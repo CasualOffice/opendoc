@@ -316,6 +316,12 @@ struct RetainedGalley {
     /// The note-label generation it was built under, so a galley built before a
     /// note was added is not reused after.
     labels: u64,
+    /// The fold-set generation it was built under
+    /// ([`FoldSet::fingerprint`](crate::fold::FoldSet::fingerprint)), so a
+    /// galley built with a heading collapsed is never reused after it is
+    /// expanded — or the other way round. A fold set changes which BLOCKS the
+    /// body has, which no paragraph's content hash can express.
+    folds: u64,
     /// One entry per top-level body block, in document order.
     blocks: Vec<RetainedBlock>,
     /// The fragments. Each is taken (`Option::take`) as it moves into the build
@@ -389,6 +395,10 @@ pub struct GalleyCache {
     /// The review view the build in progress is for — which retained slot the
     /// galley handed back at the end belongs in. `false` is the editing view.
     building_markup: bool,
+    /// The fold-set generation the build in progress is for, stamped onto the
+    /// galley it hands back so the NEXT build can tell whether the fold state
+    /// moved under it.
+    building_folds: u64,
     /// The block records the build in progress has produced so far. Becomes the
     /// next [`RetainedGalley`]'s `blocks` when the galley is handed back.
     pending_blocks: Vec<RetainedBlock>,
@@ -584,7 +594,14 @@ impl GalleyCache {
     /// `labels` is the note-label generation it is built under, and `dirty` must
     /// be [`DirtySet::is_complete`] for the retained galley to be offered at all.
     /// `O(1)`, except for the entry clear a width change forces.
-    pub(crate) fn begin_build(&mut self, width: Twip, markup: bool, labels: u64, dirty: &DirtySet) {
+    pub(crate) fn begin_build(
+        &mut self,
+        width: Twip,
+        markup: bool,
+        labels: u64,
+        folds: u64,
+        dirty: &DirtySet,
+    ) {
         if self.width != Some(width) {
             self.entries.clear();
             self.bytes = 0;
@@ -611,8 +628,12 @@ impl GalleyCache {
         } else {
             &mut self.retained_editing
         };
+        self.building_folds = folds;
         self.reusing = slot.take().filter(|retained| {
-            dirty.is_complete() && retained.width == width && retained.labels == labels
+            dirty.is_complete()
+                && retained.width == width
+                && retained.labels == labels
+                && retained.folds == folds
         });
         self.reused_galley_len = self.reusing.as_ref().map(|r| r.fragments.len());
     }
@@ -740,6 +761,7 @@ impl GalleyCache {
         let retained = RetainedGalley {
             width,
             labels,
+            folds: self.building_folds,
             blocks,
             fragments: galley.into_iter().map(Some).collect(),
         };

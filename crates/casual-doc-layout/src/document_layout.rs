@@ -72,6 +72,8 @@ use crate::flow::{
     build_galley_cached_labeled, build_galley_for_blocks_inner, flow_header_footer_labeled,
     line_grid_for_section,
 };
+// Own line (anti-conflict): the per-viewer fold filter (ADR-049).
+use crate::fold::FoldSet;
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::note_numbering::{
     NoteLabels, note_props_for_section, resolve_note_labels, visit_block_note_refs,
@@ -779,8 +781,18 @@ fn build_section_runs(
     review_view: ReviewView,
     labels: &NoteLabels,
     view: LayoutView,
+    folds: &FoldSet,
 ) -> Vec<SectionRun> {
-    build_section_runs_inner(document, shaper, plans, None, review_view, labels, view)
+    build_section_runs_inner(
+        document,
+        shaper,
+        plans,
+        None,
+        review_view,
+        labels,
+        view,
+        folds,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -792,6 +804,7 @@ fn build_section_runs_with_exclusions(
     review_view: ReviewView,
     labels: &NoteLabels,
     view: LayoutView,
+    folds: &FoldSet,
 ) -> Vec<SectionRun> {
     build_section_runs_inner(
         document,
@@ -801,6 +814,7 @@ fn build_section_runs_with_exclusions(
         review_view,
         labels,
         view,
+        folds,
     )
 }
 
@@ -813,6 +827,7 @@ fn build_section_runs_inner(
     review_view: ReviewView,
     labels: &NoteLabels,
     view: LayoutView,
+    folds: &FoldSet,
 ) -> Vec<SectionRun> {
     let sections = &document.definitions().sections;
     let body = document.body();
@@ -830,6 +845,7 @@ fn build_section_runs_inner(
             review_view,
             None,
             labels,
+            folds,
         );
         if view.is_reflow() {
             suspend_page_break_constraints(&mut galley);
@@ -872,6 +888,7 @@ fn build_section_runs_inner(
             review_view,
             labels,
             view,
+            folds,
             &mut runs,
         );
         start = end_excl;
@@ -890,6 +907,7 @@ fn build_section_runs_inner(
             review_view,
             labels,
             view,
+            folds,
             &mut runs,
         );
     }
@@ -1023,6 +1041,7 @@ fn push_section_run(
     review_view: ReviewView,
     labels: &NoteLabels,
     view: LayoutView,
+    folds: &FoldSet,
     runs: &mut Vec<SectionRun>,
 ) {
     if blocks.is_empty() {
@@ -1047,6 +1066,7 @@ fn push_section_run(
             document.definitions().settings.adjust_line_height_in_table,
         ),
         labels,
+        folds,
     );
     if view.is_reflow() {
         suspend_page_break_constraints(&mut galley);
@@ -1068,6 +1088,7 @@ fn push_section_run(
                         document.definitions().settings.adjust_line_height_in_table,
                     ),
                     labels,
+                    folds,
                 )
             })
             .collect()
@@ -1104,6 +1125,7 @@ fn build_body_galley(
     review_view: ReviewView,
     line_grid: Option<crate::flow::LineGrid>,
     labels: &NoteLabels,
+    folds: &FoldSet,
 ) -> Vec<BlockFragment> {
     let mut galley = build_galley_for_blocks_inner(
         document,
@@ -1117,6 +1139,7 @@ fn build_body_galley(
             labels: Some(labels),
         },
         line_grid,
+        folds,
     );
     // A positioned table (`w:tblPr/w:tblpPr`) is not a block in the flow: drop
     // its rows here so the paginator never reserves a band for them and the
@@ -1206,11 +1229,53 @@ pub fn paginate_document_in(
     review_view: ReviewView,
     view: LayoutView,
 ) -> crate::page::PaginatedLayout {
+    paginate_document_folded(document, shaper, review_view, view, &FoldSet::EMPTY)
+}
+
+/// [`paginate_document_in`] with a [`FoldSet`] — the one entry point that can
+/// produce a **folded** layout (ADR-049, `docs/157`).
+///
+/// `folds` is the set of collapsed heading [`NodeId`](casual_doc_model::NodeId)s
+/// this viewer is looking at. The blocks of each collapsed subtree contribute no
+/// fragments and no height, so pagination closes up and **the page count falls**
+/// — reflow, not blanking, which is Word's behaviour and the one thing
+/// ONLYOFFICE's architecture could not reproduce (their pagination loop has no
+/// visibility filter at the block tier at all).
+///
+/// Folding filters **content, never document structure**: a hidden block still
+/// closes its section, so the geometry and running content of the visible pages
+/// *before* a fold are unchanged, and it still advances list counters and note
+/// numbering. The one thing that necessarily changes is page numbers — collapsed
+/// content occupies no pages — so a host must say on screen that the page count
+/// is not the printed one. Print, PDF and DOCX export are always fully expanded.
+///
+/// An **empty** `folds` produces byte-for-byte what [`paginate_document_in`]
+/// produced before this parameter existed, which is what
+/// `tests/folding.rs`'s inertness case and the unmoved
+/// `tests/geometry_snapshot.golden` assert.
+///
+/// Complexity: `O(blocks + hidden blocks stepped)`, **not** `O(viewport)`. The
+/// filter is one integer and one `continue` per block, so a full pass stays
+/// `O(blocks)`; but a window still has to STEP OVER the hidden blocks to find
+/// the next visible one, and that stepping is `O(hidden blocks)`. A single fold
+/// over a million paragraphs is a million cheap visits — one outline-level read
+/// each, no shaping and no allocation — and the honest statement of that is the
+/// claim above, not `O(viewport)`. If it proves too slow the textbook escape is
+/// a skip list over fold boundaries, rebuilt on a fold toggle (a gesture) rather
+/// than on a keystroke; that is deliberately not built yet.
+#[must_use]
+pub fn paginate_document_folded(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    review_view: ReviewView,
+    view: LayoutView,
+    folds: &FoldSet,
+) -> crate::page::PaginatedLayout {
     // Note numbering first: the reference marker's *text* (`w:numFmt`/`w:numStart`/
     // `w:numRestart`, `docs/105` FID-L-05) is an input to line breaking, so it has
     // to be resolved before anything is flowed.
     let mut labels = resolve_note_labels(document, None);
-    let mut layout = paginate_with_note_labels(document, shaper, review_view, &labels, view);
+    let mut layout = paginate_with_note_labels(document, shaper, review_view, &labels, view, folds);
     if !labels.restarts_each_page() {
         return layout;
     }
@@ -1227,7 +1292,7 @@ pub fn paginate_document_in(
             return layout;
         }
         labels = next;
-        layout = paginate_with_note_labels(document, shaper, review_view, &labels, view);
+        layout = paginate_with_note_labels(document, shaper, review_view, &labels, view, folds);
     }
     layout
 }
@@ -1243,13 +1308,23 @@ fn paginate_with_note_labels(
     review_view: ReviewView,
     labels: &NoteLabels,
     view: LayoutView,
+    folds: &FoldSet,
 ) -> crate::page::PaginatedLayout {
     let plans = build_section_plans(document, shaper, labels, view);
     // Build one paginated run per section, each flowed at its own column width,
     // then paginate them into shared pages (column-aware, section boundaries
     // carried across pages).
-    let runs = build_section_runs(document, shaper, &plans, review_view, labels, view);
-    finish_pagination(document, shaper, &plans, &runs, review_view, labels, view)
+    let runs = build_section_runs(document, shaper, &plans, review_view, labels, view, folds);
+    finish_pagination(
+        document,
+        shaper,
+        &plans,
+        &runs,
+        review_view,
+        labels,
+        view,
+        folds,
+    )
 }
 
 /// The incremental counterpart to [`paginate_document`]: identical output, but the
@@ -1408,6 +1483,41 @@ pub fn paginate_document_after_edit_in(
     previous: Option<crate::page::PaginatedLayout>,
     view: LayoutView,
 ) -> LayoutUpdate {
+    paginate_document_after_edit_folded(
+        document,
+        shaper,
+        cache,
+        dirty,
+        review_view,
+        previous,
+        view,
+        &FoldSet::EMPTY,
+    )
+}
+
+/// [`paginate_document_after_edit_in`] under a [`FoldSet`] — the incremental
+/// path while something is folded (ADR-049).
+///
+/// A fold set is a **generation input** to the galley cache, beside the width and
+/// the note-label generation, so the three cases separate the way they should:
+/// typing at a fixed fold set still reuses the retained galley and costs
+/// `O(edit)`; toggling a fold invalidates it and pays one full re-shape, which is
+/// a gesture and is allowed to; and a galley built with a heading collapsed is
+/// never served after it is expanded. Bypassing the cache while folded — the
+/// other available answer — would make every keystroke re-shape the body, which
+/// breaches the per-interaction budget in `docs/107` §4.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn paginate_document_after_edit_folded(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+    review_view: ReviewView,
+    previous: Option<crate::page::PaginatedLayout>,
+    view: LayoutView,
+    folds: &FoldSet,
+) -> LayoutUpdate {
     let labels = resolve_note_labels(document, None);
     if labels.restarts_each_page() {
         // `eachPage` note numbering needs the pagination fixed point in
@@ -1416,7 +1526,7 @@ pub fn paginate_document_after_edit_in(
         // incrementality, on a rare path.
         cache.discard_retention();
         return LayoutUpdate {
-            layout: paginate_document_in(document, shaper, review_view, view),
+            layout: paginate_document_folded(document, shaper, review_view, view, folds),
             previous,
             changed_pages: None,
         };
@@ -1431,6 +1541,7 @@ pub fn paginate_document_after_edit_in(
         &labels,
         review_view,
         view,
+        folds,
     );
     let resumed = match previous {
         Some(previous) => resume_pagination(document, shaper, &plans, &runs, cache, previous, view),
@@ -1446,16 +1557,32 @@ pub fn paginate_document_after_edit_in(
             (layout, None, Some(changed_pages))
         }
         Resume::Refused(previous) => {
-            let layout =
-                finish_pagination(document, shaper, &plans, &runs, review_view, &labels, view);
+            let layout = finish_pagination(
+                document,
+                shaper,
+                &plans,
+                &runs,
+                review_view,
+                &labels,
+                view,
+                folds,
+            );
             // A full build re-flowed every page it produced. Charging it keeps the
             // number a complexity guard reads honest whichever path ran.
             cache.note_reflowed_pages(layout.pages.len(), false);
             (layout, Some(previous), None)
         }
         Resume::NotOffered => {
-            let layout =
-                finish_pagination(document, shaper, &plans, &runs, review_view, &labels, view);
+            let layout = finish_pagination(
+                document,
+                shaper,
+                &plans,
+                &runs,
+                review_view,
+                &labels,
+                view,
+                folds,
+            );
             cache.note_reflowed_pages(layout.pages.len(), false);
             (layout, None, None)
         }
@@ -1610,6 +1737,7 @@ fn finish_pagination(
     review_view: ReviewView,
     labels: &NoteLabels,
     view: LayoutView,
+    folds: &FoldSet,
 ) -> crate::page::PaginatedLayout {
     let mut layout = finish_pagination_pass(document, shaper, plans, runs, labels, view);
     let mut exclusions = paragraph_float_exclusions(document, shaper, plans, &layout);
@@ -1631,6 +1759,7 @@ fn finish_pagination(
             review_view,
             labels,
             view,
+            folds,
         );
         let next = finish_pagination_pass(document, shaper, plans, &runs, labels, view);
         let next_exclusions = paragraph_float_exclusions(document, shaper, plans, &next);
@@ -1657,6 +1786,7 @@ fn finish_pagination(
         review_view,
         labels,
         view,
+        folds,
     );
     finish_pagination_pass(document, shaper, plans, &runs, labels, view)
 }
@@ -2092,6 +2222,7 @@ fn build_section_runs_cached(
     labels: &NoteLabels,
     review_view: ReviewView,
     view: LayoutView,
+    folds: &FoldSet,
 ) -> Vec<SectionRun> {
     // The incremental cache used to be switched off whenever the document
     // declared ANY section — and every Word-produced file ends `w:body` with a
@@ -2119,7 +2250,7 @@ fn build_section_runs_cached(
         // too, or it would be reused across a body this one changed without
         // reporting.
         cache.discard_retention();
-        return build_section_runs(document, shaper, plans, review_view, labels, view);
+        return build_section_runs(document, shaper, plans, review_view, labels, view, folds);
     }
     // One full-width run over the whole body, built incrementally. Mirrors the
     // `sections.is_empty()` arm of `build_section_runs`, swapping
@@ -2139,6 +2270,7 @@ fn build_section_runs_cached(
             labels: Some(labels),
         },
         review_view,
+        folds,
     );
     // Same lift as the uncached builder: a positioned table is not a block in
     // the flow. The incremental path must agree with the fresh one fragment for
