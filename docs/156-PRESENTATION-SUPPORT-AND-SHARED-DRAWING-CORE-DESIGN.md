@@ -400,6 +400,27 @@ master → `defaultTextStyle`, plus `p:style` → `fmtScheme` and `clrMap`/`clrM
 (small; consumes §3.2's published seams) → `a:tbl` + `tableStyles.xml`, **the only
 genuinely PPTX-only item in this tier** → `casual-pres-wasm`.
 
+**Tier 2 status, read from the tree rather than carried forward.** The text-body
+mapping, the full inheritance cascade below `p:style` (slide → layout → master's
+`p:txStyles` → `p:defaultTextStyle`, resolved by `TextCascade`),
+`casual-pres-import`, `casual-pres-export` and slide layout have all landed. Slide
+layout was indeed small and did consume §3.2's published seams, which is the
+prediction above holding up.
+
+Three things in this tier remain, and two of them are the reason a deck is still
+not usable: **`p:style` → `fmtScheme` and `clrMap`/`clrMapOvr`** are unread, so
+every `a:schemeClr` on a slide is reported rather than resolved and no shape takes a
+themed fill; and **slide text is not shaped** — every cascade tier resolves, and
+nothing yet hands the resolved runs to the shaper, so a slide paints its shapes and
+no glyphs. `a:tbl` + `tableStyles.xml` and `casual-pres-wasm` are the rest.
+
+One correction to the plan above: it lists import and export "over the parameterised
+OPC layer", and that layer does not exist. `casual-doc-ooxml`'s OPC reader is
+`pub(crate)` and hard-wired to WordprocessingML content types, so
+`casual-pres-import` carries its own and says so at the site. Parameterising the
+original remains the better end state; writing a second reader was the smaller
+change and the gap is named rather than hidden.
+
 **Tier 3, product.** `slides.html`, slide sorter, canvas, notes pane, layout picker,
 master editor, command registry plus slide descriptors, locale keys.
 
