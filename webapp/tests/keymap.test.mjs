@@ -234,12 +234,30 @@ const BREAK_COMMAND_IDS = (() => {
   ];
 })();
 
+// `formatting_marks.mjs` generates its command rows from its own table, the way
+// `break_commands.mjs` and the spacing and table modules do, so the scan over
+// `main.js` cannot see them: `main.js` carries one `...formattingMarks.commands()`
+// spread instead of six literals. Derived from the module's own frozen
+// declaration rather than re-listed here, because a second copy of the ids is
+// exactly the drift this file exists to catch. Read as SOURCE and not imported,
+// for the same reason the three lists above are: the factory reaches for
+// `document`, which does not exist under `node --test`.
+const FORMATTING_MARK_COMMAND_IDS = (() => {
+  const source = readFileSync(new URL("../src/formatting_marks.mjs", import.meta.url), "utf8");
+  const marks = /FORMATTING_MARKS = Object\.freeze\(\[([\s\S]*?)\]\);/.exec(source);
+  assert.ok(marks, "FORMATTING_MARKS has moved, so the switch ids cannot be derived");
+  const keys = [...marks[1].matchAll(/key: "(\w+)"/g)].map((match) => match[1]);
+  assert.ok(keys.length >= 5, `only ${keys.length} marks found; the scan has drifted`);
+  return ["view.formattingMarks", ...keys.map((key) => `view.formattingMarks.${key}`)];
+})();
+
 test("every chord names a command the registry actually returns", () => {
   const registered = new Set([
     ...[...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
     ...TABLE_COMMAND_IDS,
     ...SPACING_COMMAND_IDS,
     ...BREAK_COMMAND_IDS,
+    ...FORMATTING_MARK_COMMAND_IDS,
   ]);
   assert.ok(registered.size > 80, `only ${registered.size} commands found; the scan has drifted`);
   const missing = [...new Set(KEYMAP.map((row) => row.command))].filter((id) => !registered.has(id));

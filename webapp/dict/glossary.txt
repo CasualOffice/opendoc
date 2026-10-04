@@ -267,7 +267,6 @@ bbox
 bidi
 bijection
 bindgen
-bitmask
 blit
 blits
 blitted

@@ -506,7 +506,19 @@ export const APP_MENU_SECTIONS = {
       "table.distribute.columns",
     ),
     band("menuGroup.sort", "table.sort.ascending", "table.sort.descending"),
-    band("menuGroup.properties", "table.cellFormat", "table.properties"),
+    // `table.borderStyle` sits with the other two format rows, which is where
+    // Word keeps the pen: Table Design holds Line Style beside the border
+    // controls rather than in a submenu of its own. It had three surfaces --
+    // the cell-format popover, the in-table context menu and the palette --
+    // and not this one, which is the single-surface shape `105` UX-012 is
+    // about: the menu is the surface a reader browses when they do not already
+    // know the capability exists.
+    band(
+      "menuGroup.properties",
+      "table.cellFormat",
+      "table.borderStyle",
+      "table.properties",
+    ),
     // Clearing the table style. The named styles are generated per document, so
     // they cannot be listed here — the ribbon's chooser and the palette's
     // `table.style.<name>` rows are their two surfaces — but "back to no style"
@@ -595,6 +607,9 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.row.grow", "Taller row"],
   ["table.row.shrink", "Shorter row"],
   ["table.cellFormat", "Cell formatting…"],
+  // Word's own wording in Table Design, and an ellipsis because the row opens
+  // the cell-format popover with the pen focused rather than applying a style.
+  ["table.borderStyle", "Border line style…"],
   ["table.properties", "Table properties…"],
   ["table.style.none", "No table style"],
 ]);

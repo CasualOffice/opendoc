@@ -2869,6 +2869,15 @@ async function boot() {
 
   try {
     await init();
+    // The engine is only now instantiated. `createMeasurementUnits` runs during
+    // module evaluation -- long before this line -- so its roster is faulted in
+    // rather than read at construction, and THIS is the call that fills the
+    // chooser. Reaching for a free function on an uninstantiated wasm module
+    // throws `Cannot read properties of undefined (reading
+    // '__wbindgen_add_to_stack_pointer')`, and a throw during module evaluation
+    // takes the whole editor down: nothing after it runs, so the document never
+    // opens at all.
+    measurement.reflect();
     setStatus("Ready — open a .docx, .odt, .rtf, .json, or .txt");
     fileEl.disabled = false;
     if (openBtn) openBtn.disabled = false;
