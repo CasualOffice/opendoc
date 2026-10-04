@@ -1202,11 +1202,15 @@ impl WasmDocument {
     /// autosave, and persist a 390px-wide "page" into the user's DOCX.
     ///
     /// Returns a JSON object: `{ "reflow": bool, "approximations": [string] }`.
-    /// The approximations are **reported, not hidden** — a page- or
+    /// The approximations are **reported, not hidden**, and they are derived from
+    /// **this document at this measure** rather than recited: content wider than
+    /// the reading column has been fitted to it (`docs/163` R-1), a page- or
     /// margin-anchored drawing keeps its paper-relative position (`docs/151` §8
     /// item 1 is still open), a footnote lands at a tile bottom rather than a page
     /// bottom, and a `PAGE`/`NUMPAGES` field prints a refusal because a tile index
-    /// is not a page number (`docs/151` §6.5).
+    /// is not a page number (`docs/151` §6.5). A document with none of these gets
+    /// an empty list, which is the point: the old fixed list told every reader
+    /// about footnotes whether or not the document had any.
     ///
     /// Complexity: `O(document)`. Entering or leaving reflow is a full re-shape —
     /// the galley cache is width-scoped, so nothing in it survives a width change
@@ -1267,7 +1271,7 @@ impl WasmDocument {
             content_width_twip: width,
             tile_height_twip: height,
             gutter_twip: gutter,
-            approximations: self.layout_view.approximations(),
+            approximations: self.layout_view.approximations(&self.document),
         })
         .unwrap_or_else(|_| "{\"reflow\":false,\"approximations\":[]}".to_owned())
     }
@@ -30519,11 +30523,37 @@ mod tests {
         assert_eq!(view.content_width_twip, Some(PHONE_COLUMN));
         assert_eq!(view.tile_height_twip, Some(PHONE_TILE));
         assert_eq!(view.gutter_twip, Some(PHONE_GUTTER));
-        assert_eq!(
-            view.approximations.len(),
-            3,
-            "the known approximations are reported, not hidden: {:?}",
-            view.approximations
+        // The approximations are DERIVED from this document now, not recited
+        // (`docs/163` R-7), so what is asserted is that property and not a count:
+        // every sentence reported names one of the four things reflow can
+        // approximate, and a document with none of them gets none of them. A
+        // count would have gone stale the first time the fixture changed, and a
+        // fixed list is what made the old count true for every document.
+        for sentence in &view.approximations {
+            assert!(
+                [
+                    "wider than the reading column",
+                    "anchored to the page",
+                    "footnote",
+                    "PAGE or NUMPAGES"
+                ]
+                .iter()
+                .any(|topic| sentence.contains(topic)),
+                "an approximation names nothing reflow approximates: {sentence}"
+            );
+        }
+        let mut plain = open_document(&text_of_lines(40)).expect("plain text opens");
+        let plain_view: LayoutViewJson = serde_json::from_str(
+            &plain
+                .set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+                .expect("a reading column"),
+        )
+        .expect("the view serializes");
+        assert!(
+            plain_view.approximations.is_empty(),
+            "a plain-text document has no notes, no fields, no page-anchored art \
+             and nothing over-wide, so reflow approximates nothing in it: {:?}",
+            plain_view.approximations
         );
 
         // The tile, not the paper — and this is the assertion that would have

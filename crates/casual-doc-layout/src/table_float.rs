@@ -67,6 +67,7 @@ use casual_doc_model::v1::{VerticalAlign, VerticalAnchor, VerticalPosition};
 
 use crate::anchor::{BodyWrapRect, body_section_ids, resolve_body_float_rect};
 use crate::block::BlockFragment;
+use crate::flow::MeasureFit;
 use crate::page::{AnchorContent, AnchorZ, PaginatedLayout, PlacedAnchor};
 use crate::paginate::PageConfig;
 use crate::text::LineShaper;
@@ -202,6 +203,7 @@ pub(crate) fn resolve(
     document: &Document,
     shaper: &dyn LineShaper,
     config: &PageConfig,
+    fit: MeasureFit,
 ) -> Vec<ResolvedFloatingTable> {
     // The cheap guard first: `floating_tables` allocates a section id per body
     // block, and this runs once per wrap pass per fixed-point iteration, so a
@@ -218,7 +220,13 @@ pub(crate) fn resolve(
     for floating in tables {
         let (page_index, anchor_box, column) =
             anchor_frame(layout, document, &positions, floating.body_index);
-        let rows = flow_rows(document, shaper, floating.body_index, column.size.width);
+        let rows = flow_rows(
+            document,
+            shaper,
+            floating.body_index,
+            column.size.width,
+            fit,
+        );
         let size = rows_size(&rows);
         let anchor = table_float_anchor(floating.position);
         let mut rect = resolve_body_float_rect(
@@ -261,8 +269,9 @@ pub(crate) fn wrap_rects(
     document: &Document,
     shaper: &dyn LineShaper,
     config: &PageConfig,
+    fit: MeasureFit,
 ) -> Vec<BodyWrapRect> {
-    resolve(layout, document, shaper, config)
+    resolve(layout, document, shaper, config, fit)
         .into_iter()
         .map(|table| BodyWrapRect {
             page_index: table.page_index,
@@ -285,8 +294,9 @@ pub(crate) fn place_floating_tables(
     document: &Document,
     shaper: &dyn LineShaper,
     config: &PageConfig,
+    fit: MeasureFit,
 ) {
-    let resolved = resolve(layout, document, shaper, config);
+    let resolved = resolve(layout, document, shaper, config, fit);
     for (index, table) in resolved.into_iter().enumerate() {
         let order = u32::try_from(index).unwrap_or(u32::MAX);
         layout.pages[table.page_index].anchored.push(PlacedAnchor {
@@ -502,6 +512,7 @@ fn flow_rows(
     shaper: &dyn LineShaper,
     body_index: usize,
     width: Twip,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     let body = document.body();
     let Some(block) = body.get(body_index) else {
@@ -528,6 +539,7 @@ fn flow_rows(
         // is lifted out of the galley before pagination, so it has no fragment
         // to be absent. `109` FOLD-002.
         &crate::fold::FoldSet::EMPTY,
+        fit,
     )
 }
 
