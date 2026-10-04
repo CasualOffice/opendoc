@@ -250,6 +250,7 @@ export const EN_STRINGS = Object.freeze({
   "toc.jumpedTo": "Jumped to {heading}",
   "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
   "paragraph.caretRequired": "Place the caret in a paragraph",
+  "insert.chart": "Chart",
   // A disabled control has one channel — its title — and it must say what to
   // DO, not repeat what the control would have done. This one used to borrow
   // the margin button's own label, which describes the action rather than the

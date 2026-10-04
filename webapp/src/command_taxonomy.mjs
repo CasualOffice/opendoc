@@ -357,7 +357,7 @@ export const APP_MENU_SECTIONS = {
       "layout.break.section.evenPage",
       "layout.break.section.oddPage",
     ),
-    band("menuGroup.illustrations", "insert.image", "insert.shape"),
+    band("menuGroup.illustrations", "insert.image", "insert.shape", "insert.chart"),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),
     sub(
