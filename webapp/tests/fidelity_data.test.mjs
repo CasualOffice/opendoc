@@ -482,8 +482,30 @@ test("every Charts grade is derived from the painter, the writer and the host su
   );
   const drawable = painter.slice(opens, closes);
   const DRAWN = ["Bar", "Line", "Area", "Scatter", "Pie", "Doughnut"];
+  // Only the arm that yields `true` counts. Matching the whole function body
+  // counted a family whose arm returned FALSE — mutating `Pie` to
+  // `=> false` left this green, because the substring `ChartGroupKind::Pie` was
+  // still there. So the body is split at `=> true` and a family named after it
+  // is treated as a guard that can no longer read the function, not as a
+  // family that paints.
+  const yields = drawable.indexOf("=> true");
+  assert.ok(
+    yields > 0,
+    "is_drawable no longer has a `=> true` arm; this guard reads which " +
+      "families paint by position relative to it and cannot read the new shape",
+  );
   const paints = DRAWN.filter((family) =>
-    drawable.includes(`ChartGroupKind::${family}`),
+    drawable.slice(0, yields).includes(`ChartGroupKind::${family}`),
+  );
+  const afterwards = DRAWN.filter((family) =>
+    drawable.slice(yields).includes(`ChartGroupKind::${family}`),
+  );
+  assert.deepEqual(
+    afterwards,
+    [],
+    `is_drawable names ${afterwards.join(", ")} AFTER its \`=> true\` arm, so ` +
+      "there is an arm this guard cannot read — a family may have stopped " +
+      "painting. Re-derive Charts.rendered from the new shape; do not relax this",
   );
   assert.equal(
     paints.length,
