@@ -690,6 +690,31 @@ impl ThemeFontEntry {
     }
 }
 
+impl FontCollection {
+    /// The typeface this collection supplies for one script axis.
+    ///
+    /// An East-Asian or complex-script entry whose `@typeface` is empty inherits
+    /// the Latin entry — that empty string is DrawingML's "fall back to latin"
+    /// marker, not a typeface named "" — and a Latin entry that is itself empty
+    /// resolves to nothing rather than to the empty family name.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn typeface(&self, axis: ThemeFontAxis) -> Option<&str> {
+        let entry = match axis {
+            ThemeFontAxis::Latin => &self.latin,
+            ThemeFontAxis::EastAsia => &self.ea,
+            ThemeFontAxis::ComplexScript => &self.cs,
+        };
+        let typeface = if entry.typeface.is_empty() {
+            &self.latin.typeface
+        } else {
+            &entry.typeface
+        };
+        (!typeface.is_empty()).then_some(typeface.as_str())
+    }
+}
+
 /// The theme font scheme (`theme1.xml` `a:fontScheme`): the major (heading) and
 /// minor (body) collections against which `w:rFonts@*Theme` slots resolve.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -699,6 +724,26 @@ pub struct FontScheme {
     pub major: FontCollection,
     /// The minor (body) collection (`a:minorFont`).
     pub minor: FontCollection,
+}
+
+impl FontScheme {
+    /// The typeface one collection of this scheme supplies for one script axis:
+    /// `major` when `major` is true, `minor` otherwise.
+    ///
+    /// The single place the collection-and-axis rule lives. A `w:rFonts@*Theme`
+    /// slot and an `a:fontRef` are two different references that both land here,
+    /// and two copies of the empty-entry fallback would diverge the first time one
+    /// was corrected.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn typeface(&self, major: bool, axis: ThemeFontAxis) -> Option<&str> {
+        if major {
+            self.major.typeface(axis)
+        } else {
+            self.minor.typeface(axis)
+        }
+    }
 }
 
 /// A system color (`a:sysClr`, ECMA-376 §20.1.2.3.33): a named system-palette
@@ -754,6 +799,14 @@ pub struct ColorTransform {
     /// `a:lumOff@val` — luminance offset, per-100000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lum_off: Option<i32>,
+    /// `a:satMod@val` — saturation multiplier, per-100000.
+    ///
+    /// Declared after the luminance pair and before `tint`/`shade` because that is
+    /// the order [`fold_color_modifiers`] applies them in, and a field order that
+    /// contradicts the application order is how a reader infers the wrong
+    /// composition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sat_mod: Option<i32>,
     /// `a:tint@val` — blend toward white, per-100000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<i32>,
@@ -786,6 +839,7 @@ impl ColorTransform {
             base,
             frac(self.lum_mod),
             frac(self.lum_off),
+            frac(self.sat_mod),
             frac(self.tint),
             frac(self.shade),
             frac(self.alpha),
@@ -797,8 +851,9 @@ impl ColorTransform {
 /// (`0.67`, not `67000`).
 ///
 /// `lumMod` scales and `lumOff` offsets luminance (applied channel-wise, exact
-/// for the grayscale bases these decorations use); `tint` lightens toward white
-/// and `shade` darkens toward black; `alpha` sets opacity.
+/// for the grayscale bases these decorations use); `satMod` scales saturation in
+/// HSL (see [`fold_color_modifiers`] body and the note below); `tint` lightens
+/// toward white and `shade` darkens toward black; `alpha` sets opacity.
 ///
 /// One function rather than two: the importer folds modifiers over a base it
 /// already knows, and [`ColorTransform::apply`] folds the same modifiers over a
@@ -806,9 +861,17 @@ impl ColorTransform {
 /// and a divergence here would show as a themed shape painting a slightly
 /// different colour from an explicitly-filled one.
 ///
-/// `a:satMod` is absent on purpose: nothing in this build applies a saturation
-/// modifier, and adding a half-correct one here would be a silent change to every
-/// existing colour. The detail survives in the retained `a:fmtScheme`.
+/// # The order is part of the contract
+///
+/// `lumMod`, `lumOff`, `satMod`, `tint`, `shade`, `alpha` — the HSL modifiers
+/// first, then the two toward-white/toward-black blends, then opacity. Two pieces
+/// of evidence put `satMod` in that slot rather than at the end: ECMA-376
+/// §20.1.2.3 lists the `EG_ColorTransform` children alphabetically, where
+/// `satMod` falls after `lumMod`/`lumOff` and before `shade`/`tint`; and Office's
+/// own default theme writes them in that document order
+/// (`<a:lumMod/><a:satMod/><a:tint/>`). The order matters: `satMod` and `tint` do
+/// **not** commute whenever the modulation saturates (see the unit guards), so
+/// appending it after the blends would paint a different colour.
 ///
 /// Complexity: O(1).
 #[must_use]
@@ -816,6 +879,7 @@ pub fn fold_color_modifiers(
     base: Rgba,
     lum_mod: Option<f32>,
     lum_off: Option<f32>,
+    sat_mod: Option<f32>,
     tint: Option<f32>,
     shade: Option<f32>,
     alpha: Option<f32>,
@@ -830,6 +894,9 @@ pub fn fold_color_modifiers(
         for c in &mut rgb {
             *c += o * 255.0;
         }
+    }
+    if let Some(m) = sat_mod {
+        modulate_saturation(&mut rgb, m);
     }
     if let Some(t) = tint {
         let t = t.clamp(0.0, 1.0);
@@ -849,6 +916,77 @@ pub fn fold_color_modifiers(
         g: clamp(rgb[1]),
         b: clamp(rgb[2]),
         a: alpha.map_or(base.a, |a| clamp(a.clamp(0.0, 1.0) * 255.0)),
+    }
+}
+
+/// Scales an sRGB triple's HSL **saturation** by `factor` in place, keeping its
+/// hue and lightness exactly (`a:satMod`, ECMA-376 §20.1.2.3.26).
+///
+/// # Why this is not a channel-wise multiply
+///
+/// Saturation is not an RGB quantity. In HSL, with `L` the lightness and `C` the
+/// chroma, every channel is affine in chroma for a fixed hue and lightness:
+/// `c = L + C·(p − ½)` where `p` depends only on the hue. Scaling `S` scales `C`
+/// by the same factor, so modulating saturation is **exactly** a linear scaling
+/// of every channel about `L`:
+///
+/// ```text
+/// L  = (max + min) / 2
+/// c' = L + (c − L) · k
+/// ```
+///
+/// That identity is what lets this stay in the RGB domain without an HSL round
+/// trip: converting to HSL and back would introduce two rounding errors for an
+/// operation that provably needs none, and would lose the hue of a colour whose
+/// chroma the conversion flattened. Hue is preserved because every `(c − L)`
+/// scales by the same `k`, and lightness because `max' + min' = 2L` again.
+///
+/// # The ceiling
+///
+/// `S` cannot exceed `1`, so `C` cannot exceed the chroma a fully saturated
+/// colour has at this lightness, `min(2L, 510 − 2L)`. A `satMod` that would push
+/// past it saturates there rather than wrapping or clipping per channel — clipping
+/// a channel independently would shift the hue, which is the one thing a
+/// saturation modifier must not do. This ceiling is also the only reason `satMod`
+/// fails to commute with `tint`/`shade`/`lumMod`: all four of those are affine
+/// maps, and the scaling above commutes with any affine map at a fixed `k`.
+///
+/// # Exactness
+///
+/// `<a:satMod val="100000"/>` is a bit-exact no-op, and that is a **measured**
+/// property of the arithmetic rather than a special case: `k` is then exactly `1`
+/// and `L + (c − L)·1` was verified to round back to `c` for all 2^24 sRGB bases,
+/// so an `if k == 1.0 { return }` short circuit was written, shown to change no
+/// colour, and deliberately removed — an unfalsifiable line in a colour path is
+/// worse than none (`SKILL` §4).
+///
+/// An achromatic base returns immediately, and that one IS load-bearing: its
+/// chroma is zero, so `k` would be `0/0`.
+///
+/// The channels are brought back into gamut first, because HSL is defined only on
+/// in-gamut sRGB and `a:lumOff` can push a channel past `255`. That clamp lives
+/// inside this function rather than in the fold, so a colour carrying no
+/// `a:satMod` folds bit-identically to how it folded before saturation existed.
+///
+/// Complexity: O(1).
+fn modulate_saturation(rgb: &mut [f32; 3], factor: f32) {
+    for channel in rgb.iter_mut() {
+        *channel = channel.clamp(0.0, 255.0);
+    }
+    let max = rgb[0].max(rgb[1]).max(rgb[2]);
+    let min = rgb[0].min(rgb[1]).min(rgb[2]);
+    let chroma = max - min;
+    if chroma <= 0.0 {
+        return;
+    }
+    // `2L` in 0.0..=510.0, so the ceiling is integral arithmetic on the same scale
+    // as the channels and needs no division.
+    let double_lum = max + min;
+    let chroma_ceiling = double_lum.min(510.0 - double_lum);
+    let k = (chroma * factor.max(0.0)).min(chroma_ceiling) / chroma;
+    let lum = double_lum / 2.0;
+    for channel in rgb.iter_mut() {
+        *channel = lum + (*channel - lum) * k;
     }
 }
 
@@ -1042,6 +1180,109 @@ pub struct FormatScheme {
     pub effect_styles: Vec<EffectStyle>,
 }
 
+/// Which per-script entry of a theme font collection a reference resolves
+/// against (`a:latin`/`a:ea`/`a:cs`).
+///
+/// Public because two independent references pick an entry this way — a
+/// `w:rFonts@*Theme` slot, which encodes the axis in the slot name, and an
+/// `a:fontRef`, which does not and takes it from the run's script — and the
+/// empty-entry rule below must not be written twice.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemeFontAxis {
+    /// `a:latin`, which is also the fallback for the other two.
+    #[default]
+    Latin,
+    /// `a:ea`.
+    EastAsia,
+    /// `a:cs`.
+    ComplexScript,
+}
+
+/// `a:fontRef@idx` (`ST_FontCollectionIndex`, ECMA-376 §20.1.10.25): which font
+/// collection of the theme a shape's text takes its typeface from.
+///
+/// `none` is a real value and not an absence — it says "this shape's text takes
+/// no theme typeface" — which is why it is a variant rather than being folded into
+/// the `Option` around [`FontReference`]. An absent `a:fontRef` and an
+/// `a:fontRef idx="none"` are different statements, and collapsing them would make
+/// a round trip invent one from the other.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FontCollectionIndex {
+    /// `none`.
+    #[default]
+    None,
+    /// `major` — the heading collection (`a:majorFont`).
+    Major,
+    /// `minor` — the body collection (`a:minorFont`).
+    Minor,
+}
+
+impl FontCollectionIndex {
+    /// The index an `a:fontRef@idx` token names.
+    ///
+    /// `None` for anything outside `ST_FontCollectionIndex`, which the caller
+    /// reports rather than substituting a collection: guessing `minor` would give
+    /// a shape's text the body typeface and look deliberate.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        Some(match token.trim() {
+            "none" => Self::None,
+            "major" => Self::Major,
+            "minor" => Self::Minor,
+            _ => return None,
+        })
+    }
+
+    /// The token this index is written as.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Major => "major",
+            Self::Minor => "minor",
+        }
+    }
+}
+
+/// A shape's `a:fontRef`: the theme font collection its text takes its typeface
+/// from, and the colour its text takes.
+///
+/// Both halves travel, because `a:fontRef` states both and a shape that kept only
+/// one would paint a themed typeface in an unthemed colour or the reverse. The
+/// colour is already resolved to a concrete [`Rgba`] when it reaches here, by the
+/// same fold every other shape colour goes through — `a:fontRef`'s colour child is
+/// the shape's own statement, not a theme placeholder, so there is nothing to
+/// defer.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontReference {
+    /// `a:fontRef@idx`.
+    pub index: FontCollectionIndex,
+    /// The colour `a:fontRef`'s child names, folded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgba>,
+}
+
+impl FontReference {
+    /// The typeface this reference resolves to in `scheme`, for one script axis.
+    ///
+    /// `None` for `idx="none"` (which names no collection), and for a collection
+    /// whose entry and Latin fallback are both the empty "no typeface" marker — so
+    /// an unresolvable reference hands back nothing rather than an invented family.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn typeface<'a>(&self, scheme: &'a FontScheme, axis: ThemeFontAxis) -> Option<&'a str> {
+        match self.index {
+            FontCollectionIndex::None => None,
+            FontCollectionIndex::Major => scheme.typeface(true, axis),
+            FontCollectionIndex::Minor => scheme.typeface(false, axis),
+        }
+    }
+}
+
 /// A shape's theme style reference (`wps:style`): which format-scheme entry supplies
 /// its fill and outline, and the colour each substitutes for `a:phClr`.
 ///
@@ -1074,6 +1315,20 @@ pub struct ShapeStyleRef {
     /// the shape named actually carries an effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_idx: Option<u32>,
+    /// `a:fontRef` — the theme font collection the shape's text takes, and the
+    /// colour it takes.
+    ///
+    /// Captured for the reason [`ShapeStyleRef::effect_idx`] is: so the reference
+    /// RESOLVES. Nothing in this build applies a shape-scoped text default, so a
+    /// text box's runs still take their typeface from their own `w:rFonts` and the
+    /// document's defaults — but the reference now resolves far enough for the
+    /// compatibility report to say whether the shape lost a typeface, a colour, or
+    /// nothing at all, which an uncaptured `a:fontRef` could not.
+    ///
+    /// Before this field the DOCX reader dropped `a:fontRef` with no finding at
+    /// all, which is the silent loss `AGENTS.md` forbids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_ref: Option<FontReference>,
 }
 
 impl FormatScheme {
@@ -1154,6 +1409,113 @@ pub struct ColorScheme {
     pub hyperlink: SchemeColor,
     /// Followed hyperlink (`a:folHlink`).
     pub followed_hyperlink: SchemeColor,
+}
+
+/// One theme part (`theme1.xml`) other than the document's own.
+///
+/// # Why a side table and not a wider `Definitions`
+///
+/// A WordprocessingML package has **exactly one** theme, so
+/// [`Definitions::color_scheme`](super::Definitions::color_scheme) and its three
+/// siblings are flat fields and always will be: that is the document's theme, it
+/// needs no key, and reading it costs a borrow. A `.pptx` may carry one theme
+/// part **per slide master**, which a single triple cannot represent — the first
+/// master's theme wins and every other is a loss.
+///
+/// This is the pattern `Definitions` already uses five times over — `media`,
+/// `charts`, `shape_styles`, `shape_fill_detail` and `field_ranges` are all
+/// `DefinitionMap<Id, Value>` side tables whose holder carries the key — composed
+/// with the default-plus-overrides shape of `document_defaults` and the per-style
+/// overrides above it. The format itself is built the same way: `p:clrMap` on the
+/// master with `p:clrMapOvr` on the layout and the slide. Nothing here is new,
+/// and naming the prior art is the point (`SKILL` §8).
+///
+/// The one mechanism for asking *which theme is in force* is
+/// [`Definitions::theme`](super::Definitions::theme), which hands back a
+/// [`ThemeView`] whether the answer is the document's own theme or a keyed entry.
+/// A consumer that goes through it cannot tell a single-theme document from a
+/// multi-theme deck, and a single-theme document pays nothing: the table is empty,
+/// it is omitted from the snapshot entirely, and the view is four borrows.
+///
+/// The line is resolution, not access. Layout resolves through the accessor; the
+/// importer that fills the fields and the writer that serializes them touch them
+/// directly, because they are the storage's own reader and writer rather than
+/// consumers asking a question.
+///
+/// # What is deliberately NOT here
+///
+/// The theme's display name (`a:theme@name`). The document's own theme has no
+/// field for it either, and giving the table one would make an entry a *richer*
+/// model of the same part than the primary — which is how two mechanisms grow
+/// back. It stays an unmodelled loss, reported on both paths, until there is a
+/// field on both sides.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Theme {
+    /// This theme's `a:clrScheme`, matching
+    /// [`Definitions::color_scheme`](super::Definitions::color_scheme).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme: Option<ColorScheme>,
+    /// This theme's `a:fontScheme`, matching
+    /// [`Definitions::font_scheme`](super::Definitions::font_scheme).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_scheme: Option<FontScheme>,
+    /// The modelled subset of this theme's `a:fmtScheme`, matching
+    /// [`Definitions::format_scheme`](super::Definitions::format_scheme).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_scheme: Option<FormatScheme>,
+    /// This theme's `a:fmtScheme` retained verbatim, matching
+    /// [`Definitions::format_scheme_xml`](super::Definitions::format_scheme_xml).
+    ///
+    /// Two representations of one part, with the same strict division as on the
+    /// document's own theme: the verbatim XML is what a writer emits, the typed
+    /// form is what a `a:fillRef`/`a:lnRef` resolves against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_scheme_xml: Option<String>,
+}
+
+/// A theme resolved for one holder: the document's own, or one keyed entry.
+///
+/// Borrowed rather than cloned, because the alternative is copying a format
+/// scheme — gradient stops and all — on every lookup, and the lookups sit on the
+/// painting path. `Copy`, so it can be threaded through a resolution without
+/// re-borrowing `Definitions`.
+///
+/// Every member is an `Option` for the same reason the flat fields are: a theme
+/// part may state any subset of the three schemes, and a package may have no
+/// theme at all.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ThemeView<'a> {
+    /// The `a:clrScheme` in force.
+    pub color_scheme: Option<&'a ColorScheme>,
+    /// The `a:fontScheme` in force.
+    pub font_scheme: Option<&'a FontScheme>,
+    /// The modelled subset of the `a:fmtScheme` in force.
+    pub format_scheme: Option<&'a FormatScheme>,
+    /// The verbatim `a:fmtScheme` in force.
+    pub format_scheme_xml: Option<&'a str>,
+}
+
+impl<'a> ThemeView<'a> {
+    /// The view of one keyed [`Theme`].
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn of(theme: &'a Theme) -> Self {
+        Self {
+            color_scheme: theme.color_scheme.as_ref(),
+            font_scheme: theme.font_scheme.as_ref(),
+            format_scheme: theme.format_scheme.as_ref(),
+            format_scheme_xml: theme.format_scheme_xml.as_deref(),
+        }
+    }
+
+    /// Whether this view states nothing at all — no package theme, or a theme part
+    /// that modelled none of its three schemes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Paragraph indentation in twips.

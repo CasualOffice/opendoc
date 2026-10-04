@@ -2746,6 +2746,11 @@ fn place_themed_shape(
             line_idx: Some(line_idx),
             line_color: Some(red),
             effect_idx: None,
+            // Named, not defaulted: this fixture's subject is the fill and the
+            // outline, and `a:fontRef` is deliberately absent so the appearance
+            // under test cannot be coming from anywhere else. The guard that
+            // proves `font_ref` travels is in `casual-doc-import`.
+            font_ref: None,
         },
     );
     let paragraph = BlockNode::Paragraph(Paragraph {
@@ -2897,6 +2902,11 @@ fn place_themed_text_box(
             line_idx: Some(1),
             line_color: Some(red),
             effect_idx: None,
+            // Named, not defaulted: this fixture's subject is the fill and the
+            // outline, and `a:fontRef` is deliberately absent so the appearance
+            // under test cannot be coming from anywhere else. The guard that
+            // proves `font_ref` travels is in `casual-doc-import`.
+            font_ref: None,
         },
     );
     let paragraph = BlockNode::Paragraph(Paragraph {

@@ -403,24 +403,26 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/themed-shape.docx [Semantic]
-  report: 7 entries
+  report: 8 entries
     fmtScheme/effectStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("effectStyleLst") loc.attribute=Some("effect-not-rendered") ledger=None
     fmtScheme/fillStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fillStyleLst") loc.attribute=Some("pattern") ledger=None
     fmtScheme/lnStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("lnStyleLst") loc.attribute=Some("unmodeled") ledger=None
     fontScheme/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fontScheme") loc.attribute=Some("name") ledger=None
-    schemeClr x8 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("schemeClr") loc.attribute=None ledger=None
+    schemeClr x4 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("schemeClr") loc.attribute=None ledger=None
+    shape/fontRef x4 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fontRef") loc.attribute=Some("typeface-and-colour-not-applied") ledger=None
     style x4 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("style") loc.attribute=None ledger=None
     theme/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("theme") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/themed-shape.docx [Retention]
-  report: 7 entries
+  report: 8 entries
     fmtScheme/effectStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("effectStyleLst") loc.attribute=Some("effect-not-rendered") ledger=Some(0)
     fmtScheme/fillStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fillStyleLst") loc.attribute=Some("pattern") ledger=Some(0)
     fmtScheme/lnStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("lnStyleLst") loc.attribute=Some("unmodeled") ledger=Some(0)
     fontScheme/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fontScheme") loc.attribute=Some("name") ledger=Some(0)
-    schemeClr x8 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("schemeClr") loc.attribute=None ledger=Some(0)
+    schemeClr x4 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("schemeClr") loc.attribute=None ledger=Some(0)
+    shape/fontRef x4 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fontRef") loc.attribute=Some("typeface-and-colour-not-applied") ledger=Some(0)
     style x4 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("style") loc.attribute=None ledger=Some(0)
     theme/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("theme") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)

@@ -435,14 +435,14 @@ pub fn build_galley_with_report_view(
     // against the real scheme colors (not a black fallback).
     let palette = document
         .definitions()
+        .theme(None)
         .color_scheme
-        .as_ref()
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view,
         resolver: &resolver,
-        scheme: document.definitions().font_scheme.as_ref(),
+        scheme: document.definitions().theme(None).font_scheme,
         declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
@@ -829,14 +829,14 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     let mut report = FontResolutionReport::new();
     let palette = document
         .definitions()
+        .theme(None)
         .color_scheme
-        .as_ref()
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view,
         resolver: &resolver,
-        scheme: document.definitions().font_scheme.as_ref(),
+        scheme: document.definitions().theme(None).font_scheme,
         declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
@@ -943,14 +943,14 @@ fn flow_running_blocks(
     // against the real scheme colors (not a black fallback).
     let palette = document
         .definitions()
+        .theme(None)
         .color_scheme
-        .as_ref()
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view: ReviewView::Editing,
         resolver: &resolver,
-        scheme: document.definitions().font_scheme.as_ref(),
+        scheme: document.definitions().theme(None).font_scheme,
         declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
@@ -1069,14 +1069,14 @@ pub(crate) fn build_galley_cached_labeled(
     // against the real scheme colors (not a black fallback).
     let palette = document
         .definitions()
+        .theme(None)
         .color_scheme
-        .as_ref()
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view,
         resolver: &resolver,
-        scheme: document.definitions().font_scheme.as_ref(),
+        scheme: document.definitions().theme(None).font_scheme,
         declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
@@ -8676,7 +8676,7 @@ mod tests {
         let mut ctx = FlowCtx {
             review_view,
             resolver: &resolver,
-            scheme: definitions.font_scheme.as_ref(),
+            scheme: definitions.theme(None).font_scheme,
             declared_fonts: &DeclaredFamilies::default(),
             report: &mut report,
             default_tab: crate::tabs::DEFAULT_TAB_STOP,
@@ -8738,7 +8738,7 @@ mod tests {
         let mut ctx = FlowCtx {
             review_view: ReviewView::Editing,
             resolver: &resolver,
-            scheme: definitions.font_scheme.as_ref(),
+            scheme: definitions.theme(None).font_scheme,
             declared_fonts: &DeclaredFamilies::default(),
             report: &mut report,
             default_tab: crate::tabs::DEFAULT_TAB_STOP,
@@ -12976,7 +12976,7 @@ mod tests {
             let ctx = FlowCtx {
                 review_view: ReviewView::Editing,
                 resolver: &resolver,
-                scheme: definitions.font_scheme.as_ref(),
+                scheme: definitions.theme(None).font_scheme,
                 declared_fonts: &DeclaredFamilies::default(),
                 report: &mut report,
                 default_tab: crate::tabs::DEFAULT_TAB_STOP,

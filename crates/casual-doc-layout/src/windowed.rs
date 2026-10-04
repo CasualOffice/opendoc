@@ -874,8 +874,8 @@ fn finish_window_pages(
     // against the same palette the body runs use.
     let palette = document
         .definitions()
+        .theme(None)
         .color_scheme
-        .as_ref()
         .map(crate::flow::resolve_palette);
     let mut layout = crate::page::PaginatedLayout { pages };
     apply_page_vertical_alignment(&mut layout, sections);
