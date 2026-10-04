@@ -89,6 +89,7 @@
 export const PARTICIPANT_CAPABILITIES = Object.freeze([
   "comment",
   "edit",
+  "manageAccess",
   "manageProtection",
   "review",
   "suggest",
@@ -104,6 +105,17 @@ export const ACCESS_REFUSAL_KEYS = Object.freeze({
   "session.suggestions-only-access": "session.suggestionsOnly",
   "session.review-only-access": "session.reviewOnly",
   "session.no-protection-change": "session.noProtectionChange",
+  // `AccessChangeRefusal`'s five, which are a SECOND vocabulary in the engine and
+  // deliberately one table here. `access.rs` keeps them apart because one enum
+  // answers "may this gesture touch the document" and the other "may this
+  // participant change the room"; the chrome's reason for one table is unchanged
+  // from this module's header — the sentence on a disabled control and the
+  // sentence after a refused gesture must be one string.
+  "session.no-access-change": "session.noAccessChange",
+  "session.own-access-unchangeable": "session.ownAccessUnchangeable",
+  "session.above-grant-ceiling": "session.aboveGrantCeiling",
+  "session.above-own-access": "session.aboveOwnAccess",
+  "session.not-a-participant": "session.notAParticipant",
 });
 
 /** `ProtectionRefusal::reason`'s codes, plus the forms-only one `casual-doc-wasm`
@@ -149,6 +161,18 @@ export const COLLABORATION_REFUSAL_KEYS = Object.freeze({
   "ODC-7008": "collab.idCollision",
   "ODC-7009": "collab.staleBase",
   "ODC-7010": "collab.roomFull",
+  // **The same catalogue key as `session.no-access-change`, and that is the rule
+  // rather than an economy.** This module's header states it: the sentence shown
+  // on a control a grant withholds and the sentence shown when the engine refuses
+  // the gesture are one string from one table, because a reader told two
+  // different things about one permission learns that neither is trustworthy.
+  //
+  // Before the gesture the chrome knows exactly why (it holds the grant), so it
+  // uses the `session.*` code. After one, the wire carries a deliberately
+  // undetailed `ODC-7011` — what an attacker would be enumerating is a ceiling —
+  // so the code differs and the sentence must not. `session_access.test.mjs`
+  // asserts the two resolve to one key.
+  "ODC-7011": "session.noAccessChange",
 });
 
 /** The code a grant this side could not read reports.
@@ -226,6 +250,12 @@ export function refusalKey(code) {
  */
 export function withheldCode(held, wanted) {
   const has = (name) => held.includes(name);
+  // Both `manage*` capabilities answer for themselves, before the write ladder, and
+  // for the same reason `refusal_for` does it in the engine: their authority
+  // question is not about content at all, so "you can only comment" is the wrong
+  // sentence for either. `manageAccess` is first because it is the one that is not
+  // about this document.
+  if (wanted === "manageAccess") return "session.no-access-change";
   if (wanted === "manageProtection") return "session.no-protection-change";
   if (has("suggest")) return "session.suggestions-only-access";
   if (has("review")) return "session.review-only-access";
@@ -444,6 +474,7 @@ export const PARTICIPANT_GATED_COMMANDS = Object.freeze({
   "review.accept": "review",
   "review.reject": "review",
   "review.restrictEditing": "manageProtection",
+  "review.manageAccess": "manageAccess",
 });
 
 /**

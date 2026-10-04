@@ -334,6 +334,7 @@ fn a_protocol_mismatch_stops_the_session_and_is_never_retried() {
             client: ClientId::new(0),
             revision: Revision::new(0),
             capabilities: Capabilities::owner(),
+            participants: Vec::new(),
         },
         &mut log,
     )
@@ -2386,16 +2387,20 @@ fn declared_variants(source: &str, declaration: &str) -> usize {
 #[test]
 fn a_new_wire_enum_variant_is_a_protocol_version_decision() {
     let source = include_str!("protocol.rs");
-    for (declaration, counted_at_version_4) in [
-        ("pub enum ClientMessage {", 4),
-        ("pub enum ServerMessage {", 8),
-        ("pub enum Refusal {", 10),
+    // Counted at version 5, which the bump itself is the record of: `ClientMessage::SetAccess`,
+    // `ServerMessage::AccessChanged` and `Refusal::AccessChangeRefused` are three new tags, the
+    // reasoning sits in `PROTOCOL_VERSION`'s own doc comment beside versions 2, 3 and 4, and the
+    // constant moved before these numbers did.
+    for (declaration, counted_at_this_version) in [
+        ("pub enum ClientMessage {", 5),
+        ("pub enum ServerMessage {", 9),
+        ("pub enum Refusal {", 11),
     ] {
         let found = declared_variants(source, declaration);
         assert_eq!(
-            found, counted_at_version_4,
+            found, counted_at_this_version,
             "`{declaration}` now declares {found} variants rather than \
-             {counted_at_version_4}. Every variant is a TAG on the wire and none of these enums \
+             {counted_at_this_version}. Every variant is a TAG on the wire and none of these enums \
              has a `#[serde(other)]` fallback, so a peer that does not know the tag cannot \
              decode the frame carrying it at all — which `PROTOCOL_VERSION`'s own doc comment \
              calls a hard break. `PROTOCOL_VERSION` currently reads {PROTOCOL_VERSION}. Decide \
@@ -2419,4 +2424,231 @@ fn a_new_wire_enum_variant_is_a_protocol_version_decision() {
              to notice a real variant — and an eight-space field line must not be counted as one"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Changing a participant's access inside a live room — `ServerSession::set_access`.
+//
+// The rule is `casual_doc_edit::access::refuse_access_change` and its own guards cover it. What
+// these cover is the half only this type can hold: WHICH two values the rule is applied to, and
+// what a change does and does not survive. Every one creates the condition it tests — a room is
+// built and participants are admitted with named grants, never with the file's `admit` helper,
+// which hands everybody `owner()`.
+// ---------------------------------------------------------------------------------------------
+
+/// Admits one participant with exactly `granted`, and hands back its number.
+///
+/// Deliberately not the file's `admit`: that one admits with `Capabilities::owner()`, and a guard
+/// about a rights ceiling that is run with every ceiling wide open tests nothing (`SKILL` §4).
+fn admit_as(server: &mut ServerSession, who: &str, granted: Capabilities) -> ClientId {
+    let (answer, admission) = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new(who).expect("an identity"),
+            grant: None,
+            resume: None,
+        }),
+        granted,
+    );
+    assert!(admission.is_some(), "{who} was not admitted");
+    match answer {
+        ServerMessage::Welcome { client, .. } => client,
+        other => panic!("expected a welcome for {who}, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_owner_narrows_another_participant_and_the_relay_s_own_table_says_so() {
+    // The happy path, asserted on `granted_for` rather than on the return value, because
+    // `granted_for` is what the relay's capability check reads before it orders a chunk. A
+    // function that answered correctly and wrote nowhere would satisfy a weaker guard.
+    let mut server = ServerSession::default();
+    let owner = admit_as(&mut server, "ada", Capabilities::owner());
+    let editor = admit_as(&mut server, "grace", Capabilities::editor());
+    assert_eq!(server.granted_for(editor), Some(Capabilities::editor()));
+
+    let applied = server
+        .set_access(owner, editor, Capabilities::commenter())
+        .expect("an owner may narrow an editor inside the editor's own ceiling");
+    assert_eq!(applied, Capabilities::commenter());
+    assert_eq!(server.granted_for(editor), Some(Capabilities::commenter()));
+    // ...and the ceiling is untouched, which is what makes the change reversible.
+    assert_eq!(server.ceiling_for(editor), Some(Capabilities::editor()));
+    server
+        .set_access(owner, editor, Capabilities::editor())
+        .expect("restoring a participant to their own ceiling is inside it");
+    assert_eq!(server.granted_for(editor), Some(Capabilities::editor()));
+}
+
+#[test]
+fn a_crafted_request_above_the_host_s_ceiling_is_refused_by_the_state_machine() {
+    // THE SECURITY PROPERTY, at the layer that is not the chrome. The actor is a genuine owner,
+    // so nothing about authorisation is in question; the target's own host-signed grant says
+    // `commenter`, and the request asks for `editor`. A chrome that offered the role would be
+    // wrong, and this is the guard that being wrong in the chrome cannot matter.
+    let mut server = ServerSession::default();
+    let owner = admit_as(&mut server, "ada", Capabilities::owner());
+    let commenter = admit_as(&mut server, "grace", Capabilities::commenter());
+
+    let refusal = server
+        .set_access(owner, commenter, Capabilities::editor())
+        .expect_err("a room may redistribute the host's grants and may not mint one");
+    assert_eq!(
+        refusal,
+        casual_doc_edit::access::AccessChangeRefusal::AboveCeiling
+    );
+    // Nothing was written on the refusal path: a refused request changed nothing, which is the
+    // same reason a refused join records no admission.
+    assert_eq!(
+        server.granted_for(commenter),
+        Some(Capabilities::commenter())
+    );
+    assert_eq!(
+        server.ceiling_for(commenter),
+        Some(Capabilities::commenter())
+    );
+}
+
+#[test]
+fn a_participant_the_room_never_admitted_can_neither_act_nor_be_acted_on() {
+    let mut server = ServerSession::default();
+    let owner = admit_as(&mut server, "ada", Capabilities::owner());
+    let stranger = ClientId::new(999);
+
+    // As a target: nothing to bound the request by, so there is no safe answer but refusal.
+    assert_eq!(
+        server
+            .set_access(owner, stranger, Capabilities::viewer())
+            .expect_err("a stranger has no ceiling"),
+        casual_doc_edit::access::AccessChangeRefusal::NotAParticipant
+    );
+    // As an actor: refused as `NotPermitted` rather than `NotAParticipant`, and deliberately — a
+    // sender this session never admitted has no business learning whether the TARGET exists.
+    assert_eq!(
+        server
+            .set_access(stranger, owner, Capabilities::viewer())
+            .expect_err("a stranger changes nobody"),
+        casual_doc_edit::access::AccessChangeRefusal::NotPermitted
+    );
+    assert_eq!(server.granted_for(owner), Some(Capabilities::owner()));
+}
+
+#[test]
+fn a_demoted_participant_s_reconnect_re_reads_the_host_s_grant_and_not_the_room_s_last_word() {
+    // `ClientMessage::SetAccess`'s documented lifetime, asserted rather than asserted in prose.
+    // `143` §10 requires that a resume adopt the capabilities presented NOW, so a rights change
+    // is a live adjustment inside one connection and a durable one is made at the host. Written
+    // down because the opposite behaviour is the one a reader assumes.
+    let mut server = ServerSession::default();
+    let owner = admit_as(&mut server, "ada", Capabilities::owner());
+    let resume_key = ResumeKey::new("grace-tab").expect("a key");
+    let (answer, _) = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("grace").expect("an identity"),
+            grant: None,
+            resume: Some(Resume {
+                key: resume_key.clone(),
+                revision: Revision::new(0),
+            }),
+        }),
+        Capabilities::editor(),
+    );
+    let ServerMessage::Welcome { client: editor, .. } = answer else {
+        panic!("expected a welcome, got {answer:?}");
+    };
+
+    server
+        .set_access(owner, editor, Capabilities::viewer())
+        .expect("an owner may narrow an editor");
+    assert_eq!(server.granted_for(editor), Some(Capabilities::viewer()));
+
+    // The same tab reconnects, and the host verifies the same grant again.
+    let (resumed, admission) = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("grace").expect("an identity"),
+            grant: None,
+            resume: Some(Resume {
+                key: resume_key,
+                revision: Revision::new(0),
+            }),
+        }),
+        Capabilities::editor(),
+    );
+    assert!(admission.is_some());
+    let ServerMessage::Resumed {
+        client,
+        capabilities,
+        ..
+    } = resumed
+    else {
+        panic!("expected a resume, got {resumed:?}");
+    };
+    assert_eq!(client, editor, "a resume is the same participant");
+    assert_eq!(
+        capabilities,
+        Capabilities::editor(),
+        "the resume answered with the room's last word instead of the host's grant"
+    );
+    assert_eq!(server.granted_for(editor), Some(Capabilities::editor()));
+}
+
+#[test]
+fn a_rights_change_cannot_be_used_to_evict_somebody_from_the_order() {
+    // A narrowed participant is still a MEMBER, and membership is what `commit` checks first.
+    // Conflating the two would turn a demotion into a silent `NotAuthorised` on every later
+    // chunk, which reads to its sender as "the room forgot me" rather than "you may not edit" —
+    // the wrong cause, which is what the `session.*`/`ODC-7xxx` split exists to prevent.
+    let mut server = ServerSession::default();
+    let owner = admit_as(&mut server, "ada", Capabilities::owner());
+    let editor = admit_as(&mut server, "grace", Capabilities::editor());
+    server
+        .set_access(owner, editor, Capabilities::viewer())
+        .expect("an owner may narrow an editor");
+
+    let outcome = server.commit(&crate::protocol::Submission {
+        client: editor,
+        seq: Seq::new(1),
+        base: Base::Revision(Revision::new(0)),
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: true },
+            any_mint(),
+        )],
+    });
+    // Ordered by the state machine, because `commit` judges membership and the ORDER and holds no
+    // opinion about capabilities — the capability check is the boundary's, against
+    // `granted_for`, which now reads `viewer()`. Asserting the ordering here is asserting that
+    // the demotion did not quietly become an eviction.
+    assert!(
+        matches!(outcome, Outcome::Ordered { .. }),
+        "a demoted participant was dropped from the order: {outcome:?}"
+    );
+    assert_eq!(server.granted_for(editor), Some(Capabilities::viewer()));
+}
+
+#[test]
+fn a_checkpoint_carries_both_tables_so_a_restart_does_not_forget_a_ceiling() {
+    // `ceiling` is `#[serde(default)]` for the sake of a checkpoint written before it existed,
+    // and a defaulted field is exactly the kind of thing that silently stays empty. A restart
+    // that forgot it would refuse every rights change with `NotAParticipant` — fail-closed, and
+    // still a feature that stops working after a restart.
+    let mut server = ServerSession::default();
+    let owner = admit_as(&mut server, "ada", Capabilities::owner());
+    let editor = admit_as(&mut server, "grace", Capabilities::editor());
+    server
+        .set_access(owner, editor, Capabilities::viewer())
+        .expect("an owner may narrow an editor");
+
+    let (state, retained) = server.checkpoint();
+    let entries: Vec<_> = retained.cloned().collect();
+    let restored = ServerSession::restored(state, entries);
+    assert_eq!(restored.ceiling_for(editor), Some(Capabilities::editor()));
+    assert_eq!(restored.granted_for(editor), Some(Capabilities::viewer()));
+    // And the restored session can still act, which is the thing an empty ceiling table would
+    // have taken away.
+    let mut restored = restored;
+    restored
+        .set_access(owner, editor, Capabilities::editor())
+        .expect("a restored room can still restore a participant to their ceiling");
 }

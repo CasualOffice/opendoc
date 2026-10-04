@@ -5760,6 +5760,73 @@ body.is-format-painting .page-wrap * {
 .draft-status[hidden] { display: none; }
 .draft-status[data-draft-state="unavailable"] { color: var(--danger); font-weight: 600; }
 
+/* The reader's own access, in the status bar — `access_badge.mjs`.
+   Existing tokens only: `--muted` for the whole thing and `--ink` for the level,
+   which is the same two-weight treatment `.draft-status` and `.stat-pages`
+   already use for "label plus value". No new token, no new colour (`SKILL` §11:
+   the token set is deliberate; propose visual changes, do not make them).
+   It is `inline-flex` with a glyph because the footer's other indicators are
+   words only, and a reader scanning for "what am I allowed to do" needs one
+   fixed thing to find. The glyph is `aria-hidden`; the sentence is on the
+   container's `title`/`aria-label`. */
+.access-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.access-badge .ms {
+  font-size: 15px;
+}
+
+.access-badge-level {
+  color: var(--ink);
+}
+
+/* The SOURCE is the half that goes first when the footer is tight, and it may:
+   the level is the answer and the source is the attribution, so losing the
+   attribution costs the reader the second question and not the first. The whole
+   statement stays on the container's `title`, so nothing is lost outright. */
+@media (max-width: 900px) {
+  .access-badge-source {
+    display: none;
+  }
+}
+
+/* Manage access: one row per participant, a name and a role picker.
+   The rows are generated (`session_rights.mjs`), so unlike every other dialog
+   body in this file the layout is here rather than in the markup. Built from
+   `.settings-section`'s own spacing so it sits in the same rhythm as the
+   authored sections around it. */
+.rights-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rights-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rights-who {
+  color: var(--ink);
+  font-size: var(--fs-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rights-role {
+  flex: 0 0 auto;
+}
+
 /* One scroll owner (Google Docs model): the comment column is an
    absolutely-positioned layer INSIDE `.viewport`'s scroll context, not a
    sibling `overflow:auto` container. It never scrolls on its own, so cards —
