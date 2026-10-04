@@ -346,8 +346,10 @@ impl<W: Write> Relay<W> {
     /// 2. **Buffer per participant, unbounded.** Memory exhaustion from the network: a reader
     ///    that never drains is an out-of-memory condition with extra steps.
     /// 3. **Drop the frame and carry on.** Fatal, because the log is *ordered*: a dropped
-    ///    `Apply` makes that replica silently divergent, with nothing able to say so. This is
-    ///    ONLYOFFICE's answer, and it is the one option a correctness-first relay cannot take.
+    ///    `Apply` makes that replica silently divergent, with nothing able to say so. Reported
+    ///    to be ONLYOFFICE's answer — attributed rather than source-verified, since
+    ///    `reference/` holds only their two client repositories — but the refusal does not rest
+    ///    on that: a silently divergent replica is unacceptable whoever else accepts it.
     /// 4. **Evict the participant and let it resume.** `152` §5.5's resume exists precisely to
     ///    catch a participant up from the position it reached; it keeps its [`ClientId`], so
     ///    `(client, seq)` still suppresses duplicates, and if the gap has fallen outside the
