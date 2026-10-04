@@ -24,7 +24,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::hash::ContentHasher;
 
@@ -43,7 +43,7 @@ pub const DIFF_SCHEMA: u32 = 1;
 /// id means "the nth id this parse handed out" and is meaningless across two
 /// parsed checkpoints. What is stable is a header's *position* — which section,
 /// which page type — and a comment's durable id, which the package carries.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Story {
     /// The main document body.
@@ -82,7 +82,7 @@ pub enum Story {
 }
 
 /// One step of the container path from a story's root to a block.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PathSegment {
     /// The nth block of the story or container.
@@ -104,11 +104,20 @@ pub enum PathSegment {
 
 /// Where a change is, on one side of the comparison.
 ///
-/// `start`/`end` are UTF-8 byte offsets into the block's projected plain text —
-/// the same byte space `ModelPos::offset` and the review anchors use — so a host
-/// can hand them straight to the caret/selection API of a live document or a
-/// preview session. They are `0..0` for a change that is not inside text.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// `start`/`end` are UTF-8 byte offsets into the block's **projected plain
+/// text** — the `FinalWithMarkup` projection [`crate::projection::block_text`]
+/// produces, which is what the editor shows. They are `0..0` for a change that
+/// is not inside text, and for a whole block, whose extent is the block.
+///
+/// That space agrees byte for byte with the review/caret offset space for runs
+/// and symbols, which is most paragraphs, **but it is not the same space**: a
+/// tab contributes one byte to projected text and none to the offset space,
+/// while a note reference, an equation and a label-bearing embedded object
+/// contribute to the offset space and nothing to projected text. A host that
+/// hands these numbers to a caret or a review anchor must therefore translate
+/// them through the block's own inlines rather than assume they transfer —
+/// `casual-doc-wasm`'s `plain_offset_to_anchor_offset` is that translation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffAnchor {
     /// The story this side of the change lives in.
@@ -116,9 +125,15 @@ pub struct DiffAnchor {
     /// The container path to the block, for a host that wants to say "row 3 of
     /// table 2" without walking the document.
     pub path: Vec<PathSegment>,
-    /// The block's stable node identity **on that side**. See the crate docs:
-    /// this is an anchor into that one parsed state, never a match key between
-    /// the two.
+    /// The block's stable node identity **on that side**, and only there.
+    ///
+    /// Both sides of a comparison are parsed by this crate's caller, and ids are
+    /// minted per import (see the crate docs), so this id addresses the parsed
+    /// state the comparison ran on and **nothing else**. It is not a match key
+    /// between the two sides, and it is not an id in a live editing session's
+    /// document even when that session's bytes were one of the two sides: that
+    /// re-export was re-parsed, and the ids restarted. The coordinate that
+    /// survives into a live document is [`DiffAnchor::path`].
     pub node: Option<String>,
     /// Start byte offset in the block's projected text.
     pub start: u32,
@@ -127,7 +142,7 @@ pub struct DiffAnchor {
 }
 
 /// The construct family a change belongs to (`docs/139` §9.2).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffFamily {
     /// A whole block appeared, disappeared or moved.
@@ -157,7 +172,7 @@ pub enum DiffFamily {
 }
 
 /// What kind of change it is. These strings are the ones review already uses.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffKind {
     /// Content present on the right and not on the left.
@@ -175,7 +190,7 @@ pub enum DiffKind {
 }
 
 /// How sure the record is.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
     /// Derived from an exact comparison. Insertions, deletions, text and
@@ -187,7 +202,7 @@ pub enum Confidence {
 }
 
 /// One change.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffChange {
     /// A stable id: the hex of a hash of the change's own content, so the same
@@ -203,26 +218,26 @@ pub struct DiffChange {
     /// Where it is on the right (newer) side, when it exists there.
     pub right: Option<DiffAnchor>,
     /// A bounded excerpt of the left text, for a list row.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub left_text: Option<String>,
     /// A bounded excerpt of the right text.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub right_text: Option<String>,
     /// The typed field paths that differ, for a formatting or property change —
     /// `["alignment"]`, `["spacing.beforeTwips"]`, `["pageSize.orientation"]`.
     /// Reflected from the model type's own serde field names, so a property
     /// added to the model is named here without this crate being edited.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<String>,
     /// The other half of a move pair, by change id.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paired_with: Option<String>,
     /// Exact, or heuristic.
     pub confidence: Confidence,
 }
 
 /// Why part of the comparison is not in the change list.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingCode {
     /// The construct differs and this engine has no typed comparison for it, so
@@ -243,7 +258,7 @@ pub enum FindingCode {
 /// Aggregated on purpose: a document with 40,000 drawings must produce one
 /// finding saying so, not 40,000 rows. `count` is the number of occurrences
 /// folded into this row.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffFinding {
     /// Why.
@@ -256,7 +271,7 @@ pub struct DiffFinding {
 }
 
 /// Per-side totals a host shows without walking anything.
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SideSummary {
     /// Projected blocks (paragraphs, tables, rows, cells, content controls).
@@ -270,7 +285,7 @@ pub struct SideSummary {
 /// `comparisons` is the alignment-key comparison count. It is the quantity the
 /// doubling guard measures, because a wall clock cannot tell a slow constant
 /// from a quadratic (SKILL §8).
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffDiagnostics {
     /// Blocks visited while projecting, both sides.
@@ -286,7 +301,7 @@ pub struct DiffDiagnostics {
 }
 
 /// The whole sidecar.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionDiff {
     /// [`DIFF_SCHEMA`].
