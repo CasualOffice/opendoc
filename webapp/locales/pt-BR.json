@@ -1173,6 +1173,8 @@
   "reflow.rulerWithheld": "A régua mede uma página e suas margens, e no fluxo contínuo não há nenhuma. Tabulações e recuos estão na guia Layout.",
   "reflow.unavailable": "Este documento é grande demais para ser diagramado inteiro, por isso é exibido uma janela de páginas por vez e não pode ter fluxo contínuo.",
   "reflow.withholds": "Não há páginas no fluxo contínuo, portanto a régua e o painel Páginas ficam indisponíveis.",
+  "reflowNotes.command": "O que esta exibição aproxima",
+  "reflowNotes.none": "Nada: cada parte deste documento é disposta exatamente como o documento pede.",
   "review.comment.needsRange": "Selecione o texto que você quer comentar",
   "reviewBulkActions.acceptAll": "Aceitar tudo",
   "reviewBulkActions.acceptAllChanges.title": "Aceitar todas as alterações",

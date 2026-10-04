@@ -1171,6 +1171,8 @@
   "reflow.rulerWithheld": "Penggaris mengukur halaman dan marginnya, dan dalam aliran berkelanjutan tidak ada. Perhentian tab dan indentasi ada di tab Tata Letak.",
   "reflow.unavailable": "Dokumen ini terlalu besar untuk ditata sekaligus, jadi ditampilkan satu jendela halaman pada satu waktu dan tidak dapat dialirkan.",
   "reflow.withholds": "Tidak ada halaman dalam aliran berkelanjutan, sehingga penggaris dan panel Halaman tidak tersedia.",
+  "reflowNotes.command": "Apa yang didekati tampilan ini",
+  "reflowNotes.none": "Tidak ada: setiap bagian dokumen ini ditata persis seperti yang diminta dokumen.",
   "review.comment.needsRange": "Pilih teks yang ingin Anda beri komentar",
   "reviewBulkActions.acceptAll": "Terima semua",
   "reviewBulkActions.acceptAllChanges.title": "Terima semua perubahan",

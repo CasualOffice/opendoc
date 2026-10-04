@@ -1171,6 +1171,8 @@
   "reflow.rulerWithheld": "눈금자는 페이지와 여백을 재는데 리플로우에는 둘 다 없습니다. 탭 위치와 들여쓰기는 레이아웃 탭에 있습니다.",
   "reflow.unavailable": "이 문서는 전체를 배치하기에 너무 커서 페이지 창 단위로 표시되며 리플로우할 수 없습니다.",
   "reflow.withholds": "리플로우에는 페이지가 없으므로 눈금자와 페이지 패널을 사용할 수 없습니다.",
+  "reflowNotes.command": "이 보기가 근사하는 항목",
+  "reflowNotes.none": "없습니다. 이 문서의 모든 부분이 문서에서 요청한 대로 배치되어 있습니다.",
   "review.comment.needsRange": "댓글을 달 텍스트를 선택하세요",
   "reviewBulkActions.acceptAll": "모두 적용",
   "reviewBulkActions.acceptAllChanges.title": "모든 변경 내용 적용",

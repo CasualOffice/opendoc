@@ -1172,6 +1172,8 @@
   "reflow.rulerWithheld": "Das Lineal misst eine Seite und ihre Ränder, und die gibt es im Fließlayout nicht. Tabstopps und Einzüge finden Sie auf der Registerkarte Layout.",
   "reflow.unavailable": "Dieses Dokument ist zu groß, um vollständig gesetzt zu werden, wird daher seitenfensterweise angezeigt und kann nicht umbrochen werden.",
   "reflow.withholds": "Im Fließlayout gibt es keine Seiten, daher stehen das Lineal und die Seitenleiste nicht zur Verfügung.",
+  "reflowNotes.command": "Was diese Ansicht annähert",
+  "reflowNotes.none": "Nichts: Jeder Teil dieses Dokuments wird genau so angeordnet, wie das Dokument es verlangt.",
   "review.comment.needsRange": "Markieren Sie den Text, den Sie kommentieren möchten",
   "reviewBulkActions.acceptAll": "Alle annehmen",
   "reviewBulkActions.acceptAllChanges.title": "Alle Änderungen annehmen",

@@ -1173,6 +1173,8 @@
   "reflow.rulerWithheld": "La regla mide una página y sus márgenes, y en flujo continuo no los hay. Las tabulaciones y las sangrías están en la pestaña Diseño.",
   "reflow.unavailable": "Este documento es demasiado grande para componerse entero, por lo que se muestra de una ventana de páginas a la vez y no admite flujo continuo.",
   "reflow.withholds": "En flujo continuo no hay páginas, por lo que la regla y el panel Páginas no están disponibles.",
+  "reflowNotes.command": "Qué aproxima esta vista",
+  "reflowNotes.none": "Nada: cada parte de este documento se compone tal como el documento lo pide.",
   "review.comment.needsRange": "Selecciona el texto que quieres comentar",
   "reviewBulkActions.acceptAll": "Aceptar todo",
   "reviewBulkActions.acceptAllChanges.title": "Aceptar todos los cambios",

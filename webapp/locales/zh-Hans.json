@@ -1171,6 +1171,8 @@
   "reflow.rulerWithheld": "标尺用于度量页面及其页边距，而连续排版两者都没有。制表位和缩进在“布局”选项卡中。",
   "reflow.unavailable": "此文档过大，无法整体排版，因此每次只显示一个页面窗口，无法使用连续排版。",
   "reflow.withholds": "连续排版没有页面，因此标尺和页面面板不可用。",
+  "reflowNotes.command": "此视图的近似之处",
+  "reflowNotes.none": "没有：本文档的每一部分都完全按照文档的要求排版。",
   "review.comment.needsRange": "选择要评论的文本",
   "reviewBulkActions.acceptAll": "全部接受",
   "reviewBulkActions.acceptAllChanges.title": "接受所有更改",

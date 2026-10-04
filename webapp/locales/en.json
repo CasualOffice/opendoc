@@ -1174,6 +1174,8 @@
   "reflow.rulerWithheld": "The ruler measures a page and its margins, and there are none in reflow. Tab stops and indents are on the Layout tab.",
   "reflow.unavailable": "This document is too large to lay out whole, so it is shown one page-window at a time and cannot be reflowed.",
   "reflow.withholds": "There are no pages in reflow, so the ruler and the Pages panel are unavailable.",
+  "reflowNotes.command": "What this view approximates",
+  "reflowNotes.none": "Nothing: every part of this document is laid out the way the document asks for it.",
   "review.comment.needsRange": "Select the text you want to comment on",
   "reviewBulkActions.acceptAll": "Accept all",
   "reviewBulkActions.acceptAllChanges.title": "Accept all changes",

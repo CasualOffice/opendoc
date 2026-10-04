@@ -1171,6 +1171,8 @@
   "reflow.rulerWithheld": "尺規用於度量頁面及其邊界，而連續排版兩者都沒有。定位停駐點與縮排位於「版面配置」索引標籤。",
   "reflow.unavailable": "這份文件過大，無法整體排版，因此每次只顯示一個頁面視窗，無法使用連續排版。",
   "reflow.withholds": "連續排版沒有頁面，因此尺規與頁面面板無法使用。",
+  "reflowNotes.command": "此檢視的近似之處",
+  "reflowNotes.none": "沒有：本文件的每一部分都完全依照文件的要求排版。",
   "review.comment.needsRange": "選取要註解的文字",
   "reviewBulkActions.acceptAll": "全部接受",
   "reviewBulkActions.acceptAllChanges.title": "接受所有變更",
