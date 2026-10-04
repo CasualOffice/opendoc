@@ -3115,9 +3115,15 @@ impl WasmDocument {
     /// part the package did not contain.
     ///
     /// Every family `chart_group_for_kind` admits is a family that writer can
-    /// emit — `chart_part_writer.rs`'s family sweep is exhaustive over
-    /// `ChartGroupKind`, so an eighth variant stops it compiling rather than
-    /// quietly producing an insertable chart that cannot be saved.
+    /// emit. The property is held by the writer's own `match` on
+    /// `ChartGroupKind` (`write_group` and `group_element` in
+    /// `casual-doc-export`'s `chart` module), so a seventh variant stops the
+    /// EXPORTER compiling rather than quietly producing an insertable chart that
+    /// cannot be saved — and by a `family_token` match in
+    /// `chart_part_writer.rs`, which is what makes its family sweep cover the
+    /// enum. This comment used to credit the sweep alone; the sweep is an array
+    /// of struct literals and a new variant compiles it unchanged, so that was
+    /// a property nothing held.
     ///
     /// # Errors
     ///
