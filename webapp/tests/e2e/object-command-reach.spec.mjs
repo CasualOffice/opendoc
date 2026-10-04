@@ -124,9 +124,23 @@ test("resizing an object shows the size you are dragging to", async ({
 
   const readout = page.locator(".object-resize-readout");
   await expect(readout, "no live size readout during the drag").toBeVisible();
-  // Inches to two places, because that is the unit the properties panel accepts
-  // — a readout in a unit you cannot type back is decoration.
-  await expect(readout).toHaveText(/^\d+\.\d{2} × \d+\.\d{2} in$/);
+  // Two places, in THE UNIT IN FORCE — the guarantee, not a hard-coded "in".
+  // The readout must agree with the measurement preference, because a readout in
+  // a unit you cannot type back into the properties panel is decoration. Pinned
+  // to the literal "in" this assertion did two wrong things at once: it failed
+  // honestly when the default resolved to centimetres, and it would have passed
+  // just as happily on `2.89 × 1.45 {unit}` had the suffix been a different
+  // placeholder — which is exactly what shipped, an unsubstituted `{unit}`
+  // rendered to the reader.
+  const suffix = await page.evaluate(() => {
+    const select = document.getElementById("measurementUnitSelect");
+    return select?.value ?? "";
+  });
+  const suffixes = { inch: "in", cm: "cm", mm: "mm", point: "pt", pica: "pi" };
+  const expected = suffixes[suffix] ?? "in";
+  await expect(readout).toHaveText(
+    new RegExp(`^\\d+\\.\\d{2} × \\d+\\.\\d{2} ${expected}$`),
+  );
 
   await page.mouse.up();
   // Gone on release — the readout belongs to the gesture, and the committed size

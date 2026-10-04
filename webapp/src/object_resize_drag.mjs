@@ -26,17 +26,36 @@ const EMU_PER_TWIP = 635;
 export const MIN_OBJECT_TWIP = 144;
 
 /**
- * A placed size as the one sentence every size readout in the editor uses —
- * inches to two places, because that is the unit the properties panel accepts
- * and a readout in a unit you cannot type back is decoration. Through the key
- * Page Setup's own preview label already declares, so "in" is not an
- * untranslated corner in eighteen languages.
+ * A placed size as the one sentence every size readout in the editor uses.
+ *
+ * In the unit the reader CHOSE, through the key Page Setup's own preview label
+ * declares — so a drag readout, the crop readout and the preview caption cannot
+ * disagree, and "in" is not an untranslated corner in eighteen languages.
+ *
+ * `measure` is optional and the fallback is inches, for two real cases: a
+ * caller that has no preference module, and the window before `init()` when the
+ * roster has not been faulted in yet and `unit()` is undefined. The fallback
+ * supplies the suffix EXPLICITLY, because the shared string carries a `{unit}`
+ * placeholder and an unsubstituted placeholder does not degrade — it renders as
+ * the literal text `{unit}` to the reader, which is what shipped.
  *
  * O(1).
  */
-export function sizeLabel(t, widthTwip, heightTwip) {
+export function sizeLabel(t, widthTwip, heightTwip, measure = null) {
+  const row = measure?.unit?.();
+  if (row) {
+    return t("pageSetup.dimensions", {
+      width: measure.display(widthTwip),
+      height: measure.display(heightTwip),
+      unit: row.suffix,
+    });
+  }
   const inches = (twip) => (twip / TWIPS_PER_INCH).toFixed(2);
-  return t("pageSetup.dimensions", { width: inches(widthTwip), height: inches(heightTwip) });
+  return t("pageSetup.dimensions", {
+    width: inches(widthTwip),
+    height: inches(heightTwip),
+    unit: "in",
+  });
 }
 
 /**
@@ -204,7 +223,7 @@ export function createObjectResizeDrag(io) {
     // panel to read what you got, and correcting it there. Docs shows a W×H bubble
     // during the drag and Word live-updates its Size box; this is the same promise
     // in the place the eye already is.
-    drag.readout = paintSizeReadout(drag.preview, sizeLabel(io.t, newW, newH));
+    drag.readout = paintSizeReadout(drag.preview, sizeLabel(io.t, newW, newH, io.measure?.()));
     event.preventDefault();
   }
 

@@ -138,7 +138,15 @@ export function createMeasurementUnits(io) {
 
   function resolve(stored) {
     if (byId.has(stored)) return stored;
-    const fallback = io.engine.defaultMeasurementUnit(io.locale());
+    // The REGION, not the UI language. `defaultMeasurementUnit` returns inches
+    // for the United States and Canada and centimetres everywhere else, so it
+    // needs a tag that carries a region subtag: `"en-US"` resolves to inches,
+    // bare `"en"` matches neither country and falls through to centimetres. The
+    // active UI locale is a language choice and is routinely just `"en"`, so
+    // reading the default from it gave a reader in Ohio centimetres. `region()`
+    // supplies the browser's own tag, which has the subtag; `locale()` stays the
+    // language and is still what the decimal separator keys off.
+    const fallback = io.engine.defaultMeasurementUnit(io.region?.() || io.locale());
     return byId.has(fallback) ? fallback : rows[0].id;
   }
 
