@@ -40,6 +40,8 @@ use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::WatermarkContent;
 use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
+// Own line (anti-conflict): the float's `@wrapText` side selector.
+use casual_doc_model::v1::WrapSide;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -6408,7 +6410,12 @@ fn write_anchored_drawing(
     extent.push_attribute(("cx", cx.to_string().as_str()));
     extent.push_attribute(("cy", cy.to_string().as_str()));
     w.write_event(Event::Empty(extent)).map_err(pkg)?;
-    write_wrap(w, anchor.wrap, anchor.wrap_polygon.as_deref())?;
+    write_wrap(
+        w,
+        anchor.wrap,
+        anchor.wrap_text,
+        anchor.wrap_polygon.as_deref(),
+    )?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Picture 1"));
@@ -6495,10 +6502,16 @@ fn write_group(
     if let Some(anchor) = anchor {
         write_position_h(w, &anchor.horizontal)?;
         write_position_v(w, &anchor.vertical)?;
-        write_wrap_after_extent(w, group, anchor.wrap, anchor.wrap_polygon.as_deref())?;
+        write_wrap_after_extent(
+            w,
+            group,
+            anchor.wrap,
+            anchor.wrap_text,
+            anchor.wrap_polygon.as_deref(),
+        )?;
     } else {
         write_extent_only(w, group)?;
-        write_wrap(w, WrapMode::None, None)?;
+        write_wrap(w, WrapMode::None, None, None)?;
         write_group_body(w, group, ctx)?;
         close_group_drawing(w)?;
         return Ok(());
@@ -6525,10 +6538,11 @@ fn write_wrap_after_extent(
     w: &mut Writer<Cursor<Vec<u8>>>,
     group: &WordprocessingGroup,
     wrap: WrapMode,
+    side: Option<WrapSide>,
     polygon: Option<&[PointEmu]>,
 ) -> Result<(), ExportError> {
     write_extent_only(w, group)?;
-    write_wrap(w, wrap, polygon)?;
+    write_wrap(w, wrap, side, polygon)?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Group 1"));
@@ -7256,12 +7270,23 @@ fn write_text_child(
     Ok(())
 }
 
-/// Emits the wrap element for an anchor. `wrapNone` is an empty element; the
-/// others carry a `wrapText="bothSides"` (the round-trip only reads the element
-/// name, so the attribute is fixed scaffold).
+/// Emits the wrap element for an anchor.
+///
+/// `wrapNone` and `wrapTopAndBottom` are empty elements with no attributes. The
+/// three side wraps carry `@wrapText` **only when the model holds one**: `side`
+/// is `None` for a source that did not author the attribute, and writing Word's
+/// `bothSides` default there would put markup in the package that the opened
+/// file did not contain. An absent attribute is not the same document as an
+/// explicit default — layout reads the same side either way (through
+/// `DrawingAnchor::wrap_side`), but the saved bytes would stop being the bytes
+/// that were opened, which is a fidelity loss shaped like fidelity.
+///
+/// This used to hard-code `wrapText="bothSides"` on all three, which both
+/// invented the attribute and destroyed an authored `left`/`right`/`largest`.
 fn write_wrap(
     w: &mut Writer<Cursor<Vec<u8>>>,
     wrap: WrapMode,
+    side: Option<WrapSide>,
     polygon: Option<&[PointEmu]>,
 ) -> Result<(), ExportError> {
     match wrap {
@@ -7276,7 +7301,9 @@ fn write_wrap(
                 _ => "wp:wrapThrough",
             };
             let mut el = start(tag);
-            el.push_attribute(("wrapText", "bothSides"));
+            if let Some(side) = side {
+                el.push_attribute(("wrapText", wrap_side_str(side)));
+            }
             // A tight/through wrap can carry a `wp:wrapPolygon` contour; emit it
             // (in schema order, inside the wrap element) when the anchor has one.
             match polygon {
@@ -7365,6 +7392,16 @@ fn vertical_align_str(align: VerticalAlign) -> &'static str {
         VerticalAlign::Bottom => "bottom",
         VerticalAlign::Inside => "inside",
         VerticalAlign::Outside => "outside",
+    }
+}
+
+/// The side-wrap `@wrapText` keyword (`ST_WrapText`).
+fn wrap_side_str(side: WrapSide) -> &'static str {
+    match side {
+        WrapSide::BothSides => "bothSides",
+        WrapSide::Left => "left",
+        WrapSide::Right => "right",
+        WrapSide::Largest => "largest",
     }
 }
 
@@ -7552,7 +7589,12 @@ fn write_text_box(
                 height_emu: 0,
             }),
         )?;
-        write_wrap(w, anchor.wrap, anchor.wrap_polygon.as_deref())?;
+        write_wrap(
+            w,
+            anchor.wrap,
+            anchor.wrap_text,
+            anchor.wrap_polygon.as_deref(),
+        )?;
         "wp:anchor"
     } else {
         let mut frame = start("wp:inline");

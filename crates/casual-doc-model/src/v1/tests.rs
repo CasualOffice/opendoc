@@ -2440,7 +2440,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
         AnchorHorizontal, AnchorVertical, DrawingAnchor, Extent, Fill, GradientKind, GradientStop,
         GroupChild, GroupShape, GroupTextBox, GroupTransform, HorizontalAnchor, HorizontalPosition,
         PointEmu, Rgba, ShapeAdjustment, ShapeGeometry, ShapeStroke, VerticalAnchor,
-        VerticalPosition, WordprocessingGroup, WrapMode,
+        VerticalPosition, WordprocessingGroup, WrapMode, WrapSide,
     };
     let ident = GroupTransform {
         offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -2470,6 +2470,8 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 position: VerticalPosition::Offset(0),
             },
             wrap: WrapMode::Tight,
+            // A one-sided wrap so the JSON round trip also exercises `wrap_text`.
+            wrap_text: Some(WrapSide::Left),
             wrap_distances: Default::default(),
             // A wrap contour so the JSON round trip also exercises `wrap_polygon`.
             wrap_polygon: Some(vec![

@@ -583,6 +583,7 @@ fn each_refusal_is_reachable_and_names_its_own_reason() {
                     position: VerticalPosition::Offset(0),
                 },
                 wrap: WrapMode::Square,
+                wrap_text: None,
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: false,

@@ -45,6 +45,8 @@ use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeSt
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 // Own line (anti-conflict): the shape theme-style side table's value.
 use casual_doc_model::v1::ShapeStyleRef;
+// Own line (anti-conflict): the float's `@wrapText` side selector.
+use casual_doc_model::v1::WrapSide;
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -267,6 +269,11 @@ struct PendingAnchor {
     v_position: Option<VerticalPosition>,
     /// The `wp:wrap*` mode.
     wrap: Option<WrapMode>,
+    /// The side-wrap element's `@wrapText`, when the producer authored one.
+    /// `None` is "absent", which [`DrawingAnchor::wrap_side`] resolves to Word's
+    /// `bothSides` default; it is kept distinct so the writer does not invent an
+    /// attribute the source never carried.
+    wrap_text: Option<WrapSide>,
     /// The `wp:anchor@distT/distB/distL/distR` text-exclusion distances.
     wrap_distances: WrapDistances,
     /// The tight/through wrap contour (`wp:wrapPolygon` > `wp:start`/`wp:lineTo`),
@@ -304,6 +311,7 @@ impl PendingAnchor {
                 position: self.v_position.unwrap_or(VerticalPosition::Offset(0)),
             },
             wrap: self.wrap.unwrap_or(WrapMode::None),
+            wrap_text: self.wrap_text,
             wrap_distances: self.wrap_distances,
             wrap_polygon: self.wrap_polygon.clone(),
             behind_doc: self.behind_doc,
@@ -2178,6 +2186,27 @@ impl BodyParser<'_> {
         }
     }
 
+    /// Reads a side-wrap element's `@wrapText` (`ST_WrapText`).
+    ///
+    /// Returns `None` both when the attribute is absent — the state the model
+    /// keeps distinct, so the writer does not invent `bothSides` — and when its
+    /// value is outside the enumeration. The two are not confusable in the
+    /// report: an unmappable value is charged as an ATTRIBUTE finding on the wrap
+    /// element (the element is imported; only this part of its meaning is not
+    /// carried as written), the same disposition `wp:anchor@distT`'s out-of-range
+    /// values get, while an absent attribute is no loss at all and is reported as
+    /// nothing. O(attributes on the element).
+    fn anchor_wrap_side(&mut self, local: &[u8], element: &BytesStart<'_>) -> Option<WrapSide> {
+        let raw = attribute_value(element, b"wrapText")?;
+        match wrap_side(&raw) {
+            Some(side) => Some(side),
+            None => {
+                self.reporter.report_attribute(local, b"wrapText");
+                None
+            }
+        }
+    }
+
     /// Handles one element start. `self_closing` is whether the source wrote
     /// `<x/>` rather than `<x>`; it is carried because emptiness is the whole
     /// question for part of the no-op class (`noop::carries_no_meaning_when`),
@@ -3020,8 +3049,27 @@ impl BodyParser<'_> {
             b"wrapSquare" | b"wrapTight" | b"wrapThrough" | b"wrapTopAndBottom" | b"wrapNone"
                 if self.pending_anchor.is_some() =>
             {
+                // `@wrapText` (`ST_WrapText`) says which of the two side channels
+                // beside the float the flow may use. It exists only on the three
+                // side-wrap elements; `wrapTopAndBottom`/`wrapNone` have no side
+                // channels, so it is not read for them and `wrap_side` is
+                // documented as meaningless there.
+                //
+                // Matched by LOCAL name, like every other attribute here — the
+                // parsers are handed part bytes, not a namespace-resolved tree. The
+                // attribute is unqualified in `ST_WrapText`'s schema and that is how
+                // Word writes it; `fixtures/generated/wrap-text-sides.docx` pins the
+                // exact spelling so the assumption is checked against a package
+                // rather than asserted in a comment.
+                let side = match local {
+                    b"wrapSquare" | b"wrapTight" | b"wrapThrough" => {
+                        self.anchor_wrap_side(local, element)
+                    }
+                    _ => None,
+                };
                 if let Some(anchor) = self.pending_anchor.as_mut() {
                     anchor.wrap = Some(wrap_mode(local));
+                    anchor.wrap_text = side;
                 }
             }
             // The tight/through wrap contour (`wp:wrapPolygon`): open the point
@@ -8341,6 +8389,20 @@ fn wrap_mode(local: &[u8]) -> WrapMode {
     }
 }
 
+/// Maps a side-wrap element's `@wrapText` token to its side selector
+/// (`ST_WrapText`). `None` for a value outside the enumeration, so the caller
+/// reports it rather than silently substituting a side — picking one would move
+/// text to the wrong channel, which is the defect this attribute exists to stop.
+fn wrap_side(value: &str) -> Option<WrapSide> {
+    Some(match value {
+        "bothSides" => WrapSide::BothSides,
+        "left" => WrapSide::Left,
+        "right" => WrapSide::Right,
+        "largest" => WrapSide::Largest,
+        _ => return None,
+    })
+}
+
 /// Resolves a document [`ColorScheme`] into the 12-slot RGBA palette DrawingML
 /// `a:schemeClr` targets resolve against (mirrors the layout resolver so a shape
 /// fill and a run color agree). Slot order matches [`ColorScheme`]'s fields.
@@ -8748,6 +8810,9 @@ fn vml_anchor_at(
                 .unwrap_or_else(|| VerticalPosition::Offset(twip_emu_offset(top_twips))),
         },
         wrap: vml_wrap_mode(drawing.wrap.mode),
+        // VML's own side selector is `v:wrap@side`, which `VmlWrap` does not
+        // parse; there is nothing to carry here yet.
+        wrap_text: None,
         wrap_distances: vml_wrap_distances(drawing.wrap),
         // VML text wrapping has no polygon contour.
         wrap_polygon: None,
