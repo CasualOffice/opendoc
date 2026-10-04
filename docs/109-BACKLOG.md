@@ -424,6 +424,112 @@ nothing and the table should say it.
 | 191 | RM-13 | Roadmap | No worker threading: layout and import run on the main thread, which is what makes every O(document) row a frozen tab | P3 | L | Open | New 2026-10-04 (`14` P1G-005 / `99` §5, pulled in) | `P1G-005`, HF-077, `MTB-001` | `14` carries this as `P1G-005` (`Not started`): SharedArrayBuffer plus OffscreenCanvas. It is listed last in its own lane and is the structural answer to a row that is not — `SKILL.md` §8 requires anything O(document) to stay off the main thread, HF-077 is that defect for opening a heavy document, and `14`'s `MTB-001` is the programme. Those rows are being closed one at a time on the main thread, which is the right order (a worker does not make a quadratic linear) but means this row is the ceiling they all eventually meet. Priority is original (minted here). |
 | 192 | RM-14 | Roadmap | The GPU half of the render backend has never been begun; CPU raster is the reference and the only backend | P3 | L | Open | New 2026-10-04 (`14` P1E-002/003 / `99` §5, pulled in) | `P1E-001`, `P1E-002`, `P1E-003` | `14` carries `P1E-002` and `P1E-003` as `Planned` and `P1E-001` as `Superseded`; `99` §5 states "CPU raster is the reference backend; Phase 1E's GPU half is not begun". Queued as one row because the two `Planned` rows are halves of one backend, and because the prior question — the native renderer choice — is one of the six undecided ADRs in Q8, so **this row is blocked by a decision rather than by effort**. Priority is original (minted here). |
 
+## Archive coverage — 99 and 14
+
+`104`, `105` and `106` have been inside the one-queue scheme since 2026-09-20 and their
+coverage is asserted row by row: every row still open in one of them has a row here, or is
+declared merged into one. **`99` and `14` were outside it entirely until 2026-10-04**,
+which is how `14` came to hold 48 forward-work rows for which no queue position had ever
+been derived, and `99` to hold six sections of capability with no ids at all.
+
+They are covered here now, and the coverage is **enforced**:
+`webapp/tests/tracker_single_queue.test.mjs` fails the build when `14` gains a
+forward-work row this table does not name, or when `99` gains a section this table does
+not name. The tables below are therefore hand-authored on purpose — a generated coverage
+table would be satisfied by construction and could never go red, which is the
+`docs/105` CQ-003 defect.
+
+### `14-EXECUTION-TRACKER.md` — the row classes
+
+Derived by parsing every `| ID | … |` row of `14` that sits under a header carrying a
+`Status` column. Do not edit these numbers; re-run the guard.
+
+| Class | Rows | How it is covered |
+| --- | ---: | --- |
+| `Done` | 306 | Closed by its own status. Nothing to queue |
+| Completed-work index (a `Completed` date, no `Status` column) | 12 | Closed. It is an index of `F-`/`P0-` rows that already appear above it as `Done` |
+| `In review` | 67 | **Needs re-verification as a class, not as 67 rows.** These are Phase-1F and Phase-1G slices that shipped and were never signed off, so the status is a process state rather than remaining work. They are covered by CQ-011 and by the count asserted here: if a 68th appears, the build goes red and somebody has to say which class it belongs in |
+| Closed by their own words | 2 | `P1E-001` (`Superseded`, by the P1C–1E restructure) and `P1B-R2` (`Fixed by P1B-004`). Both statuses are outside `14`'s documented vocabulary, which is CQ-011's other half |
+| **Forward work** | **48** | **Named individually below.** This is the class where work hides |
+
+### `14` forward work — all 48, and where each is reachable
+
+| `14` id | Status in `14` | Where it is covered here |
+| --- | --- | --- |
+| `M-008` | In progress | **Is `104`.** Its open rows *are* this queue's Hotfix lane |
+| `M-009` | Open | CQ-008, whose status cell already reads `Open (M-009)` |
+| `M-010` | In progress | **Is `105`.** Its open rows *are* this queue's Audit lane |
+| `M-011` | In progress | **Is `106`.** Its phases *are* this queue's Roadmap lane |
+| `MTB-001` | In progress | HF-184, HF-222, HF-113, HF-111, HF-077 — and RM-13, the worker-threading ceiling they all eventually meet |
+| `EDITOR-001` | In progress | **Is this whole queue.** `99`'s six ordered outcomes are the programme; this table is its state |
+| `EXP-000` | Designing | **Needs re-verification** — `docs/145` exists; whether the portfolio is complete was not checked here, and none of it is queued as work |
+| `COLLAB-000` | Designing | HF-114, RM-08, RM-09, under ADR-033 and `docs/107`/`143`/`144` |
+| `DAI-000` | Designing | **Needs re-verification** — `docs/132` is an architecture with nothing queued against it |
+| `HIST-000` | In progress | HF-068 and OO-023 |
+| `MFIO-005` | In progress | RM-05, HF-209, HF-210 |
+| `MFIO-006` | In progress | RM-05, HF-210 |
+| `MFIO-007` | In progress | RM-05 |
+| `MFIO-008` | In progress | RM-05 |
+| `MFIO-PDF` | In progress (Phase 0 done) | RM-07 |
+| `PDFR-000` | Experimental design; not implemented | **Needs re-verification** — `docs/131`; experimental and deliberately unqueued, which is a decision rather than an omission |
+| `P1A-001` | Accepted | **Needs re-verification** — `Accepted` is outside `14`'s own status vocabulary, so what remains is undefined |
+| `P1A-003` | Accepted | **Needs re-verification** — same |
+| `P1A-006` | Not started | **Needs re-verification** — deterministic import id/namespace seed (R3); nothing queued and nothing measured |
+| `P1B-001` | Designed | **Needs re-verification** — outside the vocabulary |
+| `P1B-FONT` | Accepted (full scope) | **Needs re-verification** — outside the vocabulary |
+| `P1E-002` | Planned | RM-14 |
+| `P1E-003` | Planned | RM-14 |
+| `P1F-7` | In progress | **Needs re-verification** — `docProps` core/app/custom ship and Document Properties is reachable; HF-099 is the one named remainder (byte size) |
+| `P1F-11..25` | Not started | **Needs re-verification** — a 2026-07-26 batch row for rendering gaps. `99` records `44`/`46`/`55`/`60` as ~992 commits stale and **understating** the engine, so the first step is a re-measurement, not a build |
+| `P1F-28..39 (excl. 28,30,31,32,34,36,37,38,39)` | Not started | **Needs re-verification** — same batch. Floating tables are FID-L-07 and FID-L-07b; SDT and comment ranges have shipped surfaces |
+| `P1F-OVERLAP` | In progress | FID-L-21 |
+| `P1F-CORPUS-PAGINATION` | In progress | FID-L-21 and FID-P-02 |
+| `P1F-NOTES-PAGINATION` | Designing | FID-L-05 and OO-024 |
+| `P1F-REVIEW-MARKUP-VIEW` | In progress | **Needs re-verification** — the review view ships; the read-only render policy half was not checked here |
+| `P1G-002` | Not started | **Needs re-verification** — the viewer ships with scroll, zoom and virtualization, so this row is almost certainly stale; it is not closed on that inference |
+| `P1G-004` | Not started | RM-12 |
+| `P1G-005` | Not started | RM-13 |
+| `P1G-INSERT-PANEL` | Not started | UX-029 |
+| `P1G-MATH-AUTHORING-DESIGN` | Not started | OO-009 |
+| `P1G-OBJ-IMAGE` | Not started | HF-252 |
+| `P1G-OBJ-TEXTBOX` | In progress | HF-253 |
+| `P1G-OBJ-CAPABILITY` | In progress | HF-214 and HF-057 cover part of it; the engine-declared-capability half **needs re-verification** |
+| `P1G-OBJ-SURFACE-CORRECTNESS` | In progress | HF-214, HF-195, HF-213 — the surface-completeness family. Partial, so it **needs re-verification** |
+| `P1G-OBJ-CROP-CORRECTNESS` | In progress | HF-106 and HF-057 |
+| `P1G-OBJ-INSPECTOR` | In progress | HF-057 |
+| `P1G-OBJ-DESIGN` | Designing | **Needs re-verification** — `docs/101` and `docs/85` §5.7/§5.9 are the design; what of it is unbuilt was not derived here |
+| `P1G-EDITOR-SAFETY-HOTFIX` | In progress | Running-content preservation and text-box caret entry ship; the nonmodal glyph panel is UX-029. The remainder **needs re-verification** |
+| `P1G-FONT-COLOR-GLYPHS` | In progress | HF-176 and HF-132 |
+| `P1G-REVIEW-037` | Pending | HF-190 and HF-199 cover part of it; mode-safe command routing **needs re-verification** |
+| `P1G-REVIEW-038` | Pending | OO-023 and HF-199 cover part of it; the comment workflow remainder **needs re-verification** |
+| `P1G-REVIEW-039` | Pending | UX-020 and HF-071 cover the accessibility half; scale and interoperability **need re-verification** |
+| `P1G-TABLE-COMPLETE-001` | In progress | HF-217, HF-218, HF-219, HF-220, HF-221, HF-222, HF-224 — the `docs/141` family |
+
+### `99-REMAINING-WORK-AUDIT.md` — by section
+
+`99` carries **no ids**, which is why it could not be merged by id and why the guard checks
+it by section heading instead: if `99` gains a section, this table must name it or the
+build fails.
+
+| `99` section | Where it is covered here |
+| --- | --- |
+| Why this document exists | Not work. It is the statement of purpose, and CQ-011 is the open half of it |
+| Owner priority decision — editor first | The six ordered outcomes are the programme behind the lane order; `EDITOR-001` in `14` is the same row |
+| 1. The open defect class — context and interaction | **Closed in `99` itself** — all five context/gesture slices read `Covered`/`Fixed` 2026-08-11/12, with the regression spec named for each. The standing lesson ("a matrix proves nothing about the case it does not exercise") is a habit, not a row |
+| 2. Object-editing correctness and UX — reopened | UX-029 (the nonmodal Insert panel), HF-057, HF-106, HF-214, HF-253, HF-254. The two P0 rungs — a stable root/subject `ObjectRef` with engine-declared capabilities, and resize/surface/crop correctness — are `14`'s `P1G-OBJ-CAPABILITY` and `P1G-OBJ-SURFACE-CORRECTNESS` and **need re-verification** rather than a queue row invented from a 2026-08 reading |
+| 3. Editing capability not yet authorable | All ten rows: FID-G-01 and FID-G-02 (`custGeom`), HF-056 (rotation and flip), HF-203 and HF-206 (insert or split a section), HF-252 (replace a picture's bytes), HF-253 (text-box body properties), HF-254 (picture borders and effects), OO-009 (math), OO-024 (note options), OO-025 (named styles), RM-01 (fields as fields) |
+| 4. Engine and rendering | RM-07 (PDF Phase 1 and tagged PDF), FID-R-08 + OO-014 + Q3 (charts and SmartArt), HF-176 + HF-132 (colour fonts and emoji), FID-L-12 (tight and through wrap), FID-L-21 (oracle page parity), HF-255 (underline style and colour in Suggesting mode), Q7 (`.docm`), FID-L-24 (the `44` Tier-4 long tail) |
+| 5. Not started | RM-14 (GPU), RM-12 (Tauri and host fonts), RM-13 (worker threading), RM-02 (the stable public SDK), HF-114 + RM-08 + RM-09 (collaboration adapters), and Q8 for the pending-decisions paragraph — of whose nine decisions two are settled (ADR-033, ADR-031), one is Q7, and six are open |
+| 6. Process debt | **CQ-011** is the first row, and it is the row this section opened and nobody closed. The fabricated-evidence half is closed and guarded (`site_claims.test.mjs`, `fidelity_data.test.mjs`, and `docs/105` §1). The "`node --test` is easy to skip" half is closed by the `test` CI job and by `SKILL.md` §3's gate list, which names `npm run test:unit` explicitly |
+
+### `106`'s owner decisions
+
+`106`'s phase tables cite `104`/`105` ids and mint none of their own, so their coverage is
+the Roadmap lane's RM rows. Its one id-bearing table is §9, the owner decisions, and all
+seven are reachable: Q1, Q2, Q3, Q6, Q7 and Q8 are queued; Q4 closed (ADR-031 and
+`docs/98`) and Q5 closed (ADR-033 — `106` strikes the row through itself), both recorded
+under [Settled on 2026-09-20](#settled-on-2026-09-20).
+
 ## Rows that need re-verification
 
 ### Settled on 2026-09-20
@@ -452,6 +558,24 @@ document does not own `105`.
 | HF-051 / OO-015 | **Settled at P2**, between `104`'s P1 and OO-015's P3. Cheap, so it leads the M group of P2 |
 | HF-088 | **Partly resolved.** A 700px rung now exists and applies (`style.css:4314`, `:4666`, `:4861`), so the swallow-the-page symptom is gone; the bottom-sheet behaviour is not built, so the row stays Partly fixed. The wrong 860px diagnosis in `104` is superseded rather than still open |
 | `104` summary, P2 and Behavioural cells | **Corrected.** P2 now reads 23 and the behavioural section 4. The two errors were equal and opposite, so the old guard — which only checked the section column against the Total — was blind to both by construction. `tracker_counts.test.mjs` now asserts every section cell individually, and the `— N items` count in each heading, and was driven red against a re-introduced cancelling pair before being trusted |
+
+### Pulled in from `14` and `99` on 2026-10-04, and not verifiable from reading
+
+These came into the queue with this consolidation. **None of them was re-graded or closed
+from reading alone** — `docs/99` §9 exists because this repository published claims that
+outran their evidence twice, and a status changed on inference is that defect with the
+evidence removed. What was checked, and what was not, is stated per row.
+
+| Id or source row | What was checked | What is still unknown |
+| --- | --- | --- |
+| HF-253 | `99` §3 says `SetTextBoxBody` and `docs/52` are "designed, not built"; `14`'s `P1G-OBJ-TEXTBOX` says `In progress`. Two documents disagree about one piece of work | Whether the operation exists in `casual-doc-edit` today. Not checked — a concurrent lane owns that crate this session, and the row is queued at the state the sources state |
+| HF-254 | `99` §3 says picture borders and effects are "Rendered, not authorable" | Whether the current object Format surface has since gained either control |
+| HF-255 | `99` §4's typed-underline row ends "Suggesting mode rejects style/colour edits until tracked-format deltas support them" | **Whether the refusal says anything.** `AGENTS.md` makes a silent refusal a hard rule, so this is the first thing to measure, and it is why the row is `S` |
+| `14` `P1G-002` | `99` §5 and the shipped viewer both describe scroll, zoom and virtualization as working | Why the row still reads `Not started`. Almost certainly stale — and it is **not** closed on that, because "almost certainly" is how the last two false claims were written |
+| `14` `P1F-11..25`, `P1F-28..39` | `99`'s own 2026-09-15 update records `44`/`46`/`55`/`60` as ~992 commits stale and **understating** the engine | Which members of the two batches are still gaps. Re-measure before building; understating is also false (`99` §9 rule 6) |
+| `14` `P1A-001`, `P1A-003`, `P1B-001`, `P1B-FONT`, `P1E-001`, `P1B-R2` | Their statuses — `Accepted`, `Designed`, `Accepted (full scope)`, `Superseded`, `Fixed by P1B-004` — are **outside `14`'s own documented status vocabulary**, which its header note has flagged since an external review and nobody mapped | What each one means. Mapping them onto the vocabulary, or extending the vocabulary, is part of CQ-011 |
+| `14` `EXP-000`, `DAI-000`, `PDFR-000`, `P1G-OBJ-DESIGN`, `P1A-006`, `P1F-7`, `P1F-REVIEW-MARKUP-VIEW` | Each names a design document that exists | What of each design is unbuilt. Listed rather than queued, because inventing a row from a 2026-07/08 reading would put work of unknown size at an invented priority |
+| `14`'s 67 `In review` rows | They are Phase-1F/1G slices that shipped; the status is a sign-off state, not remaining work | Whether any of the 67 hides a remainder. The count is asserted by the guard so a 68th cannot arrive unnoticed, and CQ-011 is the row that closes the class |
 
 ### Still open for the owner
 
@@ -497,8 +621,8 @@ queue of closed work is not a queue and `tracker_counts.test.mjs` asserts it —
 recorded here rather than deleted, because they were minted in THIS document and `104`/`105`
 are closed to new rows, so removal with no record would be the only trace of them gone.
 
-Four of them state "Fixed" with **no pull request or commit to point at** (HF-175, HF-179,
-HF-180, HF-181). That is recorded as-stated rather than corrected or trusted: an unevidenced
+Five of them state "Fixed" with **no pull request or commit to point at** (HF-175, HF-179,
+HF-180, HF-181, HF-249). That is recorded as-stated rather than corrected or trusted: an unevidenced
 status is exactly what `docs/99` §9 rule 1 is about, and it is the next thing to verify
 about this table.
 
@@ -516,6 +640,17 @@ about this table.
 | HF-179 | The mouse cursor never changes — the whole page surface is the text I-beam, whatever is under the pointer | Fixed |
 | HF-180 | A hyperlink on a picture or shape is dropped on import and lost on save — a clickable image opens as a picture of one | Fixed |
 | HF-181 | A highlighted run paints over its paragraph's border — and `w:pBdr/@w:space` was ignored entirely, so every bordered paragraph's frame sat on its own text | Fixed |
+| HF-240 | Dragging a shape leaves its text-wrap exclusion behind, in the file as well as on screen | Fixed (#737) |
+| HF-241 | A float at a mid-column offset or centred got no exclusion at all, and a text box in a cell got none | Fixed (#738) |
+| HF-242 | `w:wrap@wrapText` was not modelled, and the loss was SILENT | Fixed (#739) — HF-243 is the half that remains: the loss-coverage gate structurally cannot see an attribute vanish, and is queued |
+| HF-244 | Thirty object-geometry refusals reached the reader as one wrong sentence | Fixed (#737) |
+| HF-245 | A guard that reads its own source reported the checkout on Windows | Fixed (#737) |
+| HF-246 | An unsubstituted `{unit}` placeholder was painted to the reader in every language | Fixed (#736, #740) |
+| HF-247 | The editor would not open at all: a chrome module read the engine at construction | Fixed (#734) |
+| HF-248 | The first-run measurement default was read from the UI language, so a US reader got centimetres | Fixed (#736) |
+| HF-249 | The File row naming a measurement unit opened Settings without revealing the control | Fixed — **no PR or commit cited**, like the four below; recorded as stated rather than trusted |
+| HF-250 | Settings hid 11px of itself below a laptop's fold | Fixed (#745) |
+| HF-251 | Two green PRs merged into a red main: a model field and literals younger than its sweep | Fixed (#746) — the durable half, making `DrawingAnchor` impossible to construct incompletely, is **not** done and is not queued either; file it when it is reached |
 
 ## What was merged, and on whose authority
 

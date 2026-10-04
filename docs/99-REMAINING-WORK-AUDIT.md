@@ -1,5 +1,22 @@
 # 99 — Remaining Work Audit
 
+> **Archive, closed to new rows (2026-10-04).** The single working queue is
+> **`109-BACKLOG.md`**, and every section of this document is now reachable from it:
+> `109`'s [Archive coverage](109-BACKLOG.md#archive-coverage--99-and-14) names each
+> section below and the rows that carry its open work, and
+> `webapp/tests/tracker_single_queue.test.mjs` fails the build if this document gains a
+> section that table does not name. This document is not deleted and no row is removed
+> from it: it holds the ordered outcome gates, the object-editing priority ladder, the
+> "modeled is not shipped" theme and the process-debt record that `109` deliberately does
+> not duplicate.
+>
+> **Do not add a new row here** — add it to `109`, in the PR that discovers it.
+>
+> It carries **no ids**, which is why it was merged by section rather than by row. §6's
+> first item — *"the execution tracker is stale"* — is open as `109` **CQ-011**; it was
+> written in 2026-08 about `14` and is still true, and it is the reason both documents
+> were outside the one-queue scheme until 2026-10-04.
+
 **Status:** Living record. **Date:** 2026-08-09.
 **Scope:** everything known to be unfinished in this repository, ranked, with the
 evidence for each claim.
