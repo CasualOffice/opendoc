@@ -513,6 +513,7 @@ roadmap
 rsid
 rtf
 rustdoc
+sRGB
 sandboxed
 scalable
 schemas
