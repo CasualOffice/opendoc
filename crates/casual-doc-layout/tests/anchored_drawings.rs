@@ -2170,106 +2170,14 @@ fn an_untyped_preset_resolves_its_outline_from_the_table() {
 #[test]
 fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
     use casual_doc_layout::page::AnchorContent;
-    use casual_doc_model::v1::{
-        DashStyle, Definitions, FillStyle, FormatScheme, LineStyle, Rgba, ShapeStyleRef, StyleColor,
-    };
+    use casual_doc_model::v1::DashStyle;
 
-    let green = Rgba {
-        r: 0,
-        g: 255,
-        b: 0,
-        a: 255,
-    };
-    let red = Rgba {
-        r: 255,
-        g: 0,
-        b: 0,
-        a: 255,
-    };
-    let shape_id = node(91);
-
-    let place = |explicit_fill: Option<casual_doc_model::v1::Fill>| {
-        let child = GroupChild::Shape(GroupShape {
-            hyperlink: None,
-            id: shape_id,
-            offset: PointEmu { x_emu: 0, y_emu: 0 },
-            extent: Extent {
-                width_emu: 914_400,
-                height_emu: 914_400,
-            },
-            geometry: ShapeGeometry::Rectangle,
-            preset: None,
-            adjustments: Vec::new(),
-            path: None,
-            fill: explicit_fill,
-            stroke: None,
-            flip_h: false,
-            flip_v: false,
-            rotation: None,
-        });
-        let extent = Extent {
-            width_emu: 914_400,
-            height_emu: 914_400,
-        };
-        let group = InlineNode::Group(Box::new(WordprocessingGroup {
-            hyperlink: None,
-            id: node(90),
-            anchor: Some(page_anchor(914_400, 914_400)),
-            relative_height: Some(11),
-            extent,
-            transform: GroupTransform {
-                offset: PointEmu { x_emu: 0, y_emu: 0 },
-                extent,
-                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
-                child_extent: extent,
-                flip_h: false,
-                flip_v: false,
-                rotation: None,
-            },
-            children: vec![child],
-        }));
-        let mut definitions = Definitions {
-            format_scheme: Some(FormatScheme {
-                fill_styles: vec![Some(FillStyle {
-                    color: StyleColor::Placeholder,
-                })],
-                line_styles: vec![Some(LineStyle {
-                    width_emu: 6_350,
-                    color: StyleColor::Placeholder,
-                    dash: Some(DashStyle::Dash),
-                })],
-            }),
-            ..Definitions::default()
-        };
-        definitions.shape_styles.insert(
-            shape_id,
-            ShapeStyleRef {
-                fill_idx: Some(1),
-                fill_color: Some(green),
-                line_idx: Some(1),
-                line_color: Some(red),
-            },
-        );
-        let paragraph = BlockNode::Paragraph(Paragraph {
-            id: node(10),
-            properties: ParagraphProperties::default().into(),
-            inlines: vec![run(11, "Body"), group],
-        });
-        let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
-        let shaper = ParleyShaper::new();
-        let cfg = config();
-        let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
-        let mut layout = paginate(&galley, &cfg);
-        place_floats(&mut layout, &document, &shaper, &cfg);
-        layout.pages[0].anchored[0].content.clone()
-    };
-
-    let AnchorContent::Rectangle { fill, stroke } = place(None) else {
+    let AnchorContent::Rectangle { fill, stroke } = place_themed_shape(1, 1, None) else {
         panic!("expected a rectangle");
     };
     assert_eq!(
         fill,
-        Some(casual_doc_model::v1::Fill::Solid(green)),
+        Some(casual_doc_model::v1::Fill::Solid(THEMED_GREEN)),
         "the fillRef's colour is substituted for the entry's phClr"
     );
     let stroke = stroke.expect("the lnRef resolves an outline");
@@ -2284,7 +2192,8 @@ fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
         b: 3,
         a: 255,
     });
-    let AnchorContent::Rectangle { fill, .. } = place(Some(explicit.clone())) else {
+    let AnchorContent::Rectangle { fill, .. } = place_themed_shape(1, 1, Some(explicit.clone()))
+    else {
         panic!("expected a rectangle");
     };
     assert_eq!(
@@ -2292,6 +2201,236 @@ fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
         Some(explicit),
         "an explicit spPr fill must not be overridden by the style reference"
     );
+}
+
+/// A GRADIENT matrix entry resolves to a real gradient, per stop, and the entry
+/// kinds nothing can paint leave the shape unfilled rather than approximately
+/// filled.
+///
+/// This is the common case, not an edge: the default Office theme's `fillStyleLst`
+/// is solid, gradient, gradient, and `a:fillRef idx="2"`/`idx="3"` is what the Shape
+/// Styles gallery writes. Before this, every one of those shapes resolved to no fill
+/// at all.
+///
+/// Three separate claims, and each needs its own stop or index to be checkable:
+///
+/// * **per-stop placeholder.** Stop 1 is `a:phClr` with a `a:tint`; stop 2 is a
+///   colour the theme fixes. A build that put the placeholder on the ENTRY could
+///   not represent this, and one that dropped the transform would resolve stop 1 to
+///   the reference colour unchanged — which is how the default Office theme, whose
+///   three stops are all `phClr` and differ ONLY by transform, would flatten to one
+///   colour while looking deliberate.
+/// * **a pattern stays unfilled.** Not "becomes its foreground colour".
+/// * **a non-solid outline stays unstroked.** `ShapeStroke` holds one colour, so a
+///   gradient outline has nowhere to go but a wrong single colour.
+#[test]
+fn a_themed_gradient_resolves_per_stop_and_unpaintable_entries_stay_unfilled() {
+    use casual_doc_layout::page::AnchorContent;
+    use casual_doc_model::v1::{Fill, GradientKind, GradientStop};
+
+    let AnchorContent::Rectangle { fill, stroke } = place_themed_shape(2, 2, None) else {
+        panic!("expected a rectangle");
+    };
+    assert_eq!(
+        fill,
+        Some(Fill::Gradient {
+            stops: vec![
+                // `tint 40000` over pure green: each channel c -> c*0.4 + 255*0.6.
+                GradientStop {
+                    position: 0,
+                    color: Rgba {
+                        r: 153,
+                        g: 255,
+                        b: 153,
+                        a: 255,
+                    },
+                },
+                GradientStop {
+                    position: 100_000,
+                    color: THEMED_BLUE,
+                },
+            ],
+            kind: GradientKind::Linear { angle: 5_400_000 },
+        }),
+        "the gradient entry resolves stop by stop, transform included"
+    );
+    assert!(
+        stroke.is_none(),
+        "a gradient outline entry has no single colour, so it must not resolve"
+    );
+
+    // A pattern entry: modeled, and painted by nothing.
+    let AnchorContent::Rectangle { fill, .. } = place_themed_shape(3, 1, None) else {
+        panic!("expected a rectangle");
+    };
+    assert_eq!(
+        fill, None,
+        "a pattern entry must leave the shape unfilled, not take its foreground colour"
+    );
+
+    // An entry the parse could not model at all.
+    let AnchorContent::Rectangle { fill, .. } = place_themed_shape(4, 1, None) else {
+        panic!("expected a rectangle");
+    };
+    assert_eq!(fill, None, "an unmodeled entry resolves to nothing");
+
+    // Index 5 is past the list; it must not wrap or clamp onto entry 4.
+    let AnchorContent::Rectangle { fill, .. } = place_themed_shape(5, 1, None) else {
+        panic!("expected a rectangle");
+    };
+    assert_eq!(fill, None, "an index past the list resolves to nothing");
+}
+
+/// The colour a `a:fillRef`/`a:lnRef` names for the entry's `a:phClr`.
+const THEMED_GREEN: Rgba = Rgba {
+    r: 0,
+    g: 255,
+    b: 0,
+    a: 255,
+};
+
+/// A colour the fixture's theme fixes itself, on the gradient's second stop.
+const THEMED_BLUE: Rgba = Rgba {
+    r: 0,
+    g: 0,
+    b: 255,
+    a: 255,
+};
+
+/// Places one themed shape and returns its anchor content.
+///
+/// The format scheme is deliberately NOT uniform, so an index that resolves to the
+/// wrong entry is visible rather than indistinguishable: entry 1 is a `phClr` solid,
+/// entry 2 a two-stop gradient mixing a transformed placeholder with a fixed colour,
+/// entry 3 a pattern, entry 4 an entry the parse could not model. The line list is
+/// the same idea in miniature: entry 1 resolves, entry 2 (a non-solid outline) does
+/// not.
+fn place_themed_shape(
+    fill_idx: u32,
+    line_idx: u32,
+    explicit_fill: Option<casual_doc_model::v1::Fill>,
+) -> casual_doc_layout::page::AnchorContent {
+    use casual_doc_model::v1::{
+        ColorTransform, DashStyle, Definitions, FillStyle, FormatScheme, GradientKind,
+        GradientStyle, GradientStyleStop, LineStyle, PatternStyle, ShapeStyleRef, StyleColor,
+    };
+
+    let shape_id = node(91);
+    let red = Rgba {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: explicit_fill,
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    let extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
+        id: node(90),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(11),
+        extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        children: vec![child],
+    }));
+    let mut definitions = Definitions {
+        format_scheme: Some(FormatScheme {
+            fill_styles: vec![
+                Some(FillStyle::Solid {
+                    color: StyleColor::Placeholder(ColorTransform::default()),
+                }),
+                Some(FillStyle::Gradient(GradientStyle {
+                    stops: vec![
+                        GradientStyleStop {
+                            position: 0,
+                            color: StyleColor::Placeholder(ColorTransform {
+                                tint: Some(40_000),
+                                ..ColorTransform::default()
+                            }),
+                        },
+                        GradientStyleStop {
+                            position: 100_000,
+                            color: StyleColor::Fixed(THEMED_BLUE),
+                        },
+                    ],
+                    kind: GradientKind::Linear { angle: 5_400_000 },
+                })),
+                Some(FillStyle::Pattern(PatternStyle {
+                    preset: "pct25".to_owned(),
+                    foreground: StyleColor::Placeholder(ColorTransform::default()),
+                    background: StyleColor::Fixed(Rgba {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                        a: 255,
+                    }),
+                })),
+                None,
+            ],
+            line_styles: vec![
+                Some(LineStyle {
+                    width_emu: 6_350,
+                    color: StyleColor::Placeholder(ColorTransform::default()),
+                    dash: Some(DashStyle::Dash),
+                }),
+                None,
+            ],
+            // No effect style resolves to anything paintable here, and the
+            // appearance under test is the fill; see `themed_appearance`.
+            effect_styles: Vec::new(),
+        }),
+        ..Definitions::default()
+    };
+    definitions.shape_styles.insert(
+        shape_id,
+        ShapeStyleRef {
+            fill_idx: Some(fill_idx),
+            fill_color: Some(THEMED_GREEN),
+            line_idx: Some(line_idx),
+            line_color: Some(red),
+            effect_idx: None,
+        },
+    );
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    layout.pages[0].anchored[0].content.clone()
 }
 
 /// An adjustment guide that COMPUTES its value is honoured, not passed over for the

@@ -55,7 +55,7 @@ use crate::units::{
 };
 // Own line (anti-conflict): the single wrap-side rule.
 use crate::wrap_side::{WrapSides, wrap_sides};
-use casual_doc_model::v1::{Definitions, StyleColor};
+use casual_doc_model::v1::{Definitions, FillStyle, GradientStop};
 
 /// Places every floating object in the document (body and header/footer bands)
 /// onto the pages their anchors landed on, with a resolved rectangle and stacking
@@ -2020,10 +2020,39 @@ impl GroupMapper {
 ///
 /// An explicit fill always wins — a shape that says `a:noFill` means it — and an
 /// index the format scheme does not model resolves to nothing rather than to a
-/// neighbouring entry, so an unsupported gradient style stays unfilled instead of
-/// quietly becoming a solid.
+/// neighbouring entry, so an unsupported style stays unfilled instead of quietly
+/// becoming a solid.
 ///
-/// Complexity: O(1) — two map lookups and an index.
+/// # What each matrix entry kind resolves to
+///
+/// | entry | result |
+/// | --- | --- |
+/// | `a:solidFill` | `Fill::Solid` |
+/// | `a:gradFill` | `Fill::Gradient` — real stops, painted as a gradient |
+/// | `a:pattFill` | **nothing**; there is no pattern primitive |
+/// | `a:blipFill`, `a:grpFill` | **nothing**; not modeled |
+///
+/// The gradient case is not a nicety: a `fillStyleLst` entry past the first is
+/// commonly a gradient rather than a solid — the committed `themed-shape.docx`
+/// theme is solid, gradient, pattern, solid — so a shape naming `a:fillRef`
+/// `idx="2"` or `idx="3"` used to resolve to no fill at all and paint unfilled.
+/// Which indices Word's own Shape Styles gallery writes is not verified here:
+/// this repository holds no Word-authored theme part, and the fixture is
+/// synthetic.
+///
+/// `a:effectRef` is resolved here only far enough to be reported. **Nothing in this
+/// build renders a DrawingML effect**: there is no shadow, glow, reflection or
+/// soft-edge primitive in the display list, so a shape naming an effect style
+/// paints without it and the import report says so. Half-rendering one — a
+/// hand-rolled offset copy standing in for `a:outerShdw` — was deliberately NOT
+/// written, because "modeled but not reachable" claimed as done is the most
+/// expensive recurring mistake in this repository (`SKILL` §9.4). The loss is
+/// raised at import (`casual-doc-import`'s `report_unpaintable_style_refs`), which
+/// is where the compatibility report lives; layout has no reporting seam of its own
+/// for shapes.
+///
+/// Complexity: O(1) per shape — two map lookups, an index, and O(stops) for a
+/// gradient entry, which is bounded by the theme.
 fn themed_appearance(
     shape: &GroupShape,
     definitions: &Definitions,
@@ -2040,31 +2069,61 @@ fn themed_appearance(
         && let Some(idx) = reference.fill_idx
         && let Some(style) = scheme.fill_style(idx)
     {
-        // `a:phClr` takes the colour the reference names; without one there is
-        // nothing to substitute and the entry stays unresolved.
-        let color = match style.color {
-            StyleColor::Fixed(color) => Some(color),
-            StyleColor::Placeholder => reference.fill_color,
-        };
-        fill = color.map(Fill::Solid);
+        fill = themed_fill(style, reference.fill_color);
     }
     if stroke.is_none()
         && let Some(idx) = reference.line_idx
         && let Some(style) = scheme.line_style(idx)
     {
-        let color = match style.color {
-            StyleColor::Fixed(color) => Some(color),
-            StyleColor::Placeholder => reference.line_color,
-        };
-        stroke = color.map(|color| ShapeStroke {
-            color,
-            width_emu: style.width_emu,
-            dash: style.dash,
-            head_end: None,
-            tail_end: None,
-        });
+        // `a:phClr` takes the colour the reference names, with the entry's own
+        // transform folded over it; without a reference colour there is nothing to
+        // substitute and the entry stays unresolved.
+        stroke = style
+            .color
+            .resolve(reference.line_color)
+            .map(|color| ShapeStroke {
+                color,
+                width_emu: style.width_emu,
+                dash: style.dash,
+                head_end: None,
+                tail_end: None,
+            });
     }
     (fill, stroke)
+}
+
+/// One theme `a:fillStyleLst` entry resolved against the colour the shape's
+/// `a:fillRef` named for `a:phClr`.
+///
+/// `None` keeps today's behaviour — an unfilled shape — for every entry kind this
+/// build cannot paint. It never falls back to an approximate solid: a gradient
+/// flattened to one colour, or a pattern replaced by its foreground, looks
+/// deliberate, and a shape that is visibly unfilled at least prompts the question.
+///
+/// A gradient resolves only if EVERY stop resolves. A partial gradient would paint
+/// a different gradient while reporting nothing, which is the same failure wearing
+/// a gradient's clothes.
+///
+/// Complexity: O(stops).
+fn themed_fill(style: &FillStyle, placeholder: Option<Rgba>) -> Option<Fill> {
+    match style {
+        FillStyle::Solid { color } => color.resolve(placeholder).map(Fill::Solid),
+        FillStyle::Gradient(gradient) => {
+            let mut stops = Vec::with_capacity(gradient.stops.len());
+            for stop in &gradient.stops {
+                stops.push(GradientStop {
+                    position: stop.position,
+                    color: stop.color.resolve(placeholder)?,
+                });
+            }
+            (!stops.is_empty()).then_some(Fill::Gradient {
+                stops,
+                kind: gradient.kind,
+            })
+        }
+        // Modeled so the loss can be named; see `FillStyle::Pattern`.
+        FillStyle::Pattern(_) => None,
+    }
 }
 
 fn custom_path_content(
