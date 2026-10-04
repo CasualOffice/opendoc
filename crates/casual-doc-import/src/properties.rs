@@ -405,7 +405,7 @@ pub(crate) fn apply_paragraph_property(
                 hanging_twips: indent_attr(element, &[b"hanging"]),
             };
             if indentation == Indentation::default() {
-                return false;
+                return carries_no_attributes(element);
             }
             properties.indentation = Some(indentation);
         }
@@ -421,7 +421,7 @@ pub(crate) fn apply_paragraph_property(
                 after_auto: spacing_auto(element, b"afterAutospacing"),
             };
             if spacing == Spacing::default() {
-                return false;
+                return carries_no_attributes(element);
             }
             properties.spacing = Some(spacing);
         }
@@ -695,6 +695,29 @@ pub(crate) fn parse_table_width(element: &BytesStart<'_>) -> Option<TableWidth> 
         WidthType::Auto | WidthType::Nil => 0,
     };
     Some(TableWidth { value, width_type })
+}
+
+/// Whether a property element carries no attributes at all.
+///
+/// This separates two documents that a `parsed == Default::default()` test cannot
+/// tell apart, and which deserve opposite dispositions:
+///
+/// - `<w:ind/>` specifies no indentation. There is nothing to map and nothing was
+///   lost, so reporting it is a **false** finding.
+/// - `<w:ind w:leftChars="720"/>` specifies indentation in character units, which
+///   this parser does not read. That is a real loss and must stay reported.
+///
+/// `35-DISPOSITION-TAXONOMY.md`'s rule is that an ordinary document produces an
+/// empty report, because a report that fires on healthy files is one every caller
+/// learns to filter out — and a filtered report cannot carry the loss detection
+/// the direct-OOXML position depends on. Over the owner's corpus the
+/// attribute-less form of these two elements alone accounted for **3,525**
+/// findings in two documents, every one of them describing a loss that had not
+/// happened.
+///
+/// `O(1)`: it inspects the first attribute, not all of them.
+pub(crate) fn carries_no_attributes(element: &BytesStart<'_>) -> bool {
+    element.attributes().next().is_none()
 }
 
 pub(crate) fn attribute_value(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {

@@ -9283,12 +9283,77 @@ fn no_op_document() -> String {
           <mc:Choice Requires="w14"><w:r><w:t xml:space="preserve">Once.</w:t></w:r></mc:Choice>
           <mc:Fallback><w:r><w:t xml:space="preserve">Once.</w:t></w:r></mc:Fallback>
         </mc:AlternateContent></w:p>
+        <w:p><w:pPr><w:ind/><w:spacing/></w:pPr><w:r><w:t>Unindented.</w:t></w:r></w:p>
         <w:tbl><w:tr><w:tc>
           <w:tcPr><w:tcBorders><w:tl2br w:val="nil"/><w:tr2bl w:val="nil"/></w:tcBorders></w:tcPr>
           <w:p><w:r><w:t>Cell</w:t></w:r></w:p>
         </w:tc></w:tr></w:tbl>
         </w:body></w:document>"#
     )
+}
+
+/// An attribute-less `w:ind`/`w:spacing` specifies nothing, so it must raise
+/// nothing — and one carrying an attribute this parser cannot read must still
+/// raise a finding.
+///
+/// Both halves are in one test because the fix is the *distinction*, not either
+/// side of it. Silencing the first without keeping the second is the failure the
+/// no-op class exists to avoid in the other direction: a blanket silence buys an
+/// empty report by giving up loss detection, which `35-DISPOSITION-TAXONOMY.md`
+/// calls the worse of the two errors.
+///
+/// Measured: over the owner's nineteen-document corpus the attribute-less form
+/// raised 1,833 `w:ind` and 1,689 `w:spacing` findings in two documents, which
+/// was the largest single contributor to report volume anywhere in the corpus.
+/// The dominant location is `w:style/w:tblStylePr/w:pPr`, so the styles parser is
+/// exercised alongside the body one.
+///
+/// The assertions walk report *locations*, not the report's text: a feature
+/// string is `"ind"` for the element and `"ind/@leftChars"` for the attribute, and
+/// a `contains` test over either would also match the other.
+#[test]
+fn an_empty_indent_or_spacing_specifies_nothing_and_reports_nothing() {
+    let silent = import_with_styles(
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:ind/><w:spacing/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>
+        </w:body></w:document>"#,
+        br#"<?xml version="1.0"?><w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="Plain"><w:name w:val="Plain"/>
+          <w:pPr><w:ind/><w:spacing/></w:pPr>
+        </w:style>
+        <w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/>
+          <w:tblStylePr w:type="firstRow"><w:pPr><w:ind/><w:spacing/></w:pPr></w:tblStylePr>
+        </w:style>
+        </w:styles>"#,
+    );
+    let named: Vec<&str> = silent
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| entry.location.element.as_deref())
+        .collect();
+    assert!(
+        !named.contains(&"ind") && !named.contains(&"spacing"),
+        "an attribute-less w:ind/w:spacing reported a loss that did not happen: {named:?}"
+    );
+
+    // The precondition, kept explicit: the parser still cannot read character-unit
+    // indentation, and must still say so.
+    let lossy = import(
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:ind w:leftChars="720"/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>
+        </w:body></w:document>"#,
+    );
+    let lossy_named: Vec<&str> = lossy
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| entry.location.element.as_deref())
+        .collect();
+    assert!(
+        lossy_named.contains(&"ind"),
+        "character-unit indentation was dropped with no finding: {lossy_named:?}"
+    );
 }
 
 /// The DrawingML half of the class, on the `wps:wsp` text-box shape Word writes
