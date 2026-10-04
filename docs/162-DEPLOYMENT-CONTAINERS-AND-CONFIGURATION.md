@@ -97,9 +97,11 @@ behind compose profiles precisely so that they cannot be started by accident.
 
 ### 3.2 What is in the image, and what is not
 
-The build is four stages and the last one is `nginx:1.29-alpine`. There is **no Rust, no
-cargo, no Node, no Python and no source** in the runtime image: the toolchain exists in the
-builder stages and nothing is copied forward but the staged site.
+The build is three stages — `node`, `build`, `runtime` — and the last one is
+`nginx:1.29-alpine`. There is **no Rust, no cargo, no Node, no Python and no source** in the
+runtime image: the toolchain exists in the earlier stages and nothing is copied forward but
+the staged site. (`webapp/tests/deployment_contract.test.mjs` counts the stages, because
+the first draft of this paragraph said four.)
 
 The builder runs `webapp/build.sh` unmodified. That matters for a reason beyond
 convenience: the script ends with five generators run in `--check` mode — the embedding

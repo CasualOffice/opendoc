@@ -57,16 +57,26 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 
 RUN rustup target add wasm32-unknown-unknown
 
-# The released binary first; `cargo install` as the fallback so a renamed release
-# asset degrades to a slower build instead of an unbuildable image. Both paths
-# install the SAME pinned version, which is what matters.
+# The released binary first; `cargo install` as the fallback so a renamed or
+# missing release asset degrades to a slower build instead of an unbuildable
+# image. Both paths install the SAME pinned version, which is what matters.
+#
+# `rustwasm/wasm-pack`, and the org was wrong on the first build. `webapp/build.sh`
+# documents the tool as <https://drager.github.io/wasm-pack/>, which is the
+# maintainer's documentation site and not the repository — `drager/wasm-pack`
+# answers 404 for every release, so the first build of this image took the
+# fallback and spent 158 s building wasm-pack from crates.io. It still produced
+# the right version, which is the fallback earning its place rather than excusing
+# the wrong URL. MEASURED against the real release: v0.15.0 is the latest there
+# and publishes `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`
+# among its five assets, which are exactly the two targets below.
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) target=x86_64-unknown-linux-musl ;; \
       arm64) target=aarch64-unknown-linux-musl ;; \
       *) target= ;; \
     esac; \
-    url="https://github.com/drager/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-${target}.tar.gz"; \
+    url="https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-${target}.tar.gz"; \
     if [ -n "${target}" ] && curl -fsSL "${url}" -o /tmp/wasm-pack.tar.gz; then \
       tar -xzf /tmp/wasm-pack.tar.gz -C /tmp; \
       install -m 0755 "/tmp/wasm-pack-v${WASM_PACK_VERSION}-${target}/wasm-pack" /usr/local/bin/wasm-pack; \

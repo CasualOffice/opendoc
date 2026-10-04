@@ -455,6 +455,39 @@ test("the relay image ships no CMD, so it cannot default a permission nobody cho
   );
 });
 
+test("the stage names docs/162 lists are the stages the editor image has", () => {
+  // A small number, typed into prose, about a file in the same commit — which is
+  // exactly the shape that goes stale. The first draft of §3.2 said "four
+  // stages" over a three-stage Dockerfile, and nothing but a reader would have
+  // noticed.
+  const stages = [...EDITOR_DOCKERFILE.matchAll(/^FROM\s+\S+\s+AS\s+(\S+)/gm)].map(
+    (match) => match[1],
+  );
+  assert.ok(stages.length >= 2, "Dockerfile.editor must be a multi-stage build");
+  const counted = { 1: "one", 2: "two", 3: "three", 4: "four", 5: "five" }[stages.length];
+  assert.match(
+    GUIDE,
+    new RegExp(`The build is ${counted} stages`),
+    `docs/162 §3.2 must say the editor image is ${counted} stages — it has ` +
+      `${stages.length}: ${stages.join(", ")}`,
+  );
+  for (const stage of stages) {
+    assert.ok(
+      GUIDE.includes(`\`${stage}\``),
+      `docs/162 §3.2 names the stages and does not name \`${stage}\``,
+    );
+  }
+  // The claim the stage split exists to make: nothing from the toolchain is in
+  // the final stage. Read as "the last FROM onwards", which is the runtime.
+  const runtime = EDITOR_DOCKERFILE.slice(EDITOR_DOCKERFILE.lastIndexOf("\nFROM "));
+  assert.doesNotMatch(
+    runtime,
+    /\b(cargo|rustup|wasm-pack|apt-get|npm)\b/,
+    "Dockerfile.editor's runtime stage reaches for the build toolchain, so docs/162 §3.2's " +
+      '"no Rust, no cargo, no Node, no Python and no source" is false',
+  );
+});
+
 test("neither runtime stage runs as root", () => {
   for (const [name, text] of [
     ["Dockerfile.relay", RELAY_DOCKERFILE],

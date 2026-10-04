@@ -482,12 +482,12 @@ test("how much English the reference pages put on the site, measured and publish
   // lie than leaving it in English. The shared chrome cost nothing on either
   // side, which is the direction this figure actually watches.
   //
-  // 2093 -> 2501 with `docs/162`, the deployment guide (`109` RM-11), published as
+  // 2093 -> 2502 with `docs/162`, the deployment guide (`109` RM-11), published as
   // `reference/deployment-containers-and-configuration.html`. MEASURED per page
   // against `origin/main`'s committed bytes rather than calculated, and the
   // movement decomposes exactly:
   //
-  //   the new page                                        0 -> 394
+  //   the new page                                        0 -> 395
   //   reference/index.html (its row in the listing)      49 -> 52
   //   every other page, +1 each (11 pages)                     +11
   //
@@ -503,17 +503,17 @@ test("how much English the reference pages put on the site, measured and publish
   // `main`, which this branch found by re-measuring rather than carrying a number
   // forward. #759 then landed the same correction from the other side (2090 ->
   // 2093, ODC-7010's row in `20-ERROR-CODE-REGISTRY.md`), this branch rebased onto
-  // it, and the figure was measured AGAIN on the merged tree. 2093 + 408 = 2501,
+  // it, and the figure was measured AGAIN on the merged tree. 2093 + 409 = 2502,
   // which is the same total either way — but only because the measurement was
-  // retaken; arithmetic on this branch's own baseline would have published 2498.
+  // retaken; arithmetic on this branch's own baseline would have published 2499.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2501,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2501). That ` +
+    2502,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2502). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +
