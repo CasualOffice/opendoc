@@ -944,6 +944,43 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                 list.push(item);
             }
         }
+        AnchorContent::PictureFilledShape {
+            commands,
+            closed,
+            media,
+            crop,
+            opacity,
+            stroke,
+        } => {
+            // Clip, paint, unclip, then stroke the outline OVER the picture — the
+            // order Word draws it in: an outline under a stretched fill would be
+            // half-covered by it.
+            list.push(PaintItem::PushClipPath {
+                commands: commands.clone(),
+                closed: *closed,
+            });
+            list.push(PaintItem::Image {
+                rect: anchor.rect,
+                media: media.clone(),
+                crop: *crop,
+                opacity: *opacity,
+                transform: anchor.transform,
+            });
+            list.push(PaintItem::PopClip);
+            if let Some(stroke) = stroke {
+                list.push(PaintItem::Shape {
+                    geometry: ShapeGeometry::Path {
+                        commands: commands.clone(),
+                        closed: *closed,
+                    },
+                    fill: None,
+                    stroke: Some(shape_outline(stroke)),
+                    head_end: None,
+                    tail_end: None,
+                    transform: anchor.transform,
+                });
+            }
+        }
         AnchorContent::TextBox {
             blocks,
             fill,
@@ -1053,6 +1090,11 @@ fn shape_paint_item(
     transform: Option<crate::display::ShapeTransform>,
 ) -> Option<PaintItem> {
     let (geometry, fill, stroke, head_end, tail_end) = match content {
+        // A picture-filled shape is not ONE paint item: it expands into a clip, an
+        // image and a stroke, so it cannot come through here. `None` rather than a
+        // rectangle fallback, because a text box's backdrop is the only caller and a
+        // picture-filled backdrop would paint the image twice.
+        AnchorContent::PictureFilledShape { .. } => return None,
         AnchorContent::Rectangle { fill, stroke } => (
             ShapeGeometry::Rect { rect },
             fill.as_ref(),

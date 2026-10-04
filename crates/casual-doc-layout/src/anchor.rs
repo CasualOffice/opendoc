@@ -37,7 +37,9 @@ use casual_doc_model::v1::DashStyle;
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
 // Own `use` line, for the same anti-conflict reason as the two above: the
 // shared `GroupChild` walk needs the text-box type and the nesting bound.
-use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH, StrokeDetail, TextBoxBodyProperties};
+use casual_doc_model::v1::{
+    GroupTextBox, MAX_GROUP_DEPTH, PictureFillMode, StrokeDetail, TextBoxBodyProperties,
+};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -1054,6 +1056,26 @@ pub fn place_group_child_tree(
                 // value with literals across six crates and a `Vec` cannot live in
                 // one. Resolved here, once, for both painters.
                 let detail = stroke_detail(host.definitions(), shape.id);
+                // A picture FILL paints the image clipped to the shape's outline,
+                // which needed `PaintItem::PushClipPath` to exist. Tried before the
+                // geometry below, because the fill replaces it rather than sitting
+                // behind it — and falls through when the fill is a tile, whose
+                // repetition the display list cannot express and which stays
+                // reported rather than stretched.
+                if let Some(content) =
+                    picture_filled_shape_content(shape, host.definitions(), rect, stroke, detail)
+                {
+                    let (rotation, flip_h, flip_v) =
+                        pose.compose_child(shape.rotation, shape.flip_h, shape.flip_v);
+                    host.emit(
+                        shape.id,
+                        content,
+                        rect,
+                        None,
+                        shape_transform(rect, flip_h, flip_v, rotation),
+                    );
+                    continue;
+                }
                 let content = if let Some(path) = shape.path.as_ref() {
                     custom_path_content(path, rect, fill, stroke, detail)
                 } else {
@@ -2133,6 +2155,66 @@ pub fn shape_transform(
             Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
         ),
     })
+}
+
+/// A shape whose `a:blipFill` can be painted: the image clipped to its outline.
+///
+/// `None` — so the caller paints the ordinary geometry — when the shape has no
+/// picture fill, when the fill is a TILE (the display list has no tiling primitive,
+/// and stretching a tiled fill instead would look deliberate), when the media
+/// reference does not resolve, or when the geometry yields no outline to clip to.
+///
+/// The outline comes from the same resolution every other shape uses, so a
+/// picture-filled star is clipped to exactly the star a solid-filled one draws.
+///
+/// Complexity: O(guides + commands) in the preset, fixed per preset.
+fn picture_filled_shape_content(
+    shape: &GroupShape,
+    definitions: &Definitions,
+    rect: Rect,
+    stroke: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
+) -> Option<AnchorContent> {
+    let picture = definitions
+        .shape_fill_detail
+        .get(&shape.id)?
+        .picture
+        .as_ref()?;
+    // Only `a:stretch`. A tile is reported at import and left to the ordinary
+    // geometry path, which paints the shape's own fill or nothing.
+    if !matches!(picture.mode, PictureFillMode::Stretch { .. }) {
+        return None;
+    }
+    let media = definitions.media.get(&picture.media)?.part_name.clone();
+    // The outline to clip to: a custom geometry if the shape carries one, else the
+    // preset's own commands. A geometry with no path — an ellipse, a rounded
+    // rectangle — has no command list here, so it falls through to the ordinary
+    // path and keeps today's behaviour rather than painting unclipped.
+    let (commands, closed) = shape_outline_commands(shape, rect)?;
+    Some(AnchorContent::PictureFilledShape {
+        commands,
+        closed,
+        media,
+        crop: picture.crop,
+        opacity: picture.opacity,
+        stroke: shape_stroke(stroke, detail),
+    })
+}
+
+/// A shape's outline as display-list commands, from its custom geometry or its
+/// preset token.
+fn shape_outline_commands(shape: &GroupShape, rect: Rect) -> Option<(Vec<PathCommand>, bool)> {
+    if let Some(path) = shape.path.as_ref() {
+        return match custom_path_content(path, rect, None, None, None) {
+            AnchorContent::Path {
+                commands, closed, ..
+            } => Some((commands, closed)),
+            _ => None,
+        };
+    }
+    let token = shape.geometry.preset_token().or(shape.preset.as_deref())?;
+    let commands = shape_preset::preset_outline(token, &shape.adjustments, rect)?;
+    Some((commands, shape_preset::preset_is_closed(token)))
 }
 
 /// The rotation a text box's CONTENT paints at: `wps:bodyPr@vert` combined with

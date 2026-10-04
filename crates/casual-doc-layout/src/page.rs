@@ -151,6 +151,35 @@ pub enum AnchorContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opacity: Option<u32>,
     },
+    /// A shape whose FILL is a picture (`a:blipFill` on a `wps:spPr`): the image
+    /// painted clipped to the shape's own outline, with the outline stroked over it.
+    ///
+    /// A distinct variant rather than an `Image` with a clip bolted on, because the
+    /// placed layer is one anchor per shape and the expansion into
+    /// `PushClipPath` + `Image` + `PopClip` + stroke belongs where the other
+    /// multi-item expansions live — `AnchorContent::TextBox` already works that way.
+    ///
+    /// Only `a:stretch` reaches here. `a:tile` repeats the picture, and the display
+    /// list has no tiling primitive, so a tiled fill stays reported-and-unpainted
+    /// rather than being stretched instead — a tiled logo drawn stretched looks
+    /// deliberate and is not what the file says.
+    PictureFilledShape {
+        /// The shape's outline, which the picture is clipped to.
+        commands: Vec<crate::display::PathCommand>,
+        /// Whether that outline closes.
+        closed: bool,
+        /// The media key (package part name), resolved as for an `Image`.
+        media: String,
+        /// `a:srcRect`, the source crop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crop: Option<casual_doc_model::v1::CropRect>,
+        /// The fill's opacity in 1000ths of a percent; `None` is opaque.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<u32>,
+        /// The shape's outline, stroked over the picture.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stroke: Option<AnchorStroke>,
+    },
     /// A rectangle (a group's background/foreground shape).
     Rectangle {
         /// The fill (solid or gradient), if filled.

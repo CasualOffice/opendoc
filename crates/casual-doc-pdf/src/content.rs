@@ -257,6 +257,22 @@ impl<'a> Transcriber<'a> {
                 out.op("W n");
                 out.clips += 1;
             }
+            PaintItem::PushClipPath { commands, closed } => {
+                // `W n` sets the clip to the current path and paints nothing, the
+                // same two operators the rectangular form uses — PDF's clip takes
+                // any path, so this needed no new PDF machinery, only the display
+                // list to be able to say it.
+                //
+                // The path is closed for the clip regardless of `closed`: a clip has
+                // no stroke, so an open outline clips as if filled, which is the same
+                // reading the rasterizer takes. Emitting it open would leave the
+                // winding rule to infer a closure anyway.
+                out.op("q");
+                out.path_commands(commands, true);
+                let _ = closed;
+                out.op("W n");
+                out.clips += 1;
+            }
             PaintItem::PopClip => {
                 if out.clips > 0 {
                     out.clips -= 1;

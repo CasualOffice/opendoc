@@ -15961,7 +15961,12 @@ impl WasmDocument {
                     | AnchorContent::Ellipse { .. }
                     | AnchorContent::RoundedRectangle { .. }
                     | AnchorContent::Path { .. }
-                    | AnchorContent::Line { .. } => "shape",
+                    | AnchorContent::Line { .. }
+                    // A picture-filled shape is a SHAPE, not an image: it is
+                    // selected, resized and restyled as the shape it is, and its
+                    // fill happens to be a picture. Classifying it as an image would
+                    // give the host the wrong action bar.
+                    | AnchorContent::PictureFilledShape { .. } => "shape",
                     // A positioned table (`w:tblpPr`) rides the same float layer
                     // but is NOT a floating drawing object: it is selected and
                     // edited through the ordinary table surfaces and its cells

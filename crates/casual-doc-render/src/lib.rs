@@ -274,6 +274,28 @@ pub fn render(
                     clip_stack.push(inherited);
                 }
             }
+            PaintItem::PushClipPath { commands, closed } => {
+                // A clip has no stroke, so an open outline still clips as if filled —
+                // which is why `closed` is not consulted when building the mask and
+                // is carried only so the geometry round-trips.
+                let path = command_path(commands, *closed, dpi);
+                match path.and_then(|path| {
+                    build_clip_mask_from_path(&surface.pixmap, &path, clip_stack.last())
+                }) {
+                    Some(mask) => clip_stack.push(mask),
+                    // A degenerate outline clips nothing. Inheriting the parent keeps
+                    // the stack balanced with `PopClip`; pushing nothing would make
+                    // the matching pop discard the ENCLOSING clip, which paints
+                    // content outside it and is far worse than a clip that does not
+                    // bite.
+                    None => {
+                        if let Some(parent) = clip_stack.last() {
+                            let inherited = parent.clone();
+                            clip_stack.push(inherited);
+                        }
+                    }
+                }
+            }
             PaintItem::PopClip => {
                 clip_stack.pop();
             }
@@ -680,6 +702,30 @@ fn rasterize_svg(bytes: &[u8], width_px: u32, height_px: u32) -> Option<Pixmap> 
 /// Builds the effective clip mask for a `PushClip(rect)`: the rectangle painted
 /// into an 8-bit alpha mask, intersected with the enclosing clip (`parent`) so
 /// nested clips compose. Returns `None` only for a degenerate (zero-area) rect.
+/// The clip mask for an arbitrary outline, intersected with the enclosing clip.
+///
+/// The rectangular form is this with `rect_path`; they are separate only because the
+/// rectangle's path is built from a `Rect` and this one's is already built. Both
+/// intersect rather than replace, so nesting a clip can only ever narrow.
+fn build_clip_mask_from_path(
+    pixmap: &Pixmap,
+    path: &tiny_skia::Path,
+    parent: Option<&Mask>,
+) -> Option<Mask> {
+    match parent {
+        Some(parent) => {
+            let mut mask = parent.clone();
+            mask.intersect_path(path, FillRule::Winding, true, Transform::identity());
+            Some(mask)
+        }
+        None => {
+            let mut mask = Mask::new(pixmap.width(), pixmap.height())?;
+            mask.fill_path(path, FillRule::Winding, true, Transform::identity());
+            Some(mask)
+        }
+    }
+}
+
 fn build_clip_mask(pixmap: &Pixmap, rect: Rect, dpi: f32, parent: Option<&Mask>) -> Option<Mask> {
     let path = rect_path(rect, dpi)?;
     match parent {

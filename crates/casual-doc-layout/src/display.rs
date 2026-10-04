@@ -391,6 +391,29 @@ pub enum PaintItem {
     },
     /// Push a clip rectangle; subsequent items are clipped until [`PaintItem::PopClip`].
     PushClip(Rect),
+    /// Push a clip **path**; subsequent items are clipped to it until
+    /// [`PaintItem::PopClip`], which pops either kind.
+    ///
+    /// # Why a rectangle was not enough
+    ///
+    /// A picture-filled shape (`a:blipFill` on a `wps:spPr`) paints its image
+    /// clipped to the shape's own outline. With only a rectangular clip, a
+    /// picture-filled ellipse or star could not be drawn at all — which is why both
+    /// `docs/156` §6 row 0.3 (a shape's own `a:blipFill`) and row 0.2 (the style
+    /// matrix's `a:blipFill` entry) were blocked on the same missing primitive
+    /// rather than on any modelling work.
+    ///
+    /// Shares [`PaintItem::PopClip`] with the rectangular form deliberately: the
+    /// backend keeps one clip stack, and two pop opcodes would let a mismatched pair
+    /// unbalance it silently.
+    PushClipPath {
+        /// The outline, in the same device-scaled twips as the rest of the list.
+        commands: Vec<PathCommand>,
+        /// Whether the outline closes. An unclosed path still clips as if filled —
+        /// a clip has no stroke — but the flag is carried so the geometry round-trips
+        /// unchanged.
+        closed: bool,
+    },
     /// Pop the most recent clip.
     PopClip,
     /// Push a LAYER: subsequent items are composited as one group, optionally

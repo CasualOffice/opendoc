@@ -4388,3 +4388,255 @@ fn turnable_text_box(vertical: casual_doc_model::v1::TextVertical) -> GroupChild
         rotation: None,
     })
 }
+
+/// A picture-filled shape paints its image CLIPPED to its own outline.
+///
+/// `docs/156` §6 row 0.3 and row 0.2 were both blocked on one missing primitive, not
+/// on modelling: `PaintItem::PushClip` took a rectangle, so a picture-filled ellipse
+/// or star could not be drawn at all and the fill was reported-and-dropped.
+/// `PaintItem::PushClipPath` is that primitive.
+///
+/// Asserted as the expansion rather than as one item, because the whole point is that
+/// it is three: clip, image, unclip — and the outline stroked OVER the picture, which
+/// is the order Word draws it in. A stroke under a stretched fill is half-covered.
+#[test]
+fn a_picture_filled_shape_clips_its_image_to_its_outline() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::{
+        MediaId, MediaReference, PictureFill, PictureFillMode, ShapeFillDetail, ShapeStroke,
+    };
+
+    let shape_id = node(91);
+    let media = MediaId::new(node(900));
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        // A TRIANGLE, deliberately: a rectangle's clip would be indistinguishable
+        // from no clip at all, so the guard would pass without the primitive.
+        geometry: ShapeGeometry::Triangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: None,
+        stroke: Some(ShapeStroke {
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 12_700,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        }),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+
+    let mut document = single_child_group_document(child);
+    let definitions = document.definitions_mut();
+    definitions.media.insert(
+        media,
+        MediaReference {
+            relationship_id: "rId9".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "/word/media/fill.png".to_owned(),
+        },
+    );
+    definitions.shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: Some(PictureFill {
+                media,
+                mode: PictureFillMode::Stretch { fill_rect: None },
+                crop: None,
+                opacity: None,
+                rotate_with_shape: None,
+            }),
+            pattern: None,
+            gradient: None,
+            stroke: None,
+        },
+    );
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+
+    let clip_at = list
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::PushClipPath { .. }))
+        .expect("the picture is clipped to a PATH, not to a rectangle");
+    let image_at = list
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::Image { .. }))
+        .expect("the fill paints as an image");
+    let pop_at = list
+        .items
+        .iter()
+        .skip(clip_at)
+        .position(|item| matches!(item, PaintItem::PopClip))
+        .map(|offset| offset + clip_at)
+        .expect("the clip closes");
+    assert!(
+        clip_at < image_at && image_at < pop_at,
+        "the image must paint INSIDE the clip: clip={clip_at} image={image_at} pop={pop_at}"
+    );
+
+    // The clip is the shape's own outline — a triangle's three vertices, not a
+    // rectangle's four.
+    match &list.items[clip_at] {
+        PaintItem::PushClipPath { commands, closed } => {
+            assert!(closed, "a filled shape's outline closes");
+            assert_eq!(
+                commands.len(),
+                3,
+                "the triangle's own outline clips the picture: {commands:?}"
+            );
+        }
+        other => panic!("expected a path clip, got {other:?}"),
+    }
+
+    // And the outline is stroked AFTER the clip closes, so it paints over the
+    // picture rather than under it.
+    let stroke_at = list
+        .items
+        .iter()
+        .position(|item| {
+            matches!(
+                item,
+                PaintItem::Shape {
+                    stroke: Some(_),
+                    fill: None,
+                    ..
+                }
+            )
+        })
+        .expect("the outline is stroked");
+    assert!(
+        stroke_at > pop_at,
+        "the outline strokes over the picture, not under it: stroke={stroke_at} pop={pop_at}"
+    );
+}
+
+/// A TILED picture fill is reported, not stretched.
+///
+/// `a:tile` repeats the picture from an offset at a scale; the display list has no
+/// tiling primitive. Painting it stretched instead would put a single
+/// shape-filling image where the file says a repeating pattern — the failure looks
+/// deliberate, which is the whole reason the policy here is report-not-approximate
+/// (the same call `a:pattFill` already takes).
+///
+/// Written because the stretch guard above could not see this: its fixture only
+/// carries a stretch, so accepting a tile AS a stretch left it green.
+#[test]
+fn a_tiled_picture_fill_is_not_painted_as_a_stretch() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::{
+        MediaId, MediaReference, PictureFill, PictureFillMode, ShapeFillDetail,
+    };
+
+    let shape_id = node(91);
+    let media = MediaId::new(node(900));
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Triangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: None,
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+
+    let mut document = single_child_group_document(child);
+    let definitions = document.definitions_mut();
+    definitions.media.insert(
+        media,
+        MediaReference {
+            relationship_id: "rId9".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "/word/media/fill.png".to_owned(),
+        },
+    );
+    definitions.shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: Some(PictureFill {
+                media,
+                mode: PictureFillMode::Tile {
+                    offset_x_emu: 0,
+                    offset_y_emu: 0,
+                    scale_x: None,
+                    scale_y: None,
+                    flip: casual_doc_model::v1::TileFlip::default(),
+                    alignment: casual_doc_model::v1::RectAlignment::TopLeft,
+                },
+                crop: None,
+                opacity: None,
+                rotate_with_shape: None,
+            }),
+            pattern: None,
+            gradient: None,
+            stroke: None,
+        },
+    );
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+
+    assert!(
+        !list
+            .items
+            .iter()
+            .any(|item| matches!(item, PaintItem::Image { .. })),
+        "a tiled fill must not paint an image at all: {:?}",
+        list.items
+    );
+    assert!(
+        !list
+            .items
+            .iter()
+            .any(|item| matches!(item, PaintItem::PushClipPath { .. })),
+        "and must not clip, since there is nothing to clip"
+    );
+    // It falls through to the ordinary geometry, so the shape still draws as the
+    // triangle it is — an unpainted fill must not erase the object.
+    assert!(
+        list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::Shape {
+                geometry: casual_doc_layout::display::ShapeGeometry::Path { .. },
+                ..
+            }
+        )),
+        "the shape itself still paints: {:?}",
+        list.items
+    );
+}
