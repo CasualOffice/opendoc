@@ -15,11 +15,17 @@
 //! that flips on a one-twip crossing and makes text jump sideways as a shape is
 //! dragged past the column centre.
 //!
-//! No fixture could have caught any of that: a scan of all 36 readable packages
-//! under `fixtures/` found exactly one `wrapText` anywhere, the `bothSides` in
+//! No fixture could have caught any of that: a scan of all 35 readable packages
+//! under `fixtures/` — 36 existed, the thirty-sixth being
+//! `malformed-truncated.docx`, which is deliberately not a zip — found exactly
+//! one `wrapText` anywhere, the `bothSides` in
 //! `visual-containment.docx`. `fixtures/generated/wrap-text-sides.docx` was
-//! authored for this file and carries all four values, the absence, and a
-//! `wrapTopAndBottom` the schema gives no `@wrapText`.
+//! authored for this file and carries all four values, the absence, a
+//! `wrapTopAndBottom` the schema gives no `@wrapText`, and — because the writer
+//! reaches its wrap emitter from three different anchor paths — a side-wrapped
+//! anchored TEXT BOX and a side-wrapped anchored GROUP as well as pictures. The
+//! owner's report is about dragging shapes and text boxes, so a picture-only
+//! fixture would have left the path that matters most unexercised.
 //!
 //! What the fixture found, and it is the worse of the two possible answers: **the
 //! drop was silent.** With the read mutated out, the compatibility report for a
@@ -81,8 +87,8 @@ const SIDE_WRAPS: [&str; 3] = ["wrapSquare", "wrapTight", "wrapThrough"];
 /// The attribute, unqualified. Not `w:wrapText`, not `wp:wrapText`.
 const WRAP_TEXT: &[u8] = b"wrapText";
 
-/// What the fixture's side wraps say, in document order: four authored values and
-/// one absence.
+/// What the fixture's side wraps say, in document order: six authored values
+/// across two wrap element names and three kinds of float, plus one absence.
 ///
 /// Pinned so a fixture edited down to nothing cannot satisfy this file by having
 /// nothing to find — the vacuous pass that makes a guard worse than no guard, and
@@ -93,9 +99,18 @@ const EXPECTED_SIDE_WRAPS: &[(&str, Option<&str>)] = &[
     ("wrapSquare", Some("right")),
     ("wrapTight", Some("largest")),
     ("wrapSquare", None),
+    // A text box and a group, not pictures. The writer reaches `write_wrap` from
+    // three different anchor paths and only the picture one ran against a side
+    // wrap before these two existed; the owner's report is about dragging shapes
+    // and TEXT BOXES, so the uncovered path was the one that mattered most.
+    ("wrapSquare", Some("right")),
+    ("wrapSquare", Some("left")),
 ];
 
-/// The model states those five floats must import with, in document order.
+/// The model states the five side-wrapped PICTURES must import with, in document
+/// order. The text box and the group have their own list,
+/// [`EXPECTED_NON_PICTURES`], because they are different nodes written by
+/// different paths.
 const EXPECTED_MODEL: &[(WrapMode, Option<WrapSide>)] = &[
     (WrapMode::Square, Some(WrapSide::BothSides)),
     (WrapMode::Square, Some(WrapSide::Left)),
@@ -219,7 +234,7 @@ fn side_wraps(bytes: &[u8]) -> Vec<(String, Option<String>)> {
     found
 }
 
-/// Every anchored float's `(wrap, wrap_text)` pair, in body order.
+/// Every anchored PICTURE's `(wrap, wrap_text)` pair, in body order.
 ///
 /// Derived by walking the body rather than by indexing, so inserting a paragraph
 /// into the fixture cannot silently shift an assertion onto the wrong float.
@@ -236,6 +251,42 @@ fn anchored_floats(document: &Document) -> Vec<(WrapMode, Option<WrapSide>)> {
     }
     floats
 }
+
+/// Every anchored float that is NOT a picture, as a label and its
+/// `(wrap, wrap_text)` pair, in body order.
+///
+/// A separate walk because these are separate node kinds with separate writer
+/// paths, and a single list keyed only by position would hide which one lost its
+/// side. An inline (non-anchored) text box or group contributes nothing: there is
+/// no `wp:anchor` on it to carry the attribute.
+fn anchored_non_pictures(document: &Document) -> Vec<(&'static str, WrapMode, Option<WrapSide>)> {
+    let mut floats = Vec::new();
+    for block in document.body() {
+        if let BlockNode::Paragraph(paragraph) = block {
+            for inline in &paragraph.inlines {
+                let found = match inline {
+                    InlineNode::TextBox(text_box) => {
+                        text_box.anchor.as_ref().map(|anchor| ("text box", anchor))
+                    }
+                    InlineNode::Group(group) => {
+                        group.anchor.as_ref().map(|anchor| ("group", anchor))
+                    }
+                    _ => None,
+                };
+                if let Some((label, anchor)) = found {
+                    floats.push((label, anchor.wrap, anchor.wrap_text));
+                }
+            }
+        }
+    }
+    floats
+}
+
+/// The two non-picture floats' states, in document order.
+const EXPECTED_NON_PICTURES: &[(&str, WrapMode, Option<WrapSide>)] = &[
+    ("text box", WrapMode::Square, Some(WrapSide::Right)),
+    ("group", WrapMode::Square, Some(WrapSide::Left)),
+];
 
 /// The fixture really carries the five discriminating states, on floats that
 /// really import as floats.
@@ -258,9 +309,15 @@ fn the_fixture_carries_every_wrap_text_state() {
     let imported = import(WRAP_TEXT_SIDES_DOCX);
     assert_eq!(
         anchored_floats(&imported.document).len(),
-        EXPECTED_SIDE_WRAPS.len() + 1,
-        "the fixture's six anchors must all import as floats — the five side wraps \
-         plus the `wrapTopAndBottom` that has no side to select"
+        6,
+        "the fixture's six anchored PICTURES must all import as floats — five side \
+         wraps plus the `wrapTopAndBottom` that has no side to select"
+    );
+    assert_eq!(
+        anchored_non_pictures(&imported.document).len(),
+        2,
+        "and its anchored text box and anchored group must import as floats too, or \
+         two of the three writer paths go unexercised"
     );
 }
 
@@ -285,6 +342,13 @@ fn import_reads_every_side_and_the_absence() {
         Some((WrapMode::TopAndBottom, None)),
         "and the `wrapTopAndBottom`, which the schema gives no `@wrapText`, must \
          carry no side"
+    );
+    assert_eq!(
+        anchored_non_pictures(&imported.document),
+        EXPECTED_NON_PICTURES,
+        "and the anchored text box and anchored group must each read their own \
+         side: these are different model nodes reached by different writer paths, \
+         and a picture-only guard would not notice either losing it"
     );
 }
 
@@ -325,7 +389,18 @@ fn the_accessor_resolves_the_absent_attribute_to_words_default() {
             // that can refuse; the doc comment is where "meaningless here" lives.
             WrapSide::BothSides,
         ],
-        "every float's resolved side, in document order"
+        "every anchored picture's resolved side, in document order"
+    );
+
+    let non_pictures: Vec<WrapSide> = anchored_non_pictures(&imported.document)
+        .iter()
+        .map(|(_, _, side)| side.unwrap_or(WrapSide::BothSides))
+        .collect();
+    assert_eq!(
+        non_pictures,
+        vec![WrapSide::Right, WrapSide::Left],
+        "and the text box's and the group's, which layout reads through the same \
+         accessor on the same `DrawingAnchor`"
     );
 }
 
@@ -392,7 +467,13 @@ fn the_wrap_side_is_a_fixed_point_across_a_save() {
     assert_eq!(
         &anchored_floats(&reopened.document)[..EXPECTED_MODEL.len()],
         EXPECTED_MODEL,
-        "and reopening it must give back the same five model states"
+        "and reopening it must give back the same five picture states"
+    );
+    assert_eq!(
+        anchored_non_pictures(&reopened.document),
+        EXPECTED_NON_PICTURES,
+        "and the same text-box and group states, which travel through the writer's \
+         other two anchor paths"
     );
 }
 
