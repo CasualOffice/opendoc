@@ -431,7 +431,7 @@ fn every_refusal_code_has_a_row_in_the_register() {
     // Every refusal this crate can send, by construction rather than by a list someone
     // maintains: one of each variant, so adding a variant without a code fails to compile and
     // adding one without a register row fails here.
-    let every: [Refusal; 10] = [
+    let every: [Refusal; 11] = [
         Refusal::ProtocolVersion {
             server: 1,
             client: 2,
@@ -452,6 +452,7 @@ fn every_refusal_code_has_a_row_in_the_register() {
         Refusal::RoomFull {
             limit: crate::presence::MAX_PARTICIPANTS,
         },
+        Refusal::AccessChangeRefused,
     ];
     let mut codes = std::collections::BTreeSet::new();
     for refusal in every {

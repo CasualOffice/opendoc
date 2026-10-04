@@ -5278,6 +5278,24 @@ body.compact-mode {
 }
 
 /* Icon toggle buttons */
+/* **`.fmt` has to answer `[hidden]`, because its own `display` outranks the user
+   agent's.** `[hidden] { display: none }` is a UA rule, so any author `display` on
+   the same element beats it — which means every `.fmt` button in this product that
+   ships `hidden` was painted anyway.
+   This was not theoretical and it was already known once: `.ribbon-overflow-btn`
+   carries its own `[hidden]` rule further down, and the only reason it needs one is
+   this. That rule is now redundant and is left where it is rather than removed in a
+   change about something else; what is new here is that the NEXT `.fmt` button to
+   ship `hidden` does not have to rediscover it. `session-rights.spec.mjs` is the
+   guard — Manage access is absent, not greyed, for a participant whose grant
+   withholds it, and a button the stylesheet painted anyway is that requirement
+   silently broken.
+   Before `.fmt` rather than after, so the cascade order is obvious at the point the
+   `display` is set. */
+.fmt[hidden] {
+  display: none;
+}
+
 .fmt {
   display: inline-flex;
   align-items: center;
@@ -5775,15 +5793,32 @@ body.is-format-painting .page-wrap * {
   gap: 5px;
   color: var(--muted);
   white-space: nowrap;
+  /* **It shrinks rather than pushes**, and this is the line that matters: at
+     320px the footer squeezed this box to 28px against a 68px content width, and
+     a box that will not shrink turns that into a SIDEWAYS SCROLL of the whole
+     chrome — which `phone-no-horizontal-scroll.spec.mjs` caught, by name, on the
+     first run. The no-horizontal-scroll rule is the one the ribbon budget turns
+     on too (`SKILL` §11): what breaks first is never an overflow menu, it is a
+     scrollbar. */
+  flex: 0 1 auto;
   min-width: 0;
 }
 
 .access-badge .ms {
   font-size: 15px;
+  /* The glyph is the one part that may not shrink — a half-drawn icon is worse
+     than none — so it is excluded from the squeeze and the text absorbs it. */
+  flex: 0 0 auto;
 }
 
 .access-badge-level {
   color: var(--ink);
+  /* Truncates rather than overflowing. The whole statement is on the container's
+     `title`/`aria-label`, so a clipped label costs a sighted reader the end of a
+     word and costs a screen reader nothing. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* The SOURCE is the half that goes first when the footer is tight, and it may:
@@ -5792,6 +5827,17 @@ body.is-format-painting .page-wrap * {
    statement stays on the container's `title`, so nothing is lost outright. */
 @media (max-width: 900px) {
   .access-badge-source {
+    display: none;
+  }
+}
+
+/* At phone width the glyph goes too, and the level keeps every pixel there is.
+   A 15px icon plus its gap is a fifth of what this box gets at 320px, and the
+   WORD is the thing a reader needs — "Read only" clipped to "Read on…" still
+   answers the question, and a lock glyph on its own does not say whether it
+   means read-only, comments-only or suggest-only. */
+@media (max-width: 620px) {
+  .access-badge .ms {
     display: none;
   }
 }

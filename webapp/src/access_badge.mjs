@@ -98,15 +98,30 @@ export const ACCESS_LEVEL_KEYS = Object.freeze({
   read: "access.level.read",
 });
 
-/** The container role, as `capabilities.mjs` grades it, reduced to a level.
+/** The container role, as `capabilities.mjs` grades it, reduced to a level — or
+ *  `null` when no container grant was supplied at all.
  *
  *  Reads the capability set rather than the role NAME, because a host may
  *  withhold a capability from a named preset (`parseWithheld`) and the name would
- *  then overstate what is left. O(1). */
+ *  then overstate what is left.
+ *
+ *  **`null` for an absent grant, and NOT "read only", which is the fail-closed
+ *  answer and is wrong here.** Fail-closed is the rule for a boundary, and this is
+ *  not one — it is a statement, and the statement would be false: a reader on a
+ *  page that supplied no container grant is not restricted by one, so reporting
+ *  "Read only — set when this document was opened" names an authority that did not
+ *  speak. That is the exact failure the `session.*` / `document.*` split exists to
+ *  prevent, and it is worse than the overstatement it would be avoiding, because a
+ *  reader who is told they may not edit does not try.
+ *
+ *  An object that is PRESENT and withholds `edit` is a different fact and does
+ *  grade to a level — `{has: () => false}` is a host saying no, and it is reported.
+ *
+ *  O(1). */
 function containerLevel(capabilities) {
-  const has = (name) => capabilities?.has?.(name) === true;
-  if (has("edit")) return "full";
-  if (has("comment")) return "comment";
+  if (typeof capabilities?.has !== "function") return null;
+  if (capabilities.has("edit") === true) return "full";
+  if (capabilities.has("comment") === true) return "comment";
   return "read";
 }
 
@@ -181,8 +196,14 @@ export function accessState({
   }
 
   // 4. The container's grant — the host's, from the URL, before first paint.
+  //    `null` is "no container said anything", which falls through to (5); `full`
+  //    is a container that said yes, which is the same outcome by a different
+  //    route and falls through for the same reason — naming the host as the
+  //    authority for an unrestricted reader attributes a decision nobody made.
   const level = containerLevel(capabilities);
-  if (level !== "full") return frozen(ACCESS_LEVEL_KEYS[level], ACCESS_SOURCE_KEYS.host);
+  if (level !== null && level !== "full") {
+    return frozen(ACCESS_LEVEL_KEYS[level], ACCESS_SOURCE_KEYS.host);
+  }
 
   // 5. Nothing restricts anything. `Capabilities::local` says the reader on their
   //    own machine is the only authority, and the badge says so rather than going

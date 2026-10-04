@@ -319,6 +319,34 @@ const MODALS = [
     },
   },
   {
+    id: "sessionRightsDialog",
+    name: "Manage access",
+    // The rights surface for a shared session. It is reachable here because the
+    // PARTICIPANT grant arrives on the URL — `session_access.mjs`'s documented
+    // channel for a document opened without a live `Welcome` — so the editor is
+    // this room's owner for the length of this test. Without that the button is
+    // present and disabled, which is the standalone state and the right one:
+    // outside a room there are no other people's permissions to change.
+    //
+    // The membership list is EMPTY, because no relay answered, and the dialog
+    // opens anyway and says so. That is the behaviour under test as much as the
+    // modal contract is: a room of one is a real and common state — one doc, one
+    // room — and a control that refuses to open cannot tell the reader there is
+    // nobody to change.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Close, because with no rows there is no role picker to land on — which is
+    // what `initialFocus` falls back to, deliberately, rather than focusing a
+    // disabled Apply.
+    focus: "#sessionRightsClose",
+    async open(page) {
+      await gotoEditor(page, "&granted=comment,edit,manageAccess,review,suggest&participant=0");
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="review"]').click();
+      await page.locator("#reviewManageAccessBtn").click();
+    },
+  },
+  {
     id: "aboutDialog",
     name: "About",
     // Opened from the File PAGE rather than the palette, because a durable

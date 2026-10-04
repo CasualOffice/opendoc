@@ -47948,10 +47948,17 @@ mod tests {
     fn every_capability_the_engine_models_has_a_facade_name_in_both_directions() {
         // Sorted, because the getter promises sorted and a host diffing two grants compares
         // the lists.
-        let every_name: Vec<String> = ["comment", "edit", "manageProtection", "review", "suggest"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        let every_name: Vec<String> = [
+            "comment",
+            "edit",
+            "manageAccess",
+            "manageProtection",
+            "review",
+            "suggest",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
         let mut d = open_document(&text_of_lines(1)).expect("must open");
         d.adopt_participant_capabilities_internal(&every_name)
             .expect("every capability the engine models must have a name the facade accepts");

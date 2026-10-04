@@ -196,6 +196,21 @@ test("the withheld reason names what the participant MAY do, as the engine does"
   // happened to send; naming the class tells them what they are allowed to do.
   assert.equal(withheldCode([], "edit"), "session.read-only-access");
   assert.equal(withheldCode(["comment"], "edit"), "session.comments-only-access");
+  // `manageAccess` answers for itself, before the write ladder, because its
+  // authority question is not about this document at all: "you can only comment"
+  // is the wrong sentence for a reader who may comment and may not manage the
+  // room. Asserted across every write class so the answer is the capability's and
+  // not the holder's.
+  for (const held of [[], ["comment"], ["comment", "suggest"], ["comment", "review"]]) {
+    assert.equal(withheldCode(held, "manageAccess"), "session.no-access-change", `${held}`);
+  }
+  // ...and it is NOT the protection answer, which is the confusion this feature
+  // started from: `manageProtection` authorises changing the DOCUMENT's own
+  // policy, which travels with the file.
+  assert.notEqual(
+    withheldCode([], "manageAccess"),
+    withheldCode([], "manageProtection"),
+  );
   assert.equal(withheldCode(["comment", "suggest"], "edit"), "session.suggestions-only-access");
   assert.equal(withheldCode(["comment", "review"], "edit"), "session.review-only-access");
   // Widest write class held first, and `suggest` beats `review` — the Rust
@@ -259,6 +274,15 @@ test("every gated command resolves to a capability, and nothing else is captured
 test("a withheld command is disabled WITH its reason, on every surface at once", () => {
   const rows = [
     { id: "review.restrictEditing", enabled: true, disabledReason: "" },
+    // `review.manageAccess` is BELT AND BRACES here, and worth saying so. The
+    // rights surface does not produce this row at all for a participant whose
+    // grant withholds `manageAccess` — the owner's decision is absence, not a
+    // greyed control, and `session_rights.mjs` is where that is decided. What this
+    // table buys is the SENTENCE: `capabilityForCommand` is what
+    // `reflectReviewSurface` asks for the ribbon face's refusal title in a room,
+    // so a row that did reach this path is disabled with the same words the engine
+    // would have refused with rather than with a generic "unavailable".
+    { id: "review.manageAccess", enabled: true, disabledReason: "" },
     { id: "review.acceptAll", enabled: true, disabledReason: "" },
     { id: "review.comment", enabled: false, disabledReason: "Select text to comment on" },
     { id: "format.bold", enabled: true, disabledReason: "" },
@@ -270,6 +294,8 @@ test("a withheld command is disabled WITH its reason, on every surface at once",
   // Disabled, and carrying the SAME sentence the engine would have refused with.
   assert.equal(row("review.restrictEditing").enabled, false);
   assert.equal(row("review.restrictEditing").disabledReason, EN_STRINGS["session.noProtectionChange"]);
+  assert.equal(row("review.manageAccess").enabled, false);
+  assert.equal(row("review.manageAccess").disabledReason, EN_STRINGS["session.noAccessChange"]);
   assert.equal(row("review.acceptAll").enabled, false);
   assert.equal(row("review.acceptAll").disabledReason, EN_STRINGS["session.suggestionsOnly"]);
   // The grant's sentence outranks a transient one — the single rule used wherever
@@ -367,6 +393,21 @@ test("an unroutable code keeps the engine's own sentence rather than a generic o
   assert.equal(refusalKey(""), null);
   assert.equal(refusalKey(undefined), null);
   assert.equal(refusalKey("ODC-7010"), "collab.roomFull");
+  // **ONE SENTENCE FOR ONE PERMISSION, from two codes.** This module's whole
+  // reason for having a single table is that the sentence on a control a grant
+  // withholds and the sentence after the engine refuses the gesture must not
+  // differ. For managing access they arrive by different codes and that is
+  // deliberate: before the gesture the chrome knows exactly why, so it uses the
+  // `session.*` code; after one, the wire carries `ODC-7011`, which is
+  // undetailed on purpose — what an attacker would be enumerating is a ceiling.
+  // The CODES differ and the sentence must not, so they resolve to one key.
+  assert.equal(refusalKey("ODC-7011"), "session.noAccessChange");
+  assert.equal(refusalKey("session.no-access-change"), "session.noAccessChange");
+  assert.equal(
+    sessionAccess({}, keys).sentenceFor("ODC-7011"),
+    sessionAccess({}, keys).sentenceFor("session.no-access-change"),
+    "a reader is told two different things about one permission",
+  );
   assert.equal(sessionAccess({}, keys).sentenceFor("table.unmerge-not-merged"), "");
   assert.equal(sessionAccess({}, keys).sentenceFor("session.read-only-access"), "session.readOnly");
 });

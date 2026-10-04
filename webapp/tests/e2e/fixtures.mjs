@@ -39,8 +39,13 @@ export async function stableBox(locator) {
 // sample to open, and every page to finish its first render (mirrors the
 // manual "headless browser smoke" checks previously narrated in
 // docs/14-EXECUTION-TRACKER.md — see docs/67-EDITOR-UX-GAP-ANALYSIS.md).
-export async function gotoEditor(page) {
-  await page.goto("/editor.html?fixture=rich");
+export async function gotoEditor(page, query = "") {
+  // `query` is appended, not substituted, so every existing caller is unchanged.
+  // It exists for the one condition no spec could otherwise create: a PARTICIPANT
+  // grant. `session_access.mjs` reads it from the URL — the channel the host uses
+  // for a document opened without a live `Welcome` — so a spec can be a room's
+  // owner, or its viewer, without a relay.
+  await page.goto(`/editor.html?fixture=rich${query}`);
   await page.waitForFunction(
     () => {
       const status = document.getElementById("status");
