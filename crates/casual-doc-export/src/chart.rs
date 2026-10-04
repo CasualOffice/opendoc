@@ -56,6 +56,11 @@ use casual_doc_model::v1::{
     ThemeColor, ThemeColorRef, TickLabelPosition, TickMark,
 };
 use casual_doc_model::{NodeId, v1::EmbeddedPart};
+// Own `use` lines (rustfmt `Preserve`): the group walk that reaches a chart
+// inside a grouped text box. Kept separate so a parallel lane adding to the
+// sorted block above does not conflict here.
+use casual_doc_model::v1::GroupChild;
+use casual_doc_model::v1::WordprocessingGroup;
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesText, Event};
 
@@ -97,28 +102,34 @@ pub(crate) struct GeneratedChartPart {
 
 /// Every chart part this export must generate rather than copy.
 ///
-/// # What it walks, and the bound that is deliberate
+/// # Every block container, not just the body
 ///
-/// The **body** only, matching `collect_embedded_rels`: the document-relationship
-/// walk is body-only too, so a chart in a header or a footnote has no
-/// `document.xml.rels` entry to point at a part this could write, and the
-/// importer does not project one either (`casual_doc_import::chart::build_charts`
-/// records the same bound). Generating a part for one would produce an
-/// unreferenced part, not a working chart. That gap is one item, recorded in both
-/// places, rather than half-closed here.
+/// A chart is legal in a header, a footer, a footnote, an endnote and a comment —
+/// `Document::visit_chart_object_ids` walks all of them for exactly that reason,
+/// so the model admits a projection there. This walked the body alone while the
+/// relationship walk was body-only too; both are now per-part, so a chart the
+/// editor mints on a running surface gets its part written and its own part's
+/// `_rels` declares it (`109` HF-256). Walking the body alone here would have
+/// left the surface's relationship pointing at nothing — the same defect one
+/// container along.
 ///
-/// # Complexity: O(document body + charts), one walk, no lookup in a loop
+/// Part names are package-global, so one flat list is still the right answer: the
+/// caller writes each part once and `available_embedded_parts` admits it for
+/// every surface that references it.
+///
+/// # Complexity: O(document + charts), one walk, no lookup in a loop
 ///
 /// The projection table is inverted into an anchor -> projection map **once**
 /// (O(charts)) before the walk, so the per-object step is a map probe and not a
-/// scan of `Definitions::charts`. Walking the body and scanning the table per
+/// scan of `Definitions::charts`. Walking the document and scanning the table per
 /// object would be O(objects x charts) — the shape `SKILL` §8 forbids.
 pub(crate) fn generate_chart_parts(
     document: &Document,
     retained_parts: &RetainedParts,
     reporter: &mut Reporter,
 ) -> Result<Vec<GeneratedChartPart>, ExportError> {
-    let charts = &document.definitions().charts;
+    let definitions = document.definitions();
+    let charts = &definitions.charts;
     if charts.is_empty() {
         return Ok(Vec::new());
     }
@@ -127,11 +138,43 @@ pub(crate) fn generate_chart_parts(
         .map(|(_, chart)| (chart.object, chart))
         .collect();
     let mut objects: Vec<&EmbeddedObject> = Vec::new();
-    for block in document.body() {
-        collect_chart_objects_in_block(block, &mut objects);
+    let notes = definitions
+        .footnotes
+        .iter()
+        .chain(definitions.endnotes.iter())
+        .map(|(_, note)| note.blocks.as_slice());
+    let running = definitions
+        .headers
+        .iter()
+        .chain(definitions.footers.iter())
+        .map(|(_, part)| part.blocks.as_slice());
+    let comments = definitions
+        .comments
+        .iter()
+        .map(|(_, comment)| comment.blocks.as_slice());
+    for blocks in std::iter::once(document.body())
+        .chain(notes)
+        .chain(running)
+        .chain(comments)
+    {
+        for block in blocks {
+            collect_chart_objects_in_block(block, &mut objects);
+        }
     }
-    let mut generated = Vec::new();
+    let mut generated: Vec<GeneratedChartPart> = Vec::new();
     for object in objects {
+        if generated
+            .iter()
+            .any(|part| part.part_name == object.part.part_name)
+        {
+            // Two chart objects naming one part. `insertChart` derives the name
+            // from the object's own id so its inserts cannot collide, but a
+            // model that arrives by snapshot load or a future importer can carry
+            // this — and writing the part twice would put two ZIP entries under
+            // one name, which is a package no reader agrees about. First writer
+            // wins, deterministically, because the walk order above is fixed.
+            continue;
+        }
         if retained_parts
             .parts
             .iter()
@@ -232,7 +275,31 @@ fn collect_chart_objects_in_inlines<'a>(
                     collect_chart_objects_in_block(block, out);
                 }
             }
+            // A grouped shape's text box holds blocks like any other container,
+            // and `write_group_text_box` writes a chart inside one — so a part
+            // has to be generated for it too (`109` HF-196).
+            InlineNode::Group(group) => collect_chart_objects_in_group(group, out),
             _ => {}
+        }
+    }
+}
+
+/// [`collect_chart_objects_in_inlines`] for a DrawingML group's children.
+///
+/// Complexity: O(the group subtree); `MAX_GROUP_DEPTH` bounds the recursion.
+fn collect_chart_objects_in_group<'a>(
+    group: &'a WordprocessingGroup,
+    out: &mut Vec<&'a EmbeddedObject>,
+) {
+    for child in &group.children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    collect_chart_objects_in_block(block, out);
+                }
+            }
+            GroupChild::Group(nested) => collect_chart_objects_in_group(nested, out),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
         }
     }
 }
