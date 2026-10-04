@@ -998,7 +998,12 @@ export function diffWindow(count, scrollTop, viewport, { rowHeight = DIFF_ROW_HE
   if (total === 0) return { first: 0, last: 0 };
   const top = Math.max(0, Number(scrollTop) || 0);
   const height = Math.max(rowHeight, Number(viewport) || rowHeight);
-  const first = Math.max(0, Math.floor(top / rowHeight) - overscan);
+  // BOTH ends are clamped to the list. Clamping only `last` leaves `first` past
+  // the end on an over-scrolled container, and although the window is then empty
+  // so nothing renders, `translateY(first × rowHeight)` would be written for a
+  // position that does not exist — a latent wrong answer waiting for the first
+  // row to be rendered into it.
+  const first = Math.min(total, Math.max(0, Math.floor(top / rowHeight) - overscan));
   const last = Math.min(total, Math.ceil((top + height) / rowHeight) + overscan);
   return { first, last: Math.max(first, last) };
 }
