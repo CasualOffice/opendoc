@@ -108,6 +108,22 @@ function fakeView(seed = {}) {
   };
 }
 
+/** The two properties of a `<select>` this module actually uses: an options
+ *  list it appends to, and a `value` it writes. Not a DOM — the point of the
+ *  module being pure is that this is all it needs. */
+function fakeSelect() {
+  const options = [];
+  return {
+    options,
+    value: "",
+    ownerDocument: {
+      createElement: () => ({ value: "", textContent: "" }),
+    },
+    append: (option) => void options.push(option),
+    addEventListener: () => {},
+  };
+}
+
 function build({ seed = {}, region = "inch", separator = ".", locale = "en-US" } = {}) {
   const view = fakeView(seed);
   const status = [];
@@ -221,4 +237,82 @@ test("the command row says which unit is in force", () => {
   assert.equal(row.id, "view.measurementUnits");
   assert.equal(row.noDoc, true, "the preference governs dialogs that open with no document");
   assert.match(row.label, /point/i, `the label carried no unit: ${row.label}`);
+});
+
+// THE BOOT ORDER, which took the editor down on `main` at 5cbbaf12.
+//
+// `createMeasurementUnits` is called while `main.js` is still being EVALUATED.
+// `boot()` is the last statement in that file, so `await init()` has not run
+// yet and the wasm module is not instantiated. A free function on an
+// uninstantiated module does not return nothing — it throws
+//
+//   Uncaught TypeError: Cannot read properties of undefined
+//     (reading '__wbindgen_add_to_stack_pointer')
+//       at Object.measurementUnits (casual_doc_wasm.js:12257)
+//       at createMeasurementUnits (measurement_units.mjs:97)
+//       at main.js:10486
+//
+// and a throw during module evaluation means every statement after it never
+// runs. The editor did not degrade; it did not open at all.
+//
+// So this asserts the GUARANTEE — constructing before the engine exists is
+// survivable, and the roster arrives when the engine does — rather than the
+// mechanism, which is a `let` and a fault-in function and could be rewritten.
+test("constructing before the engine is instantiated does not throw", () => {
+  const view = fakeView({});
+  // Exactly what `main.js` hands it pre-`init()`: the bindings are imported and
+  // callable, and calling one throws.
+  const uninstantiated = {
+    measurementUnits: () => {
+      throw new TypeError(
+        "Cannot read properties of undefined (reading '__wbindgen_add_to_stack_pointer')",
+      );
+    },
+    defaultMeasurementUnit: () => {
+      throw new TypeError("Cannot read properties of undefined");
+    },
+    decimalSeparatorForLanguage: () => {
+      throw new TypeError("Cannot read properties of undefined");
+    },
+    formatMeasurement: () => {
+      throw new TypeError("Cannot read properties of undefined");
+    },
+    parseMeasurement: () => {
+      throw new TypeError("Cannot read properties of undefined");
+    },
+  };
+  const select = fakeSelect();
+  let units;
+  assert.doesNotThrow(() => {
+    units = createMeasurementUnits({
+      engine: uninstantiated,
+      select,
+      locale: () => "en-US",
+      onChanged: () => {},
+      setStatus: () => {},
+      openChooser: () => {},
+      view,
+    });
+  }, "the factory must survive being called before init()");
+
+  // Nothing to show yet, and nothing that crashes a caller who asks early.
+  assert.doesNotThrow(() => units.reflect(), "reflect() before init() is a no-op");
+  assert.deepEqual(units.units(), [], "no roster before the engine has one");
+  assert.equal(units.unitId(), null);
+  assert.doesNotThrow(() => units.applyToField(null));
+  assert.equal(select.options.length, 0, "the chooser stays empty until primed");
+
+  // Now the engine arrives, which is `boot()` reaching `measurement.reflect()`
+  // after `await init()`. The roster faults in and the chooser fills.
+  const ready = fakeEngine({ region: "inch", separator: "." });
+  for (const key of Object.keys(uninstantiated)) uninstantiated[key] = ready[key];
+  units.reflect();
+  assert.ok(units.units().length > 0, "the roster arrives with the engine");
+  assert.equal(units.unitId(), "inch");
+  assert.equal(
+    select.options.length,
+    units.units().length,
+    "the chooser is filled once, by the priming call",
+  );
+  assert.equal(units.format(1440), "1", "and the unit in force is usable");
 });

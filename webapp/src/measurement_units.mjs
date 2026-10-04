@@ -92,17 +92,49 @@ export function unitLabel(id) {
  */
 export function createMeasurementUnits(io) {
   const view = io.view ?? undefined;
-  /** The engine's rows, read once: the roster does not depend on a document and
-   *  rebuilding a `<select>` under a keyboard user loses their place. */
-  const rows = JSON.parse(io.engine.measurementUnits());
-  const byId = new Map(rows.map((row) => [row.id, row]));
-
-  /** The unit in force.
+  /** The engine's rows, the id index, and the unit in force.
    *
-   *  A stored value that the engine does not recognise is DISCARDED rather than
-   *  trusted: a build that drops a unit, or a value someone edited by hand, must
-   *  not leave every dialog formatting against a unit that no longer exists. */
-  let chosen = resolve(readPref(UNIT_PREF_KEY, "", view));
+   *  Read ONCE, and deliberately NOT at construction. This factory is called
+   *  while `main.js` is still being evaluated, which is before `boot()` has
+   *  awaited `init()` — and a free function on an uninstantiated wasm module
+   *  does not merely return nothing, it throws
+   *  `Cannot read properties of undefined (reading
+   *  '__wbindgen_add_to_stack_pointer')` and takes the whole editor down with
+   *  it, because a throw during module evaluation means nothing after it runs.
+   *  `main.js` already records this hazard where it reaches for
+   *  `engineVersion()`; this module has to honour the same rule.
+   *
+   *  So the roster is faulted in on first use. `reflect()` is called once more
+   *  from `boot()` after `init()` resolves, which is what fills the chooser; the
+   *  roster still does not depend on a document, and it is still never rebuilt
+   *  under a keyboard user. */
+  let rows = null;
+  let byId = null;
+  let chosen = null;
+
+  /** Faults the roster in. Returns whether the engine was ready.
+   *
+   *  `false` is only ever the pre-`init()` window: every caller below treats it
+   *  as "nothing to show yet" rather than as an error, because at that point
+   *  there is no document, no dialog and no field to format. */
+  function ensure() {
+    if (rows) return true;
+    if (typeof io.engine?.measurementUnits !== "function") return false;
+    let serialised;
+    try {
+      serialised = io.engine.measurementUnits();
+    } catch {
+      return false;
+    }
+    rows = JSON.parse(serialised);
+    byId = new Map(rows.map((row) => [row.id, row]));
+    /** A stored value that the engine does not recognise is DISCARDED rather
+     *  than trusted: a build that drops a unit, or a value someone edited by
+     *  hand, must not leave every dialog formatting against a unit that no
+     *  longer exists. */
+    chosen = resolve(readPref(UNIT_PREF_KEY, "", view));
+    return true;
+  }
 
   function resolve(stored) {
     if (byId.has(stored)) return stored;
@@ -112,11 +144,12 @@ export function createMeasurementUnits(io) {
 
   /** The row for the unit in force: `{id, suffix, decimalPlaces, stepTwip}`. */
   function unit() {
-    return byId.get(chosen);
+    return ensure() ? byId.get(chosen) : undefined;
   }
 
   /** The locale's decimal separator, for prose only — see the header. */
   function separator() {
+    if (typeof io.engine?.decimalSeparatorForLanguage !== "function") return ".";
     return io.engine.decimalSeparatorForLanguage(io.locale());
   }
 
@@ -130,6 +163,7 @@ export function createMeasurementUnits(io) {
    *  A whole value keeps at least one digit: `"0"`, never `""`, because a blank
    *  box and a box holding 0 mean different things in a dialog. */
   function format(twips) {
+    if (!ensure()) return "";
     const raw = io.engine.formatMeasurement(Math.round(twips ?? 0), chosen, ".");
     return raw.includes(".") ? raw.replace(/\.?0+$/, "") || "0" : raw;
   }
@@ -137,6 +171,7 @@ export function createMeasurementUnits(io) {
   /** Twips → prose a reader reads, with the locale's separator and the unit's
    *  own suffix. Used for the Page setup preview's caption. */
   function display(twips) {
+    if (!ensure()) return "";
     return io.engine.formatMeasurement(Math.round(twips ?? 0), chosen, separator());
   }
 
@@ -150,6 +185,7 @@ export function createMeasurementUnits(io) {
    *  caller is told it has no number, so a dialog can decline to write rather than
    *  writing a value the reader never typed. */
   function parse(text) {
+    if (!ensure()) return null;
     try {
       return io.engine.parseMeasurement(String(text ?? ""), chosen);
     } catch (error) {
@@ -162,6 +198,7 @@ export function createMeasurementUnits(io) {
    *  repaint. An unknown id is refused rather than defaulted — a silently
    *  substituted unit is a wrong number presented as a right one. */
   function setUnit(id) {
+    if (!ensure()) return false;
     if (!byId.has(id) || id === chosen) return false;
     chosen = id;
     writePref(UNIT_PREF_KEY, chosen, view);
@@ -174,6 +211,7 @@ export function createMeasurementUnits(io) {
   function reflect() {
     const select = io.select;
     if (!select) return;
+    if (!ensure()) return;
     if (select.options.length === 0) {
       for (const row of rows) {
         const option = select.ownerDocument.createElement("option");
@@ -192,9 +230,9 @@ export function createMeasurementUnits(io) {
   reflect();
 
   return {
-    unitId: () => chosen,
+    unitId: () => (ensure() ? chosen : null),
     unit,
-    units: () => rows,
+    units: () => (ensure() ? rows : []),
     separator,
     format,
     display,
@@ -216,6 +254,7 @@ export function createMeasurementUnits(io) {
     applyToField: (input) => {
       if (!input) return;
       const row = unit();
+      if (!row) return;
       const min = Number(input.dataset.measureMinTwip ?? 0);
       const max = Number(input.dataset.measureMaxTwip ?? 0);
       input.step = format(row.stepTwip);
@@ -234,7 +273,7 @@ export function createMeasurementUnits(io) {
     commands: () => [
       {
         id: "view.measurementUnits",
-        label: t("units.command", { unit: unitLabel(chosen) }),
+        label: t("units.command", { unit: unitLabel(ensure() ? chosen : "") }),
         group: "View",
         kw: "measurement units centimetres centimeters millimetres inches points picas ruler page setup margins indent",
         noDoc: true,
