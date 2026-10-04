@@ -2066,6 +2066,9 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 /// because "it is a path now" would pass for a path that happened to be four corners —
 /// the point is that the shape has the vertex count its recipe produces and visits
 /// points the bounding box does not.
+///
+/// With `a:arcTo` evaluated, an arc-bearing token resolves here too, so the only
+/// reason left to fall back is a token the table does not carry.
 #[test]
 fn an_untyped_preset_resolves_its_outline_from_the_table() {
     use casual_doc_layout::page::AnchorContent;
@@ -2115,12 +2118,37 @@ fn an_untyped_preset_resolves_its_outline_from_the_table() {
         "and inside the vertical span: {ys:?}"
     );
 
-    // A preset needing arcs keeps today's behaviour rather than being flattened.
-    assert!(
-        matches!(content("ellipse"), AnchorContent::Rectangle { .. }),
-        "an arc-bearing preset still falls back, reported, to its bounding rectangle"
+    // A preset needing arcs resolves as well, now that `a:arcTo` evaluates — this
+    // assertion used to be that it fell back to its bounding rectangle. `ellipse`
+    // reaches the table only as an untyped token like this; a shape whose model
+    // geometry is `Ellipse` is still answered by the typed primitive.
+    let AnchorContent::Path {
+        commands, closed, ..
+    } = content("ellipse")
+    else {
+        panic!("an arc-bearing preset must not paint as a rectangle either");
+    };
+    assert!(closed, "an ellipse is a closed outline");
+    // The box is the same 1440 twips square at (1440, 1440), so this is the circle of
+    // radius 720 about (2160, 2160), drawn as a move to its leftmost point and four
+    // quarter-turn cubics. Its on-curve points are the box's edge MIDPOINTS — the
+    // same assertion the cross above makes, and one a rectangle cannot pass.
+    let walk: Vec<(i32, i32)> = commands
+        .iter()
+        .map(|command| (command.endpoint().x.raw(), command.endpoint().y.raw()))
+        .collect();
+    assert_eq!(
+        walk,
+        vec![
+            (1_440, 2_160),
+            (2_160, 1_440),
+            (2_880, 2_160),
+            (2_160, 2_880),
+            (1_440, 2_160),
+        ],
+        "left, then clockwise through top, right and bottom, back to the left"
     );
-    // An unknown token likewise.
+    // An unknown token is the only thing that still falls back.
     assert!(matches!(
         content("notAShapeAtAll"),
         AnchorContent::Rectangle { .. }
