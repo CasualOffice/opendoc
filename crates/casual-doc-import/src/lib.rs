@@ -99,10 +99,10 @@ use crate::styles::Styles;
 fn decode_xml_reference(
     reference: &quick_xml::events::BytesRef<'_>,
 ) -> Result<String, ImportError> {
-    let name = reference.decode().map_err(|_| ImportError::MalformedXml)?;
+    let name = reference.as_ref();
     let mut encoded = String::with_capacity(name.len() + 2);
     encoded.push('&');
-    encoded.push_str(&name);
+    encoded.push_str(name);
     encoded.push(';');
     Ok(quick_xml::escape::unescape(&encoded)
         .map_err(|_| ImportError::MalformedXml)?

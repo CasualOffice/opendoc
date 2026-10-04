@@ -81,7 +81,7 @@ pub(crate) fn parse_metadata(
                     });
                 }
                 let name = start.name();
-                let (_, local) = split_name(name.as_ref());
+                let (_, local) = split_name(name.into_inner().as_bytes());
                 if local == b"document-statistic" {
                     read_statistics(&start, &mut app, &mut findings);
                 }
@@ -89,11 +89,11 @@ pub(crate) fn parse_metadata(
                     let mut name = None;
                     let mut kind = String::from("string");
                     for attr in start.attributes().flatten() {
-                        let (_, attr_name) = split_name(attr.key.as_ref());
+                        let (_, attr_name) = split_name(attr.key.into_inner().as_bytes());
                         if attr_name == b"name" {
-                            name = Some(String::from_utf8_lossy(attr.value.as_ref()).into_owned());
+                            name = Some(attr.value.as_ref().to_owned());
                         } else if attr_name == b"value-type" {
-                            kind = String::from_utf8_lossy(attr.value.as_ref()).into_owned();
+                            kind = attr.value.as_ref().to_owned();
                         }
                     }
                     custom_name = name.map(|name| (name, kind));
@@ -147,7 +147,7 @@ pub(crate) fn parse_metadata(
                     });
                 }
                 let name = empty.name();
-                let (_, local) = split_name(name.as_ref());
+                let (_, local) = split_name(name.into_inner().as_bytes());
                 if local == b"document-statistic" {
                     read_statistics(&empty, &mut app, &mut findings);
                 }
@@ -155,7 +155,7 @@ pub(crate) fn parse_metadata(
             Event::Text(text) => {
                 if let Some((_, value)) = current.as_mut() {
                     value.push_str(
-                        &unescape(&String::from_utf8_lossy(text.as_ref()))
+                        &unescape(text.as_ref())
                             .map_err(|_| OdfError::MalformedContent)?,
                     );
                     if value.len() > 4096 {
@@ -169,7 +169,7 @@ pub(crate) fn parse_metadata(
             }
             Event::End(end) => {
                 let name_ref = end.name();
-                let (_, local) = split_name(name_ref.as_ref());
+                let (_, local) = split_name(name_ref.into_inner().as_bytes());
                 if let Some((name, value)) = current.take() {
                     if name == "editing-duration" {
                         match parse_duration_minutes(&value) {
@@ -317,10 +317,8 @@ fn read_statistics(
     findings: &mut Vec<MetadataFinding>,
 ) {
     for attr in start.attributes().flatten() {
-        let (_, attr_name) = split_name(attr.key.as_ref());
-        let value = String::from_utf8_lossy(attr.value.as_ref())
-            .parse::<i64>()
-            .ok();
+        let (_, attr_name) = split_name(attr.key.into_inner().as_bytes());
+        let value = attr.value.as_ref().parse::<i64>().ok();
         let target = match attr_name {
             b"page-count" => Some(&mut app.pages),
             b"word-count" => Some(&mut app.words),

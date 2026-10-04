@@ -52,21 +52,21 @@ fn parse_tree(xml: &str) -> Option<Element> {
                 {
                     return None;
                 }
-                stack.push(element(&reader, &start)?);
+                stack.push(element(&start)?);
             }
             Event::Empty(start) => {
                 element_count = element_count.checked_add(1)?;
                 if element_count > MAX_MATH_NODES.saturating_mul(8) {
                     return None;
                 }
-                append_element(&mut stack, &mut root, element(&reader, &start)?)?;
+                append_element(&mut stack, &mut root, element(&start)?)?;
             }
             Event::End(_) => {
                 let closed = stack.pop()?;
                 append_element(&mut stack, &mut root, closed)?;
             }
             Event::Text(text) => {
-                let decoded = text.decode().ok()?;
+                let decoded = text.as_ref();
                 let decoded = quick_xml::escape::unescape(&decoded).ok()?;
                 let current = stack.last_mut()?;
                 if current.text.len().saturating_add(decoded.len()) > MAX_MATH_BYTES {
@@ -75,7 +75,7 @@ fn parse_tree(xml: &str) -> Option<Element> {
                 current.text.push_str(&decoded);
             }
             Event::GeneralRef(reference) => {
-                let name = reference.decode().ok()?;
+                let name = reference.as_ref();
                 let encoded = format!("&{name};");
                 let decoded = quick_xml::escape::unescape(&encoded).ok()?;
                 let current = stack.last_mut()?;
@@ -92,18 +92,18 @@ fn parse_tree(xml: &str) -> Option<Element> {
     if stack.is_empty() { root } else { None }
 }
 
-fn element(reader: &Reader<&[u8]>, start: &BytesStart<'_>) -> Option<Element> {
-    let name = omml_local_name(start.name().as_ref())?.to_vec();
+fn element(start: &BytesStart<'_>) -> Option<Element> {
+    let name = omml_local_name(start.name().into_inner().as_bytes())?.to_vec();
     let mut attributes = Vec::new();
     for attribute in start.attributes().with_checks(true) {
         let attribute = attribute.ok()?;
-        let raw_name = attribute.key.as_ref();
+        let raw_name = attribute.key.into_inner().as_bytes();
         if raw_name == b"xmlns" || raw_name.starts_with(b"xmlns:") {
             continue;
         }
         let local = raw_name.rsplit(|byte| *byte == b':').next()?.to_vec();
         let value = attribute
-            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+            .normalized_value(XmlVersion::Implicit1_0)
             .ok()?
             .into_owned();
         attributes.push((local, value));

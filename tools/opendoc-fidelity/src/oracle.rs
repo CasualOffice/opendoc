@@ -294,21 +294,21 @@ pub fn parse_word_boxes(xhtml: &str) -> Result<Vec<WordPage>, Box<dyn Error>> {
             Event::Eof => break,
             Event::Start(tag) | Event::Empty(tag) => {
                 let name = tag.local_name();
-                match name.as_ref() {
-                    b"page" => {
+                match name.into_inner() {
+                    "page" => {
                         pages.push(WordPage {
-                            width: attr_f64(&tag, b"width")?,
-                            height: attr_f64(&tag, b"height")?,
+                            width: attr_f64(&tag, "width")?,
+                            height: attr_f64(&tag, "height")?,
                             words: Vec::new(),
                         });
                     }
-                    b"word" => {
+                    "word" => {
                         let page = pages.last_mut().ok_or("a <word> outside any <page>")?;
                         page.words.push(WordBox {
-                            x0: attr_f64(&tag, b"xMin")?,
-                            y0: attr_f64(&tag, b"yMin")?,
-                            x1: attr_f64(&tag, b"xMax")?,
-                            y1: attr_f64(&tag, b"yMax")?,
+                            x0: attr_f64(&tag, "xMin")?,
+                            y0: attr_f64(&tag, "yMin")?,
+                            x1: attr_f64(&tag, "xMax")?,
+                            y1: attr_f64(&tag, "yMax")?,
                             text: String::new(),
                         });
                         in_word = true;
@@ -318,10 +318,10 @@ pub fn parse_word_boxes(xhtml: &str) -> Result<Vec<WordPage>, Box<dyn Error>> {
             }
             Event::Text(text) if in_word => {
                 if let Some(word) = pages.last_mut().and_then(|p| p.words.last_mut()) {
-                    word.text.push_str(&text.decode()?);
+                    word.text.push_str(text.as_ref());
                 }
             }
-            Event::End(tag) if tag.local_name().as_ref() == b"word" => in_word = false,
+            Event::End(tag) if tag.local_name().into_inner() == "word" => in_word = false,
             _ => {}
         }
         buf.clear();
@@ -330,11 +330,11 @@ pub fn parse_word_boxes(xhtml: &str) -> Result<Vec<WordPage>, Box<dyn Error>> {
 }
 
 /// Reads one `f64` attribute off a start tag.
-fn attr_f64(tag: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Result<f64, Box<dyn Error>> {
+fn attr_f64(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Result<f64, Box<dyn Error>> {
     let attribute = tag
         .try_get_attribute(key)?
-        .ok_or_else(|| format!("missing attribute {}", String::from_utf8_lossy(key)))?;
-    Ok(std::str::from_utf8(&attribute.value)?.parse::<f64>()?)
+        .ok_or_else(|| format!("missing attribute {key}"))?;
+    Ok(attribute.value.as_ref().parse::<f64>()?)
 }
 
 /// Groups word boxes into lines by vertical overlap — the same rule

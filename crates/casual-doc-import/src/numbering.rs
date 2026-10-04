@@ -388,20 +388,20 @@ fn parse_raw(
                 on_start(
                     &mut state,
                     reporter,
-                    element.local_name().as_ref(),
+                    element.local_name().into_inner().as_bytes(),
                     &element,
                 );
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
                 let local = element.local_name();
-                on_start(&mut state, reporter, local.as_ref(), &element);
-                on_end(&mut state, local.as_ref(), &mut abstracts, &mut nums);
+                on_start(&mut state, reporter, local.into_inner().as_bytes(), &element);
+                on_end(&mut state, local.into_inner().as_bytes(), &mut abstracts, &mut nums);
             }
             Event::End(element) => {
                 on_end(
                     &mut state,
-                    element.local_name().as_ref(),
+                    element.local_name().into_inner().as_bytes(),
                     &mut abstracts,
                     &mut nums,
                 );

@@ -36,7 +36,7 @@
 //! words `themeColor` and `accent1` as ordinary text, so a guard that reaches for
 //! a substring passes here while proving nothing, and is caught.
 //!
-//! The attribute test is on `attribute.key.as_ref()`, the name **as written**:
+//! The attribute test is on `attribute.key.into_inner().as_bytes()`, the name **as written**:
 //! `w:themeColor` is `w:`-qualified (unlike `wp:wrapText`, which is not), so a
 //! writer that emitted a bare `themeColor` must not satisfy this file.
 //!
@@ -248,7 +248,7 @@ fn write_back(imported: &Imported) -> Vec<u8> {
 ///
 /// This is the function every question in this file must be asked through. It
 /// walks element and attribute names; it never searches the part bytes for a
-/// substring. `attribute.key.as_ref()` is the name as written, which is what
+/// substring. `attribute.key.into_inner().as_bytes()` is the name as written, which is what
 /// pins the `w:` prefix.
 fn themed_edges(bytes: &[u8]) -> Vec<ThemedEdge> {
     let mut found = Vec::new();
@@ -280,8 +280,8 @@ fn themed_edges(bytes: &[u8]) -> Vec<ThemedEdge> {
                 Ok(_) => continue,
                 Err(error) => panic!("the written {name} is well-formed XML: {error}"),
             };
-            let written = String::from_utf8_lossy(element.name().as_ref()).into_owned();
-            let local = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+            let written = element.name().into_inner().to_owned();
+            let local = element.local_name().into_inner().to_owned();
             if !EDGE_NAMES.contains(&local.as_str()) {
                 continue;
             }
@@ -291,7 +291,7 @@ fn themed_edges(bytes: &[u8]) -> Vec<ThemedEdge> {
             let mut is_edge = false;
             for attribute in element.attributes() {
                 let attribute = attribute.expect("a well-formed attribute");
-                let key = attribute.key.as_ref().to_vec();
+                let key = attribute.key.into_inner().as_bytes().to_vec();
                 if key == b"w:val" {
                     is_edge = true;
                 }
@@ -300,7 +300,7 @@ fn themed_edges(bytes: &[u8]) -> Vec<ThemedEdge> {
                     .position(|probe| *probe == key.as_slice())
                 {
                     values[index] =
-                        Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned());
+                        Some(attribute.value.as_ref().to_owned());
                 }
             }
             // A cell margin carries `w:w`/`w:type`, never `w:val`; a border always
@@ -502,9 +502,9 @@ fn the_theme_attributes_are_w_qualified_as_written() {
             for attribute in element.attributes() {
                 let attribute = attribute.expect("a well-formed attribute");
                 let local =
-                    String::from_utf8_lossy(attribute.key.local_name().as_ref()).into_owned();
+                    attribute.key.local_name().into_inner().to_owned();
                 if matches!(local.as_str(), "themeColor" | "themeTint" | "themeShade") {
-                    keys.insert(String::from_utf8_lossy(attribute.key.as_ref()).into_owned());
+                    keys.insert(String::from_utf8_lossy(attribute.key.into_inner().as_bytes()).into_owned());
                 }
             }
         }

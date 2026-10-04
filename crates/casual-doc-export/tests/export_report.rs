@@ -112,7 +112,7 @@ fn internal_targets(rels_part_name: &str, bytes: &[u8]) -> Vec<(String, String)>
                 continue;
             }
         };
-        if element.local_name().as_ref() != b"Relationship" {
+        if element.local_name().into_inner().as_bytes() != b"Relationship" {
             buffer.clear();
             continue;
         }
@@ -121,8 +121,8 @@ fn internal_targets(rels_part_name: &str, bytes: &[u8]) -> Vec<(String, String)>
         let mut external = false;
         for attribute in element.attributes() {
             let attribute = attribute.expect("well-formed attribute");
-            let value = String::from_utf8_lossy(&attribute.value).into_owned();
-            match attribute.key.local_name().as_ref() {
+            let value = attribute.value.as_ref().to_owned();
+            match attribute.key.local_name().into_inner().as_bytes() {
                 b"Id" => id = value,
                 b"Target" => target = value,
                 b"TargetMode" => external = value == "External",

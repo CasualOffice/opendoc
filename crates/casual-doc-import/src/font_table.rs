@@ -71,7 +71,7 @@ pub(crate) fn parse(
                 bump(&mut elements, config.max_elements)?;
                 on_start(&element, &mut current, font_rels, reporter, true);
                 on_end(
-                    element.local_name().as_ref(),
+                    element.local_name().into_inner().as_bytes(),
                     &mut current,
                     &mut fonts,
                     reporter,
@@ -79,7 +79,7 @@ pub(crate) fn parse(
             }
             Event::End(element) => {
                 on_end(
-                    element.local_name().as_ref(),
+                    element.local_name().into_inner().as_bytes(),
                     &mut current,
                     &mut fonts,
                     reporter,
@@ -106,7 +106,7 @@ fn on_start(
     self_closing: bool,
 ) {
     let name = element.local_name();
-    match name.as_ref() {
+    match name.into_inner().as_bytes() {
         b"font" => {
             let name = attribute_value(element, b"name").unwrap_or_default();
             *current = Some(FontDescriptor {
@@ -129,36 +129,36 @@ fn on_start(
                 // the package or its `w:fontKey` is missing, and without both there
                 // is nothing to decrypt. That is structurally unusable, not merely
                 // unmodeled, which is `rejected` in `35`'s vocabulary.
-                reporter.report_invalid(name.as_ref());
+                reporter.report_invalid(name.into_inner().as_bytes());
             }
-            set(current, |font| match name.as_ref() {
+            set(current, |font| match name.into_inner().as_bytes() {
                 b"embedRegular" => font.embedded.regular = face,
                 b"embedBold" => font.embedded.bold = face,
                 b"embedItalic" => font.embedded.italic = face,
                 _ => font.embedded.bold_italic = face,
             });
         }
-        b"altName" => set_bounded(current, element, reporter, name.as_ref(), |font, value| {
+        b"altName" => set_bounded(current, element, reporter, name.into_inner().as_bytes(), |font, value| {
             font.alt_name = value;
         }),
-        b"panose1" => set_bounded(current, element, reporter, name.as_ref(), |font, value| {
+        b"panose1" => set_bounded(current, element, reporter, name.into_inner().as_bytes(), |font, value| {
             font.panose1 = value;
         }),
-        b"charset" => set_bounded(current, element, reporter, name.as_ref(), |font, value| {
+        b"charset" => set_bounded(current, element, reporter, name.into_inner().as_bytes(), |font, value| {
             font.charset = value;
         }),
         b"family" => {
             let family = attribute_value(element, b"val")
                 .as_deref()
                 .and_then(font_family_from);
-            report_unreadable_val(element, reporter, name.as_ref(), family.is_none());
+            report_unreadable_val(element, reporter, name.into_inner().as_bytes(), family.is_none());
             set(current, |font| font.family = family);
         }
         b"pitch" => {
             let pitch = attribute_value(element, b"val")
                 .as_deref()
                 .and_then(font_pitch_from);
-            report_unreadable_val(element, reporter, name.as_ref(), pitch.is_none());
+            report_unreadable_val(element, reporter, name.into_inner().as_bytes(), pitch.is_none());
             set(current, |font| font.pitch = pitch);
         }
         b"sig" => {
@@ -175,7 +175,7 @@ fn on_start(
                 // just the element: which coverage range went missing is the whole
                 // content of the finding.
                 if attribute_value(element, slot).is_some() && sig_val(element, slot).is_none() {
-                    reporter.report_attribute(name.as_ref(), slot);
+                    reporter.report_attribute(name.into_inner().as_bytes(), slot);
                 }
             }
             set(current, |font| {
@@ -197,7 +197,7 @@ fn on_start(
         // named instead of skipped: the part is regenerated on save, so this finding
         // is the only trace it leaves.
         b"fonts" => {}
-        _ => reporter.report_element(name.as_ref(), element, self_closing),
+        _ => reporter.report_element(name.into_inner().as_bytes(), element, self_closing),
     }
 }
 

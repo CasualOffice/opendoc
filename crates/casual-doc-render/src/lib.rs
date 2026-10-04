@@ -1206,7 +1206,19 @@ impl ColrPainter<'_> {
             skrifa::color::Extend::Reflect => SpreadMode::Reflect,
             _ => SpreadMode::Pad,
         };
-        RadialGradient::new(center, focal, radius, stops, spread, Transform::identity())
+        // `tiny-skia` 0.12 made the two-point conical form explicit: the old
+        // `new(start, end, radius, ..)` was Skia's `MakeTwoPointConical` with
+        // `startRadius = 0`, so passing 0.0 as the start radius reproduces it
+        // exactly (0.12 CHANGELOG, "Breaking changes").
+        RadialGradient::new(
+            center,
+            0.0,
+            focal,
+            radius,
+            stops,
+            spread,
+            Transform::identity(),
+        )
     }
 }
 
@@ -1839,8 +1851,11 @@ fn gradient_shader(gradient: &Gradient, bounds: SkRect) -> Option<Shader<'static
         }
         GradientKind::Radial => {
             let radius = (bounds.width().max(bounds.height()) / 2.0).max(0.5);
+            // Start radius 0.0 keeps `tiny-skia` 0.11's single-radius meaning
+            // (see `radial_shader` above).
             RadialGradient::new(
                 SkPoint::from_xy(cx, cy),
+                0.0,
                 SkPoint::from_xy(cx, cy),
                 radius,
                 stops,

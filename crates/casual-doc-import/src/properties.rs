@@ -723,13 +723,12 @@ pub(crate) fn carries_no_attributes(element: &BytesStart<'_>) -> bool {
 pub(crate) fn attribute_value(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {
     for attribute in element.attributes() {
         let attribute = attribute.ok()?;
-        if attribute.key.local_name().as_ref() == name {
+        if attribute.key.local_name().into_inner().as_bytes() == name {
             // Unescape XML character references so an attribute value round-trips
             // symmetrically with a writer's escaping (e.g. a field instruction or
             // URL carrying `&`/`"`/`<`). Entity-free values are unchanged. This
             // mirrors the run-text path in `body.rs`.
-            let raw = std::str::from_utf8(attribute.value.as_ref()).ok()?;
-            return quick_xml::escape::unescape(raw)
+            return quick_xml::escape::unescape(attribute.value.as_ref())
                 .ok()
                 .map(|value| value.into_owned());
         }

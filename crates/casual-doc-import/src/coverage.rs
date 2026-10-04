@@ -132,9 +132,9 @@ pub fn meaningful_markup(xml: &[u8]) -> MeaningfulMarkup {
                 // because that is how the importer reads it.
                 let self_closing = matches!(event, Event::Empty(_));
                 let local_name = element.local_name();
-                let local = String::from_utf8_lossy(local_name.as_ref()).into_owned();
-                let carries = !noop::carries_no_meaning(local_name.as_ref())
-                    && !noop::carries_no_meaning_when(local_name.as_ref(), element, self_closing);
+                let local = String::from_utf8_lossy(local_name.into_inner().as_bytes()).into_owned();
+                let carries = !noop::carries_no_meaning(local_name.into_inner().as_bytes())
+                    && !noop::carries_no_meaning_when(local_name.into_inner().as_bytes(), element, self_closing);
                 if carries {
                     match markup.common_ancestors.get_mut(&local) {
                         Some(existing) => existing.retain(|name| open.contains(name)),

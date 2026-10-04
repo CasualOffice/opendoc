@@ -184,7 +184,7 @@ fn binary_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
 /// sides on purpose so a guard that reaches for a substring fails here rather than
 /// in a published claim.
 ///
-/// The attribute test is on `attribute.key.as_ref()`, the name **as written**, not
+/// The attribute test is on `attribute.key.into_inner().as_bytes()`, the name **as written**, not
 /// on `local_name()`. That is what pins the namespace: a `w15:wrapText` has the
 /// same local name and must not count.
 fn side_wraps(bytes: &[u8]) -> Vec<(String, Option<String>)> {
@@ -211,15 +211,15 @@ fn side_wraps(bytes: &[u8]) -> Vec<(String, Option<String>)> {
                 Ok(quick_xml::events::Event::Start(element))
                 | Ok(quick_xml::events::Event::Empty(element)) => {
                     let local = element.local_name();
-                    let local = String::from_utf8_lossy(local.as_ref()).into_owned();
+                    let local = String::from_utf8_lossy(local.into_inner().as_bytes()).into_owned();
                     if !SIDE_WRAPS.contains(&local.as_str()) {
                         continue;
                     }
                     let mut value = None;
                     for attribute in element.attributes().with_checks(false).flatten() {
-                        if attribute.key.as_ref() == WRAP_TEXT {
+                        if attribute.key.into_inner().as_bytes() == WRAP_TEXT {
                             value = Some(
-                                String::from_utf8_lossy(attribute.value.as_ref()).into_owned(),
+                                attribute.value.as_ref().to_owned(),
                             );
                         }
                     }
@@ -553,7 +553,7 @@ fn a_wrap_with_no_side_channels_acquires_no_wrap_text() {
                 Ok(quick_xml::events::Event::Start(element))
                 | Ok(quick_xml::events::Event::Empty(element)) => {
                     let local = element.local_name();
-                    let local = String::from_utf8_lossy(local.as_ref()).into_owned();
+                    let local = String::from_utf8_lossy(local.into_inner().as_bytes()).into_owned();
                     if local != "wrapNone" && local != "wrapTopAndBottom" {
                         continue;
                     }
@@ -561,7 +561,7 @@ fn a_wrap_with_no_side_channels_acquires_no_wrap_text() {
                         .attributes()
                         .with_checks(false)
                         .flatten()
-                        .any(|attribute| attribute.key.as_ref() == WRAP_TEXT)
+                        .any(|attribute| attribute.key.into_inner().as_bytes() == WRAP_TEXT)
                     {
                         offenders.push(format!("{name}:{local}"));
                     }

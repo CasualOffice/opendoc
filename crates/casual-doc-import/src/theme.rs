@@ -124,7 +124,7 @@ pub(crate) fn parse(
                     parser.capture_depth += 1;
                 } else if parser.skip_depth > 0 {
                     parser.skip_depth += 1;
-                } else if element.local_name().as_ref() == b"fmtScheme" {
+                } else if element.local_name().into_inner().as_bytes() == b"fmtScheme" {
                     parser.begin_capture(&event)?;
                 } else if parser.on_start(element, reporter) == Descend::No {
                     parser.skip_depth = 1;
@@ -136,7 +136,7 @@ pub(crate) fn parse(
                     parser.write_capture(&event)?;
                 } else if parser.skip_depth > 0 {
                     // Inside a subtree already reported on its outermost element.
-                } else if element.local_name().as_ref() == b"fmtScheme" {
+                } else if element.local_name().into_inner().as_bytes() == b"fmtScheme" {
                     parser.begin_capture(&event)?;
                     parser.finish_capture();
                 } else {
@@ -155,7 +155,7 @@ pub(crate) fn parse(
                 } else if parser.skip_depth > 0 {
                     parser.skip_depth -= 1;
                 } else {
-                    parser.on_end(element.local_name().as_ref());
+                    parser.on_end(element.local_name().into_inner().as_bytes());
                 }
                 depth = depth.saturating_sub(1);
             }
@@ -173,7 +173,7 @@ pub(crate) fn parse(
 impl Parser {
     fn on_start(&mut self, element: &BytesStart<'_>, reporter: &mut Reporter) -> Descend {
         let local = element.local_name();
-        let local = local.as_ref();
+        let local = local.into_inner().as_bytes();
         match local {
             // The part root. Its schemes are modeled below, but `@name` (the
             // theme's display name) has nowhere to live in the model and the
@@ -495,7 +495,7 @@ pub(crate) fn parse_format_scheme(xml: &str, config: &ImportConfig) -> Option<Fo
             Event::Empty(element) => (Some(element), true),
             Event::End(element) => {
                 let local = element.local_name();
-                match local.as_ref() {
+                match local.into_inner().as_bytes() {
                     b"fillStyleLst" | b"lnStyleLst" | b"effectStyleLst" | b"bgFillStyleLst" => {
                         list = None;
                         entry = None;
@@ -524,7 +524,7 @@ pub(crate) fn parse_format_scheme(xml: &str, config: &ImportConfig) -> Option<Fo
             return None;
         }
         let local = element.local_name();
-        match local.as_ref() {
+        match local.into_inner().as_bytes() {
             b"fillStyleLst" => {
                 list = Some(StyleList::Fill);
                 entry = None;
@@ -546,7 +546,7 @@ pub(crate) fn parse_format_scheme(xml: &str, config: &ImportConfig) -> Option<Fo
                 if let Some(open) = entry.as_mut()
                     && open.color.is_none()
                 {
-                    open.color = style_color(element, local.as_ref());
+                    open.color = style_color(element, local.into_inner().as_bytes());
                 }
             }
             b"prstDash" => {

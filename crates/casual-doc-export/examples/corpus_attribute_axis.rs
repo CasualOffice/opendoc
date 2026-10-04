@@ -166,9 +166,9 @@ fn attribute_pairs(xml: &[u8]) -> BTreeSet<Pair> {
         match &event {
             Event::Eof => break,
             Event::Start(element) | Event::Empty(element) => {
-                let name = local(element.name().as_ref());
+                let name = local(element.name().into_inner().as_bytes());
                 for attribute in element.attributes().flatten() {
-                    let key = attribute.key.as_ref();
+                    let key = attribute.key.into_inner().as_bytes();
                     if is_plumbing(key) {
                         continue;
                     }
@@ -176,7 +176,7 @@ fn attribute_pairs(xml: &[u8]) -> BTreeSet<Pair> {
                     // `says_nothing` tests for is pure ASCII with no entity
                     // spelling, so unescaping could only change values this
                     // predicate already keeps.
-                    let value = String::from_utf8_lossy(attribute.value.as_ref());
+                    let value = attribute.value.as_ref();
                     if says_nothing(&value) {
                         continue;
                     }

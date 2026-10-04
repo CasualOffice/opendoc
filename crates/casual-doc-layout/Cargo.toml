@@ -33,15 +33,15 @@ casual-doc-model.workspace = true
 # segmenters. Without it, ICU falls back to character breaking but also reports
 # one missing-model error per complex-script segmentation pass (2,150 warnings
 # for the SDS fidelity probe), flooding hosts during otherwise-successful layout.
-parley = { version = "0.11", default-features = false, features = ["std", "complex-scripts"] }
+parley = { version = "0.11.1", default-features = false, features = ["std", "complex-scripts"] }
 # Re-exported by `parley` (same 0.11 crate); a direct dependency here so the
 # `system-fonts` feature can select fontique's `fontconfig-dlopen`, and so the
 # shaper/registry can name `fontique::{Blob, Script}` directly.
-fontique = { version = "0.11", default-features = false, features = ["std"] }
+fontique = { version = "0.11.1", default-features = false, features = ["std"] }
 # Parse-only OpenType reader (fontations) for glyph-coverage checks in the font
 # resolver. No system/`fontconfig` access — WASM-clean. Already in the tree via
 # `parley`/`fontique`, so no new version is introduced.
-skrifa = { version = "0.43", default-features = false }
+skrifa = { version = "0.44", default-features = false }
 serde.workspace = true
 # Grapheme-cluster segmentation for coverage reporting: an emoji ZWJ sequence,
 # an emoji-presentation sequence and a regional-indicator pair are each ONE

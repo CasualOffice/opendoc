@@ -178,7 +178,7 @@ pub(crate) fn parse_master_page(
             }
             Event::Text(text) => {
                 if state.skip_depth.is_none() && state.para_open {
-                    let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                    let decoded = text.as_ref();
                     let value = quick_xml::escape::unescape(&decoded)
                         .map_err(|_| OdfError::MalformedContent)?;
                     append_text(&mut state, &value, limits)?;
@@ -186,7 +186,7 @@ pub(crate) fn parse_master_page(
             }
             Event::CData(text) => {
                 if state.skip_depth.is_none() && state.para_open {
-                    let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                    let value = text.as_ref();
                     append_text(&mut state, &value, limits)?;
                 }
             }
@@ -263,7 +263,7 @@ fn open_element(
         return Ok(());
     }
     let name = start.name();
-    let local = local_name(name.as_ref());
+    let local = local_name(name.into_inner().as_bytes());
 
     // Inside an open paragraph: map the bounded inline subset.
     if state.para_open && element_depth > state.para_depth {
@@ -555,7 +555,7 @@ fn store_region(content: &mut MasterPageContent, slot: RegionSlot, region: Heade
 fn span_is_styled(start: &BytesStart<'_>) -> bool {
     start.attributes().flatten().any(|attribute| {
         matches!(
-            local_name(attribute.key.as_ref()),
+            local_name(attribute.key.into_inner().as_bytes()),
             b"style-name" | b"class-names"
         )
     })
@@ -565,8 +565,8 @@ fn span_is_styled(start: &BytesStart<'_>) -> bool {
 fn space_count(start: &BytesStart<'_>) -> Result<usize, OdfError> {
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
-        if local_name(attribute.key.as_ref()) == b"c" {
-            let value = String::from_utf8_lossy(attribute.value.as_ref());
+        if local_name(attribute.key.into_inner().as_bytes()) == b"c" {
+            let value = attribute.value.as_ref();
             return value
                 .trim()
                 .parse::<usize>()

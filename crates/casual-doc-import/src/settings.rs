@@ -59,7 +59,7 @@ pub(crate) fn parse(
                 }
                 bump(&mut elements, config.max_elements)?;
                 let local = element.local_name();
-                match (level, local.as_ref()) {
+                match (level, local.into_inner().as_bytes()) {
                     (1, b"compat") => in_compat = true,
                     (1, b"footnotePr") => note_scope = Some(NoteScope::Footnote),
                     (1, b"endnotePr") => note_scope = Some(NoteScope::Endnote),
@@ -87,7 +87,7 @@ pub(crate) fn parse(
                 );
             }
             Event::End(element) => {
-                match element.local_name().as_ref() {
+                match element.local_name().into_inner().as_bytes() {
                     b"compat" => in_compat = false,
                     b"footnotePr" | b"endnotePr" => note_scope = None,
                     _ => {}
@@ -121,7 +121,7 @@ fn on_setting(
     reporter: &mut Reporter,
 ) {
     let local = element.local_name();
-    let local = local.as_ref();
+    let local = local.into_inner().as_bytes();
     if in_compat && level == 2 {
         match local {
             b"adjustLineHeightInTable" => {

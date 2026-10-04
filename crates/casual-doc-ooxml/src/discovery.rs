@@ -132,17 +132,21 @@ pub(crate) fn for_each_metadata_element(
                     attribute.map_err(|_| PackageError::MalformedPackageXml { part })?;
                 // OPC attribute values (notably a relationship `Target` URL) may
                 // carry XML character references (`&amp;` in a query string), so
-                // unescape them; entity-free values are unchanged. Malformed
-                // UTF-8 or a bad entity fails closed.
-                let raw = core::str::from_utf8(attribute.value.as_ref())
+                // unescape them; entity-free values are unchanged. A bad entity
+                // fails closed here; malformed UTF-8 fails closed one level up,
+                // because `quick-xml` 0.42 validates the encoding when it builds
+                // the event, so `read_event_into` below already returns
+                // `MalformedPackageXml` for it and the value reaches us as `str`.
+                let value = quick_xml::escape::unescape(attribute.value.as_ref())
                     .map_err(|_| PackageError::MalformedPackageXml { part })?;
-                let value = quick_xml::escape::unescape(raw)
-                    .map_err(|_| PackageError::MalformedPackageXml { part })?;
-                sink(attribute.key.local_name().as_ref(), value.as_ref());
+                sink(
+                    attribute.key.local_name().into_inner().as_bytes(),
+                    value.as_ref(),
+                );
             }
             Ok(())
         };
-        visit(local_name.as_ref(), &mut read_attributes)
+        visit(local_name.into_inner().as_bytes(), &mut read_attributes)
     };
     loop {
         let event = reader

@@ -50,7 +50,22 @@ const DRAW_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const SVG_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const FORM_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:form:1.0";
 const DC_NS: &[u8] = b"http://purl.org/dc/elements/1.1/";
-const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
+/// Ceiling on the `xmlns`/`xmlns:*` bindings `quick-xml`'s namespace resolver
+/// will hold in scope at once, raised well above its own default (128).
+///
+/// The limit bounds the resolver's buffer and the prefix-resolution scan, and it
+/// is set explicitly because the default is tuned for hand-written dialects: a
+/// real `content.xml` written by LibreOffice declares around twenty namespaces on
+/// the root element alone, and a document assembled from several sources can
+/// rebind prefixes further down. Refusing such a file is a false rejection, so
+/// the ceiling is set where it still bounds work but no honest document reaches
+/// it.
+///
+/// `quick-xml` 0.42 changed what this counts: 0.41 capped declarations **per
+/// element**, 0.42 caps bindings **in scope at once** across every open element.
+/// 4,096 bounds either reading, and the element nesting depth is bounded
+/// separately by `max_xml_depth`.
+const MAX_NAMESPACE_BINDINGS_IN_SCOPE: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NamespaceKind {
@@ -1330,7 +1345,7 @@ fn parse_style_document(
     let mut reader = NsReader::from_reader(bytes);
     reader
         .resolver_mut()
-        .set_max_declarations_per_element(MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT);
+        .set_max_namespace_bindings(MAX_NAMESPACE_BINDINGS_IN_SCOPE);
     let mut buffer = Vec::new();
     let mut depth = 0_usize;
     let mut elements = 0_usize;
@@ -1511,7 +1526,7 @@ fn parse_style_document(
                     common_container = false;
                 }
                 if depth == 1 {
-                    if element.local_name().as_ref() != expected_root {
+                    if element.local_name().into_inner().as_bytes() != expected_root {
                         return Err(OdfError::MalformedContent);
                     }
                     root_closed = true;
@@ -1519,19 +1534,15 @@ fn parse_style_document(
                 depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
             }
             Event::Text(text) if style_container_depth.is_some() => {
-                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                let value = quick_xml::escape::unescape(&decoded)
+                let decoded = text.as_ref();
+                let value = quick_xml::escape::unescape(decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
             }
             Event::CData(text) => {
-                let non_whitespace = !text
-                    .decode()
-                    .map_err(|_| OdfError::MalformedContent)?
-                    .trim()
-                    .is_empty();
+                let non_whitespace = !text.as_ref().trim().is_empty();
                 if style_container_depth.is_some() && non_whitespace {
                     return Err(OdfError::MalformedContent);
                 }
@@ -1987,7 +1998,7 @@ fn read_list_style_header(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"name" {
+        if namespace_kind(&namespace) == NamespaceKind::Style && local.into_inner().as_bytes() == b"name" {
             if style_name.is_some() {
                 return Err(OdfError::MalformedContent);
             }
@@ -2032,7 +2043,7 @@ fn read_list_level(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         let namespace = namespace_kind(&namespace);
-        match (namespace, local.as_ref()) {
+        match (namespace, local.into_inner().as_bytes()) {
             (NamespaceKind::Text, b"level") => {
                 if source_level.is_some() {
                     return Err(OdfError::MalformedContent);
@@ -2139,12 +2150,12 @@ fn read_style_header(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"name" {
+        if namespace_kind(&namespace) == NamespaceKind::Style && local.into_inner().as_bytes() == b"name" {
             if name.is_some() {
                 return Err(OdfError::MalformedContent);
             }
             name = Some(decode_attribute(&attribute)?);
-        } else if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"family"
+        } else if namespace_kind(&namespace) == NamespaceKind::Style && local.into_inner().as_bytes() == b"family"
         {
             if family_seen {
                 return Err(OdfError::MalformedContent);
@@ -2167,7 +2178,7 @@ fn read_style_header(
                 }
             };
         } else if namespace_kind(&namespace) == NamespaceKind::Style
-            && local.as_ref() == b"parent-style-name"
+            && local.into_inner().as_bytes() == b"parent-style-name"
         {
             if parent.is_some() {
                 return Err(OdfError::MalformedContent);
@@ -2219,7 +2230,7 @@ fn read_default_style_header(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"family" {
+        if namespace_kind(&namespace) == NamespaceKind::Style && local.into_inner().as_bytes() == b"family" {
             if family_seen {
                 return Err(OdfError::MalformedContent);
             }
@@ -2315,7 +2326,7 @@ fn read_text_style_properties(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+        let mapped = match (namespace_kind(&namespace), local.into_inner().as_bytes()) {
             (NamespaceKind::Fo, b"font-weight") => {
                 style.style.run_properties.bold = parse_toggle(&value, "bold", "normal");
                 style.style.run_properties.bold.is_some()
@@ -2427,7 +2438,7 @@ fn read_paragraph_style_properties(
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         let paragraph = &mut style.style.paragraph_properties;
-        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+        let mapped = match (namespace_kind(&namespace), local.into_inner().as_bytes()) {
             (NamespaceKind::Fo, b"text-align") => {
                 style.style.alignment = match value.as_str() {
                     "start" => Some(Alignment::Start),
@@ -2538,7 +2549,7 @@ fn read_table_style_properties(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+        let mapped = match (namespace_kind(&namespace), local.into_inner().as_bytes()) {
             (NamespaceKind::Table, b"align") => match value.trim() {
                 "left" | "start" => {
                     style.style.table_alignment = Some(Alignment::Start);
@@ -2632,13 +2643,13 @@ fn read_table_row_style_properties(
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         let mapped = if namespace_kind(&namespace) == NamespaceKind::Style
-            && matches!(local.as_ref(), b"row-height" | b"min-row-height")
+            && matches!(local.into_inner().as_bytes(), b"row-height" | b"min-row-height")
         {
             // Exact height uses style:row-height; a minimum uses
             // style:min-row-height. Bound to the model's twips domain.
             match parse_length_to_twips(&value) {
                 Some(twips) if (0..=31_680).contains(&twips) => {
-                    let rule = if local.as_ref() == b"row-height" {
+                    let rule = if local.into_inner().as_bytes() == b"row-height" {
                         HeightRule::Exact
                     } else {
                         HeightRule::AtLeast
@@ -2697,7 +2708,7 @@ fn read_table_cell_style_properties(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+        let mapped = match (namespace_kind(&namespace), local.into_inner().as_bytes()) {
             (NamespaceKind::Fo, b"background-color") => {
                 // `transparent` is the ODF default (no fill): a recognized no-op,
                 // not a degradation. Only an RGB value maps to a fill.
@@ -2817,7 +2828,7 @@ fn read_draw_gradient(
         if namespace_kind(&namespace) != NamespaceKind::Draw {
             continue;
         }
-        match local.as_ref() {
+        match local.into_inner().as_bytes() {
             b"name" => name = Some(value.trim().to_owned()),
             b"style" => {
                 style_kind = Some(match value.trim() {
@@ -2911,7 +2922,7 @@ fn read_draw_stroke_dash(
         if namespace_kind(&namespace) != NamespaceKind::Draw {
             continue;
         }
-        match local.as_ref() {
+        match local.into_inner().as_bytes() {
             b"name" => name = Some(value.trim().to_owned()),
             b"style" => round = value.trim() == "round",
             b"dots1" => dots1 = value.trim().parse::<u32>().unwrap_or(0),
@@ -2977,7 +2988,7 @@ fn read_graphic_style_properties(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+        let mapped = match (namespace_kind(&namespace), local.into_inner().as_bytes()) {
             (NamespaceKind::Style, b"wrap") => {
                 style.style.graphic_wrap = Some(value.trim().to_owned());
                 true
@@ -3321,7 +3332,7 @@ fn read_table_column_style_properties(
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         let mapped = if namespace_kind(&namespace) == NamespaceKind::Style
-            && local.as_ref() == b"column-width"
+            && local.into_inner().as_bytes() == b"column-width"
         {
             // Bound to the model's GridColumn domain: an out-of-range width would
             // otherwise fail whole-document validation. Drop it with a finding
@@ -3569,7 +3580,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut reader = NsReader::from_reader(bytes);
     reader
         .resolver_mut()
-        .set_max_declarations_per_element(MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT);
+        .set_max_namespace_bindings(MAX_NAMESPACE_BINDINGS_IN_SCOPE);
     let mut buffer = Vec::new();
     let mut depth = 0_usize;
     let mut elements = 0_usize;
@@ -4692,7 +4703,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     body_depth = None;
                 }
                 if depth == 1 {
-                    if element.local_name().as_ref() != b"document-content" {
+                    if element.local_name().into_inner().as_bytes() != b"document-content" {
                         return Err(OdfError::MalformedContent);
                     }
                     root_closed = true;
@@ -4703,8 +4714,8 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 if leaf_depth.is_some() {
                     return Err(OdfError::MalformedContent);
                 }
-                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                let value = quick_xml::escape::unescape(&decoded)
+                let decoded = text.as_ref();
+                let value = quick_xml::escape::unescape(decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 if let Some(note) = &mut open_note
                     && note.citation_depth.is_some()
@@ -4741,7 +4752,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 if leaf_depth.is_some() {
                     return Err(OdfError::MalformedContent);
                 }
-                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = text.as_ref();
                 if let Some(note) = &mut open_note
                     && note.citation_depth.is_some()
                 {
@@ -4946,13 +4957,13 @@ fn start_list(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"style-name" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"style-name" {
             if explicit_style.is_some() {
                 return Err(OdfError::MalformedContent);
             }
             explicit_style = Some(decode_attribute(&attribute)?);
         } else if namespace_kind(&namespace) == NamespaceKind::Text
-            && matches!(local.as_ref(), b"continue-list" | b"continue-numbering")
+            && matches!(local.into_inner().as_bytes(), b"continue-list" | b"continue-numbering")
         {
             reporter.report("odf.list.continuation".to_owned(), ModelOutcome::Degraded);
         } else if !is_namespace_declaration(&attribute) {
@@ -5017,7 +5028,7 @@ fn start_list_item(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"start-value" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"start-value" {
             // A start-value restarts this level's counter. The model represents
             // it as a per-instance level-start override; the first item to carry
             // it establishes the instance start. A later, conflicting restart
@@ -5051,7 +5062,7 @@ fn start_list_item(
                 }
             }
         } else if namespace_kind(&namespace) == NamespaceKind::Text
-            && local.as_ref() == b"style-override"
+            && local.into_inner().as_bytes() == b"style-override"
         {
             reporter.report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
         } else if !is_namespace_declaration(&attribute) {
@@ -5435,7 +5446,7 @@ fn build_shape_draft(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         match namespace_kind(&namespace) {
-            NamespaceKind::Svg => match local.as_ref() {
+            NamespaceKind::Svg => match local.into_inner().as_bytes() {
                 b"width" => width_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"height" => height_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"x" => {
@@ -5448,10 +5459,10 @@ fn build_shape_draft(
                 }
                 _ => {}
             },
-            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+            NamespaceKind::Text if local.into_inner().as_bytes() == b"anchor-type" => {
                 anchor_type = Some(decode_attribute(&attribute)?);
             }
-            NamespaceKind::Draw => match local.as_ref() {
+            NamespaceKind::Draw => match local.into_inner().as_bytes() {
                 b"z-index" => {
                     z_index = decode_attribute(&attribute)?
                         .parse::<i64>()
@@ -5540,17 +5551,17 @@ fn build_line_draft(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         match namespace_kind(&namespace) {
-            NamespaceKind::Svg => match local.as_ref() {
+            NamespaceKind::Svg => match local.into_inner().as_bytes() {
                 b"x1" => x1 = parse_emu(&decode_attribute(&attribute)?),
                 b"y1" => y1 = parse_emu(&decode_attribute(&attribute)?),
                 b"x2" => x2 = parse_emu(&decode_attribute(&attribute)?),
                 b"y2" => y2 = parse_emu(&decode_attribute(&attribute)?),
                 _ => {}
             },
-            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+            NamespaceKind::Text if local.into_inner().as_bytes() == b"anchor-type" => {
                 anchor_type = Some(decode_attribute(&attribute)?);
             }
-            NamespaceKind::Draw => match local.as_ref() {
+            NamespaceKind::Draw => match local.into_inner().as_bytes() {
                 b"z-index" => {
                     z_index = decode_attribute(&attribute)?
                         .parse::<i64>()
@@ -5686,11 +5697,7 @@ fn consume_shape_subtree(
                 sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
             }
             Event::Text(text) => {
-                if text
-                    .into_inner()
-                    .iter()
-                    .any(|byte| !byte.is_ascii_whitespace())
-                {
+                if text.as_ref().bytes().any(|byte| !byte.is_ascii_whitespace()) {
                     body_dropped = true;
                 }
             }
@@ -5809,14 +5816,14 @@ fn read_group_box_child(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         match namespace_kind(&namespace) {
-            NamespaceKind::Svg => match local.as_ref() {
+            NamespaceKind::Svg => match local.into_inner().as_bytes() {
                 b"x" => x = parse_emu(&decode_attribute(&attribute)?),
                 b"y" => y = parse_emu(&decode_attribute(&attribute)?),
                 b"width" => width = parse_emu(&decode_attribute(&attribute)?),
                 b"height" => height = parse_emu(&decode_attribute(&attribute)?),
                 _ => {}
             },
-            NamespaceKind::Draw if local.as_ref() == b"style-name" => {
+            NamespaceKind::Draw if local.into_inner().as_bytes() == b"style-name" => {
                 style_name = Some(decode_attribute(&attribute)?);
             }
             _ => {}
@@ -5871,14 +5878,14 @@ fn read_group_line_child(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         match namespace_kind(&namespace) {
-            NamespaceKind::Svg => match local.as_ref() {
+            NamespaceKind::Svg => match local.into_inner().as_bytes() {
                 b"x1" => x1 = parse_emu(&decode_attribute(&attribute)?),
                 b"y1" => y1 = parse_emu(&decode_attribute(&attribute)?),
                 b"x2" => x2 = parse_emu(&decode_attribute(&attribute)?),
                 b"y2" => y2 = parse_emu(&decode_attribute(&attribute)?),
                 _ => {}
             },
-            NamespaceKind::Draw if local.as_ref() == b"style-name" => {
+            NamespaceKind::Draw if local.into_inner().as_bytes() == b"style-name" => {
                 style_name = Some(decode_attribute(&attribute)?);
             }
             _ => {}
@@ -5936,10 +5943,10 @@ fn parse_draw_group(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         match namespace_kind(&namespace) {
-            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+            NamespaceKind::Text if local.into_inner().as_bytes() == b"anchor-type" => {
                 anchor_type = Some(decode_attribute(&attribute)?);
             }
-            NamespaceKind::Draw => match local.as_ref() {
+            NamespaceKind::Draw => match local.into_inner().as_bytes() {
                 b"z-index" => {
                     z_index = decode_attribute(&attribute)?
                         .parse::<i64>()
@@ -6129,7 +6136,7 @@ fn parse_group_children(
                 count_attribute(&attribute, attributes, attribute_bytes, limits)?;
                 let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
                 if namespace_kind(&namespace) == NamespaceKind::Draw
-                    && local.as_ref() == b"transform"
+                    && local.into_inner().as_bytes() == b"transform"
                 {
                     reporter.report(
                         "odf.draw.group-transform".to_owned(),
@@ -6200,7 +6207,7 @@ fn parse_group_children(
                 // exactly once.
                 let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
                 if namespace_kind(&namespace) == NamespaceKind::Svg {
-                    match local.as_ref() {
+                    match local.into_inner().as_bytes() {
                         b"x" => fx = parse_emu(&decode_attribute(&attribute)?),
                         b"y" => fy = parse_emu(&decode_attribute(&attribute)?),
                         b"width" => fw = parse_emu(&decode_attribute(&attribute)?),
@@ -6361,17 +6368,17 @@ fn parse_draw_frame(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         match namespace_kind(&namespace) {
-            NamespaceKind::Svg => match local.as_ref() {
+            NamespaceKind::Svg => match local.into_inner().as_bytes() {
                 b"width" => width_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"height" => height_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"x" => x_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"y" => y_emu = parse_emu(&decode_attribute(&attribute)?),
                 _ => {}
             },
-            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+            NamespaceKind::Text if local.into_inner().as_bytes() == b"anchor-type" => {
                 anchor_type = Some(decode_attribute(&attribute)?);
             }
-            NamespaceKind::Draw => match local.as_ref() {
+            NamespaceKind::Draw => match local.into_inner().as_bytes() {
                 b"z-index" => {
                     z_index = decode_attribute(&attribute)?
                         .parse::<i64>()
@@ -6529,7 +6536,7 @@ fn parse_draw_frame(
                             let (namespace, local) =
                                 reader.resolver().resolve_attribute(attribute.key);
                             if namespace_kind(&namespace) == NamespaceKind::Text
-                                && local.as_ref() == b"c"
+                                && local.into_inner().as_bytes() == b"c"
                             {
                                 count = decode_attribute(&attribute)?
                                     .parse()
@@ -6584,8 +6591,8 @@ fn parse_draw_frame(
                 sub_depth -= 1;
             }
             Event::Text(text) if capture_depth.is_some() => {
-                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                let value = quick_xml::escape::unescape(&decoded)
+                let decoded = text.as_ref();
+                let value = quick_xml::escape::unescape(decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 *text_bytes = text_bytes
                     .checked_add(value.len())
@@ -6596,8 +6603,8 @@ fn parse_draw_frame(
                 }
             }
             Event::Text(text) if box_depth.is_some_and(|depth| sub_depth > depth) => {
-                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                let value = quick_xml::escape::unescape(&decoded)
+                let decoded = text.as_ref();
+                let value = quick_xml::escape::unescape(decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 *text_bytes = text_bytes
                     .checked_add(value.len())
@@ -6611,7 +6618,7 @@ fn parse_draw_frame(
             }
             // A `<![CDATA[…]]>` block inside the box body (verbatim text).
             Event::CData(text) if box_depth.is_some_and(|depth| sub_depth > depth) => {
-                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = text.as_ref();
                 *text_bytes = text_bytes
                     .checked_add(value.len())
                     .ok_or(OdfError::MalformedContent)?;
@@ -6967,7 +6974,7 @@ fn parse_annotation(
                         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
                         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
                         if namespace_kind(&namespace) == NamespaceKind::Text
-                            && local.as_ref() == b"c"
+                            && local.into_inner().as_bytes() == b"c"
                         {
                             count = decode_attribute(&attribute)?
                                 .parse()
@@ -7013,8 +7020,8 @@ fn parse_annotation(
                     buffer.clear();
                     continue;
                 };
-                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                let value = quick_xml::escape::unescape(&decoded)
+                let decoded = text.as_ref();
+                let value = quick_xml::escape::unescape(decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 let dropped = append_captured_text(
                     kind,
@@ -7036,7 +7043,7 @@ fn parse_annotation(
                     buffer.clear();
                     continue;
                 };
-                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = text.as_ref();
                 let dropped = append_captured_text(
                     kind,
                     &value,
@@ -7235,7 +7242,7 @@ fn parse_tracked_changes(
                             let (namespace, local) =
                                 reader.resolver().resolve_attribute(attribute.key);
                             if namespace_kind(&namespace) == NamespaceKind::Text
-                                && local.as_ref() == b"c"
+                                && local.into_inner().as_bytes() == b"c"
                             {
                                 count = decode_attribute(&attribute)?
                                     .parse()
@@ -7293,8 +7300,8 @@ fn parse_tracked_changes(
                     buffer.clear();
                     continue;
                 };
-                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                let value = quick_xml::escape::unescape(&decoded)
+                let decoded = text.as_ref();
+                let value = quick_xml::escape::unescape(decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 append_captured_text(
                     kind,
@@ -7322,7 +7329,7 @@ fn parse_tracked_changes(
                 )?;
             }
             Event::CData(text) if capture == Some(CommentCapture::Body) => {
-                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = text.as_ref();
                 append_captured_text(
                     CommentCapture::Body,
                     &value,
@@ -7362,7 +7369,7 @@ fn read_changed_region_id(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"id" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"id" {
             id = Some(decode_attribute(&attribute)?);
         }
     }
@@ -7383,7 +7390,7 @@ fn read_change_id(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"change-id" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"change-id" {
             id = Some(decode_attribute(&attribute)?);
         }
     }
@@ -7403,7 +7410,7 @@ fn read_draw_control_id(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Draw && local.as_ref() == b"control" {
+        if namespace_kind(&namespace) == NamespaceKind::Draw && local.into_inner().as_bytes() == b"control" {
             id = Some(decode_attribute(&attribute)?);
         }
     }
@@ -7600,7 +7607,7 @@ fn read_form_control(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if namespace_kind(&namespace) == NamespaceKind::Form {
-            match local.as_ref() {
+            match local.into_inner().as_bytes() {
                 b"id" => id = Some(decode_attribute(&attribute)?),
                 b"name" => name = Some(decode_attribute(&attribute)?),
                 b"current-state" => {
@@ -7640,7 +7647,7 @@ fn read_form_id_name(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if namespace_kind(&namespace) == NamespaceKind::Form {
-            match local.as_ref() {
+            match local.into_inner().as_bytes() {
                 b"id" => id = Some(decode_attribute(&attribute)?),
                 b"name" => name = Some(decode_attribute(&attribute)?),
                 _ => {}
@@ -7666,7 +7673,7 @@ fn read_form_option_label(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Form && local.as_ref() == b"label" {
+        if namespace_kind(&namespace) == NamespaceKind::Form && local.into_inner().as_bytes() == b"label" {
             label = Some(decode_attribute(&attribute)?);
         }
     }
@@ -7685,7 +7692,7 @@ fn read_href(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Xlink && local.as_ref() == b"href" {
+        if namespace_kind(&namespace) == NamespaceKind::Xlink && local.into_inner().as_bytes() == b"href" {
             href = Some(decode_attribute(&attribute)?);
         }
     }
@@ -7991,7 +7998,7 @@ fn start_table(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == b"style-name" {
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.into_inner().as_bytes() == b"style-name" {
             let style_name = decode_attribute(&attribute)?;
             match automatic_styles.get(&(StyleFamily::Table, style_name)) {
                 Some(style) => {
@@ -8091,7 +8098,7 @@ fn add_table_columns(
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == b"style-name" {
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.into_inner().as_bytes() == b"style-name" {
             let style_name = decode_attribute(&attribute)?;
             match automatic_styles.get(&(StyleFamily::TableColumn, style_name)) {
                 Some(style) => width = style.column_width_twips,
@@ -8146,7 +8153,7 @@ fn start_table_row(
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == b"style-name" {
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.into_inner().as_bytes() == b"style-name" {
             let style_name = decode_attribute(&attribute)?;
             match automatic_styles.get(&(StyleFamily::TableRow, style_name)) {
                 Some(style) => height = style.row_height,
@@ -8198,7 +8205,7 @@ fn start_table_cell(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if namespace_kind(&namespace) == NamespaceKind::Table {
-            if local.as_ref() == b"style-name" {
+            if local.into_inner().as_bytes() == b"style-name" {
                 let style_name = decode_attribute(&attribute)?;
                 match automatic_styles.get(&(StyleFamily::TableCell, style_name)) {
                     Some(style) => {
@@ -8213,7 +8220,7 @@ fn start_table_cell(
                 }
                 continue;
             }
-            let target = match local.as_ref() {
+            let target = match local.into_inner().as_bytes() {
                 b"number-columns-repeated" => &mut repeat,
                 b"number-columns-spanned" => &mut column_span,
                 b"number-rows-spanned" => &mut row_span,
@@ -8312,13 +8319,13 @@ fn read_table_repeat(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == expected_local {
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.into_inner().as_bytes() == expected_local {
             if repeat.is_some() {
                 return Err(OdfError::MalformedContent);
             }
             repeat = Some(parse_positive_usize(&decode_attribute(&attribute)?)?);
         } else if namespace_kind(&namespace) == NamespaceKind::Table
-            && recognized.contains(&local.as_ref())
+            && recognized.contains(&local.into_inner().as_bytes())
         {
             // Counted here (once) but consumed and reported by the caller.
         } else if !is_namespace_declaration(&attribute) {
@@ -8569,13 +8576,13 @@ fn start_note(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"id" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"id" {
             if source_id.is_some() {
                 return Err(OdfError::MalformedContent);
             }
             source_id = Some(decode_attribute(&attribute)?);
         } else if namespace_kind(&namespace) == NamespaceKind::Text
-            && local.as_ref() == b"note-class"
+            && local.into_inner().as_bytes() == b"note-class"
         {
             if kind.is_some() {
                 return Err(OdfError::MalformedContent);
@@ -9029,7 +9036,7 @@ fn start_paragraph(
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if heading
             && namespace_kind(&namespace) == NamespaceKind::Text
-            && local.as_ref() == b"outline-level"
+            && local.into_inner().as_bytes() == b"outline-level"
         {
             let raw = decode_attribute(&attribute)?;
             let parsed = raw.parse::<u16>().map_err(|_| OdfError::MalformedContent)?;
@@ -9047,7 +9054,7 @@ fn start_paragraph(
                 );
             }
         } else if namespace_kind(&namespace) == NamespaceKind::Text
-            && local.as_ref() == b"style-name"
+            && local.into_inner().as_bytes() == b"style-name"
         {
             let style_name = decode_attribute(&attribute)?;
             if let Some(style) = automatic_styles.get(&(StyleFamily::Paragraph, style_name.clone()))
@@ -9114,7 +9121,7 @@ fn process_inline(
             let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
             count_attribute(&attribute, attributes, attribute_bytes, limits)?;
             let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-            if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"c" {
+            if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"c" {
                 count = decode_attribute(&attribute)?
                     .parse()
                     .map_err(|_| OdfError::MalformedContent)?;
@@ -9251,7 +9258,7 @@ fn read_span_properties(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"style-name" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"style-name" {
             if style_name.is_some() {
                 return Err(OdfError::MalformedContent);
             }
@@ -9456,13 +9463,13 @@ fn read_link_target(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Xlink && local.as_ref() == b"href" {
+        if namespace_kind(&namespace) == NamespaceKind::Xlink && local.into_inner().as_bytes() == b"href" {
             if href.is_some() {
                 return Err(OdfError::MalformedContent);
             }
             href = Some(decode_attribute(&attribute)?);
         } else if namespace_kind(&namespace) == NamespaceKind::Xlink
-            && local.as_ref() == b"type"
+            && local.into_inner().as_bytes() == b"type"
             && decode_attribute(&attribute)? == "simple"
         {
             // The model's hyperlink target already implies the simple-link type.
@@ -9539,7 +9546,7 @@ fn read_toc_name(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"name" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"name" {
             name = Some(decode_attribute(&attribute)?);
         } else if !is_namespace_declaration(&attribute) {
             reporter.report(
@@ -9573,7 +9580,7 @@ fn read_bookmark_name(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"name" {
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"name" {
             if name.is_some() {
                 return Err(OdfError::MalformedContent);
             }
@@ -11495,7 +11502,7 @@ fn read_version(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Office && local.as_ref() == b"version" {
+        if namespace_kind(&namespace) == NamespaceKind::Office && local.into_inner().as_bytes() == b"version" {
             version = Some(decode_attribute(&attribute)?);
         } else if !is_namespace_declaration(&attribute) {
             reporter.report(
@@ -11550,7 +11557,7 @@ fn count_attribute(
 ) -> Result<(), OdfError> {
     enforce(
         "odf_content_xml_name_bytes",
-        attribute.key.as_ref().len(),
+        attribute.key.into_inner().as_bytes().len(),
         limits.max_xml_name_bytes,
     )?;
     *attributes = checked_increment(*attributes)?;
@@ -11577,7 +11584,7 @@ fn count_attribute(
 fn validate_name(element: &BytesStart<'_>, limits: OdfImportLimits) -> Result<(), OdfError> {
     enforce(
         "odf_content_xml_name_bytes",
-        element.name().as_ref().len(),
+        element.name().into_inner().as_bytes().len(),
         limits.max_xml_name_bytes,
     )
 }
@@ -11609,16 +11616,13 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<(), OdfError> {
 fn decode_attribute(
     attribute: &quick_xml::events::attributes::Attribute<'_>,
 ) -> Result<String, OdfError> {
-    let raw =
-        core::str::from_utf8(attribute.value.as_ref()).map_err(|_| OdfError::MalformedContent)?;
-    quick_xml::escape::unescape(raw)
+    quick_xml::escape::unescape(attribute.value.as_ref())
         .map(|value| value.into_owned())
         .map_err(|_| OdfError::MalformedContent)
 }
 
 fn decode_reference(reference: &BytesRef<'_>) -> Result<String, OdfError> {
-    let name = reference.decode().map_err(|_| OdfError::MalformedContent)?;
-    let encoded = format!("&{name};");
+    let encoded = format!("&{};", reference.as_ref());
     quick_xml::escape::unescape(&encoded)
         .map(|value| value.into_owned())
         .map_err(|_| OdfError::MalformedContent)
@@ -11628,7 +11632,7 @@ fn resolved_name(reader: &NsReader<&[u8]>, element: &BytesStart<'_>) -> Resolved
     let (namespace, local) = reader.resolver().resolve_element(element.name());
     ResolvedName {
         namespace: namespace_kind(&namespace),
-        local: local.as_ref().to_vec(),
+        local: local.into_inner().as_bytes().to_vec(),
     }
 }
 
@@ -11638,17 +11642,17 @@ fn is_name(name: &ResolvedName, namespace: NamespaceKind, local: &[u8]) -> bool 
 
 fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
     match namespace {
-        ResolveResult::Bound(Namespace(value)) if *value == OFFICE_NS => NamespaceKind::Office,
-        ResolveResult::Bound(Namespace(value)) if *value == TEXT_NS => NamespaceKind::Text,
-        ResolveResult::Bound(Namespace(value)) if *value == SCRIPT_NS => NamespaceKind::Script,
-        ResolveResult::Bound(Namespace(value)) if *value == XLINK_NS => NamespaceKind::Xlink,
-        ResolveResult::Bound(Namespace(value)) if *value == STYLE_NS => NamespaceKind::Style,
-        ResolveResult::Bound(Namespace(value)) if *value == FO_NS => NamespaceKind::Fo,
-        ResolveResult::Bound(Namespace(value)) if *value == TABLE_NS => NamespaceKind::Table,
-        ResolveResult::Bound(Namespace(value)) if *value == DRAW_NS => NamespaceKind::Draw,
-        ResolveResult::Bound(Namespace(value)) if *value == SVG_NS => NamespaceKind::Svg,
-        ResolveResult::Bound(Namespace(value)) if *value == DC_NS => NamespaceKind::Dc,
-        ResolveResult::Bound(Namespace(value)) if *value == FORM_NS => NamespaceKind::Form,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == OFFICE_NS => NamespaceKind::Office,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == TEXT_NS => NamespaceKind::Text,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == SCRIPT_NS => NamespaceKind::Script,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == XLINK_NS => NamespaceKind::Xlink,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == STYLE_NS => NamespaceKind::Style,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == FO_NS => NamespaceKind::Fo,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == TABLE_NS => NamespaceKind::Table,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == DRAW_NS => NamespaceKind::Draw,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == SVG_NS => NamespaceKind::Svg,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == DC_NS => NamespaceKind::Dc,
+        ResolveResult::Bound(Namespace(value)) if value.as_bytes() == FORM_NS => NamespaceKind::Form,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -11716,7 +11720,7 @@ fn read_field_kind(
         for attribute in element.attributes() {
             let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
             let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-            if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"name" {
+            if namespace_kind(&namespace) == NamespaceKind::Text && local.into_inner().as_bytes() == b"name" {
                 seq_name = Some(decode_attribute(&attribute)?);
             }
         }
@@ -11738,7 +11742,7 @@ fn read_field_kind(
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if namespace_kind(&namespace) == NamespaceKind::Text {
-            match local.as_ref() {
+            match local.into_inner().as_bytes() {
                 b"ref-name" => ref_name = Some(decode_attribute(&attribute)?),
                 b"reference-format" => page = decode_attribute(&attribute)? == "page",
                 _ => {}
@@ -11879,12 +11883,12 @@ fn attribute_feature(
         "attribute",
         &ResolvedName {
             namespace: namespace_kind(&namespace),
-            local: local.as_ref().to_vec(),
+            local: local.into_inner().as_bytes().to_vec(),
         },
     )
 }
 
 fn is_namespace_declaration(attribute: &quick_xml::events::attributes::Attribute<'_>) -> bool {
-    let key = attribute.key.as_ref();
+    let key = attribute.key.into_inner().as_bytes();
     key == b"xmlns" || key.starts_with(b"xmlns:")
 }

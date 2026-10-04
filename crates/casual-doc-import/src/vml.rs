@@ -713,9 +713,8 @@ impl VmlWrap {
 fn attr(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {
     for attribute in element.attributes() {
         let attribute = attribute.ok()?;
-        if attribute.key.local_name().as_ref() == name {
-            let raw = std::str::from_utf8(attribute.value.as_ref()).ok()?;
-            return quick_xml::escape::unescape(raw)
+        if attribute.key.local_name().into_inner().as_bytes() == name {
+            return quick_xml::escape::unescape(attribute.value.as_ref())
                 .ok()
                 .map(|value| value.into_owned());
         }
@@ -1479,7 +1478,7 @@ pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
             Event::Eof => break,
             Event::Start(element) => {
                 let local = element.local_name();
-                let name = local.as_ref();
+                let name = local.into_inner().as_bytes();
                 if shapetype_depth > 0 {
                     shapetype_depth += 1;
                 } else if name == b"shapetype" {
@@ -1493,7 +1492,7 @@ pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
             }
             Event::Empty(element) => {
                 let local = element.local_name();
-                let name = local.as_ref();
+                let name = local.into_inner().as_bytes();
                 if shapetype_depth == 0 {
                     on_open(name, &element, &mut groups, &mut shape, false);
                     on_close(name, &mut groups, &mut shape, &mut out);
@@ -1501,7 +1500,7 @@ pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
             }
             Event::End(element) => {
                 let local = element.local_name();
-                let name = local.as_ref();
+                let name = local.into_inner().as_bytes();
                 if shapetype_depth > 0 {
                     shapetype_depth -= 1;
                 } else {
@@ -1640,8 +1639,8 @@ fn capture_txbx(
         let before = reader.buffer_position() as usize;
         buffer.clear();
         match reader.read_event_into(buffer) {
-            Ok(Event::Start(e)) if e.local_name().as_ref() == b"txbxContent" => depth += 1,
-            Ok(Event::End(e)) if e.local_name().as_ref() == b"txbxContent" => {
+            Ok(Event::Start(e)) if e.local_name().into_inner().as_bytes() == b"txbxContent" => depth += 1,
+            Ok(Event::End(e)) if e.local_name().into_inner().as_bytes() == b"txbxContent" => {
                 depth -= 1;
                 if depth == 0 {
                     break before;

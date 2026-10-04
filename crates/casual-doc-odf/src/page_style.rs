@@ -23,7 +23,7 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
         match reader.read_event_into(&mut buf).ok()? {
             Event::Start(start) | Event::Empty(start) => {
                 let local = start.name();
-                let local = local.as_ref().split(|byte| *byte == b':').next_back()?;
+                let local = local.into_inner().as_bytes().split(|byte| *byte == b':').next_back()?;
                 if local != b"page-layout-properties" {
                     buf.clear();
                     continue;
@@ -37,8 +37,8 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                 let mut column_separator = None;
                 let mut text_direction = None;
                 for attr in start.attributes().flatten() {
-                    let key = attr.key.as_ref().split(|byte| *byte == b':').next_back()?;
-                    let value = String::from_utf8_lossy(attr.value.as_ref());
+                    let key = attr.key.into_inner().as_bytes().split(|byte| *byte == b':').next_back()?;
+                    let value = attr.value.as_ref();
                     match key {
                         b"page-width" => width = parse_twips(&value),
                         b"page-height" => height = parse_twips(&value),

@@ -96,7 +96,7 @@ pub(crate) fn scan_comment_para_ids(
                     return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                 }
                 bump(&mut elements, config.max_elements)?;
-                match element.local_name().as_ref() {
+                match element.local_name().into_inner().as_bytes() {
                     b"comment" => {
                         if let Some(id) = attribute_value(&element, b"id") {
                             current = Some((id, level));
@@ -108,13 +108,13 @@ pub(crate) fn scan_comment_para_ids(
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
-                if element.local_name().as_ref() == b"p" {
+                if element.local_name().into_inner().as_bytes() == b"p" {
                     record_para(&current, depth, &element, &mut out);
                 }
             }
             Event::End(element) => {
                 depth = depth.saturating_sub(1);
-                if element.local_name().as_ref() == b"comment" {
+                if element.local_name().into_inner().as_bytes() == b"comment" {
                     current = None;
                 }
             }
@@ -153,7 +153,7 @@ pub(crate) fn parse_comments_extended(
 ) -> Result<BTreeMap<String, CommentExtended>, ImportError> {
     let mut out = BTreeMap::new();
     each_element(xml, config, |element| {
-        match element.local_name().as_ref() {
+        match element.local_name().into_inner().as_bytes() {
             // The part root carries no data of its own.
             b"commentsEx" => {}
             b"commentEx" => match token(element, b"paraId") {
@@ -194,7 +194,7 @@ pub(crate) fn parse_comments_ids(
 ) -> Result<BTreeMap<String, String>, ImportError> {
     let mut out = BTreeMap::new();
     each_element(xml, config, |element| {
-        match element.local_name().as_ref() {
+        match element.local_name().into_inner().as_bytes() {
             // The part root carries no data of its own.
             b"commentsIds" => {}
             b"commentId" => match (token(element, b"paraId"), token(element, b"durableId")) {
@@ -239,7 +239,7 @@ pub(crate) fn parse_people(
                     return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                 }
                 bump(&mut elements, config.max_elements)?;
-                match element.local_name().as_ref() {
+                match element.local_name().into_inner().as_bytes() {
                     // The part root carries no data of its own.
                     b"people" => {}
                     b"person" => {
@@ -263,7 +263,7 @@ pub(crate) fn parse_people(
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
-                match element.local_name().as_ref() {
+                match element.local_name().into_inner().as_bytes() {
                     // A childless `<w15:people/>` carries no data of its own.
                     b"people" => {}
                     b"person" => match identity(&element, b"author") {
@@ -282,7 +282,7 @@ pub(crate) fn parse_people(
             }
             Event::End(element) => {
                 depth = depth.saturating_sub(1);
-                if element.local_name().as_ref() == b"person"
+                if element.local_name().into_inner().as_bytes() == b"person"
                     && let Some(person) = pending.take()
                 {
                     people.push(person);

@@ -193,18 +193,18 @@ fn flagged(xml: &[u8], local: &str, key: &[u8], flag: &[u8]) -> Vec<(String, Opt
             Ok(_) => continue,
             Err(error) => panic!("the part is well-formed XML: {error}"),
         };
-        if element.local_name().as_ref() != local.as_bytes() {
+        if element.local_name().into_inner().as_bytes() != local.as_bytes() {
             continue;
         }
         let mut id = None;
         let mut value = None;
         for attribute in element.attributes() {
             let attribute = attribute.expect("a well-formed attribute");
-            let name = attribute.key.as_ref();
+            let name = attribute.key.into_inner().as_bytes();
             if name == key {
-                id = Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned());
+                id = Some(attribute.value.as_ref().to_owned());
             } else if name == flag {
-                value = Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned());
+                value = Some(attribute.value.as_ref().to_owned());
             }
         }
         if let Some(id) = id {
@@ -231,11 +231,11 @@ fn styles(bytes: &[u8]) -> Vec<(String, Option<String>)> {
     let mut open: Option<Option<String>> = None;
     loop {
         match reader.read_event_into(&mut buffer) {
-            Ok(Event::Start(element)) if element.local_name().as_ref() == b"style" => {
+            Ok(Event::Start(element)) if element.local_name().into_inner().as_bytes() == b"style" => {
                 open = Some(attribute_as_written(&element, b"w:customStyle"));
             }
             Ok(Event::Empty(element) | Event::Start(element))
-                if element.local_name().as_ref() == b"name" =>
+                if element.local_name().into_inner().as_bytes() == b"name" =>
             {
                 if let Some(flag) = open.clone()
                     && let Some(name) = attribute_as_written(&element, b"w:val")
@@ -243,7 +243,7 @@ fn styles(bytes: &[u8]) -> Vec<(String, Option<String>)> {
                     found.push((name, flag));
                 }
             }
-            Ok(Event::End(element)) if element.local_name().as_ref() == b"style" => open = None,
+            Ok(Event::End(element)) if element.local_name().into_inner().as_bytes() == b"style" => open = None,
             Ok(Event::Eof) => break,
             Ok(_) => {}
             Err(error) => panic!("the styles part is well-formed XML: {error}"),
@@ -261,8 +261,8 @@ fn attribute_as_written(
 ) -> Option<String> {
     element.attributes().find_map(|attribute| {
         let attribute = attribute.expect("a well-formed attribute");
-        (attribute.key.as_ref() == name)
-            .then(|| String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+        (attribute.key.into_inner().as_bytes() == name)
+            .then(|| attribute.value.as_ref().to_owned())
     })
 }
 

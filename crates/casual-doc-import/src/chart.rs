@@ -617,7 +617,7 @@ impl Parser {
                         return Err(ChartDecline::Malformed);
                     }
                     let local = element.local_name();
-                    let local = local.as_ref();
+                    let local = local.into_inner().as_bytes();
                     if !saw_root {
                         if local != b"chartSpace" {
                             return Err(ChartDecline::Malformed);
@@ -646,7 +646,7 @@ impl Parser {
                         return Err(ChartDecline::Malformed);
                     }
                     let local = element.local_name();
-                    let local = local.as_ref();
+                    let local = local.into_inner().as_bytes();
                     if !saw_root {
                         // A `<c:chartSpace/>` carries no chart at all.
                         return Err(if local == b"chartSpace" {
@@ -666,8 +666,7 @@ impl Parser {
                 }
                 Event::Text(text) => {
                     if self.skip_depth == 0 && self.value_text.is_some() {
-                        let raw = text.decode().map_err(|_| ChartDecline::Malformed)?;
-                        let decoded = quick_xml::escape::unescape(&raw)
+                        let decoded = quick_xml::escape::unescape(text.as_ref())
                             .map_err(|_| ChartDecline::Malformed)?;
                         self.push_value_text(&decoded, config)?;
                     }
@@ -689,7 +688,7 @@ impl Parser {
                         continue;
                     }
                     let local = element.local_name();
-                    let local = local.as_ref();
+                    let local = local.into_inner().as_bytes();
                     self.on_end(local)?;
                     self.scopes.pop();
                 }

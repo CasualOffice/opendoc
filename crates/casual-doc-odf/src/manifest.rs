@@ -40,7 +40,7 @@ pub(crate) fn parse_manifest(
     let mut reader = NsReader::from_reader(bytes);
     reader
         .resolver_mut()
-        .set_max_declarations_per_element(limits.max_xml_attributes);
+        .set_max_namespace_bindings(limits.max_xml_attributes);
     let mut buffer = Vec::new();
     let mut depth = 0_usize;
     let mut elements = 0_usize;
@@ -148,7 +148,7 @@ pub(crate) fn parse_manifest(
                     insert_entry(&mut entries, entry)?;
                 }
                 if depth == 1 {
-                    if element.local_name().as_ref() != b"manifest" {
+                    if element.local_name().into_inner().as_bytes() != b"manifest" {
                         return Err(OdfError::MalformedManifest);
                     }
                     root_closed = true;
@@ -156,11 +156,7 @@ pub(crate) fn parse_manifest(
                 depth = depth.checked_sub(1).ok_or(OdfError::MalformedManifest)?;
             }
             Event::Text(text) if depth == 0 => {
-                match text
-                    .decode()
-                    .map_err(|_| OdfError::MalformedManifest)?
-                    .trim()
-                    .is_empty()
+                match text.as_ref().trim().is_empty()
                 {
                     true => {}
                     false => return Err(OdfError::MalformedManifest),
@@ -191,7 +187,7 @@ fn read_version(
         let attribute = attribute.map_err(|_| OdfError::MalformedManifest)?;
         count_attribute(attribute.value.len(), attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if is_bound(namespace, MANIFEST_NS) && local.as_ref() == b"version" {
+        if is_bound(namespace, MANIFEST_NS) && local.into_inner().as_bytes() == b"version" {
             version = Some(decode_attribute(&attribute)?);
         }
     }
@@ -215,7 +211,7 @@ fn read_file_entry(
         if !is_bound(namespace, MANIFEST_NS) {
             continue;
         }
-        match local.as_ref() {
+        match local.into_inner().as_bytes() {
             b"full-path" => full_path = Some(decode_attribute(&attribute)?),
             b"media-type" => media_type = Some(decode_attribute(&attribute)?),
             b"version" => version = Some(decode_attribute(&attribute)?),
@@ -233,9 +229,7 @@ fn read_file_entry(
 fn decode_attribute(
     attribute: &quick_xml::events::attributes::Attribute<'_>,
 ) -> Result<String, OdfError> {
-    let raw =
-        core::str::from_utf8(attribute.value.as_ref()).map_err(|_| OdfError::MalformedManifest)?;
-    quick_xml::escape::unescape(raw)
+    quick_xml::escape::unescape(attribute.value.as_ref())
         .map(|value| value.into_owned())
         .map_err(|_| OdfError::MalformedManifest)
 }
@@ -288,11 +282,11 @@ fn insert_entry(
 
 fn is_manifest_name(reader: &NsReader<&[u8]>, element: &BytesStart<'_>, local: &[u8]) -> bool {
     let (namespace, actual_local) = reader.resolver().resolve_element(element.name());
-    actual_local.as_ref() == local && is_bound(namespace, MANIFEST_NS)
+    actual_local.into_inner().as_bytes() == local && is_bound(namespace, MANIFEST_NS)
 }
 
 fn is_bound(result: ResolveResult<'_>, expected: &[u8]) -> bool {
-    matches!(result, ResolveResult::Bound(Namespace(actual)) if actual == expected)
+    matches!(result, ResolveResult::Bound(Namespace(actual)) if actual.as_bytes() == expected)
 }
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<(), OdfError> {

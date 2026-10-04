@@ -1810,23 +1810,23 @@ impl BodyParser<'_> {
                     // need resolving — including against declarations written
                     // on that same start tag.
                     self.push_namespace_declarations(&element);
-                    if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
+                    if is_math_root(element.local_name().into_inner().as_bytes()) && self.math_allowed() {
                         self.begin_math(&element)?;
                     } else {
-                        self.on_start(element.local_name().as_ref(), &element, false)?;
+                        self.on_start(element.local_name().into_inner().as_bytes(), &element, false)?;
                     }
                 }
                 Event::Empty(element) => {
-                    if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
+                    if is_math_root(element.local_name().into_inner().as_bytes()) && self.math_allowed() {
                         // A degenerate self-closing math root: retain the lone tag.
                         self.emit_empty_math(&element)?;
                     } else {
-                        self.on_start(element.local_name().as_ref(), &element, true)?;
-                        self.on_end(element.local_name().as_ref())?;
+                        self.on_start(element.local_name().into_inner().as_bytes(), &element, true)?;
+                        self.on_end(element.local_name().into_inner().as_bytes())?;
                     }
                 }
                 Event::End(element) => {
-                    self.on_end(element.local_name().as_ref())?;
+                    self.on_end(element.local_name().into_inner().as_bytes())?;
                     self.pop_namespace_declarations();
                     self.depth = self.depth.saturating_sub(1);
                 }
@@ -1834,12 +1834,10 @@ impl BodyParser<'_> {
                 // open anchor accumulator (bounded), not the paragraph flow.
                 Event::Text(text) if self.capturing_anchor_axis() => {
                     let raw = text.into_inner();
-                    let raw =
-                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
                     if let Some(anchor) = self.pending_anchor.as_mut()
                         && anchor.capture_buffer.len() + raw.len() <= 64
                     {
-                        anchor.capture_buffer.push_str(raw);
+                        anchor.capture_buffer.push_str(&raw);
                     }
                 }
                 Event::GeneralRef(reference) if self.capturing_anchor_axis() => {
@@ -1854,20 +1852,16 @@ impl BodyParser<'_> {
                 // the paragraph flow exactly like the anchor axes above.
                 Event::Text(text) if self.relative_size_pct.is_some() => {
                     let raw = text.into_inner();
-                    let raw =
-                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
                     if let Some(buffer) = self.relative_size_pct.as_mut()
                         && buffer.len() + raw.len() <= 32
                     {
-                        buffer.push_str(raw);
+                        buffer.push_str(&raw);
                     }
                 }
                 Event::Text(text) if self.in_text || self.in_instr => {
                     let raw = text.into_inner();
-                    let raw =
-                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
                     let decoded =
-                        quick_xml::escape::unescape(raw).map_err(|_| ImportError::MalformedXml)?;
+                        quick_xml::escape::unescape(&raw).map_err(|_| ImportError::MalformedXml)?;
                     self.push_text(decoded.as_ref())?;
                 }
                 Event::GeneralRef(reference) if self.in_text || self.in_instr => {
@@ -1875,10 +1869,8 @@ impl BodyParser<'_> {
                     self.push_text(&decoded)?;
                 }
                 Event::CData(cdata) if self.in_text || self.in_instr => {
-                    let raw = cdata.into_inner();
-                    let text =
-                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
-                    self.push_text(text)?;
+                    let text = cdata.into_inner();
+                    self.push_text(&text)?;
                 }
                 _ => {}
             }
@@ -1892,8 +1884,8 @@ impl BodyParser<'_> {
     /// start, appends every event within it, and, on the matching end, hands the
     /// re-serialized fragment to [`Self::pending_pict_xml`] for [`Self::commit_pict`].
     fn capture_pict_event(&mut self, event: &Event<'_>) {
-        let pict_start = matches!(event, Event::Start(e) if e.local_name().as_ref() == b"pict");
-        let pict_end = matches!(event, Event::End(e) if e.local_name().as_ref() == b"pict");
+        let pict_start = matches!(event, Event::Start(e) if e.local_name().into_inner().as_bytes() == b"pict");
+        let pict_end = matches!(event, Event::End(e) if e.local_name().into_inner().as_bytes() == b"pict");
         if pict_start && self.vml_capture.is_none() {
             self.vml_capture = Some(Writer::new(Vec::new()));
             self.vml_capture_depth = 0;
@@ -1973,7 +1965,7 @@ impl BodyParser<'_> {
                 self.math_depth += 1;
                 // An `m:t` (any namespace prefix; local name `t`) carries literal
                 // equation text collected into the fallback.
-                self.math_in_t = el.local_name().as_ref() == b"t";
+                self.math_in_t = el.local_name().into_inner().as_bytes() == b"t";
             }
             Event::End(_) => {
                 // The math root's own start tag went through the ordinary Start
@@ -1986,7 +1978,7 @@ impl BodyParser<'_> {
             }
             Event::Eof => return Err(ImportError::MalformedXml),
             Event::Text(text) if self.math_in_t => {
-                let raw = text.decode().map_err(|_| ImportError::MalformedXml)?;
+                let raw = text.as_ref();
                 let decoded =
                     quick_xml::escape::unescape(&raw).map_err(|_| ImportError::MalformedXml)?;
                 self.push_math_text(&decoded)?;
@@ -2076,22 +2068,18 @@ impl BodyParser<'_> {
     fn push_namespace_declarations(&mut self, element: &BytesStart<'_>) {
         for attribute in element.attributes() {
             let Ok(attribute) = attribute else { continue };
-            if attribute.key.prefix().map(|prefix| prefix.into_inner()) != Some(b"xmlns".as_slice())
-            {
+            if attribute.key.prefix().map(|prefix| prefix.into_inner()) != Some("xmlns") {
                 continue;
             }
             if self.namespaces.len() >= MAX_TRACKED_NAMESPACES {
                 return;
             }
-            let Ok(raw) = std::str::from_utf8(attribute.value.as_ref()) else {
-                continue;
-            };
-            let Ok(uri) = quick_xml::escape::unescape(raw) else {
+            let Ok(uri) = quick_xml::escape::unescape(attribute.value.as_ref()) else {
                 continue;
             };
             self.namespaces.push(NamespaceDeclaration {
                 depth: self.depth,
-                prefix: attribute.key.local_name().as_ref().to_vec(),
+                prefix: attribute.key.local_name().into_inner().as_bytes().to_vec(),
                 uri: uri.as_bytes().to_vec(),
             });
         }
@@ -2167,7 +2155,7 @@ impl BodyParser<'_> {
         }
         for attribute in element.attributes().with_checks(false).flatten() {
             let name = attribute.key.local_name();
-            let name = name.as_ref();
+            let name = name.into_inner().as_bytes();
             if crate::report::is_revision_save_id_attribute(name) {
                 self.reporter.report_rsid();
             } else if matches!(name, b"paraId" | b"textId")

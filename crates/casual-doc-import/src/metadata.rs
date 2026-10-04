@@ -61,8 +61,7 @@ pub(crate) fn parse(
 
 /// Decodes a text event to an unescaped owned string (mirrors the body parser).
 fn decode(text: &BytesText<'_>) -> Result<String, ImportError> {
-    let raw = std::str::from_utf8(text.as_ref()).map_err(|_| ImportError::MalformedXml)?;
-    Ok(quick_xml::escape::unescape(raw)
+    Ok(quick_xml::escape::unescape(text.as_ref())
         .map_err(|_| ImportError::MalformedXml)?
         .into_owned())
 }
@@ -107,7 +106,7 @@ fn parse_core(
                 }
                 bump(&mut elements, config.max_elements)?;
                 if depth == 2 {
-                    current = Some(element.local_name().as_ref().to_vec());
+                    current = Some(element.local_name().into_inner().as_bytes().to_vec());
                     text.clear();
                 }
             }
@@ -115,9 +114,9 @@ fn parse_core(
                 bump(&mut elements, config.max_elements)?;
                 // An empty-valued field (`<dc:title/>`) at the root level.
                 if depth == 1
-                    && !assign_core(&mut core, element.local_name().as_ref(), String::new())
+                    && !assign_core(&mut core, element.local_name().into_inner().as_bytes(), String::new())
                 {
-                    reporter.report(element.local_name().as_ref());
+                    reporter.report(element.local_name().into_inner().as_bytes());
                 }
             }
             Event::Text(chunk) if current.is_some() && depth == 2 => {
@@ -206,18 +205,18 @@ fn parse_app(
                 }
                 bump(&mut elements, config.max_elements)?;
                 let local = element.local_name();
-                match local.as_ref() {
+                match local.into_inner().as_bytes() {
                     b"TitlesOfParts" => section = Section::Titles,
                     b"HeadingPairs" => {
                         section = Section::Headings;
                         pending_heading = None;
                     }
                     b"lpstr" | b"lpwstr" | b"i4" if section != Section::None => {
-                        vt = Some(local.as_ref().to_vec());
+                        vt = Some(local.into_inner().as_bytes().to_vec());
                         text.clear();
                     }
                     _ if section == Section::None && depth == 2 => {
-                        scalar = Some(local.as_ref().to_vec());
+                        scalar = Some(local.into_inner().as_bytes().to_vec());
                         text.clear();
                     }
                     _ => {}
@@ -229,15 +228,15 @@ fn parse_app(
                 if section != Section::None {
                     // An empty vector leaf (`<vt:lpstr/>`).
                     commit_vt(
-                        local.as_ref(),
+                        local.into_inner().as_bytes(),
                         String::new(),
                         section,
                         &mut app,
                         &mut pending_heading,
                     );
-                } else if depth == 1 && !assign_app_scalar(&mut app, local.as_ref(), String::new())
+                } else if depth == 1 && !assign_app_scalar(&mut app, local.into_inner().as_bytes(), String::new())
                 {
-                    reporter.report(local.as_ref());
+                    reporter.report(local.into_inner().as_bytes());
                 }
             }
             Event::Text(chunk) if vt.is_some() || scalar.is_some() => {
@@ -248,12 +247,12 @@ fn parse_app(
             }
             Event::End(element) => {
                 let local = element.local_name();
-                match local.as_ref() {
+                match local.into_inner().as_bytes() {
                     b"TitlesOfParts" | b"HeadingPairs" => section = Section::None,
                     _ => {
                         if vt.take().is_some() {
                             commit_vt(
-                                local.as_ref(),
+                                local.into_inner().as_bytes(),
                                 std::mem::take(&mut text),
                                 section,
                                 &mut app,
@@ -366,24 +365,24 @@ fn parse_custom(
                     return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                 }
                 bump(&mut elements, config.max_elements)?;
-                if element.local_name().as_ref() == b"property" {
+                if element.local_name().into_inner().as_bytes() == b"property" {
                     pending_name = property_name(&element);
                     pending_value = None;
                     values_seen = 0;
                 } else if pending_name.is_some() {
-                    vt = Some(element.local_name().as_ref().to_vec());
+                    vt = Some(element.local_name().into_inner().as_bytes().to_vec());
                     text.clear();
                 }
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
-                if element.local_name().as_ref() == b"property" {
+                if element.local_name().into_inner().as_bytes() == b"property" {
                     // A value-less property is skipped (nothing to model).
                     pending_name = None;
                     pending_value = None;
                 } else if pending_name.is_some() {
                     pending_value =
-                        Some(custom_value(element.local_name().as_ref(), String::new()));
+                        Some(custom_value(element.local_name().into_inner().as_bytes(), String::new()));
                 }
             }
             Event::Text(chunk) if vt.is_some() => {
@@ -393,7 +392,7 @@ fn parse_custom(
                 text.push_str(&crate::decode_xml_reference(&reference)?);
             }
             Event::End(element) => {
-                if element.local_name().as_ref() == b"property" {
+                if element.local_name().into_inner().as_bytes() == b"property" {
                     if let (Some(name), Some(value)) = (pending_name.take(), pending_value.take())
                         && !name.is_empty()
                     {

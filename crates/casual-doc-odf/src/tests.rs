@@ -68,7 +68,18 @@ fn package(entries: &[Entry]) -> Vec<u8> {
     for entry in entries {
         let mut options = FullFileOptions::default().compression_method(entry.compression);
         if entry.local_extra {
-            options.add_extra_data(0xcafe, b"odf", false).unwrap();
+            // Any header id will do -- the ODF rule under test is that the
+            // `mimetype` entry carries NO local extra field, whatever is in it.
+            // It has to be an id `zip` does not consider reserved, though:
+            // `zip` refuses to write a reserved id unless its `unreserved`
+            // feature is on, and zip 8 grew that list from 43 ids to 59,
+            // which is what retired the 0xcafe (Java JAR) id used here before.
+            // If this ever panics again, pick another id outside
+            // `zip::extra_fields::EXTRA_FIELD_MAPPING` rather than enabling the
+            // feature -- the production writer never adds extra data at all.
+            options
+                .add_extra_data(0x0df0, b"odf", false)
+                .expect("0x0df0 is not a zip-reserved extra-field id");
         }
         writer.start_file(entry.name, options).unwrap();
         writer.write_all(&entry.bytes).unwrap();

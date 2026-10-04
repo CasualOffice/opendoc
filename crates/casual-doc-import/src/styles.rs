@@ -433,7 +433,7 @@ fn parse_raw(
         match read_node(&mut reader, &mut buffer, &mut ctx)? {
             Node::Eof => break,
             Node::Close => {}
-            Node::Empty(element) => match element.local_name().as_ref() {
+            Node::Empty(element) => match element.local_name().into_inner().as_bytes() {
                 b"style" => styles.push(empty_style(&element)),
                 // A childless `<w:latentStyles/>` still carries block defaults.
                 b"latentStyles" => latent_styles = Some(read_latent_styles(&element, &[])),
@@ -442,7 +442,7 @@ fn parse_raw(
                 b"styles" | b"docDefaults" => {}
                 other => ctx.report(other),
             },
-            Node::Open(element) => match element.local_name().as_ref() {
+            Node::Open(element) => match element.local_name().into_inner().as_bytes() {
                 // The `w:styles` root: fall through so its children are read by
                 // the same top-level loop.
                 b"styles" => {}
@@ -484,14 +484,14 @@ fn read_lsd_exceptions(
         match read_node(reader, buffer, ctx)? {
             Node::Open(element) => {
                 depth += 1;
-                if element.local_name().as_ref() == b"lsdException"
+                if element.local_name().into_inner().as_bytes() == b"lsdException"
                     && let Some(exception) = read_lsd_exception(&element)
                 {
                     exceptions.push(exception);
                 }
             }
             Node::Empty(element) => {
-                if element.local_name().as_ref() == b"lsdException"
+                if element.local_name().into_inner().as_bytes() == b"lsdException"
                     && let Some(exception) = read_lsd_exception(&element)
                 {
                     exceptions.push(exception);
@@ -623,7 +623,7 @@ fn read_style(
             Node::Close | Node::Eof => break,
         };
         let mut consumed = false;
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"name" => raw.name = attribute_value(&child, b"val"),
             b"aliases" => raw.aliases = attribute_value(&child, b"val"),
             b"basedOn" => raw.based_on = attribute_value(&child, b"val"),
@@ -747,7 +747,7 @@ fn read_override(
             Node::Close | Node::Eof => break,
         };
         let mut consumed = false;
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"pPr" => {
                 acc.has_paragraph = true;
                 if open {
@@ -819,7 +819,7 @@ fn read_doc_defaults(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"pPrDefault" | b"rPrDefault" => {
                 if open {
                     read_default_wrapper(reader, buffer, ctx, depth + 1, &mut acc)?;
@@ -852,7 +852,7 @@ fn read_default_wrapper(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"pPr" => {
                 acc.has_paragraph = true;
                 if open {
@@ -894,7 +894,7 @@ fn read_paragraph_container(
             Node::Close | Node::Eof => break,
         };
         let mut consumed = false;
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"rPr" => {
                 acc.has_run = true;
                 if open {
@@ -986,7 +986,7 @@ fn read_run_container(
         // highlight-like background and boxed-run border were both dropped. The
         // body parser reads both; this is the same style-path gap the paragraph
         // container above had.
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"shd" => {
                 let (shading, degraded) = parse_shading(&child);
                 if degraded {
@@ -1026,7 +1026,7 @@ fn read_table_container(
             Node::Close | Node::Eof => break,
         };
         let mut consumed = false;
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"tblOverlap" => match attribute_value(&child, b"val").as_deref() {
                 Some("never") => props.overlap = Some(TableOverlap::Never),
                 Some("overlap") => props.overlap = Some(TableOverlap::Overlap),
@@ -1137,7 +1137,7 @@ fn read_row_container(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"trHeight" => {
                 let value = attribute_value(&child, b"val")
                     .and_then(|value| value.parse::<u32>().ok())
@@ -1187,7 +1187,7 @@ fn read_cell_container(
             Node::Close | Node::Eof => break,
         };
         let mut consumed = false;
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"tcW" => match parse_table_width(&child) {
                 Some(width) => props.width = Some(width),
                 None => ctx.report(b"tcW"),
@@ -1271,7 +1271,7 @@ fn read_borders(
             Node::Close | Node::Eof => break,
         };
         let edge = border_edge(&child);
-        let slot = match child.local_name().as_ref() {
+        let slot = match child.local_name().into_inner().as_bytes() {
             b"top" => Some(&mut borders.top),
             b"bottom" => Some(&mut borders.bottom),
             b"start" | b"left" => Some(&mut borders.start),
@@ -1292,7 +1292,7 @@ fn read_borders(
             // diagonal with a real style does, and still reports its container
             // (HF-174).
             None if crate::noop::carries_no_meaning_when(
-                child.local_name().as_ref(),
+                child.local_name().into_inner().as_bytes(),
                 &child,
                 !open,
             ) => {}
@@ -1325,7 +1325,7 @@ fn read_style_num_pr(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        match child.local_name().as_ref() {
+        match child.local_name().into_inner().as_bytes() {
             b"numId" => {
                 if let Some(value) = attribute_value(&child, b"val") {
                     acc.pending_num_id = Some(value);
@@ -1363,13 +1363,13 @@ fn read_style_tab_stops(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        if child.local_name().as_ref() == b"tab" {
+        if child.local_name().into_inner().as_bytes() == b"tab" {
             match tab_stop_from(&child) {
                 Some(tab) if paragraph.tabs.len() < MAX_TAB_STOPS => paragraph.tabs.push(tab),
                 _ => ctx.report(b"tab"),
             }
         } else {
-            ctx.report(child.local_name().as_ref());
+            ctx.report(child.local_name().into_inner().as_bytes());
         }
         if open {
             skip_subtree(reader, buffer, ctx)?;
@@ -1392,7 +1392,7 @@ fn read_paragraph_borders(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        let slot = match child.local_name().as_ref() {
+        let slot = match child.local_name().into_inner().as_bytes() {
             b"top" => Some(&mut borders.top),
             b"bottom" => Some(&mut borders.bottom),
             b"start" | b"left" => Some(&mut borders.start),
@@ -1430,7 +1430,7 @@ fn read_margins(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        let slot = match child.local_name().as_ref() {
+        let slot = match child.local_name().into_inner().as_bytes() {
             b"top" => Some(&mut margins.top_twips),
             b"start" | b"left" => Some(&mut margins.start_twips),
             b"bottom" => Some(&mut margins.bottom_twips),

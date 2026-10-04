@@ -167,7 +167,7 @@ fn element_local_names(bytes: &[u8]) -> BTreeSet<String> {
                 Ok(quick_xml::events::Event::Start(element))
                 | Ok(quick_xml::events::Event::Empty(element)) => {
                     let local = element.local_name();
-                    names.insert(String::from_utf8_lossy(local.as_ref()).into_owned());
+                    names.insert(String::from_utf8_lossy(local.into_inner().as_bytes()).into_owned());
                 }
                 Ok(_) => {}
                 Err(error) => panic!("a package part must be well-formed XML: {error}"),
