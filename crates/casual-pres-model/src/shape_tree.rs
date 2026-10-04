@@ -197,10 +197,23 @@ impl ShapeTree {
     /// and a cache would have to be invalidated on every edit.
     #[must_use]
     pub fn slot(&self, kind: PlaceholderKind, index: u32) -> Option<&SlideNode> {
+        // `title` and `ctrTitle` are ONE slot for inheritance, and matching the pair
+        // literally is how that was got wrong: a slide's `ctrTitle` looked up
+        // `(CtrTitle, idx)`, a master carries `title`, the lookup missed, and every
+        // title slide inherited neither its geometry nor its text tiers. The two
+        // tokens differ only in where the layout puts the box — a centred title is
+        // still the title placeholder — which is why `PlaceholderKind::is_title`
+        // exists and why `TextStyles::tier` already folded them.
+        //
+        // The index is NOT folded. A two-content layout has two `body` slots
+        // distinguished only by `@idx`, so matching on the kind alone would pick the
+        // wrong one half the time.
         self.children.iter().find(|child| {
-            child
-                .placeholder
-                .is_some_and(|placeholder| placeholder.slot() == (kind, index))
+            child.placeholder.is_some_and(|placeholder| {
+                let (candidate, candidate_index) = placeholder.slot();
+                candidate_index == index
+                    && (candidate == kind || (candidate.is_title() && kind.is_title()))
+            })
         })
     }
 

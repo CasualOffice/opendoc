@@ -355,14 +355,24 @@ fn an_imported_titles_size_resolves_through_the_run_and_the_autofit_record() {
     );
 }
 
-/// A `+mj-lt` typeface is carried out as unresolved rather than substituted.
+/// A `+mj-lt` typeface RESOLVES to the family the theme names, and nothing on this
+/// slide is left unresolved.
 ///
-/// The deck's theme really does name a major font, which is asserted from the
-/// fixture's own bytes — so the report is saying "the file names Calibri Light
-/// and this engine did not use it", not "the file named nothing". That is the
-/// whole point of reporting instead of defaulting: the loss is nameable.
+/// # Why this guard was inverted rather than deleted
+///
+/// It asserted the opposite until the theme reader landed: `+mj-lt` was carried out
+/// as an unresolved property, because nothing read `a:fontScheme` and reporting the
+/// token beat substituting a guess. Two lanes then landed in parallel — one shaping
+/// slide text, one reading the theme — and this is the guard that caught the
+/// combination: each branch was green and the merge was red, which is exactly the
+/// `SKILL` §5a hazard with no textual conflict for git to find.
+///
+/// So the assertion now says what is true, and keeps BOTH halves of the claim: the
+/// theme names `Calibri Light` (read from the fixture's own bytes, so the
+/// resolution is of something real) and the slide's canvas reports nothing (so the
+/// resolution happened rather than the report merely being dropped).
 #[test]
-fn an_imported_theme_typeface_is_reported_rather_than_substituted() {
+fn an_imported_theme_typeface_resolves_to_the_family_the_theme_names() {
     let theme = String::from_utf8(
         deck::deck_parts()
             .into_iter()
@@ -372,11 +382,40 @@ fn an_imported_theme_typeface_is_reported_rather_than_substituted() {
     )
     .expect("the theme part is UTF-8");
     assert!(
-        theme.contains(r#"<a:majorFont><a:latin typeface="Calibri Light"/>"#),
-        "the fixture's theme must name a major font for the report to be a loss"
+        theme.contains(r#"<a:majorFont><a:latin typeface="Calibri Light""#),
+        "the fixture's theme must name a major font, or resolving it proves nothing"
     );
 
     let imported = open(&deck::deck());
+    let major = casual_pres_model::Typeface {
+        name: "+mj-lt".to_owned(),
+        panose: None,
+    };
+    assert_eq!(
+        imported
+            .presentation
+            .resolve_typeface(&major)
+            .map(str::to_owned),
+        Some("Calibri Light".to_owned()),
+        "the major latin font is what +mj-lt names"
+    );
+    // The control: a concrete family resolves to itself, so the function is not
+    // simply answering the major font for everything.
+    let concrete = casual_pres_model::Typeface {
+        name: "Georgia".to_owned(),
+        panose: None,
+    };
+    assert_eq!(
+        imported
+            .presentation
+            .resolve_typeface(&concrete)
+            .map(str::to_owned),
+        Some("Georgia".to_owned()),
+        "a stated family is its own answer"
+    );
+    // The run still STORES the token: resolving it into the run would turn a theme
+    // reference into an authored font, which survives a reopen and stops following
+    // the theme.
     let canvas =
         lay_out_slide(&imported.presentation, 0, &shaper()).expect("the first slide lays out");
     let reported: Vec<&casual_pres_layout::UnresolvedProperty> = canvas
@@ -384,13 +423,10 @@ fn an_imported_theme_typeface_is_reported_rather_than_substituted() {
         .iter()
         .map(|entry| &entry.property)
         .collect();
-    assert_eq!(
-        reported,
-        vec![&casual_pres_layout::UnresolvedProperty::ThemeTypeface {
-            name: "+mj-lt".to_owned()
-        }],
-        "exactly the one theme reference the slide authors, and nothing else — \
-         every size on this slide resolves"
+    assert!(
+        reported.is_empty(),
+        "nothing on this slide is unresolved now — every size resolves and the one \
+         theme reference does too: {reported:?}"
     );
 }
 
@@ -443,5 +479,141 @@ fn an_imported_deck_composes_glyph_paint_items_over_its_shapes() {
         total,
         "One".len() + "First in presentation order".len() + "second line".len(),
         "every authored character reaches a paint item"
+    );
+}
+
+/// A slide's `ctrTitle` inherits from a master's `title`, because the two are ONE
+/// slot for inheritance.
+///
+/// # Why the fixture has to be perturbed
+///
+/// `title` and `ctrTitle` differ only in where the layout puts the box — a centred
+/// title is still the title placeholder — and `PlaceholderKind::is_title` folds
+/// them. The SLOT lookup did not, so a slide's `ctrTitle` looked up
+/// `(CtrTitle, 0)`, a master carries `title`, and the lookup missed: every title
+/// slide inherited neither its geometry nor its text tiers from the master.
+///
+/// The plain fixture cannot show it, because its title LAYOUT carries a `ctrTitle`
+/// with a full `a:xfrm`, so the slide matches at the layout tier and the master is
+/// never consulted. This removes the layout's `ctrTitle` so the lookup must fall
+/// through to the master's `title` — and without the fold it falls through to
+/// nothing.
+#[test]
+fn a_slide_ctr_title_inherits_from_the_masters_title_slot() {
+    let layout_one = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slideLayouts/slideLayout1.xml")
+            .expect("the fixture carries slideLayout1.xml")
+            .1,
+    )
+    .expect("the layout part is UTF-8");
+
+    // Retype the layout's own title slot so it no longer matches the slide's. The
+    // master's `title` then becomes the only candidate, which is the case under
+    // test; retyping is safer than deleting the shape, which would also change the
+    // tree's child count and the paint order.
+    let before = r#"<p:ph type="ctrTitle"/>"#;
+    assert_eq!(
+        layout_one.matches(before).count(),
+        1,
+        "one ctrTitle slot on the title layout"
+    );
+    let layout_one = layout_one.replace(before, r#"<p:ph type="ftr" idx="9"/>"#);
+
+    let mut parts = deck::deck_parts();
+    parts
+        .iter_mut()
+        .find(|(name, _)| name == "ppt/slideLayouts/slideLayout1.xml")
+        .expect("the part exists")
+        .1 = layout_one.into_bytes();
+    let imported = open(&deck::build_pptx(&parts));
+
+    let slide = &imported.presentation.slides()[0];
+    let title = slide.shapes.title().expect("slide 1 fills a title slot");
+    assert!(
+        title
+            .placeholder
+            .is_some_and(|slot| slot.kind == casual_pres_model::PlaceholderKind::CtrTitle),
+        "and it is the ctrTitle form, or this guard is testing the wrong shape"
+    );
+
+    // Asserted on the LAID-OUT rect, not on `resolve_slot`. That function answers
+    // "which shape fills this slot", and the slide's own shape does — with an empty
+    // `p:spPr`. The geometry cascade is a separate resolution, and the only place it
+    // is observable is the canvas, which is also the only place it matters.
+    //
+    // The geometry half of this does NOT depend on `ShapeTree::slot`'s title fold:
+    // measured, and the fold can be reverted with this assertion still green,
+    // because the shaping lane's own `inherited_geometry` matches the two title
+    // tokens itself. The TEXT tiers are where the fold bites, and the second half of
+    // this guard is that — a master `title` tier the slide's `ctrTitle` can only see
+    // through the fold.
+    let canvas = lay_out_slide(&imported.presentation, 0, &shaper()).expect("the slide lays out");
+    let placed = canvas
+        .anchors
+        .iter()
+        .find(|anchor| anchor.node == Some(title.id()))
+        .expect("the title shape is placed");
+
+    // The master's own title box in EMU is off (838200, 365126), ext
+    // 10515600 x 1325563; at 635 EMU per twip that is (1320, 575) and
+    // 16560 x 2088. The slide states no geometry at all, so this can only have come
+    // from the tier above — and only through the title fold, because the layout's
+    // own title slot was retyped away above.
+    assert_eq!(
+        (
+            placed.rect.origin.x.raw(),
+            placed.rect.origin.y.raw(),
+            placed.rect.size.width.raw(),
+            placed.rect.size.height.raw()
+        ),
+        (1320, 575, 16560, 2088),
+        "the placed title takes the MASTER's title box"
+    );
+    assert_ne!(
+        placed.rect.size.width.raw(),
+        0,
+        "and not the zero box the slide itself states"
+    );
+
+    // The text half. The master's `title` placeholder carries an `a:lstStyle` with
+    // a level-1 right margin nothing else in the deck states, so the value can only
+    // reach the slide's `ctrTitle` if the slot lookup folded the two tokens.
+    let master = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slideMasters/slideMaster1.xml")
+            .expect("the fixture carries the master")
+            .1,
+    )
+    .expect("the master part is UTF-8");
+    let plain = r#"<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="838200" y="365126"/><a:ext cx="10515600" cy="1325563"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+<p:txBody><a:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>"#;
+    assert!(
+        master.contains(plain),
+        "the master's title slot moved; this perturbation is anchored on it"
+    );
+    let enriched = plain.replace(
+        "<a:lstStyle/>",
+        r#"<a:lstStyle><a:lvl1pPr marR="123456"/></a:lstStyle>"#,
+    );
+    let master = master.replace(plain, &enriched);
+
+    parts
+        .iter_mut()
+        .find(|(name, _)| name == "ppt/slideMasters/slideMaster1.xml")
+        .expect("the part exists")
+        .1 = master.into_bytes();
+    let imported = open(&deck::build_pptx(&parts));
+    let slide = &imported.presentation.slides()[0];
+    let title = slide.shapes.title().expect("slide 1 fills a title slot");
+    let resolved = imported.presentation.text_cascade(slide, title).resolve(0);
+    assert_eq!(
+        resolved.paragraph.margin_right_emu,
+        Some(123_456),
+        "the master's TITLE slot tier reaches a slide's ctrTitle — without the fold \
+         the slot lookup misses and this is None"
     );
 }

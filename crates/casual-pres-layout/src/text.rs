@@ -216,6 +216,11 @@ pub enum UnresolvedProperty {
 /// master's children — doing them per paragraph would be `O(paragraphs x shapes)`,
 /// which is the shape of the `O(n^2)` that shipped on the outline path.
 pub(crate) struct PreparedText<'a> {
+    /// The deck, for the one thing shaping needs from it that the cascade does not
+    /// supply: `Presentation::resolve_typeface`, which turns a `+mj-lt` reference
+    /// into the family the theme names. Carried here rather than threaded through
+    /// three call sites, because `prepare` already holds it.
+    presentation: &'a Presentation,
     /// The shape this text belongs to, for the unresolved report.
     shape: NodeId,
     /// `a:bodyPr`: the insets, the anchor, the wrap and the autofit scale.
@@ -331,6 +336,7 @@ pub(crate) fn prepare<'a>(
         });
     }
     Some(PreparedText {
+        presentation,
         shape: node.id(),
         body: &text.body_properties,
         paragraphs,
@@ -366,6 +372,7 @@ pub(crate) fn flow(
     let mut glyphs = 0_usize;
     for paragraph in &prepared.paragraphs {
         let fragment = flow_paragraph(
+            prepared.presentation,
             prepared.shape,
             paragraph,
             body.wrap,
@@ -447,6 +454,7 @@ pub(crate) fn flow(
     reason = "every argument is an independent input the fold does not carry"
 )]
 fn flow_paragraph(
+    presentation: &Presentation,
     shape: NodeId,
     paragraph: &PreparedParagraph<'_>,
     wrap: TextWrap,
@@ -489,7 +497,7 @@ fn flow_paragraph(
         let styled: Vec<StyledRun<'_>> = segment
             .runs
             .iter()
-            .map(|run| styled_run(shape, paragraph.id, run, scale, report))
+            .map(|run| styled_run(presentation, shape, paragraph.id, run, scale, report))
             .collect();
         if styled.is_empty() {
             continue;
@@ -537,6 +545,7 @@ fn flow_paragraph(
 /// Translates one run's effective character properties into the shaper's
 /// vocabulary, reporting whatever could not be resolved.
 fn styled_run<'a>(
+    presentation: &'a Presentation,
     shape: NodeId,
     paragraph: NodeId,
     run: &'a PreparedRun<'a>,
@@ -580,24 +589,42 @@ fn styled_run<'a>(
     };
 
     // `a:latin` is the Latin-script face, which is the one the bundled faces can
-    // answer. A theme reference is reported and dropped: handing `+mj-lt` to the
-    // shaper as a family name would make it search for a face literally called
-    // "+mj-lt", fail, and fall back — the same result, with the loss hidden.
-    let requested_family = character.latin.as_ref().and_then(|latin| {
-        if latin.is_theme_reference() {
-            report.push(UnresolvedTextProperty {
-                shape,
-                paragraph,
-                run: Some(run.id),
-                property: UnresolvedProperty::ThemeTypeface {
-                    name: latin.name.clone(),
-                },
+    // answer. A `+mj-lt`/`+mn-lt` reference resolves through the deck's own
+    // `a:fontScheme`, so the shaper is handed the family the THEME names — not the
+    // token, which would make it search for a face literally called "+mj-lt", fail,
+    // and fall back with the loss hidden.
+    //
+    // The run keeps storing the token; only the shaper's input is resolved.
+    // Resolving it into the model would turn a theme reference into an authored
+    // font: it would survive a reopen and stop following the theme.
+    //
+    // It is reported only when it resolves to NOTHING — a deck with no
+    // `a:fontScheme`, or a scheme whose cell is empty. That is a real loss and
+    // still nameable; a reference that resolved is not.
+    //
+    // One call, not a reference/concrete branch: `resolve_typeface` answers a
+    // stated family with itself, so branching on `is_theme_reference` first was a
+    // second path that could only ever agree with this one. Measured — removing the
+    // branch changed no guard, which is what says it was redundant rather than
+    // untested.
+    let requested_family =
+        character
+            .latin
+            .as_ref()
+            .and_then(|latin| match presentation.resolve_typeface(latin) {
+                Some(family) => Some(std::borrow::Cow::Borrowed(family)),
+                None => {
+                    report.push(UnresolvedTextProperty {
+                        shape,
+                        paragraph,
+                        run: Some(run.id),
+                        property: UnresolvedProperty::ThemeTypeface {
+                            name: latin.name.clone(),
+                        },
+                    });
+                    None
+                }
             });
-            None
-        } else {
-            Some(std::borrow::Cow::Borrowed(latin.name.as_str()))
-        }
-    });
 
     StyledRun {
         text: std::borrow::Cow::Borrowed(run.text),
