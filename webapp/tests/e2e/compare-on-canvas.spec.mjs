@@ -41,8 +41,8 @@ function textFile(name, body) {
   return { name, mimeType: "text/plain", buffer: Buffer.from(body, "utf8") };
 }
 
-async function openText(page, file) {
-  await page.goto("/editor.html?blank=1");
+async function openText(page, file, { lang = "" } = {}) {
+  await page.goto(`/editor.html?blank=1${lang ? `&lang=${lang}` : ""}`);
   await expect(page.locator("#file")).toBeEnabled();
   await page.locator("#file").setInputFiles(file);
   await expect(page.locator("#docTitle")).toHaveValue(file.name);
@@ -235,5 +235,44 @@ test("a difference a tracked change cannot express is REPORTED, not swallowed", 
   // NON-VACUITY: the comparison still applied what it could, so the report is a
   // qualification of a result rather than the whole result.
   await expect(page.locator("#compareBody [data-compare-marked]")).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the refusal is the READER's language, not the engine's English", async ({
+  page,
+  consoleErrors,
+}) => {
+  // THIS IS THE GUARD ON THE WIRING, and it exists because the refusal guard
+  // above cannot be it. The engine's own sentence for
+  // `compare.document-has-revisions` and the catalogue's English sentence say the
+  // same thing — deliberately, they describe one decision — so an assertion on
+  // English prose passes whether the code was routed through
+  // `editRefusalMessage`'s `routeRefusal` seam or fell through to the engine's
+  // `refused: ` text. That is the vacuous shape this repository has shipped
+  // before, and it would have hidden the routing being absent entirely.
+  //
+  // A non-English locale separates them. `casual_doc_edit::refusal`'s whole
+  // purpose is that "a host routes the code through its own catalogue — `t(code)`
+  // — so a non-English reader gets the specific reason in their own language",
+  // and nothing in the chrome read a `compare.*` code before this lane. German
+  // here: routed, the panel is German; unrouted, it is the engine's English, and
+  // the last two assertions cannot both hold.
+  await openText(page, textFile("mine.txt", "Alpha beta gamma\n"), { lang: "de" });
+  await setReviewMode(page, "suggesting");
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.insertText("Vorgeschlagen. ");
+  await expect(page.locator("#reviewAcceptAll")).toBeEnabled();
+
+  await compareAgainst(page, textFile("theirs.txt", "Alpha beta delta\n"));
+
+  const refusal = page.locator("#compareBody [data-compare-refused]");
+  await expect(refusal).toBeVisible({ timeout: 45_000 });
+  await expect(refusal).toHaveAttribute("data-compare-refused", "compare.document-has-revisions");
+  // The German catalogue's sentence, which only the routed path can produce.
+  await expect(refusal).toContainText(/nachverfolgte Änderungen/);
+  await expect(refusal).toContainText(/Nehmen Sie sie zuerst an oder lehnen Sie sie ab/);
+  // And NOT the engine's English, which is what an unrouted code would show.
+  await expect(refusal).not.toContainText(/already has tracked changes/i);
   expect(consoleErrors).toEqual([]);
 });

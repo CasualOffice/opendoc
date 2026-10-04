@@ -537,24 +537,29 @@ export function changeObjectName(change) {
 
 /** `applyDiffAsRevisions`' coded refusals -> catalogue key.
  *
- *  THE FIRST AND ONLY SUCH TABLE IN THIS HOST, checked before it was written.
+ *  ONE ROUTING MECHANISM, NOT TWO, and this is the half of it that belongs here.
  *  `casual-doc-edit/src/refusal.rs` ships a refusal as `refused: <sentence>\u{1f}<code>`
- *  and `to_js` splits the code onto the thrown `Error`; its own documentation says
- *  a host routes `t(code)` "so a non-English reader gets the specific reason in
- *  their own language". The engine has ~130 such codes and `grep` finds **no host
- *  table routing any of them** — `edit_errors.mjs` passes the engine's English
- *  sentence through verbatim, deliberately, because a half-populated general list
- *  would silently fall back to the generic sentence for everything not in it.
+ *  and `to_js` splits the code onto the thrown `Error`; `edit_errors.mjs`'s
+ *  `editRefusalMessage` is the one function that turns such a throw into a
+ *  sentence, and it takes the code->sentence routing as an argument precisely so
+ *  the policy stays in one place while each surface supplies its own vocabulary:
+ *  *"The caller supplies the routing, not this module."* So these four rows are
+ *  fed to that seam (`applyAsRevisions`), never consulted beside it.
  *
- *  So this table is scoped to the four codes THIS surface can produce, exactly as
- *  `FINDING_KEY` is scoped to the finding codes this surface can produce, and
- *  anything else still falls through to the engine's own sentence rather than to a
- *  generic one. A general code->sentence catalogue over all ~130 is a separate
- *  piece of work; when it lands, these four keys are what it reads.
+ *  It is scoped to the four codes THIS surface can produce, exactly as
+ *  `FINDING_KEY` is scoped to the finding codes this surface can produce. The
+ *  general table, `session_access.mjs`'s `REFUSAL_KEYS`, covers three families —
+ *  `session.*`, `document.protected-*` and `ODC-7xxx` — and its derived guard
+ *  reads `access.rs`, `protection.rs` and `docs/20`, none of which mint a
+ *  `compare.*` code; the engine has ~130 coded refusals and those three families
+ *  are 9 of them. Adding compare's four there would put one surface's nouns in
+ *  another surface's module and leave the other ~120 no better off. A code
+ *  neither table knows still falls through to the engine's own sentence, which is
+ *  more specific than anything a generic replacement could say.
  *
- *  `review.author-required` is defence in depth: `compareWith` never passes an
- *  empty author. It is routed anyway, because a refusal whose only reader-facing
- *  form is English prose is a refusal that will be read in English.
+ *  `review.author-required` is defence in depth: `applyAsRevisions` never passes
+ *  an empty author. It is routed anyway, because a refusal whose only
+ *  reader-facing form is English prose is a refusal that will be read in English.
  *
  *  `compare_documents.test.mjs` derives the expected set FROM THE RUST and fails
  *  the build if the engine grows a fifth. O(1). */
@@ -564,6 +569,13 @@ export const REFUSAL_KEY = Object.freeze({
   "compare.sidecar-unreadable": "compare.refused.sidecarUnreadable",
   "review.author-required": "compare.refused.authorRequired",
 });
+
+/** This surface's half of `editRefusalMessage`'s routing: a coded refusal's
+ *  localised sentence, or `""` for a code it does not know — which is the seam's
+ *  contract for "fall back to the engine's own sentence". O(1). */
+function routeCompareRefusal(code) {
+  return REFUSAL_KEY[code] ? t(REFUSAL_KEY[code]) : "";
+}
 
 /** What a comparison found and a tracked change cannot say -> catalogue key.
  *
@@ -974,10 +986,16 @@ export function bindComparePanel(io) {
     try {
       res = live.applyDiffAsRevisions(sidecar, author, new Date().toISOString());
     } catch (error) {
+      // ROUTED THROUGH THE ONE SEAM, with this surface's four rows as its
+      // vocabulary: the code becomes a localised sentence when `REFUSAL_KEY`
+      // knows it, and the engine's own specific sentence when it does not.
       return {
         ok: false,
         code: String(error?.code ?? ""),
-        message: editRefusalMessage(error, { editingUnavailableReason: io.readOnlyReason?.() ?? "" }),
+        message: editRefusalMessage(error, {
+          editingUnavailableReason: io.readOnlyReason?.() ?? "",
+          routeRefusal: routeCompareRefusal,
+        }),
       };
     }
     const loss = Array.from(res.pasteLoss ?? []);
@@ -1073,13 +1091,11 @@ export function bindComparePanel(io) {
       if (summary.total > 0 && io.landed) {
         const result = await applyAsRevisions(outcome.sidecar, otherName);
         if (!result?.ok) {
-          // ROUTED BY CODE, falling back to the engine's own sentence. Both
-          // halves matter: the code is what makes the reason translatable, and
-          // the engine's sentence is what stops an unrecognised code becoming
-          // "something went wrong".
-          const message = REFUSAL_KEY[result?.code]
-            ? t(REFUSAL_KEY[result.code])
-            : result?.message || t("compare.noAnswer");
+          // The sentence `applyAsRevisions` already routed — NOT a second lookup
+          // of the same code. Two places deciding one mapping is the drift this
+          // repository keeps fixing, and here it would be two places deciding
+          // whether a refusal is read in the reader's language.
+          const message = result?.message || t("compare.noAnswer");
           const note = paragraph(message);
           note.dataset.compareRefused = String(result?.code ?? "");
           render([paragraph(t("compare.against", { name: otherName })), note]);
