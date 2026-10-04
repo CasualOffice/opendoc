@@ -590,22 +590,55 @@ test("the unified diff expands its context, and an entry scrolls to its change",
   // navigation worked. (That is what this assertion tried first, and it waited
   // out the full 45 s on an empty string.) The effects that ARE observable are
   // the selection highlight the overlay paints over the navigated range, and the
-  // canvas moving — which is why the fixture is 200 paragraphs long: paragraph
-  // 120 is off-screen, so "it took me there" cannot be true by accident.
+  // canvas moving.
+  //
+  // THE OFF-SCREEN PRECONDITION IS CREATED HERE, NOT ASSUMED FROM THE FIXTURE.
+  // A 200-paragraph document was supposed to leave paragraph 120 off screen, and
+  // it does not: `landed` applies the comparison and then navigates to the first
+  // change, so by the time the panel reports a total the canvas has ALREADY been
+  // taken there — measured `#viewport.scrollTop` 2072, with the highlight's box
+  // at 665..682 inside a viewport of 156..690. `scrollReviewSelectionIntoView`
+  // then uses `"nearest"`, which is correct behaviour for a target that is
+  // already visible and does nothing at all, so `scrollTop` could not increase
+  // and the assertion below waited out its full timeout on a working feature.
+  // Scrolling back to the top first — and asserting we got there — makes the
+  // precondition this test needs explicit instead of a side effect of wherever
+  // landing happened to leave the canvas.
+  const viewport = page.locator("#viewport");
+  await viewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect
+    .poll(async () => viewport.evaluate((element) => element.scrollTop))
+    .toBe(0);
   const highlight = page.locator("#pages .overlay .highlight");
   await expect(
     highlight,
     "a highlight is already painted, so the one below proves nothing",
   ).toHaveCount(0);
-  const scrollBefore = await page.locator("#viewport").evaluate((element) => element.scrollTop);
   await goto.click();
   await expect(highlight, "nothing was selected, so nothing was navigated to").not.toHaveCount(0, {
     timeout: 45_000,
   });
   await expect
-    .poll(async () => page.locator("#viewport").evaluate((element) => element.scrollTop), {
-      timeout: 45_000,
-    })
-    .toBeGreaterThan(scrollBefore);
+    .poll(async () => viewport.evaluate((element) => element.scrollTop), { timeout: 45_000 })
+    .toBeGreaterThan(0);
+  // AND THE CHANGE IS IN VIEW, which is the guarantee; `scrollTop` moving is only
+  // the mechanism, and a scroll that landed somewhere else entirely would satisfy
+  // it. Both boxes are read in ONE `evaluate` so they come from the same frame —
+  // two separate reads can straddle a scroll tick and compare a stale rect.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const view = document.querySelector("#viewport")?.getBoundingClientRect();
+          const mark = document
+            .querySelector("#pages .overlay .highlight")
+            ?.getBoundingClientRect();
+          return !!view && !!mark && mark.top >= view.top && mark.bottom <= view.bottom;
+        }),
+      { timeout: 45_000 },
+    )
+    .toBe(true);
   expect(consoleErrors).toEqual([]);
 });
