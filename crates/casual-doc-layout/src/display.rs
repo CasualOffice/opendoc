@@ -11,6 +11,9 @@ use casual_doc_model::v1::{CropRect, DashStyle, LineEnd};
 // Own `use` line (anti-conflict), matching the convention in `anchor.rs`: the
 // outline geometry `a:ln` carries beyond colour, width and a preset dash.
 use casual_doc_model::v1::{DashStop, LineCap, LineJoin};
+// Own `use` line (anti-conflict): a path gradient's family is DrawingML's own
+// `a:path@path` token, so the model's enum is reused rather than mirrored.
+use casual_doc_model::v1::GradientPath;
 use serde::{Deserialize, Serialize};
 
 use crate::text::GlyphRun;
@@ -97,7 +100,70 @@ pub enum GradientKind {
         angle_deg: f32,
     },
     /// A radial/concentric gradient centered on the shape.
+    ///
+    /// This is the gradient a path gradient collapses to when the file states no
+    /// `a:path@path` token at all — it is NOT what `a:path path="circle"` means, and
+    /// the two were the same value until [`GradientKind::Path`] existed.
     Radial,
+    /// A **path gradient** (`a:path`): the stops run outward from a focus rectangle
+    /// inside the shape to the shape's own bounding box.
+    ///
+    /// Not a linear gradient and not a plain radial one. DrawingML has two gradient
+    /// families and this is the second: `a:lin` sweeps along an axis, while `a:path`
+    /// expands from `a:fillToRect` along contours whose *shape* is named by
+    /// `a:path@path` — circles, rectangles, or the shape's own outline.
+    Path {
+        /// Which contour family the stops follow (`a:path@path`).
+        path: GradientPath,
+        /// Where the FIRST stop sits (`a:path/a:fillToRect`), as fractions of the
+        /// shape's bounding box.
+        focus: GradientFocus,
+    },
+}
+
+/// Where a path gradient's first stop sits inside the shape's bounding box:
+/// `a:path/a:fillToRect`, resolved from `ST_Percentage` to fractions of the box.
+///
+/// Each field is an **inset from its own edge**, so the focus rectangle spans
+/// `left ..= 1.0 - right` horizontally and `top ..= 1.0 - bottom` vertically. The
+/// common authored value is `0.5` on all four edges — a focus *point* at the box
+/// centre — and an edge may be negative, which places the focus outside the box
+/// (`RelativeRect` keeps negatives for exactly that reason).
+///
+/// Fractions rather than `RelativeRect`'s per-100000 integers because a backend
+/// should not have to know DrawingML's percentage unit, which is the same reason
+/// `AnchorShadow` resolves `a:outerShdw`'s polar offset in layout.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct GradientFocus {
+    /// Inset from the box's left edge, as a fraction of its width.
+    pub left: f32,
+    /// Inset from the box's top edge, as a fraction of its height.
+    pub top: f32,
+    /// Inset from the box's right edge, as a fraction of its width.
+    pub right: f32,
+    /// Inset from the box's bottom edge, as a fraction of its height.
+    pub bottom: f32,
+}
+
+impl GradientFocus {
+    /// The focus point at the centre of the box — all four edges inset by half.
+    ///
+    /// This is what an **absent** `a:fillToRect` resolves to, and the choice is a
+    /// decision rather than a default. ECMA-376's own default is the identity rect
+    /// (every edge zero), which makes the focus the whole bounding box and the
+    /// gradient therefore zero-extent: the first stop's colour, flat, across the
+    /// shape. Painting that is the "flat colour that looks deliberate" outcome
+    /// `docs/119` §6 rejects for an unsupported construct, and it is also what the
+    /// collapse this replaces already did. Every producer that writes `a:path` writes
+    /// an explicit `a:fillToRect` with it, so the degenerate reading is unreachable
+    /// in practice; centring keeps a path gradient looking like a gradient and
+    /// matches what `GradientKind::Radial` drew for the same markup before.
+    pub const CENTER: Self = Self {
+        left: 0.5,
+        top: 0.5,
+        right: 0.5,
+        bottom: 0.5,
+    };
 }
 
 /// The outline of a floating DrawingML shape: a resolved color, a device-pixel

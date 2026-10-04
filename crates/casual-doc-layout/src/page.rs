@@ -14,6 +14,9 @@ use casual_doc_model::v1::{DashStyle, Fill, LineEnd};
 // Own `use` line (anti-conflict): the outline geometry `a:ln` carries beyond
 // colour, width and a preset dash.
 use casual_doc_model::v1::{DashStop, LineCap, LineJoin};
+// Own `use` line (anti-conflict): the `a:gradFill` geometry the model's `Fill`
+// has nowhere to put, carried beside it by `AnchorFill`.
+use casual_doc_model::v1::GradientDetail;
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
@@ -131,6 +134,48 @@ fn is_solid_dash(dash: &DashStyle) -> bool {
     matches!(dash, DashStyle::Solid)
 }
 
+/// A floating shape's resolved fill: the model's `a:solidFill`/`a:gradFill` plus
+/// the `a:gradFill` geometry that model value has nowhere to put.
+///
+/// # Why this wraps the model fill instead of replacing it
+///
+/// Exactly the [`AnchorStroke`] arrangement, one layer down. `ShapeStroke` is a small
+/// `Copy` value with literals across six crates, so the cap, join and `a:custDash`
+/// it cannot hold live in `Definitions::shape_fill_detail` and are folded in here, at
+/// placement, by `anchor::shape_stroke`. `Fill` has the same problem: `a:path@path`
+/// and `a:fillToRect` are in the same side table, under the same shape id, and were
+/// never read — so a `path="rect"` gradient reached the display list as the identical
+/// value a `path="circle"` one did, and painted as concentric circles.
+///
+/// Wrapping rather than mirroring the model enum keeps ONE description of a stop
+/// list: a parallel `AnchorGradient` would have to be kept in step with
+/// `Fill::Gradient` by hand, and the first thing to change would be the thing that
+/// drifted. It also keeps [`AnchorContent`] `Eq`, which a display-layer gradient (with
+/// `f32` positions) cannot be.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct AnchorFill {
+    /// The resolved model fill — a solid colour or an ordered stop list.
+    pub fill: Fill,
+    /// The `a:gradFill` geometry from `Definitions::shape_fill_detail`, when the file
+    /// stated any. `None` for a solid fill, for a gradient with nothing beyond its
+    /// stops and sweep, and for a fill that came from the theme's style matrix (which
+    /// files no row under the shape's id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<GradientDetail>,
+}
+
+impl AnchorFill {
+    /// A fill with no retained `a:gradFill` geometry — a solid colour, or a gradient
+    /// whose sweep `Fill::Gradient` already describes in full.
+    #[must_use]
+    pub const fn plain(fill: Fill) -> Self {
+        Self {
+            fill,
+            gradient: None,
+        }
+    }
+}
+
 /// What a [`PlacedAnchor`] paints: an image, a filled/stroked shape, a line/
 /// connector, or a text box (flowed block content with an optional fill/border).
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -184,7 +229,7 @@ pub enum AnchorContent {
     Rectangle {
         /// The fill (solid or gradient), if filled.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        fill: Option<Fill>,
+        fill: Option<AnchorFill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -192,7 +237,7 @@ pub enum AnchorContent {
     Ellipse {
         /// The fill (solid or gradient), if filled.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        fill: Option<Fill>,
+        fill: Option<AnchorFill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -202,7 +247,7 @@ pub enum AnchorContent {
         radius: Twip,
         /// The fill (solid or gradient), if filled.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        fill: Option<Fill>,
+        fill: Option<AnchorFill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -222,7 +267,7 @@ pub enum AnchorContent {
         closed: bool,
         /// The fill (solid or gradient), if filled.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        fill: Option<Fill>,
+        fill: Option<AnchorFill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -249,7 +294,7 @@ pub enum AnchorContent {
         blocks: Vec<BlockFragment>,
         /// The box background fill (solid or gradient), if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        fill: Option<Fill>,
+        fill: Option<AnchorFill>,
         /// The box border color and width, if any.
         border: Option<TextBoxStroke>,
         /// Resolved content offset and overflow clipping.

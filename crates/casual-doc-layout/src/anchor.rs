@@ -37,9 +37,10 @@ use casual_doc_model::v1::DashStyle;
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
 // Own `use` line, for the same anti-conflict reason as the two above: the
 // shared `GroupChild` walk needs the text-box type and the nesting bound.
-use casual_doc_model::v1::{
-    GroupTextBox, MAX_GROUP_DEPTH, PictureFillMode, StrokeDetail, TextBoxBodyProperties,
-};
+use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH, PictureFillMode, TextBoxBodyProperties};
+// Own `use` line (anti-conflict): the whole shape-keyed appearance row, which is now
+// what the content builders take instead of just its outline half.
+use casual_doc_model::v1::ShapeFillDetail;
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -47,7 +48,7 @@ use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
-    AnchorContent, AnchorShadow, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor,
+    AnchorContent, AnchorFill, AnchorShadow, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor,
     PlacedFragment,
 };
 use crate::paginate::PageConfig;
@@ -829,7 +830,16 @@ fn collect_inlines(
                         node: Some(text_box.id),
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
-                            fill: text_box.fill.clone(),
+                            // A lone text-bearing `wps:wsp` becomes a `v1::TextBox`
+                            // but keeps its shape id, and `commit_shape` files its
+                            // appearance row under that id BEFORE the text-box
+                            // branch — so this resolves, and a gradient's path
+                            // geometry is not quietly dropped for the one text box
+                            // that is not inside a group.
+                            fill: shape_fill(
+                                text_box.fill.as_ref(),
+                                fill_detail(ctx.document.definitions(), text_box.id),
+                            ),
                             border: text_box.border.map(text_box_stroke),
                             content_layout: flowed.content_layout,
                             // A standalone `TextBox` models no geometry yet, so
@@ -1061,11 +1071,13 @@ pub fn place_group_child_tree(
                 // (docs/119 §6). Getting this order wrong is what made a slide paint
                 // a freeform's bounding preset instead of its outline.
                 let (fill, stroke) = themed_appearance(shape, host.definitions());
-                // The authored cap, join and `a:custDash` live in a side table keyed
-                // by the shape's own id, because `ShapeStroke` is a small `Copy`
-                // value with literals across six crates and a `Vec` cannot live in
-                // one. Resolved here, once, for both painters.
-                let detail = stroke_detail(host.definitions(), shape.id);
+                // The appearance the hot model types have nowhere to put lives in a
+                // side table keyed by the shape's own id: the authored cap, join and
+                // `a:custDash`, because `ShapeStroke` is a small `Copy` value with
+                // literals across six crates and a `Vec` cannot live in one — AND
+                // the `a:gradFill` path geometry, for the same reason. Resolved here,
+                // once, for every painter and for both seams.
+                let detail = fill_detail(host.definitions(), shape.id);
                 // A picture FILL paints the image clipped to the shape's outline,
                 // which needed `PaintItem::PushClipPath` to exist. Tried before the
                 // geometry below, because the fill replaces it rather than sitting
@@ -1087,7 +1099,7 @@ pub fn place_group_child_tree(
                     continue;
                 }
                 let content = if let Some(path) = shape.path.as_ref() {
-                    custom_path_content(path, rect, fill, stroke, detail)
+                    custom_path_content(path, rect, fill.as_ref(), stroke, detail)
                 } else {
                     preset_geometry_content(
                         shape.geometry,
@@ -1228,7 +1240,7 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
             text_box.border,
             self.definitions(),
         );
-        let detail = stroke_detail(self.definitions(), text_box.id);
+        let detail = fill_detail(self.definitions(), text_box.id);
         // "Modeled is not shipped": a text-bearing `wps:wsp` whose preset is an
         // ellipse or a star must PAINT as one, with its text inside. The backdrop
         // comes from the same mapping a text-free shape uses, and takes the
@@ -1243,7 +1255,10 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
                 node: Some(text_box.id),
                 content: AnchorContent::TextBox {
                     blocks: flowed.blocks,
-                    fill: backdrop.is_none().then(|| themed_fill.clone()).flatten(),
+                    fill: backdrop
+                        .is_none()
+                        .then(|| shape_fill(themed_fill.as_ref(), detail))
+                        .flatten(),
                     border: backdrop
                         .is_none()
                         .then(|| themed_border.map(text_box_stroke))
@@ -1376,7 +1391,7 @@ fn preset_geometry_content(
     rect: Rect,
     fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
-    detail: Option<&StrokeDetail>,
+    detail: Option<&ShapeFillDetail>,
 ) -> AnchorContent {
     match geometry {
         ShapeGeometry::Line => {
@@ -1399,20 +1414,20 @@ fn preset_geometry_content(
         }
         ShapeGeometry::Ellipse => {
             return AnchorContent::Ellipse {
-                fill: fill.cloned(),
+                fill: shape_fill(fill, detail),
                 stroke: shape_stroke(stroke, detail),
             };
         }
         ShapeGeometry::RoundRectangle => {
             return AnchorContent::RoundedRectangle {
                 radius: rounded_rectangle_radius(adjustments, rect),
-                fill: fill.cloned(),
+                fill: shape_fill(fill, detail),
                 stroke: shape_stroke(stroke, detail),
             };
         }
         ShapeGeometry::Rectangle => {
             return AnchorContent::Rectangle {
-                fill: fill.cloned(),
+                fill: shape_fill(fill, detail),
                 stroke: shape_stroke(stroke, detail),
             };
         }
@@ -1429,7 +1444,7 @@ fn preset_geometry_content(
                 AnchorContent::Path {
                     commands,
                     closed: shape_preset::preset_is_closed(token),
-                    fill: fill.cloned(),
+                    fill: shape_fill(fill, detail),
                     stroke: shape_stroke(stroke, detail),
                 }
             })
@@ -1441,7 +1456,7 @@ fn preset_geometry_content(
         // object is, and Word does not erase them either. Weighed in docs/119 §6
         // "Rejected".
         .unwrap_or_else(|| AnchorContent::Rectangle {
-            fill: fill.cloned(),
+            fill: shape_fill(fill, detail),
             stroke: shape_stroke(stroke, detail),
         })
 }
@@ -1464,7 +1479,7 @@ pub fn shape_geometry_content(
     rect: Rect,
     fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
-    detail: Option<&StrokeDetail>,
+    detail: Option<&ShapeFillDetail>,
 ) -> AnchorContent {
     preset_geometry_content(geometry, preset, adjustments, rect, fill, stroke, detail)
 }
@@ -1496,7 +1511,7 @@ fn text_box_backdrop(
     rect: Rect,
     fill: Option<&Fill>,
     border: Option<ShapeStroke>,
-    detail: Option<&StrokeDetail>,
+    detail: Option<&ShapeFillDetail>,
 ) -> Option<Box<AnchorContent>> {
     // A plain rectangle never needs a backdrop: the text-box content already paints
     // its fill and outline, and a second rectangle over the top would just be the
@@ -1517,10 +1532,11 @@ fn text_box_backdrop(
         return Some(Box::new(AnchorContent::Path {
             commands,
             closed: shape_preset::preset_is_closed(token),
-            fill: text_box.fill.clone(),
-            // A `GroupTextBox` has no row in the shape-keyed side table, so there
-            // is no cap/join/custDash to resolve for its backdrop.
-            stroke: shape_stroke(text_box.border, None),
+            // The row IS this text box's own: the importer files a text-bearing
+            // `wps:wsp`'s appearance detail under the shape id the `GroupTextBox`
+            // keeps, which is the same reason its theme style reference resolves.
+            fill: shape_fill(text_box.fill.as_ref(), detail),
+            stroke: shape_stroke(text_box.border, detail),
         }));
     }
     Some(Box::new(preset_geometry_content(
@@ -2066,9 +2082,9 @@ fn themed_fill(style: &FillStyle, placeholder: Option<Rgba>) -> Option<Fill> {
 fn custom_path_content(
     path: &casual_doc_model::v1::ShapePath,
     rect: Rect,
-    fill: Option<Fill>,
+    fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
-    detail: Option<&StrokeDetail>,
+    detail: Option<&ShapeFillDetail>,
 ) -> AnchorContent {
     use casual_doc_model::v1::ShapePathCommand;
 
@@ -2132,7 +2148,7 @@ fn custom_path_content(
     AnchorContent::Path {
         commands,
         closed,
-        fill,
+        fill: shape_fill(fill, detail),
         stroke: shape_stroke(stroke, detail),
     }
 }
@@ -2190,7 +2206,7 @@ fn picture_filled_shape_content(
     definitions: &Definitions,
     rect: Rect,
     stroke: Option<ShapeStroke>,
-    detail: Option<&StrokeDetail>,
+    detail: Option<&ShapeFillDetail>,
 ) -> Option<AnchorContent> {
     let picture = definitions
         .shape_fill_detail
@@ -2263,16 +2279,19 @@ fn is_quarter_turn(rotation: i32) -> bool {
 /// the same code a document's is — the `None` dash defaulting to solid is a
 /// decision, not an incidental, and two copies of it would drift.
 ///
-/// `detail` is the shape's [`StrokeDetail`] from `Definitions::shape_fill_detail`,
-/// which carries the cap, join and authored dash `ShapeStroke` has nowhere to put.
+/// `detail` is the shape's row in `Definitions::shape_fill_detail`, whose
+/// `StrokeDetail` carries the cap, join and authored dash `ShapeStroke` has nowhere
+/// to put. It is the WHOLE row rather than the outline half because the fill half has
+/// the same problem — see [`shape_fill`] — and one lookup per shape then serves both.
 /// It is a separate argument rather than a lookup inside because this function is
 /// also the seam a slide converts through, and the two document classes reach their
 /// definition tables differently.
 #[must_use]
 pub fn shape_stroke(
     stroke: Option<ShapeStroke>,
-    detail: Option<&StrokeDetail>,
+    detail: Option<&ShapeFillDetail>,
 ) -> Option<AnchorStroke> {
+    let detail = detail.and_then(|detail| detail.stroke.as_ref());
     stroke.map(|s| AnchorStroke {
         color: rgba(s.color),
         width: emu_to_twip_extent(s.width_emu),
@@ -2282,6 +2301,28 @@ pub fn shape_stroke(
         custom_dash: detail
             .map(|detail| detail.custom_dash.clone())
             .unwrap_or_default(),
+    })
+}
+
+/// Converts a model fill into the display list's fill, folding in the `a:gradFill`
+/// geometry the model value cannot hold.
+///
+/// The fill counterpart of [`shape_stroke`], and published for the same reason: a
+/// slide's shape and a document's must reach the display list through one conversion,
+/// or a `path="rect"` gradient paints one way in a deck and another in a DOCX.
+///
+/// **This lookup is the whole reach of `docs/156` §6 row 0.3's gradient half.** The
+/// path geometry has been imported, modeled and re-emitted since row 0.3's first
+/// commit, and layout simply never read it — the display list received the same value
+/// for `path="rect"`, `path="shape"` and `path="circle"` and painted all three as
+/// concentric circles centred on the shape.
+///
+/// Complexity: O(stops) for a gradient (the stop list is cloned), O(1) for a solid.
+#[must_use]
+pub fn shape_fill(fill: Option<&Fill>, detail: Option<&ShapeFillDetail>) -> Option<AnchorFill> {
+    fill.map(|fill| AnchorFill {
+        fill: fill.clone(),
+        gradient: detail.and_then(|detail| detail.gradient),
     })
 }
 
@@ -2318,13 +2359,17 @@ pub fn anchor_shadow(definitions: &Definitions, node: NodeId) -> Option<AnchorSh
     })
 }
 
-/// The stroke detail a shape's own id resolves to, if the file stated any.
+/// The appearance detail a shape's own id resolves to, if the file stated any.
+///
+/// One lookup per shape, serving both [`shape_stroke`] and [`shape_fill`]: the row is
+/// "appearance detail the hot model types have nowhere to put", and splitting it into
+/// a stroke lookup and a fill lookup would mean two walks of the same map for one
+/// shape.
+///
+/// Complexity: O(log n) in the number of shapes carrying detail.
 #[must_use]
-fn stroke_detail(definitions: &Definitions, shape: NodeId) -> Option<&StrokeDetail> {
-    definitions
-        .shape_fill_detail
-        .get(&shape)
-        .and_then(|detail| detail.stroke.as_ref())
+fn fill_detail(definitions: &Definitions, shape: NodeId) -> Option<&ShapeFillDetail> {
+    definitions.shape_fill_detail.get(&shape)
 }
 
 fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {

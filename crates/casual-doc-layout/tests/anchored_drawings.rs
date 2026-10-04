@@ -2189,7 +2189,11 @@ fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
     };
     assert_eq!(
         fill,
-        Some(casual_doc_model::v1::Fill::Solid(THEMED_GREEN)),
+        // `plain` asserts the second half too: a themed fill files NO row under the
+        // shape's id, so it must arrive with no `a:gradFill` geometry attached.
+        Some(casual_doc_layout::page::AnchorFill::plain(
+            casual_doc_model::v1::Fill::Solid(THEMED_GREEN)
+        )),
         "the fillRef's colour is substituted for the entry's phClr"
     );
     let stroke = stroke.expect("the lnRef resolves an outline");
@@ -2210,9 +2214,322 @@ fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
     };
     assert_eq!(
         fill,
-        Some(explicit),
+        Some(casual_doc_layout::page::AnchorFill::plain(explicit)),
         "an explicit spPr fill must not be overridden by the style reference"
     );
+}
+
+/// A path gradient's AUTHORED family and focus reach the display list.
+///
+/// `docs/156` §6 row 0.3's gradient half, at the altitude that was missing. The path
+/// geometry has been imported, modeled and re-emitted since row 0.3's first commit,
+/// and `Definitions::shape_fill_detail` held it under the shape's own id — but layout
+/// never read that row, so `path="rect"`, `path="shape"` and `path="circle"` all
+/// reached the rasteriser as the same `GradientKind::Radial` and all three painted as
+/// concentric circles centred on the shape.
+///
+/// This drives the REAL pipeline — a `Definitions` row, the shared `GroupChild` walk
+/// in `place_floats`, then `compose_page` — because a guard that builds a display-list
+/// value directly proves the rasteriser works and proves nothing about whether layout
+/// ever hands it that value. Both failure modes have happened here: a `compose` that
+/// drops a field, and a group walk that never consults the side table.
+///
+/// The four families are asserted TOGETHER on purpose. A fixture carrying only
+/// `path="rect"` cannot fail for the right reason: it would pass for any gradient at
+/// all, including the old collapse. These four must produce four different display
+/// values, which is exactly what the collapse could not do.
+#[test]
+fn a_path_gradients_authored_family_and_focus_reach_the_display_list() {
+    use casual_doc_layout::display::{GradientKind as DisplayGradientKind, PaintItem};
+    use casual_doc_model::v1::{GradientDetail, GradientPath, RelativeRect};
+
+    // `l="25000" t="10000" r="25000" b="10000"` — a focus RECTANGLE, not the common
+    // centre point, so the four edges can be told apart from each other and from the
+    // `GradientFocus::CENTER` fallback below.
+    let authored = RelativeRect {
+        left: 25_000,
+        top: 10_000,
+        right: 25_000,
+        bottom: 10_000,
+    };
+    let detail = |path: GradientPath| {
+        Some(GradientDetail {
+            path: Some(path),
+            fill_to_rect: Some(authored),
+            ..GradientDetail::default()
+        })
+    };
+
+    let DisplayFill::Gradient(rect_gradient) = place_gradient_shape(
+        casual_doc_model::v1::GradientKind::Radial,
+        detail(GradientPath::Rect),
+    ) else {
+        panic!("expected a gradient fill");
+    };
+    match rect_gradient.kind {
+        DisplayGradientKind::Path { path, focus } => {
+            assert_eq!(
+                path,
+                GradientPath::Rect,
+                "the authored `a:path path=\"rect\"` family reaches the display list"
+            );
+            // `ST_Percentage` (1/1000 of a percent) resolved to fractions of the box,
+            // which is the unit the backends paint in.
+            assert!(
+                (focus.left - 0.25).abs() < 1e-4
+                    && (focus.top - 0.10).abs() < 1e-4
+                    && (focus.right - 0.25).abs() < 1e-4
+                    && (focus.bottom - 0.10).abs() < 1e-4,
+                "a:fillToRect resolves per edge (got {focus:?})"
+            );
+        }
+        other => panic!("a rectangular path gradient must not collapse: {other:?}"),
+    }
+
+    // The control that makes the assertion above mean something: a DIFFERENT authored
+    // family must reach a DIFFERENT display value. Before this row, both were
+    // `Radial`.
+    let DisplayFill::Gradient(circle_gradient) = place_gradient_shape(
+        casual_doc_model::v1::GradientKind::Radial,
+        detail(GradientPath::Circle),
+    ) else {
+        panic!("expected a gradient fill");
+    };
+    assert!(
+        matches!(
+            circle_gradient.kind,
+            DisplayGradientKind::Path {
+                path: GradientPath::Circle,
+                ..
+            }
+        ),
+        "`path=\"circle\"` is a different display value from `path=\"rect\"` \
+         (got {:?})",
+        circle_gradient.kind
+    );
+    let DisplayFill::Gradient(shape_gradient) = place_gradient_shape(
+        casual_doc_model::v1::GradientKind::Radial,
+        detail(GradientPath::Shape),
+    ) else {
+        panic!("expected a gradient fill");
+    };
+    assert!(
+        matches!(
+            shape_gradient.kind,
+            DisplayGradientKind::Path {
+                path: GradientPath::Shape,
+                ..
+            }
+        ),
+        "`path=\"shape\"` is a third display value (got {:?})",
+        shape_gradient.kind
+    );
+
+    // An `a:path` with no `@path` token states no family, so there is nothing to
+    // resolve and the concentric collapse is KEPT rather than guessed at. This is
+    // also the shape an ODF-imported radial gradient arrives in.
+    let DisplayFill::Gradient(untyped) = place_gradient_shape(
+        casual_doc_model::v1::GradientKind::Radial,
+        Some(GradientDetail {
+            rotate_with_shape: Some(true),
+            ..GradientDetail::default()
+        }),
+    ) else {
+        panic!("expected a gradient fill");
+    };
+    assert!(
+        matches!(untyped.kind, DisplayGradientKind::Radial),
+        "a path gradient with no authored family stays concentric (got {:?})",
+        untyped.kind
+    );
+
+    // No row at all: the same answer, reached by a different route.
+    let DisplayFill::Gradient(no_row) =
+        place_gradient_shape(casual_doc_model::v1::GradientKind::Radial, None)
+    else {
+        panic!("expected a gradient fill");
+    };
+    assert!(
+        matches!(no_row.kind, DisplayGradientKind::Radial),
+        "a gradient with no side-table row stays concentric (got {:?})",
+        no_row.kind
+    );
+
+    // An absent `a:fillToRect` is the degenerate identity rect, which would make the
+    // gradient zero-extent and paint flat; it resolves to the centre point instead,
+    // and that decision is recorded on `GradientFocus::CENTER`.
+    let DisplayFill::Gradient(no_focus) = place_gradient_shape(
+        casual_doc_model::v1::GradientKind::Radial,
+        Some(GradientDetail {
+            path: Some(GradientPath::Rect),
+            ..GradientDetail::default()
+        }),
+    ) else {
+        panic!("expected a gradient fill");
+    };
+    match no_focus.kind {
+        DisplayGradientKind::Path { focus, .. } => assert!(
+            (focus.left - 0.5).abs() < 1e-6
+                && (focus.top - 0.5).abs() < 1e-6
+                && (focus.right - 0.5).abs() < 1e-6
+                && (focus.bottom - 0.5).abs() < 1e-6,
+            "an absent a:fillToRect centres the focus (got {focus:?})"
+        ),
+        other => panic!("expected a path gradient: {other:?}"),
+    }
+
+    // And a LINEAR gradient through the same side-table row is untouched: the row's
+    // `path`/`fillToRect` belong to `a:path` and must not be read for an `a:lin`.
+    let DisplayFill::Gradient(linear) = place_gradient_shape(
+        casual_doc_model::v1::GradientKind::Linear { angle: 5_400_000 },
+        detail(GradientPath::Rect),
+    ) else {
+        panic!("expected a gradient fill");
+    };
+    assert!(
+        matches!(
+            linear.kind,
+            DisplayGradientKind::Linear { angle_deg } if (angle_deg - 90.0).abs() < 0.01
+        ),
+        "an `a:lin` sweep is still linear (got {:?})",
+        linear.kind
+    );
+
+    // The whole thing is worthless if the item never reached the page, so assert the
+    // route once: the shape is a real `PaintItem::Shape` on the composed list.
+    let shape_id = node(93);
+    let mut definitions = Definitions::default();
+    definitions.shape_fill_detail.insert(
+        shape_id,
+        casual_doc_model::v1::ShapeFillDetail {
+            gradient: detail(GradientPath::Rect),
+            ..Default::default()
+        },
+    );
+    let list = compose_gradient_page(casual_doc_model::v1::GradientKind::Radial, definitions);
+    assert!(
+        list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::Shape {
+                fill: Some(DisplayFill::Gradient(_)),
+                ..
+            }
+        )),
+        "the gradient arrives as a composed paint item, not only as anchor content"
+    );
+}
+
+/// Places one grouped `wps:wsp` whose `a:gradFill` carries `kind`, with `detail`
+/// filed in `Definitions::shape_fill_detail` under the shape's own id, then composes
+/// the page and returns the display fill the rasteriser would receive.
+///
+/// The shape goes through the shared `GroupChild` walk because that walk is where the
+/// side-table lookup lives, and it is the walk a slide's layout shares.
+fn place_gradient_shape(
+    kind: casual_doc_model::v1::GradientKind,
+    detail: Option<casual_doc_model::v1::GradientDetail>,
+) -> DisplayFill {
+    use casual_doc_layout::display::PaintItem;
+
+    let mut definitions = Definitions::default();
+    if let Some(detail) = detail {
+        definitions.shape_fill_detail.insert(
+            node(93),
+            casual_doc_model::v1::ShapeFillDetail {
+                gradient: Some(detail),
+                ..Default::default()
+            },
+        );
+    }
+    let list = compose_gradient_page(kind, definitions);
+    list.items
+        .iter()
+        .find_map(|item| match item {
+            PaintItem::Shape {
+                fill: Some(fill), ..
+            } => Some(fill.clone()),
+            _ => None,
+        })
+        .expect("the shape composes to a filled paint item")
+}
+
+/// The composed display list for a page holding one grouped, gradient-filled shape.
+fn compose_gradient_page(
+    kind: casual_doc_model::v1::GradientKind,
+    definitions: Definitions,
+) -> casual_doc_layout::display::DisplayList {
+    use casual_doc_model::v1::GradientStop as ModelGradientStop;
+
+    let extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: node(93),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent,
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: Some(Fill::Gradient {
+            stops: vec![
+                ModelGradientStop {
+                    position: 0,
+                    color: Rgba {
+                        r: 255,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    },
+                },
+                ModelGradientStop {
+                    position: 100_000,
+                    color: Rgba {
+                        r: 0,
+                        g: 0,
+                        b: 255,
+                        a: 255,
+                    },
+                },
+            ],
+            kind,
+        }),
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
+        id: node(92),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(7),
+        extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        children: vec![child],
+    }));
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    compose_page(&layout.pages[0])
 }
 
 /// A GRADIENT matrix entry resolves to a real gradient, per stop, and the entry
@@ -2245,7 +2562,7 @@ fn a_themed_gradient_resolves_per_stop_and_unpaintable_entries_stay_unfilled() {
     };
     assert_eq!(
         fill,
-        Some(Fill::Gradient {
+        Some(casual_doc_layout::page::AnchorFill::plain(Fill::Gradient {
             stops: vec![
                 // `tint 40000` over pure green: each channel c -> c*0.4 + 255*0.6.
                 GradientStop {
@@ -2263,7 +2580,7 @@ fn a_themed_gradient_resolves_per_stop_and_unpaintable_entries_stay_unfilled() {
                 },
             ],
             kind: GradientKind::Linear { angle: 5_400_000 },
-        }),
+        })),
         "the gradient entry resolves stop by stop, transform included"
     );
     assert!(
@@ -2467,7 +2784,9 @@ fn a_grouped_text_box_with_no_explicit_fill_resolves_its_theme_style() {
     };
     assert_eq!(
         fill,
-        Some(casual_doc_model::v1::Fill::Solid(THEMED_GREEN)),
+        Some(casual_doc_layout::page::AnchorFill::plain(
+            casual_doc_model::v1::Fill::Solid(THEMED_GREEN)
+        )),
         "the fillRef's colour is substituted for the entry's phClr, exactly as it is \
          for a text-free shape"
     );
@@ -2487,7 +2806,7 @@ fn a_grouped_text_box_with_no_explicit_fill_resolves_its_theme_style() {
     };
     assert_eq!(
         fill,
-        Some(explicit),
+        Some(casual_doc_layout::page::AnchorFill::plain(explicit)),
         "an explicit fill outranks the style matrix"
     );
 }

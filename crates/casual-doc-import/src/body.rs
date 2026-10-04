@@ -5393,13 +5393,35 @@ impl BodyParser<'_> {
                         .unwrap_or(GradientKind::Linear { angle: 0 });
                     let detail = std::mem::take(&mut self.grad_detail);
                     let retained = !detail.is_empty();
+                    // What is still NOT painted, now that `a:path@path` and
+                    // `a:fillToRect` are. Narrowed deliberately: layout reads the
+                    // path family and the focus rectangle out of this row and the
+                    // display list carries both, so reporting the whole row would
+                    // name a shape as having lost appearance it did not lose — which
+                    // `105` EV-007 counts as false in the same way overstating
+                    // support is. The `a:effectRef` precedent one level up is the
+                    // same rule: report on what did not resolve, not on the presence
+                    // of a reference.
+                    //
+                    // Each survivor here is a real gap. `a:gradFill@flip` mirrors the
+                    // ramp across the fill and nothing implements it;
+                    // `@rotWithShape="0"` asks for a gradient that does NOT turn with
+                    // its shape, where the backends apply the shape transform to the
+                    // shader; and `a:lin@scaled` measures the sweep angle in a unit
+                    // square before stretching it to the box, which is a different
+                    // angle from the one painted. A no-op value is not a loss, so
+                    // `scaled="0"`, `flip="none"` and `rotWithShape="1"` do not
+                    // report.
+                    let unpainted = detail.scaled == Some(true)
+                        || matches!(detail.flip, Some(flip) if flip != TileFlip::None)
+                        || detail.rotate_with_shape == Some(false);
                     if let Some(shape) = self.pending_shape.as_mut() {
                         shape.fill = Some(Fill::Gradient { stops, kind });
                         if retained {
                             shape.fill_detail.gradient = Some(detail);
                         }
                     }
-                    if retained {
+                    if unpainted {
                         self.reporter.report_shape_appearance_unpainted(
                             "gradFill",
                             "gradient-geometry-not-painted",

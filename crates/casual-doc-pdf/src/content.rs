@@ -1379,10 +1379,48 @@ fn shading_dictionary(
                 num(radius)
             )
         }
+        // A path gradient (`a:path`) — the second DrawingML gradient family, whose
+        // stops run outward from `a:fillToRect` to the shape's bounding box.
+        //
+        // **`path="circle"` is exact in family**: a type-3 radial shading centred on
+        // the focus rather than on the shape, which is what the construct says and
+        // what the raster backend now also draws.
+        //
+        // **`path="rect"` and `path="shape"` are approximated by the same radial**,
+        // and this divergence from the raster backend is deliberate. PDF's shading
+        // families are axial (2), radial (3) and meshes (4-7); there is no
+        // rectangular or outline-following family, so the only exact options are a
+        // mesh — which would mean triangulating every shape's outline per gradient —
+        // or the stepped decomposition the rasteriser uses, which in a content stream
+        // means up to 128 extra clipped path fills PER SHAPE, with every one of them
+        // in the file forever. A radial from the right focus, in the right colours,
+        // with the right progression is inexact at the corners; it is not a different
+        // construct, and it is what `docs/119` §6 "Rejected" prefers over a flat
+        // colour that looks deliberate. Recorded here rather than left ambiguous.
+        GradientKind::Path { focus, .. } => {
+            // PDF's y axis points UP and `rect_points` already returned the box's
+            // BOTTOM edge as `y`, so the focus's inset from the layout-space top edge
+            // is measured down from `y + height`.
+            let cx = x + (focus.left + 1.0 - focus.right) / 2.0 * width;
+            let cy = y + height - (focus.top + 1.0 - focus.bottom) / 2.0 * height;
+            let corner = |px: f32, py: f32| ((px - cx).powi(2) + (py - cy).powi(2)).sqrt();
+            let radius = corner(x, y)
+                .max(corner(x + width, y))
+                .max(corner(x, y + height))
+                .max(corner(x + width, y + height));
+            format!(
+                "/Coords[{} {} 0 {} {} {}]",
+                num(cx),
+                num(cy),
+                num(cx),
+                num(cy),
+                num(radius)
+            )
+        }
     };
     let shading_type = match gradient.kind {
         GradientKind::Linear { .. } => 2,
-        GradientKind::Radial => 3,
+        GradientKind::Radial | GradientKind::Path { .. } => 3,
     };
     Some(format!(
         "<</ShadingType {shading_type}/ColorSpace/DeviceRGB{coords}/Function {function}/Extend[true true]>>"
@@ -1530,5 +1568,82 @@ mod path_tests {
         ];
         assert!(stream(&commands, true).contains("h\n"));
         assert!(!stream(&commands, false).contains("h\n"));
+    }
+}
+
+#[cfg(test)]
+mod path_gradient_tests {
+    use super::*;
+    use casual_doc_layout::display::{Color, Gradient, GradientFocus, GradientStop};
+    use casual_doc_model::v1::GradientPath;
+
+    fn two_stop(kind: GradientKind) -> Gradient {
+        Gradient {
+            stops: vec![
+                GradientStop {
+                    position: 0.0,
+                    color: Color::rgb(255, 0, 0),
+                },
+                GradientStop {
+                    position: 1.0,
+                    color: Color::rgb(0, 0, 255),
+                },
+            ],
+            kind,
+        }
+    }
+
+    /// A path gradient's shading is centred on `a:fillToRect`, in PDF's y-up space.
+    ///
+    /// Two facts, and the second is the one a reviewer cannot see by reading: PDF's
+    /// origin is bottom-left and `rect_points` already returned the box's BOTTOM edge
+    /// as `y`, so a focus inset from the layout-space TOP edge has to be measured
+    /// DOWN from `y + height`. Getting that backwards mirrors every off-centre
+    /// highlight vertically, which looks like a different light source rather than
+    /// like a bug.
+    ///
+    /// The control in the same test is the box-centred `GradientKind::Radial`: if the
+    /// focus were ignored the two would emit identical coordinates, which is exactly
+    /// what happened before `GradientKind::Path` existed.
+    #[test]
+    fn a_path_gradient_shading_is_centred_on_its_focus_in_pdf_space() {
+        // A 100x40 box whose bottom-left corner is at (10, 20) in PDF space. The
+        // focus sits a quarter in from the left and a quarter down from the
+        // layout-space TOP: PDF x = 10 + 25 = 35, PDF y = 20 + 40 - 10 = 50.
+        let focused = shading_dictionary(
+            &two_stop(GradientKind::Path {
+                path: GradientPath::Circle,
+                focus: GradientFocus {
+                    left: 0.25,
+                    top: 0.25,
+                    right: 0.75,
+                    bottom: 0.75,
+                },
+            }),
+            10.0,
+            20.0,
+            100.0,
+            40.0,
+        )
+        .expect("a two-stop path gradient builds a shading");
+        assert!(
+            focused.contains("/ShadingType 3"),
+            "a path gradient is a radial shading: {focused}"
+        );
+        assert!(
+            focused.contains("/Coords[35 50 0 35 50"),
+            "the focus centre is (35, 50) in PDF's y-up space: {focused}"
+        );
+
+        let centred = shading_dictionary(&two_stop(GradientKind::Radial), 10.0, 20.0, 100.0, 40.0)
+            .expect("a radial gradient builds a shading");
+        assert!(
+            centred.contains("/Coords[60 40 0 60 40"),
+            "the box-centred radial is still centred on the box: {centred}"
+        );
+        assert_ne!(
+            focused, centred,
+            "an off-centre focus must not emit the box-centred shading"
+        );
     }
 }
