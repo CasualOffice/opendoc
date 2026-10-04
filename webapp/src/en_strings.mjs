@@ -1084,4 +1084,52 @@ export const EN_STRINGS = Object.freeze({
   // plural-family prefix rule to answer for it.
   "protect.enforceOff": "Choose a restriction before applying one",
 
+  // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
+  //
+  // `session_access.mjs` routes two code families to these, and it is ONE table
+  // for both halves of the same question: the sentence a control carries while it
+  // is disabled, and the sentence shown when the engine or the relay refuses the
+  // gesture anyway. Two tables would drift, and a reader told two different
+  // things about one permission learns that neither is trustworthy.
+  //
+  // The five `session.*` keys are `casual_doc_edit::access::AccessRefusal`'s own
+  // classes. The engine writes an English fallback beside each code; these are
+  // the translated ones, and they are what a reader actually sees. They say what
+  // the participant MAY do rather than which operation was refused — naming the
+  // operation tells them what the chrome happened to send.
+  "session.readOnly": "You have read-only access to this document",
+  "session.commentsOnly": "You can add comments to this document, but not change it",
+  "session.suggestionsOnly": "You can comment and suggest changes, but not change the document directly",
+  "session.reviewOnly": "You can accept or reject other people's changes and add comments, but not change this document yourself",
+  "session.noProtectionChange": "You are not allowed to change how this document is protected",
+  // A grant this build could not read — an unknown capability name, or a
+  // participant number that is not one. The chrome narrows to read-only and SAYS
+  // SO, because silently granting less is a bug that looks like a working
+  // read-only mode (`casual-doc-wasm`'s own reasoning, one layer up).
+  "session.grantUnreadable": "This session's permissions could not be read, so the document is open read-only",
+  // The DOCUMENT's own `w:documentProtection`, which is the other authority and
+  // asks the same of everyone (ADR-052). Reachable on a document opened from a
+  // file with no room at all, and until these keys existed every one of them
+  // reached a reader of all nineteen locales in the engine's English. They name
+  // the DOCUMENT rather than the reader, which is the distinction `access.rs`
+  // insists on: a host showing "you have read-only access" for a protected FILE
+  // sends the reader to argue with the wrong party.
+  "document.protectedReadOnly": "This document is protected against changes",
+  "document.protectedCommentsOnly": "This document is protected: only comments can be added",
+  "document.protectedTrackedChangesOnly": "This document is protected: changes must be tracked, and tracked changes cannot be accepted or rejected",
+  "document.protectedFormsOnly": "This document is protected: only its form fields can be edited",
+  // The `ODC-7xxx` collaboration family (`docs/20`), every row of it. Each says
+  // what the reader should DO, because that is the difference between the codes:
+  // one invites a retry, one asks them to copy their work out, one is terminal.
+  "collab.conflict": "That one change could not be merged with everyone else's — try it again",
+  "collab.protocolVersion": "This editor and the document's server speak different versions — reload the page",
+  "collab.notAuthorised": "This session is not authorised to open this document",
+  "collab.readOnly": "You are reading this shared document and cannot change it",
+  "collab.notSaving": "This shared session cannot save right now — copy your work out before closing",
+  "collab.tooFarBehind": "This session fell too far behind to catch up, and unsent changes were lost — reload to continue",
+  "collab.malformed": "A message from the server could not be read, so it was ignored",
+  "collab.idCollision": "A change from someone else named something this copy already has, so it was not applied",
+  "collab.staleBase": "The document moved on while that change was in flight — it is being sent again",
+  "collab.roomFull": "This document already has as many people editing as it allows — try again shortly",
+
 });

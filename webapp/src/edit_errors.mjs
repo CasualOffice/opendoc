@@ -42,6 +42,26 @@ const EXPLAINED = /^refused: /;
  *  how. It is only true when the DOCUMENT is not itself read-only. */
 const VIEWING = "Viewing mode is read-only; switch to Editing to change the document";
 
+/** The LOCALISED sentence for a marked refusal, when the host can route its code.
+ *
+ *  `casual_doc_edit::refusal` splits a marked refusal into a sentence and a
+ *  stable dotted code, and `casual-doc-wasm`'s `to_js` puts the code on the
+ *  thrown `Error`. Until this, the code was set and nothing read it: every
+ *  explained refusal reached the reader in the ENGINE's English, in all nineteen
+ *  locales, which is the whole reason the code exists ("a host routes the code
+ *  through its own catalogue — `t(code)` — so a non-English reader gets the
+ *  specific reason in their own language").
+ *
+ *  The caller supplies the routing, not this module, so the policy stays pure and
+ *  this file keeps taking its vocabulary as input. A code the host cannot route
+ *  falls back to the engine's own sentence, which is more specific than anything
+ *  a generic replacement could say — never to `GENERIC`. */
+function routed(error, context) {
+  const code = typeof error?.code === "string" ? error.code : "";
+  if (!code || typeof context.routeRefusal !== "function") return "";
+  return String(context.routeRefusal(code) ?? "");
+}
+
 /**
  * What to say when a mutation is refused BEFORE it reaches the engine.
  *
@@ -64,12 +84,14 @@ export function mutationBlockedMessage(context = {}) {
  * The sentence to show for a thrown engine error.
  *
  * @param {unknown} error the value `catch` received; any shape, including null.
- * @param {{editingUnavailableReason?: string}} [context] what the HOST already
- *        knows about the document, independent of this particular throw.
+ * @param {{editingUnavailableReason?: string, routeRefusal?: (code: string) => string}} [context]
+ *        what the HOST already knows, independent of this particular throw.
  *        `editingUnavailableReason` is the engine's own getter (`docs/113`
  *        §8.3): a non-empty string means no edit can ever apply to this
  *        document, and it is already a user-facing sentence naming the size,
- *        the limit and what to do about it.
+ *        the limit and what to do about it. `routeRefusal` turns the thrown
+ *        error's stable dotted code into the host's own localised sentence, and
+ *        returns `""` for a code it does not know.
  * @returns {string} a user-facing sentence, never an engine error name.
  */
 export function editRefusalMessage(error, context = {}) {
@@ -81,6 +103,10 @@ export function editRefusalMessage(error, context = {}) {
   // the getter exists (`SKILL.md` §10: say why, never refuse blankly).
   const unavailable = String(context.editingUnavailableReason ?? "");
   if (unavailable) return unavailable;
+  // The routed sentence BEFORE the engine's own, and only when the host answered
+  // for this code: same reason, the reader's language.
+  const localised = routed(error, context);
+  if (localised) return localised;
   const text = String(error?.message ?? error ?? "");
   if (EXPLAINED.test(text)) return text.replace(EXPLAINED, "");
   return HISTORY_FAILURE.test(text) ? HISTORY : GENERIC;

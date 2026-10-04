@@ -786,17 +786,40 @@ export function allowsMode(capabilities, mode) {
  * switch into an editing mode it can never enter: a dead control, and the
  * repository's standing rule is that there is never one.
  *
+ * `participant` is the ROOM's grant — a third authority, and the one a shared
+ * document adds (`152` §10 Q4). It is asked last and answers per mode, because
+ * the three refusals send a reader to three different places and must not share
+ * one sentence: the document the engine refuses names the document, a withheld
+ * mode names the container, and a participant's grant names what *they* may do.
+ * Precedence is the order of specificity the existing two already had, with the
+ * room's grant below the container's — a host that composed a mode away has
+ * decided it for everyone in their page, which is the wider statement.
+ *
  * Complexity: O(buttons).
  */
-export function reflectReviewModeAccess({ buttons, bannerEdit, capabilities, readOnlyReason, withheldReason }) {
+export function reflectReviewModeAccess({ buttons, bannerEdit, capabilities, readOnlyReason, withheldReason, participant }) {
+  /** The room's verdict on one mode: `null` when there is no room, or when it
+   *  allows the mode. A sentence, never a bare boolean — `session_access.mjs`
+   *  says why a withheld capability carries its reason from the start. */
+  const roomRefusal = (mode) => {
+    if (!participant) return null;
+    const decision = participant.allows(mode);
+    return decision.allowed ? null : decision.reason;
+  };
   for (const button of buttons ?? []) {
-    const withheld = !allowsMode(capabilities, button.dataset?.reviewMode);
-    button.disabled = !!readOnlyReason || withheld;
+    const mode = button.dataset?.reviewMode;
+    const withheld = !allowsMode(capabilities, mode);
+    const room = withheld ? null : roomRefusal(mode);
+    button.disabled = !!readOnlyReason || withheld || !!room;
     if (readOnlyReason) button.title = readOnlyReason;
     else if (withheld) button.title = withheldReason;
+    else if (room) button.title = room;
     else button.removeAttribute("title");
   }
-  if (bannerEdit) bannerEdit.hidden = !!readOnlyReason || !allowsMode(capabilities, "editing");
+  if (bannerEdit) {
+    bannerEdit.hidden =
+      !!readOnlyReason || !allowsMode(capabilities, "editing") || !!roomRefusal("editing");
+  }
 }
 
 /** Whether a capability set grants `name`, for any value at all.
@@ -878,6 +901,20 @@ export function hostConfig(view = globalThis) {
     // host's configuration arrives in one place or it arrives in two, and two is
     // how `autosave` came to be known by both this file and `main.js`.
     prefs: params?.get("prefs") ?? null,
+    // THE ROOM'S GRANT, read here with the other five for the reason the comment
+    // above `prefs` gives: a host's configuration arrives in one place or it
+    // arrives in two, and two is how `autosave` came to be known by both this
+    // file and `main.js`.
+    //
+    // A DIFFERENT AUTHORITY FROM `withhold`, and never composed with it here.
+    // `withhold` is what this CONTAINER may do; these two are what THIS
+    // PARTICIPANT may do in the room the host put them in (`152` §2a — the host
+    // creates the room, not the first client). `session_access.mjs` resolves
+    // them, and the reason reading them off the URL is safe rather than
+    // forgeable is written down there: `adoptParticipantCapabilities`
+    // intersects, so a value from this side can only ever narrow.
+    granted: params?.get("granted") ?? null,
+    participant: params?.get("participant") ?? null,
     framed,
   };
 }

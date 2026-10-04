@@ -143,7 +143,14 @@ test("no two chords collide on the same keyboard", () => {
 const EDITOR_COMMANDS_SOURCE = (() => {
   const start = MAIN_JS.indexOf("function editorCommands(");
   assert.ok(start > 0, "editorCommands() has moved or been renamed");
-  const end = MAIN_JS.indexOf("\n}", MAIN_JS.indexOf("return cmds.filter", start));
+  // Anchored on the `cmds.filter(` that ends the builder rather than on the whole
+  // `return` line: the return is now wrapped — `SESSION.narrow(cmds.filter(…))`
+  // applies the room's grant to every surface at once — and an anchor that
+  // included the word `return` silently matched NOTHING, which made `end` fall
+  // before `start` and took the whole scan with it.
+  const returned = MAIN_JS.indexOf("cmds.filter(", start);
+  assert.ok(returned > start, "editorCommands() no longer ends by filtering `cmds`");
+  const end = MAIN_JS.indexOf("\n}", returned);
   assert.ok(end > start, "the end of editorCommands() could not be found");
   return MAIN_JS.slice(start, end);
 })();
