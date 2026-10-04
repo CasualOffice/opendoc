@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Moved from here",
   "compare.kind.move_to": "Moved to here",
   "compare.kind.property": "Property changed",
-  "compare.marked": "{count} differences are now tracked changes in this document.",
+  "compare.marked": "The differences are now tracked changes in this document.",
   "compare.needsDocument": "Open a document to compare another one with",
   "compare.noAnswer": "The comparison stopped before it had an answer.",
   "compare.object.block": "<Block>",

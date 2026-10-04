@@ -308,7 +308,15 @@ export const EN_STRINGS = Object.freeze({
   // The answer, FIRST and as a sentence about the document rather than a number
   // about the panel. The owner's report on the previous shape was that a count
   // told them nothing: "i cant even see what is being changed".
-  "compare.marked": "{count} differences are now tracked changes in this document.",
+  //
+  // NO COUNT IN IT, deliberately, and measured: the first draft read "{count}
+  // differences are now tracked changes in this document" and rendered "1
+  // differences" on a one-word edit. A sentence needs plural agreement where a
+  // labelled number does not, and the count already has its own line directly
+  // below (`compare.changeCount`) — whose own comment records why that one is not
+  // a plural family. One number, one place, and nineteen catalogues that need one
+  // form each instead of Arabic's six.
+  "compare.marked": "The differences are now tracked changes in this document.",
   // And how to walk them. Review's own next/previous navigate the revisions the
   // comparison just wrote, which is the route that cannot land on the wrong
   // paragraph — unlike a click on a list entry, whose anchor belongs to the

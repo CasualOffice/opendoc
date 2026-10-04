@@ -181,7 +181,7 @@
   "compare.kind.move_from": "从此处移出",
   "compare.kind.move_to": "移至此处",
   "compare.kind.property": "属性已更改",
-  "compare.marked": "{count} 处差异现在已是本文档中的修订。",
+  "compare.marked": "这些差异现在已是本文档中的修订。",
   "compare.needsDocument": "请先打开一个文档，再与另一个比较",
   "compare.noAnswer": "比较在得出结果之前就停止了。",
   "compare.object.block": "<块>",

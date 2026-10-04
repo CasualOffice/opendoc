@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Dipindahkan dari sini",
   "compare.kind.move_to": "Dipindahkan ke sini",
   "compare.kind.property": "Properti berubah",
-  "compare.marked": "{count} perbedaan sekarang menjadi perubahan terlacak di dokumen ini.",
+  "compare.marked": "Perbedaannya sekarang menjadi perubahan terlacak di dokumen ini.",
   "compare.needsDocument": "Buka sebuah dokumen untuk dibandingkan dengan yang lain",
   "compare.noAnswer": "Perbandingan berhenti sebelum memperoleh hasil.",
   "compare.object.block": "<Blok>",

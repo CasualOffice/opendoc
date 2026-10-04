@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Przeniesiono stąd",
   "compare.kind.move_to": "Przeniesiono tutaj",
   "compare.kind.property": "Zmieniono właściwość",
-  "compare.marked": "{count} różnic jest teraz śledzonymi zmianami w tym dokumencie.",
+  "compare.marked": "Różnice są teraz śledzonymi zmianami w tym dokumencie.",
   "compare.needsDocument": "Otwórz dokument, aby porównać z nim inny",
   "compare.noAnswer": "Porównanie zatrzymało się, zanim dało wynik.",
   "compare.object.block": "<Blok>",

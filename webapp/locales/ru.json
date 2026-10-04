@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Перемещено отсюда",
   "compare.kind.move_to": "Перемещено сюда",
   "compare.kind.property": "Свойство изменено",
-  "compare.marked": "{count} различий теперь являются исправлениями в этом документе.",
+  "compare.marked": "Различия теперь являются исправлениями в этом документе.",
   "compare.needsDocument": "Откройте документ, чтобы сравнить с ним другой",
   "compare.noAnswer": "Сравнение остановилось, не получив результата.",
   "compare.object.block": "<Блок>",

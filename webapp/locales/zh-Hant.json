@@ -181,7 +181,7 @@
   "compare.kind.move_from": "從此處搬移",
   "compare.kind.move_to": "搬移至此處",
   "compare.kind.property": "屬性已變更",
-  "compare.marked": "{count} 處差異現在已是本文件中追蹤的變更。",
+  "compare.marked": "這些差異現在已是本文件中追蹤的變更。",
   "compare.needsDocument": "請先開啟一份文件，再與另一份比較",
   "compare.noAnswer": "比較在得出結果之前就停止了。",
   "compare.object.block": "<區塊>",

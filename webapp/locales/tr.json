@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Buradan taşındı",
   "compare.kind.move_to": "Buraya taşındı",
   "compare.kind.property": "Özellik değişti",
-  "compare.marked": "{count} fark artık bu belgede izlenen değişiklik.",
+  "compare.marked": "Farklar artık bu belgede izlenen değişiklikler.",
   "compare.needsDocument": "Başka bir belgeyle karşılaştırmak için önce bir belge açın",
   "compare.noAnswer": "Karşılaştırma bir sonuca ulaşmadan durdu.",
   "compare.object.block": "<Blok>",

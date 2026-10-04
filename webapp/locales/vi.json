@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Đã chuyển đi từ đây",
   "compare.kind.move_to": "Đã chuyển đến đây",
   "compare.kind.property": "Thuộc tính đã đổi",
-  "compare.marked": "{count} khác biệt giờ là thay đổi được theo dõi trong tài liệu này.",
+  "compare.marked": "Các khác biệt giờ là thay đổi được theo dõi trong tài liệu này.",
   "compare.needsDocument": "Hãy mở một tài liệu để so sánh với tài liệu khác",
   "compare.noAnswer": "Việc so sánh đã dừng trước khi có kết quả.",
   "compare.object.block": "<Khối>",

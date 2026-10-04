@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Von hier verschoben",
   "compare.kind.move_to": "Hierher verschoben",
   "compare.kind.property": "Eigenschaft geändert",
-  "compare.marked": "{count} Unterschiede sind nun nachverfolgte Änderungen in diesem Dokument.",
+  "compare.marked": "Die Unterschiede sind nun nachverfolgte Änderungen in diesem Dokument.",
   "compare.needsDocument": "Öffnen Sie ein Dokument, um ein anderes damit zu vergleichen",
   "compare.noAnswer": "Der Vergleich wurde abgebrochen, bevor er ein Ergebnis hatte.",
   "compare.object.block": "<Block>",

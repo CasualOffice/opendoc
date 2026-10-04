@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Vanaf hier verplaatst",
   "compare.kind.move_to": "Naar hier verplaatst",
   "compare.kind.property": "Eigenschap gewijzigd",
-  "compare.marked": "{count} verschillen zijn nu bijgehouden wijzigingen in dit document.",
+  "compare.marked": "De verschillen zijn nu bijgehouden wijzigingen in dit document.",
   "compare.needsDocument": "Open een document om er een ander mee te vergelijken",
   "compare.noAnswer": "De vergelijking is gestopt voordat er een resultaat was.",
   "compare.object.block": "<Blok>",

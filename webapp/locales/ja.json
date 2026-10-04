@@ -181,7 +181,7 @@
   "compare.kind.move_from": "ここから移動",
   "compare.kind.move_to": "ここへ移動",
   "compare.kind.property": "プロパティの変更",
-  "compare.marked": "{count} 件の相違点がこの文書の変更履歴になりました。",
+  "compare.marked": "相違点はこの文書の変更履歴になりました。",
   "compare.needsDocument": "比較するには、まず文書を開いてください",
   "compare.noAnswer": "比較は結果が出る前に停止しました。",
   "compare.object.block": "<ブロック>",

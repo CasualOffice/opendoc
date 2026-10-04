@@ -181,7 +181,7 @@
   "compare.kind.move_from": "यहाँ से खिसकाया गया",
   "compare.kind.move_to": "यहाँ खिसकाया गया",
   "compare.kind.property": "गुण बदला गया",
-  "compare.marked": "{count} अंतर अब इस दस्तावेज़ में ट्रैक किए गए बदलाव हैं।",
+  "compare.marked": "अंतर अब इस दस्तावेज़ में ट्रैक किए गए बदलाव हैं।",
   "compare.needsDocument": "किसी दूसरे दस्तावेज़ से तुलना करने के लिए पहले एक दस्तावेज़ खोलें",
   "compare.noAnswer": "तुलना परिणाम मिलने से पहले रुक गई।",
   "compare.object.block": "<ब्लॉक>",

@@ -181,7 +181,7 @@
   "compare.kind.move_from": "نُقل من هنا",
   "compare.kind.move_to": "نُقل إلى هنا",
   "compare.kind.property": "تغيّرت خاصية",
-  "compare.marked": "{count} من الفروق أصبحت الآن تغييرات متعقَّبة في هذا المستند.",
+  "compare.marked": "أصبحت الفروق الآن تغييرات متعقَّبة في هذا المستند.",
   "compare.needsDocument": "افتح مستندًا لمقارنة مستند آخر به",
   "compare.noAnswer": "توقفت المقارنة قبل أن تصل إلى نتيجة.",
   "compare.object.block": "<كتلة>",

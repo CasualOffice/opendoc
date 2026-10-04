@@ -846,8 +846,11 @@ export function bindComparePanel(io) {
     // changes it does not hold is the overstatement SKILL §9 exists for.
     if (applied) {
       const marked = document.createElement("p");
+      // The count stays an ATTRIBUTE here and a sentence one line down: see
+      // `compare.marked`, which lost its `{count}` after rendering "1
+      // differences". A guard still reads the number off this.
       marked.dataset.compareMarked = String(summary.total);
-      marked.textContent = t("compare.marked", { count: summary.total });
+      marked.textContent = t("compare.marked");
       children.push(marked, paragraph(t("compare.reviewNav"), "muted"));
       children.push(...unmarkedNotes(applied.loss));
     }

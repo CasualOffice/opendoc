@@ -181,7 +181,7 @@
   "compare.kind.move_from": "여기에서 이동",
   "compare.kind.move_to": "여기로 이동",
   "compare.kind.property": "속성 변경됨",
-  "compare.marked": "{count}개의 차이점이 이제 이 문서의 변경 내용입니다.",
+  "compare.marked": "차이점이 이제 이 문서의 변경 내용입니다.",
   "compare.needsDocument": "비교하려면 먼저 문서를 여세요",
   "compare.noAnswer": "비교가 결과를 내기 전에 중단되었습니다.",
   "compare.object.block": "<블록>",

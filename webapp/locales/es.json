@@ -181,7 +181,7 @@
   "compare.kind.move_from": "Movido desde aquí",
   "compare.kind.move_to": "Movido hasta aquí",
   "compare.kind.property": "Propiedad cambiada",
-  "compare.marked": "{count} diferencias son ahora cambios realizados en este documento.",
+  "compare.marked": "Las diferencias ahora son cambios realizados en este documento.",
   "compare.needsDocument": "Abre un documento para comparar otro con él",
   "compare.noAnswer": "La comparación se detuvo antes de tener un resultado.",
   "compare.object.block": "<Bloque>",

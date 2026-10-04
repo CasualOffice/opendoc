@@ -24,7 +24,14 @@
 // `keyboard.insertText`, never `keyboard.type`: printable characters are
 // `preventDefault`ed on this editor, so `type` leaves the element with no input
 // and the spec green over a feature that never ran.
-import { test, expect, clickIntoFirstPage, mirrorBlocks, setReviewMode } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  clickIntoFirstPage,
+  mirrorBlocks,
+  moveCaretToDocStart,
+  setReviewMode,
+} from "./fixtures.mjs";
 
 /** A plain-text fixture, for the reason `compare.spec.mjs` gives: a comparison
  *  imports both sides through the format registry, so `.txt` exercises the same
@@ -98,8 +105,7 @@ test("one text edit shows as a tracked change IN THE DOCUMENT", async ({ page, c
   // and if that were ever false the assertion below would prove nothing.
   const before = await saturatedInk(page);
   expect(before, "a plain black-text document must paint no author-coloured ink").toBe(0);
-  const bodyBefore = await mirrorBlocks(page);
-  expect(bodyBefore.join(" ")).not.toContain("delta");
+  await expect(page.locator("#reviewSidebar .review-margin-revision")).toHaveCount(0);
 
   await compareAgainst(page, textFile("theirs.txt", "Alpha beta delta\n"));
 
@@ -117,19 +123,38 @@ test("one text edit shows as a tracked change IN THE DOCUMENT", async ({ page, c
   // produces changes".
   await expect(page.locator("body")).toHaveClass(/showing-changes/);
 
-  // THE DELETED WORD REALLY LANDED IN THE MODEL, not only in a panel: the other
-  // document's "delta" is now an inline of this document, struck through. This is
-  // the half a pixel count cannot tell you, and the half that makes the change
-  // acceptable and rejectable.
-  const bodyAfter = await mirrorBlocks(page);
-  expect(bodyAfter.join(" "), "the comparison's deletion is in the document").toContain("delta");
-  expect(bodyAfter.join(" "), "and this document's own word is still there").toContain("gamma");
+  // THE REVIEW SURFACE READS IT, which is the half a pixel count cannot tell you
+  // and the half that makes the change acceptable and rejectable. One card, and
+  // specifically a REPLACEMENT card — the engine writes the recorded deletion and
+  // the insertion as one `RevisionGroupKind::Replacement` so the pair decides
+  // together — authored to the compared document and naming both words.
+  //
+  // Measured in Chromium through this exact route: the card reads
+  // `Replaced “delta” with “gamma”`, authored `theirs.txt`. "delta" is the other
+  // document's word, so a card carrying it proves the comparison's DELETION
+  // reached the model and not merely the panel.
+  //
+  // NOT the accessibility mirror, which was the first draft and was wrong about
+  // the engine: `collect_a11y_inlines` drops a deletion's text on purpose ("a
+  // deletion is not on the page under the default projection, so it is not
+  // read"), so asserting "delta" in the mirror asserted against a deliberate
+  // decision rather than against this change.
+  const card = page.locator("#reviewSidebar .review-margin-revision");
+  await expect(card).toHaveCount(1);
+  await expect(card).toHaveClass(/review-margin-replacement/);
+  await expect(card).toContainText("delta");
+  await expect(card).toContainText("gamma");
+  // ATTRIBUTED TO THE COMPARED DOCUMENT (ADR-061), so the author colour on the
+  // canvas distinguishes a computed difference from a person's suggestion.
+  await expect(card).toContainText("theirs.txt");
 
-  // THE REVIEW SURFACE SEES IT. `updateReviewControls` disables Accept all on a
-  // document with no tracked changes, so an enabled one is the review chrome
-  // agreeing that the comparison wrote revisions — the whole point of routing
-  // through the revision model rather than painting a second overlay.
+  // And `updateReviewControls` disables Accept all on a document with no tracked
+  // changes, so an enabled one is the bulk-decide path agreeing too.
   await expect(page.locator("#reviewAcceptAll")).toBeEnabled();
+
+  // The document's own word survived: a comparison marks text, it does not
+  // replace it.
+  expect((await mirrorBlocks(page)).join(" ")).toContain("gamma");
 
   // The panel is the INDEX of that, and it leads with a sentence about the
   // document rather than with a bare count.
@@ -155,7 +180,7 @@ test("a document that already carries revisions is refused, in its own words", a
   // A REAL tracked change, authored the way a reviewer authors one.
   await setReviewMode(page, "suggesting");
   await clickIntoFirstPage(page);
-  await page.keyboard.press("Control+Home");
+  await moveCaretToDocStart(page);
   await page.keyboard.insertText("Suggested. ");
   await expect(page.locator("#reviewAcceptAll")).toBeEnabled();
   const bodyBefore = await mirrorBlocks(page);
