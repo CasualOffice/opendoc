@@ -281,7 +281,6 @@ autosave
 autoshape
 backend
 backends
-backoff
 backpressure
 basedOn
 bbox
@@ -496,6 +495,7 @@ pointercancel
 pointerdown
 pointermove
 polyline
+populatable
 postMessage
 pre
 preedit
