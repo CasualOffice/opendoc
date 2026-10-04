@@ -285,18 +285,19 @@ mod tests {
             SourceFile::new("v1/document.rs", include_str!("document.rs")),
             SourceFile::new("v1/ids.rs", include_str!("ids.rs")),
             SourceFile::new("v1/intern.rs", include_str!("intern.rs")),
+            SourceFile::new("v1/locate.rs", include_str!("locate.rs")),
             SourceFile::new("v1/metadata.rs", include_str!("metadata.rs")),
             SourceFile::new("v1/migration.rs", include_str!("migration.rs")),
             SourceFile::new("v1/numbering.rs", include_str!("numbering.rs")),
             SourceFile::new("v1/properties.rs", include_str!("properties.rs")),
             SourceFile::new("v1/table.rs", include_str!("table.rs")),
         ])
-        // Fourteen at the time of writing: validation, the snapshot limits, the id
+        // Seventeen at the time of writing: validation, the snapshot limits, the id
         // recorder, the chart-anchor recorder and the field-range tally in
-        // `document.rs`, this module's own two faces, `InlineNode::id` in `body.rs`,
-        // and the v0 bridge in `migration.rs`. A scan that reads fewer has stopped
-        // reading the source it was handed.
-        .expecting_at_least(14)
+        // `document.rs`, this module's own two faces, `locate.rs`'s route walks,
+        // `InlineNode::id` in `body.rs`, and the v0 bridge in `migration.rs`. A scan
+        // that reads fewer has stopped reading the source it was handed.
+        .expecting_at_least(17)
     }
 
     /// Every v1 module is in the scan.

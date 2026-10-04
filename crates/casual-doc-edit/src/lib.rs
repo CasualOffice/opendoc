@@ -1494,8 +1494,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             if text.is_empty() {
                 return Err(EditError::EmptyEdit);
             }
-            let para = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(at.node).ok_or(EditError::NodeNotFound)?;
             if at.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -1512,9 +1511,9 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             if range.end.offset <= range.start.offset {
                 return Err(EditError::EmptyEdit);
             }
-            let para =
-                find_paragraph_mut(blocks_owning_mut(doc, range.start.node)?, range.start.node)
-                    .ok_or(EditError::NodeNotFound)?;
+            let para = doc
+                .paragraph_mut(range.start.node)
+                .ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -1599,14 +1598,10 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             }
             match properties {
                 Some(both) => {
-                    if let Some(para) =
-                        find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
-                    {
+                    if let Some(para) = doc.paragraph_mut(at.node) {
                         para.properties = both.leading.clone().into();
                     }
-                    if let Some(para) =
-                        find_paragraph_mut(blocks_owning_mut(doc, *new_id)?, *new_id)
-                    {
+                    if let Some(para) = doc.paragraph_mut(*new_id) {
                         para.properties = both.trailing.clone().into();
                     }
                 }
@@ -1616,14 +1611,11 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                     // trailing half. The leading half's mark is new. Copying the
                     // revision onto both meant accepting a deleted mark on the
                     // leading half re-joined what the user had just split.
-                    if let Some(para) =
-                        find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
-                    {
+                    if let Some(para) = doc.paragraph_mut(at.node) {
                         para.properties.mark_revision = None;
                     }
                     if let Some(next) = next_style
-                        && let Some(para) =
-                            find_paragraph_mut(blocks_owning_mut(doc, *new_id)?, *new_id)
+                        && let Some(para) = doc.paragraph_mut(*new_id)
                     {
                         para.properties.style_ref = Some(next);
                     }
@@ -1654,8 +1646,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             match join_paragraphs(blocks_owning_mut(doc, *first)?, *first, *second)? {
                 Some(split_at) => {
                     if let Some(merged) = properties
-                        && let Some(para) =
-                            find_paragraph_mut(blocks_owning_mut(doc, *first)?, *first)
+                        && let Some(para) = doc.paragraph_mut(*first)
                     {
                         para.properties = merged.as_ref().clone().into();
                     }
@@ -1679,8 +1670,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 return Err(EditError::EmptyEdit);
             }
             let node = range.start.node;
-            let para = find_paragraph_mut(blocks_owning_mut(doc, node)?, node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(node).ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -1712,8 +1702,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 return Err(EditError::EmptyEdit);
             }
             let node = range.start.node;
-            let para = find_paragraph_mut(blocks_owning_mut(doc, node)?, node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(node).ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -1751,8 +1740,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 return Err(EditError::Unsupported);
             }
             let node = range.start.node;
-            let para = find_paragraph_mut(blocks_owning_mut(doc, node)?, node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(node).ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -1827,8 +1815,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             Ok(Operation::SetInlines { node, inlines: old })
         }
         Operation::SetInlines { node, inlines } => {
-            let para = find_paragraph_mut(blocks_owning_mut(doc, *node)?, *node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(*node).ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut para.inlines, inlines.clone());
             Ok(Operation::SetInlines {
                 node: *node,
@@ -1836,8 +1823,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::SetParagraphProperties { node, properties } => {
-            let para = find_paragraph_mut(blocks_owning_mut(doc, *node)?, *node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(*node).ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut para.properties, (**properties).clone().into());
             Ok(Operation::SetParagraphProperties {
                 node: *node,
@@ -2249,9 +2235,9 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             // two. A suggested keystroke passes `comments: None` and runs none of this.
             if previous_comments.is_some() && doc.validate().is_err() {
                 for previous in &previous_paragraphs {
-                    let paragraph =
-                        find_paragraph_mut(blocks_owning_mut(doc, previous.node)?, previous.node)
-                            .expect("review paragraph was prevalidated");
+                    let paragraph = doc
+                        .paragraph_mut(previous.node)
+                        .expect("review paragraph was prevalidated");
                     paragraph.inlines = previous.inlines.clone();
                 }
                 if let Some(previous) = previous_comments {
@@ -2694,7 +2680,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidField));
             if let Err(err) = outcome {
-                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node) {
+                if let Some(para) = doc.paragraph_mut(at.node) {
                     para.inlines = snapshot;
                 }
                 return Err(err);
@@ -2714,7 +2700,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::Unsupported));
             if let Err(err) = outcome {
-                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node) {
+                if let Some(para) = doc.paragraph_mut(at.node) {
                     para.inlines = snapshot;
                 }
                 return Err(err);
@@ -2730,7 +2716,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
-            if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
+            if let Some(para) = doc.paragraph_mut(node) {
                 para.inlines
                     .retain(|i| !(is_removable_inline_node(i) && i.id() == *object));
                 // Removing the object can leave the two equal-property runs it kept
@@ -2739,7 +2725,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 coalesce_adjacent_runs(&mut para.inlines);
             }
             if doc.validate().is_err() {
-                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
+                if let Some(para) = doc.paragraph_mut(node) {
                     para.inlines = snapshot;
                 }
                 return Err(EditError::Unsupported);
@@ -2758,14 +2744,14 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
-            if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
+            if let Some(para) = doc.paragraph_mut(node) {
                 remove_field_by_id(&mut para.inlines, *field);
                 // Removing the field can leave two equal-property runs it kept
                 // apart adjacent, which the model forbids; coalesce them back.
                 coalesce_adjacent_runs(&mut para.inlines);
             }
             if doc.validate().is_err() {
-                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
+                if let Some(para) = doc.paragraph_mut(node) {
                     para.inlines = snapshot;
                 }
                 return Err(EditError::InvalidField);
@@ -3083,8 +3069,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             if already_defined {
                 return Err(EditError::Unsupported);
             }
-            let para = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para = doc.paragraph_mut(at.node).ok_or(EditError::NodeNotFound)?;
             if at.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -3135,7 +3120,8 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                         doc.definitions_mut().endnotes.remove(note);
                     }
                 }
-                let para = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
+                let para = doc
+                    .paragraph_mut(at.node)
                     .expect("the paragraph we just edited still exists");
                 para.inlines = old_inlines;
                 return Err(EditError::Unsupported);
@@ -5103,10 +5089,15 @@ fn surface_blocks_mut<'a>(
 /// owning-block-list lookup, for the op arms that snapshot a paragraph before
 /// mutating it. Reading only the body meant those ops refused outright in a
 /// header, footer or note.
+///
+/// **O(1) in document size** when this document has already resolved `id` through
+/// [`Document::paragraph_mut`] — which is what the op arm two lines above the
+/// snapshot did — and O(document) otherwise (`docs/109` HF-184). The read face
+/// deliberately does not RECORD a route: that needs `&mut`, and buying one here
+/// would cost `Document` its `Sync`. See `casual_doc_model::v1::locate`.
+#[must_use]
 pub fn find_paragraph_any(doc: &Document, id: NodeId) -> Option<&Paragraph> {
-    surface_block_lists(doc)
-        .into_iter()
-        .find_map(|blocks| find_paragraph(blocks, id))
+    doc.paragraph(id)
 }
 
 /// Every surface, body first — the order the searches below try them in.
@@ -5153,9 +5144,15 @@ fn all_surfaces(doc: &Document) -> Vec<Surface> {
 /// while the matching mutations kept walking the body alone. That mismatch has
 /// one shape wherever it appears: a control that looks enabled, then fails,
 /// silently does nothing, or reports an error about the wrong thing.
+/// **O(1) in document size** for a paragraph this document has resolved before, and
+/// O(document) for the first lookup of one (`docs/109` HF-184). It used to be two
+/// whole-document walks every time — `surface_of` to find the owning surface, then
+/// `find_paragraph_mut` to find the paragraph inside it — on a path a keystroke
+/// takes. `Document::paragraph_mut` keeps a bounded, self-validating route cache
+/// and answers the same question; see `casual_doc_model::v1::locate` for why a
+/// re-verified hint needs no invalidation.
 fn find_paragraph_any_mut(doc: &mut Document, id: NodeId) -> Option<&mut Paragraph> {
-    let surface = surface_of(doc, id)?;
-    find_paragraph_mut(surface_blocks_mut(doc, &surface)?, id)
+    doc.paragraph_mut(id)
 }
 
 /// does — they mutate only after they have found their target.
@@ -5461,14 +5458,34 @@ pub fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
 /// other's work, and it is an upper bound on the blocks examined (a walk that
 /// returns early still charges its whole block list) — deterministic for a
 /// given document and operation, which is all a ratio needs.
+///
+/// # It counts the blocks the lookup examined, not the ones this crate walked
+///
+/// `docs/109` HF-184 moved the by-id paragraph walk itself into
+/// `casual_doc_model::v1::locate`, where a bounded route cache can short-circuit
+/// it, so the blocks a lookup examines are now charged partly here and partly to
+/// `casual_doc_model::v1::route_block_visits`. This returns the **sum**, because
+/// the quantity every guard in this workspace reads it for is "blocks examined
+/// resolving a position" and that is invariant to which crate does the walking.
+///
+/// This is not a detail. Three keystroke-cost guards in `casual-doc-wasm` assert
+/// `block_visits() > 0` before asserting their ratio — the vacuity check that
+/// stops a dead meter passing as a fast engine — and when the walk moved they read
+/// zero and went red while the engine had in fact got *faster*. A meter that
+/// measures one implementation rather than one quantity turns an improvement into
+/// a failure, which is `SKILL`'s "guards assert the guarantee, not the
+/// circumstance" seen from the meter's side.
 #[must_use]
 pub fn block_visits() -> u64 {
-    BLOCK_VISITS.with(Cell::get)
+    BLOCK_VISITS
+        .with(Cell::get)
+        .saturating_add(casual_doc_model::v1::route_block_visits())
 }
 
-/// Zeroes the [`block_visits`] counter for this thread.
+/// Zeroes the [`block_visits`] counter for this thread — both halves of it.
 pub fn reset_block_visits() {
     BLOCK_VISITS.with(|visits| visits.set(0));
+    casual_doc_model::v1::reset_route_block_visits();
 }
 
 thread_local! {
@@ -11080,6 +11097,185 @@ mod tests {
         assert!(d.properties().is_none_or(|p| p.core.is_empty()));
     }
 
+    /// A chart projection, and the `EmbeddedObject` it is anchored to.
+    ///
+    /// Everything but the anchor is the type's own default, deliberately: this
+    /// fixture is about what happens to a projection when its anchor is removed
+    /// positionally, and a hand-built plot area would say nothing about that while
+    /// making the shape harder to read. (`SKILL` §5a warns against reaching for a
+    /// default to satisfy the compiler; the warning is about a field whose value the
+    /// test is *supposed* to be checking, which is not this.)
+    fn chart_fixture(object: NodeId) -> (InlineNode, Chart) {
+        use casual_doc_model::v1::{
+            ChartCoverage, DisplayBlanks, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
+            PlotArea,
+        };
+        let node = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+            id: object,
+            kind: EmbeddedKind::Chart,
+            part: EmbeddedPart {
+                relationship_id: "rId10".to_owned(),
+                relationship_type:
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                        .to_owned(),
+                part_name: "word/charts/chart1.xml".to_owned(),
+            },
+            extra_parts: Vec::new(),
+            preview: None,
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            },
+            prog_id: None,
+        }));
+        let projection = Chart {
+            object,
+            coverage: ChartCoverage::default(),
+            title: None,
+            auto_title_deleted: false,
+            plot_area: PlotArea::default(),
+            legend: None,
+            plot_visible_only: false,
+            display_blanks_as: DisplayBlanks::default(),
+            vary_colors: false,
+            external_data: None,
+        };
+        (node, projection)
+    }
+
+    /// Deleting a paragraph that holds a chart leaves the document VALID, and the
+    /// next unrelated edit still applies (`docs/109` HF-257).
+    ///
+    /// **The measured sequence, reproduced rather than paraphrased.** A document
+    /// with one chart and a second paragraph; `DeleteBlocks { container: None,
+    /// index: 0, count: 1 }` returns `Ok`; `definitions().charts` still holds the
+    /// projection; and the next `SetCoreProperties` — editing document properties,
+    /// nothing to do with any chart — must still apply. It used to be refused
+    /// `ValueTooLarge`, which the host shows as its one generic sentence, because
+    /// `validate()` answered `DanglingChartObjectRef` and every validating operation
+    /// collapses any model refusal onto its own single error. Recoverable only by
+    /// undoing the delete.
+    ///
+    /// **Why there is no cascade here.** A positional removal does not name the
+    /// object it takes with it, so carrying the projection out beside it would need a
+    /// forward removal-footprint classifier over the whole operation set that stayed
+    /// exhaustive forever — and the projection would then have to be re-installed by
+    /// undo, in the right order, or an incomplete classifier would silently turn an
+    /// undo into a chart that reopens as a placeholder. `validate_charts` tolerates
+    /// the orphan instead: a `Chart` is a read projection over a retained part, and a
+    /// derived index whose subject is gone is stale cache, not corruption. Its own
+    /// doc comment carries that argument.
+    ///
+    /// This guard pins the decision in **both** directions, which is the half a
+    /// "validate stopped complaining" test would miss: the orphan is tolerated, and
+    /// a projection anchored to an embedded object that is NOT a chart is still
+    /// refused, because that state cannot arise from editing and is a false claim
+    /// about the document.
+    #[test]
+    fn deleting_a_paragraph_that_holds_a_chart_leaves_the_document_editable() {
+        let object = n(50);
+        let (chart_node, projection) = chart_fixture(object);
+        let mut definitions = Definitions::default();
+        assert!(
+            definitions
+                .charts
+                .insert(ChartId::new(n(901)), projection)
+                .is_none(),
+            "the fixture's chart key must be fresh"
+        );
+        let mut d = Document::new(
+            n(1000),
+            vec![
+                para(2, vec![run(3, "Chart "), chart_node]),
+                para(10, vec![run(11, "a second paragraph")]),
+            ],
+            definitions,
+        )
+        .expect("a document with a live chart projection is valid");
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteBlocks {
+                container: None,
+                index: 0,
+                count: 1,
+            },
+        )
+        .expect("the positional delete applies");
+        assert_eq!(d.body().len(), 1, "the chart's paragraph is gone");
+        assert!(
+            d.definitions().charts.iter().count() == 1,
+            "the projection is NOT evicted — nothing names it, so there is nothing to \
+             evict it, and keeping it is what lets undo bring the chart back whole"
+        );
+        d.validate()
+            .expect("an orphaned read projection is stale cache, not an invalid document");
+
+        // The edit that used to be refused: document properties, which validate.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetCoreProperties {
+                properties: Box::new(CoreProperties {
+                    title: Some("Quarterly Report".to_owned()),
+                    ..CoreProperties::default()
+                }),
+            },
+        )
+        .expect(
+            "an unrelated validating edit must not be refused for a chart it has \
+             nothing to do with",
+        );
+
+        // And undo restores the chart whole: the node comes back, the projection was
+        // never evicted, so it still describes something.
+        apply(&mut d, &mut ids, &inverse).expect("undo restores the paragraph");
+        assert_eq!(d.body().len(), 2);
+        d.validate()
+            .expect("the restored chart and its projection agree again");
+    }
+
+    /// A projection anchored to an embedded object that is not a chart is still
+    /// refused (`docs/109` HF-257, `validate_charts` state 2).
+    ///
+    /// The other half of the tolerance above. Nothing turns a chart into an OLE
+    /// object in place, so this state cannot come from editing — only from a wrong
+    /// write — and a projection describing an OLE embedding is a false claim about
+    /// the document rather than a stale one.
+    #[test]
+    fn a_projection_anchored_to_a_non_chart_object_is_still_refused() {
+        use casual_doc_model::v1::{EmbeddedKind, EmbeddedObject};
+        let object = n(50);
+        let (chart_node, projection) = chart_fixture(object);
+        let InlineNode::EmbeddedObject(embedded) = chart_node else {
+            unreachable!("the fixture builds an embedded object");
+        };
+        let ole = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+            kind: EmbeddedKind::OleObject,
+            prog_id: Some("Excel.Sheet.12".to_owned()),
+            ..*embedded
+        }));
+        let mut definitions = Definitions::default();
+        assert!(
+            definitions
+                .charts
+                .insert(ChartId::new(n(901)), projection)
+                .is_none(),
+            "the fixture's chart key must be fresh"
+        );
+        let refusal = Document::new(n(1000), vec![para(2, vec![run(3, "x"), ole])], definitions)
+            .expect_err("a projection describing an OLE object is a false claim");
+        assert!(
+            matches!(
+                refusal,
+                casual_doc_model::ModelError::DanglingChartObjectRef(named) if named == object
+            ),
+            "the refusal must name the anchor it disbelieves: {refusal:?}"
+        );
+    }
+
     #[test]
     fn scoped_review_state_applies_inverts_and_rolls_back_atomically() {
         let paragraph = n(2);
@@ -12986,6 +13182,72 @@ mod tests {
             "work must roughly double, not quadruple: {small} visits at {small_n} \
              blocks and {large} at {}",
             small_n * 2
+        );
+    }
+
+    /// Typing resolves its paragraph without walking the document (`docs/109`
+    /// HF-184).
+    ///
+    /// The defect: every keystroke resolved its paragraph by TWO whole-document
+    /// walks — `surface_of` for the owning surface and `find_paragraph_mut` for the
+    /// paragraph inside it — and the second one counted its own cost, so the engine
+    /// was instrumenting the walk it was doing. `107` §4 says per-interaction work
+    /// is O(1) in document size; this is where that was not true.
+    ///
+    /// **Guarded by DOUBLING, not by a clock** (`SKILL` §8). The *second* keystroke
+    /// in a paragraph — which is what a typing burst is almost entirely made of —
+    /// must examine no blocks at either size, and the FIRST one must roughly double,
+    /// which is what proves the measurement can see growth at all. Without that
+    /// second half, "zero at both sizes" could just mean the counters are dead.
+    ///
+    /// `block_visits` is read rather than the model's own `route_block_visits`
+    /// because it is the SUM of both halves — the walk moved into the model when
+    /// this landed, and the quantity a guard wants is "blocks examined resolving a
+    /// position", not "blocks this crate happened to walk". See that function.
+    #[test]
+    fn a_keystroke_resolves_its_paragraph_without_walking_the_document() {
+        /// `(the first keystroke's cost, the second's)` in a document of `blocks`
+        /// paragraphs, typing into the LAST one so a linear scan pays full price.
+        fn work(blocks: u64) -> (u64, u64) {
+            let mut document = flat_document(blocks);
+            let target = match document.body().last().expect("a paragraph") {
+                BlockNode::Paragraph(paragraph) => paragraph.id,
+                _ => unreachable!("flat_document builds paragraphs"),
+            };
+            let mut ids = IdGenerator::new(9);
+            let mut keystroke = |offset: u32| {
+                let mint = Mint::reserve(&mut ids, 1).expect("a mint");
+                reset_block_visits();
+                super::apply(
+                    &mut document,
+                    mint,
+                    &Operation::InsertText {
+                        at: Pos::new(target, offset),
+                        text: "x".to_owned(),
+                    },
+                )
+                .expect("typing applies");
+                block_visits()
+            };
+            (keystroke(0), keystroke(1))
+        }
+
+        let small_n = 400;
+        let (small_cold, small_warm) = work(small_n);
+        let (large_cold, large_warm) = work(small_n * 2);
+        assert_eq!(
+            (small_warm, large_warm),
+            (0, 0),
+            "the second keystroke in a paragraph must examine no blocks at either \
+             size; it examined {small_warm} at {small_n} paragraphs and {large_warm} \
+             at {}",
+            small_n * 2
+        );
+        assert!(
+            large_cold >= small_cold * 2 - 8,
+            "the measurement cannot see growth — the first keystroke went \
+             {small_cold} -> {large_cold} across a doubled document — so the zeroes \
+             above prove nothing"
         );
     }
 
