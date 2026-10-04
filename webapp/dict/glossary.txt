@@ -162,6 +162,7 @@ PowerPoint
 Pre
 ProseMirror
 README
+RFC
 RGB
 RGBA
 RSS

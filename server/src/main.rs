@@ -8,6 +8,13 @@
 //! opendoc-relay serve <journal> <addr> [viewer|commenter|suggester|editor|owner]
 //! ```
 //!
+//! # `serve` speaks WebSocket and nothing else
+//!
+//! The client is a browser, and a browser cannot open a TCP socket. So `serve` performs the
+//! RFC 6455 handshake on every connection and carries `ODC1` frames as binary messages —
+//! `opendoc_relay::websocket` records why that is a framing adaptor rather than a dependency,
+//! and ADR-063 records the decision it replaces.
+//!
 //! # The role argument is required, and that is the point
 //!
 //! `serve` will not start without it. It is the room's
@@ -32,15 +39,12 @@
 // libraries, where a stray print is a library writing to somebody else's stdout.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
-use std::io::Write as _;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use casual_doc_edit::access::Capabilities;
-use casual_doc_transaction::codec::encode_frame;
-use casual_doc_transaction::protocol::{ClientId, ClientMessage, Revision};
-use opendoc_relay::transport::{Frames, ReadError};
-use opendoc_relay::{Access, Recovered, Relay, Room};
+use casual_doc_transaction::protocol::Revision;
+use opendoc_relay::{Access, Notice, Recovered, Relay, Room, accept_loop};
 
 fn main() -> std::process::ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -103,11 +107,6 @@ fn report(recovered: &Recovered) {
     }
 }
 
-/// Thread-per-connection, deliberately — see `opendoc_relay::transport` for what that costs and
-/// why a dumb relay is the one shape it suits.
-///
-/// Everything this function decides is sockets and threads. The decisions that are hard to get
-/// right are in `opendoc_relay::relay`, where a test can reach them.
 /// The room's ceiling, by name. One role per capability preset and no way to spell a
 /// combination: an operator choosing a room's policy from a command line should be choosing
 /// between understood roles, and a host that needs an unusual set has
@@ -129,73 +128,31 @@ fn serve(journal: &str, address: &str, access: Access) -> Result<(), Box<dyn cor
     report(&recovered);
     let relay = Arc::new(Mutex::new(Relay::new(room, access)));
     let listener = TcpListener::bind(address)?;
-    println!("relaying {journal} on {}", listener.local_addr()?);
-    for stream in listener.incoming() {
-        let stream = stream?;
-        let relay = Arc::clone(&relay);
-        std::thread::spawn(move || {
-            if let Err(error) = participant(stream, &relay) {
-                eprintln!("participant ended: {error}");
-            }
-        });
-    }
+    println!(
+        "relaying {journal} on ws://{} (WebSocket, protocol {})",
+        listener.local_addr()?,
+        casual_doc_transaction::protocol::PROTOCOL_VERSION
+    );
+    // The loop, the threads and the per-connection decisions are all in the library now, where
+    // a test can drive two real clients through one real socket. What is left here is printing,
+    // which is the one thing a library must not do.
+    let notice: Arc<dyn Fn(Notice) + Send + Sync> = Arc::new(|notice| match notice {
+        Notice::Evicted { client } => eprintln!(
+            "participant {} could not be written to and was removed from the room; it \
+             resumes to catch up",
+            client.get()
+        ),
+        Notice::DepartureUndelivered { missed, departed } => eprintln!(
+            "participant {} was not told that {} left",
+            missed.get(),
+            departed.get()
+        ),
+        Notice::Ended { detail } => eprintln!("participant ended: {detail}"),
+        // `Notice` is `#[non_exhaustive]`, so a variant added later compiles here and is
+        // reported rather than silently dropped. The `{notice:?}` is the evidence an operator
+        // needs until somebody writes a sentence for it.
+        other => eprintln!("relay: {other:?}"),
+    });
+    accept_loop(&listener, &relay, &notice)?;
     Ok(())
-}
-
-fn participant(
-    stream: TcpStream,
-    relay: &Mutex<Relay<TcpStream>>,
-) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
-    let fanned = stream.try_clone()?;
-    let mut answers = stream.try_clone()?;
-    let mut frames = Frames::new(stream);
-    let mut writer = Some(fanned);
-    let mut me: Option<ClientId> = None;
-    let outcome = loop {
-        let message: ClientMessage = match frames.next_frame() {
-            Ok(message) => message,
-            Err(ReadError::Closed) => break Ok(()),
-            Err(error) => break Err(Box::new(error) as Box<dyn core::error::Error + Send + Sync>),
-        };
-        let handled = {
-            // One lock across decide, journal, answer and fan out: two participants must not be
-            // told about the order in two different orders.
-            let mut relay = relay.lock().map_err(|_| "the room lock was poisoned")?;
-            relay.handle(me, &mut writer, &message)?
-        };
-        if let Some(client) = handled.joined_as {
-            me = Some(client);
-        }
-        for client in handled.evicted {
-            // The relay has already removed each of these from the room — `152` §2c's
-            // back-pressure policy, taken where a test can reach it rather than here. This line
-            // is the evidence an operator needs, and it is no longer also the policy.
-            eprintln!(
-                "participant {} could not be written to and was removed from the room; it \
-                 resumes to catch up",
-                client.get()
-            );
-        }
-        if let Some(answer) = handled.answer {
-            answers.write_all(&encode_frame(&answer))?;
-            answers.flush()?;
-        }
-        if handled.leaving {
-            break Ok(());
-        }
-    };
-    // Every exit path: a clean leave, a broken pipe, a refused frame. A writer left behind is a
-    // socket every future chunk is written to and reported as failed forever.
-    if let Some(client) = me
-        && let Ok(mut relay) = relay.lock()
-    {
-        for missed in relay.disconnected(client) {
-            eprintln!(
-                "participant {} was not told that {} left",
-                missed.get(),
-                client.get()
-            );
-        }
-    }
-    outcome
 }
