@@ -1389,6 +1389,16 @@ pub(crate) fn import_with_sources(
     // stamp belongs to. This is why `build_section_boundary` cannot set it.
     watermark::lift_header_watermarks(&mut sections, &header_watermarks);
 
+    // The theme's style matrix and the shapes that reference it only exist together
+    // at this point, and a loss needs both: the entry says what the appearance IS,
+    // the reference says somebody asked for it. A pattern fill style or a shadow
+    // effect style nothing names is not a loss, and the default Office theme carries
+    // one of the latter — so reporting on the theme's contents would add a finding to
+    // most Word documents.
+    if let Some(scheme) = theme.format_scheme.as_ref() {
+        theme::report_unpaintable_style_refs(scheme, &parsed_defs.shape_styles, &mut reporter);
+    }
+
     // The typed chart projections (`docs/155` §8): a READ projection of parts that
     // stay byte-preserved, built after the body parse because each one is anchored
     // to the `EmbeddedObject` node the body minted. Ids come from the same
