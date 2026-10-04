@@ -63,6 +63,10 @@ import { foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs
  *   scaleOf?: (page: any) => ({sx: number, sy: number}),
  * }} deps
  */
+/** How far into the page margin the in-body chevron sits, in CSS pixels.
+ *  Matches `.fold-body-chevron`'s 18px width plus a 2px gap. */
+const CHEVRON_GUTTER = 20;
+
 export function createFoldChrome({
   getDoc,
   caretNode,
@@ -324,7 +328,16 @@ export function createFoldChrome({
       chevron.setAttribute("aria-label", label);
       chevron.dataset.node = heading.node;
       chevron.querySelector(".ms").textContent = heading.collapsed ? "chevron_right" : "expand_more";
-      chevron.style.left = `${rect.x}px`;
+      // The chevron sits in the page margin beside the heading, which is what
+      // Word does. But the margin is not always wide enough to hold it: at the
+      // phone rung reflow pulls the text to a 16px inset, and an 18px chevron
+      // offset by GUTTER then painted at -4px — outside the window, which
+      // `phone-no-horizontal-scroll` measures and refuses. So the offset is
+      // explicit arithmetic that CLAMPS rather than a negative margin that
+      // cannot. Where the margin has room this is the same position it always
+      // was; where it does not, the chevron tucks against the edge instead of
+      // hanging off it.
+      chevron.style.left = `${Math.max(0, rect.x - CHEVRON_GUTTER)}px`;
       chevron.style.top = `${rect.y}px`;
       chevron.style.height = `${rect.height}px`;
     },

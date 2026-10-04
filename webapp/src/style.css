@@ -6291,7 +6291,9 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   justify-content: center;
   width: 18px;
-  margin-left: -20px;
+  /* The margin offset is applied in `fold_chrome.mjs` as clamped
+     arithmetic, because a negative margin here cannot be clamped and paints
+     outside the window when the page margin is narrower than the chevron. */
   padding: 0;
   border: none;
   border-radius: 4px;
