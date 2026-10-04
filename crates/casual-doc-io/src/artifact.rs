@@ -6,7 +6,7 @@ use std::fmt;
 
 use casual_doc_model::v1::Document;
 
-use crate::{CompatibilityReport, FormatId};
+use crate::{CompatibilityReport, FormatId, PreservationLedger};
 
 /// A concrete format plus its source or emitted profile version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +121,19 @@ pub struct ImportArtifact {
     pub source: SourceEnvelope,
     /// Import compatibility findings.
     pub report: CompatibilityReport,
+    /// The preservation ledger licensing every `preserved` retention outcome in
+    /// [`ImportArtifact::report`] (`35-DISPOSITION-TAXONOMY.md`).
+    ///
+    /// This is what makes a preservation claim auditable rather than trusted: a
+    /// host can resolve an entry's `ledger_id` to the record that says where the
+    /// retained bytes live and how many there are. The adapter has already run
+    /// `CompatibilityReport::validate` against it, so an import whose claims did
+    /// not resolve failed instead of reporting — but the host can re-check, which
+    /// it could not when the ledger stopped at the DOCX importer's own boundary.
+    ///
+    /// Empty for an adapter that retains nothing: an empty ledger beside a report
+    /// with no `preserved` entry is the consistent, honest state.
+    pub ledger: PreservationLedger,
     /// Detected source format/profile.
     pub format: FormatProfile,
 }
@@ -167,6 +180,15 @@ pub struct ExportArtifact {
     pub bytes: Vec<u8>,
     /// Export compatibility findings.
     pub report: CompatibilityReport,
+    /// The preservation ledger licensing every `preserved` retention outcome in
+    /// [`ExportArtifact::report`].
+    ///
+    /// An export can make a preservation claim too — "these source parts were
+    /// carried verbatim into the written package" — and `35`'s rule does not
+    /// weaken on the way out: a claim with no record behind it is `not-retained`,
+    /// not `preserved`. Keeping the ledger on both artifacts means the invariant
+    /// has one spelling rather than one per direction.
+    pub ledger: PreservationLedger,
     /// Emitted format/profile.
     pub format: FormatProfile,
     /// Emitted MIME type.

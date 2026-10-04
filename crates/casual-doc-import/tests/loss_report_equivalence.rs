@@ -71,7 +71,10 @@ fn collect(root: &Path, directory: &Path, into: &mut BTreeSet<String>) {
         let path = entry.path();
         if path.is_dir() {
             collect(root, &path, into);
-        } else if path.extension().is_some_and(|extension| extension == "docx") {
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "docx")
+        {
             let relative = path
                 .strip_prefix(root)
                 .expect("fixture path is under the fixtures root");

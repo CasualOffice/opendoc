@@ -8,10 +8,10 @@ use casual_doc_odf::{
 };
 
 use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
-    ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
-    FormatImporter, FormatProfile, ImportArtifact, ImportRequest, ModelOutcome, ProbeRequest,
-    ProbeResult, RetentionOutcome, SourceEnvelope, formats,
+    AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, DocumentResources,
+    ExportArtifact, ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter,
+    FormatId, FormatImporter, FormatProfile, ImportArtifact, ImportRequest, PreservationLedger,
+    ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
 
 #[derive(Debug)]
@@ -113,6 +113,27 @@ impl FormatImporter for OdtAdapter {
         } else {
             OdfRetainedParts::default()
         };
+        // ODT can now make a *ledger-validated* preservation claim, which is the
+        // whole of `docs/156` Tier 0 row 0.10. Retaining the source bytes is the
+        // byte floor: the package is reproduced exactly on an unchanged export, so
+        // every unconsumed remainder inside it really is recoverable, and the
+        // record says how many bytes stand behind that. Before this, the adapter
+        // upgraded `not-retained` to `preserved` whenever `retain_source` was set
+        // and cited nothing — `35` is explicit that a warning without a retained
+        // record is `not-retained`, never `preserved`, so the claim was made on
+        // the honour system and no host could check it.
+        let ledger = if request.retain_source {
+            PreservationLedger::with_source_snapshot(request.bytes.len())
+        } else {
+            PreservationLedger::default()
+        };
+        let report = convert_report(&imported.report, &ledger)?;
+        // The same check the DOCX importer runs, now reachable from here. A
+        // `preserved` entry whose record does not resolve fails the import rather
+        // than reaching a host as an unauditable claim.
+        report
+            .validate(&ledger)
+            .map_err(|violation| AdapterError::new(format!("ODT disposition: {violation}")))?;
         Ok(ImportArtifact {
             document: imported.document,
             resources,
@@ -125,7 +146,8 @@ impl FormatImporter for OdtAdapter {
                     retained,
                 },
             ),
-            report: convert_report(&imported.report, request.retain_source),
+            report,
+            ledger,
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some(version),
@@ -148,6 +170,7 @@ impl FormatExporter for OdtAdapter {
             .filter(|source| source.format() == &self.descriptor.id)
             .and_then(SourceEnvelope::state::<OdtSourceState>);
 
+        let mut ledger = PreservationLedger::default();
         let (bytes, mut report, version) = match request.mode {
             ExportMode::ExactIfUnchanged => {
                 let source = matching_source
@@ -187,7 +210,9 @@ impl FormatExporter for OdtAdapter {
                         AdapterError::new(format!("ODT semantic export: {error}"))
                     })?
                 };
-                let mut report = convert_report(&exported.report, false);
+                // An export has no byte floor, so nothing licenses a `preserved`
+                // remainder here: the writer's own findings are all drops.
+                let mut report = convert_report(&exported.report, &PreservationLedger::default())?;
                 if !request.resources.is_empty() {
                     report.entries.push(export_loss(
                         "odt.export.resources",
@@ -197,13 +222,32 @@ impl FormatExporter for OdtAdapter {
                 if preserving {
                     // Report exactly how many parts were repackaged (the subset
                     // the current document references), not the whole source set.
-                    let carried = retained
-                        .map(|retained| referenced_retained_parts(request.document, retained).len())
-                        .unwrap_or(0);
+                    let repackaged = retained
+                        .map(|retained| referenced_retained_parts(request.document, retained));
+                    let carried = repackaged.as_ref().map_or(0, OdfRetainedParts::len);
                     if carried != 0 {
-                        report
-                            .entries
-                            .push(export_preserved("odt.export.retained_parts", carried));
+                        // The one preservation claim this adapter makes on the way
+                        // out, and it now has a record behind it: the parts really
+                        // were copied into the written package, and the record says
+                        // how many bytes of them. One aggregate record rather than
+                        // one per part, because the finding is one aggregate entry
+                        // with a count — splitting the record without splitting the
+                        // entry would leave an entry citing an arbitrary one of them.
+                        let bytes = repackaged.as_ref().map_or(0, |parts| {
+                            parts
+                                .parts
+                                .values()
+                                .chain(parts.unknown.values())
+                                .map(|part| part.bytes.len())
+                                .sum()
+                        });
+                        let ledger_id =
+                            ledger.record_opaque_part("odt.export.retained_parts", bytes);
+                        report.entries.push(export_preserved(
+                            "odt.export.retained_parts",
+                            carried,
+                            Some(ledger_id),
+                        ));
                     } else if request.source.is_some() {
                         report
                             .entries
@@ -214,9 +258,13 @@ impl FormatExporter for OdtAdapter {
             }
         };
         report.sort();
+        report.validate(&ledger).map_err(|violation| {
+            AdapterError::new(format!("ODT export disposition: {violation}"))
+        })?;
         Ok(ExportArtifact {
             bytes,
             report,
+            ledger,
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some(version),
@@ -232,71 +280,147 @@ fn export_loss(feature: &str, occurrences: usize) -> CompatibilityEntry {
         feature: feature.to_owned(),
         occurrences: u32::try_from(occurrences).unwrap_or(u32::MAX),
         location: FeatureLocation::default(),
-        model_outcome: ModelOutcome::Omitted,
-        retention_outcome: RetentionOutcome::NotRetained,
+        disposition: Disposition::OmittedNotRetained,
+        ledger_id: None,
+        part: None,
     }
 }
 
-fn export_preserved(feature: &str, occurrences: usize) -> CompatibilityEntry {
+fn export_preserved(
+    feature: &str,
+    occurrences: usize,
+    ledger_id: Option<crate::LedgerId>,
+) -> CompatibilityEntry {
     CompatibilityEntry {
         feature: feature.to_owned(),
         occurrences: u32::try_from(occurrences).unwrap_or(u32::MAX),
         location: FeatureLocation::default(),
-        model_outcome: ModelOutcome::Mapped,
-        retention_outcome: RetentionOutcome::Preserved,
+        disposition: Disposition::MappedPreserved,
+        ledger_id,
+        part: None,
     }
 }
 
-fn convert_report(report: &OdfCompatibilityReport, retained_source: bool) -> CompatibilityReport {
-    let mut converted = CompatibilityReport {
-        entries: report
-            .entries
-            .iter()
-            .map(|entry| CompatibilityEntry {
-                feature: entry.feature.clone(),
-                occurrences: entry.occurrences,
-                location: FeatureLocation {
-                    part_name: Some(casual_doc_odf::CONTENT_PART.to_owned()),
-                    namespace: feature_namespace(&entry.feature).map(str::to_owned),
-                    local_name: entry.feature.rsplit('.').next().map(str::to_owned),
-                    // The ODF report has no attribute vocabulary of its own; the
-                    // axis exists at this layer for adapters that do.
-                    attribute_name: None,
-                },
-                model_outcome: match entry.model_outcome {
-                    OdfModelOutcome::Mapped => ModelOutcome::Mapped,
-                    OdfModelOutcome::Degraded => ModelOutcome::Degraded,
-                    OdfModelOutcome::Omitted => ModelOutcome::Omitted,
-                },
-                retention_outcome: match entry.retention_outcome {
-                    OdfRetentionOutcome::Preserved => RetentionOutcome::Preserved,
-                    OdfRetentionOutcome::NotRetained if retained_source => {
-                        RetentionOutcome::Preserved
-                    }
-                    OdfRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
-                    OdfRetentionOutcome::Blocked => RetentionOutcome::Blocked,
-                    OdfRetentionOutcome::Rejected => RetentionOutcome::Rejected,
-                    OdfRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
-                },
-            })
-            .collect(),
+/// Resolves one ODF finding's two axes into the single nine-pair disposition the
+/// taxonomy admits.
+///
+/// `casual-doc-odf` keeps its own two-field report, so this is where a foreign
+/// vocabulary is admitted into the taxonomy — and admitting it means the illegal
+/// pairs have to be dealt with rather than carried. `35`: "Any pairing not listed
+/// above is an internal error and must fail import, not be reported."
+///
+/// Two of the six illegal pairs are reachable today and they are handled
+/// differently, on purpose:
+///
+/// - **`degraded`/`omitted` + `not-applicable`** is *normalized* to
+///   `not-retained`. `casual-doc-odf` emits exactly one of these
+///   (`odf.draw.image-missing-part`, in its `package.rs`): a drawing whose
+///   referenced image part is absent from the package. `not-applicable` means
+///   "there is no unconsumed remainder", which contradicts `degraded` by
+///   definition — and the honest reading is the weaker one, because the picture
+///   bytes are not in the package for anything to retain. Refusing the import
+///   over an upstream report's spelling would turn a reporting defect into a
+///   document that will not open, which is the wrong trade. **This is a real
+///   defect in `casual-doc-odf`'s report and the fix belongs there; it is
+///   normalized here because this lane does not own that crate.**
+/// - **`mapped` + anything other than `not-applicable`/`preserved`** is
+///   *refused*. `casual-doc-odf` never constructs `mapped` at all, so there is no
+///   finding to be charitable about: a `mapped` construct with a blocked,
+///   rejected or dropped remainder is a contradiction with no honest reading, and
+///   the taxonomy's rule is that it fails rather than being published.
+fn disposition_of(model: OdfModelOutcome, retention: OdfRetentionOutcome) -> Option<Disposition> {
+    let retention = match (model, retention) {
+        // See above: `not-applicable` only pairs with `mapped`.
+        (
+            OdfModelOutcome::Degraded | OdfModelOutcome::Omitted,
+            OdfRetentionOutcome::NotApplicable,
+        ) => OdfRetentionOutcome::NotRetained,
+        (_, retention) => retention,
     };
-    converted.sort();
-    converted
+    match (model, retention) {
+        (OdfModelOutcome::Mapped, OdfRetentionOutcome::NotApplicable) => {
+            Some(Disposition::MappedComplete)
+        }
+        (OdfModelOutcome::Mapped, OdfRetentionOutcome::Preserved) => {
+            Some(Disposition::MappedPreserved)
+        }
+        (OdfModelOutcome::Mapped, _) => None,
+        (OdfModelOutcome::Degraded, OdfRetentionOutcome::Preserved) => {
+            Some(Disposition::DegradedPreserved)
+        }
+        (OdfModelOutcome::Degraded, OdfRetentionOutcome::NotRetained) => {
+            Some(Disposition::DegradedNotRetained)
+        }
+        (OdfModelOutcome::Degraded, OdfRetentionOutcome::Blocked) => {
+            Some(Disposition::DegradedBlocked)
+        }
+        // `rejected` is a whole-construct refusal, so the model outcome of a
+        // refused construct is `omitted` — `35` admits no `degraded` + `rejected`.
+        (OdfModelOutcome::Degraded, OdfRetentionOutcome::Rejected) => None,
+        (OdfModelOutcome::Omitted, OdfRetentionOutcome::Preserved) => {
+            Some(Disposition::OmittedPreserved)
+        }
+        (OdfModelOutcome::Omitted, OdfRetentionOutcome::NotRetained) => {
+            Some(Disposition::OmittedNotRetained)
+        }
+        (OdfModelOutcome::Omitted, OdfRetentionOutcome::Blocked) => {
+            Some(Disposition::OmittedBlocked)
+        }
+        (OdfModelOutcome::Omitted, OdfRetentionOutcome::Rejected) => {
+            Some(Disposition::OmittedRejected)
+        }
+        (OdfModelOutcome::Degraded | OdfModelOutcome::Omitted, _) => None,
+    }
 }
 
-fn feature_namespace(feature: &str) -> Option<&'static str> {
-    if feature.contains(".office.") {
-        Some("urn:oasis:names:tc:opendocument:xmlns:office:1.0")
-    } else if feature.contains(".text.") {
-        Some("urn:oasis:names:tc:opendocument:xmlns:text:1.0")
-    } else if feature.contains(".script.") {
-        Some("urn:oasis:names:tc:opendocument:xmlns:script:1.0")
-    } else if feature.contains(".xlink.") {
-        Some("http://www.w3.org/1999/xlink")
-    } else {
-        None
+/// Lifts an ODF report into the taxonomy, citing `ledger` for every claim it
+/// licenses.
+///
+/// A `not-retained` finding becomes `preserved` **only** when the ledger holds a
+/// source snapshot — the byte floor really does reproduce the package, so the
+/// remainder really is recoverable — and the entry then carries the record id, so
+/// the claim is auditable. Without a snapshot the finding stays `not-retained`,
+/// which is what `35` requires of a warning with nothing behind it.
+fn convert_report(
+    report: &OdfCompatibilityReport,
+    ledger: &PreservationLedger,
+) -> Result<CompatibilityReport, AdapterError> {
+    let snapshot = ledger.source_snapshot();
+    let mut entries = Vec::with_capacity(report.entries.len());
+    for entry in &report.entries {
+        let retention = match entry.retention_outcome {
+            OdfRetentionOutcome::NotRetained | OdfRetentionOutcome::NotApplicable
+                if snapshot.is_some() =>
+            {
+                OdfRetentionOutcome::Preserved
+            }
+            retention => retention,
+        };
+        let disposition = disposition_of(entry.model_outcome, retention).ok_or_else(|| {
+            AdapterError::new(format!(
+                "ODT disposition: {} reports {:?} + {:?}, which 35-DISPOSITION-TAXONOMY.md \
+                     does not admit",
+                entry.feature, entry.model_outcome, retention
+            ))
+        })?;
+        entries.push(CompatibilityEntry {
+            feature: entry.feature.clone(),
+            occurrences: entry.occurrences,
+            location: FeatureLocation {
+                part_name: Some(casual_doc_odf::CONTENT_PART.to_owned()),
+                element: entry.feature.rsplit('.').next().map(str::to_owned),
+                // The ODF report has no attribute vocabulary of its own; the
+                // axis exists at this layer for adapters that do.
+                attribute: None,
+            },
+            disposition,
+            ledger_id: ledger.snapshot_license(disposition.retention_outcome()),
+            part: None,
+        });
     }
+    let mut converted = CompatibilityReport { entries };
+    converted.sort();
+    Ok(converted)
 }
 
 #[cfg(test)]
@@ -308,8 +432,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        DetectionRequest, FormatSelection, IoError, builtin_registry,
-        builtin_registry_with_package_limits,
+        DetectionRequest, FormatSelection, IoError, ModelOutcome, RetentionOutcome,
+        builtin_registry, builtin_registry_with_package_limits,
     };
     use casual_doc_ooxml::PackageLimits;
 
@@ -398,7 +522,7 @@ mod tests {
         assert!(exported.report.entries.iter().any(|entry| {
             entry.feature == "odt.export.retained_parts"
                 && entry.occurrences == 1
-                && entry.retention_outcome == RetentionOutcome::Preserved
+                && entry.retention_outcome() == RetentionOutcome::Preserved
         }));
 
         // The written package reopens with the image reference intact...
@@ -467,12 +591,27 @@ mod tests {
                 .and_then(|state| state.original_bytes.as_deref()),
             Some(bytes.as_slice())
         );
-        assert!(imported.report.entries.iter().any(|entry| {
-            entry.feature == "odf.style.unresolved"
-                && entry.location.part_name.as_deref() == Some("content.xml")
-                && entry.location.namespace.is_none()
-                && entry.retention_outcome == RetentionOutcome::Preserved
-        }));
+        // The `preserved` claim is no longer taken on trust: the entry names the
+        // ledger record that licenses it, and the record is in the artifact's
+        // ledger. The old form of this assertion checked that the location's
+        // `namespace` axis was empty, which proved nothing about the claim — that
+        // axis was never populated by any adapter and has gone with the second
+        // taxonomy.
+        let entry = imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "odf.style.unresolved")
+            .expect("the unresolved style is reported");
+        assert_eq!(entry.location.part_name.as_deref(), Some("content.xml"));
+        assert_eq!(entry.retention_outcome(), RetentionOutcome::Preserved);
+        let record = imported
+            .ledger
+            .get(entry.ledger_id.expect("a licensing record"))
+            .expect("the record is in the artifact's ledger");
+        assert_eq!(record.kind, crate::PreservationKind::SourceSnapshot);
+        assert_eq!(record.retained_bytes, bytes.len());
+        assert_eq!(imported.report.validate(&imported.ledger), Ok(()));
     }
 
     #[test]
@@ -573,13 +712,13 @@ mod tests {
         assert!(exported.report.entries.iter().any(|entry| {
             entry.feature == "odt.export.resources"
                 && entry.occurrences == 1
-                && entry.model_outcome == ModelOutcome::Omitted
-                && entry.retention_outcome == RetentionOutcome::NotRetained
+                && entry.model_outcome() == ModelOutcome::Omitted
+                && entry.retention_outcome() == RetentionOutcome::NotRetained
         }));
         assert!(exported.report.entries.iter().any(|entry| {
             entry.feature == "odt.export.source_envelope"
-                && entry.model_outcome == ModelOutcome::Omitted
-                && entry.retention_outcome == RetentionOutcome::NotRetained
+                && entry.model_outcome() == ModelOutcome::Omitted
+                && entry.retention_outcome() == RetentionOutcome::NotRetained
         }));
     }
 

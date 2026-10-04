@@ -3,21 +3,17 @@
 use std::sync::Arc;
 
 use casual_doc_export::{export_document, export_document_with_retained_parts};
-use casual_doc_import::{
-    FeatureLocation as DocxFeatureLocation, ImportConfig, ImportMode,
-    ModelOutcome as DocxModelOutcome, RetainedParts, RetentionOutcome as DocxRetentionOutcome,
-    import_package,
-};
+use casual_doc_import::{ImportConfig, ImportMode, RetainedParts, import_package};
 use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_rtf::RtfLimits;
 
 use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
-    ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
-    FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest, ModelOutcome,
-    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, ProbeRequest,
-    ProbeResult, RetentionOutcome, SourceEnvelope, formats,
+    AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, DocumentResources,
+    ExportArtifact, ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter,
+    FormatId, FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest,
+    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, PreservationLedger,
+    ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -134,36 +130,36 @@ impl FormatImporter for DocxAdapter {
                 }
             }
         }
-        let mut report = convert_report(&imported.report);
+        // The importer's report and ledger travel to the host as they are. There
+        // is no conversion step here any more and that is the point: the DOCX
+        // importer already speaks the only taxonomy there is, so re-encoding it
+        // at this boundary could only lose something, and did.
+        let mut report = imported.report;
+        let ledger = imported.ledger;
         for part_name in unreadable_fonts {
             report.entries.push(CompatibilityEntry {
                 feature: "docx.font.embedded.unreadable-part".to_owned(),
                 occurrences: 1,
-                location: FeatureLocation {
-                    part_name: Some(part_name),
-                    namespace: None,
-                    local_name: None,
-                    attribute_name: None,
-                },
-                model_outcome: ModelOutcome::Omitted,
-                retention_outcome: RetentionOutcome::NotRetained,
+                location: FeatureLocation::for_part(&part_name),
+                disposition: Disposition::OmittedNotRetained,
+                ledger_id: None,
+                part: None,
             });
         }
         for part_name in unreadable {
             report.entries.push(CompatibilityEntry {
                 feature: "docx.media.unreadable-part".to_owned(),
                 occurrences: 1,
-                location: FeatureLocation {
-                    part_name: Some(part_name),
-                    namespace: None,
-                    local_name: None,
-                    attribute_name: None,
-                },
-                model_outcome: ModelOutcome::Omitted,
-                retention_outcome: RetentionOutcome::NotRetained,
+                location: FeatureLocation::for_part(&part_name),
+                disposition: Disposition::OmittedNotRetained,
+                ledger_id: None,
+                part: None,
             });
         }
         report.sort();
+        report
+            .validate(&ledger)
+            .map_err(|violation| AdapterError::new(format!("import disposition: {violation}")))?;
         let source = SourceEnvelope::new(
             self.descriptor.id.clone(),
             env!("CARGO_PKG_VERSION").to_owned(),
@@ -177,6 +173,7 @@ impl FormatImporter for DocxAdapter {
             resources,
             source,
             report,
+            ledger,
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: None,
@@ -216,8 +213,9 @@ impl FormatExporter for DocxAdapter {
                         feature: "docx.export.retained_parts".to_owned(),
                         occurrences: u32::try_from(dropped).unwrap_or(u32::MAX),
                         location: FeatureLocation::default(),
-                        model_outcome: ModelOutcome::Omitted,
-                        retention_outcome: RetentionOutcome::NotRetained,
+                        disposition: Disposition::OmittedNotRetained,
+                        ledger_id: None,
+                        part: None,
                     });
                 }
                 (exported.bytes, report)
@@ -238,8 +236,9 @@ impl FormatExporter for DocxAdapter {
                         feature: "source_envelope".to_owned(),
                         occurrences: 1,
                         location: FeatureLocation::default(),
-                        model_outcome: ModelOutcome::Omitted,
-                        retention_outcome: RetentionOutcome::NotRetained,
+                        disposition: Disposition::OmittedNotRetained,
+                        ledger_id: None,
+                        part: None,
                     });
                 }
                 (exported.bytes, report)
@@ -257,9 +256,19 @@ impl FormatExporter for DocxAdapter {
             }
         };
         report.sort();
+        // The DOCX writer makes no preservation claim: a part it carries verbatim
+        // is carried by the side-table, which this report describes as a part it
+        // did NOT drop rather than as a `preserved` remainder. So the ledger is
+        // empty, and `validate` holds that honest — an export that ever does claim
+        // preservation will fail here until it mints the record behind the claim.
+        let ledger = PreservationLedger::default();
+        report
+            .validate(&ledger)
+            .map_err(|violation| AdapterError::new(format!("export disposition: {violation}")))?;
         Ok(ExportArtifact {
             bytes,
             report,
+            ledger,
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: None,
@@ -385,43 +394,23 @@ pub fn builtin_registry_with_format_limits(
 /// dotted segment, which is what the adapter surfaced before the DOCX layer had
 /// an element/attribute vocabulary at all (FID-R-03). Where the DOCX layer now
 /// names the element, that name wins, because it is the real one.
-fn convert_location(
-    location: &DocxFeatureLocation,
-    fallback_local_name: Option<String>,
-) -> FeatureLocation {
-    FeatureLocation {
-        part_name: location.part_name.clone(),
-        namespace: None,
-        local_name: location.element.clone().or(fallback_local_name),
-        attribute_name: location.attribute.clone(),
-    }
-}
-
-fn convert_model_outcome(outcome: DocxModelOutcome) -> ModelOutcome {
-    match outcome {
-        DocxModelOutcome::Mapped => ModelOutcome::Mapped,
-        DocxModelOutcome::Degraded => ModelOutcome::Degraded,
-        DocxModelOutcome::Omitted => ModelOutcome::Omitted,
-    }
-}
-
-fn convert_retention_outcome(outcome: DocxRetentionOutcome) -> RetentionOutcome {
-    match outcome {
-        DocxRetentionOutcome::Preserved => RetentionOutcome::Preserved,
-        DocxRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
-        DocxRetentionOutcome::Blocked => RetentionOutcome::Blocked,
-        DocxRetentionOutcome::Rejected => RetentionOutcome::Rejected,
-        DocxRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
-    }
-}
-
-/// Lifts the DOCX writer's findings into the format-neutral report.
+/// Widens the DOCX writer's export findings into the shared report entry.
 ///
-/// Exists because the two layers keep separate types on purpose: the adapter
-/// vocabulary is shared by every format, the writer's is DOCX-specific. The
-/// disposition itself is not re-decided here — both axes come from the writer's
-/// `Disposition` — so a finding cannot mean one thing to the writer and another
-/// to the caller.
+/// Nothing about the taxonomy is re-decided: the writer's `Disposition` is the
+/// shared `Disposition`, and the bounded location is the shared
+/// `FeatureLocation`. What this adds is the two axes a writer finding does not
+/// have — the ledger reference and the whole-part disposition — both `None`,
+/// because the DOCX writer makes no preservation claim and charges its findings
+/// to parts by name rather than by manifest entry.
+///
+/// The one computation left is the location's element fallback: a writer finding
+/// whose location names no element borrows the last dotted segment of its
+/// feature id (`docx.export.signature` -> `signature`). That is a synthesized
+/// name rather than an observed one, which `35` disapproves of ("an invented
+/// location is worse than none"), and it is kept here **only** because changing
+/// it would change the published report — a behaviour change does not belong in
+/// a refactor whose whole claim is that nothing changed. It is written down so
+/// the next lane can decide it on purpose.
 pub(crate) fn convert_export_report(
     report: &casual_doc_export::CompatibilityReport,
 ) -> CompatibilityReport {
@@ -432,30 +421,18 @@ pub(crate) fn convert_export_report(
             .map(|entry| CompatibilityEntry {
                 feature: entry.feature.clone(),
                 occurrences: entry.occurrences,
-                location: convert_location(
-                    &entry.location,
-                    entry.feature.rsplit('.').next().map(str::to_owned),
-                ),
-                model_outcome: convert_model_outcome(entry.model_outcome()),
-                retention_outcome: convert_retention_outcome(entry.retention_outcome()),
-            })
-            .collect(),
-    };
-    converted.sort();
-    converted
-}
-
-fn convert_report(report: &casual_doc_import::CompatibilityReport) -> CompatibilityReport {
-    let mut converted = CompatibilityReport {
-        entries: report
-            .entries
-            .iter()
-            .map(|entry| CompatibilityEntry {
-                feature: entry.feature.clone(),
-                occurrences: entry.occurrences,
-                location: convert_location(&entry.location, None),
-                model_outcome: convert_model_outcome(entry.model_outcome()),
-                retention_outcome: convert_retention_outcome(entry.retention_outcome()),
+                location: FeatureLocation {
+                    part_name: entry.location.part_name.clone(),
+                    element: entry
+                        .location
+                        .element
+                        .clone()
+                        .or_else(|| entry.feature.rsplit('.').next().map(str::to_owned)),
+                    attribute: entry.location.attribute.clone(),
+                },
+                disposition: entry.disposition,
+                ledger_id: None,
+                part: None,
             })
             .collect(),
     };
@@ -466,7 +443,7 @@ fn convert_report(report: &casual_doc_import::CompatibilityReport) -> Compatibil
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DetectionRequest, ExportRequest, FormatSelection};
+    use crate::{DetectionRequest, ExportRequest, FormatSelection, ModelOutcome, RetentionOutcome};
 
     const MINIMAL_DOCX: &[u8] = include_bytes!("../../../fixtures/generated/minimal-valid.docx");
 
@@ -528,9 +505,9 @@ mod tests {
                         .collect::<Vec<_>>()
                 )
             });
-        assert_eq!(entry.location.local_name.as_deref(), Some("p"));
-        assert_eq!(entry.location.attribute_name.as_deref(), Some("paraId"));
-        assert_eq!(entry.model_outcome, ModelOutcome::Degraded);
+        assert_eq!(entry.location.element.as_deref(), Some("p"));
+        assert_eq!(entry.location.attribute.as_deref(), Some("paraId"));
+        assert_eq!(entry.model_outcome(), ModelOutcome::Degraded);
     }
 
     /// A media part named by a relationship but absent from (or unreadable in)
@@ -598,8 +575,8 @@ mod tests {
             Some("word/media/image1.png"),
             "the report names the part that was lost"
         );
-        assert_eq!(reported.model_outcome, ModelOutcome::Omitted);
-        assert_eq!(reported.retention_outcome, RetentionOutcome::NotRetained);
+        assert_eq!(reported.model_outcome(), ModelOutcome::Omitted);
+        assert_eq!(reported.retention_outcome(), RetentionOutcome::NotRetained);
     }
 
     /// Builds a package whose `fontTable.xml` embeds one `.odttf` face.
@@ -843,8 +820,8 @@ mod tests {
             Some("word/media/image1.png"),
             "the finding names the part"
         );
-        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-        assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+        assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+        assert_eq!(entry.retention_outcome(), RetentionOutcome::NotRetained);
     }
 
     /// A semantic save drops the opaque parts the preserving save carries, and
@@ -913,8 +890,8 @@ mod tests {
             .find(|entry| entry.feature == "docx.export.retained_parts")
             .expect("a semantic save must report the side-table it drops");
         assert_eq!(entry.occurrences, 1, "one opaque part was dropped");
-        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-        assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+        assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+        assert_eq!(entry.retention_outcome(), RetentionOutcome::NotRetained);
 
         let preserving = registry
             .export(
