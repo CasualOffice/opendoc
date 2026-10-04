@@ -287,10 +287,35 @@ test("Show changes on a version compares it with its PREDECESSOR, and writes not
     "version history wrote tracked changes into the live document",
   ).toHaveCount(0);
   await expect(page.locator("#reviewShowChangesBtn")).toHaveAttribute("aria-pressed", "false");
+  // AND IT IS SAID, not merely true. An absence assertion alone would pass over a
+  // panel that is read-only and never mentions it — the reader would be left to
+  // infer, from a surface whose other route writes into their document, that this
+  // one did not. Both halves are needed for either to be worth anything.
+  await expect(
+    page.locator("#compareBody [data-compare-read-only]"),
+    "the panel never tells the reader their document was left alone",
+  ).toHaveCount(1);
+  await expect(page.locator("#compareBody")).toContainText(/Read-only/i);
+
+  // THE VERSION PANEL IS REOPENED, and that is not scaffolding: both surfaces
+  // live in the right-hand rail and opening Compare takes it, so the version
+  // rows are genuinely not on screen now. Measured — the ⋮ resolved and stayed
+  // "not visible" for the whole timeout. The two menu-state assertions below
+  // therefore need the panel back, and they are deliberately AFTER the
+  // comparison rather than before it so that a run against the old behaviour
+  // fails on the defect ("no count at all") and not on a corollary.
+  // Closing Compare is the gesture, and it is the honest one: `file.versionHistory`
+  // is a TOGGLE and the version panel is still open in STATE while Compare covers
+  // it, so driving the command once closes it rather than revealing it (measured —
+  // "#versionPanel … unexpected value hidden"). Closing Compare is also what
+  // releases the two parsed sides the unified diff was reading context from.
+  await page.locator("#compareClose").click();
+  await expect(page.locator("#comparePanel")).toBeHidden();
+  await expect(page.locator("#versionPanel")).toBeVisible();
+  await expect(rows).toHaveCount(3, { timeout: 45_000 });
 
   // THE EARLIEST ROW HAS NO PREDECESSOR, so it is disabled WITH ITS REASON
   // rather than enabled and silently useless — `SKILL` §10, never a dead control.
-  await page.keyboard.press("Escape");
   await rows.last().locator(".version-item-menu").click();
   await expect(page.locator("#versionRowMenu")).toBeVisible();
   await expect(changes).toBeDisabled();
