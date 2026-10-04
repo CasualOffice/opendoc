@@ -227,9 +227,10 @@ export function versionRowRef(row) {
  * Three facts are derivable from the stored metadata alone, with no engine call,
  * no checkpoint read and no document parse:
  *
- *   * **Same content.** Checkpoints are content-addressed, so two rows sharing a
- *     hash hold the same document. Any row that is a twin of an earlier one SAYS
- *     so and names it. This is deliberately kept even though
+ *   * **Same content.** Two rows holding the same document — by the engine's
+ *     content digest, or failing that by the checkpoint's byte hash, which is
+ *     `isSameDocument`'s own precedence — are twins, and the later one SAYS so
+ *     and names the earlier. This is deliberately kept even though
  *     `captureVersion`'s `skipIfUnchanged` now refuses to create such a row: the
  *     reasons in `KEEP_UNCHANGED` can still make one, and a timeline written by
  *     an older build already has them. A duplicate that labels itself is strictly
@@ -260,14 +261,28 @@ export function versionRowRef(row) {
 export function versionRowDeltas(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const deltas = new Map();
-  const firstSeen = new Map();
-  // Oldest first, so "the earlier row with these bytes" is the one already seen.
+  const firstByContent = new Map();
+  const firstByBytes = new Map();
+  // Oldest first, so "the earlier row holding this document" is the one already
+  // seen. Content identity FIRST and bytes as the fallback — the same precedence
+  // `isSameDocument` applies, because a label that disagreed with the
+  // suppression would be a second answer to one question. Keying this on bytes
+  // alone is what the suppression used to do, and it misses the case the whole
+  // fix is about: two rows can hold one document and two different byte layouts,
+  // which `KEEP_UNCHANGED`'s reasons can still legitimately produce.
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const row = list[i];
     if (!row?.versionId) continue;
     const previous = list[i + 1] ?? null;
-    const twin = row.checkpointId ? firstSeen.get(row.checkpointId) : undefined;
-    if (row.checkpointId && twin === undefined) firstSeen.set(row.checkpointId, row);
+    const twin =
+      (row.contentId ? firstByContent.get(row.contentId) : undefined) ??
+      (row.checkpointId ? firstByBytes.get(row.checkpointId) : undefined);
+    if (row.contentId && !firstByContent.has(row.contentId)) {
+      firstByContent.set(row.contentId, row);
+    }
+    if (row.checkpointId && !firstByBytes.has(row.checkpointId)) {
+      firstByBytes.set(row.checkpointId, row);
+    }
     const here = Number(row.revision);
     const there = Number(previous?.revision);
     const edits =

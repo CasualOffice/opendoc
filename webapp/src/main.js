@@ -15216,10 +15216,10 @@ function adoptDraftDocument(name, bytes) {
 /**
  * Takes the snapshot, in the document's own format.
  *
- * The mode ladder is `exportDocumentAs`'s, plus `semantic` as the last resort,
- * so a draft and a save can never be produced by different ladders. There is
- * deliberately no cross-format fallback: normalized JSON would succeed where
- * DOCX failed and would drop every image while doing it.
+ * The mode ladder is `exportDocumentAs`'s plus `semantic` as the last resort, so
+ * a draft and a save can never come from different ladders; there is deliberately
+ * no cross-format fallback, because normalized JSON would succeed where DOCX
+ * failed and drop every image. `contentId` rides along — see `version_panel.mjs`.
  */
 function takeDraftSnapshot() {
   const formatId = draftFormatFor(currentSourceFormat);
@@ -15235,7 +15235,7 @@ function takeDraftSnapshot() {
         findings = 0; // a report we cannot parse must not lose us the draft
       }
       artifact.free();
-      return { bytes, formatId, mode, findings };
+      return { bytes, formatId, mode, findings, contentId: doc.contentDigest() };
     } catch (err) {
       lastError = err;
     }

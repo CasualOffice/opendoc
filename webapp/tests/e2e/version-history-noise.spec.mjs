@@ -2,14 +2,20 @@
 // real application, because that is the one thing two reading-based
 // investigations could not establish.
 //
-// The owner reported this twice ("even in case of no changes why the fuck are you
-// saving a version"), and both earlier passes stopped at `shouldCapture` and
-// `skipIfUnchanged` looking correct. They are correct, in isolation. What was
-// wrong was what they were asked ABOUT: a reason nothing had declared, and a
-// comparison against the head rather than against the timeline. Neither is
-// visible from reading one function, and both are obvious from three lines of
-// instrumented log. So this file drives the gestures and reads the store the
-// panel reads, and every assertion below is on rows that are really there.
+// The owner reported this three times ("even in case of no changes why the fuck
+// are you saving a version"), and three reading passes stopped at `shouldCapture`
+// and `skipIfUnchanged` looking correct. They are correct, in isolation. What was
+// wrong was what they were asked ABOUT: a reason nothing had declared, a
+// comparison against the head rather than against the timeline, and — the one
+// this file got wrong itself — a comparison of the source-format BYTES where the
+// question is about the DOCUMENT.
+//
+// THIS FILE WAS PART OF THE DEFECT. Its first version made a self-cancelling edit,
+// saved, and asserted TWO version rows; its `expectNoDuplicateContent` passed
+// because the two rows' byte hashes differ across export modes. A guard written
+// to close the owner's report asserted the report as correct behaviour, which is
+// SKILL §10's "assert the guarantee, not the mechanism" with a price on it. The
+// counts below are now the guarantee: no changes, no new version.
 //
 // NON-VACUITY IS ASSERTED, not assumed. This repository has shipped a spec whose
 // `not.toHaveText(/no results/i)` could never fail because the app says "No
@@ -34,14 +40,21 @@ import {
 const panel = "#versionPanel";
 const rows = "#versionPanelBody .version-item";
 
-/** Every version row the store holds, oldest first, with the content hash that
- *  decides whether two of them are the same document.
+/** Every version row the store holds, oldest first, with both identities it
+ *  carries: `contentId`, the engine's digest of the DOCUMENT, and
+ *  `checkpointId`, a SHA-256 of the source-format BYTES.
+ *
+ *  Both, because the difference between them is the defect. The byte hash is not
+ *  an identity for a document: the import row holds the original file verbatim
+ *  and `source_unchanged` is a monotonic watermark, so after any edit at all —
+ *  including one immediately undone — every later checkpoint is a re-export with
+ *  a different layout. Two hashes, one document.
  *
  *  Read from IndexedDB rather than from the panel because the defect is about
  *  rows EXISTING: a filter, a group heading or a repaint bug could hide one from
- *  the list, and "the panel shows two" is a weaker claim than "the store holds
- *  two". The head pointer comes from the same read, because half of this fix is
- *  that the head has to follow the bytes. */
+ *  the list, and "the panel shows one" is a weaker claim than "the store holds
+ *  one". The head pointer comes from the same read, because half of this fix is
+ *  that the head has to follow the document. */
 function timeline(page) {
   return page.evaluate(
     () =>
@@ -62,6 +75,7 @@ function timeline(page) {
                 .map((row) => ({
                   versionId: row.versionId,
                   kind: row.kind,
+                  contentId: row.contentId ?? "",
                   checkpointId: row.checkpointId,
                   bytes: row.bytes,
                   revision: row.revision,
@@ -104,60 +118,119 @@ async function realEdit(page, marker) {
   await page.keyboard.insertText(marker);
 }
 
-/** No two rows in the timeline hold the same document.
+/** No two rows in the timeline hold the same DOCUMENT.
  *
  *  The CLASS assertion, not an instance of it: every defect this file was written
- *  for ends with two rows sharing a content hash, whichever gesture produced them,
+ *  for ends with two rows holding one document, whichever gesture produced them,
  *  so this is the invariant and the per-gesture tests are the conditions that used
- *  to break it. */
+ *  to break it.
+ *
+ *  It asserts the GUARANTEE, which is the whole point of the rewrite. The version
+ *  of this helper that shipped with the first attempt at this fix compared
+ *  `checkpointId` — the source BYTES — and so it passed on two rows holding one
+ *  document, because the two export modes that produced them serialize the same
+ *  document differently. It was asserting the mechanism, and the mechanism was the
+ *  bug, so the guard written to close the owner's report encoded the report as
+ *  correct behaviour (SKILL §10: assert the guarantee, not the mechanism).
+ *
+ *  BOTH identities are now checked, which is strictly stronger than either:
+ *  two rows are the same document if they share the engine's content digest, and
+ *  byte-identical artifacts are the same document too. A row that carries no
+ *  digest — one written before the field existed — still gets the byte test. */
 function expectNoDuplicateContent(store) {
-  const byHash = new Map();
+  const byContent = new Map();
+  const byBytes = new Map();
   for (const row of store.rows) {
-    const seen = byHash.get(row.checkpointId);
+    if (row.contentId) {
+      const seen = byContent.get(row.contentId);
+      expect(
+        seen,
+        `two version rows hold the same document (${row.kind} and ${seen?.kind}, ` +
+          `content ${row.contentId}) — one of them is a version of nothing`,
+      ).toBeUndefined();
+      byContent.set(row.contentId, row);
+    }
+    const seenBytes = byBytes.get(row.checkpointId);
     expect(
-      seen,
-      `two version rows hold the same document (${row.kind} and ${seen?.kind}, ` +
+      seenBytes,
+      `two version rows hold byte-identical artifacts (${row.kind} and ${seenBytes?.kind}, ` +
         `checkpoint ${row.checkpointId}) — one of them is a version of nothing`,
     ).toBeUndefined();
-    byHash.set(row.checkpointId, row);
+    byBytes.set(row.checkpointId, row);
   }
 }
 
-test("reopening a document you already saved adds no version row", async ({ page }) => {
-  // THE MEASURED REPRODUCTION. Before the fix this ended with three rows, the
-  // third byte-identical to the first:
+/** Every row carries the engine's content digest.
+ *
+ *  NON-VACUITY FOR THE IDENTITY ITSELF. `captureVersion` falls back to the byte
+ *  hash when no digest is supplied, which is the right failure mode (over-keeping
+ *  a version is recoverable; dropping one is not) and a terrible silent one: the
+ *  defect would be back and every count assertion in this file would still pass
+ *  on a store that was simply never asked for a digest. So the digest's PRESENCE
+ *  is asserted, not just its effect. */
+function expectContentIdentities(store) {
+  for (const row of store.rows) {
+    expect(
+      row.contentId,
+      `the ${row.kind} row carries no content identity, so its suppression fell back to ` +
+        "comparing source bytes — the comparison this whole file exists to replace",
+    ).toMatch(/^cid\d+-[0-9a-f]{32}$/);
+  }
+}
+
+test("an edit that cancels itself out leaves one version, not two", async ({ page }) => {
+  // THE OWNER'S REPORT, STATED AS A COUNT. "Even in case of no changes why the
+  // fuck are you saving a version", three times.
   //
-  //   import cp=fb07bd2d | saved cp=28c11967 | import cp=fb07bd2d
+  // This assertion used to read `expectVersions(page, 2)` — a comment admitting
+  // the document had not changed, immediately above a guard asserting that two
+  // rows was correct. Its own recorded output named the two hashes:
   //
-  // and one more arrived on every reload, because the comparison only looked at
-  // the head and the head was `saved`.
+  //   import cp=fb07bd2d | saved cp=28c11967
+  //
+  // Two hashes, one document. The bytes differ because the import row is the
+  // original file verbatim and the saved row is a re-export — `source_unchanged`
+  // is `revision == 0`, a monotonic watermark, so the exact export mode is
+  // permanently unavailable after the first edit and never comes back when that
+  // edit is undone. Dedupe now compares the document, so there is ONE row.
   await gotoEditor(page);
-  await expectVersions(page, 1);
+  const opened = await expectVersions(page, 1);
+  const baseline = opened.rows[0];
+
+  // THE ASSERTION THE OWNER HAS BEEN ASKING FOR. Deliberately before every other
+  // claim in this file, so that when it fails it fails on the count and the
+  // failure reads "expected 1, received 2" rather than on some corollary.
   await neutralEdit(page);
   await saveDocument(page);
-  const saved = await expectVersions(page, 2);
+  const saved = await expectVersions(page, 1);
+  expect(
+    saved.rows[0].versionId,
+    "and it is the SAME row: nothing was written, so the import row still stands",
+  ).toBe(baseline.versionId);
   expectNoDuplicateContent(saved);
-  const baseline = saved.rows[0];
+  expectContentIdentities(saved);
 
+  // THE MEASURED REPRODUCTION of the second half. Before the first attempt at
+  // this fix, a reload after a save added a third row byte-identical to the
+  // first, forever, because the comparison only looked at the head.
   await gotoEditor(page);
-  const reopened = await expectVersions(page, 2);
+  const reopened = await expectVersions(page, 1);
   expectNoDuplicateContent(reopened);
-  // And the head followed the bytes: the document on screen is the file from
-  // disk, which is what the import row holds, so that is the row the panel may
-  // call current. Leaving the head on `saved` is the lie that made suppressing
-  // the duplicate look wrong.
+  // And the head followed the document: the one row holds what is on screen, so
+  // that is the row the panel may call current.
   expect(reopened.heads).toContain(baseline.versionId);
 
-  // A second reload is still two rows: the fix is a rule, not a one-off.
+  // A second reload is still one row: the fix is a rule, not a one-off.
   await gotoEditor(page);
-  expectNoDuplicateContent(await expectVersions(page, 2));
+  expectNoDuplicateContent(await expectVersions(page, 1));
 
   // NON-VACUITY. A store that suppressed everything would have passed every
   // assertion above, so a real change must still produce a row.
   await realEdit(page, "a genuine insertion");
   await saveDocument(page);
-  const after = await expectVersions(page, 3);
+  const after = await expectVersions(page, 2);
   expectNoDuplicateContent(after);
+  expectContentIdentities(after);
 });
 
 test("a tab going away after an edit that cancels out adds no version row", async ({ page }) => {
@@ -177,24 +250,25 @@ test("a tab going away after an edit that cancels out adds no version row", asyn
   await expectVersions(page, 1);
   await neutralEdit(page);
   await saveDocument(page);
-  await expectVersions(page, 2);
+  await expectVersions(page, 1);
 
   // Reopening leaves the capture interval unarmed (a suppressed capture
   // deliberately does not start it), which is the state the `pagehide` capture
   // got through in. Recreating the condition rather than waiting ten minutes for
   // it is the difference between a guard and a clock.
   await gotoEditor(page);
-  await expectVersions(page, 2);
+  await expectVersions(page, 1);
 
   await neutralEdit(page);
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-  const store = await expectVersions(page, 2);
+  const store = await expectVersions(page, 1);
   expectNoDuplicateContent(store);
+  expectContentIdentities(store);
 
   // NON-VACUITY: the same flush after a REAL edit does keep a version.
   await realEdit(page, "something worth keeping");
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-  expectNoDuplicateContent(await expectVersions(page, 3));
+  expectNoDuplicateContent(await expectVersions(page, 2));
 });
 
 test("saving an untouched document says so rather than silently doing nothing", async ({

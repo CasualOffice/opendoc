@@ -55,6 +55,7 @@ use casual_doc_diff::{DiffJob, DiffSides, MediaDigests, Progress};
 // the one walk that resolves a change's path against a document this session
 // holds. Separate `use` lines, in sorted position, per the parallel-lane import
 // rule.
+use casual_doc_diff::identity::content_digest_hex;
 use casual_doc_diff::projection::{block_at_path, block_text};
 use casual_doc_diff::record::{DIFF_SCHEMA, DiffChange, DiffFamily, DiffKind, Story, VersionDiff};
 use casual_doc_edit::ParagraphIndex;
@@ -672,6 +673,33 @@ fn classify_change(
 
 #[wasm_bindgen]
 impl WasmDocument {
+    /// This document's **content identity** — the digest that is equal exactly
+    /// when a comparison of two states would report nothing.
+    ///
+    /// The host stores it beside a version checkpoint and compares it to decide
+    /// whether a save has anything new in it. It exists because the
+    /// checkpoint's own id cannot answer that question: that id is a SHA-256 of
+    /// the **source-format bytes**, and one unchanged document has two different
+    /// byte layouts depending on which export mode produced it — the import row
+    /// is the original file verbatim, and `source_unchanged` is `revision == 0`,
+    /// a monotonic watermark, so after any edit at all (including one that is
+    /// immediately undone) every later checkpoint is a `preserve_when_safe`
+    /// re-export. Two hashes, one document, and a version row with nothing in it.
+    ///
+    /// Deliberately **not** a second notion of sameness: the digest is folded
+    /// from the same semantic projection the comparison aligns on plus the same
+    /// definition values it compares, so this and Compare cannot come to
+    /// disagree. See `casual_doc_diff::identity`.
+    ///
+    /// Complexity: **O(blocks + text bytes + definitions)**. Call it at SAVE, not
+    /// per edit — per-interaction work stays O(1) in document size (`docs/107`
+    /// §4), and no editing path calls this.
+    #[wasm_bindgen(js_name = contentDigest)]
+    #[must_use]
+    pub fn content_digest(&self) -> String {
+        content_digest_hex(&self.document)
+    }
+
     /// Applies a comparison sidecar to this document as tracked changes
     /// (**ADR-061**).
     ///
@@ -946,6 +974,8 @@ impl WasmDocument {
 mod tests {
     use super::*;
 
+    use crate::open_document;
+
     /// A DOCX fixture that carries a media part, so the digest path is exercised
     /// against a real package rather than a constructed one.
     const PICTURE_DOCX: &[u8] =
@@ -958,6 +988,78 @@ mod tests {
     /// Plain text is a registered format, so a fixture needs no ZIP.
     fn text(lines: &[&str]) -> Vec<u8> {
         lines.join("\n").into_bytes()
+    }
+
+    /// **The defect, stated as one assertion.**
+    ///
+    /// `insertText("x")` then a backspace is the shape every "why is there a
+    /// version with no changes in it" report reduces to: the engine's revision
+    /// watermark moves, the document does not. The content digest says the
+    /// document did not change — and the SOURCE BYTES, which the duplicate
+    /// suppression used to compare, say it did, because the watermark is
+    /// monotonic and `exact_if_unchanged` is gone for good after the first edit.
+    ///
+    /// Both halves are asserted here because the second is the reason the first
+    /// is needed. Measured on this fixture: the re-export is not byte-identical
+    /// to the original file, so byte-hash dedupe could not have worked even in
+    /// principle.
+    #[test]
+    fn an_edit_and_its_undo_leave_the_content_digest_equal_while_the_bytes_diverge() {
+        let mut doc = open_document(PICTURE_DOCX).expect("the fixture opens");
+        let unchanged = doc.content_digest();
+        let original = doc
+            .export_as_inner(casual_doc_io::formats::DOCX, "exact_if_unchanged")
+            .expect("an unchanged document exports")
+            .bytes;
+
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        doc.apply(casual_doc_edit::Operation::InsertText {
+            at: Pos::new(node, 0),
+            text: "x".to_owned(),
+        })
+        .expect("the insertion applies");
+        assert_ne!(
+            doc.content_digest(),
+            unchanged,
+            "an insertion is a real change and the digest has to see it — otherwise this guard \
+             would pass on a digest that is a constant"
+        );
+
+        doc.apply(casual_doc_edit::Operation::DeleteText {
+            range: casual_doc_edit::Range {
+                start: Pos::new(node, 0),
+                end: Pos::new(node, 1),
+            },
+        })
+        .expect("the deletion applies");
+
+        assert_eq!(
+            doc.content_digest(),
+            unchanged,
+            "an edit that cancels itself out leaves the document saying the same thing, so its \
+             content identity is the same identity"
+        );
+
+        // The exact mode does not degrade quietly, it REFUSES — the watermark has
+        // moved, so there is no "unchanged document" left to hand the source back
+        // for, and the host falls back exactly as `comparableBytes` does.
+        let refusal = doc
+            .export_as_inner(casual_doc_io::formats::DOCX, "exact_if_unchanged")
+            .expect_err("the exact mode is gone once the watermark has moved");
+        assert!(
+            refusal.contains("unchanged document"),
+            "and it says why, rather than silently re-serializing: {refusal}"
+        );
+        let re_exported = doc
+            .export_as_inner(casual_doc_io::formats::DOCX, "preserve_when_safe")
+            .expect("the fallback mode exports")
+            .bytes;
+        assert_ne!(
+            re_exported, original,
+            "and this is why the bytes cannot be the identity: the import checkpoint holds the \
+             original file verbatim and every later one is a re-export, so one unchanged \
+             document has two different byte hashes"
+        );
     }
 
     /// The facade produces the same sidecar whether it is driven in slices or run

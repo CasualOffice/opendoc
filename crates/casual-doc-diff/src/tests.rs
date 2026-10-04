@@ -15,6 +15,7 @@ use casual_doc_model::v1::{
 };
 
 use crate::compare::{DEFINITION_FIELDS, STORY_FIELDS, differing_field_paths};
+use crate::identity::{content_digest, content_digest_hex};
 use crate::job::{DiffJob, DiffSides, Progress};
 use crate::record::{
     DiffChange, DiffFamily, DiffKind, FindingCode, PathSegment, Story, VersionDiff,
@@ -746,6 +747,120 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
     assert!(
         !has_finding(&unchanged, FindingCode::NotCompared, "charts"),
         "nor raise the honesty finding on a healthy comparison"
+    );
+}
+
+// ── content identity ────────────────────────────────────────────────────────
+
+/// **The content digest and the comparison must be one definition of sameness.**
+///
+/// Version history suppresses a duplicate version by comparing digests, and the
+/// Compare panel decides what changed by running the diff. If those two could
+/// disagree, the product would hold two answers to "is this the same document" —
+/// and the defect this digest exists to fix was exactly a third answer (the
+/// source bytes) disagreeing with both.
+///
+/// So the guard is an equivalence over pairs, not a spot check: for each pair,
+/// `digests equal` must hold exactly when `the diff reports nothing`. A digest
+/// that ignored a family would show up as an equal digest beside a non-empty
+/// diff, and a digest that folded in something that is not content (a revision
+/// counter, an id) would show up as the opposite.
+#[test]
+fn the_content_digest_is_equal_exactly_when_the_comparison_finds_nothing() {
+    let styled = |priority: i32| {
+        let style: casual_doc_model::v1::Style = serde_json::from_value(serde_json::json!({
+            "kind": "paragraph",
+            "name": "heading 1",
+            "uiPriority": priority,
+        }))
+        .expect("the style deserializes");
+        let mut document = base_document();
+        document.definitions_mut().styles.insert(
+            casual_doc_model::v1::StyleId::new(NodeId::new(500).expect("non-zero")),
+            style,
+        );
+        document
+    };
+    let headed = |text: &str| {
+        let mut document = base_document();
+        let header_id = HeaderFooterId::new(NodeId::new(900).expect("non-zero"));
+        let definitions = document.definitions_mut();
+        definitions.headers.insert(
+            header_id,
+            HeaderFooter {
+                blocks: vec![paragraph(10, text)],
+            },
+        );
+        definitions.sections[0].headers.push(HeaderFooterRef {
+            kind: HeaderFooterKind::Default,
+            reference: header_id,
+        });
+        document
+    };
+    let bodied = |text: &str| import_body(&xml_paragraph(text));
+
+    let pairs: Vec<(&str, Document, Document)> = vec![
+        // Two independent parses of one fragment: nothing changed, and the
+        // digest has to say so or the suppression can never fire.
+        ("two parses of one body", bodied("alpha"), bodied("alpha")),
+        ("a body text change", bodied("alpha"), bodied("alpha!")),
+        // A paragraph inserted above another: every NodeId after it now names a
+        // different paragraph, which is why neither side of this may be keyed on
+        // ids.
+        (
+            "a paragraph inserted above",
+            import_body(&format!("{}{}", xml_paragraph("a"), xml_paragraph("b"))),
+            import_body(&format!(
+                "{}{}{}",
+                xml_paragraph("x"),
+                xml_paragraph("a"),
+                xml_paragraph("b")
+            )),
+        ),
+        ("a style property change", styled(9), styled(3)),
+        ("a header text change", headed("old"), headed("new")),
+        ("an unchanged header", headed("same"), headed("same")),
+    ];
+
+    for (what, left, right) in pairs {
+        let diff = diff(&left, &right);
+        let same_digest = content_digest(&left) == content_digest(&right);
+        assert_eq!(
+            same_digest,
+            diff.changes.is_empty(),
+            "{what}: the digest says {} while the comparison reports {} change(s) — the two \
+             notions of sameness have diverged: {:?}",
+            if same_digest { "same" } else { "different" },
+            diff.changes.len(),
+            diff.changes
+        );
+    }
+}
+
+/// The digest is a value, not a timestamp: the same document hands back the same
+/// string every time it is asked, and the string says which scheme produced it.
+///
+/// Determinism is load-bearing in a way that is easy to lose: `Definitions` is
+/// `BTreeMap`-backed, so its serialization is ordered — swap one for a `HashMap`
+/// and this digest becomes a different value on every call, every save becomes a
+/// new version again, and nothing else in the workspace would notice.
+#[test]
+fn the_digest_is_deterministic_and_carries_its_scheme() {
+    let document = base_document();
+    let first = content_digest_hex(&document);
+    assert_eq!(
+        first,
+        content_digest_hex(&document),
+        "same document, same digest"
+    );
+    assert!(
+        first.starts_with(&format!("cid{}-", crate::identity::CONTENT_IDENTITY_SCHEMA)),
+        "the digest names its scheme so it can never be read as a checkpoint byte hash: {first}"
+    );
+    assert_ne!(
+        first,
+        content_digest_hex(&import_body(&xml_paragraph("something else"))),
+        "and a different document is a different digest"
     );
 }
 
