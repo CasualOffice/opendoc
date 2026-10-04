@@ -68,6 +68,7 @@ something it must never send again. See `152` §5.6.
 | `ODC-7007` | `collaboration_malformed` | error | The message could not be read. The sender must **not** send the same bytes again. |
 | `ODC-7008` | `collaboration_id_collision` | error | An arriving operation introduces an identity this replica already holds, or one minted outside the sender's own identity space. Refused rather than applied, because applying it overwrites a node somebody else minted. |
 | `ODC-7009` | `collaboration_stale_base` | error | The submission was written against an ordered position the document has moved past. Nothing is lost: the client rebases it and resubmits with the same sequence number. |
+| `ODC-7010` | `collaboration_room_full` | fatal | The room already holds as many participants as it admits, so this connection was not admitted. Terminal for this connection and **not** retryable on it — a client that resends the same join down the same socket spins — but a room's occupancy is a property of a moment, so a later connection may be admitted. Separate from `ODC-7003` because only one of the two is worth waiting out. |
 | `ODC-8001` | `plugin_failed` | error | A plugin returned an error or violated its declared contract. |
 | `ODC-9001` | `internal` | fatal | An unexpected internal failure occurred. |
 

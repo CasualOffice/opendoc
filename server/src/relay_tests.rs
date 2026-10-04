@@ -11,7 +11,7 @@ use casual_doc_edit::{Mint, Operation, Pos, ReviewParagraphState};
 use crate::Access;
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_transaction::codec::decode_frame;
-use casual_doc_transaction::presence::{PresenceClock, PresenceUpdate};
+use casual_doc_transaction::presence::{MAX_PARTICIPANTS, PresenceClock, PresenceUpdate};
 use casual_doc_transaction::protocol::{
     Base, ClientId, ClientMessage, GrantToken, Identity, Join, PROTOCOL_VERSION, Refusal, Resume,
     ResumeKey, Revision, Seq, ServerMessage, Submission,
@@ -22,20 +22,64 @@ use super::Relay;
 use crate::Room;
 
 /// A writer that keeps every byte, so a test can read what a participant received.
+///
+/// `accepts` is what makes `152` §2c's back-pressure policy reachable at all: a participant whose
+/// socket has gone cannot be expressed by a writer that always succeeds, and the policy is about
+/// nothing else. It counts **further writes**, rather than being a bare `broken` flag, because
+/// the cascade case needs a socket that survives the chunk and dies during the departure
+/// announcement — a flag can only express a socket that was already dead when the fan-out
+/// started, and that case never reaches the eviction queue's second pass.
+///
+/// `None` accepts everything, which is what `Default` gives, so every existing guard is
+/// unchanged.
 #[derive(Debug, Default)]
 struct Sink {
     written: Vec<u8>,
+    accepts: Option<usize>,
+}
+
+impl Sink {
+    /// A socket that accepts `count` more writes and then refuses every one.
+    fn accepting(count: usize) -> Self {
+        Self {
+            written: Vec::new(),
+            accepts: Some(count),
+        }
+    }
 }
 
 impl std::io::Write for Sink {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self.accepts {
+            Some(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "the peer went away",
+                ));
+            }
+            Some(left) => self.accepts = Some(left - 1),
+            None => {}
+        }
         self.written.extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
+    // Deliberately always `Ok`: `fan_out` is `write_all(..).and_then(flush)`, so a refusing
+    // `write` is already enough, and failing here too would make `accepting(1)` mean "accepts
+    // half a frame".
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+/// Replaces `client`'s socket with one that accepts `count` more writes and then refuses.
+///
+/// The condition the policy exists for, created rather than waited for: the participant is still
+/// a member, the relay still believes it is reachable, and the next fan-out is what finds out.
+fn socket_accepting(relay: &mut Relay<Sink>, client: ClientId, count: usize) {
+    relay
+        .participants_mut()
+        .joined(client, Sink::accepting(count));
 }
 
 fn scratch(name: &str) -> std::path::PathBuf {
@@ -174,7 +218,7 @@ fn an_ordered_chunk_is_applied_by_everyone_except_its_author() {
         "the author gets an acknowledgement, which is what it is waiting for: {:?}",
         handled.answer
     );
-    assert!(handled.behind.is_empty());
+    assert!(handled.evicted.is_empty());
 
     for client in &clients {
         let messages = received(&mut relay, *client);
@@ -250,9 +294,10 @@ fn presence_is_fanned_with_the_identity_the_relay_attaches_and_never_answered() 
         "presence is not ordered and never acknowledged, so there is nothing truthful to answer"
     );
     assert!(
-        handled.behind.is_empty(),
-        "a participant that missed a presence update is not behind anything — the next one \
-         corrects it — so failures are deliberately not reported here"
+        handled.evicted.is_empty(),
+        "both of these sinks accept every byte, so nobody is unreachable and nobody may be \
+         removed — `152` §2c's policy applies to presence too, and the case where it fires is \
+         `an_unreachable_participant_is_removed_from_the_room_rather_than_written_to_for_ever`"
     );
 
     let messages = received(&mut relay, clients[1]);
@@ -945,6 +990,298 @@ fn a_narrowed_grant_on_rejoin_beats_the_one_the_journal_remembers() {
             reason: Refusal::ReadOnlyAccess,
         }),
         "a revoked right survived a reconnect because the journal remembered the wider grant"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+#[test]
+fn a_room_refuses_the_participant_past_its_ceiling_by_name() {
+    // The gap: presence held `MAX_PARTICIPANTS` and the relay enforced nothing, so a room's
+    // connection count was unbounded input from the network with a cap one layer in that could
+    // only ever refuse a *caret*. The ceiling is now at admission, and it refuses **by name**
+    // rather than through a socket that quietly stops accepting — a listener that stops
+    // answering is indistinguishable from a dead host, which is the one thing a client must not
+    // have to guess.
+    //
+    // Three halves, because each failure mode passes the other two: the last admitted
+    // participant IS admitted (so the bound is not off by one and the room is not refusing
+    // everyone), the next one is refused by name, and a join after somebody leaves is admitted
+    // (so the refusal is about occupancy and not about the room having shut).
+    let (path, mut relay, clients) = with_participants("full-room", MAX_PARTICIPANTS as u64);
+    assert_eq!(
+        relay.participants_mut().len(),
+        MAX_PARTICIPANTS,
+        "the fixture must actually fill the room, or this guard measures nothing"
+    );
+
+    let mut writer = Some(Sink::default());
+    let handled = relay
+        .handle(
+            None,
+            &mut writer,
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("one-too-many").expect("an identity"),
+                grant: None,
+                resume: None,
+            }),
+        )
+        .expect("the join is handled");
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::Stopped {
+            reason: Refusal::RoomFull {
+                limit: MAX_PARTICIPANTS,
+            },
+        }),
+        "a full room admitted one more participant"
+    );
+    assert!(
+        handled.joined_as.is_none(),
+        "a refused join must not be assigned an identity"
+    );
+    assert!(
+        writer.is_some(),
+        "the writer must NOT be taken: a refused connection that left its socket in the \
+         participant set would be written to for ever, which is the defect the eviction policy \
+         exists to end — it must not be re-introduced at admission"
+    );
+    assert_eq!(
+        relay.participants_mut().len(),
+        MAX_PARTICIPANTS,
+        "the refused participant joined the set anyway"
+    );
+    assert_eq!(Refusal::RoomFull { limit: 1 }.code(), "ODC-7010");
+    assert!(
+        Refusal::RoomFull { limit: 1 }.is_terminal(),
+        "the connection does not survive, so a client that held the session open would be \
+         holding one the relay does not have"
+    );
+    assert!(
+        !Refusal::RoomFull { limit: 1 }.is_retryable(),
+        "resending the same join down the same socket spins; a later connection is a new \
+         session rather than a retry of this one"
+    );
+
+    // Occupancy is a property of a moment. One participant leaves and the next join is admitted,
+    // which is what distinguishes this refusal from a room that has stopped accepting.
+    relay.disconnected(clients[0]);
+    assert_eq!(relay.participants_mut().len(), MAX_PARTICIPANTS - 1);
+    let (answer, joined) = join_with(&mut relay, "after-a-departure", None);
+    assert!(
+        matches!(answer, ServerMessage::Welcome { .. }),
+        "a join into a room with room must be admitted: {answer:?}"
+    );
+    assert!(joined.is_some());
+
+    // And the ORDER of the two checks, which is a decision and not an accident: a caller with no
+    // grant is told it is not authorised, never how full the room is. Detail that helps an
+    // operator diagnose also helps a stranger enumerate, which is the rule `GrantRefusal`
+    // already follows when it collapses three causes into one wire answer.
+    let other = scratch("full-granted-room");
+    let token = GrantToken::new(b"the-one-true-token".to_vec()).expect("a token");
+    let mut granted = Relay::new(
+        Room::create(&other).expect("a new room"),
+        Access::Granted(Box::new(OneToken {
+            expected: token.as_bytes().to_vec(),
+            grants: Capabilities::editor(),
+        })),
+    );
+    for which in 0..MAX_PARTICIPANTS {
+        let (answer, joined) =
+            join_with(&mut granted, &format!("held-{which}"), Some(token.clone()));
+        assert!(
+            joined.is_some(),
+            "the granted room must fill up too, or the ordering below is untested: {answer:?}"
+        );
+    }
+    let (answer, joined) = join_with(&mut granted, "no-grant", None);
+    assert_eq!(
+        answer,
+        ServerMessage::Stopped {
+            reason: Refusal::NotAuthorised,
+        },
+        "a grantless caller was told how full the room is"
+    );
+    assert!(joined.is_none());
+    // The same room, a real grant: now the ceiling is the answer, which is what makes the
+    // ordering above an ordering rather than a room that refuses every join.
+    let (answer, joined) = join_with(&mut granted, "with-a-grant", Some(token));
+    assert_eq!(
+        answer,
+        ServerMessage::Stopped {
+            reason: Refusal::RoomFull {
+                limit: MAX_PARTICIPANTS,
+            },
+        }
+    );
+    assert!(joined.is_none());
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&other);
+}
+
+#[test]
+fn an_unreachable_participant_is_removed_rather_than_written_to_for_ever() {
+    // `152` §2c's back-pressure policy, which did not exist: `fan_out` returned the participants
+    // it could not reach, the binary printed a line about each of them, and every one stayed in
+    // the set — so the next chunk was written to the same dead socket and reported as failed
+    // again, for ever. A log line is evidence; it is not a policy.
+    //
+    // Three participants, so "the unreachable one and nobody else" cannot be satisfied by a
+    // policy that empties the room or that evicts the author.
+    let (path, mut relay, clients) = with_participants("evict", 3);
+    let author = clients[0];
+    let healthy = clients[1];
+    let gone = clients[2];
+
+    // The control, asserted FIRST: with nobody unreachable, nobody is removed.
+    let handled = relay
+        .handle(
+            Some(author),
+            &mut None,
+            &ClientMessage::Submit(chunk(author, 1, Base::Revision(Revision::new(0)))),
+        )
+        .expect("handled");
+    assert!(
+        handled.evicted.is_empty(),
+        "a reachable room evicted somebody: {:?}",
+        handled.evicted
+    );
+    assert_eq!(relay.participants_mut().len(), 3);
+
+    socket_accepting(&mut relay, gone, 0);
+    let handled = relay
+        .handle(
+            Some(author),
+            &mut None,
+            &ClientMessage::Submit(chunk(author, 2, Base::Revision(Revision::new(1)))),
+        )
+        .expect("handled");
+    assert_eq!(
+        handled.evicted,
+        vec![gone],
+        "the unreachable participant, and only it, must be removed"
+    );
+    assert_eq!(
+        relay.participants_mut().len(),
+        2,
+        "the dead socket is still in the set, which is the defect this policy exists to end"
+    );
+
+    // THE HALF THAT MAKES IT A POLICY: the next chunk does not try the dead socket again. Before
+    // this change the same client came back in `behind` on every chunk for the life of the room.
+    let handled = relay
+        .handle(
+            Some(author),
+            &mut None,
+            &ClientMessage::Submit(chunk(author, 3, Base::Revision(Revision::new(2)))),
+        )
+        .expect("handled");
+    assert!(
+        handled.evicted.is_empty(),
+        "the evicted participant was written to again: {:?}",
+        handled.evicted
+    );
+    assert_eq!(
+        relay.room().session().head(),
+        Revision::new(3),
+        "and the order kept moving throughout: an eviction must not cost the room its progress"
+    );
+
+    // Presence is governed by the same rule, because the policy is about REACHABILITY and not
+    // about ordering. A participant whose socket refuses a caret frame is not behind an order it
+    // was never part of — it is gone.
+    socket_accepting(&mut relay, healthy, 0);
+    let handled = relay
+        .handle(
+            Some(author),
+            &mut None,
+            &ClientMessage::Presence(PresenceUpdate {
+                clock: PresenceClock::new(1),
+                payload: b"somewhere".to_vec(),
+            }),
+        )
+        .expect("handled");
+    assert_eq!(
+        handled.evicted,
+        vec![healthy],
+        "an unreachable participant survived a presence fan-out"
+    );
+    assert_eq!(relay.participants_mut().len(), 1, "only the author is left");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_eviction_that_cannot_be_announced_finds_the_next_dead_socket_behind_it() {
+    // The cascade, and the reason the eviction is a QUEUE rather than one pass over the list
+    // `fan_out` returned: announcing a departure is itself a fan-out, so a write that fails
+    // while announcing identifies ANOTHER unreachable participant. Swallowing that is how one
+    // dead socket hides the next one behind it, which is exactly the shape `disconnected`
+    // returning its failures to a caller that only printed them used to have.
+    //
+    // The condition is created precisely rather than approximated: `second` accepts the chunk
+    // and refuses the departure announcement that follows it, so it is NOT in the list the
+    // fan-out returned and can only be found on the queue's second pass.
+    let (path, mut relay, clients) = with_participants("cascade", 4);
+    let author = clients[0];
+    let witness = clients[1];
+    let first = clients[2];
+    let second = clients[3];
+
+    // Both must be in the ROSTER, or no departure is announced for them and the cascade is
+    // unreachable. Presence is how a participant enters it, and the relay attaches the identity.
+    for client in [first, second] {
+        let handled = relay
+            .handle(
+                Some(client),
+                &mut None,
+                &ClientMessage::Presence(PresenceUpdate {
+                    clock: PresenceClock::new(1),
+                    payload: b"here".to_vec(),
+                }),
+            )
+            .expect("handled");
+        assert!(
+            handled.evicted.is_empty(),
+            "nobody may be evicted while setting this up, or the fixture is the finding"
+        );
+    }
+    assert_eq!(
+        relay.roster().len(),
+        2,
+        "both participants must be in the roster, or no `Departed` frame is sent and the \
+         cascade cannot happen"
+    );
+
+    socket_accepting(&mut relay, first, 0);
+    socket_accepting(&mut relay, second, 1);
+
+    let handled = relay
+        .handle(
+            Some(author),
+            &mut None,
+            &ClientMessage::Submit(chunk(author, 1, Base::Revision(Revision::new(0)))),
+        )
+        .expect("handled");
+    let mut evicted = handled.evicted;
+    evicted.sort_unstable();
+    let mut expected = vec![first, second];
+    expected.sort_unstable();
+    assert_eq!(
+        evicted, expected,
+        "a dead socket found while announcing another one's departure was swallowed: the \
+         fan-out returned only {first:?}, and {second:?} could only be found by putting the \
+         failed announcement back on the queue"
+    );
+    assert_eq!(
+        relay.participants_mut().len(),
+        2,
+        "the author and the witness must be all that is left"
+    );
+    assert!(
+        !received(&mut relay, witness).is_empty(),
+        "the witness must still be in the room and still receiving, or this guard passed by \
+         emptying it"
     );
     let _ = std::fs::remove_file(&path);
 }

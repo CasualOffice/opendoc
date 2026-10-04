@@ -23,7 +23,7 @@ use std::io::Write;
 use casual_doc_edit::access::refuse_if_not_permitted;
 
 use casual_doc_transaction::codec::encode_frame;
-use casual_doc_transaction::presence::{Accepted, Roster};
+use casual_doc_transaction::presence::{Accepted, MAX_PARTICIPANTS, Roster};
 use casual_doc_transaction::protocol::{
     Arrival, ClientId, ClientMessage, Outcome, Refusal, ServerMessage,
 };
@@ -41,13 +41,18 @@ pub struct Handled {
     /// never retried, so there is nothing truthful to say about one. A lost update is corrected
     /// by the next.
     pub answer: Option<ServerMessage>,
-    /// Participants whose fan-out write failed while handling an **ordered** chunk.
+    /// Participants this message's fan-out could not reach, and which the relay has therefore
+    /// **removed from the room** — `152` §2c.
     ///
-    /// They are behind the order and `152` §5.5's resume is how they catch up — which only
-    /// happens if the caller does something with this. Presence failures are deliberately *not*
-    /// reported: presence is not ordered, so a participant that missed one is not behind
-    /// anything.
-    pub behind: Vec<ClientId>,
+    /// This used to be "participants whose write failed", reported and left connected, which is
+    /// not a back-pressure policy: a dead socket stayed in the set and every later chunk was
+    /// written to it and reported as failed again, which is the exact harm
+    /// [`Relay::disconnected`]'s own doc comment names. They are now evicted, which is a
+    /// decision and is written down where decisions go.
+    ///
+    /// A caller still wants the list — the eviction is the *policy*, the log line is the
+    /// *evidence* — but it no longer has to do anything for the room to stay correct.
+    pub evicted: Vec<ClientId>,
     /// Set when this message was the `Join` that assigned an identity.
     pub joined_as: Option<ClientId>,
     /// Whether the sender asked to leave.
@@ -142,6 +147,35 @@ impl<W: Write> Relay<W> {
                         });
                     }
                 };
+                // The room's occupancy ceiling, consulted **after** the grant and **before**
+                // the order hears about this connection — `152` §2c.
+                //
+                // After the grant, because a caller with no grant must not be able to use the
+                // refusal to measure how full a room it was never admitted to is; that is the
+                // same rule `GrantRefusal` already follows when it reports every failure as one
+                // undetailed `NotAuthorised` on the wire.
+                //
+                // Before `Room::join`, because that call **journals** the admission (ADR-058),
+                // and a durable `Record::Admitted` for a participant who was then refused is a
+                // lie in the log. The cost of checking first is that the relay cannot yet know
+                // whether this join would GROW the set — a resume carries a `ResumeKey` and the
+                // session resolves it to a participant number afterwards — so the test is
+                // pessimistic: at the ceiling, a reconnect whose predecessor has not yet been
+                // reaped is refused too. That is narrow, loud and self-healing (every exit path
+                // runs `disconnected`, and the client's next connection is admitted), and the
+                // alternative is worse in both available directions: journalling an admission
+                // and then refusing it, or exempting a join that merely *claims* `resume`,
+                // which is a ceiling any client bypasses by setting one field.
+                if self.participants.len() >= MAX_PARTICIPANTS {
+                    return Ok(Handled {
+                        answer: Some(ServerMessage::Stopped {
+                            reason: Refusal::RoomFull {
+                                limit: MAX_PARTICIPANTS,
+                            },
+                        }),
+                        ..Handled::default()
+                    });
+                }
                 // `Room::join` journals the admission before it answers, exactly as
                 // `Room::commit` does for a chunk, so a participant number cannot outlive the
                 // record of it (ADR-058). The `?` is the whole of "a caller that cannot journal
@@ -231,13 +265,14 @@ impl<W: Write> Relay<W> {
                             client: submission.client,
                             operations: submission.operations.clone(),
                         }));
-                        let behind = self.participants.fan_out(submission.client, &bytes);
+                        let unreachable = self.participants.fan_out(submission.client, &bytes);
+                        let evicted = self.evict_unreachable(unreachable);
                         Ok(Handled {
                             answer: Some(ServerMessage::Ack {
                                 through: submission.seq,
                                 revision,
                             }),
-                            behind,
+                            evicted,
                             ..Handled::default()
                         })
                     }
@@ -275,7 +310,19 @@ impl<W: Write> Relay<W> {
                         client,
                         update: update.clone(),
                     });
-                    let _ = self.participants.fan_out(client, &bytes);
+                    // Evicted here too, and that is one mechanism rather than two. The policy is
+                    // about **reachability**, not about ordering: a participant whose socket
+                    // refused a presence frame is not merely behind an order it was never part
+                    // of, it is gone, and leaving it in the set is what made a dead writer
+                    // outlive its connection. What is still true is the old comment's point —
+                    // it is not *behind* anything, so nothing needs catching up; it simply is
+                    // not here.
+                    let unreachable = self.participants.fan_out(client, &bytes);
+                    let evicted = self.evict_unreachable(unreachable);
+                    return Ok(Handled {
+                        evicted,
+                        ..Handled::default()
+                    });
                 }
                 Ok(Handled::default())
             }
@@ -284,6 +331,69 @@ impl<W: Write> Relay<W> {
                 ..Handled::default()
             }),
         }
+    }
+
+    /// Removes every participant the fan-out could not reach, and tells the rest they are gone.
+    ///
+    /// # The policy, named before any code — `152` §2c
+    ///
+    /// This is **back-pressure**, and the textbook has four answers. Three are wrong here:
+    ///
+    /// 1. **Block** until the slow reader drains. The relay holds one lock across decide,
+    ///    journal, answer and fan out, so one unresponsive socket freezes the room for
+    ///    everybody — including the author still waiting for its acknowledgement. Head-of-line
+    ///    blocking, and [`crate::fanout`] already names it as what a slow participant costs.
+    /// 2. **Buffer per participant, unbounded.** Memory exhaustion from the network: a reader
+    ///    that never drains is an out-of-memory condition with extra steps.
+    /// 3. **Drop the frame and carry on.** Fatal, because the log is *ordered*: a dropped
+    ///    `Apply` makes that replica silently divergent, with nothing able to say so. This is
+    ///    ONLYOFFICE's answer, and it is the one option a correctness-first relay cannot take.
+    /// 4. **Evict the participant and let it resume.** `152` §5.5's resume exists precisely to
+    ///    catch a participant up from the position it reached; it keeps its [`ClientId`], so
+    ///    `(client, seq)` still suppresses duplicates, and if the gap has fallen outside the
+    ///    retained window `Room::history_since` already answers with the **announced**
+    ///    bounded-offline refusal rather than a silent hole.
+    ///
+    /// **(4) is the decision.** It is the only one of the four that preserves the ordered log,
+    /// and the mechanism it needs is already built.
+    ///
+    /// # Why the threshold is one failed write and not a tuned count
+    ///
+    /// Because under this transport a *slow* reader does not fail. The socket buffer absorbs it
+    /// and then the blocking `write_all` absorbs it; an `Err` means the connection is broken or
+    /// its buffer is gone. So "persistently behind" has no second meaning to count up to here,
+    /// and a retry counter would be a knob pretending to be a policy. If the transport ever
+    /// becomes non-blocking, *that* is when a watermark becomes a real design — and the
+    /// decision to make then is how much to buffer, not whether to evict.
+    ///
+    /// # Why at the relay rather than in the binary
+    ///
+    /// The same reason the rest of this module is here: in `main.rs` behind a `TcpStream` the
+    /// policy cannot be tested at all, and what the binary did instead was print a line. A log
+    /// line is evidence, not a policy.
+    ///
+    /// Returns who was removed, in no particular order.
+    fn evict_unreachable(&mut self, unreachable: Vec<ClientId>) -> Vec<ClientId> {
+        let mut evicted = Vec::new();
+        let mut pending = unreachable;
+        while let Some(client) = pending.pop() {
+            // Already gone — nothing to remove and no departure owed. This is also what makes
+            // the loop terminate: every pass either removes one member of a finite set or
+            // skips, and a client cannot be removed twice.
+            if !self.participants.left(client) {
+                continue;
+            }
+            evicted.push(client);
+            if self.roster.forget(client) {
+                let bytes = encode_frame(&ServerMessage::Departed { client });
+                // An announcement that itself fails identifies ANOTHER unreachable participant,
+                // which is the same policy's business — so it goes back on the queue rather
+                // than being swallowed. Swallowing it is how one dead socket used to hide the
+                // next one behind it.
+                pending.extend(self.participants.fan_out(client, &bytes));
+            }
+        }
+        evicted
     }
 
     /// Forgets a connection, however it ended, and tells the others its presence is gone.

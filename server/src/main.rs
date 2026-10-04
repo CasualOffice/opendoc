@@ -166,11 +166,13 @@ fn participant(
         if let Some(client) = handled.joined_as {
             me = Some(client);
         }
-        for client in handled.behind {
-            // Reported, not swallowed: each of these is behind the order, and `152` §5.5's resume
-            // is how it catches up — which only happens if somebody noticed.
+        for client in handled.evicted {
+            // The relay has already removed each of these from the room — `152` §2c's
+            // back-pressure policy, taken where a test can reach it rather than here. This line
+            // is the evidence an operator needs, and it is no longer also the policy.
             eprintln!(
-                "participant {} missed a chunk; it must resume",
+                "participant {} could not be written to and was removed from the room; it \
+                 resumes to catch up",
                 client.get()
             );
         }
