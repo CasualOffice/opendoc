@@ -53,10 +53,36 @@ run_wasm_pack() {
     -- --features web-host-fonts
 }
 
+run_wasm_pack_slides() {
+  # The PRESENTATION facade, built into the same `pkg` directory under its own
+  # `--out-name` so the two bundles sit side by side and neither overwrites the
+  # other's glue.
+  #
+  # Two bundles and not one, deliberately. A visitor who opens a document should
+  # not download the deck engine, and a visitor who opens a deck should not
+  # download the editor's 16k-line surface — so `editor.html` preloads
+  # `casual_doc_wasm` and `slides.html` preloads `casual_pres_wasm`, and the
+  # pages share only the chrome vocabulary. Merging them would make every first
+  # paint on either page pay for both.
+  #
+  # Same `web-host-fonts` reasoning as above: the browser fetches the Roboto
+  # variable faces from the pinned CDN and registers them before the first paint,
+  # so the embedded copy is ~2 MB every visitor downloads and the engine then
+  # replaces.
+  wasm-pack build "$repo/crates/casual-pres-wasm" \
+    --target web \
+    --out-dir "$here/pkg" \
+    --out-name casual_pres_wasm \
+    -- --features web-host-fonts
+}
+
 build_with_retry() {
   local attempts=3 i delay
   for ((i = 1; i <= attempts; i++)); do
-    if run_wasm_pack; then
+    # Both facades, and the document one first: it is the larger build and the
+    # one whose failure a developer is most likely to be iterating on, so its
+    # error appears without waiting for the second.
+    if run_wasm_pack && run_wasm_pack_slides; then
       return 0
     fi
     if (( i < attempts )); then

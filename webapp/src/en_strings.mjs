@@ -1260,8 +1260,13 @@ export const EN_STRINGS = Object.freeze({
   // presentation and deliberately CANNOT edit one: `casual-pres-wasm` exposes no
   // operation set, because a presentation editing surface has to route through
   // `casual-doc-transaction` and bypassing it is the defect `105` CQ-002 records.
-  // So nothing here says "edit", and the empty state says what the page is for
-  // rather than promising a feature that is a design decision away.
+  // So nothing here or in `slides.html` says "edit".
+  //
+  // Only the SCRIPT-side strings are here. The page's own labels — the open and
+  // save buttons, the sorter and canvas headings, the empty state and the report's
+  // disclosure — are declared by `slides.html`'s `data-i18n` attributes, where
+  // their English sits beside them and a reviewer reads it in place. The
+  // extractor refuses a key with two homes, which is how that stays true.
   "slides.untitled": "Slide {number}",
   // The count is the sentence a reader checks the deck opened by, so it names
   // the unit rather than standing alone as a number beside an icon.
@@ -1281,20 +1286,13 @@ export const EN_STRINGS = Object.freeze({
   // lives in `i18n.mjs`.
   "slides.fidelityLossy.one": "Opened with {count} construct this build does not cover",
   "slides.fidelityLossy.other": "Opened with {count} constructs this build does not cover",
-  "slides.fidelityToggle": "Show what was not recovered",
   // A refusal, not a crash. The engine refuses a package it cannot read
   // correctly rather than opening it wrong, and the message carries the engine's
   // own reason instead of replacing it with a generic apology.
   "slides.openFailed": "That file could not be opened as a presentation: {reason}",
-  "slides.empty": "Open a .pptx to see it rendered by this engine",
-  "slides.chooseFile": "Open a presentation",
-  "slides.save": "Save a copy",
   // Save carries every part the engine does not model through byte-for-byte, so
   // the label promises a copy rather than an edit — and the help text says what
   // survives, because that is the claim worth making and the one a converter
   // cannot.
-  "slides.saveHelp": "Writes the deck back out, carrying the parts this build does not model through unchanged",
-  "slides.sorter": "Slides in this deck",
-  "slides.canvas": "The current slide",
 
 });

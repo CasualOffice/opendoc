@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The same viewport contract `editor.html` documents: `viewport-fit=cover`
+         so the chrome can paint under a notch while every fixed region pays its
+         own `env(safe-area-inset-*)`, and deliberately NOT `user-scalable=no`,
+         which suppressing pinch-zoom makes an accessibility failure for anyone
+         who needs to magnify (`105` UX-018). A deck viewer needs magnification
+         more than an editor does, not less. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title data-i18n="slides.pageTitle">OpenDoc Slides — local presentation rendering in WebAssembly</title>
+    <meta
+      name="description"
+      content="Open a PowerPoint presentation locally in your browser and see it rendered by the OpenDoc Rust and WebAssembly engine, with a report of anything the engine did not recover."
+    />
+    <!-- @generated brand-icons -->
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- @end brand-icons -->
+    <link rel="canonical" href="https://opendoc.casualoffice.org/slides.html" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+    <link rel="stylesheet" href="./src/style.css" />
+    <!-- After style.css so a white-labelled host's tokens win by ordinary
+         cascade order, with no `!important` and no script. -->
+    <link rel="stylesheet" href="./src/brand.css" />
+    <!-- Start the engine download at parse time rather than after the module
+         graph has been fetched, parsed and evaluated: without these the two
+         large transfers run back to back instead of together. `as="fetch"` with
+         crossorigin matches how wasm-bindgen's glue requests it, so the preload
+         is reused rather than fetched twice.
+
+         This page preloads the PRESENTATION facade, not the document one. They
+         are separate bundles on purpose — a visitor who never opens a deck
+         should not download the deck engine, and vice versa. -->
+    <link rel="modulepreload" href="./src/slides_page.mjs" />
+    <link rel="modulepreload" href="./pkg/casual_pres_wasm.js" />
+    <link rel="preload" as="fetch" type="application/wasm" crossorigin href="./pkg/casual_pres_wasm_bg.wasm" />
+  </head>
+  <body>
+    <a data-i18n="slides.skipToSlide" class="skip-link" href="#slideCanvas">Skip to the slide</a>
+    <header class="bar">
+      <div class="brand">
+        <!-- @generated brand-mark -->
+      <span class="brand-logo" aria-hidden="true"></span>
+        <!-- @end brand-mark -->
+      </div>
+      <div class="slides-chrome">
+        <!-- A label element rather than a styled button wrapping the input: the
+             input stays the real control, so it keeps its own keyboard
+             behaviour and its own accessible name instead of needing both
+             rebuilt in script. -->
+        <label class="slides-open" for="slidesFile" data-i18n="slides.chooseFile">Open a presentation</label>
+        <input id="slidesFile" class="slides-file" type="file" accept=".pptx,.potx,.ppsx" />
+        <!-- Disabled until a deck is open: a save button that throws because
+             there is nothing to save is worse than one that is visibly not
+             available yet. -->
+        <button id="slidesSave" type="button" data-i18n="slides.save" data-i18n-title="slides.saveHelp" title="Writes the deck back out, carrying the parts this build does not model through unchanged" disabled>Save a copy</button>
+        <!-- `aria-live="polite"` because the position changes under the
+             reader's own keystroke: a screen reader should hear the new slide
+             without the focus moving, and `assertive` would interrupt them
+             mid-word on every arrow key. -->
+        <output id="slidesPosition" class="slides-position" aria-live="polite"></output>
+      </div>
+    </header>
+
+    <main class="slides-main">
+      <!-- The sorter is a LIST, not a set of buttons in a div: a screen reader
+           needs the count and the position, and `role="list"` with one item per
+           slide is what carries both without any script announcing them. -->
+      <nav class="slides-sorter" aria-labelledby="slidesSorterHeading">
+        <h2 id="slidesSorterHeading" class="visually-hidden" data-i18n="slides.sorter">Slides in this deck</h2>
+        <ol id="slidesSorter" class="slides-strip"></ol>
+      </nav>
+
+      <section class="slides-stage" aria-labelledby="slidesCanvasHeading">
+        <h2 id="slidesCanvasHeading" class="visually-hidden" data-i18n="slides.canvas">The current slide</h2>
+        <!-- `tabindex="0"` so the stage itself takes the arrow keys: paging a
+             deck is the primary interaction and it must not require tabbing
+             into a thumbnail first. The canvas carries no text for assistive
+             technology — a rendered slide is pixels — so the sorter's list is
+             the navigable structure and this is the view. That gap is real and
+             named rather than papered over: slide text does not yet reach an
+             accessibility mirror the way the document editor's does. -->
+        <div id="slideStage" class="slide-stage" tabindex="0">
+          <canvas id="slideCanvas" class="slide-canvas"></canvas>
+          <p id="slidesEmpty" class="slides-empty" data-i18n="slides.empty">Open a .pptx to see it rendered by this engine</p>
+        </div>
+
+        <!-- The fidelity report. Open by default when there is something to
+             report and absent when there is not: a disclosure a reader has to
+             find is a disclosure most readers never see, and this is the one
+             claim this engine can make that a converter cannot. -->
+        <section id="slidesFidelity" class="slides-fidelity" hidden>
+          <p id="slidesFidelitySummary" class="slides-fidelity-summary"></p>
+          <details id="slidesFidelityDetails">
+            <summary data-i18n="slides.fidelityToggle">Show what was not recovered</summary>
+            <ul id="slidesFidelityList" class="slides-fidelity-list"></ul>
+          </details>
+        </section>
+
+        <!-- A refusal, shown. The engine refuses a package it cannot read
+             correctly rather than opening it wrong, and a viewer that swallowed
+             that would turn a loud refusal into a blank page. `role="alert"`
+             because it is the answer to an action the reader just took. -->
+        <p id="slidesError" class="slides-error" role="alert" hidden></p>
+      </section>
+    </main>
+
+    <script type="module" src="./src/slides_page.mjs"></script>
+  </body>
+</html>

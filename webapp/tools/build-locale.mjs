@@ -158,6 +158,11 @@ export function keysFromSite(root = WEBAPP) {
 export async function buildCatalogue() {
   const markup = new Map([
     ...keysFromMarkup(readFileSync(join(WEBAPP, "editor.html"), "utf8")),
+    // `slides.html` is the deck viewer (docs/156 Tier 3). Listed explicitly
+    // rather than globbed, like `editor.html` beside it: a glob over `*.html`
+    // would also read the GENERATED site pages, and those inline their partials,
+    // so one edit to a partial would look like six separate keys.
+    ...keysFromMarkup(readFileSync(join(WEBAPP, "slides.html"), "utf8")),
     ...keysFromSite(),
   ]);
   const script = await scriptStrings();
