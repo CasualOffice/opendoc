@@ -182,9 +182,51 @@ fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author:
     }
 }
 
+/// Whether content that declares itself wider than the measure may be laid out
+/// outside it — the one question paper and a reflowed column answer differently,
+/// and the whole of `docs/163` R-1.
+///
+/// On paper the measure is the *text column* and there is paper beyond it: a
+/// table with an explicit `w:tblW` in `dxa`, or an inline image with a declared
+/// extent, that is wider than the column bleeds into the margin and is still
+/// rasterised, because the page raster is the whole sheet. Word and ONLYOFFICE
+/// both bleed, so [`Bleed`](Self::Bleed) is what fidelity requires there.
+///
+/// In a reflowed column the measure is the *surface*: a tile's raster is exactly
+/// `content_width + 2 x gutter` (`document_layout`'s `reflow_page_config`), there
+/// is no margin past it, and the host guarantees no horizontal scroll — so
+/// anything laid out past the measure is not clipped-but-reachable, it is **not
+/// drawn at all**. [`Fit`](Self::Fit) is therefore not a preference there, it is
+/// the difference between showing the author's content and losing it
+/// (`AGENTS.md`: *no silent data loss*).
+///
+/// This is `max-width: 100%` — the rule every browser already applies to tables
+/// and replaced elements — scoped to the surface that needs it, and it is the
+/// cheapest of the three answers the field offers (Google Docs give the table its
+/// own scroller; ONLYOFFICE scale the whole table down; Word refits with columns
+/// and larger type). It loses nothing and needs no new paint primitive.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MeasureFit {
+    /// Declared widths stand, and content wider than the measure is laid out
+    /// past it. The paper default, and byte-for-byte the behaviour that preceded
+    /// this type.
+    #[default]
+    Bleed,
+    /// Declared widths are clamped to the measure: a table's target width, and an
+    /// inline drawing's painted extent (aspect ratio preserved), resolve against
+    /// the width the content is being flowed at.
+    Fit,
+}
+
 struct FlowCtx<'a> {
     /// The review presentation policy for this galley (docs/93).
     review_view: ReviewView,
+    /// Whether content wider than the measure may be laid out outside it. The
+    /// fourth per-viewer view parameter, and the one that is derived from
+    /// [`LayoutView`](crate::document_layout::LayoutView) rather than chosen: a
+    /// reflowed surface has nothing past the measure, so it is
+    /// [`MeasureFit::Fit`], and paper is [`MeasureFit::Bleed`].
+    fit: MeasureFit,
     /// The headings this viewer has collapsed (ADR-049). The third per-viewer
     /// view parameter, beside [`ReviewView`] and
     /// [`LayoutView`](crate::document_layout::LayoutView), and empty for every
@@ -440,6 +482,7 @@ pub fn build_galley_with_report_view(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit: MeasureFit::Bleed,
         review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
@@ -496,6 +539,7 @@ pub fn build_galley_for_blocks(
         NoteFlow::default(),
         single_section_line_grid(document),
         &FoldSet::EMPTY,
+        MeasureFit::Bleed,
     )
 }
 
@@ -535,6 +579,7 @@ pub(crate) fn build_galley_for_note_blocks(
     content_width: Twip,
     label: &str,
     labels: Option<&NoteLabels>,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     build_galley_for_blocks_inner(
         document,
@@ -551,6 +596,10 @@ pub(crate) fn build_galley_for_note_blocks(
         // A note's own body is not part of the outline, so nothing in it can be
         // folded: there is no heading tree to fold against.
         &FoldSet::EMPTY,
+        // A note body is body content and flows through the same pipeline, so it
+        // gets the same answer about the measure. A table too wide for a reflowed
+        // footnote band would otherwise be lost exactly as one in the body was.
+        fit,
     )
 }
 
@@ -565,6 +614,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
     flow_body_into(
@@ -577,6 +627,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         notes,
         line_grid,
         folds,
+        fit,
         MeasureResume::default(),
         &mut galley,
         BlockMarks::Skip,
@@ -638,6 +689,7 @@ pub(crate) fn flow_body_range(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
     resume: MeasureResume,
 ) -> (Vec<BlockFragment>, u32) {
     let from_block = from_block.min(blocks.len());
@@ -666,6 +718,7 @@ pub(crate) fn flow_body_range(
         notes,
         line_grid,
         folds,
+        fit,
         resume,
         &mut sink,
         BlockMarks::Skip,
@@ -696,6 +749,7 @@ pub fn flow_body_into_sink<S: GalleySink + ?Sized>(
         NoteFlow::default(),
         single_section_line_grid(document),
         &FoldSet::EMPTY,
+        MeasureFit::Bleed,
         MeasureResume::default(),
         sink,
         BlockMarks::Record,
@@ -728,6 +782,7 @@ pub(crate) fn build_measures_for_blocks_inner(
         notes,
         line_grid,
         folds,
+        MeasureFit::Bleed,
         MeasureResume::default(),
     );
     (measures, block_starts)
@@ -783,6 +838,7 @@ pub(crate) fn build_measures_for_blocks_resumed(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
     resume: MeasureResume,
 ) -> (Vec<FragmentMeasure>, Vec<u32>, MeasureResume) {
     let mut sink = MeasureSink::new();
@@ -796,6 +852,7 @@ pub(crate) fn build_measures_for_blocks_resumed(
         notes,
         line_grid,
         folds,
+        fit,
         resume,
         &mut sink,
         BlockMarks::Record,
@@ -821,6 +878,7 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
     resume: MeasureResume,
     sink: &mut S,
     marks: BlockMarks,
@@ -834,6 +892,7 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit,
         review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
@@ -948,6 +1007,7 @@ fn flow_running_blocks(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit: MeasureFit::Bleed,
         review_view: ReviewView::Editing,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
@@ -1010,6 +1070,7 @@ pub fn build_galley_cached(
         NoteFlow::default(),
         ReviewView::Editing,
         &FoldSet::EMPTY,
+        MeasureFit::Bleed,
     )
 }
 
@@ -1035,6 +1096,7 @@ pub(crate) fn build_galley_cached_labeled(
     notes: NoteFlow<'_>,
     review_view: ReviewView,
     folds: &FoldSet,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     // A drop-cap paragraph and its following body paragraph are one coupled flow
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
@@ -1055,6 +1117,7 @@ pub(crate) fn build_galley_cached_labeled(
             notes,
             single_section_line_grid(document),
             folds,
+            fit,
         );
     }
     // The cache path resolves fonts exactly like the fresh path so a reused
@@ -1074,6 +1137,7 @@ pub(crate) fn build_galley_cached_labeled(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit,
         review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
@@ -3065,7 +3129,7 @@ fn solve_table_columns(
         Some(TableLayout::Fixed) => TableLayout::Fixed,
         _ => TableLayout::Autofit,
     };
-    solve_column_widths(&cols, spec, available, layout)
+    solve_column_widths(&cols, spec, available, layout, ctx.fit)
         .into_iter()
         .map(Twip)
         .collect()
@@ -3080,6 +3144,7 @@ fn solve_column_widths(
     spec: WidthSpec,
     available: i32,
     layout: TableLayout,
+    fit: MeasureFit,
 ) -> Vec<i32> {
     let n = cols.len();
     if n == 0 {
@@ -3100,6 +3165,20 @@ fn solve_column_widths(
             // width nor narrower than the content minimum.
             TableLayout::Autofit => pref_sum.clamp(min_sum, available.max(min_sum)),
         },
+    };
+    // `docs/163` R-1. Two of the three arms above can land past `available`: a
+    // `dxa` preferred width is the author's number and consults nothing, and a
+    // fixed layout with a declared grid takes `grid_sum`. On paper that is
+    // correct — the table bleeds into the margin and the page raster still holds
+    // it — and under [`MeasureFit::Fit`] it is silent data loss, because the
+    // surface ends at the measure. `distribute_width` below only ever shrinks
+    // when `sum > target`, so clamping the TARGET is the whole of the fix: the
+    // deficit comes out of each column's slack above its content minimum first,
+    // which is Word's AutoFit-to-window and keeps the type at full size (rather
+    // than ONLYOFFICE's `GetScaleBySection`, which shrinks the glyphs too).
+    let target = match fit {
+        MeasureFit::Bleed => target,
+        MeasureFit::Fit => target.min(available),
     };
 
     let base: Vec<i32> = match layout {
@@ -3206,6 +3285,7 @@ fn block_intrinsic(
 ) -> (i32, i32) {
     let mut scratch = FontResolutionReport::new();
     let mut mctx = FlowCtx {
+        fit: MeasureFit::Bleed,
         review_view: ReviewView::Editing,
         resolver: ctx.resolver,
         scheme: ctx.scheme,
@@ -3872,7 +3952,14 @@ fn collect_items_with_measure<'a>(
             InlineNode::Symbol(symbol) => out.push(FlowItem::Run(symbol_glyph_run(symbol, ctx))),
             InlineNode::Break(node) => out.push(FlowItem::Break(node.kind)),
             InlineNode::Drawing(drawing) => {
-                if let Some(item) = image_item(drawing, ctx) {
+                // The intrinsic passes measure what the drawing WANTS, so they
+                // are handed no measure at all; the real pass clamps it to the
+                // width it got, and only on a surface with nothing past it.
+                let measure = match (intrinsic, ctx.fit) {
+                    (None, MeasureFit::Fit) => Some(width),
+                    _ => None,
+                };
+                if let Some(item) = image_item(drawing, measure, ctx) {
                     out.push(item);
                 }
             }
@@ -4921,9 +5008,24 @@ fn field_style(inlines: &[InlineNode], value: &str, ctx: &mut FlowCtx) -> FieldS
 /// drawing declares no extent (so it cannot be sized here) or its media id is
 /// absent from the table. Anchored/floating placement is a later slice
 /// (`P1F-28`); this is the inline case.
-fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
+///
+/// `measure` is the width the drawing is being flowed at — the body column, or a
+/// cell's or a text box's inner width — and is consulted only under
+/// [`MeasureFit::Fit`], where a declared extent wider than it would be laid out
+/// past the raster and lost (`docs/163` R-1). This is what `hr_item` next door
+/// already does with its `width`, and what Google document for pageless:
+/// *"images will adjust to your screen size"*. `None` for the intrinsic-width
+/// passes, which must see the drawing's natural extent — that IS the preferred
+/// width the column solver is asking them for.
+///
+/// Complexity: `O(1)`; the clamp is one integer multiply-divide.
+fn image_item(
+    drawing: &Drawing,
+    measure: Option<Twip>,
+    ctx: &FlowCtx,
+) -> Option<FlowItem<'static>> {
     let part = ctx.media.get(&drawing.media)?.part_name.clone();
-    let size = extent_to_size(drawing.extent.as_ref()?);
+    let size = fit_box_to_measure(extent_to_size(drawing.extent.as_ref()?), measure);
     (size.width.raw() > 0 && size.height.raw() > 0).then_some(FlowItem::Image {
         media: part,
         size,
@@ -4960,6 +5062,28 @@ fn hr_item(rule: &ModelHorizontalRule, width: Twip) -> FlowItem<'static> {
         size: Size::new(rule_width, thickness),
         color: [rule.color.r, rule.color.g, rule.color.b, rule.color.a],
     })
+}
+
+/// Scales `size` down so it is no wider than `measure`, **preserving the aspect
+/// ratio**. Returns it unchanged when it already fits, when `measure` is `None`
+/// (no clamp asked for), or when either dimension is degenerate.
+///
+/// Scaling rather than cropping is the point: a 7in image in a 3.25in reading
+/// column becomes a 3.25in image of the whole picture, not a 3.25in slice of it.
+/// The height is derived from the clamped width by the integer ratio, so the
+/// shape survives to within one twip (1/1440in).
+///
+/// Complexity: `O(1)`.
+fn fit_box_to_measure(size: Size, measure: Option<Twip>) -> Size {
+    let Some(measure) = measure else {
+        return size;
+    };
+    let (w, h, m) = (size.width.raw(), size.height.raw(), measure.raw());
+    if m <= 0 || w <= m || w <= 0 || h <= 0 {
+        return size;
+    }
+    let scaled_h = ((i64::from(h) * i64::from(m)) / i64::from(w)).max(1) as i32;
+    Size::new(Twip(m), Twip(scaled_h))
 }
 
 /// Converts a drawing's EMU extent to a twip box size.
@@ -8285,6 +8409,7 @@ mod tests {
                 NoteFlow::default(),
                 None,
                 &FoldSet::EMPTY,
+                MeasureFit::Bleed,
                 MeasureResume::default(),
             );
             assert_eq!(
@@ -8347,6 +8472,7 @@ mod tests {
                 NoteFlow::default(),
                 None,
                 &FoldSet::EMPTY,
+                MeasureFit::Bleed,
                 MeasureResume::default(),
             );
             assert_eq!(base as usize, from);
@@ -8445,6 +8571,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let mut report = FontResolutionReport::new();
         let mut ctx = FlowCtx {
+            fit: MeasureFit::Bleed,
             review_view,
             resolver: &resolver,
             scheme: definitions.font_scheme.as_ref(),
@@ -8507,6 +8634,7 @@ mod tests {
         let resolver = FontResolver::new();
         let mut report = FontResolutionReport::new();
         let mut ctx = FlowCtx {
+            fit: MeasureFit::Bleed,
             review_view: ReviewView::Editing,
             resolver: &resolver,
             scheme: definitions.font_scheme.as_ref(),
@@ -12015,7 +12143,13 @@ mod tests {
                 preferred: 2000,
             },
         ];
-        let w = solve_column_widths(&cols, WidthSpec::Dxa(8000), 10_000, TableLayout::Autofit);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Dxa(8000),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(
             w.iter().sum::<i32>(),
             8000,
@@ -12039,10 +12173,22 @@ mod tests {
             },
         ];
         // 100% (5000 fiftieths) of a 10_000-twip content width.
-        let w = solve_column_widths(&cols, WidthSpec::Pct(5000), 10_000, TableLayout::Autofit);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Pct(5000),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(w.iter().sum::<i32>(), 10_000, "the table fills the width");
         // 50% resolves to half.
-        let half = solve_column_widths(&cols, WidthSpec::Pct(2500), 10_000, TableLayout::Autofit);
+        let half = solve_column_widths(
+            &cols,
+            WidthSpec::Pct(2500),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(half.iter().sum::<i32>(), 5000);
     }
 
@@ -12062,12 +12208,99 @@ mod tests {
                 preferred: 3000,
             },
         ];
-        let w = solve_column_widths(&cols, WidthSpec::Dxa(4000), 10_000, TableLayout::Autofit);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Dxa(4000),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(w.iter().sum::<i32>(), 4000);
         assert!(
             w[0] >= 2500,
             "the narrow-min column keeps its minimum: {w:?}"
         );
+    }
+
+    /// An over-wide table is **fitted to the measure** under
+    /// [`MeasureFit::Fit`] and **keeps the author's width** under
+    /// [`MeasureFit::Bleed`] — and the fit comes out of each column's slack, not
+    /// out of its content.
+    ///
+    /// Both over-wide arms are covered, because either one alone produces the
+    /// loss: an explicit `dxa` preferred width (which consults nothing) and a
+    /// declared grid under a fixed layout (which is taken verbatim).
+    ///
+    /// MUTATION PROOF, both halves:
+    ///
+    /// - deleting the clamp (`MeasureFit::Fit => target`) fails with
+    ///   `a reflowed table must fit the 5400-twip measure, not [3240, 3240, 3240,
+    ///   3240]`;
+    /// - fitting by truncation instead — walking the base widths and giving each
+    ///   overflowing column `max(1)` of what is left — fails with
+    ///   `a reflowed table must fit the 5400-twip measure, not [3240, 2160, 1, 1]
+    ///   (an explicit dxa width) / left: 5402 right: 5400`, and the minimum
+    ///   assertion below it is what names the crushed columns.
+    #[test]
+    fn solver_fits_an_over_wide_table_to_the_measure_without_crushing_a_column() {
+        const MEASURE: i32 = 5_400;
+        const MIN: i32 = 500;
+        let cols: Vec<ColumnConstraint> = (0..4)
+            .map(|_| ColumnConstraint {
+                grid: Some(3_240),
+                min: MIN,
+                preferred: 3_240,
+            })
+            .collect();
+
+        let bleed = solve_column_widths(
+            &cols,
+            WidthSpec::Dxa(12_960),
+            MEASURE,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
+        assert_eq!(
+            bleed.iter().sum::<i32>(),
+            12_960,
+            "on paper the author's `w:tblW` stands and the table bleeds into the margin: {bleed:?}"
+        );
+
+        for (name, widths) in [
+            (
+                "an explicit dxa width",
+                solve_column_widths(
+                    &cols,
+                    WidthSpec::Dxa(12_960),
+                    MEASURE,
+                    TableLayout::Autofit,
+                    MeasureFit::Fit,
+                ),
+            ),
+            (
+                "a declared grid under a fixed layout",
+                solve_column_widths(
+                    &cols,
+                    WidthSpec::Auto,
+                    MEASURE,
+                    TableLayout::Fixed,
+                    MeasureFit::Fit,
+                ),
+            ),
+        ] {
+            assert_eq!(
+                widths.iter().sum::<i32>(),
+                MEASURE,
+                "a reflowed table must fit the {MEASURE}-twip measure, not {widths:?} ({name})"
+            );
+            for (index, width) in widths.iter().enumerate() {
+                assert!(
+                    *width >= MIN,
+                    "column {index} was crushed to {width} twips, below its {MIN}-twip content \
+                     minimum: {widths:?} ({name})"
+                );
+            }
+        }
     }
 
     #[test]
@@ -12084,7 +12317,13 @@ mod tests {
                 preferred: 5000,
             },
         ];
-        let w = solve_column_widths(&cols, WidthSpec::Auto, 12_000, TableLayout::Fixed);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Auto,
+            12_000,
+            TableLayout::Fixed,
+            MeasureFit::Bleed,
+        );
         assert_eq!(w, vec![3000, 5000], "fixed layout keeps the declared grid");
     }
 
@@ -12745,6 +12984,7 @@ mod tests {
             let resolver = FontResolver::new();
             let mut report = FontResolutionReport::new();
             let ctx = FlowCtx {
+                fit: MeasureFit::Bleed,
                 review_view: ReviewView::Editing,
                 resolver: &resolver,
                 scheme: definitions.font_scheme.as_ref(),
