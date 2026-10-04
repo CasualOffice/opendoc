@@ -500,6 +500,37 @@ export const COMMAND_CONTRACT = Object.freeze([
   // the editor offers that this file does not name is invisible to a host, which
   // is the one audience it has.
   exact("view.reflow", null),
+  // Folding — the heading at the caret, Collapse/Expand All, and the nine level
+  // rungs (ADR-049, `109` FOLD-001). EXACT rows and not a family, by this file's
+  // own addressing rule: a family is for a roster generated from the document,
+  // while the rungs are the fixed set in `fold_view.mjs`'s `FOLD_LEVELS` —
+  // `all` plus levels one to nine, which is what `w:outlineLvl` can express.
+  //
+  // Each requires NOTHING, and that is a claim worth making explicitly rather
+  // than by omission: a fold is a VIEW, per-viewer and per-session. It issues no
+  // `Operation`, bumps no document revision, and is never written to the file —
+  // `w15:collapsed` is the document's own saved default, a separate tier. So a
+  // host that has granted no mutation capability at all may still offer it, and
+  // a host embedding a long report for READING is exactly who wants it. Same
+  // grade, for the same reason, as `view.reflow` and `view.formattingMarks.*`.
+  //
+  // What a host does NOT get from these is a guarantee that they will act: a
+  // windowed body refuses every one of them with a reason, which
+  // `foldState().withheldReason` carries and the rows carry as their
+  // `disabledReason` — a refusal, never a dead control.
+  exact("view.fold.toggle", null),
+  exact("view.fold.all", null),
+  exact("view.fold.none", null),
+  exact("view.fold.level.all", null),
+  exact("view.fold.level.l1", null),
+  exact("view.fold.level.l2", null),
+  exact("view.fold.level.l3", null),
+  exact("view.fold.level.l4", null),
+  exact("view.fold.level.l5", null),
+  exact("view.fold.level.l6", null),
+  exact("view.fold.level.l7", null),
+  exact("view.fold.level.l8", null),
+  exact("view.fold.level.l9", null),
   // The reading measure, four steps (`docs/154` §5.1, ADR-048). EXACT rows and
   // not a family, because this file's addressing rule is about enumerability:
   // `format.family.*` and `style.*` are generated from the document and cannot be

@@ -310,6 +310,27 @@ const PALETTE_ONLY = new Map([
   // user-facing surface.
   ["object.selectNext", "by design: the Tab key IS the affordance"],
   ["object.selectPrevious", "by design: Shift+Tab IS the affordance"],
+  // By design. The ten rungs of the fold-level picker (`show every level`, then
+  // levels one to nine — what `w:outlineLvl` can express) are palette-only, and
+  // the three commands a reader actually reaches for are NOT: `view.fold.toggle`,
+  // `view.fold.all` and `view.fold.none` sit in View ▸ Show beside
+  // `view.outline`, which are the three rows Word puts on a heading's context
+  // menu, and folding is additionally reachable from the outline tree's
+  // disclosures and the in-body chevron.
+  //
+  // The rungs stay here for two reasons that are placement decisions rather than
+  // unfinished work. Ten inline rows for ONE choice would be three times the
+  // longest band in that menu — the length complaint the `sub()` flyouts exist
+  // to answer — and a flyout needs a band NAME, which means a new key in
+  // nineteen catalogues for a control that is a numeric refinement of
+  // `view.fold.all`. Word agrees: its own outline-level selection lives in the
+  // Table-of-Contents dialog, not on a menu. If a Folding flyout is ever wanted,
+  // it is a band name and nineteen translations, not a redesign.
+  ...Array.from({ length: 10 }, (_, index) => [
+    `view.fold.level.${index === 0 ? "all" : `l${index}`}`,
+    "by design: the level picker is a numeric refinement of view.fold.all, which " +
+      "has a menu row; ten inline rows would be the longest band in View",
+  ]),
   // Word's Review band puts these on a SPLIT button: "Accept and Move to Next"
   // is the face, "Accept This Change" is the first dropdown row. We have the
   // face (`#reviewAcceptBtn` = review.acceptNext) and no dropdown, so the
