@@ -87,7 +87,7 @@ pub struct TextCascade<'a> {
     pub(crate) deck: Option<&'a ListStyle>,
 }
 
-impl TextCascade<'_> {
+impl<'a> TextCascade<'a> {
     /// A cascade that inherits nothing, for a shape whose deck states no tier.
     ///
     /// Not a hypothetical: a `.pptx` with no `p:txStyles` and no
@@ -102,6 +102,24 @@ impl TextCascade<'_> {
             master_tier: None,
             deck: None,
         }
+    }
+
+    /// The same cascade with a different tier 5 — the shape's own `a:lstStyle`
+    /// replaced by some other body's.
+    ///
+    /// This exists for exactly one caller and the reason is worth stating: a
+    /// table CELL carries its own `a:txBody/a:lstStyle`, and the four tiers under
+    /// it belong to the `p:graphicFrame` the table is on. So a cell's cascade is
+    /// the frame's cascade with the cell's own list style on top, and this is how
+    /// a consumer builds it without a second cascade type or a second resolver.
+    ///
+    /// # Complexity
+    ///
+    /// O(1) — one field.
+    #[must_use]
+    pub const fn with_shape_tier(mut self, shape: Option<&'a ListStyle>) -> Self {
+        self.shape = shape;
+        self
     }
 
     /// The properties in effect for a paragraph at `level`, before the paragraph's

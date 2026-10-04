@@ -617,3 +617,222 @@ fn a_slide_ctr_title_inherits_from_the_masters_title_slot() {
          the slot lookup misses and this is None"
     );
 }
+
+/// The table on a real slide reaches the display list, through the SAME
+/// `AnchorContent::Table` arm a positioned DOCX table uses.
+///
+/// This is the "modelled is not shipped" guard for the table work (`SKILL` §9.4):
+/// the import guards prove an `a:tbl` arrives in the model, and nothing there can
+/// say a user sees it. So this one asserts the whole chain — bytes, model, flow,
+/// composition — down to the paint items the raster backend consumes.
+///
+/// The counts are derived from the fixture rather than typed: three rows, and one
+/// `CellFragment` per emitted cell, with the horizontal continuation NOT emitted
+/// because the origin's `grid_span` already covers its column.
+#[test]
+fn an_imported_slide_table_reaches_the_display_list() {
+    let imported = open(&deck::deck());
+    let canvas = lay_out_slide(&imported.presentation, 2, &shaper()).expect("slide 10 lays out");
+
+    let tables: Vec<&AnchorContent> = canvas
+        .anchors
+        .iter()
+        .map(|anchor| &anchor.content)
+        .filter(|content| matches!(content, AnchorContent::Table { .. }))
+        .collect();
+    assert_eq!(
+        tables.len(),
+        1,
+        "the ONE table frame on the slide produces one positioned-table anchor, \
+         and the chart frame — which has no payload in the model — produces none"
+    );
+    let AnchorContent::Table { rows } = tables[0] else {
+        unreachable!("filtered above");
+    };
+    assert_eq!(rows.len(), 3, "one BlockFragment::TableRow per a:tr");
+
+    let cells_per_row: Vec<usize> = rows
+        .iter()
+        .map(|row| match row {
+            BlockFragment::TableRow { cells, .. } => cells.len(),
+            BlockFragment::Paragraph { .. } => {
+                panic!("a table's rows are TableRow fragments, not paragraphs")
+            }
+        })
+        .collect();
+    assert_eq!(
+        cells_per_row,
+        vec![2, 3, 3],
+        "row 0 emits TWO cells for three grid columns: the `hMerge` continuation \
+         owns nothing and the `gridSpan=2` origin covers its column. Emitting it \
+         would make three, which is the conflation this whole shape prevents"
+    );
+
+    // The geometry, in twips, derived from the fixture's EMU: the origin cell
+    // spans grid columns 0 and 1 and the next cell starts at that sum.
+    let BlockFragment::TableRow { cells, height, .. } = &rows[0] else {
+        unreachable!("asserted above");
+    };
+    let edges: Vec<(i32, i32)> = cells
+        .iter()
+        .map(|cell| (cell.x.raw(), cell.width.raw()))
+        .collect();
+    assert_eq!(
+        edges,
+        vec![(0, 7200), (7200, 1440)],
+        "a merge origin's width is the SUM of the columns it spans (1828800 + \
+         2743200 EMU = 7200 twips), and the cell after it starts at that edge"
+    );
+    assert_eq!(
+        cells[0].grid_span, 2,
+        "the origin carries its span, which is what the composition needs to know \
+         it owns two grid slots"
+    );
+    assert!(
+        height.raw() >= 584,
+        "a:tr@h is a MINIMUM: 370840 EMU is 584 twips and the row is at least that, \
+         grown by its content — got {}",
+        height.raw()
+    );
+
+    // The borders and the shading, each on the edge the file states and nowhere
+    // else. `a:lnL` is red at 12700 EMU (20 twips) and `a:lnB` blue at 38100 (60).
+    let origin = &cells[0];
+    assert_eq!(
+        origin.shading,
+        Some([0xFF, 0xF2, 0xCC, 0xFF]),
+        "the cell's a:solidFill paints as the cell's shading"
+    );
+    assert_eq!(
+        origin
+            .borders
+            .start
+            .map(|edge| (edge.color, edge.width.raw())),
+        Some(([0xFF, 0x00, 0x00, 0xFF], 20)),
+        "a:lnL becomes the START edge, keeping its own colour and EMU width"
+    );
+    assert_eq!(
+        origin
+            .borders
+            .bottom
+            .map(|edge| (edge.color, edge.width.raw())),
+        Some(([0x00, 0x00, 0xFF, 0xFF], 60)),
+        "a:lnB becomes the BOTTOM edge, with the OTHER colour and width — so an \
+         edge copied from its neighbour cannot pass"
+    );
+    assert_eq!(
+        (origin.borders.end.is_none(), origin.borders.top.is_none()),
+        (true, true),
+        "the two edges the file does not state stay unstroked"
+    );
+    assert_eq!(
+        origin.vertical_alignment,
+        casual_doc_layout::block::CellVAlign::Center,
+        "a:tcPr@anchor=\"ctr\" is the cell's vertical alignment"
+    );
+
+    // The vertical merge, which is the other half of the two-encodings rule: the
+    // origin's box spans both rows it covers and the continuation owns no box.
+    let BlockFragment::TableRow {
+        cells: middle,
+        height: middle_height,
+        ..
+    } = &rows[1]
+    else {
+        panic!("row 1 is a table row");
+    };
+    let merged = match cells[1].vertical_merge {
+        casual_doc_layout::block::CellVerticalMerge::Restart { height } => height,
+        ref other => panic!("the rowSpan=2 cell must be a merge RESTART, got {other:?}"),
+    };
+    assert_eq!(
+        merged.raw(),
+        height.raw() + middle_height.raw(),
+        "a restart's box height is the sum of every row it covers — not its own \
+         row's height, which is what a reader that conflated the two encodings \
+         would produce"
+    );
+    assert!(
+        matches!(
+            middle[2].vertical_merge,
+            casual_doc_layout::block::CellVerticalMerge::Continue
+        ),
+        "and the vMerge cell under it is a CONTINUATION, owning no content"
+    );
+
+    // And the cells' text actually shaped: the glyphs are in the display list,
+    // through the shaper a DOCX text box uses.
+    let list = compose_slide(&canvas);
+    let glyphs: usize = list
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            PaintItem::Glyphs { run, .. } => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .sum();
+    assert!(
+        glyphs > 0,
+        "a slide table's cells reach GLYPH paint items, not just boxes"
+    );
+}
+
+/// A table's cells own their content exactly once.
+///
+/// The failure this is about is specific and visible: conflating `@rowSpan` with
+/// `@vMerge` gives the covered cell the origin's text, so the string appears twice
+/// in the display list. So the assertion is on how many emitted cells carry glyphs
+/// at all, rather than on "some text painted".
+#[test]
+fn a_merged_cells_content_is_not_painted_twice() {
+    let imported = open(&deck::deck());
+    let canvas = lay_out_slide(&imported.presentation, 2, &shaper()).expect("slide 10 lays out");
+    let AnchorContent::Table { rows } = canvas
+        .anchors
+        .iter()
+        .map(|anchor| &anchor.content)
+        .find(|content| matches!(content, AnchorContent::Table { .. }))
+        .expect("the table anchor")
+    else {
+        unreachable!("filtered above");
+    };
+
+    let mut with_content = 0_usize;
+    let mut without = 0_usize;
+    for row in rows {
+        let BlockFragment::TableRow { cells, .. } = row else {
+            panic!("a table's rows are TableRow fragments");
+        };
+        for cell in cells {
+            let glyphs: usize = cell
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    BlockFragment::Paragraph { lines, .. } => Some(
+                        lines
+                            .lines
+                            .iter()
+                            .flat_map(|line| line.runs.iter())
+                            .map(|run| run.glyphs.len())
+                            .sum::<usize>(),
+                    ),
+                    BlockFragment::TableRow { .. } => None,
+                })
+                .sum();
+            if glyphs == 0 {
+                without += 1;
+            } else {
+                with_content += 1;
+            }
+        }
+    }
+    assert_eq!(
+        (with_content, without),
+        (7, 1),
+        "EIGHT of the fixture's cells carry text in the model — the vMerge \
+         continuation among them, because a round trip has to write its a:txBody \
+         back — and exactly one emitted cell paints none of it, because a covered \
+         cell paints nothing. A continuation that painted its own content would \
+         make this (8, 0)"
+    );
+}

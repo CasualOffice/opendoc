@@ -26,8 +26,18 @@
 //!
 //! * **Bullets, tab stops, vertical text and an `a:normAutofit` re-solve.** Each
 //!   is enumerated in [`text`]'s own documentation, with the reason.
-//! * **Table and chart frames.** A `p:graphicFrame` holding an `a:tbl` or a
-//!   `c:chart` is not placed; the importer reports it.
+//! * **A chart or SmartArt frame's CONTENT.** A `p:graphicFrame` is placed — a
+//!   table reaches the display list through [`AnchorContent::Table`], the same
+//!   arm a positioned DOCX table uses, and `table`'s own documentation carries
+//!   the argument — but a `c:chart` or a `dgm:relIds` payload never arrives in
+//!   the model, so its frame is a positioned empty box. `docs/156` §8 leaves both
+//!   to `docs/155`/ADR-050 and the importer reports each.
+//! * **A table STYLE.** The `a:tableStyleId` GUID resolves to a `TableStyles`
+//!   entry that carries an id and a name and no formatting, so a styled table
+//!   paints its cells' own fills and borders and nothing the style adds. Also
+//!   `a:tblPr@rtl`: the grid is painted left to right whatever it says, because
+//!   mirroring the grid without mirroring each cell's `a:lnL`/`a:lnR` and
+//!   `@marL`/`@marR` is worse than not mirroring at all.
 //! * **Grouped text.** A text-bearing `p:sp` *inside* a `p:grpSp` carries no text
 //!   into the model at all — `GroupChild` has nowhere to put an `a:txBody` — so it
 //!   cannot reach here. The importer reports it as `grpSp/txBody`, and it is the
@@ -45,9 +55,10 @@ use casual_doc_layout::text::LineShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip, emu_to_twip_extent};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{Definitions, GroupChild};
-use casual_pres_model::{PlaceholderKind, Presentation, ShapeTree, Slide, SlideNode};
+use casual_pres_model::{PlaceholderKind, Presentation, ShapeTree, Slide, SlideNode, SlideTable};
 
 pub mod outline;
+mod table;
 pub mod text;
 
 pub use outline::{
@@ -133,10 +144,13 @@ pub fn lay_out_slide(
     );
     let mut host = SlideHost {
         definitions: presentation.definitions(),
+        presentation,
+        slide,
         anchors: Vec::new(),
         order: 0,
         shaper,
         texts: Vec::new(),
+        tables: Vec::new(),
         unresolved: Vec::new(),
     };
     let origin = Point::new(Twip(0), Twip(0));
@@ -148,12 +162,19 @@ pub fn lay_out_slide(
         let mapper = GroupMapper::from_transform(&tier.tree.transform);
         let mut visible: Vec<GroupChild> = Vec::with_capacity(tier.tree.children.len());
         host.texts.clear();
+        host.tables.clear();
         for child in tier.tree.children.iter().filter(|child| !child.hidden) {
             visible.push(inherited_geometry(child, &tier.fallbacks));
             if tier.paints_text(child)
                 && let Some(prepared) = text::prepare(presentation, slide, child)
             {
                 host.texts.push((child.id(), prepared));
+            }
+            // A table is carried the same way a text body is, and for the same
+            // reason: the walk is what knows the frame's rectangle, so the flow
+            // has to happen inside `emit` rather than here.
+            if let Some(table) = child.table.as_ref() {
+                host.tables.push((child.id(), child, table));
             }
         }
         place_group_child_tree(&visible, origin, &mapper, GroupPose::IDENTITY, 0, &mut host);
@@ -325,6 +346,11 @@ fn slot_in(tree: &ShapeTree, kind: PlaceholderKind, index: u32) -> Option<&Slide
 /// instead of its authored outline.
 struct SlideHost<'a> {
     definitions: &'a Definitions,
+    /// The deck, for a table cell's text cascade — the one thing a cell needs
+    /// that the walk does not supply.
+    presentation: &'a Presentation,
+    /// The slide being laid out, for the same reason.
+    slide: &'a Slide,
     anchors: Vec<PlacedAnchor>,
     order: u32,
     /// The text stack this host shapes with.
@@ -336,6 +362,10 @@ struct SlideHost<'a> {
     /// handful carry text, so a linear scan beats building and hashing a map per
     /// tier — and the lookup happens once per emitted child, not once per glyph.
     texts: Vec<(NodeId, text::PreparedText<'a>)>,
+    /// The current tier's `p:graphicFrame` tables, waiting for the walk to supply
+    /// each frame's rectangle. A `Vec` for the same reason `texts` is one: a
+    /// slide holds a handful of frames at most.
+    tables: Vec<(NodeId, &'a SlideNode, &'a SlideTable)>,
     unresolved: Vec<UnresolvedTextProperty>,
 }
 
@@ -352,6 +382,38 @@ impl GroupChildHost for SlideHost<'_> {
         descr: Option<String>,
         transform: Option<ShapeTransform>,
     ) {
+        // A `p:graphicFrame` holding a table paints the TABLE and not the frame.
+        // The frame's own `AnchorContent` is an unfilled, unstroked rectangle —
+        // it is a position, not a drawing — so emitting it as well would put a
+        // paint item in every deck's display list that draws nothing, and the
+        // frame's rectangle is the only thing the walk was needed for.
+        if let Some(position) = self.tables.iter().position(|(id, _, _)| *id == node) {
+            let (_, frame, table) = self.tables.swap_remove(position);
+            let mut unresolved = Vec::new();
+            let flowed = table::flow(
+                self.presentation,
+                self.slide,
+                frame,
+                table,
+                self.shaper,
+                &mut unresolved,
+            );
+            self.unresolved.append(&mut unresolved);
+            if let Some(flowed) = flowed {
+                // The frame's ORIGIN with the TABLE's own size. A table's width is
+                // the sum of its grid and its height the sum of its rows, and
+                // PowerPoint re-derives the frame's `a:ext` from those rather than
+                // the other way round — so a frame whose `a:ext` has gone stale
+                // paints at the size its grid states, which is what PowerPoint
+                // shows.
+                let sized = Rect {
+                    origin: rect.origin,
+                    size: Size::new(table::width(table), table::authored_height(table)),
+                };
+                self.push(node, flowed, sized, descr, transform, None);
+                return;
+            }
+        }
         // From the same resolver the document host uses, so a shape authored with
         // `a:outerShdw` casts the identical shadow on a slide and in a DOCX.
         let shadow = anchor_shadow(self.definitions, node);

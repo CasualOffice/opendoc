@@ -71,6 +71,16 @@ pub(crate) const SLIDE_LAYOUT_REL: &str =
 pub(crate) const THEME_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 
+/// The `tableStyles` relationship type.
+///
+/// Reached by TYPE, like the theme and for the same reason: nothing in
+/// `ppt/presentation.xml` points at it. A table joins to an entry inside it by
+/// GUID, not by relationship id, so the part is a deck-wide table that has to be
+/// found rather than followed — and the conventional name `ppt/tableStyles.xml`
+/// is a convention, which is what this constant avoids depending on.
+pub(crate) const TABLE_STYLES_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles";
+
 /// The `slideMaster` relationship type, used for ONE purpose: finding the theme
 /// before `ppt/presentation.xml` has been read.
 ///

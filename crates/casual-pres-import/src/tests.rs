@@ -13,6 +13,8 @@
 //! code.
 
 mod deck;
+// Own line (anti-conflict): the table guards, split out at the file ceiling.
+mod table;
 // Own line (anti-conflict): the theme guards, split out at the file ceiling.
 mod theme;
 
@@ -719,8 +721,21 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         // Fills and effects outside the modelled subset.
         "gradFill",
         "effectLst",
-        // A table, a chart or a diagram arrives as nothing at all.
-        "graphicFrame",
+        // A CHART payload still arrives as nothing — `docs/156` §8 leaves
+        // `c:chart` and SmartArt to `docs/155`/ADR-050 — and the `@uri` that
+        // said which kind of payload it was goes with it. The frame itself is
+        // asserted ABSENT below, because the frame now arrives in both cases.
+        "chart",
+        "graphicData/@uri",
+        // A table style's formatting parts. The GUID joins, the appearance does
+        // not, so a styled table arrives unstyled and the report says which
+        // parts were dropped rather than naming the style list once.
+        "wholeTbl",
+        "band1H",
+        // A cell's diagonal rule. Visible — a crossed-out cell that reopens
+        // blank is loss — and `TableCellProperties` has four edges and no
+        // diagonal.
+        "lnTlToBr",
         // `a:satMod` has no field on `ColorTransform`, because
         // `v1::fold_color_modifiers` applies no saturation modifier. Reported
         // rather than half-applied — adding an approximate fold would change every
@@ -753,6 +768,37 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
     // that says nothing (`SKILL` §9.3) — and because each of these was a finding
     // on this fixture before the change, so a regression puts it straight back.
     for recovered in [
+        // The FRAME is read now, in every case: its `p:xfrm` box, its name and
+        // its hidden flag arrive whether its payload is a table, a chart or a
+        // diagram. So naming it would overstate the loss, and the payload
+        // assertions above are what keep that honest — a list is satisfied by a
+        // report that says nothing (`SKILL` §9.3), and this is the entry that
+        // would hide behind one.
+        "graphicFrame",
+        // Every part of an `a:tbl` this build reads. Each was a finding on this
+        // fixture before the change, so a regression puts it straight back.
+        "tbl",
+        "tblPr",
+        "tblGrid",
+        "gridCol",
+        "tr",
+        "tc",
+        "tcPr",
+        "tableStyleId",
+        "lnL",
+        "lnB",
+        // `tableStyles.xml` is consumed, so it is no longer a whole-part loss.
+        // The separate guard below asserts the entries actually arrived — this
+        // one alone could be "fixed" by deleting the part.
+        "ppt/tableStyles.xml",
+        "tblStyle",
+        // A `a:tblStyle` part that states nothing loses nothing: the fixture's
+        // second entry self-closes `a:firstCol`, and reporting that would make
+        // every real `tableStyles.xml` look lossier than it is.
+        "firstCol",
+        // `p:cNvGraphicFramePr` holds only `a:graphicFrameLocks`, an editing
+        // lock rather than document content.
+        "cNvGraphicFramePr",
         "txStyles",
         "defaultTextStyle",
         // The colour map is read, on the master and as an override on a layout and
@@ -1026,6 +1072,9 @@ fn import_limits_clamp_to_their_hard_ceilings() {
         max_paragraphs_per_body: usize::MAX,
         max_runs_per_paragraph: usize::MAX,
         max_run_bytes: usize::MAX,
+        max_table_rows: usize::MAX,
+        max_table_columns: usize::MAX,
+        max_table_styles: usize::MAX,
     }
     .clamped();
     assert_eq!(clamped.max_slides, ImportLimits::HARD_MAX_SLIDES);
@@ -1039,6 +1088,15 @@ fn import_limits_clamp_to_their_hard_ceilings() {
     assert_eq!(
         clamped.max_shapes_per_tree,
         ImportLimits::HARD_MAX_SHAPES_PER_TREE
+    );
+    assert_eq!(clamped.max_table_rows, ImportLimits::HARD_MAX_TABLE_ROWS);
+    assert_eq!(
+        clamped.max_table_columns,
+        ImportLimits::HARD_MAX_TABLE_COLUMNS
+    );
+    assert_eq!(
+        clamped.max_table_styles,
+        ImportLimits::HARD_MAX_TABLE_STYLES
     );
     assert_eq!(
         clamped.max_paragraphs_per_body,

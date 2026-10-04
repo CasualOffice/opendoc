@@ -41,9 +41,19 @@
 //! Nothing the model does not carry can be written, so this list is the model's
 //! gap list seen from the other side: the theme part (so a written deck has no
 //! `a:theme` and a reader of it resolves no `a:schemeClr`), `p:clrMap`,
-//! notes and handout masters, `p:transition`, `p:timing`, `p:graphicFrame` — so a
-//! table, chart or diagram is not written because it never arrived — gradient,
-//! picture and pattern fills on a slide shape, effects, and `p14:sectionLst`.
+//! notes and handout masters, `p:transition`, `p:timing`, a `p:graphicFrame`'s
+//! non-table payload — a `c:chart` or a SmartArt `dgm:relIds` never arrives, so
+//! its frame is written as a positioned empty frame — a table STYLE's formatting
+//! parts, so `ppt/tableStyles.xml` comes back with its `@def` and empty
+//! `a:tblStyle` entries, gradient, picture and pattern fills on a slide shape,
+//! effects, and `p14:sectionLst`.
+//!
+//! A table itself IS written: a `p:graphicFrame` with its `p:xfrm`, the `a:tbl`
+//! inside it, the grid, the row heights, each cell's `a:tcPr` and its `a:txBody`,
+//! and **both** encodings of a merge — the origin's `@gridSpan`/`@rowSpan` and
+//! the covered cell's `@hMerge`/`@vMerge`. A covered cell is still written,
+//! because a row must hold one `a:tc` per `a:gridCol`; `table.rs` carries the
+//! argument.
 //!
 //! A deck that imported with a non-empty report therefore exports without the
 //! constructs that report named. That is the honest composition of two lanes, not
@@ -64,6 +74,7 @@
 
 mod opc;
 mod shapes;
+mod table;
 mod text;
 
 use std::collections::BTreeMap;
@@ -207,8 +218,15 @@ pub fn export_pptx(
 ///
 /// This is the call that makes a deck survive a round trip rather than merely
 /// reopen: the theme part, `p:transition`, `p:timing`, notes and handout masters
-/// and `p:graphicFrame`'s own parts are all constructs the model does not carry,
-/// and all of them are written back byte-for-byte.
+/// and a chart's or diagram's own parts are all constructs the model does not
+/// carry, and all of them are written back byte-for-byte.
+///
+/// `ppt/tableStyles.xml` is the one part this is NOT true of, and the direction is
+/// deliberate: the writer regenerates it whenever the deck carries any table-style
+/// fact, so a regenerated part with empty `a:tblStyle` entries wins over a
+/// retained part that had the formatting in it. That is the safe direction — a
+/// retained style list could name a style the deck no longer has — and it is a
+/// real loss for this one part, recorded here rather than hidden.
 ///
 /// A regenerated part wins over a retained one — see [`RetainedParts`] for why that
 /// direction is the only safe one.
@@ -360,6 +378,26 @@ pub fn export_pptx_retaining(
         parts.add(name, body)?;
         types.override_for(name, content_type::SLIDE);
         parts.add(&rels_name(name), rels.to_xml())?;
+    }
+
+    // `ppt/tableStyles.xml`, when the deck carries one. Written after the tiers
+    // because nothing in them references it: a table joins to an entry by GUID,
+    // and the part is reached from `ppt/presentation.xml` by relationship TYPE.
+    //
+    // Skipped entirely for a deck with no table-style facts at all, rather than
+    // written empty: a part declaring nothing is a part a reader has to read, and
+    // `TableStyles::is_empty` is the same test the model's own serialization uses.
+    if !presentation.table_styles().is_empty() {
+        const NAME: &str = "ppt/tableStyles.xml";
+        parts.add(NAME, table::table_styles_part(presentation.table_styles()))?;
+        types.override_for(NAME, content_type::TABLE_STYLES);
+        presentation_rels.add(rel::TABLE_STYLES, &relative_target("ppt", NAME));
+        // The presentation part's relationships were written above with the ids
+        // the id lists quote, so adding one now means rewriting that part.
+        parts.replace(
+            &rels_name("ppt/presentation.xml"),
+            presentation_rels.to_xml(),
+        );
     }
 
     // Image parts, once each, for every media reference whose bytes the caller

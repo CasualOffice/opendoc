@@ -42,6 +42,7 @@ mod placeholder;
 mod presentation;
 mod shape_tree;
 mod slide_size;
+mod table;
 mod text_body;
 mod text_bullet;
 mod text_cascade;
@@ -50,13 +51,19 @@ mod text_run;
 mod text_styles;
 mod theme;
 
-pub use error::{PresentationError, SlideAxis};
+pub use error::{PresentationError, SlideAxis, TableAxis};
 pub use ids::{SlideId, SlideLayoutId, SlideMasterId};
 pub use layout_kind::LayoutKind;
 pub use placeholder::{Placeholder, PlaceholderKind, PlaceholderOrientation, PlaceholderSize};
 pub use presentation::{Presentation, SCHEMA_VERSION, Slide, SlideLayout, SlideMaster};
 pub use shape_tree::{ShapeTree, SlideNode};
 pub use slide_size::{MAX_SLIDE_EMU, MIN_SLIDE_EMU, SlideSize, SlideSizeKind};
+// Own line (anti-conflict): the PPTX-only table vocabulary.
+pub use table::{
+    CellMerge, DEFAULT_CELL_MARGIN_HORIZONTAL_EMU, DEFAULT_CELL_MARGIN_VERTICAL_EMU,
+    MAX_TABLE_GRID_COLUMNS, MAX_TABLE_ROWS, SlideTable, TableCell, TableCellProperties,
+    TableGridColumn, TableProperties, TableRow, TableStyle, TableStyles,
+};
 // Own line (anti-conflict): the theme indirection a deck has and a document does not.
 pub use text_body::{
     ListStyle, MAX_TEXT_LEVEL, TEXT_LEVELS, TextAnchor, TextAutoFit, TextBody, TextBodyProperties,

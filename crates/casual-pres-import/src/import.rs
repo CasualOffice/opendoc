@@ -22,7 +22,13 @@
 //! reachable through those lists; each part's `p:cSld` name, `p:bg` solid fill
 //! and `p:spTree`; `p:sp`, `p:cxnSp`, `p:pic` and nested `p:grpSp` with
 //! `a:xfrm`, `a:prstGeom` + `a:avLst`, a single-subpath `a:custGeom`,
-//! `a:solidFill` and `a:ln`; `p:nvPr/p:ph`; and `a:txBody` in full —
+//! `a:solidFill` and `a:ln`; `p:graphicFrame` with its `p:xfrm` and the `a:tbl`
+//! inside its `a:graphicData` — `a:tblPr`'s banding flags, `@rtl` and
+//! `a:tableStyleId`, `a:tblGrid`'s `a:gridCol@w`, and each `a:tr@h` row's
+//! `a:tc` cells with their `a:tcPr` margins, `@anchor`, fill and four border
+//! lines, their merge roles on both axes, and their `a:txBody`;
+//! `ppt/tableStyles.xml`'s `@def` and its `a:tblStyle` entries;
+//! `p:nvPr/p:ph`; and `a:txBody` in full —
 //! `a:bodyPr` with its autofit, the nine-level `a:lstStyle`, and `a:p`/`a:pPr`
 //! with level, alignment, margins, indent, spacing, bullets and tab stops, plus
 //! `a:r`/`a:rPr`, `a:br` and `a:fld`. Media reachable from an `a:blip@r:embed`
@@ -43,8 +49,14 @@
 //! `Presentation::resolve_typeface`.
 //!
 //! **Not read, and reported:** `p:transition` and `p:timing`; notes and handout
-//! masters; `p:graphicFrame`, so tables, charts and SmartArt do not arrive at all;
-//! gradient, picture and pattern fills on a shape; effects; `a:tbl`; `a:arcTo`;
+//! masters; a `p:graphicFrame`'s non-table payload — a `c:chart`, a SmartArt
+//! `dgm:relIds` or a `p:oleObj` — each reported by its own name, the frame's box
+//! and identity having arrived; a `p:graphicFrame` nested inside a `p:grpSp`,
+//! whose table has nowhere to live because a `GroupChild` carries no payload;
+//! a table style's FORMATTING parts (`a:wholeTbl`, `a:band1H`, `a:firstRow` and
+//! the rest), so a styled table arrives with the GUID and none of the appearance;
+//! a cell's diagonal borders and `a:tcPr@vert`;
+//! gradient, picture and pattern fills on a shape; effects; `a:arcTo`;
 //! `p14:sectionLst`; `a:fontRef` (neither the collection it names nor its colour
 //! has a field); `a:satMod` and the hue/gamma/channel colour modifiers; the theme
 //! part's `a:objectDefaults`, `a:extraClrSchemeLst` and `a:custClrLst`; and
@@ -69,19 +81,23 @@ use casual_doc_model::v1::Definitions;
 use casual_doc_package::{BoundedPackage, PackageLimits};
 use casual_pres_model::{
     ColorMap, ColorMapping, Presentation, Slide, SlideLayout, SlideLayoutId, SlideMaster,
-    SlideMasterId,
+    SlideMasterId, TableStyles,
 };
 
 use crate::ImportError;
 use crate::ids::Ids;
 use crate::limits::ImportLimits;
 use crate::loss::Reporter;
-use crate::opc::{PresentationPackage, SLIDE_LAYOUT_REL, SLIDE_MASTER_REL, THEME_REL};
+use crate::opc::{
+    PresentationPackage, SLIDE_LAYOUT_REL, SLIDE_MASTER_REL, TABLE_STYLES_REL, THEME_REL,
+};
 use crate::parts::{
     PartContext, all_of_type, first_of_type, read_layout, read_master, read_presentation_part,
     read_slide, resolve_part,
 };
 use crate::shapes::Surface;
+// Own line (anti-conflict): the deck-wide `tableStyles.xml`.
+use crate::table::read_table_styles_part;
 // Own line (anti-conflict): the theme half of the import.
 use crate::theme::{
     Resolver, ThemePart, read_color_map_of, read_theme_part, report_unpaintable_style_refs,
@@ -187,6 +203,25 @@ pub fn import_pptx(
     // The presentation-level resolver uses the IDENTITY colour map, because only a
     // master states one and `p:defaultTextStyle` sits above every master.
     let deck_resolver = Resolver::new(&theme, ColorMap::IDENTITY);
+
+    // `ppt/tableStyles.xml`, beside the theme and for the same reason: it is a
+    // deck-wide table reached by relationship TYPE, and a table's
+    // `a:tableStyleId` joins to it by GUID rather than through a reference the
+    // slide carries. Read here rather than after the slides because it is
+    // independent of them — nothing in it can change how a shape is read — and
+    // because reading it last would leave the order looking as if it depended on
+    // something.
+    let table_styles_part = first_of_type(&presentation_relationships, TABLE_STYLES_REL)
+        .filter(|part| package.contains_part(part));
+    let table_styles = match table_styles_part.as_deref() {
+        Some(part) => {
+            let bytes = package.read_part(part)?;
+            let read = read_table_styles_part(&bytes, part, &mut reporter, limits)?;
+            consumed.push(part.to_owned());
+            read
+        }
+        None => TableStyles::default(),
+    };
 
     let presentation_bytes = package.read_part(&presentation_part)?;
     let declaration = read_presentation_part(
@@ -449,7 +484,10 @@ pub fn import_pptx(
     .with_default_text_style(declaration.default_text_style)?
     // The colour maps, for the same reason plus one more: they are keyed by part
     // id, so they can only be attached once those ids exist.
-    .with_color_mapping(color_mapping)?;
+    .with_color_mapping(color_mapping)?
+    // And `tableStyles.xml`, which is an optional part most packages carry only
+    // the `@def` of.
+    .with_table_styles(table_styles)?;
     let (report, ledger) = reporter.finish()?;
     Ok(ImportedPresentation {
         presentation,

@@ -148,6 +148,14 @@ fn node_xml(
     // on them, and the model's `NodeId` is this engine's own identity rather than
     // the file's.
     let shape_id = position + 2;
+    // A node carrying an `a:tbl` is a `p:graphicFrame`, whatever its `GroupChild`
+    // variant says. The frame's BOX is a `GroupChild::Shape` because that is how
+    // the shared placement walk reaches it; following the variant here would
+    // write a `p:sp` and lose every table in the deck on the first save, with no
+    // geometry guard able to see it.
+    if let Some(table) = node.table.as_ref() {
+        return Ok(crate::table::graphic_frame_xml(node, table, shape_id));
+    }
     match &node.content {
         GroupChild::Shape(shape) => Ok(shape_xml(node, shape, shape_id)),
         GroupChild::Picture(picture) => Ok(picture_xml(node, picture, shape_id, context, rels)),
@@ -353,7 +361,7 @@ fn folder_of(part: &str) -> &str {
 }
 
 /// `p:cNvPr`, shared by every shape kind.
-fn non_visual_properties(
+pub(crate) fn non_visual_properties(
     shape_id: usize,
     name: Option<&str>,
     fallback: &str,
@@ -599,7 +607,17 @@ fn fill_xml(fill: &Fill) -> String {
 
 /// `a:ln`.
 fn outline_xml(stroke: &ShapeStroke) -> String {
-    let mut xml = format!(r#"<a:ln w="{}">"#, stroke.width_emu);
+    line_properties_xml("a:ln", stroke)
+}
+
+/// A `CT_LineProperties` under any tag name.
+///
+/// `a:ln` on a `p:spPr` and `a:lnL`..`a:lnB` on an `a:tcPr` are the SAME element
+/// type under four different names, so there is one writer for all five rather
+/// than a table-only copy that would diverge the first time a dash or an
+/// arrowhead was added to one of them.
+pub(crate) fn line_properties_xml(tag: &str, stroke: &ShapeStroke) -> String {
+    let mut xml = format!(r#"<{tag} w="{}">"#, stroke.width_emu);
     xml.push_str(&format!(
         "<a:solidFill>{}</a:solidFill>",
         srgb_xml(stroke.color)
@@ -616,8 +634,13 @@ fn outline_xml(stroke: &ShapeStroke) -> String {
             xml.push_str(&format!(r#"<{tag} type="{}"/>"#, line_end_token(end.kind)));
         }
     }
-    xml.push_str("</a:ln>");
+    xml.push_str(&format!("</{tag}>"));
     xml
+}
+
+/// An `a:tcPr`'s own fill, which is the same `a:solidFill` a shape writes.
+pub(crate) fn cell_fill_xml(fill: &Fill) -> String {
+    fill_xml(fill)
 }
 
 /// An `a:srgbClr`, with its alpha folded back out into an `a:alpha` child.

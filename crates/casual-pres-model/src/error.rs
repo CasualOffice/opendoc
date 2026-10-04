@@ -27,6 +27,28 @@ impl fmt::Display for SlideAxis {
     }
 }
 
+/// Which axis of a table a merge or size failure was charged to.
+///
+/// A table's two merge axes are validated by ONE routine run twice, so the axis
+/// has to be a value rather than two near-identical error variants — which is
+/// also what stops a failure being reported as the wrong axis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableAxis {
+    /// Rows: `a:tc@rowSpan` and `a:tc@vMerge`, and `a:tr` count.
+    Row,
+    /// Grid columns: `a:tc@gridSpan` and `a:tc@hMerge`, and `a:gridCol` count.
+    Column,
+}
+
+impl fmt::Display for TableAxis {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Row => "row",
+            Self::Column => "column",
+        })
+    }
+}
+
 /// Presentation model construction or validation failure.
 ///
 /// Deliberately a separate type from [`ModelError`] rather than more variants on it:
@@ -124,6 +146,65 @@ pub enum PresentationError {
     FontSizeOutOfDomain(u32),
     /// An `a:rPr@spc` fell outside `ST_TextPoint`.
     TextSpacingOutOfDomain(i32),
+    /// An `a:tbl` declared no `a:tblGrid` columns.
+    ///
+    /// There is no width anywhere else in an `a:tbl` — the frame's `p:xfrm` is the
+    /// frame's, not the grid's — so a table with no columns has no geometry at all
+    /// and would place every cell at zero width.
+    EmptyTableGrid(NodeId),
+    /// A table declared more rows or grid columns than the model bounds.
+    TableTooLarge {
+        /// The offending table.
+        table: NodeId,
+        /// Which axis overflowed.
+        axis: TableAxis,
+        /// The declared count.
+        count: usize,
+    },
+    /// A row's cell count did not match the grid's column count.
+    ///
+    /// PresentationML requires one `a:tc` per `a:gridCol`, continuations included,
+    /// because that is what makes a merge's coverage computable by position. A
+    /// short row shifts every cell after it into the wrong column.
+    TableRowWidthMismatch {
+        /// The table the row is in.
+        table: NodeId,
+        /// The offending row.
+        row: NodeId,
+        /// The `a:tc` count found.
+        cells: usize,
+        /// The `a:gridCol` count expected.
+        columns: usize,
+    },
+    /// A merge origin declared a span below two.
+    ///
+    /// `@gridSpan="1"` is not a merge, it is the default, and admitting it would
+    /// make an unmerged cell and a one-cell "merge" two models of one fact.
+    CellSpanOutOfDomain {
+        /// The offending cell.
+        cell: NodeId,
+        /// The declared span.
+        span: u32,
+    },
+    /// A continuation cell (`@hMerge`/`@vMerge`) had no origin covering it.
+    UnanchoredCellMerge {
+        /// The offending cell.
+        cell: NodeId,
+        /// Which axis the continuation was on.
+        axis: TableAxis,
+    },
+    /// A merge origin's span ran over a cell that is not its continuation, or past
+    /// the edge of the row or column.
+    OverlappingCellMerge {
+        /// The cell the overlap was detected at.
+        cell: NodeId,
+        /// Which axis the overlap is on.
+        axis: TableAxis,
+    },
+    /// An `a:gridCol@w` or `a:tr@h` was negative.
+    TableMeasureOutOfDomain(i64),
+    /// Two `a:tblStyle` entries declared the same GUID.
+    DuplicateTableStyleId(String),
     /// A failure in a reused document-model type.
     Model(ModelError),
 }
@@ -214,6 +295,38 @@ impl fmt::Display for PresentationError {
                 formatter,
                 "letter spacing {value} hundredths of a point is out of domain"
             ),
+            Self::EmptyTableGrid(id) => {
+                write!(formatter, "table {id} declares no grid columns")
+            }
+            Self::TableTooLarge { table, axis, count } => {
+                write!(formatter, "table {table} declares {count} {axis}s")
+            }
+            Self::TableRowWidthMismatch {
+                table,
+                row,
+                cells,
+                columns,
+            } => write!(
+                formatter,
+                "table {table} row {row} has {cells} cells for {columns} grid columns"
+            ),
+            Self::CellSpanOutOfDomain { cell, span } => {
+                write!(formatter, "cell {cell} declares a span of {span}")
+            }
+            Self::UnanchoredCellMerge { cell, axis } => write!(
+                formatter,
+                "cell {cell} continues a {axis} merge that no origin covers"
+            ),
+            Self::OverlappingCellMerge { cell, axis } => write!(
+                formatter,
+                "cell {cell} is inside a {axis} merge that already covers it"
+            ),
+            Self::TableMeasureOutOfDomain(value) => {
+                write!(formatter, "table measure {value} EMU is negative")
+            }
+            Self::DuplicateTableStyleId(id) => {
+                write!(formatter, "two table styles declare the id {id}")
+            }
             Self::Model(error) => write!(formatter, "{error}"),
         }
     }

@@ -294,12 +294,20 @@ fn read_tree_child(
         }
         b"graphicFrame" => {
             // A `p:graphicFrame` holds a table, a chart, a SmartArt diagram or an
-            // OLE object. `docs/156` §8 puts `a:tbl` in Tier 2 and charts and
-            // SmartArt with `docs/155`/ADR-050; none is modelled here, and a
-            // frame drawn as an empty rectangle would look like a bug rather
-            // than a gap.
-            reporter.omitted(&part, b"graphicFrame");
-            Ok(false)
+            // OLE object. The FRAME is read in every case — its box, its name and
+            // its hidden flag are the same non-visual properties a `p:sp` carries
+            // — and only an `a:tbl` payload arrives with it. Charts and SmartArt
+            // belong to `docs/155`/ADR-050 and `crate::table` reports each by the
+            // payload's own name, so the report says what was actually lost
+            // instead of discarding the frame and naming the wrapper.
+            if empty {
+                reporter.invalid(&part, b"graphicFrame");
+                return Ok(false);
+            }
+            if let Some(node) = crate::table::read_graphic_frame(cursor, reporter, ids, resolver)? {
+                nodes.push(node);
+            }
+            Ok(true)
         }
         b"contentPart" => {
             reporter.omitted(&part, b"contentPart");
@@ -315,15 +323,15 @@ fn read_tree_child(
 /// Non-visual properties shared by every shape kind (`p:nvSpPr`, `p:nvPicPr`,
 /// `p:nvGrpSpPr`, `p:nvCxnSpPr`).
 #[derive(Clone, Debug, Default)]
-struct NonVisual {
-    name: Option<String>,
-    hidden: bool,
-    placeholder: Option<Placeholder>,
+pub(crate) struct NonVisual {
+    pub(crate) name: Option<String>,
+    pub(crate) hidden: bool,
+    pub(crate) placeholder: Option<Placeholder>,
     descr: Option<String>,
 }
 
 /// Reads a `p:nv*Pr` wrapper: its `p:cNvPr`, its `p:cNv*Pr`, and its `p:nvPr`.
-fn read_non_visual(
+pub(crate) fn read_non_visual(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
 ) -> Result<NonVisual, ImportError> {
@@ -354,7 +362,13 @@ fn read_non_visual(
                 non_visual.placeholder = read_placeholder_slot(cursor, reporter)?;
                 Ok(true)
             }
-            b"cNvSpPr" | b"cNvPicPr" | b"cNvGrpSpPr" | b"cNvCxnSpPr" => Ok(false),
+            // `p:cNvGraphicFramePr` joins the list for a `p:graphicFrame`. Its only
+            // child is `a:graphicFrameLocks`, which is an editing lock and not
+            // document content, so reporting it would put a false loss in the
+            // report for every table in a deck.
+            b"cNvSpPr" | b"cNvPicPr" | b"cNvGrpSpPr" | b"cNvCxnSpPr" | b"cNvGraphicFramePr" => {
+                Ok(false)
+            }
             b"extLst" => Ok(false),
             other => {
                 reporter.omitted(&part, other);
@@ -540,6 +554,7 @@ fn read_shape(
         hidden: non_visual.hidden,
         content: GroupChild::Shape(shape),
         text,
+        table: None,
     }))
 }
 
@@ -649,6 +664,9 @@ fn read_picture(
         hidden: non_visual.hidden,
         content: GroupChild::Picture(picture),
         text,
+        // A `p:pic` is not a `p:graphicFrame`; only the frame reader produces a
+        // table, so this is `None` by construction rather than by omission.
+        table: None,
     }))
 }
 
@@ -773,6 +791,15 @@ fn read_group(
         if node.placeholder.is_some() {
             reporter.degraded_attribute(&part, b"grpSp", b"ph");
         }
+        if node.table.is_some() {
+            // A `p:graphicFrame` inside a `p:grpSp`. The frame's box survives as
+            // an unpainted rectangle inside the group, which keeps the group's
+            // own extent honest, but the table itself has nowhere to live: a
+            // `GroupChild` carries no payload. Reported as `grpSp/tbl` for the
+            // same reason grouped text is reported — a grouped table that reopens
+            // empty is loss, and the group is the reason, not the table.
+            reporter.omitted(&part, b"grpSp/tbl");
+        }
         if node.text.is_some() {
             // A text-bearing shape inside a group: `GroupChild` can only carry
             // slide text through `GroupChild::TextBox`, which the presentation
@@ -821,6 +848,9 @@ fn read_group(
         hidden: non_visual.hidden,
         content: GroupChild::Group(Box::new(group)),
         text: None,
+        // A `p:graphicFrame` inside a `p:grpSp` is read as a frame by the same
+        // recursion, so a group itself never carries the table.
+        table: None,
     }))
 }
 
@@ -897,11 +927,13 @@ fn read_shape_property(
                 Ok(true)
             }
             b"ln" => {
-                if empty {
-                    return Ok(false);
-                }
-                properties.stroke = read_line(cursor, reporter, element, resolver)?;
-                Ok(true)
+                // NOT `if empty { return Ok(false) }`. `<a:ln w="12700"/>` is a
+                // legal self-closing outline whose whole meaning is its `@w`, and
+                // answering `default()` for it discarded the width — the sixth
+                // instance of the trap `xml::enter` was written for. `read_line`
+                // takes the flag and reads the attributes either way.
+                properties.stroke = read_line(cursor, reporter, element, empty, resolver)?;
+                Ok(!empty)
             }
             b"effectLst" | b"effectDag" | b"scene3d" | b"sp3d" => {
                 // Self-closed is "no effects" and carries no lost meaning;

@@ -12,6 +12,8 @@ use crate::{
     LayoutKind, PlaceholderKind, PresentationError, ShapeTree, SlideId, SlideLayoutId,
     SlideMasterId, SlideSize, TextStyles,
 };
+// Own line (anti-conflict): the deck-wide table-style table.
+use crate::table::TableStyles;
 // Own line (anti-conflict): the presentation-wide bottom tier of the text cascade.
 use crate::text_body::ListStyle;
 // Own line (anti-conflict): the theme indirection, which has no document analogue.
@@ -154,6 +156,8 @@ pub struct Presentation {
     default_text_style: ListStyle,
     #[serde(default, skip_serializing_if = "ColorMapping::is_empty")]
     color_mapping: ColorMapping,
+    #[serde(default, skip_serializing_if = "TableStyles::is_empty")]
+    table_styles: TableStyles,
 }
 
 impl Presentation {
@@ -191,6 +195,9 @@ impl Presentation {
             // Same reasoning, and one more: the colour map is keyed by part id, so
             // it can only be built once the ids above exist.
             color_mapping: ColorMapping::default(),
+            // And the same again: `tableStyles.xml` is an optional part and most
+            // packages that have one carry only its `@def`.
+            table_styles: TableStyles::default(),
         };
         presentation.validate()?;
         Ok(presentation)
@@ -228,6 +235,30 @@ impl Presentation {
         self.color_mapping = color_mapping;
         self.validate()?;
         Ok(self)
+    }
+
+    /// Attaches the deck's `tableStyles.xml`: the default table-style GUID and the
+    /// `a:tblStyle` entries a table's `a:tableStyleId` joins to.
+    ///
+    /// Re-validates, because two entries with one GUID would make
+    /// [`TableStyles::style`] silently answer with the first and never the second.
+    ///
+    /// # Errors
+    ///
+    /// [`PresentationError::DuplicateTableStyleId`].
+    pub fn with_table_styles(
+        mut self,
+        table_styles: TableStyles,
+    ) -> Result<Self, PresentationError> {
+        self.table_styles = table_styles;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// The deck's table styles.
+    #[must_use]
+    pub const fn table_styles(&self) -> &TableStyles {
+        &self.table_styles
     }
 
     /// The colour maps the deck's parts state.
@@ -577,6 +608,7 @@ impl Presentation {
             }
         }
         self.default_text_style.validate()?;
+        self.table_styles.validate()?;
         for slide in &self.slides {
             slide.shapes.validate(&self.definitions)?;
         }

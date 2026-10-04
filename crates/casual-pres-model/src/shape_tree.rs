@@ -30,7 +30,7 @@ use casual_doc_model::v1::{
 use casual_doc_model::{ModelError, NodeId};
 use serde::{Deserialize, Serialize};
 
-use crate::{Placeholder, PlaceholderKind, PresentationError, TextBody};
+use crate::{Placeholder, PlaceholderKind, PresentationError, SlideTable, TextBody};
 
 /// One shape on a slide, layout or master: a DrawingML child plus the slide-only
 /// identity it carries.
@@ -63,6 +63,22 @@ pub struct SlideNode {
     /// [`crate::PresentationError::TextBoxShapeOnSlide`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<TextBody>,
+    /// The table this node's `p:graphicFrame` holds (`a:graphicData/a:tbl`), when
+    /// it holds one.
+    ///
+    /// On the NODE for the same reason `text` is, and the precedent is deliberate:
+    /// a `p:graphicFrame` is a positioned, unpainted box plus a payload, and
+    /// `GroupChild` has a field for the box and none for the payload. So the box
+    /// imports as the `GroupChild::Shape` every other slide shape is — which is
+    /// what lets the SHARED placement walk compute a frame's rectangle with no
+    /// table arm anywhere in it — and the payload hangs here.
+    ///
+    /// A frame holding a `c:chart` or a `dgm:relIds` therefore arrives with this
+    /// `None`: the frame's position, name and hidden flag are read, its payload is
+    /// reported. That is a narrower loss than dropping the frame, and it is why
+    /// `graphicFrame` is no longer in the loss report while `chart` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<SlideTable>,
 }
 
 impl SlideNode {
@@ -75,6 +91,7 @@ impl SlideNode {
             hidden: false,
             content,
             text: None,
+            table: None,
         }
     }
 
@@ -82,6 +99,13 @@ impl SlideNode {
     #[must_use]
     pub fn with_text(mut self, text: TextBody) -> Self {
         self.text = Some(text);
+        self
+    }
+
+    /// Attaches the `a:tbl` a `p:graphicFrame` carries.
+    #[must_use]
+    pub fn with_table(mut self, table: SlideTable) -> Self {
+        self.table = Some(table);
         self
     }
 
@@ -180,6 +204,20 @@ impl ShapeTree {
                     return Err(error);
                 }
             }
+            // A table's rows, cells and cell text are in the SAME id space, so a
+            // cell id colliding with a shape id has to be caught by the one
+            // uniqueness walk rather than by a second check nobody runs.
+            if let Some(table) = child.table.as_ref() {
+                let mut failure = None;
+                table.visit_node_ids(&mut |id| {
+                    if failure.is_none() {
+                        failure = visit(id).err();
+                    }
+                });
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -261,6 +299,9 @@ impl ShapeTree {
             }
             if let Some(text) = child.text.as_ref() {
                 text.validate()?;
+            }
+            if let Some(table) = child.table.as_ref() {
+                table.validate()?;
             }
             validate_child(&child.content, definitions, 0)?;
         }

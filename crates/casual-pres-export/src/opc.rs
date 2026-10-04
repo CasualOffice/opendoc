@@ -49,6 +49,11 @@ pub(crate) mod rel {
     /// An image, from any part that paints one.
     pub(crate) const IMAGE: &str =
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+    /// `ppt/tableStyles.xml`, from the presentation part. Reached by TYPE: nothing
+    /// in `ppt/presentation.xml` points at it, because a table names a style by
+    /// GUID rather than by relationship id.
+    pub(crate) const TABLE_STYLES: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles";
 }
 
 /// The content types this writer declares.
@@ -63,6 +68,8 @@ pub(crate) mod content_type {
         "application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml";
     pub(crate) const RELATIONSHIPS: &str =
         "application/vnd.openxmlformats-package.relationships+xml";
+    pub(crate) const TABLE_STYLES: &str =
+        "application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml";
 }
 
 /// One relationship, as written into a `_rels` part.
