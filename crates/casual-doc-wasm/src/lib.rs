@@ -14526,11 +14526,23 @@ impl WasmDocument {
     /// the transaction crate's `removed_by` already half is. Tracked as
     /// `109` HF-257.
     ///
-    /// Complexity: one `is_empty()` for every document that holds no chart —
-    /// which is every document until one is inserted. With charts, O(the removed
-    /// subtree) per declared removal, plus O(charts) to key the projections.
+    /// # Complexity, stated rather than implied
+    ///
+    /// * **O(1)** — one `is_empty()` — for every document that holds no chart,
+    ///   which is every document until one is inserted or imported.
+    /// * **O(charts)** when the removed node IS a chart. That is the gesture this
+    ///   lane added, and it never walks the document.
+    /// * **O(document), one walk**, only when a chart-bearing document removes a
+    ///   named object that is not itself a chart — because a chart can be nested
+    ///   inside the removed subtree (a chart in a text box in a group) and
+    ///   nothing indexes node → surface yet. It is one walk rather than one per
+    ///   chart, so it is not the quadratic shape `SKILL` §8 forbids, and it is
+    ///   never on the keystroke path: the only operations that reach it are an
+    ///   object delete and the undo of an object insert. `109` HF-184's
+    ///   id → paragraph index is what removes this term; this will use it.
     fn cascade_chart_projections(&self, ops: &[Operation]) -> Vec<Operation> {
-        if self.document.definitions().charts.is_empty() {
+        let charts = &self.document.definitions().charts;
+        if charts.is_empty() {
             return ops.to_vec();
         }
         let mut removed: Vec<NodeId> = Vec::new();
@@ -14541,6 +14553,12 @@ impl WasmDocument {
             if let Operation::DeleteObject { object } | Operation::RemoveInlineObject { object } =
                 op
             {
+                // The node IS a chart: answered from the registry, no walk. The
+                // common case, and the one the chart delete gesture takes.
+                if charts.iter().any(|(_, chart)| chart.object == *object) {
+                    removed.push(*object);
+                    continue;
+                }
                 for blocks in surface_block_lists(&self.document) {
                     if chart_objects_under_in_blocks(blocks, *object, &mut removed) {
                         break;
@@ -17745,8 +17763,16 @@ fn unpainted_chart_refusal(kind: &str) -> String {
     )
 }
 
-/// Whether `group` colours by point rather than by series — the pie families,
-/// which take ONE series and give each category its own colour.
+/// Whether `group` is one of the pie families, which take ONE series and give
+/// each category its own colour.
+///
+/// Not a second copy of `casual_doc_layout::chart`'s `colors_by_point`, which
+/// answers a PAINT question (which colour a bar or a sector takes) and is right
+/// for pie whether or not a producer wrote `c:varyColors`. This answers an
+/// AUTHORING one: how many series the sample data has, whether the plot area
+/// gets axes at all, and what `c:varyColors` is written as. Both read the same
+/// two enum variants because that is what the OOXML families are, not because
+/// one is standing in for the other.
 const fn chart_colors_by_point(group: ChartGroupKind) -> bool {
     matches!(
         group,
