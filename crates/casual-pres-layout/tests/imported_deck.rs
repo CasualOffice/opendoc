@@ -5,16 +5,21 @@
 //! # Why this test exists at all
 //!
 //! `casual-pres-import` and `casual-pres-layout` were built on separate branches
-//! against the same model, and each is guarded on its own: the importer's 22 guards
-//! drive a package into a `Presentation`, and the layout crate's 12 drive a
+//! against the same model, and each is guarded on its own: the importer's guards
+//! drive a package into a `Presentation`, and the layout crate's drive a
 //! hand-built `Presentation` into a display list. **Neither one touches the other.**
 //! Two crates that compile against one type are not a pipeline, and "both lanes
 //! landed" is exactly the "modelled is not shipped" claim `SKILL` §9.4 is about.
 //!
 //! So this is the seam, and it is the only test in the repository that asserts a
-//! deck gets from bytes to paint items.
+//! deck gets from bytes to paint items — now including its GLYPHS, which the
+//! hand-built guards cannot speak for: a `Presentation` assembled in Rust proves
+//! nothing about the cascade a real `.pptx` authors across four parts.
 
+use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::display::{PaintItem, ShapeGeometry};
+use casual_doc_layout::page::AnchorContent;
+use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_package::PackageLimits;
 use casual_pres_import::{ImportLimits, ImportedPresentation, import_pptx};
 use casual_pres_layout::{compose_slide, lay_out_slide};
@@ -29,6 +34,12 @@ use casual_pres_layout::{compose_slide, lay_out_slide};
 #[path = "../../casual-pres-import/src/tests/deck.rs"]
 mod deck;
 
+/// The deterministic shaper: bundled faces only, so a guard means the same thing
+/// on a developer's machine and on the runner.
+fn shaper() -> ParleyShaper {
+    ParleyShaper::without_system_fonts()
+}
+
 /// Imports some fixture bytes, or panics with the import error.
 fn open(bytes: &[u8]) -> ImportedPresentation {
     import_pptx(bytes, PackageLimits::default(), ImportLimits::default())
@@ -39,7 +50,7 @@ fn open(bytes: &[u8]) -> ImportedPresentation {
 /// painted as a plain rectangle. Both are derived from the display list the raster
 /// backend would consume, not from the model.
 fn path_profile(imported: &ImportedPresentation, index: usize) -> (usize, usize) {
-    let canvas = lay_out_slide(&imported.presentation, index)
+    let canvas = lay_out_slide(&imported.presentation, index, &shaper())
         .unwrap_or_else(|| panic!("slide {index} lays out"));
     let list = compose_slide(&canvas);
     let mut longest = 0;
@@ -63,7 +74,7 @@ fn an_imported_deck_lays_out_and_paints_every_slide() {
     assert_eq!(count, 3, "the fixture is a three-slide deck");
 
     for index in 0..count {
-        let canvas = lay_out_slide(&imported.presentation, index)
+        let canvas = lay_out_slide(&imported.presentation, index, &shaper())
             .unwrap_or_else(|| panic!("slide {index} lays out"));
         assert!(
             canvas.size.width.raw() > 0 && canvas.size.height.raw() > 0,
@@ -143,7 +154,8 @@ fn an_unhidden_preset_paints_its_outline_and_a_hidden_one_paints_nothing() {
 #[test]
 fn an_imported_deck_paints_the_master_before_the_slide() {
     let imported = open(&deck::deck());
-    let canvas = lay_out_slide(&imported.presentation, 0).expect("the first slide lays out");
+    let canvas =
+        lay_out_slide(&imported.presentation, 0, &shaper()).expect("the first slide lays out");
     // The three tiers are one monotonic paint order, so a master shape can never
     // land on top of the slide content it sits behind. Asserted on the ORDER the
     // canvas carries, because `compose_slide` sorts by it and a composed list
@@ -156,5 +168,280 @@ fn an_imported_deck_paints_the_master_before_the_slide() {
     assert!(
         orders.len() >= 2,
         "the fixture's first slide inherits at least one shape from a tier above it"
+    );
+}
+
+/// The glyph runs of the one text anchor whose shape is `name`'s, in paragraph
+/// then line order, paired with the paragraph each came from.
+fn text_profile(
+    canvas: &casual_pres_layout::SlideCanvas,
+    shape: usize,
+) -> Vec<(usize, i32, i32, i32, usize)> {
+    let anchor = canvas
+        .anchors
+        .iter()
+        .filter(|anchor| matches!(anchor.content, AnchorContent::TextBox { .. }))
+        .nth(shape)
+        .unwrap_or_else(|| panic!("the canvas has no text anchor {shape}"));
+    let AnchorContent::TextBox { blocks, .. } = &anchor.content else {
+        unreachable!("filtered above");
+    };
+    let mut profile = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let BlockFragment::Paragraph { lines, .. } = block else {
+            panic!("slide text flows as paragraphs");
+        };
+        for line in &lines.lines {
+            for run in &line.runs {
+                profile.push((
+                    index,
+                    run.origin.x.raw(),
+                    run.size.raw(),
+                    line.height.raw(),
+                    run.glyphs.len(),
+                ));
+            }
+        }
+    }
+    profile
+}
+
+/// A real deck's body text reaches positioned glyph runs, in order, with each
+/// paragraph's own alignment, size and line advance.
+///
+/// This is the claim the crate could not make before: `casual-pres-layout`
+/// emitted no glyph at all, so "a deck reaches paint items" meant shapes only.
+/// Every number below is a *difference between paragraphs of one shape*, so the
+/// guard cannot be satisfied by an engine that resolves one property and ignores
+/// the rest:
+///
+/// * three paragraphs, in the authored order, with the authored glyph counts —
+///   so a reader that dropped the `a:fld`'s cached text, or shaped the
+///   paragraphs in list order rather than document order, fails;
+/// * sizes 28/24/20pt from three different `a:rPr@sz` values against ONE master
+///   tier that says 28pt at level 0 and nothing at levels 1 and 2;
+/// * the third paragraph alone states `algn="r"`, so its runs must start further
+///   right than the first's;
+/// * the third paragraph alone states `a:lnSpc` 150%, so its line box must be
+///   taller than the second's although its text is SMALLER.
+#[test]
+fn an_imported_decks_body_text_reaches_positioned_glyph_runs() {
+    let imported = open(&deck::deck());
+    let canvas =
+        lay_out_slide(&imported.presentation, 1, &shaper()).expect("the second slide lays out");
+    // Text anchor 0 is the title; anchor 1 is the content placeholder.
+    let profile = text_profile(&canvas, 1);
+
+    let paragraphs: Vec<usize> = profile.iter().map(|entry| entry.0).collect();
+    assert_eq!(
+        paragraphs,
+        vec![0, 1, 2, 2],
+        "three paragraphs with glyphs, the third carrying its run and the \
+         `a:fld`'s cached slide number: {profile:?}"
+    );
+    let glyphs: Vec<usize> = profile.iter().map(|entry| entry.4).collect();
+    assert_eq!(
+        glyphs,
+        vec![
+            "Top level".len(),
+            "Second level, numbered from c".len(),
+            "Third level, unbulleted".len(),
+            "2".len(),
+        ],
+        "one glyph per authored character, the field's cache included: {profile:?}"
+    );
+    let sizes: Vec<i32> = profile.iter().map(|entry| entry.2).collect();
+    assert_eq!(
+        sizes,
+        vec![560, 480, 400, 400],
+        "28pt, 24pt and 20pt in twips — hundredths of a point divided by five"
+    );
+
+    let (first_x, second_height) = (profile[0].1, profile[1].3);
+    let (third_x, third_height) = (profile[2].1, profile[2].3);
+    assert!(
+        third_x > first_x,
+        "only the third paragraph states `algn=\"r\"`: first={first_x} \
+         third={third_x}"
+    );
+    assert!(
+        third_height > second_height,
+        "the third paragraph's 150% `a:lnSpc` must outweigh its smaller text: \
+         second={second_height} third={third_height}"
+    );
+
+    // `a:pPr@marL` indents the paragraph's whole column, and the two bulleted
+    // paragraphs author different margins (228,600 and 742,950 EMU), so a reader
+    // that ignored `@marL` would produce one number twice.
+    let AnchorContent::TextBox { blocks, .. } = &canvas
+        .anchors
+        .iter()
+        .filter(|anchor| matches!(anchor.content, AnchorContent::TextBox { .. }))
+        .nth(1)
+        .expect("the content placeholder")
+        .content
+    else {
+        unreachable!("filtered above");
+    };
+    let metrics: Vec<(i32, i32)> = blocks
+        .iter()
+        .map(|block| match block {
+            BlockFragment::Paragraph { box_metrics, .. } => (
+                box_metrics.indent_start.raw(),
+                box_metrics.space_before.raw(),
+            ),
+            other => panic!("slide text flows as paragraphs: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        metrics,
+        vec![(360, 0), (1_170, 0), (0, 120), (360, 0)],
+        "`@marL` 228,600 and 742,950 EMU at 635 EMU per twip, and the third \
+         paragraph's `a:spcBef` of 600 hundredths of a point as 120 twips; the \
+         third states no `@marL` and the empty fourth inherits the shape's \
+         level-1 360"
+    );
+}
+
+/// A title's size comes from its run, through a cascade whose two tiers say
+/// something else, and is then scaled by the producer's autofit record.
+///
+/// The competition is read out of the model first, so the guard states what it
+/// is rather than asserting a bare number: the layout's `ctrTitle` placeholder
+/// says 60pt and the master's `p:titleStyle` says 44pt while the run says 44pt
+/// and the body records a 92.5% `fontScale`. The only answer consistent with all
+/// four is 814 twips, and each wrong fold is a different nameable number — 1,200
+/// for the layout tier, 880 for an ignored `fontScale`.
+#[test]
+fn an_imported_titles_size_resolves_through_the_run_and_the_autofit_record() {
+    let imported = open(&deck::deck());
+    let slide = imported
+        .presentation
+        .slides()
+        .first()
+        .expect("the deck has slides");
+    let layout = imported
+        .presentation
+        .layout_of(slide)
+        .expect("the slide's layout resolves");
+    let layout_size = layout
+        .shapes
+        .slot(casual_pres_model::PlaceholderKind::CtrTitle, 0)
+        .and_then(|node| node.text.as_ref())
+        .and_then(|text| text.list_style.level(0))
+        .and_then(|level| level.default_character.as_deref())
+        .and_then(|character| character.size_hundredths_point);
+    assert_eq!(
+        layout_size,
+        Some(6_000),
+        "the layout tier must disagree with the run, or this proves nothing"
+    );
+    let master_size = imported
+        .presentation
+        .master_of(layout)
+        .and_then(|master| master.text_styles.title.level(0))
+        .and_then(|level| level.default_character.as_deref())
+        .and_then(|character| character.size_hundredths_point);
+    assert_eq!(master_size, Some(4_400), "and so must the master tier");
+
+    let canvas =
+        lay_out_slide(&imported.presentation, 0, &shaper()).expect("the first slide lays out");
+    let title = text_profile(&canvas, 0);
+    assert_eq!(title.len(), 1, "the title is one run: {title:?}");
+    assert_eq!(
+        title[0].2, 814,
+        "44pt is 880 twips and the recorded 92,500 thousandths of a percent \
+         takes it to 814; 1,200 would mean the layout tier won"
+    );
+}
+
+/// A `+mj-lt` typeface is carried out as unresolved rather than substituted.
+///
+/// The deck's theme really does name a major font, which is asserted from the
+/// fixture's own bytes — so the report is saying "the file names Calibri Light
+/// and this engine did not use it", not "the file named nothing". That is the
+/// whole point of reporting instead of defaulting: the loss is nameable.
+#[test]
+fn an_imported_theme_typeface_is_reported_rather_than_substituted() {
+    let theme = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/theme/theme1.xml")
+            .expect("the fixture carries a theme part")
+            .1,
+    )
+    .expect("the theme part is UTF-8");
+    assert!(
+        theme.contains(r#"<a:majorFont><a:latin typeface="Calibri Light"/>"#),
+        "the fixture's theme must name a major font for the report to be a loss"
+    );
+
+    let imported = open(&deck::deck());
+    let canvas =
+        lay_out_slide(&imported.presentation, 0, &shaper()).expect("the first slide lays out");
+    let reported: Vec<&casual_pres_layout::UnresolvedProperty> = canvas
+        .unresolved
+        .iter()
+        .map(|entry| &entry.property)
+        .collect();
+    assert_eq!(
+        reported,
+        vec![&casual_pres_layout::UnresolvedProperty::ThemeTypeface {
+            name: "+mj-lt".to_owned()
+        }],
+        "exactly the one theme reference the slide authors, and nothing else — \
+         every size on this slide resolves"
+    );
+}
+
+/// The composed display list carries the glyphs, after the shape they sit on.
+///
+/// The canvas is layout's own vocabulary; this is the claim that a renderer sees
+/// them. Order matters as much as presence: a `PaintItem::Glyphs` emitted before
+/// its shape's `PaintItem::Shape` would be painted over by the shape's fill, so
+/// the text would be invisible on every filled placeholder in the deck.
+#[test]
+fn an_imported_deck_composes_glyph_paint_items_over_its_shapes() {
+    let imported = open(&deck::deck());
+    let canvas =
+        lay_out_slide(&imported.presentation, 0, &shaper()).expect("the first slide lays out");
+    let list = compose_slide(&canvas);
+
+    let glyph_items: Vec<usize> = list
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| matches!(item, PaintItem::Glyphs { .. }))
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        glyph_items.len(),
+        3,
+        "the title's one run and the subtitle's two lines: {} items composed",
+        list.items.len()
+    );
+    let first_shape = list
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::Shape { .. }))
+        .expect("the slide paints shapes too");
+    assert!(
+        glyph_items[0] > first_shape,
+        "glyphs must compose after the shapes they sit on: \
+         first shape at {first_shape}, first glyph run at {}",
+        glyph_items[0]
+    );
+    let total: usize = list
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            PaintItem::Glyphs { run } => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(
+        total,
+        "One".len() + "First in presentation order".len() + "second line".len(),
+        "every authored character reaches a paint item"
     );
 }
