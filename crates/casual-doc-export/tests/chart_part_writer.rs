@@ -1472,8 +1472,19 @@ fn an_orphan_projection_writes_no_part_and_the_package_still_reopens() {
         export_document(&document, &BTreeMap::new()).expect("a document with an orphan writes");
     let mut package =
         DocxPackage::open(&export.bytes, PackageLimits::default()).expect("the package opens");
-    assert!(
-        package.read_part(CHART_PART).is_err(),
+    // Scanned by DIRECTORY, not by the one name the model happened to hold: a
+    // writer keyed off the projection table would mint its own name, and a guard
+    // that only looked for `chart7.xml` would pass over the part it wrote. What
+    // must be true is that the package carries no chart part AT ALL.
+    let chart_parts: Vec<&str> = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.as_str())
+        .filter(|name| name.starts_with("word/charts/"))
+        .collect();
+    assert_eq!(
+        chart_parts,
+        Vec::<&str>::new(),
         "an orphan projection must not produce a part nothing references"
     );
     // Not `None`: `content_type` falls back to the `.xml` extension Default for
