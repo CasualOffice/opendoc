@@ -1815,18 +1815,40 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
      MEASURED AFTER, and the two steps reported separately because they are not
      the same size: four columns of 211px take the eleven groups from 643px to
      540px, and the group margin below takes 540 to 532, in a body whose ceiling
-     on this viewport is 560. The balance cannot go much under that whatever the
-     track is — `break-inside: avoid` means no column is shorter than the tallest
-     group, and Paragraph alone is 281px — so a narrower track buys almost
-     nothing: measured at 10rem and 9rem it is 517, five columns and all. The
-     28px of headroom is therefore the honest figure, and it is smaller than the
-     margin `dialog-fit.spec.mjs`'s other rows sit inside. What makes it safe
-     rather than lucky is that this card's type is SELF-HOSTED — Inter and
-     Material Symbols are served from `fonts.css`, which `chrome_fonts.test.mjs`
-     asserts — so the Linux runner lays these rows out in the same faces a Mac
-     does. Letting a group break across columns would buy 57px more and is not
-     taken: a keymap is read by scanning a group, and a group split down a column
-     boundary is the thing multicol is being asked not to do. */
+     on this viewport is 560.
+
+     THAT 28px OF HEADROOM WAS NOT REAL, and the argument that made it look safe
+     was wrong. It ran: this card's type is SELF-HOSTED, so the Linux runner lays
+     these rows out in the same faces a Mac does. The faces are the same; the
+     METRICS are not. CI measured the same body at 577px against the same 560px
+     ceiling — `#shortcutsDialog hides 17px of its content below the fold` — a
+     45px platform delta on a 28px margin. Same font file is not same line box.
+
+     So `.shortcuts-group` lets a group break across columns, which is the 57px
+     the previous pass measured and declined. Four configurations, all measured
+     at 1280x720 through `modal-roster`'s own open path, with the CI delta
+     applied:
+
+       break-inside | track | local | projected CI (+45px)
+       avoid        | 13rem |  532  |  577  <- what CI rejected
+       avoid        | 10rem |  517  |  562  <- still over the 560 ceiling
+       auto         | 13rem |  475  |  520  <- taken
+       auto         | 10rem |  453  |  498
+
+     A narrower track alone cannot fix this: `break-inside: avoid` means no
+     column is shorter than the tallest group and Paragraph alone is 281px, so
+     10rem buys 15px where 45px is needed. The track stays at 13rem rather than
+     going to 10rem, because narrowing it is a SECOND readability cost on top of
+     the split and 520px already clears the ceiling by more than the delta that
+     produced this failure.
+
+     The cost is real and is the one the previous pass named: a keymap is read by
+     scanning a group, and a group split down a column boundary is the thing
+     multicol is normally asked not to do. It is accepted because the
+     alternative on a 1280x720 laptop is content below the fold, and a group a
+     reader cannot see at all is worse than one that continues in the next
+     column. Multicol preserves reading order, so a split group continues where
+     a reader's eye is already going. */
   columns: auto;
   column-width: 13rem;
   column-gap: var(--space-6);
@@ -1846,7 +1868,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
  * `display: contents` on the row hands its two cells to this grid; the row
  * padding it drops comes back as `row-gap`. */
 .shortcuts-group {
-  break-inside: avoid;
+  break-inside: auto;
   display: grid;
   /* `minmax(0, max-content)` on the LABEL column, not bare `max-content`: the
      card is now sized to the measured width of these groups, so a group that
