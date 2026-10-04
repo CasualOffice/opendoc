@@ -1405,13 +1405,30 @@ export function bindComparePanel(io) {
     const change = line.change;
     const kind = document.createElement("span");
     kind.className = "compare-kind";
-    kind.textContent = KIND_KEY[change.kind] ? t(KIND_KEY[change.kind]) : change.kind;
+    kind.textContent = t(lineKindKey(line));
     const parts = [kind];
     const fields = changeFields(change);
     if (line.text) {
       const quote = document.createElement("q");
       quote.className = "compare-diff-text";
-      quote.textContent = line.text;
+      // THE WHOLE LINE, WITH THE CHANGED PART MARKED — GitHub's intra-line diff,
+      // and the fix for a row that read `Removed "THEY"`.
+      //
+      // The engine's word aligner is per-WORD, so a text change's `leftText` and
+      // `rightText` are the differing words and nothing else. Rendering those
+      // alone is precise and nearly unreadable: "THEY" on its own tells a reader
+      // which word moved and not what the sentence says. The block's full
+      // projected text is available on the side the line belongs to, and the
+      // change carries byte offsets into exactly that text, so the line can be
+      // the line.
+      //
+      // Falls back to the excerpt whenever the block text or the offsets cannot
+      // be trusted (`markedLine` returns `null`): a whole-block change has a
+      // `0..0` anchor, a story outside the body may not resolve, and an excerpt
+      // is the honest answer there rather than a guess at a range.
+      const marked = markedLine(line);
+      if (marked) quote.append(...marked);
+      else quote.textContent = line.text;
       parts.push(quote);
     } else if (fields.length > 0) {
       const named = document.createElement("span");
@@ -1426,6 +1443,82 @@ export function bindComparePanel(io) {
       parts.push(named);
     }
     return parts;
+  }
+
+  /** The kind label a diff LINE carries, which is not always its change's kind.
+   *
+   *  A `text` change has text on both sides, so it contributes a removed line
+   *  AND an added line — and labelling both with the change's own kind printed
+   *  `Added "THEY"` on the removed half. Measured in Chromium, and it is the kind
+   *  of wrongness a reader believes: the colour said removed and the word said
+   *  added.
+   *
+   *  So a removed line says removed and an added line says added, EXCEPT for the
+   *  two kinds where the change's own name carries information the ± cannot: a
+   *  move's two halves are not a deletion and an insertion, and saying so is the
+   *  whole reason the engine distinguishes them. `data-compare-kind` still
+   *  carries the CHANGE's kind, because that is what classifies the change and is
+   *  what a guard and a stylesheet select on. O(1). */
+  function lineKindKey(line) {
+    const kind = line.change?.kind;
+    if (line.kind === "del") {
+      return kind === "move_from" ? KIND_KEY.move_from : KIND_KEY.deletion;
+    }
+    if (line.kind === "add") {
+      return kind === "move_to" ? KIND_KEY.move_to : KIND_KEY.insertion;
+    }
+    return KIND_KEY[kind] ?? KIND_KEY.property;
+  }
+
+  /** The line's full text with the changed range wrapped in a `<mark>`, or
+   *  `null` when it cannot be produced honestly.
+   *
+   *  `DiffAnchor.start`/`end` are UTF-8 BYTE offsets into the block's projected
+   *  text, and a JS string is UTF-16, so the split goes through `TextEncoder`
+   *  rather than `String.slice` — which would cut at the wrong place in any
+   *  document with a non-ASCII character before the change, i.e. most of them.
+   *
+   *  `null`, and the caller falls back to the engine's excerpt, when: there is no
+   *  anchor on this line's side; the block has no projected text (a table, an
+   *  external chunk); the range is empty or inverted; it runs past the end; or
+   *  the decode produces U+FFFD, which is what a cut inside a multi-byte sequence
+   *  looks like. The offsets are word-boundary aligned over grapheme clusters, so
+   *  the last case should not happen — and it is checked rather than assumed,
+   *  because the alternative is rendering a replacement character into the
+   *  reader's own sentence.
+   *
+   *  Complexity: O(the block's text) for the encode, on a row that is in the
+   *  window. Not O(document), and not per change in the diff. */
+  function markedLine(line) {
+    const side = line.kind === "del" ? "left" : "right";
+    const anchor = line.change?.[side];
+    const hunk = diffView?.hunks?.[line.hunk];
+    if (!anchor || !hunk?.placeable || blockIndexOfPath(anchor.path) === null) return null;
+    let whole = null;
+    try {
+      whole = diffView.job?.blockTextAt(
+        side,
+        JSON.stringify(anchor.story ?? null),
+        JSON.stringify(anchor.path),
+      );
+    } catch {
+      return null;
+    }
+    if (typeof whole !== "string" || whole.length === 0) return null;
+    const start = Number(anchor.start) || 0;
+    const end = Number(anchor.end) || 0;
+    if (end <= start) return null;
+    const bytes = new TextEncoder().encode(whole);
+    if (end > bytes.length) return null;
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    const head = decoder.decode(bytes.subarray(0, start));
+    const body = decoder.decode(bytes.subarray(start, end));
+    const tail = decoder.decode(bytes.subarray(end));
+    if (`${head}${body}${tail}`.includes("�") && !whole.includes("�")) return null;
+    const mark = document.createElement("mark");
+    mark.className = "compare-diff-mark";
+    mark.textContent = body;
+    return [document.createTextNode(head), mark, document.createTextNode(tail)];
   }
 
   /** One row of the window, as an element. O(1). */

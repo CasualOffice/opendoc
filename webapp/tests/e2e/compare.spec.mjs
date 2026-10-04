@@ -297,6 +297,46 @@ test("Show changes on a version compares it with its PREDECESSOR, and writes not
   ).toHaveCount(1);
   await expect(page.locator("#compareBody")).toContainText(/Read-only/i);
 
+  // IT IS A UNIFIED DIFF, and this is the part the owner asked for: "diff should
+  // be like how GitHub diff appears on a PR — things added or removed, on that
+  // changes, while you can expect to see more."
+  //
+  // So all three parts are asserted, not just the changed lines. A panel that
+  // rendered added/removed rows and no context and no expand control would be a
+  // list with colours on it, which is what this replaced.
+  const diff = page.locator("#compareBody [data-compare-diff]");
+  await expect(diff).toBeVisible();
+  // The HUNK header: where in the document this run of changes is.
+  await expect(diff.locator('[data-compare-row="hunk"]').first()).toContainText(/Paragraph \d+/);
+  // An ADDED line, carrying the inserted sentence. (This pair differs by an
+  // insertion, so there is no removed line to assert and none is claimed.)
+  await expect(diff.locator('[data-compare-row="add"]').first()).toContainText(
+    "Alpha only in the middle version.",
+  );
+  // CONTEXT: unchanged blocks around the change, which are in NEITHER side's
+  // sidecar — a change record names only what changed — so a context row with
+  // real text in it is the proof that `blockTextAt` is wired and that the two
+  // parsed sides survived the comparison completing.
+  const context = diff.locator('[data-compare-row="context"]');
+  await expect(context).not.toHaveCount(0);
+  const contextText = (await context.allInnerTexts()).join(" ").trim();
+  expect(
+    contextText.length,
+    "every context row is empty, so the context is a placeholder and not the document",
+  ).toBeGreaterThan(0);
+
+  // THE EXPAND CONTROLS ARE THERE, one per side of the hunk, and the one that
+  // points off the top of the document is disabled WITH ITS REASON rather than
+  // enabled and doing nothing when pressed — `SKILL` §10. The edit in this
+  // fixture is at `Ctrl+Home`, so the hunk is at the first block and "above" is
+  // genuinely the end of the document; that is asserted rather than worked
+  // around. The REVEAL half is asserted in the test below, on a fixture whose
+  // paragraph count is written in this file.
+  await expect(diff.locator("[data-compare-expand]")).not.toHaveCount(0);
+  const above = diff.locator('[data-compare-expand="before"]').first();
+  await expect(above).toBeDisabled();
+  await expect(above).toHaveAttribute("title", /no more of the document/i);
+
   // THE VERSION PANEL IS REOPENED, and that is not scaffolding: both surfaces
   // live in the right-hand rail and opening Compare takes it, so the version
   // rows are genuinely not on screen now. Measured — the ⋮ resolved and stayed
@@ -431,5 +471,117 @@ test("every entry in the list names what it is about, never only its kind", asyn
   // not finished. `record.rs`: `complete` is false whenever `findings` is
   // non-empty, which an inline object in the demo document makes true.
   await expect(page.locator("#compareBody")).not.toContainText(/did not finish/i);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the unified diff expands its context, and an entry scrolls to its change", async ({
+  page,
+  consoleErrors,
+}) => {
+  // THE FIXTURE'S PARAGRAPH COUNT IS WRITTEN IN THIS FILE, which is the point of
+  // doing this on the file route rather than on the demo document: the hunk sits
+  // at paragraph 20 of 40, so there are unchanged blocks in BOTH directions and
+  // both expand controls are genuinely live. On the version-history fixture the
+  // edit is at `Ctrl+Home`, where "above" is the end of the document — a correct
+  // disabled control, and no way to test the reveal.
+  const lines = (changed) =>
+    Array.from({ length: 40 }, (_, index) =>
+      index === 19 ? changed : `Paragraph number ${index + 1} is unchanged`,
+    ).join("\n");
+  await openText(page, textFile("mine.txt", `${lines("The twentieth paragraph as I wrote it")}\n`));
+  await compareAgainst(page, textFile("theirs.txt", `${lines("The twentieth paragraph as THEY wrote it")}\n`), {
+    via: "rail",
+  });
+
+  const diff = page.locator("#compareBody [data-compare-diff]");
+  await expect(diff).toBeVisible();
+  // One hunk, named by position. 40 paragraphs differing in exactly one place
+  // cannot produce two hunks, so this also catches a grouping rule that split
+  // on every change.
+  await expect(diff.locator('[data-compare-row="hunk"]')).toHaveCount(1);
+  await expect(diff.locator('[data-compare-row="hunk"]')).toContainText("Paragraph 20");
+
+  // REMOVED then ADDED, GitHub's order, with the real text on both sides — the
+  // half a summary count cannot show. `openText` opened MINE, so mine is the
+  // right-hand (newer) side and theirs is the left: an insertion is what this
+  // document has.
+  const removed = diff.locator('[data-compare-row="del"]');
+  const added = diff.locator('[data-compare-row="add"]');
+  await expect(removed).toHaveCount(1);
+  await expect(added).toHaveCount(1);
+  await expect(removed).toContainText("as THEY wrote it");
+  await expect(added).toContainText("as I wrote it");
+
+  // CONTEXT ON BOTH SIDES, with the actual neighbouring paragraphs in it. These
+  // are in NEITHER side's sidecar — a change record names only what changed — so
+  // this is the proof that `blockTextAt` is wired to the right side and the
+  // right path. 19 and 21 bracket the change; naming them is what distinguishes
+  // real context from three blank rows.
+  const context = diff.locator('[data-compare-row="context"]');
+  await expect(context).toHaveCount(6, { timeout: 45_000 });
+  await expect(diff).toContainText("Paragraph number 19 is unchanged");
+  await expect(diff).toContainText("Paragraph number 21 is unchanged");
+  await expect(
+    diff,
+    "paragraph 16 is four blocks away and is showing before anything was expanded",
+  ).not.toContainText("Paragraph number 16 is unchanged");
+
+  // AND YOU CAN SEE MORE — the owner's "while you can expect to see more". Both
+  // controls are live here, and pressing one must actually add rows: a button
+  // that renders and does nothing is the dead control `SKILL` §10 forbids.
+  const above = diff.locator('[data-compare-expand="before"]');
+  const below = diff.locator('[data-compare-expand="after"]');
+  await expect(above).toBeEnabled();
+  await expect(below).toBeEnabled();
+  // THE SIZER IS THE ROW ARRAY and the DOM is the window, so growth is measured
+  // on the sizer rather than by counting rendered rows. Counting rows is what
+  // this test tried first and it is the wrong instrument: 26 context rows do not
+  // fit in a 46vh scroller, so an exact count asserts the viewport's height.
+  const sizerHeight = () =>
+    diff.locator(".compare-diff-sizer").evaluate((element) => element.offsetHeight);
+  const start = await sizerHeight();
+  await above.click();
+  await expect(
+    diff,
+    "the expand control was enabled and revealed nothing above",
+  ).toContainText("Paragraph number 16 is unchanged");
+  const expanded = await sizerHeight();
+  expect(expanded, "the row array did not grow when context was revealed").toBeGreaterThan(start);
+  await below.click();
+  expect(await sizerHeight(), "expanding below did not grow the row array").toBeGreaterThan(
+    expanded,
+  );
+
+  // THE WINDOW IS NOT THE LIST, and this is the assertion that fails if the
+  // renderer goes back to one node per change in one synchronous loop. The row
+  // array is `sizer / 22` rows tall (`DIFF_ROW_HEIGHT`, which JS writes onto the
+  // container as `--diff-row-h` so the arithmetic and the stylesheet cannot
+  // disagree); the DOM holds strictly fewer.
+  const rows2 = Math.round((await sizerHeight()) / 22);
+  const rendered = await diff.locator(".compare-changes > li").count();
+  expect(rows2, "the sizer is not sized from the whole row array").toBeGreaterThan(28);
+  expect(
+    rendered,
+    `the DOM holds ${rendered} of ${rows2} rows — the window is rendering the whole list`,
+  ).toBeLessThan(rows2);
+
+  // AN ENTRY SCROLLS TO ITS CHANGE. This is the route where it CAN: Review ▸
+  // Compare's right-hand side IS the open document, so the change's `right.path`
+  // addresses a block on screen and `nodeAtStoryPath` turns it into that
+  // paragraph's real NodeId. `DiffAnchor.node` is never used — it addresses a
+  // throwaway parse whose counter restarted at 1, so it would land on an
+  // unrelated paragraph and report nothing wrong.
+  const goto = diff.locator("[data-compare-goto]").first();
+  await expect(goto).toBeVisible();
+  await goto.click();
+  // The EFFECT, not the mechanism: the caret is now in the paragraph the change
+  // is about. Asserted through the selection rather than through a scroll
+  // position, because a scroll offset is a measured number and the guarantee is
+  // "the reader is taken to that paragraph".
+  await expect
+    .poll(async () => page.evaluate(() => window.getSelection()?.toString() ?? ""), {
+      timeout: 45_000,
+    })
+    .toContain("as I wrote it");
   expect(consoleErrors).toEqual([]);
 });
