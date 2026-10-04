@@ -371,3 +371,52 @@ test("no fidelity note denies an authoring path the engine ships", () => {
   }
   assert.deepEqual(stale, []);
 });
+
+// A `modeled` grade is derived from the importer, not from recollection.
+//
+// `rendered` has been pinned here since the page was first guarded, and
+// `modeled` never was — which is how SmartArt carried `modeled: "full"` while
+// NOTHING under `word/diagrams` is parsed anywhere in the importer, and Charts
+// carried it while six chart families and the whole of `chartex` are untyped.
+// Both are §9 rule 3 overstatements by omission, and both reached the published
+// page, which is the third time this file has had to catch that.
+//
+// This asserts the two claims that CAN be derived from the tree rather than
+// agreed by hand. It deliberately does not try to grade every family: a guard
+// that pretends to check more than it does is the `fidelity_data` failure mode
+// §9 rule 6 names, and this file has already been that once.
+test("a family the importer does not parse may not claim it is modeled", () => {
+  const importer = readFileSync(
+    new URL("../../crates/casual-doc-import/src/body.rs", import.meta.url),
+    "utf8",
+  );
+  const by = Object.fromEntries(FIDELITY.map((row) => [row.family, row]));
+
+  // SmartArt: the diagram parts are the only place a typed diagram could come
+  // from. No reference to them means the model holds a relationship and nothing
+  // else, so anything but "none" is a claim about code that is not there.
+  if (!importer.includes("word/diagrams")) {
+    assert.equal(
+      by["SmartArt"].modeled,
+      "none",
+      'nothing in the importer reads word/diagrams, so SmartArt cannot be "modeled" at all — ' +
+        "it is a preserved reference. Grade it `none` or point at the parser.",
+    );
+  }
+
+  // The preview bitmap. Both embedded families pass `preview: None` on every
+  // path, so a note promising the reader "a preview image shows if present" is
+  // describing a branch that cannot be taken. Word writes no preview for a
+  // classic chart part either, so this is not a gap waiting on a fixture.
+  const previewless = /preview: None/.test(importer);
+  for (const family of ["Charts", "SmartArt"]) {
+    if (previewless) {
+      assert.doesNotMatch(
+        by[family].note,
+        /preview image shows/i,
+        `${family}'s note promises a preview image while the importer passes ` +
+          "`preview: None` on every path, so no document can ever produce one",
+      );
+    }
+  }
+});
