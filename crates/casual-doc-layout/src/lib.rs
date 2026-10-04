@@ -63,6 +63,7 @@ pub mod running;
 pub mod script;
 pub mod shape;
 pub mod shape_guide;
+pub mod shape_preset;
 pub mod symbol_map;
 mod table_float;
 pub mod tabs;

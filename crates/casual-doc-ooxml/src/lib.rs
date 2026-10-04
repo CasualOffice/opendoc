@@ -10,6 +10,9 @@ mod discovery;
 mod error;
 mod package;
 mod path;
+/// Derivation of the committed preset-geometry table, shared by the generator and
+/// the guard that checks its output.
+pub mod preset_table;
 mod relationships;
 
 #[cfg(test)]
