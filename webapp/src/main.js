@@ -147,9 +147,10 @@ import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
 import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { insertChartAtCaret } from "./chart_insert.mjs";
+import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
-import { matchWithinScope } from "./find_scope.mjs";
+import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
@@ -11824,6 +11825,7 @@ function editorCommands(context = { surface: "palette" }) {
     // Fold at the caret, Collapse/Expand All and the level rungs, generated from
     // the module's one table so no two surfaces can offer different sets.
     ...foldView.commands(),
+    ...collabCommands({ transport: () => collab, t }),
     // The ¶ toggle and its five switches, the measurement-unit preference, and
     // Restrict Editing. Each module generates its own rows from its own table, so
     // the palette, the menu and the control cannot offer different sets — and
@@ -13229,13 +13231,6 @@ function captureFindScope() {
 // Same node compares offsets with no WASM call; otherwise selectionEdge(...false)
 // returns whichever endpoint is earlier, and since the two nodes differ the
 // returned node uniquely identifies which one that is.
-function findPosLE(aNode, aOff, bNode, bOff) {
-  if (aNode === bNode) return aOff <= bOff;
-  const edge = doc.selectionEdge(aNode, aOff, bNode, bOff, false);
-  const aIsEarlier = edge.node === aNode;
-  edge.free();
-  return aIsEarlier;
-}
 
 // A find match spans a single paragraph, so match.startNode === match.endNode.
 // Accept iff [match.startOffset .. match.endOffset] on that node lies within the
@@ -13246,7 +13241,7 @@ function findPosLE(aNode, aOff, bNode, bOff) {
 function matchInFindSelection(match) {
   if (!findSelection.checked) return true;
   if (!findScope) return false;
-  return matchWithinScope(match, findScope, findPosLE);
+  return matchWithinScope(match, findScope, positionComparator(doc));
 }
 
 /** Scans every match in document order, starting from the top, up to

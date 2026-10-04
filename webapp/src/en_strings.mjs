@@ -1252,6 +1252,9 @@ export const EN_STRINGS = Object.freeze({
   // connection that has not landed as well as a lost one, because to the reader
   // they are the same fact.
   "collab.connected": "Shared — your changes are reaching everyone in this document",
+  "collab.reconnect": "Reconnect",
+  "collab.standalone":
+    "This document is not shared, so there is nothing to reconnect to",
   "collab.reconnecting": "Connection lost — reconnecting. Changes you make now are not shared yet",
   "collab.stopped": "Not connected to this shared document — your changes are staying on this device",
 

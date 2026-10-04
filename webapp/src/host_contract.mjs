@@ -301,6 +301,7 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.dropCap", "mutate"),
   exact("insert.image", "mutate"),
   exact("insert.shape", "mutate"),
+  exact("insert.chart", "mutate"),
   exact("insert.textbox", "mutate"),
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
@@ -500,6 +501,14 @@ export const COMMAND_CONTRACT = Object.freeze([
   // the editor offers that this file does not name is invisible to a host, which
   // is the one audience it has.
   exact("view.reflow", null),
+  // Reconnecting a shared session requires NOTHING of the host, and that is the
+  // interesting part rather than an omission. It mutates no document — it opens a
+  // socket the reader already had — so a host that granted no mutation capability
+  // can still offer it, and a host that granted editing but whose session dropped
+  // needs it most. The grant that matters arrives on the wire in the `Welcome`
+  // and only ever NARROWS what this host already allowed, so reconnecting cannot
+  // widen a reader's reach (ADR-063).
+  exact("collab.reconnect", null),
   // Folding — the heading at the caret, Collapse/Expand All, and the nine level
   // rungs (ADR-049, `109` FOLD-001). EXACT rows and not a family, by this file's
   // own addressing rule: a family is for a roster generated from the document,

@@ -34,3 +34,23 @@ export function matchWithinScope(match, scope, posLE) {
     posLE(node, match.endOffset, endNode, endOffset)
   );
 }
+
+/** The canonical comparator for `matchWithinScope`, over an engine handle.
+ *
+ *  It lives here rather than at the call site because of the `free()`: the edge
+ *  is an engine-owned handle and leaking one leaks WASM memory on every match
+ *  tested, which is per-keystroke work during a find. One place to get right.
+ *
+ *  O(1) for two offsets in the same node; otherwise one `selectionEdge` call.
+ *
+ *  @param {{selectionEdge: Function}} doc
+ */
+export function positionComparator(doc) {
+  return (aNode, aOff, bNode, bOff) => {
+    if (aNode === bNode) return aOff <= bOff;
+    const edge = doc.selectionEdge(aNode, aOff, bNode, bOff, false);
+    const aIsEarlier = edge.node === aNode;
+    edge.free();
+    return aIsEarlier;
+  };
+}
