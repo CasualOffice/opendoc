@@ -6220,6 +6220,96 @@ body.is-format-painting .page-wrap * {
   color: var(--muted);
 }
 
+/* ---- Folding (ADR-049) ------------------------------------------------------
+   The outline is a `role="tree"` whose rows are a disclosure plus a label, so a
+   row is a flex line and the label keeps every rule `.outline-item` already had
+   — no new colour, radius or type size, because docs/63's tokens are deliberate
+   and this feature has no business proposing a visual change. */
+.outline-tree {
+  display: block;
+}
+
+.outline-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The disclosure is a REAL focusable button (ONLYOFFICE's is a bare `div` with
+   no role and no tabindex, which is the mistake to avoid). It is 18px square so
+   the row's height is still the label's, and a leaf renders the same box as an
+   inert spacer so text at one level always starts at the same x. */
+.outline-twisty {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.outline-twisty .ms {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.outline-twisty:hover {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* Withheld, not dead: `aria-disabled` keeps the reason reachable where
+   `disabled` would hide the title from assistive technology. */
+.outline-twisty[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.outline-twisty[aria-hidden="true"] {
+  cursor: default;
+}
+
+/* The row's label now sits beside a disclosure, so its own left padding is the
+   indent only — the twisty supplies the gutter. */
+.outline-row .outline-item {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* The in-body chevron at the caret's heading — Word's affordance, which
+   ONLYOFFICE does not have at all. Positioned by the chrome against the caret
+   rectangle, so it needs an absolute box in the page's own coordinate space. */
+.fold-body-chevron {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  margin-left: -20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.fold-body-chevron .ms {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.fold-body-chevron:hover {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
 .outline-empty {
   padding: 14px 10px;
   color: var(--faint);

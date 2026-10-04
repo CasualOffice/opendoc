@@ -75,9 +75,26 @@ function appendCheckbox(parent, node) {
  *
  * The table it applies to is the caret's own top-level block — `blockIndexOf`
  * returns the body block CONTAINING a node, so for a paragraph inside a cell it
- * is the table's index, and `accessibilityTreeWindow` projects top-level blocks
- * from `start`. So the caret's table is `nodes[caretBlock - windowStart]` and no
- * matching by shape is needed.
+ * is the table's index.
+ *
+ * It is matched by **node id**, from the projection's `nodes` array, and not by
+ * index arithmetic over `blocks`. The arithmetic was wrong in two ways and only
+ * one of them is new: a single paragraph can project SEVERAL nodes (its text
+ * plus one per drawing it holds), so `blocks` was never index-aligned with the
+ * document's top-level blocks; and since ADR-049 the projection also omits the
+ * blocks inside a collapsed heading's range, which shifts everything after a
+ * fold. `nodes[i]` names the top-level block that produced `blocks[i]`, so the
+ * caret's table is the entry whose owner is the caret's block and no arithmetic
+ * is involved.
+ *
+ * FOLDING: the mirror is filtered by the same `FoldSet` the layout is, and the
+ * filtering happens in the ENGINE. That is not a shortcut — it is the only place
+ * it can happen: `A11yBlockJson` carries `kind`/`level`/`text` and no node id,
+ * so nothing here could tell which projected heading was collapsed, and matching
+ * by level-plus-text is guesswork. A folded range is therefore absent from what
+ * a screen reader reads for exactly as long as it is absent from the canvas,
+ * which is the point — an unfiltered mirror makes the fold a lie to the one
+ * reader who cannot check it.
  */
 export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) {
   const a11yDocument = document.getElementById("a11yDocument");
@@ -96,9 +113,15 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) 
   // The window follows the caret, so assistive technology reads the part of the
   // document being edited, and the engine only projects those blocks.
   let nodes = [];
+  /** `owners[i]` is the top-level block that produced `nodes[i]`. Parallel to
+   *  `nodes` by the engine's own contract, and the only way anything here can
+   *  tell which projected node belongs to which block. */
+  let owners = [];
   let total = 0;
   let windowStart = 0;
   let caretBlock = -1;
+  /** The caret's own top-level block id, so its table is found by identity. */
+  let caretOwner = "";
   try {
     caretBlock = focusNode ? doc.blockIndexOf(focusNode) : -1;
     const anchor = caretBlock >= 0 ? caretBlock : a11yWindowStart;
@@ -107,9 +130,15 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) 
     total = Number(payload.total) || 0;
     windowStart = Number(payload.start) || 0;
     nodes = Array.isArray(payload.blocks) ? payload.blocks : [];
+    owners = Array.isArray(payload.nodes) ? payload.nodes : [];
     a11yWindowStart = windowStart;
+    // The caret's block, by ID. `blockIndexOf` gives the INDEX, which is what
+    // the fold filter invalidates, so the id comes from the engine's own
+    // `blockNodeOf` and is compared against the owners the projection reports.
+    caretOwner = focusNode ? String(doc.blockNodeOf(focusNode) || "") : "";
   } catch {
     nodes = [];
+    owners = [];
   }
   const frag = document.createDocumentFragment();
   // A list is a STACK of open lists, one per depth, because screen readers
@@ -125,7 +154,11 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) 
       listStack = [];
     }
   };
-  const caretIndex = caretBlock >= 0 ? caretBlock - windowStart : -1;
+  // The projected node the caret's table is, by owner id. `-1` when the caret
+  // is not in the window, is not in a table, or sits inside a folded range (it
+  // cannot: a fold projects its content to a single boundary position, so the
+  // caret is never inside what the eye cannot see).
+  const caretIndex = caretOwner === "" ? -1 : owners.indexOf(caretOwner);
   for (const [blockIndex, node] of (Array.isArray(nodes) ? nodes : []).entries()) {
     if (node.kind === "listItem") {
       const depth = Math.max(0, Number(node.level) || 0);

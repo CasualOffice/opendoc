@@ -13081,6 +13081,34 @@ impl WasmDocument {
             .unwrap_or(-1)
     }
 
+    /// The **node id** of the top-level body block containing `node`, or `""`
+    /// when it is not in the body.
+    ///
+    /// [`Self::block_index_of`]'s answer as an identity rather than a position,
+    /// and that difference is the point: an index is invalidated by anything that
+    /// filters the list it indexes into, and since ADR-049 the accessibility
+    /// projection omits the blocks inside a collapsed heading's range. The
+    /// projection reports the owning block of every node it emits, so a host that
+    /// has to find "the caret's table" among them matches an id instead of doing
+    /// arithmetic that a fold — or a paragraph projecting more than one node —
+    /// silently breaks.
+    ///
+    /// `O(document)`, the same walk `block_index_of` makes, and for the same
+    /// reason: it is asked once per mirror rebuild, not once per node.
+    #[wasm_bindgen(js_name = blockNodeOf)]
+    #[must_use]
+    pub fn block_node_of(&self, node: &str) -> String {
+        let Ok(id) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        self.document
+            .body()
+            .iter()
+            .find(|block| block_holds(block, id))
+            .map(|block| block_node_id(block).to_string())
+            .unwrap_or_default()
+    }
+
     /// [`Self::accessibility_tree_window`]'s walk: counts every block so `total`
     /// is the document's real size, and projects only those inside the window.
     // Eight arguments because `NoteAnchorLengths` is PASSED rather than looked

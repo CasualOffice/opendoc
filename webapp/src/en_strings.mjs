@@ -142,6 +142,41 @@ export const EN_STRINGS = Object.freeze({
   "textWidth.full.command": "Text width: Full",
   "textWidth.pagedWithheld":
     "Text width applies in reflow. On pages the measure is the document's own, so turn Reflow on to choose one.",
+  // -- Folding (ADR-049, `docs/157`) -----------------------------------------
+  //
+  // ONLYOFFICE has no folding at all — zero `collaps` hits across their 232-file
+  // Word engine, and their exported outline API has no Collapse or Expand — so
+  // every sentence here is written from Word rather than matched against theirs.
+  //
+  // The two toggle labels are whole verbs rather than one label plus a state,
+  // for the reason the reflow pair above are two keys: a language that inflects
+  // the noun for the action cannot be served by concatenation.
+  "fold.collapseHeading": "Collapse heading",
+  "fold.expandHeading": "Expand heading",
+  "fold.collapseAll": "Collapse all headings",
+  "fold.expandAll": "Expand all headings",
+  "fold.treeLabel": "Document headings",
+  // Two withholdings, two sentences. One shared "folding is unavailable" string
+  // would tell a reader who pressed the shortcut inside a paragraph about a
+  // document-level limitation that does not apply to them.
+  "fold.noHeadingAtCaret":
+    "The cursor is not in a heading. Folding collapses a heading and the content under it, so put the cursor in one first.",
+  "fold.noDocument": "Open a document to fold its headings.",
+  "fold.unavailable": "This document's headings cannot be folded.",
+  // The level picker. "All levels" is the off position and folds nothing; level
+  // 1 folds every heading, which is why the two are one mechanism.
+  "fold.level.all": "Show all levels",
+  "fold.level.n": "Show level {level}",
+  // WORD SAYS THIS AND SO MUST WE. Collapsed content occupies no pages, so the
+  // number on screen is lower than the number that prints. Print, PDF and DOCX
+  // export are always fully expanded (ADR-049), so the printed numbers are the
+  // true ones — and a page indicator that quietly means something else while
+  // folded is the same class of lie as printing a tile index as a page number,
+  // which `151` §6.5 refuses.
+  "fold.pageCountNotPrinted.one":
+    "One heading is collapsed, so the page count on screen is not the printed one. Printing and export always include collapsed content.",
+  "fold.pageCountNotPrinted.other":
+    "{count} headings are collapsed, so the page count on screen is not the printed one. Printing and export always include collapsed content.",
   // Reflow cuts the document into tiles, not pages, so "Page 3 of 12" would be
   // wrong in both halves (`docs/151` §6.5). How far through the reader is, is a
   // question the tile index can answer honestly.
