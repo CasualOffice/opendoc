@@ -21,6 +21,10 @@
 !rust-toolchain.toml
 !crates/
 !server/
+# `tools/` for its MANIFESTS alone: `[workspace].members` names four crates under
+# it, and cargo refuses to load a workspace with a member manifest missing — the
+# first relay build failed on exactly that. Nothing under it is compiled.
+!tools/
 
 # The editor build (`webapp/build.sh`): the webapp, the published package the
 # embedding generator reads, `docs/` for the reference pages and

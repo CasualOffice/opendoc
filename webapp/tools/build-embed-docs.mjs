@@ -116,6 +116,12 @@ const SOURCES = Object.freeze({
   brandTest: join(WEBAPP, "tests", "brand.test.mjs"),
   whiteLabelGate: join(WEBAPP, "tests", "e2e", "white-label.spec.mjs"),
   editorMarkup: join(WEBAPP, "editor.html"),
+  // `docs/162`, `109` RM-11. The deployment section's commands are DERIVED from
+  // the compose file rather than typed into the page: a renamed service or a
+  // renamed profile changes what the page tells a host to run, and
+  // `tests/deployment_contract.test.mjs` already holds that file against the
+  // relay's real CLI (`server/src/main.rs`).
+  compose: join(REPO, "docker-compose.yml"),
 });
 
 /** What each capability is, in one clause.
@@ -435,6 +441,8 @@ const COLUMN_KEYS = Object.freeze({
   Region: "site.column.region",
   File: "site.column.file",
   "Ships as": "site.column.shipsAs",
+  Service: "site.column.service",
+  "Compose profile": "site.column.composeProfile",
   Lane: "site.column.lane",
   "The test": "site.column.theTest",
   // The two ROLE columns of the region table. A role name is API vocabulary — a
@@ -522,7 +530,136 @@ function codeList(values) {
   return list.length ? list.map((value) => `<code>${escape(value)}</code>`).join(" ") : "—";
 }
 
+/** What each compose service is, in one clause — the deployment table's only
+ *  authored column, exactly as `MEANINGS` is the capability table's.
+ *
+ *  `deploymentRows()` FAILS when a service exists with no clause or a clause
+ *  names a service the compose file no longer has, so adding a service cannot
+ *  ship an unexplained row and deleting one cannot leave a row describing
+ *  nothing. */
+const SERVICES = Object.freeze({
+  editor: "The product: a static file server, with nothing behind it.",
+  relay: "The optional relay. It orders chunks, holds no document, and is not needed to edit.",
+  "relay-create":
+    "Creates the room's durable log, once. The host creates a room, not the first client.",
+  "relay-inspect":
+    "Replays that log and reports what it holds. Run it on a stopped room, or on a copy.",
+});
+
+/** Every service in `docker-compose.yml`, with the profiles that enable it.
+ *
+ *  A deliberately narrow reader over the subset the compose file is written in,
+ *  not a YAML parser: two-space indentation, one `services:` block, `profiles:`
+ *  as a block sequence. It throws rather than guesses, because a reader that
+ *  silently returned nothing would publish an empty table. */
+function composeServices() {
+  const lines = read(SOURCES.compose).split("\n");
+  const at = lines.findIndex((line) => line === "services:");
+  if (at < 0) {
+    throw new Error("build-embed-docs: docker-compose.yml has no top-level `services:` block");
+  }
+  const services = new Map();
+  let current = null;
+  let inProfiles = false;
+  for (const line of lines.slice(at + 1)) {
+    if (line.trim() && /^\S/.test(line)) break; // the next top-level key
+    if (/^\s*#/.test(line) || !line.trim()) continue;
+    const service = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+    if (service) {
+      current = service[1];
+      services.set(current, []);
+      inProfiles = false;
+      continue;
+    }
+    if (/^ {4}profiles:\s*$/.test(line)) {
+      inProfiles = true;
+      continue;
+    }
+    if (inProfiles) {
+      const item = line.match(/^ {6}- (\S+)\s*$/);
+      if (item) {
+        services.get(current).push(item[1]);
+        continue;
+      }
+      inProfiles = false;
+    }
+  }
+  if (!services.size) {
+    throw new Error("build-embed-docs: read no services out of docker-compose.yml");
+  }
+  return services;
+}
+
 // ── The regions ────────────────────────────────────────────────────────────
+
+/** The deployment table: one row per compose service.
+ *
+ *  The profile cell is the honest statement of "the relay is optional" — a
+ *  service with no profile starts with `docker compose up` and one with a profile
+ *  does not, so the table says which is which instead of asserting it in prose. */
+function deploymentRows() {
+  const services = composeServices();
+  const undescribed = [...services.keys()].filter((name) => !SERVICES[name]);
+  if (undescribed.length) {
+    throw new Error(
+      "build-embed-docs: docker-compose.yml has services with no clause in SERVICES: " +
+        `${undescribed.join(", ")}. Add one clause each, so the page cannot ship an ` +
+        "unexplained row.",
+    );
+  }
+  const gone = Object.keys(SERVICES).filter((name) => !services.has(name));
+  if (gone.length) {
+    throw new Error(
+      "build-embed-docs: SERVICES describes services docker-compose.yml no longer has: " +
+        gone.join(", "),
+    );
+  }
+  return [...services].map(([name, profiles]) => [
+    `<code>${escape(name)}</code>`,
+    say(`site.service.${name.replaceAll("-", "")}`, SERVICES[name]),
+    profiles.length
+      ? profiles.map((profile) => `<code>${escape(profile)}</code>`).join(" ")
+      : said("site.service.noProfile", "none, so it starts by default"),
+  ]);
+}
+
+/** The commands, generated from the compose file's own service and profile names.
+ *
+ *  NOT a `codePanel`, and the reason is worth recording. A code panel's head names
+ *  the file its body was extracted from, and that path is the one text node on
+ *  this page that cannot go through the localisation seam:
+ *  `tests/no_unrouted_strings.test.mjs` holds this page at a MEASURED 88 unrouted
+ *  sites with no slack, and a ratchet's only legal direction is down. A
+ *  `<pre><code>` body is exempt from that count — it is code by construction — so
+ *  the commands ship with a routed caption above them in the page's prose rather
+ *  than an unrouted path beside them, and the attribution is the block's first
+ *  line, where it is part of what a reader copies. */
+function deploymentCommands() {
+  const services = composeServices();
+  const profileOf = (name) => services.get(name)?.[0];
+  const oneShot = (name) => {
+    const profile = profileOf(name);
+    return profile
+      ? `docker compose --profile ${profile} run --rm ${name}`
+      : `docker compose run --rm ${name}`;
+  };
+  const up = (name) => {
+    const profile = profileOf(name);
+    return profile
+      ? `docker compose --profile ${profile} up --build`
+      : `docker compose up --build ${name}`;
+  };
+  return [
+    `# ${rel(SOURCES.compose)} — generated from it, so a renamed profile changes this.`,
+    "",
+    "# The editor on its own. No server, nothing to create, nothing to back up.",
+    up("editor"),
+    "",
+    "# Adding the optional relay: create the room's journal once, then serve it.",
+    oneShot("relay-create"),
+    up("relay"),
+  ].join("\n");
+}
 
 function capabilityRows() {
   const unknown = Object.keys(MEANINGS).filter((name) => !CAPABILITIES.includes(name));
@@ -1440,6 +1577,16 @@ function regions() {
       ["Region", "What it is", "readonly", "preview"],
       regionRows(),
     ),
+    // ── docs/162, 109 RM-11 ─────────────────────────────────
+    // The deployment section. Both halves are generated from
+    // `docker-compose.yml`, so the page cannot tell a host to run a service or a
+    // profile the file does not have — and the file itself is held against the
+    // relay's real CLI by `tests/deployment_contract.test.mjs`.
+    "container-services": table(["Service", "What it is", "Compose profile"], deploymentRows()),
+    "container-commands":
+      '<div class="code-panel">\n  <pre><code>' +
+      escape(deploymentCommands()) +
+      "</code></pre>\n</div>",
     "evidence-table": table(["File", "Lane", "The test"], evidenceRows()),
   };
 }

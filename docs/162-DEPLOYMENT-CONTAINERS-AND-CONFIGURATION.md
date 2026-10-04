@@ -110,11 +110,13 @@ building the thing.
 
 `webapp/src/fonts.css` self-hosts Inter and Material Symbols Outlined from
 `../assets/fonts/*.woff2`, and `webapp/tests/chrome_fonts.test.mjs` asserts the stylesheet
-contains no `fonts.googleapis.com` or `fonts.gstatic.com` reference at all. That guard is
-what keeps the editor's chrome working with no network, so the image carries the woff2
-files and `deploy/editor-nginx.conf` does exactly one thing with them: hands back the bytes
-the build produced. **No `sub_filter`, no CDN rewrite, no asset host.** A rewrite there
-would undo the guarantee in the one place no test is looking.
+holds no reference to either Google Fonts host — the two hostnames are in that test rather
+than in this sentence, because `webapp/tests/doc_pages.test.mjs` refuses a published page
+that names one and it was right to refuse this one. That guard is what keeps the editor's
+chrome working with no network, so the image carries the woff2 files and
+`deploy/editor-nginx.conf` does exactly one thing with them: hands back the bytes the build
+produced. **No `sub_filter`, no CDN rewrite, no asset host.** A rewrite there would undo
+the guarantee in the one place no test is looking.
 
 `application/wasm` is declared explicitly in the same file. nginx has shipped it in
 `mime.types` since 1.25, but a silent fallback to `application/octet-stream` makes
@@ -132,8 +134,9 @@ chrome typefaces are all served from the image.
 `--features web-host-fonts`; `crates/casual-doc-wasm/Cargo.toml` has that feature on by
 default, and `crates/casual-doc-layout/src/fonts.rs` records what it does — the
 `external-web-fonts` WASM build "omits these four byte blobs". `webapp/src/web_fonts.mjs`
-then fetches Roboto and the Noto families from commit-pinned paths on
-`cdn.jsdelivr.net`, and the CJK and emoji faces are fetched on demand when
+then fetches Roboto and the Noto families over the network from four commit-pinned
+revisions on a public CDN — that file holds the four hostnames and revisions, and this one
+does not repeat them — and the CJK and emoji faces are fetched on demand when
 `missingCoverage()` asks for them.
 
 So a container on an air-gapped network serves a working editor whose **document** text

@@ -491,16 +491,38 @@ test("how much English the reference pages put on the site, measured and publish
   // precisely the trap the paragraph above describes, one merge later. Recorded
   // here rather than left for whoever next runs the suite, because a number that
   // is wrong on `main` makes every open branch look like it broke something.
+  // 2090 -> 2499 with `docs/162`, the deployment guide (`109` RM-11), published as
+  // `reference/deployment-containers-and-configuration.html`. MEASURED per page
+  // against `origin/main`'s committed bytes rather than calculated, and the
+  // movement decomposes exactly:
+  //
+  //   the new page                                        0 -> 392
+  //   reference/index.html (its row in the listing)      49 -> 52
+  //   every other page, +1 each (11 pages)                     +11
+  //
+  // The +1 is the new entry in the shared reference navigation, which these pages
+  // inline — an unrouted link label, like the eleven already there. The 392 is
+  // ARTICLE BODY in a published design document, which is the region this figure
+  // deliberately does not route, for the reason the paragraph above gives.
+  //
+  // AND IT WAS ALREADY 3 STALE BEFORE THIS BRANCH TOUCHED IT. `origin/main`'s own
+  // committed reference pages measure 2093 against the 2090 declared here, which
+  // means this assertion is red on `main` as of 6f0c7efc — a published document
+  // moved and the figure was not re-measured. Recorded rather than quietly
+  // absorbed into the new number: the whole point of this figure is to notice
+  // exactly that, and it did, three commits late. The 2499 below is this tree's
+  // measurement, so it carries the correction with it.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2093,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2093). That ` +
+    2499,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2499). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
-      `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
+      `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
+      `the new figure here — do not calculate it. Per page: ` +
       JSON.stringify(sites),
   );
   // The site's own hand-authored pages are still exactly what the string table
