@@ -596,6 +596,32 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.command": "Version history",
   "versionHistory.current": "Current version",
 
+  // WHAT CHANGED, per row. The owner's second report was about the timeline
+  // itself: "still no improvement in versions". Every row read `Saved · 16 KB`,
+  // so the panel answered *when* and never *what*, and nothing told two rows
+  // apart but a clock. These four are everything the stored metadata can honestly
+  // say without parsing a checkpoint — see `versionRowDeltas` for why each one is
+  // derivable and what it deliberately does not claim.
+  //
+  // `sameAs` is the one the owner's FIRST report is about. A duplicate row can no
+  // longer be created by an implicit capture, but the integrity captures can still
+  // make one and older timelines already have them, so a duplicate names the
+  // version it duplicates instead of leaving the reader to diff by eye.
+  "versionHistory.row.sameAs": "Same content as {name}",
+  "versionHistory.row.edits.one": "{count} edit",
+  "versionHistory.row.edits.other": "{count} edits",
+  "versionHistory.row.grew": "{size} larger",
+  "versionHistory.row.shrank": "{size} smaller",
+  "versionHistory.row.by": "by {name}",
+
+  // Said, not whispered. SKILL §10 forbids a silent no-op, and a capture that
+  // found nothing new to keep used to be exactly that: no row appeared and
+  // nothing explained why. This is the panel's line for it — the status channel
+  // stays out of it on purpose, because a Save's own "Saved <name>" is the
+  // sentence the reader needs at that moment and two sentences about one act
+  // race each other.
+  "versionHistory.unchangedNote": "No changes since {name}, so no new version was kept.",
+
   // The row menu: the five actions a single version can have done to it, and
   // the name of the ⋮ that opens them.
   //

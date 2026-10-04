@@ -350,12 +350,34 @@ export function sanitiseVersionName(name) {
 
 // ── The capture trigger ──────────────────────────────────────────────────────
 
-/** The reasons a capture can be asked for. The first four are the autosave
- *  path's own triggers (`docs/112` §4.4); the rest are explicit. */
+/** The reasons a capture can be asked for. The first six are the autosave
+ *  path's own triggers (`drafts.mjs`'s `DRAFT_WRITE_REASONS`, which
+ *  `version_history.test.mjs` asserts is a subset of this object); the rest are
+ *  explicit.
+ *
+ *  EVERY STRING THE DRAFT PATH CAN FIRE HAS TO BE IN HERE. `pagehide` and
+ *  `restored` were not, and `main.js` fires both — `draftScheduler.flush("pagehide")`
+ *  on the `pagehide` event and `writeDraft("restored")` after a draft is
+ *  recovered. An unregistered reason is not inert: it reaches
+ *  `VersionCapturePolicy.shouldCapture`, falls past `ALWAYS_CAPTURE` to the
+ *  watermark and interval checks, and then reaches `captureVersion` with
+ *  `suppressesUnchanged(reason)` answering for a reason it has never heard of.
+ *  Measured in Chromium on 2026-10-04 (`version-history-noise.spec.mjs`):
+ *
+ *      [VH] capture(pagehide) accepted kind=auto
+ *      [VH] captureNow reason=pagehide kind=auto suppress=false bytes=16384 ...
+ *      [VH] -> status=history.recorded ok=true
+ *
+ *  — a version row whose content hash was already in the timeline, written
+ *  because the reason was unknown. `suppressesUnchanged` now closes that by
+ *  defaulting to suppression; registering the reasons is the other half, so the
+ *  classification is a decision rather than a fallback. */
 export const CAPTURE_REASON = Object.freeze({
   QUIESCE: "quiesce",
   CEILING: "ceiling",
   HIDDEN: "hidden",
+  PAGEHIDE: "pagehide",
+  RESTORED: "restored",
   RENAME: "rename",
   OPEN: "open",
   SAVE: "save",
@@ -401,22 +423,45 @@ const ALWAYS_CAPTURE = new Map([
  *                                   "keep a version" — so a row that says nothing
  *                                   new is noise. The one capture that carries
  *                                   real information, the import baseline of a
- *                                   document with no timeline yet, has no head to
+ *                                   document with no timeline yet, has no twin to
  *                                   be identical to and is never suppressed.
  *    QUIESCE, CEILING, HIDDEN,      autosave's own triggers. `shouldCapture`
- *    RENAME                         already refuses these on an unmoved revision
+ *    PAGEHIDE, RESTORED, RENAME     already refuses these on an unmoved revision
  *                                   watermark, but a watermark is not content: type
  *                                   a character and delete it and the revision has
- *                                   moved while the document has not.
+ *                                   moved while the document has not. PAGEHIDE and
+ *                                   RESTORED are here because `main.js` fires them
+ *                                   and they were never registered at all; see
+ *                                   `CAPTURE_REASON`.
+ *    MANUAL                         moved here on 2026-10-04. The argument below
+ *                                   is about somebody asking for a version BY
+ *                                   NAME, and MANUAL's only caller is not that:
+ *                                   it is `version_panel.mjs`'s pre-copy safety
+ *                                   capture, fired because the user pressed "Make
+ *                                   a copy". From the reader's side that is as
+ *                                   implicit as a Save, the copy's own message is
+ *                                   the sentence about what happened, and the row
+ *                                   it used to leave behind is one of the rows the
+ *                                   owner reported twice. The integrity argument
+ *                                   for PRE_RESTORE does not transfer: no
+ *                                   invariant is stated over a MANUAL record
+ *                                   existing, and `makeCopy` already treats
+ *                                   `UNCHANGED` as success.
  *
  *  And these are NOT suppressed, each for its own reason:
  *
- *    NAME, MANUAL                   explicit user acts. Somebody naming the
+ *    NAME                           an explicit user act. Somebody naming the
  *                                   current state expects the named entry to
  *                                   appear, and suppressing it would make the
  *                                   command look broken — the worse failure by
  *                                   far, and content addressing makes the
- *                                   duplicate cost one ~300-byte row.
+ *                                   duplicate cost one ~300-byte row. NOTE: this
+ *                                   reason currently has no caller —
+ *                                   `nameVersion` names a row that already
+ *                                   exists rather than capturing a new one — so
+ *                                   it is a classification kept correct for the
+ *                                   day a "Name the current state" command wants
+ *                                   it, not a live code path.
  *    PRE_RESTORE, RESTORE,          INTEGRITY captures, and the careful case.
  *    RECOVERY                       `docs/140` §9 makes the pre-restore capture a
  *                                   PRECONDITION of restore: the current state
@@ -444,31 +489,54 @@ export const SUPPRESS_UNCHANGED = Object.freeze([
   CAPTURE_REASON.QUIESCE,
   CAPTURE_REASON.CEILING,
   CAPTURE_REASON.HIDDEN,
+  CAPTURE_REASON.PAGEHIDE,
+  CAPTURE_REASON.RESTORED,
   CAPTURE_REASON.RENAME,
   CAPTURE_REASON.OPEN,
   CAPTURE_REASON.SAVE,
+  CAPTURE_REASON.MANUAL,
 ]);
 
 /** The reasons that capture even when nothing changed. See `SUPPRESS_UNCHANGED`
- *  for the argument on each. */
+ *  for the argument on each.
+ *
+ *  THIS IS THE LIST THAT DECIDES. `suppressesUnchanged` asks whether a reason is
+ *  in here, not whether it is in `SUPPRESS_UNCHANGED`, so the four integrity
+ *  captures and `NAME` are the only things that can write a duplicate — and a
+ *  reason nobody classified suppresses instead of keeping. `SUPPRESS_UNCHANGED`
+ *  stays as the written argument and as the other half of the both-or-neither
+ *  guard; it is not the predicate. */
 export const KEEP_UNCHANGED = Object.freeze([
   CAPTURE_REASON.NAME,
-  CAPTURE_REASON.MANUAL,
   CAPTURE_REASON.PRE_RESTORE,
   CAPTURE_REASON.RESTORE,
   CAPTURE_REASON.RECOVERY,
 ]);
 
-/** Whether a capture for `reason` is skipped when its bytes already are the head.
+/** Whether a capture for `reason` is skipped when its bytes are already somewhere
+ *  in this lineage.
  *
- *  O(reasons) over a frozen list of six. Deliberately NOT consulted by
- *  `shouldCapture`: that one is the editing path's whole contribution and must stay
- *  O(1) with no storage and no bytes, and a content comparison needs the artifact.
- *  The answer is carried to `captureVersion`, which has already hashed the bytes it
- *  is about to write and has already read the lineage's rows, so the comparison
- *  costs one string equality and no extra work at all. */
+ *  O(reasons) over a frozen list of four. **The question is "is this reason one of
+ *  the few that must keep a duplicate", not "is this reason on the suppress
+ *  list"** — those read the same for every reason either list names, and
+ *  differently for a reason neither does, which is the case that shipped the
+ *  defect. `SUPPRESS_UNCHANGED.includes(reason)` answered `false` for `"pagehide"`
+ *  and `"restored"` — two strings `main.js` fires and `CAPTURE_REASON` had never
+ *  heard of — so the capture went through unsuppressed and wrote a byte-identical
+ *  row. The dangerous default was "keep"; it is now "suppress", which is the same
+ *  deliberate-classification posture `historyStatusKind` takes in the other
+ *  direction (an unknown status code is treated as a refusal, because silence
+ *  about lost work is the worse failure there and a duplicate row is the worse
+ *  failure here).
+ *
+ *  Deliberately NOT consulted by `shouldCapture`: that one is the editing path's
+ *  whole contribution and must stay O(1) with no storage and no bytes, and a
+ *  content comparison needs the artifact. The answer is carried to
+ *  `captureVersion`, which has already hashed the bytes it is about to write and
+ *  has already read the lineage's rows, so the comparison costs one string
+ *  equality per row and no extra work at all. */
 export function suppressesUnchanged(reason) {
-  return SUPPRESS_UNCHANGED.includes(reason);
+  return !KEEP_UNCHANGED.includes(reason);
 }
 
 /**
@@ -788,9 +856,11 @@ export async function openHistoryStore({
      * touches none of this.
      *
      * `skipIfUnchanged` reports `UNCHANGED` and writes nothing when the artifact
-     * is byte-identical to the lineage head. The caller decides, per reason, and
-     * the default is OFF — so the restore path, which calls this without the flag,
-     * keeps its pre-restore capture unconditionally (`SUPPRESS_UNCHANGED`).
+     * is byte-identical to ANY version already in this lineage — not only to the
+     * head — and corrects the head onto the row that holds those bytes. The
+     * caller decides, per reason, and the default is OFF, so the restore path,
+     * which calls this without the flag, keeps its pre-restore capture
+     * unconditionally (`KEEP_UNCHANGED`).
      *
      * Quota is handled and never guessed at: one extra eligible version is
      * released and the write retried once, and if it still fails the caller gets
@@ -839,12 +909,13 @@ export async function openHistoryStore({
 
         const existing = await readLineageVersions(metas, lineageId);
         // NOTHING NEW TO KEEP (`docs/139` §18 q3 as the owner reversed it on
-        // 2026-09-28). Checkpoints are content-addressed, so "identical to the
-        // head" is the hash this call already computed against the hash the head
-        // already stores — one string comparison, inside the transaction that is
-        // already reading these rows, so nothing is hashed, read or walked twice.
-        // Here rather than in `shouldCapture` because that one is the editing
-        // path's whole contribution and may not touch bytes or storage.
+        // 2026-09-28). Checkpoints are content-addressed, so "already in this
+        // timeline" is the hash this call already computed against the hashes the
+        // rows already store — one string comparison per row, inside the
+        // transaction that is already reading them, so nothing is hashed, read or
+        // walked twice. Here rather than in `shouldCapture` because that one is
+        // the editing path's whole contribution and may not touch bytes or
+        // storage.
         //
         // Inside the transaction on purpose: doing it outside would be a
         // check-then-write across a `readwrite` boundary, where a second tab's
@@ -852,13 +923,50 @@ export async function openHistoryStore({
         // no longer saw — the same race `expectedHead` exists for.
         //
         // UNCHANGED is not a refusal (`INFORMATIONAL_CODES`), so `result.ok` is
-        // true and nothing is reported as an error: nothing went wrong. The head
-        // is handed back so a caller can say which version already holds these
-        // bytes.
-        if (skipIfUnchanged && lineage.headVersionId) {
-          const head = existing.find((row) => row.versionId === lineage.headVersionId);
-          if (head?.checkpointId === checkpointId) {
-            return result(HISTORY_STATUS.UNCHANGED, { version: head });
+        // true and nothing is reported as an error: nothing went wrong. The row
+        // that holds these bytes is handed back so a caller can SAY which version
+        // the document already matches — which `version_panel.mjs` does, because
+        // §10 forbids a silent no-op.
+        //
+        // THE WHOLE LINEAGE, not just the head. A duplicate is a duplicate
+        // wherever it already sits: two rows with one content hash are two rows
+        // a reader cannot tell apart and cannot choose between, and the head is
+        // only one of the places the twin can be. Measured in Chromium on
+        // 2026-10-04 — open a document, edit it, save, then reload the same file:
+        //
+        //    after reload 1: import cp=fb07bd2d | saved cp=28c11967 | import cp=fb07bd2d
+        //
+        // The third row is byte-identical to the first and was written because
+        // the comparison only looked at the head, which was `saved` at the time.
+        // Every reload after a save added one, forever.
+        //
+        // AND THE HEAD MOVES TO THE TWIN. The head is defined one screen down as
+        // "the only version that still describes the document" — `deleteVersion`
+        // refuses to delete it on exactly that ground — so leaving it on a row
+        // whose content the document no longer holds is the lie that made
+        // suppressing the duplicate look wrong. Pointing it at the row that does
+        // hold these bytes is what makes "no new row" honest: the panel's
+        // "current version" marker lands on the version a restore would get you.
+        // Nothing is rewritten and nothing is removed — `createdAt`,
+        // `parentVersionId` and the rest of the chain are untouched, so this is a
+        // pointer correction and not a rewind of the timeline. A concurrent
+        // prepared restore notices through `expectedHead` and refuses, which is
+        // the behaviour it already has for any other head movement.
+        if (skipIfUnchanged) {
+          const twins = existing.filter((row) => row.checkpointId === checkpointId);
+          if (twins.length > 0) {
+            const atHead = twins.find((row) => row.versionId === lineage.headVersionId);
+            // The head when the head is one of them (nothing to correct),
+            // otherwise the NEWEST twin: it is the one nearest the reader in the
+            // timeline and the one a "current version" marker belongs on.
+            const holder =
+              atHead ??
+              twins.reduce((best, row) => ((row.createdAt ?? 0) >= (best.createdAt ?? 0) ? row : best));
+            if (!atHead) {
+              documents.put({ ...lineage, headVersionId: holder.versionId, updatedAt: now });
+              await idbCommitted(tx);
+            }
+            return result(HISTORY_STATUS.UNCHANGED, { version: holder });
           }
         }
         const pinned = existing.filter((row) => row.pinned).length;

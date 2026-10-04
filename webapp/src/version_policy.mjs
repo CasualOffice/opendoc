@@ -209,6 +209,80 @@ export function groupVersions(versions, { now = Date.now(), namedOnly = false } 
   return groups;
 }
 
+/** How a row is referred to in another row's sentence: its name when it has
+ *  one, its clock time otherwise. The same choice `versionRowText` makes for
+ *  the title, in one place so the two cannot disagree. O(1). */
+export function versionRowRef(row) {
+  return row?.name ? row.name : d(row?.createdAt ?? 0, { timeStyle: "short" });
+}
+
+/**
+ * WHAT CHANGED between each version and the one before it, for every row at once.
+ *
+ * The owner's second report was that the timeline itself had not improved: "still
+ * no improvement in versions". A column of rows that all read `Saved · 16 KB` is
+ * why — the only thing distinguishing them is a clock, so the panel answers *when*
+ * and never *what*, and a reader cannot tell which row holds the work they want.
+ *
+ * Three facts are derivable from the stored metadata alone, with no engine call,
+ * no checkpoint read and no document parse:
+ *
+ *   * **Same content.** Checkpoints are content-addressed, so two rows sharing a
+ *     hash hold the same document. Any row that is a twin of an earlier one SAYS
+ *     so and names it. This is deliberately kept even though
+ *     `captureVersion`'s `skipIfUnchanged` now refuses to create such a row: the
+ *     reasons in `KEEP_UNCHANGED` can still make one, and a timeline written by
+ *     an older build already has them. A duplicate that labels itself is strictly
+ *     better than one the reader has to diff by eye.
+ *   * **How many edits.** `revision` is the engine's monotonic edit watermark,
+ *     recorded on every row. Its delta is the number of landed edits between two
+ *     versions — a real measure of how much happened, not a guess. It is reported
+ *     ONLY when both watermarks are finite and the delta is positive: a reopen
+ *     resets the watermark to 0 (`resetDirtyTracking`), so across an open boundary
+ *     the subtraction is meaningless and saying nothing is the honest answer.
+ *   * **How much bigger or smaller.** The byte delta, which is what every file
+ *     history shows and what a reader uses to spot the version where a chapter
+ *     went missing.
+ *
+ * What this does NOT claim is what the changed TEXT was: that needs a comparison,
+ * and a comparison needs both checkpoints parsed. `version.changes` (Show changes)
+ * is the route to that, per row, on demand. Naming the limit here so this is not
+ * read as a diff.
+ *
+ * O(rows), once per repaint, over metadata already in memory — no storage read
+ * and nothing document-sized. Computed over the UNFILTERED list on purpose: "what
+ * changed since the previous version" must mean the same thing whether or not the
+ * reader has ticked *Only named versions*.
+ *
+ * @param {object[]} rows `version_meta` rows, NEWEST FIRST (`listVersions`' order).
+ * @returns {Map<string, {edits: number, byteDelta: number, sameAs: string}>}
+ */
+export function versionRowDeltas(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const deltas = new Map();
+  const firstSeen = new Map();
+  // Oldest first, so "the earlier row with these bytes" is the one already seen.
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const row = list[i];
+    if (!row?.versionId) continue;
+    const previous = list[i + 1] ?? null;
+    const twin = row.checkpointId ? firstSeen.get(row.checkpointId) : undefined;
+    if (row.checkpointId && twin === undefined) firstSeen.set(row.checkpointId, row);
+    const here = Number(row.revision);
+    const there = Number(previous?.revision);
+    const edits =
+      previous && Number.isFinite(here) && Number.isFinite(there) && here > there
+        ? here - there
+        : 0;
+    deltas.set(row.versionId, {
+      edits,
+      byteDelta: previous ? (row.bytes ?? 0) - (previous.bytes ?? 0) : 0,
+      sameAs: twin ? versionRowRef(twin) : "",
+    });
+  }
+  return deltas;
+}
+
 /**
  * Everything one row displays, derived once.
  *
@@ -220,24 +294,40 @@ export function groupVersions(versions, { now = Date.now(), namedOnly = false } 
  * exact timestamp to be AVAILABLE, not merely implied by a friendly one.
  *
  * `label` is what a screen reader reads, and it carries the title, the full
- * timestamp, the origin and the "current version" fact in one string — an
- * option whose name is "14:32" tells a non-sighted reader nothing about which
- * of nine rows it is.
+ * timestamp, the origin, what changed and the "current version" fact in one
+ * string — an option whose name is "14:32" tells a non-sighted reader nothing
+ * about which of nine rows it is. `change` is in there rather than left to the
+ * visible line alone, because a sighted reader can now tell two rows apart and a
+ * screen-reader reader could not.
  *
- * O(1). Reads only the row.
+ * O(1). Reads only the row and the delta it is handed.
  *
  * @param {object} row a `version_meta` row.
- * @param {{isHead?: boolean, sizeText?: string}} [context]
+ * @param {{isHead?: boolean, sizeText?: string, delta?: object,
+ *          describeSize?: (bytes: number) => string}} [context]
  */
-export function versionRowText(row, { isHead = false, sizeText = "" } = {}) {
+export function versionRowText(
+  row,
+  { isHead = false, sizeText = "", delta = null, describeSize = null } = {},
+) {
   const at = row?.createdAt ?? 0;
   const named = Boolean(row?.name);
   const clock = d(at, { timeStyle: "short" });
   const timestamp = d(at, { dateStyle: "full", timeStyle: "medium" });
   const kind = versionKindLabel(row?.kind);
+  const change = versionChangeText(delta, describeSize);
+  const author = String(row?.actor ?? "").trim();
   const parts = [named ? row.name : clock, timestamp, kind];
+  if (change) parts.push(change);
+  if (author) parts.push(t("versionHistory.row.by", { name: author }));
   if (isHead) parts.push(t("versionHistory.current"));
   if (named) parts.push(t("versionHistory.isNamed"));
+  // Origin first, then what changed, then who: the kind says which gesture made
+  // the row, and the rest is what tells two rows of one kind apart.
+  const detailParts = [kind];
+  if (change) detailParts.push(change);
+  else if (sizeText) detailParts.push(sizeText);
+  if (author) detailParts.push(t("versionHistory.row.by", { name: author }));
   return {
     title: named ? row.name : clock,
     clock,
@@ -245,9 +335,32 @@ export function versionRowText(row, { isHead = false, sizeText = "" } = {}) {
     exact: Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : "",
     kind,
     named,
-    detail: sizeText ? `${kind} · ${sizeText}` : kind,
+    change,
+    author,
+    detail: detailParts.join(" · "),
     label: parts.join(", "),
   };
+}
+
+/** The "what changed" phrase for one row, or `""` when nothing is derivable.
+ *
+ *  Order matters and is a decision: "same content" OUTRANKS a count of edits,
+ *  because a row whose bytes are already in the timeline is the one fact a reader
+ *  most needs and the edits that produced it cancelled out. O(1). */
+export function versionChangeText(delta, describeSize = null) {
+  if (!delta) return "";
+  if (delta.sameAs) return t("versionHistory.row.sameAs", { name: delta.sameAs });
+  const phrases = [];
+  if (delta.edits > 0) phrases.push(t("versionHistory.row.edits", { count: delta.edits }));
+  const size = Number(delta.byteDelta);
+  if (describeSize && Number.isFinite(size) && size !== 0) {
+    phrases.push(
+      size > 0
+        ? t("versionHistory.row.grew", { size: describeSize(size) })
+        : t("versionHistory.row.shrank", { size: describeSize(-size) }),
+    );
+  }
+  return phrases.join(" · ");
 }
 
 /**

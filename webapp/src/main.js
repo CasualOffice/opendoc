@@ -118,9 +118,11 @@ import { createMeasurementUnits } from "./measurement_units.mjs";
 import { createDocumentProtection } from "./document_protection.mjs";
 import {
   DRAFT_EXPORT_MODES,
+  DRAFT_WRITE_REASONS,
   DraftPresence,
   DraftScheduler,
   HEARTBEAT_MS,
+  bindDraftFlushOnExit,
   describeDraftAge,
   describeDraftSize,
   documentKey,
@@ -15582,7 +15584,7 @@ async function restoreDraft(slotId) {
   // Take our own copy BEFORE dropping the row it came from, so the work is
   // never momentarily in neither place — a crash in the gap would otherwise
   // lose exactly the document the user had just recovered.
-  await queueDraftWork(() => writeDraft("restored"));
+  await queueDraftWork(() => writeDraft(DRAFT_WRITE_REASONS.RESTORED));
   if (slotId === draftSlot) {
     // This tab reclaimed its own slot, so the write above IS that row, now
     // holding the restored document. Deleting it would delete the work.
@@ -15676,13 +15678,8 @@ document.getElementById("draftRecoveryDismiss")?.addEventListener("click", () =>
   setStatus("Recovered work is still available from File ▸ Recover unsaved work");
 });
 
-// `visibilitychange` rather than `beforeunload`: the hidden transition is the
-// only one browsers reliably fire for a background-tab discard or a mobile
-// app switch, which is where the tab most often dies. `pagehide` is the belt.
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") draftScheduler.flush("hidden");
-});
-window.addEventListener("pagehide", () => draftScheduler.flush("pagehide"));
+// Hidden, then pagehide: see `bindDraftFlushOnExit` for why those two.
+bindDraftFlushOnExit(draftScheduler);
 
 /** Boot: scan the store and offer whatever a previous session left behind. */
 async function startDrafts() {

@@ -137,6 +137,8 @@ import {
   historyMessageKind,
   historyUnavailableReason,
   retentionSummary,
+  versionRowDeltas,
+  versionRowRef,
   versionRowText,
 } from "./version_policy.mjs";
 
@@ -246,6 +248,7 @@ export function createVersionHistory({
 }) {
   const panel = document.getElementById("versionPanel");
   const body = document.getElementById("versionPanelBody");
+  const noteEl = document.getElementById("versionPanelNote");
   const summaryEl = document.getElementById("versionPanelSummary");
   const detailEl = document.getElementById("versionPanelDetail");
   const policyEl = document.getElementById("versionPanelPolicy");
@@ -277,6 +280,9 @@ export function createVersionHistory({
   let lineageId = "";
   let headVersionId = null;
   let rows = [];
+  /** What changed between each row and the one before it, keyed by version id.
+   *  Rebuilt by `renderList` from `rows`; see `versionRowDeltas`. */
+  let deltas = new Map();
   let selectedId = "";
   /** The cell the roving tabindex is on. A grid has exactly one tab stop. */
   let activeCell = CELL_ENTRY;
@@ -386,6 +392,12 @@ export function createVersionHistory({
     closeRowMenu();
     body.replaceChildren();
     const namedOnly = Boolean(namedOnlyBox?.checked);
+    // What changed between each version and the one before it, for the whole
+    // timeline at once. From the UNFILTERED list, so "since the previous version"
+    // means the same thing with the named-only filter on as off — and O(rows)
+    // once per repaint rather than per row, because a per-row lookup of the
+    // previous row would be the quadratic shape SKILL §8 names.
+    deltas = versionRowDeltas(rows);
     const groups = groupVersions(rows, { now: Date.now(), namedOnly });
     if (groups.length === 0) {
       const empty = document.createElement("div");
@@ -440,6 +452,8 @@ export function createVersionHistory({
     const text = versionRowText(row, {
       isHead: row.versionId === headVersionId,
       sizeText: describeDraftSize(row.bytes ?? 0),
+      delta: deltas.get(row.versionId) ?? null,
+      describeSize: describeDraftSize,
     });
     const item = document.createElement("div");
     item.className = "version-item";
@@ -664,6 +678,23 @@ export function createVersionHistory({
       else button.title = t("capability.notGranted");
     }
     if (banner) banner.hidden = !previewing;
+  }
+
+  /** The panel's one transient sentence: why a capture wrote no row.
+   *
+   *  A polite live region rather than the status channel, so a screen reader hears
+   *  it without it competing with the Save confirmation — and `hidden` when empty,
+   *  so an empty paragraph does not occupy the footer. O(1). */
+  function showNote(text) {
+    if (!noteEl) return;
+    noteEl.textContent = text;
+    noteEl.hidden = !text;
+  }
+
+  /** Drops the note. Called whenever something really was kept, because a
+   *  sentence saying nothing changed must not outlive the next version. O(1). */
+  function clearNote() {
+    showNote("");
   }
 
   /** The disclosure line: how much history there is and what the policy does
@@ -1453,6 +1484,9 @@ export function createVersionHistory({
     panel.hidden = false;
     for (const entry of entryPoints) entry.setAttribute("aria-pressed", "true");
     onOpenChange(true);
+    // A note about a capture from twenty minutes ago is not news. The sentence is
+    // about the moment it was written, so it does not survive a reopen.
+    clearNote();
     await refresh();
     // The grid's tab stop, not the grid: a grid manages focus with a roving
     // tabindex, and landing on the container would leave a screen reader
@@ -1686,23 +1720,27 @@ export function createVersionHistory({
       skipIfUnchanged: suppressesUnchanged(reason),
     });
     if (result.status === HISTORY_STATUS.UNCHANGED) {
-      // NOTHING IS SAID, and that is decided rather than skipped.
+      // IT IS SAID, IN THE PANEL, AND NOT ON THE STATUS CHANNEL.
       //
-      // A suppressed capture is not a refusal: nothing was promised and withheld,
-      // and `report` exists for the case where somebody's work could not be kept.
-      // Every reason that a PERSON asks for by name — Name this version, and a
-      // manual capture — is on the `KEEP_UNCHANGED` side, so no surface ever offers
-      // to make a version and then quietly does nothing; the suppressed reasons are
-      // all implicit. Saying it anyway would put a second sentence on the status
-      // channel about one act and RACE the Save's own "Saved <name>", which is the
-      // message the reader actually needs. What tells the truth is the timeline
-      // itself: no row appeared, the head is still marked as the current version,
-      // and the disclosure line still says how many are kept.
+      // The status channel stays out of it for the reason it always did: a Save's
+      // own "Saved <name>" is the sentence the reader needs at that moment, and a
+      // second sentence about one act races it. But "no row appeared, work it out"
+      // is the silent no-op SKILL §10 forbids, and it is precisely what the owner
+      // could not work out — reported twice. So the panel says which version the
+      // document already matches, and the head has been corrected onto that row by
+      // the store, so the "Current version" marker agrees with the sentence.
       //
+      // `refresh()` rather than a local repaint: the head may have moved, and the
+      // row that holds these bytes is the one that now has to be marked.
+      if (result.version) {
+        await refresh();
+        showNote(t("versionHistory.unchangedNote", { name: versionRowRef(result.version) }));
+      }
       // And nothing is noted: `noteCaptured` would start the interval over and skip
       // the NEXT tick — the one that would have had something to keep.
       return result;
     }
+    clearNote();
     if (result.ok) {
       capturePolicy.noteCaptured(Date.now(), info.revision);
       rows = await ready.listVersions(lineageId);
