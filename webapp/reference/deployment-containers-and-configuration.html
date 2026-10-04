@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Deployment: container images, compose, and configuration — OpenDoc</title>
-    <meta name="description" content="This is the only thing in this document worth reading twice. The editor needs no server to function. webapp/build.sh compiles crates/casual-doc-wasm to WebAssembly and stages a flat static site beside it, so opening a DOCX, laying it out, editing it and writing it back all happen in the tab." />
+    <meta name="description" content="The editor is a static, local-first web app that needs no server to function, and the collaboration relay is optional and holds no document." />
     <meta name="author" content="CasualOffice" />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
     <meta name="theme-color" content="#fbfaf8" />
@@ -16,14 +16,14 @@
     <meta property="og:type" content="article" />
     <meta property="og:site_name" content="OpenDoc" />
     <meta property="og:title" content="Deployment: container images, compose, and configuration" />
-    <meta property="og:description" content="This is the only thing in this document worth reading twice. The editor needs no server to function. webapp/build.sh compiles crates/casual-doc-wasm to WebAssembly and stages a flat static site beside it, so opening a DOCX, laying it out, editing it and writing it back all happen in the tab." />
+    <meta property="og:description" content="The editor is a static, local-first web app that needs no server to function, and the collaboration relay is optional and holds no document." />
     <meta property="og:url" content="https://opendoc.casualoffice.org/reference/deployment-containers-and-configuration.html" />
     <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
     <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Deployment: container images, compose, and configuration" />
-    <meta name="twitter:description" content="This is the only thing in this document worth reading twice. The editor needs no server to function. webapp/build.sh compiles crates/casual-doc-wasm to WebAssembly and stages a flat static site beside it, so opening a DOCX, laying it out, editing it and writing it back all happen in the tab." />
+    <meta name="twitter:description" content="The editor is a static, local-first web app that needs no server to function, and the collaboration relay is optional and holds no document." />
     <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
 
     <link rel="stylesheet" href="../src/marketing.css" />
@@ -37,7 +37,7 @@
             "url": "https://opendoc.casualoffice.org/reference/deployment-containers-and-configuration.html",
             "name": "Deployment: container images, compose, and configuration — OpenDoc",
             "headline": "Deployment: container images, compose, and configuration",
-            "description": "This is the only thing in this document worth reading twice. The editor needs no server to function. webapp/build.sh compiles crates/casual-doc-wasm to WebAssembly and stages a flat static site beside it, so opening a DOCX, laying it out, editing it and writing it back all happen in the tab.",
+            "description": "The editor is a static, local-first web app that needs no server to function, and the collaboration relay is optional and holds no document.",
             "inLanguage": "en",
             "isPartOf": {
               "@id": "https://opendoc.casualoffice.org/#website"
@@ -125,7 +125,7 @@
       <article class="doc-article">
         <p class="doc-eyebrow">Reference</p>
         <h1 id="deployment-container-images-compose-and-configuration">Deployment: container images, compose, and configuration</h1>
-        <p class="doc-lede">This is the only thing in this document worth reading twice. The editor needs no server to function. webapp/build.sh compiles crates/casual-doc-wasm to WebAssembly and stages a flat static site beside it, so opening a DOCX, laying it out, editing it and writing it back all happen in the tab.</p>
+        <p class="doc-lede">The editor is a static, local-first web app that needs no server to function, and the collaboration relay is optional and holds no document.</p>
         <p class="doc-provenance">
           Generated from this repository's own design document:
           <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md"><code>docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md</code></a>
@@ -135,7 +135,7 @@
         <p class="doc-body"><strong>Honesty basis:</strong> every capability, number and limit below is cited to the file that decides it, and <code>webapp/tests/deployment_contract.test.mjs</code> re-derives the ones that can drift — the relay's subcommands and argument order, the five role names, the ports, the pinned toolchain versions and the participant ceiling — from the source rather than from this document. <code>SKILL.md</code> §9 exists because published pages here have carried fabricated claims; a deployment guide is a published claim, so §8 of this document enumerates what these images do <strong>not</strong> do rather than leaving it to be discovered in production.</p>
         <hr class="doc-rule" />
         <h2 class="doc-h2" id="1-there-are-two-deployments-and-they-are-not-a-stack">1. There are two deployments, and they are not a stack</h2>
-        <p class="doc-body">This is the only thing in this document worth reading twice.</p>
+        <p class="doc-body">The editor is a static, local-first web app that needs <strong>no server to function</strong>, and the collaboration relay is <strong>optional</strong> and holds <strong>no document</strong>. That is the only thing in this document worth reading twice, and everything below follows from it.</p>
         <div class="doc-table-scroll">
         <table class="doc-table">
         <thead>

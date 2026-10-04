@@ -492,11 +492,12 @@ test("how much English the reference pages put on the site, measured and publish
   // here rather than left for whoever next runs the suite, because a number that
   // is wrong on `main` makes every open branch look like it broke something.
   // 2090 -> 2499 with `docs/162`, the deployment guide (`109` RM-11), published as
+  // 2090 -> 2501 with `docs/162`, the deployment guide (`109` RM-11), published as
   // `reference/deployment-containers-and-configuration.html`. MEASURED per page
   // against `origin/main`'s committed bytes rather than calculated, and the
   // movement decomposes exactly:
   //
-  //   the new page                                        0 -> 392
+  //   the new page                                        0 -> 394
   //   reference/index.html (its row in the listing)      49 -> 52
   //   every other page, +1 each (11 pages)                     +11
   //
@@ -518,8 +519,8 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2499,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2499). That ` +
+    2501,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2501). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

@@ -19,7 +19,9 @@ these images do **not** do rather than leaving it to be discovered in production
 
 ## 1. There are two deployments, and they are not a stack
 
-This is the only thing in this document worth reading twice.
+The editor is a static, local-first web app that needs **no server to function**, and the
+collaboration relay is **optional** and holds **no document**. That is the only thing in
+this document worth reading twice, and everything below follows from it.
 
 | | **The editor** | **The relay** |
 | --- | --- | --- |
