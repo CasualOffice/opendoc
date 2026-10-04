@@ -6358,7 +6358,7 @@ impl BodyParser<'_> {
         // Charged before the early return, so an edge rejected for a missing
         // `w:val` still reports the theme reference it carried: the caller reports
         // the container on `None`, which names the element but not the attribute.
-        crate::properties::report_border_theme_color(&mut self.reporter, element);
+        crate::properties::report_border_theme_color(self.reporter, element);
         let style = attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32)?;
         let size_eighth_points = attribute_value(element, b"sz")
             .and_then(|value| value.parse::<u32>().ok())
