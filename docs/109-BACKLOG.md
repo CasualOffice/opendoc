@@ -215,8 +215,8 @@ and the old sum-to-Total check could not see either.)
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Hotfix | 108 | 0 | 17 | 56 | 35 | 0 |
 | Audit | 71 | 0 | 24 | 37 | 10 | 0 |
-| Roadmap | 24 | 0 | 0 | 2 | 7 | 15 |
-| **Total** | **203** | **0** | **41** | **95** | **52** | **15** |
+| Roadmap | 24 | 0 | 1 | 2 | 7 | 14 |
+| **Total** | **203** | **0** | **42** | **95** | **52** | **14** |
 
 **There are no P0s, and the table above is the authority on that.** This paragraph used to
 announce two, from the 2026-09-20 re-grade of HF-045 and HF-011 into P0 against `104`'s own
