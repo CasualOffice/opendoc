@@ -55,6 +55,8 @@ use casual_doc_model::v1::{
     ScatterStyle, Series, TickLabelPosition, TickMark,
 };
 
+// Own line (anti-conflict): the shared arc/sector geometry (`docs/155` §7.4).
+use crate::arc::{FULL_TURN, sector};
 use crate::text::{ChartPrimitive, ChartStroke, GlyphRun};
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -201,6 +203,21 @@ impl Paint<'_> {
         )
     }
 
+    /// One pie or doughnut **point's** fill.
+    ///
+    /// Pie and doughnut colour by point rather than by series — the format's
+    /// `c:varyColors` default for these two families, and what Word draws whether
+    /// or not the element is written. Indexed off the theme accents directly
+    /// rather than off `palette`, which is sized by series count and would be
+    /// length 1 for the single-series pie that is the common case.
+    ///
+    /// The model carries no `c:dPt` per-point override, so an authored
+    /// point-specific fill is not honoured yet; it is retained in the part and
+    /// re-emitted verbatim.
+    fn point(&self, index: usize) -> [u8; 4] {
+        self.style.accents[index % self.style.accents.len()]
+    }
+
     /// A series' line colour: its explicit `a:ln` solid fill, else its fill.
     fn line(&self, series: &Series, index: usize) -> [u8; 4] {
         series
@@ -212,15 +229,38 @@ impl Paint<'_> {
 
 /// Whether a chart group's family is drawn by this module.
 ///
-/// The one place the tier 1A / tier 1B boundary is decided (`docs/155` §7.3).
-/// Pie and doughnut need an arc, and [`crate::display::PathCommand`] has none; a
-/// polygon fan is rejected rather than shipped, so they keep the reported
-/// placeholder.
+/// The one place the drawable boundary is decided. **Every tier-1 family is now
+/// drawn**: tier 1A's bar, column, line (including `c:smooth`), area and scatter,
+/// and tier 1B's pie and doughnut, which needed the arc that
+/// [`crate::arc::sector`] builds from the path primitive the shapes lane landed.
+/// The families `docs/155` §4.3 puts out of scope never reach a
+/// [`ChartGroupKind`] at all, so there is nothing for this to refuse — it is
+/// kept, exhaustive and total, because the next family added to the model must
+/// make a deliberate choice here rather than defaulting into the drawers.
 ///
 /// O(1).
 #[must_use]
 pub fn is_drawable(kind: ChartGroupKind) -> bool {
-    !matches!(
+    match kind {
+        ChartGroupKind::Bar { .. }
+        | ChartGroupKind::Line { .. }
+        | ChartGroupKind::Area { .. }
+        | ChartGroupKind::Scatter { .. }
+        | ChartGroupKind::Pie { .. }
+        | ChartGroupKind::Doughnut { .. } => true,
+    }
+}
+
+/// Whether a family colours by **point** rather than by series.
+///
+/// `c:varyColors` is the explicit element, but pie and doughnut behave as though
+/// it were set whether or not a producer writes it — a single-series pie with one
+/// colour would be a solid disc. One predicate so the fills, the legend keys and
+/// anything added later cannot disagree about which they key off.
+///
+/// O(1).
+fn colors_by_point(kind: ChartGroupKind) -> bool {
+    matches!(
         kind,
         ChartGroupKind::Pie { .. } | ChartGroupKind::Doughnut { .. }
     )
@@ -456,8 +496,18 @@ struct LegendEntry {
 /// Places the legend on `area`'s declared edge and returns the area left for the
 /// plot.
 ///
-/// Only the drawable groups contribute entries: a legend key for a pie group this
+/// Only the drawable groups contribute entries: a legend key for a group this
 /// build does not paint would describe nothing on the page.
+///
+/// **A pie or doughnut legend names CATEGORIES, not series.** That is not a
+/// special case bolted on: these two families colour by point, so the legend has
+/// to key the same thing the fills key, or every swatch would be the wrong
+/// colour. Word and ONLYOFFICE both list categories here.
+///
+/// Complexity: O(series + categories), with the category labels gathered once for
+/// the whole chart rather than per group — `category_labels` walks the series
+/// list, so calling it inside the group loop would be the by-id-lookup-in-a-loop
+/// shape `SKILL` §8 forbids.
 fn place_legend(
     chart: &Chart,
     area: Rect,
@@ -473,9 +523,26 @@ fn place_legend(
     }
     let mut entries: Vec<LegendEntry> = Vec::new();
     let mut color = 0usize;
+    // Hoisted: one walk for the whole chart, not one per group.
+    let by_point = chart
+        .plot_area
+        .groups
+        .iter()
+        .any(|group| colors_by_point(group.kind) && !group.series.is_empty());
+    if by_point {
+        for (point, name) in category_labels(chart).into_iter().enumerate() {
+            if let Some(label) = shape_colored(&name, paint.style.text, shape) {
+                entries.push(LegendEntry {
+                    label,
+                    color: paint.point(point),
+                });
+            }
+        }
+    }
     for group in &chart.plot_area.groups {
         for series in &group.series {
             if is_drawable(group.kind)
+                && !colors_by_point(group.kind)
                 && let Some(name) = series.name.as_ref().map(|name| name.text.as_str())
                 && let Some(label) = shape_colored(name, paint.style.text, shape)
             {
@@ -905,9 +972,192 @@ fn draw_group(
         ChartGroupKind::Scatter { style: scatter } => {
             draw_scatter(group, geometry, scatter, paint, out);
         }
-        // Tier 1B: no arc primitive, and a polygon fan is rejected (`docs/155`
-        // §7.3). `is_drawable` keeps the caller from reaching here.
-        ChartGroupKind::Pie { .. } | ChartGroupKind::Doughnut { .. } => {}
+        ChartGroupKind::Pie { first_slice_angle } => draw_pie(
+            group,
+            geometry,
+            PieShape {
+                first_slice_angle,
+                hole_percent: 0,
+            },
+            paint,
+            shape,
+            out,
+        ),
+        ChartGroupKind::Doughnut {
+            first_slice_angle,
+            hole_size,
+        } => draw_pie(
+            group,
+            geometry,
+            PieShape {
+                first_slice_angle,
+                hole_percent: hole_size,
+            },
+            paint,
+            shape,
+            out,
+        ),
+    }
+}
+
+/// A pie or doughnut group's geometry settings.
+///
+/// One struct for both families, because a doughnut *is* a pie with a hole
+/// (`SKILL` §8: one mechanism, not two). A pie is `hole_percent: 0`, and nothing
+/// below branches on the family again.
+#[derive(Clone, Copy)]
+struct PieShape {
+    /// `c:firstSliceAng`, degrees clockwise from twelve o'clock.
+    first_slice_angle: u16,
+    /// `c:holeSize`, a percentage of the outer radius. Zero is a pie.
+    hole_percent: u8,
+}
+
+/// Pie and doughnut: one sector per plotted point, sized by its share of the
+/// series total.
+///
+/// # What is drawn
+///
+/// A pie plots its **first series only**, which is what the format means and what
+/// Word and ONLYOFFICE both do — a `c:pieChart` with two series shows the first
+/// and reports the rest. A doughnut plots **every** series as a concentric ring,
+/// the first series innermost, splitting the band between the hole and the outer
+/// radius equally. Both are the same loop with a different radial band, which is
+/// why there is one function.
+///
+/// # Sweeps that close the circle exactly
+///
+/// Sweeps are taken from the **running cumulative total**, rounded once, and
+/// differenced — not rounded per slice and summed. Per-slice rounding leaves up
+/// to one angle unit of error per slice, so a nine-slice pie would not close; a
+/// cumulative difference makes the last slice end exactly on the first slice's
+/// start angle by construction, for any number of slices.
+///
+/// A point whose magnitude is zero contributes **no commands at all**
+/// ([`crate::arc::sector`] returns an empty list for a zero sweep), so a
+/// zero-valued category paints nothing rather than a hairline sliver on the slice
+/// boundary.
+///
+/// # Complexity
+///
+/// O(points in the group), with a bounded constant per point: at most 10 path
+/// commands. No by-id lookup happens inside the loop.
+fn draw_pie(
+    group: &ChartGroup,
+    geometry: &GroupGeometry,
+    pie: PieShape,
+    paint: &Paint<'_>,
+    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    out: &mut Vec<ChartPrimitive>,
+) {
+    let plot = geometry.plot;
+    // A pie is circular, so it takes the largest circle the plot rectangle holds.
+    let outer = Twip(plot.size.width.raw().min(plot.size.height.raw()) / 2);
+    if outer.raw() <= 0 || group.series.is_empty() {
+        return;
+    }
+    let centre = Point::new(
+        Twip(plot.origin.x.raw() + plot.size.width.raw() / 2),
+        Twip(plot.origin.y.raw() + plot.size.height.raw() / 2),
+    );
+    // `c:firstSliceAng` is measured from twelve o'clock; `crate::arc` measures
+    // from three o'clock, DrawingML's own convention. One quarter turn converts.
+    let start_angle = i32::from(pie.first_slice_angle)
+        .saturating_mul(60_000)
+        .saturating_sub(FULL_TURN / 4);
+
+    let hole = Twip(outer.raw() * i32::from(pie.hole_percent.min(90)) / 100);
+    // A pie draws its first series; a doughnut rings every series.
+    let rings: &[Series] = if pie.hole_percent == 0 {
+        &group.series[..1]
+    } else {
+        &group.series
+    };
+    let band = (outer.raw() - hole.raw()).max(1) / i32::try_from(rings.len()).unwrap_or(1).max(1);
+
+    for (ring, series) in rings.iter().enumerate() {
+        let index = i32::try_from(ring).unwrap_or(0);
+        let ring_inner = Twip(hole.raw() + band * index);
+        let ring_outer = Twip(hole.raw() + band * (index + 1));
+        let count = range_len(&series.values).max(geometry.categories);
+        let values = dense_numbers(&series.values, count);
+        // Magnitudes: Word plots |value| in a pie, because a negative share of a
+        // whole has no angle. The sign is not lost — it is still in the cache and
+        // still re-emitted verbatim on export.
+        let total: f64 = values.iter().flatten().map(|value| value.abs()).sum();
+        if total <= 0.0 {
+            continue;
+        }
+        let mut running = 0.0f64;
+        let mut swept = 0i32;
+        for (point, value) in values.iter().enumerate() {
+            let magnitude = value.unwrap_or(0.0).abs();
+            running += magnitude;
+            // Round the CUMULATIVE fraction, then difference: the circle closes.
+            let reached = round_angle(running / total * f64::from(FULL_TURN));
+            let sweep = reached - swept;
+            swept = reached;
+            let commands = sector(
+                centre,
+                ring_outer,
+                ring_inner,
+                start_angle.saturating_add(swept - sweep),
+                sweep,
+            );
+            if commands.is_empty() {
+                continue;
+            }
+            let color = paint.point(point);
+            out.push(ChartPrimitive::Path {
+                commands,
+                closed: true,
+                fill: Some(color),
+                stroke: Some(ChartStroke {
+                    color: BACKGROUND,
+                    width: HAIRLINE,
+                }),
+            });
+            if show_value(series) {
+                // At the band's mid-radius, on the slice's bisector — the only
+                // place a label is inside its own slice for every slice width.
+                let mid = f64::from(ring_inner.raw() + ring_outer.raw()) / 2.0;
+                let bisector = f64::from(start_angle.saturating_add(swept - sweep / 2));
+                let radians = bisector / 60_000.0 * core::f64::consts::PI / 180.0;
+                let anchor = Rect::new(
+                    Point::new(
+                        Twip(centre.x.raw() + round_angle(mid * radians.cos())),
+                        Twip(centre.y.raw() + round_angle(mid * radians.sin())),
+                    ),
+                    Size::new(Twip::ZERO, Twip::ZERO),
+                );
+                draw_data_label(
+                    &format_value(magnitude),
+                    anchor,
+                    false,
+                    paint.style,
+                    shape,
+                    out,
+                );
+            }
+        }
+    }
+}
+
+/// Rounds an angle or length to a whole unit, saturating rather than wrapping.
+fn round_angle(value: f64) -> i32 {
+    if value.is_nan() {
+        return 0;
+    }
+    let rounded = value.round();
+    if rounded >= f64::from(i32::MAX) {
+        i32::MAX
+    } else if rounded <= f64::from(i32::MIN) {
+        i32::MIN
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            rounded as i32
+        }
     }
 }
 
@@ -1140,15 +1390,15 @@ fn flush_polyline(
     out: &mut Vec<ChartPrimitive>,
 ) {
     if points.len() >= 2 && !series.line.is_some_and(|line| line.no_fill) {
-        out.push(ChartPrimitive::Path {
-            points: core::mem::take(points),
-            closed: false,
-            fill: None,
-            stroke: Some(ChartStroke {
+        out.push(ChartPrimitive::polyline(
+            &core::mem::take(points),
+            false,
+            None,
+            Some(ChartStroke {
                 color,
                 width: series_line_width(series),
             }),
-        });
+        ));
     } else {
         points.clear();
     }
@@ -1261,12 +1511,7 @@ fn draw_areas(
         }
         lower.reverse();
         upper.extend(lower);
-        out.push(ChartPrimitive::Path {
-            points: upper,
-            closed: true,
-            fill: Some(color),
-            stroke: None,
-        });
+        out.push(ChartPrimitive::polyline(&upper, true, Some(color), None));
     }
 }
 
@@ -1331,15 +1576,15 @@ fn draw_scatter(
             points.clone()
         };
         if joined && smoothed.len() >= 2 && !series.line.is_some_and(|line| line.no_fill) {
-            out.push(ChartPrimitive::Path {
-                points: smoothed,
-                closed: false,
-                fill: None,
-                stroke: Some(ChartStroke {
+            out.push(ChartPrimitive::polyline(
+                &smoothed,
+                false,
+                None,
+                Some(ChartStroke {
                     color,
                     width: series_line_width(series),
                 }),
-            });
+            ));
         }
         if marked {
             for point in &points {

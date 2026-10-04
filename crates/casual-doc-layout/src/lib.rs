@@ -15,6 +15,7 @@
 //! - [`text`] — line-level types + the [`text::LineShaper`] seam.
 //! - [`block`] — block/flow fragments (the galley).
 //! - [`chart`] — DrawingML chart composition from the typed projection (`docs/155`).
+//! - [`arc`] — circular arcs and sectors as cubic path commands (`docs/155` §7.4).
 //! - [`page`] — immutable paginated output.
 //! - [`display`] — the backend-neutral paint list.
 //! - [`formatting_marks`] — the paint-only non-printing-character overlay.
@@ -27,6 +28,9 @@
 #![forbid(unsafe_code)]
 
 pub mod anchor;
+// Own line (anti-conflict): circular arcs as cubic paths, shared by charts and
+// the preset-shape table (`docs/155` §7.4).
+pub mod arc;
 pub mod block;
 pub mod cascade;
 // Own line (anti-conflict): chart composition from the typed projection.

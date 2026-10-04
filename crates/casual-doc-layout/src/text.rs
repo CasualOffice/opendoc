@@ -16,6 +16,8 @@ use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::NodeId;
 
 use crate::block::BlockFragment;
+// Own line (anti-conflict): the chart path primitive carries curves now.
+use crate::display::PathCommand;
 use crate::model::ModelRange;
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -386,13 +388,21 @@ pub enum ChartPrimitive {
         /// The segment's stroke.
         stroke: ChartStroke,
     },
-    /// A polyline or polygon: a line series, a smoothed (sampled) series, an area
-    /// series' closed outline.
+    /// A path in command order: a line series, a smoothed (sampled) series, an
+    /// area series' closed outline, a pie slice, a doughnut ring.
+    ///
+    /// **One path mechanism, not two** (`SKILL` §8). This was a point list until
+    /// pie and doughnut needed curves; a second curved variant beside it would
+    /// have been the parallel path the display list's own `ShapeGeometry` already
+    /// removed when it replaced `Polygon` with `Path`. A straight polyline is a
+    /// command list that happens to contain no curves — build one with
+    /// [`ChartPrimitive::polyline`].
     Path {
-        /// The vertices in path order, box-local.
-        points: Vec<Point>,
-        /// Whether the figure joins back to its first point (an area) or is left
-        /// open (a line series).
+        /// The commands in path order, box-local, beginning with a
+        /// [`PathCommand::MoveTo`].
+        commands: Vec<PathCommand>,
+        /// Whether the figure joins back to its subpath start (an area, a pie
+        /// slice) or is left open (a line series).
         closed: bool,
         /// Fill colour (RGBA), if filled.
         fill: Option<[u8; 4]>,
@@ -414,6 +424,38 @@ pub enum ChartPrimitive {
         /// The shaped run.
         run: GlyphRun,
     },
+}
+
+impl ChartPrimitive {
+    /// A [`ChartPrimitive::Path`] from a vertex list — the straight-segment case,
+    /// which is every series family except pie and doughnut.
+    ///
+    /// Exists so the point-list callers keep reading as point lists while there is
+    /// still only one path variant to paint.
+    ///
+    /// Complexity: O(points).
+    #[must_use]
+    pub fn polyline(
+        points: &[Point],
+        closed: bool,
+        fill: Option<[u8; 4]>,
+        stroke: Option<ChartStroke>,
+    ) -> Self {
+        let mut commands = Vec::with_capacity(points.len());
+        for (index, point) in points.iter().enumerate() {
+            commands.push(if index == 0 {
+                PathCommand::MoveTo { point: *point }
+            } else {
+                PathCommand::LineTo { point: *point }
+            });
+        }
+        Self::Path {
+            commands,
+            closed,
+            fill,
+            stroke,
+        }
+    }
 }
 
 /// An inline chart (`a:graphicFrame` → `c:chart`) placed on a line: the authored

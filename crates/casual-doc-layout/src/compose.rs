@@ -272,6 +272,36 @@ fn compose_paragraph_into(
     }
 }
 
+/// Translates one path command by `shift`.
+///
+/// Exhaustive over [`PathCommand`] on purpose: a new command variant must fail to
+/// compile here rather than silently composing at the wrong origin.
+///
+/// Complexity: O(1).
+fn shift_command(command: PathCommand, shift: impl Fn(Point) -> Point) -> PathCommand {
+    match command {
+        PathCommand::MoveTo { point } => PathCommand::MoveTo {
+            point: shift(point),
+        },
+        PathCommand::LineTo { point } => PathCommand::LineTo {
+            point: shift(point),
+        },
+        PathCommand::CubicTo {
+            control1,
+            control2,
+            point,
+        } => PathCommand::CubicTo {
+            control1: shift(control1),
+            control2: shift(control2),
+            point: shift(point),
+        },
+        PathCommand::QuadTo { control, point } => PathCommand::QuadTo {
+            control: shift(control),
+            point: shift(point),
+        },
+    }
+}
+
 /// Translates one box-local [`ChartPrimitive`] into page space and emits it as a
 /// display-list item.
 ///
@@ -327,20 +357,18 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
             transform: None,
         }),
         ChartPrimitive::Path {
-            points,
+            commands,
             closed,
             fill,
             stroke,
         } => {
-            let mut commands = Vec::with_capacity(points.len());
-            for (index, point) in points.iter().enumerate() {
-                let point = shift(*point);
-                commands.push(if index == 0 {
-                    PathCommand::MoveTo { point }
-                } else {
-                    PathCommand::LineTo { point }
-                });
-            }
+            // Translation only: the commands are already the display list's own
+            // `PathCommand`, so a curved slice and a straight polyline take the
+            // same one line here and nothing in this function knows which it is.
+            let commands = commands
+                .iter()
+                .map(|command| shift_command(*command, shift))
+                .collect();
             list.push(PaintItem::Shape {
                 geometry: ShapeGeometry::Path {
                     commands,
