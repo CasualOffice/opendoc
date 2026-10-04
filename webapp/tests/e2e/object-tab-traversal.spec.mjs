@@ -12,13 +12,7 @@
 // must keep its indent / list-demote / next-cell meaning. That behaviour was
 // verified correct in the 2026-08-09 editing audit and this must not disturb it,
 // so it is asserted here too.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  expectEditorFocused,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 // A 1x1 PNG, so a SECOND object can be inserted. The fixture ships exactly one
 // object ("Picture 1 of 1"), and with one object every traversal assertion is
@@ -45,7 +39,7 @@ const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
 async function clickImage(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * IMAGE_POS.fx, y: box.height * IMAGE_POS.fy } });
 }
 

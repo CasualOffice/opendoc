@@ -7,13 +7,13 @@
 // resolve through `resolveExternalTarget`, so this spec drives the SAME hostile
 // link from both and requires them to agree.
 import {
-  test,
+  MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
   moveCaretToDocStart,
-  MOD,
   stableBox,
+  test,
 } from "./fixtures.mjs";
 
 // Records every `window.open` the page attempts instead of performing it, so a

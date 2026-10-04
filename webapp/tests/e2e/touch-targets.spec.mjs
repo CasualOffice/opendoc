@@ -5,16 +5,7 @@
 // ratchet: the first block runs the shell under real touch emulation, where
 // `(pointer: coarse)` matches, and the second measures a hit area that must
 // hold for every pointer.
-import {
-  test,
-  expect,
-  stableBox,
-  gotoEditor,
-  MOD,
-  openCommandPalette,
-  menuCommandRow,
-  openAppMenu,
-} from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, menuCommandRow, openAppMenu, openCommandPalette, stableBox, test } from "./fixtures.mjs";
 
 // The iOS Safari floor: anything under 16px zooms the page on focus.
 const IOS_NO_ZOOM_PX = 16;
@@ -147,7 +138,7 @@ test("an image resize grip is hit-testable well outside its 9px visual", async (
   );
 
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * 0.14, y: box.height * 0.11 } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 

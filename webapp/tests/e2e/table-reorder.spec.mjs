@@ -13,15 +13,15 @@
 // the reader — `runEdit` flattens engine errors into one generic line, which is
 // right for internal vocabulary and wrong here.
 import {
-  test,
+  MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
   mirrorBlocks,
+  moveCaretToDocStart,
   openCommandPalette,
   stableBox,
-  MOD,
+  test,
 } from "./fixtures.mjs";
 
 /** Inserts a rows x cols table below a first paragraph, caret in cell (0,0). */

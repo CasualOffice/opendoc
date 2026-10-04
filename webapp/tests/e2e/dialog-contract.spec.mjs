@@ -13,17 +13,7 @@
 // the same four assertions. The last test closes the loop — if a new
 // `aria-modal` element appears in editor.html and is not in the table, this
 // spec fails, so the next dialog cannot ship without the contract either.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  MOD,
-  expectEditorFocused,
-  openAppMenu,
-  runAppMenuCommand,
-  runFilePageCommand,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, openAppMenu, runAppMenuCommand, runFilePageCommand, stableBox, test } from "./fixtures.mjs";
 
 async function openPalette(page) {
   await page.keyboard.press(`${MOD}+Shift+P`);
@@ -481,7 +471,7 @@ const MODALS = [
         { timeout: 45_000 },
       );
       const canvas = page.locator(".page-wrap .page").first();
-      const box = await canvas.boundingBox();
+      const box = await stableBox(canvas);
       await canvas.click({ position: { x: box.width * 0.14, y: box.height * 0.11 } });
       await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
       await page.locator('.object-bar-btn[aria-label="Edit alt text"]').click();

@@ -6,7 +6,7 @@
 // exists. LibreOffice Writer raises a marker with a `+` when the pointer is in
 // the band, and that is what docs/85 §8d adopted. It is the same
 // one-surface-only reachability failure the command-surface audit kept finding.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 // Hovers a point a fixed distance inside the page's top or bottom edge. A
 // fraction of the page height is a poor target here: the band's size comes from
@@ -16,7 +16,7 @@ async function hoverBand(page, edge) {
   const canvas = page.locator(".page-wrap .page").first();
   await canvas.evaluate((el, e) => el.scrollIntoView({ block: e === "bottom" ? "end" : "start" }), edge);
   await page.waitForTimeout(120);
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   const y = edge === "bottom" ? box.y + box.height - 10 : box.y + 10;
   await page.mouse.move(box.x + box.width * 0.5, y);
   return box;
@@ -27,7 +27,7 @@ async function hoverBody(page) {
   const canvas = page.locator(".page-wrap .page").first();
   await canvas.evaluate((el) => el.scrollIntoView({ block: "start" }));
   await page.waitForTimeout(120);
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.4);
 }
 

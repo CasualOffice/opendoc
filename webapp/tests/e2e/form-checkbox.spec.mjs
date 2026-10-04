@@ -15,11 +15,11 @@
 // Word toggles on a click and on Space, as one undo step. Both agree, so this
 // asserts what they agree on.
 import {
-  test,
   expect,
   gotoEditor,
   setReviewMode,
   stableBox,
+  test,
 } from "./fixtures.mjs";
 
 const FORM = "../fixtures/generated/form-checkbox.docx";

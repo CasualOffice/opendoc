@@ -9,16 +9,7 @@
 //
 // There is no sub-document address anywhere in this: a header position is an
 // ordinary NodeId + offset, so typing into a header is ordinary text editing.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  setReviewMode,
-  stableBox,
-  expectNothingToUndo,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, expectNothingToUndo, gotoEditor, setReviewMode, stableBox, test } from "./fixtures.mjs";
 
 // The rich demo fixture has no running content; sample.docx does, so the tests
 // that need a real header open it through the ordinary file path.
@@ -87,7 +78,7 @@ test("double-clicking the header band enters the context", async ({ page, consol
 
   // The gesture every reference editor uses: double-click in the band itself.
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.dblclick({ position: { x: box.width * 0.5, y: box.height * 0.045 } });
 
   expect(await band(page)).toBe("header");
@@ -173,7 +164,7 @@ test("clicking body text still puts the caret in the body", async ({ page, conso
 // header selected a word in the BODY and header text could not be selected at all.
 
 async function pageBox(page) {
-  return page.locator(".page-wrap .page").first().boundingBox();
+  return stableBox(page.locator(".page-wrap .page").first());
 }
 
 test("double-clicking the header band does not select a word in the body", async ({

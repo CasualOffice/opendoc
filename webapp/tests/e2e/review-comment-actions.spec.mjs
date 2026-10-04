@@ -10,7 +10,7 @@
 // target too. When it is not met the buttons are DISABLED WITH A REASON rather
 // than missing — the repo forbids a control that does nothing, and a control
 // that silently vanishes is worse than one that explains itself.
-import { test, expect } from "./fixtures.mjs";
+import { expect, stableBox, test } from "./fixtures.mjs";
 
 const resolveBtn = (page) => page.locator("#reviewResolveBtn");
 const deleteBtn = (page) => page.locator("#reviewDeleteBtn");
@@ -24,7 +24,7 @@ async function commentOnSomething(page) {
     timeout: 45_000,
   });
   const sheet = page.locator(".page-wrap .page").first();
-  const box = await sheet.boundingBox();
+  const box = await stableBox(sheet);
   await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.12);
   for (let i = 0; i < 10; i++) await page.keyboard.press("Shift+ArrowRight");
 
@@ -38,7 +38,7 @@ async function commentOnSomething(page) {
   await page.locator("#reviewSidebar button", { hasText: /Comment|Add|Post/ }).first().click();
   await expect(markers(page)).toHaveCount(1);
 
-  const marker = await markers(page).first().boundingBox();
+  const marker = await stableBox(markers(page).first());
   return { x: marker.x + marker.width / 2, y: marker.y + marker.height / 2 };
 }
 

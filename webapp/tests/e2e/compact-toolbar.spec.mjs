@@ -31,7 +31,7 @@
 //   * At any narrower width the bar STILL does not scroll: whatever does not
 //     fit folds into the "⋯" menu, the way Google Docs' toolbar does, and
 //     everything folded is still reachable there.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 /** The viewport the chrome is budgeted against. Not a round number chosen for
  *  looks: docs/64 and docs/115 budget the ribbon's Home band at 1280px, and a
@@ -392,9 +392,7 @@ test("compact text-color menus anchor to the visible compact controls", async ({
     const menu = page.locator(`#${menuId}`);
     await expect(menu).toBeVisible();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
-    const [triggerBox, menuBox] = await Promise.all([trigger.boundingBox(), menu.boundingBox()]);
-    expect(triggerBox).not.toBeNull();
-    expect(menuBox).not.toBeNull();
+    const [triggerBox, menuBox] = await Promise.all([stableBox(trigger), stableBox(menu)]);
     expect(Math.abs(menuBox.x - triggerBox.x), `${menuId} should share its trigger's x`).toBeLessThanOrEqual(1);
     expect(
       Math.abs(menuBox.y - (triggerBox.y + triggerBox.height + 4)),

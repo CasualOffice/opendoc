@@ -5,14 +5,7 @@
 // synthetic events during a PR and narrating the result (see P1G-FOCUS-001 /
 // P1G-SELECTION-ROBUST-001 in docs/14-EXECUTION-TRACKER.md); this suite makes
 // that check permanent and automatic.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  typeMoveFindUndo,
-  expectEditorFocused,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, stableBox, test, typeMoveFindUndo } from "./fixtures.mjs";
 
 // Every recovery scenario proves the editor is still usable the same way:
 // after the interrupt, type a distinctive marker, find it, then undo it.
@@ -29,8 +22,8 @@ async function assertRecovered(page, marker) {
 // pointercancel/blur/hidden-tab has no guaranteed following pointerup, which
 // is exactly the case `resetPointerGesture` exists to recover from.
 async function startDragNearBottomEdge(page) {
-  const pageBox = await page.locator(".page-wrap .page").first().boundingBox();
-  const viewportBox = await page.locator("#viewport").boundingBox();
+  const pageBox = await stableBox(page.locator(".page-wrap .page").first());
+  const viewportBox = await stableBox(page.locator("#viewport"));
   await page.mouse.move(pageBox.x + 30, pageBox.y + 30);
   await page.mouse.down();
   await page.mouse.move(pageBox.x + 30, viewportBox.y + viewportBox.height - 10);

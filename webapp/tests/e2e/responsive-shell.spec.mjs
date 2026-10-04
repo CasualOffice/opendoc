@@ -124,7 +124,7 @@ test("the object properties panel starts below the ribbon, expanded and collapse
   );
 
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * 0.14, y: box.height * 0.11 } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
   await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();

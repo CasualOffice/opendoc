@@ -2,13 +2,7 @@
 // other text container. These tests use the engine-drawn active-cell outline as
 // geometry, so pointer assertions do not guess where an opaque canvas laid out
 // a regular or merged cell (docs/58, P1G-CONTEXT-04).
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 async function insertTwoByTwo(page) {
   await gotoEditor(page);
@@ -47,7 +41,7 @@ async function copySelection(page) {
 async function activeCellBox(page) {
   const outline = page.locator(".cell-outline");
   await expect(outline).toBeVisible();
-  const box = await outline.boundingBox();
+  const box = await stableBox(outline);
   expect(box).not.toBeNull();
   return box;
 }
@@ -187,7 +181,7 @@ test("clicking body text exits the active cell without mutating the table", asyn
   const rowsBefore = await tableRows(page);
   const cell = await activeCellBox(page);
   const canvas = page.locator(".page-wrap .page").first();
-  const pageBox = await canvas.boundingBox();
+  const pageBox = await stableBox(canvas);
   expect(pageBox).not.toBeNull();
 
   // Search below the live table outline for ordinary body text. The active-cell

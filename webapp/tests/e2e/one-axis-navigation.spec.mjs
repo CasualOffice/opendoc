@@ -19,7 +19,7 @@
 // the two tests named for command-surface parity assert frozen `toContain`
 // lists and cannot detect an omission. This one derives both sides from the
 // running application, so it can.
-import { test, expect, gotoEditor, clickIntoFirstPage, openAppMenu, MOD } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, openAppMenu, stableBox, test } from "./fixtures.mjs";
 
 /** The bar's names, in bar order. Declared once: three tests walk them, and a
  *  menu added to one list and not the others is a menu nothing sweeps. */
@@ -125,7 +125,7 @@ test("File is a PAGE in the ribbon chrome and a DROPDOWN in the compact chrome",
   await expect(filePage).toBeVisible();
   await expect(page.locator("body")).toHaveClass(/file-page-open/);
   // It covers the work area rather than sitting in the band's 70-odd pixels.
-  const box = await filePage.boundingBox();
+  const box = await stableBox(filePage);
   const viewport = page.viewportSize();
   expect(box.height, "a File PAGE fills the work area").toBeGreaterThan(viewport.height / 2);
   expect(box.width).toBeGreaterThan(viewport.width - 4);
@@ -145,7 +145,7 @@ test("File is a PAGE in the ribbon chrome and a DROPDOWN in the compact chrome",
   await openAppMenu(page, "file");
   const popover = page.locator("#appMenuPopover");
   await expect(popover).toBeVisible();
-  const menuBox = await popover.boundingBox();
+  const menuBox = await stableBox(popover);
   expect(menuBox.width, "a dropdown is anchored, not full-width").toBeLessThan(
     viewport.width / 2,
   );

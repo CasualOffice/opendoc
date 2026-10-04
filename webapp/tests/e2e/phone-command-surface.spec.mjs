@@ -10,7 +10,7 @@
 // gets `isMobile`, `hasTouch` and a real device scale factor rather than a narrow
 // desktop window — which, before that project existed, is all any "phone" spec in
 // this suite was ever getting (docs/148 §9 item 5).
-import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, menuCommandRow, stableBox, test } from "./fixtures.mjs";
 
 const PHONE = { width: 390, height: 844 };
 const NARROW = { width: 320, height: 568 };
@@ -45,7 +45,7 @@ test.describe("the two sheets", () => {
       for (const id of ["#compactFormatBtn", "#compactInsertBtn"]) {
         const button = page.locator(id);
         await expect(button, `${id} is on the bar at ${size.width}px`).toBeVisible();
-        const box = await button.boundingBox();
+        const box = await stableBox(button);
         expect(box.height, `${id} is a touch target at ${size.width}px`).toBeGreaterThanOrEqual(
           MIN_TOUCH_TARGET_PX,
         );
@@ -98,7 +98,7 @@ test.describe("the two sheets", () => {
     await clickIntoFirstPage(page);
     await openSheet(page, "#compactFormatBtn", "#compactFormatMenu");
 
-    const sheet = await page.locator("#compactFormatMenu").boundingBox();
+    const sheet = await stableBox(page.locator("#compactFormatMenu"));
     // A sheet, not a popover anchored mid-screen: the first version of this rung
     // styled `.app-menu-popover` and `.compact-overflow-menu` as sheets and left
     // `.compact-command-menu` a floating card in the middle of the document.
@@ -311,9 +311,9 @@ test("the toast clears an open bottom sheet as well as the command bar", async (
     toast.hidden = false;
   });
 
-  const toast = await page.locator(".toast").boundingBox();
-  const sheet = await page.locator("#compactFormatMenu").boundingBox();
-  const header = await page.locator("header.bar").boundingBox();
+  const toast = await stableBox(page.locator(".toast"));
+  const sheet = await stableBox(page.locator("#compactFormatMenu"));
+  const header = await stableBox(page.locator("header.bar"));
   expect(toast, "the toast is on screen to be measured").not.toBeNull();
   expect(
     toast.y + toast.height,

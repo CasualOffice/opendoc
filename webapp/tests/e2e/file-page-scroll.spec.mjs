@@ -22,7 +22,7 @@
 // This asserts the GUARANTEE — the reader can reach the bottom — rather than any
 // particular overflow value, because the next person to restyle a dialog will
 // change the values and should still be caught.
-import { test, expect } from "./fixtures.mjs";
+import { expect, stableBox, test } from "./fixtures.mjs";
 
 // Panes with more content than a short window. `Export` and `New document` are
 // deliberately absent: they size to their grid and a test that asserts scrolling
@@ -78,7 +78,7 @@ test.describe("File page panes scroll", () => {
       await pane.evaluate((el) => {
         el.scrollTop = 0;
       });
-      const box = await pane.boundingBox();
+      const box = await stableBox(pane);
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.wheel(0, 400);
 

@@ -9,14 +9,7 @@
 // Two questions per context:
 //   Does clicking inside it — on EMPTY space, not on a glyph — keep me here?
 //   Does using the chrome (ribbon tab, panel) lose my next keystroke?
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 /** Inserts a text box through the palette and leaves the caret inside it. */
 async function insertTextBox(page) {
@@ -32,7 +25,7 @@ async function insertTextBox(page) {
 /** The selected object's page rect in client pixels, from the engine's own
  *  geometry via the selection outline the editor draws. */
 async function objectRect(page) {
-  const box = await page.locator(".object-handle").first().boundingBox();
+  const box = await stableBox(page.locator(".object-handle").first());
   expect(box, "a selected object draws handles").not.toBeNull();
   return box;
 }
@@ -152,7 +145,7 @@ test("a click in the body is the way out of a text box", async ({ page, consoleE
   let box = null;
   await expect
     .poll(async () => {
-      box = await canvas.boundingBox();
+      box = await stableBox(canvas);
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);

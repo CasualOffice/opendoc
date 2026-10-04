@@ -15,15 +15,15 @@
 // claim — a caption that renders and is not in the mirror is a caption a screen
 // reader cannot read.
 import {
-  test,
+  MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
   mirrorBlocks,
+  runPaletteCommand,
   setReviewMode,
   stableBox,
-  runPaletteCommand,
-  MOD,
+  test,
 } from "./fixtures.mjs";
 
 /** The References band, with its panel shown. */

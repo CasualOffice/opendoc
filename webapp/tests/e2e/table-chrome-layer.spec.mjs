@@ -19,13 +19,13 @@
 //
 // TBL-37 recorded that no test dragged a table boundary at all before this file.
 import {
-  test,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
   moveCaretToDocStart,
-  stableBox,
   setReviewMode,
+  stableBox,
+  test,
 } from "./fixtures.mjs";
 
 /** Inserts a 2x2 table below a first paragraph, leaving the caret in the table. */

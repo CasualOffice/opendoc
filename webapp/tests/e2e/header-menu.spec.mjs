@@ -1,11 +1,4 @@
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  openAppMenu,
-  useCompactChrome,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, openAppMenu, stableBox, test, useCompactChrome } from "./fixtures.mjs";
 
 // The menu bar is the COMPACT chrome's navigation axis, and its only one — the
 // ribbon tab strip is the ribbon chrome's (`109` UX-014, docs/122). Every test
@@ -164,7 +157,7 @@ test("the two-row header contains its width and keeps every menu reachable on a 
   await expect(last).toHaveText("Review");
   await last.evaluate((button) => button.scrollIntoView({ inline: "nearest", block: "nearest" }));
   await last.click();
-  const popoverBox = await page.locator("#appMenuPopover").boundingBox();
+  const popoverBox = await stableBox(page.locator("#appMenuPopover"));
   expect(popoverBox.x).toBeGreaterThanOrEqual(0);
   expect(popoverBox.x + popoverBox.width).toBeLessThanOrEqual(480);
   await expect(

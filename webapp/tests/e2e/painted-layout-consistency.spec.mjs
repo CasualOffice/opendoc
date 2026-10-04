@@ -26,14 +26,14 @@
 // Page-local coordinates (relative to the page canvas) also neutralise the
 // Suggesting banner, which pushes the whole page down the viewport.
 import {
-  test,
+  MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
   moveCaretToDocStart,
   pageSheet,
   stableBox,
-  MOD,
+  test,
 } from "./fixtures.mjs";
 
 const mirrorText = (page) =>
