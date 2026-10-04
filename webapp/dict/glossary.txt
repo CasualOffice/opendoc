@@ -338,6 +338,7 @@ docProps
 docprops
 documentProtection
 docx
+dpi
 draggable
 drawingml
 dropdown
