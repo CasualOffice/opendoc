@@ -99,6 +99,49 @@ impl<'a> StyleCascade<'a> {
         chain
     }
 
+    /// The paragraph's effective `w:outlineLvl` alone — what makes it a heading
+    /// and at what depth — resolved through the same layer order
+    /// [`resolve_paragraph`](Self::resolve_paragraph) uses, but without cloning
+    /// and overlaying every other property.
+    ///
+    /// This exists for the outline-fold filter ([`crate::fold`]), which asks the
+    /// question once for **every** block of the document, including the ones it
+    /// is about to hide. Going through `resolve_paragraph` there would clone and
+    /// overlay a full `ParagraphProperties` per block, on top of the resolve the
+    /// visible paragraphs already do — a second O(document) cost for a document
+    /// with one heading folded.
+    ///
+    /// Being a second reader of one cascade is a risk the house rules name
+    /// (`SKILL.md` §8), so the equivalence is pinned rather than assumed:
+    /// `outline_level_matches_the_full_cascade` in `tests/folding.rs` asserts
+    /// this agrees with `resolve_paragraph(..).outline_level` over a document
+    /// that exercises document defaults, a `basedOn` chain and a direct
+    /// override.
+    ///
+    /// The table-style layer is deliberately not consulted: a table style cannot
+    /// make a paragraph a heading, and folding is an outline concept.
+    ///
+    /// O(style chain depth), which is bounded.
+    #[must_use]
+    pub(crate) fn outline_level(&self, direct: &ParagraphProperties) -> Option<u8> {
+        let mut level = self
+            .defaults
+            .and_then(|defaults| defaults.paragraph.as_ref())
+            .and_then(|paragraph| paragraph.outline_level);
+        for id in self.style_chain(self.paragraph_style(direct)) {
+            if let Some(style) = self.styles.get(&id)
+                && let Some(ppr) = &style.paragraph
+                && ppr.outline_level.is_some()
+            {
+                level = ppr.outline_level;
+            }
+        }
+        if direct.outline_level.is_some() {
+            level = direct.outline_level;
+        }
+        level
+    }
+
     /// The effective paragraph properties for a paragraph: `docDefaults.pPr`
     /// overlaid by the paragraph style chain (root → leaf) overlaid by the direct
     /// `w:pPr`. The result carries the same `style_ref` the paragraph declared.

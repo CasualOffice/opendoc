@@ -79,6 +79,8 @@ use crate::text::InlineTransform;
 // Own line (anti-conflict): the recorded advance of each resolved tab.
 use crate::text::TabExtent;
 // Own line (anti-conflict): the EMU boundary converter, per `156` §6 row 0.6.
+// Own line (anti-conflict): the outline-fold visibility filter.
+use crate::fold::{FoldFlow, FoldSet, FoldState, Visibility};
 use crate::units::emu_to_twip_extent;
 // Own line (anti-conflict): the signed EMU boundary converter.
 use crate::units::emu_to_twip_offset;
@@ -260,6 +262,18 @@ struct FlowCtx<'a> {
     /// `w:numRestart`, `docs/105` FID-L-05). `None` for the standalone galley
     /// builders, which then fall back to the note's decimal definition ordinal.
     note_labels: Option<&'a NoteLabels>,
+    /// The headings this viewer has folded (ADR-049). `None` — the default for
+    /// every entry point that does not name one — means nothing is folded and
+    /// the filter is skipped entirely, so an unfolded document pays nothing.
+    folds: Option<&'a FoldSet>,
+    /// The fold state the OUTERMOST block sequence starts in, taken once by
+    /// [`flow_blocks_into`]. Non-default only for a windowed pass resuming
+    /// mid-document, which cannot otherwise know whether its first block is
+    /// inside a folded range.
+    fold_resume: Option<FoldState>,
+    /// The fold state the next measure chunk must resume from — the counterpart
+    /// of `resume_snapshot`, recorded at the same block for the same reason.
+    fold_snapshot: Option<FoldState>,
 }
 
 /// The resolved, layout-relevant portion of one section's document grid.
@@ -400,6 +414,9 @@ pub fn build_galley_with_report_view(
         paragraph_float_exclusions: None,
         note_label: None,
         note_labels: None,
+        folds: None,
+        fold_resume: None,
+        fold_snapshot: None,
     };
     let (galley, _float_floor) = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -430,6 +447,7 @@ pub fn build_galley_for_blocks(
         ReviewView::Editing,
         NoteFlow::default(),
         single_section_line_grid(document),
+        None,
     )
 }
 
@@ -482,6 +500,7 @@ pub(crate) fn build_galley_for_note_blocks(
             labels,
         },
         None,
+        None,
     )
 }
 
@@ -495,6 +514,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: Option<&FoldSet>,
 ) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
     flow_body_into(
@@ -507,6 +527,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         notes,
         line_grid,
         None,
+        FoldFlow::new(folds),
         &mut galley,
         BlockMarks::Skip,
     );
@@ -543,6 +564,7 @@ pub fn build_measures_for_blocks(
         ReviewView::Editing,
         NoteFlow::default(),
         single_section_line_grid(document),
+        None,
     )
 }
 
@@ -565,6 +587,7 @@ pub(crate) fn flow_body_range(
     block_starts: &[u32],
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: FoldFlow<'_>,
 ) -> (Vec<BlockFragment>, u32) {
     let from_block = from_block.min(blocks.len());
     let offset = block_starts.get(from_block).copied().unwrap_or_default() as usize;
@@ -592,6 +615,7 @@ pub(crate) fn flow_body_range(
         notes,
         line_grid,
         None,
+        folds,
         &mut sink,
         BlockMarks::Skip,
     );
@@ -621,6 +645,7 @@ pub fn flow_body_into_sink<S: GalleySink + ?Sized>(
         NoteFlow::default(),
         single_section_line_grid(document),
         None,
+        FoldFlow::default(),
         sink,
         BlockMarks::Record,
     );
@@ -640,6 +665,7 @@ pub(crate) fn build_measures_for_blocks_inner(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: Option<&FoldSet>,
 ) -> (Vec<FragmentMeasure>, Vec<u32>) {
     let (measures, block_starts, _) = build_measures_for_blocks_resumed(
         document,
@@ -650,6 +676,7 @@ pub(crate) fn build_measures_for_blocks_inner(
         review_view,
         notes,
         line_grid,
+        folds,
         MeasureResume::default(),
     );
     (measures, block_starts)
@@ -672,6 +699,23 @@ pub(crate) fn build_measures_for_blocks_inner(
 #[derive(Clone, Debug, Default)]
 pub struct MeasureResume {
     numbering: NumberingState,
+    /// Whether the next chunk starts inside a folded range, and at which level
+    /// (ADR-049 §3). A window that began mid-document cannot recompute this
+    /// without walking from the start of the document, which is the O(document)
+    /// cost the whole design avoids — so it joins the continuation state that
+    /// already crosses this seam instead of inventing a second one.
+    fold: FoldState,
+}
+
+impl MeasureResume {
+    /// Whether the next chunk starts inside a folded range.
+    ///
+    /// Exposed so a window that resumes here can be asserted to know it, which
+    /// is the whole reason the state crosses the seam (ADR-049 §3).
+    #[must_use]
+    pub fn is_inside_a_fold(&self) -> bool {
+        self.fold.is_suppressing()
+    }
 }
 
 /// [`build_measures_for_blocks_inner`] resumed from a previous chunk's
@@ -691,10 +735,11 @@ pub(crate) fn build_measures_for_blocks_resumed(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: Option<&FoldSet>,
     resume: MeasureResume,
 ) -> (Vec<FragmentMeasure>, Vec<u32>, MeasureResume) {
     let mut sink = MeasureSink::new();
-    let numbering = flow_body_into(
+    let (numbering, fold) = flow_body_into(
         document,
         shaper,
         blocks,
@@ -704,11 +749,12 @@ pub(crate) fn build_measures_for_blocks_resumed(
         notes,
         line_grid,
         Some(resume.numbering),
+        FoldFlow::resumed(folds, resume.fold),
         &mut sink,
         BlockMarks::Record,
     );
     let (measures, block_starts) = sink.finish_with_block_marks();
-    (measures, block_starts, MeasureResume { numbering })
+    (measures, block_starts, MeasureResume { numbering, fold })
 }
 
 /// The shared body-flow constructor both tiers go through: one
@@ -728,9 +774,10 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     resume: Option<NumberingState>,
+    folds: FoldFlow<'_>,
     sink: &mut S,
     marks: BlockMarks,
-) -> NumberingState {
+) -> (NumberingState, FoldState) {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
     let palette = document
@@ -762,12 +809,16 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         paragraph_float_exclusions: exclusions,
         note_label: notes.label,
         note_labels: notes.labels,
+        folds: folds.set,
+        fold_resume: Some(folds.resume),
+        fold_snapshot: None,
     };
     flow_blocks_into(blocks, shaper, content_width, &mut ctx, sink, marks);
     // The snapshot when the pass took one (an outermost pass over two or more
     // blocks); otherwise the state it ended in, which for a one-block or
     // final chunk is the same thing.
-    ctx.resume_snapshot.take().unwrap_or(ctx.numbering)
+    let fold = ctx.fold_snapshot.take().unwrap_or_default();
+    (ctx.resume_snapshot.take().unwrap_or(ctx.numbering), fold)
 }
 
 /// Flows a header's or footer's block content into a galley of fragments at
@@ -871,6 +922,9 @@ fn flow_running_blocks(
         paragraph_float_exclusions: None,
         note_label: notes.label,
         note_labels: notes.labels,
+        folds: None,
+        fold_resume: None,
+        fold_snapshot: None,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
@@ -906,6 +960,7 @@ pub fn build_galley_cached(
         dirty,
         NoteFlow::default(),
         ReviewView::Editing,
+        None,
     )
 }
 
@@ -922,11 +977,28 @@ pub(crate) fn build_galley_cached_labeled(
     dirty: &DirtySet,
     notes: NoteFlow<'_>,
     review_view: ReviewView,
+    folds: Option<&FoldSet>,
 ) -> Vec<BlockFragment> {
     // A drop-cap paragraph and its following body paragraph are one coupled flow
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
     // rather than serving either half under a stale independent paragraph key.
-    if contains_drop_cap_pair(document.body(), &StyleCascade::new(document.definitions())) {
+    //
+    // **A fold takes the same escape, and the cost is stated rather than
+    // hidden.** This loop keys retained fragments by top-level block index and
+    // notes every block it visits; a hidden block has no fragments to note, and
+    // the fold set is not part of the cache generation, so a folded build served
+    // from this path could hand back a fragment for a block the reader cannot
+    // see. A slow correct galley beats a fast wrong one. The consequence,
+    // recorded: while anything is folded, a keystroke costs a full re-shape
+    // instead of `O(edit)`, which breaches the per-interaction budget
+    // (`docs/107` §4) for a folded document. Closing it means making the fold
+    // set a cache generation input beside `content_width` and the note-label
+    // fingerprint, and noting a hidden block as a zero-fragment entry so the
+    // block indices stay aligned — a cache change, not a filter change, which is
+    // why it is not bundled in with the filter.
+    let folded = folds.is_some_and(|set| !set.is_empty());
+    if folded || contains_drop_cap_pair(document.body(), &StyleCascade::new(document.definitions()))
+    {
         // Nothing this build produces is retained, and nothing retained before it
         // survives: a galley kept from before the drop cap appeared would
         // otherwise be reused after it was removed, with the intervening change
@@ -941,6 +1013,7 @@ pub(crate) fn build_galley_cached_labeled(
             review_view,
             notes,
             single_section_line_grid(document),
+            folds,
         );
     }
     // The cache path resolves fonts exactly like the fresh path so a reused
@@ -982,6 +1055,9 @@ pub(crate) fn build_galley_cached_labeled(
         paragraph_float_exclusions: None,
         note_label: notes.label,
         note_labels: notes.labels,
+        folds: None,
+        fold_resume: None,
+        fold_snapshot: None,
     };
     // A galley retained by the previous build can only be reused if it was built
     // under the same note labels; a note added, removed or renumbered changes
@@ -1559,6 +1635,14 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
     // table cell / content control to the following paragraphs in the same cell,
     // so their text wraps beside it instead of under it.
     let mut active_carries: Vec<ParagraphFloatExclusion> = Vec::new();
+    // The outline-fold filter's whole state (ADR-049, [`crate::fold`]). The
+    // OUTERMOST sequence takes the seeded resume state — non-default only for a
+    // windowed pass starting inside a folded range — and every nested sequence
+    // (a table cell, a content control, a text box, a note body) starts
+    // unsuppressed, because a fold runs to the end of its own container.
+    let seeded_fold = ctx.fold_resume.take();
+    let outermost_sequence = seeded_fold.is_some();
+    let mut fold = seeded_fold.unwrap_or_default();
     while index < blocks.len() {
         if marks == BlockMarks::Record {
             galley.mark_block();
@@ -1567,6 +1651,38 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
             // and commits nothing from it.
             if index + 2 == blocks.len() {
                 ctx.resume_snapshot = Some(ctx.numbering.clone());
+                // The fold state rides in the SAME continuation state, at the
+                // same block, for the same reason — not in a parallel one
+                // (ADR-049 §3).
+                ctx.fold_snapshot = Some(fold);
+            }
+        }
+        // ADR-049 item 4: the filter sits BEFORE measurement — before shaping,
+        // before any height, before any fragment — mirroring the run-tier
+        // precedent (`push_styled_runs` returning on a cascaded `w:vanish`). A
+        // filter that measured and then clipped would pay the whole cost of the
+        // content it hides, which is the opposite of the point, and would be
+        // invisible to every correctness test. It sits AFTER `mark_block` so a
+        // hidden block still occupies its index in the measure sink's block
+        // marks; dropping the mark would misalign every block index the
+        // windowed paginator resumes on.
+        if let Some(folds) = ctx.folds {
+            let (folded, level) = match &blocks[index] {
+                BlockNode::Paragraph(paragraph) => (
+                    folds.contains(paragraph.id),
+                    ctx.cascade.outline_level(&paragraph.properties),
+                ),
+                // Only a paragraph can carry `w:outlineLvl`, so nothing else can
+                // open a fold — but anything can be inside one.
+                _ => (false, None),
+            };
+            if fold.visit(folded, level) == Visibility::Hidden {
+                index += 1;
+                // A hidden block is not a `w:contextualSpacing` neighbour of the
+                // next visible one — they are not adjacent in the document —
+                // and this is the conservative direction (no collapse).
+                prev_para = None;
+                continue;
             }
         }
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
@@ -1680,6 +1796,11 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
             }
         }
         index += 1;
+    }
+    // Numbering's own contract, applied to the fold state: the snapshot when the
+    // pass took one, otherwise the state the sequence ended in.
+    if outermost_sequence && ctx.fold_snapshot.is_none() {
+        ctx.fold_snapshot = Some(fold);
     }
     float_floor
 }
@@ -2943,6 +3064,9 @@ fn block_intrinsic(
         paragraph_float_exclusions: None,
         note_label: None,
         note_labels: None,
+        folds: None,
+        fold_resume: None,
+        fold_snapshot: None,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -7767,6 +7891,7 @@ mod tests {
                 &block_starts,
                 NoteFlow::default(),
                 None,
+                FoldFlow::default(),
             );
             assert_eq!(
                 base as usize, from,
@@ -7827,6 +7952,7 @@ mod tests {
                 &block_starts,
                 NoteFlow::default(),
                 None,
+                FoldFlow::default(),
             );
             assert_eq!(base as usize, from);
             assert_eq!(
@@ -7946,6 +8072,9 @@ mod tests {
             paragraph_float_exclusions: None,
             note_label: None,
             note_labels: None,
+            folds: None,
+            fold_resume: None,
+            fold_snapshot: None,
         };
         let mut items = Vec::new();
         collect_items(
@@ -8005,6 +8134,9 @@ mod tests {
             paragraph_float_exclusions: None,
             note_label: None,
             note_labels: None,
+            folds: None,
+            fold_resume: None,
+            fold_snapshot: None,
         };
         let mut out = Vec::new();
         push_styled_runs(text, &properties, &mut ctx, &mut out);
@@ -11849,6 +11981,9 @@ mod tests {
                 paragraph_float_exclusions: None,
                 note_label: None,
                 note_labels: None,
+                folds: None,
+                fold_resume: None,
+                fold_snapshot: None,
             };
             block_intrinsic(&[paragraph(700, inlines)], &ParleyShaper::new(), &ctx, None)
         }

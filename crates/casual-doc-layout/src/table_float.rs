@@ -519,6 +519,8 @@ fn flow_rows(
         crate::flow::ReviewView::Editing,
         crate::flow::NoteFlow::default(),
         None,
+        // A positioned table is its own container: a body fold cannot reach into it.
+        None,
     )
 }
 

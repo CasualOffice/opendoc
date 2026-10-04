@@ -329,6 +329,9 @@ fn push_body_wrap_rect(
     {
         return;
     }
+    if !paragraph_is_laid_out(layout, PageScope::Body, paragraph) {
+        return;
+    }
     let (page_index, refs) = target(layout, ctx, Some(paragraph), PageScope::Body, section, None);
     let mut rect = resolve_anchor_rect(&anchor, extent, &refs);
     if let Some(size) = flowed_size {
@@ -654,6 +657,9 @@ fn collect_block(
 ) {
     match block {
         BlockNode::Paragraph(para) => {
+            if !paragraph_is_laid_out(layout, scope, para.id) {
+                return;
+            }
             collect_inlines(
                 layout,
                 ctx,
@@ -1657,6 +1663,39 @@ fn target(
         page_index,
         AnchorRefs::new(geometry, paragraph_box, column_box),
     )
+}
+
+/// Whether a BODY paragraph produced a placed fragment in `layout`.
+///
+/// An anchored object hangs off a paragraph; if that paragraph laid nothing
+/// out, the object is not laid out either. Without this, [`locate`]'s
+/// paragraph-not-found fallback resolves the anchor against page 0 and the
+/// object paints there — so folding a heading (`crate::fold`) would leave its
+/// images and text boxes stacked on the first page while the text they belong
+/// to is gone. Derived from the layout rather than from the fold set, so it
+/// covers every reason a paragraph can be absent, not just folding.
+///
+/// Always `true` outside the body: a header/footer float resolves against its
+/// band, whose fragments are walked per page rather than looked up here.
+///
+/// O(placed body fragments), paid once per anchoring paragraph that actually
+/// carries a float — which is what [`locate`] already costs for the same
+/// paragraph a moment later.
+fn paragraph_is_laid_out(layout: &PaginatedLayout, scope: PageScope, paragraph: NodeId) -> bool {
+    if !matches!(scope, PageScope::Body) {
+        return true;
+    }
+    layout.pages.iter().any(|page| {
+        page.placed.iter().any(|placed| {
+            find_paragraph_rect(
+                &placed.fragment,
+                placed.rect.origin,
+                placed.rect.size.width,
+                paragraph,
+            )
+            .is_some()
+        })
+    })
 }
 
 fn push(layout: &mut PaginatedLayout, page_index: usize, anchor: PlacedAnchor) {

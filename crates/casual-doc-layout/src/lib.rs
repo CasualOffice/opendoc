@@ -33,6 +33,8 @@ pub mod compose;
 pub mod display;
 pub mod document_layout;
 pub mod flow;
+// Own line (anti-conflict): the outline-fold visibility filter (ADR-049).
+pub mod fold;
 pub mod font_registry;
 // Own line (anti-conflict): the paint-only non-printing-character overlay.
 pub mod font_substitution;

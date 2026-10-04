@@ -70,11 +70,13 @@ use crate::document_layout::LayoutView;
 use crate::document_layout::mirrored_page_config;
 use crate::document_layout::referenced_endnotes;
 use crate::flow::MeasureResume;
+// Own line (anti-conflict): the outline-fold visibility filter (ADR-049).
 use crate::flow::NoteFlow;
 use crate::flow::ReviewView;
 use crate::flow::build_measures_for_blocks_resumed;
 use crate::flow::flow_body_range;
 use crate::flow::single_section_line_grid;
+use crate::fold::{FoldFlow, FoldSet};
 use crate::incremental::PageRange;
 use crate::incremental::ViewportLayout;
 use crate::incremental::VisiblePage;
@@ -212,8 +214,14 @@ pub struct DocumentMeasures {
     /// `committed_blocks`, because the paragraph before a chunk's first is what
     /// `w:contextualSpacing` compares it against.
     resume_block: usize,
-    /// The list counters as of entering `resume_block`.
+    /// The list counters as of entering `resume_block`, and whether that block
+    /// is inside a folded range.
     numbering: MeasureResume,
+    /// The headings folded for this measure pass (ADR-049). Cloned once at
+    /// `measure_document` — O(folded headings) — because every chunk and every
+    /// paint window has to flow under exactly the same set; re-deriving it per
+    /// window would be the O(document) walk the design exists to avoid.
+    folds: FoldSet,
     /// The committed measures from `tail_base` onward — everything a resumed
     /// pagination can read.
     ///
@@ -317,6 +325,29 @@ pub fn measure_document(
     measure_document_prefix(document, shaper, usize::MAX)
 }
 
+/// [`measure_document`] with the viewer's folded headings applied (ADR-049).
+///
+/// Folding forces [`FlowResume::FromStart`]: a paint window that began at a
+/// checkpoint mid-document would need the fold state *at that block*, and the
+/// measure pass records its continuation state per CHUNK, not per checkpoint.
+/// Rather than invent a second per-checkpoint state — which `SKILL.md` §8
+/// forbids and which would duplicate a fact the chunk state already carries —
+/// a folded document re-flows from its first block, exactly as every document
+/// whose paragraphs carry a style already does (`classify_resume`). The chunked
+/// MEASURE pass, which is the one that actually crosses a seam, carries the fold
+/// state in [`MeasureResume`].
+///
+/// # Errors
+///
+/// [`NotWindowable`], exactly as [`measure_document`].
+pub fn measure_document_folded(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    folds: &FoldSet,
+) -> Result<DocumentMeasures, NotWindowable> {
+    measure_document_prefix_folded(document, shaper, usize::MAX, folds)
+}
+
 /// [`measure_document`] over the first `block_budget` top-level blocks only,
 /// leaving the rest for [`extend_measures`].
 ///
@@ -337,6 +368,22 @@ pub fn measure_document_prefix(
     document: &Document,
     shaper: &dyn LineShaper,
     block_budget: usize,
+) -> Result<DocumentMeasures, NotWindowable> {
+    measure_document_prefix_folded(document, shaper, block_budget, &FoldSet::new())
+}
+
+/// [`measure_document_prefix`] with the viewer's folded headings applied. See
+/// [`measure_document_folded`] for why a non-empty set forces
+/// [`FlowResume::FromStart`].
+///
+/// # Errors
+///
+/// [`NotWindowable`], exactly as [`measure_document`].
+pub fn measure_document_prefix_folded(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    block_budget: usize,
+    folds: &FoldSet,
 ) -> Result<DocumentMeasures, NotWindowable> {
     let sections = &document.definitions().sections;
     if sections.len() > 1 {
@@ -379,13 +426,18 @@ pub fn measure_document_prefix(
         config,
         plan: plans.into_iter().next().expect("one section, one plan"),
         content_width,
-        resume: classify_resume(&blocks),
+        resume: if folds.is_empty() {
+            classify_resume(&blocks)
+        } else {
+            FlowResume::FromStart
+        },
         labels,
         endnotes,
         total_blocks: blocks.len(),
         committed_blocks: 0,
         resume_block: 0,
         numbering: MeasureResume::default(),
+        folds: folds.clone(),
         tail: Vec::new(),
         tail_base: 0,
     };
@@ -473,6 +525,7 @@ fn measure_chunk(
         ReviewView::Editing,
         NoteFlow::with_labels(&measures.labels),
         single_section_line_grid(document),
+        Some(&measures.folds),
         measures.numbering.clone(),
     );
 
@@ -754,6 +807,10 @@ pub fn window_of(
         &measures.block_starts,
         NoteFlow::with_labels(&measures.labels),
         single_section_line_grid(document),
+        // A folded document is measured `FromStart`, so `from_block` is 0 and
+        // the window begins outside every fold — which is why this needs no
+        // per-checkpoint fold state (see `measure_document_folded`).
+        FoldFlow::new(Some(&measures.folds)),
     );
     let shaped_fragments = galley.len();
 
