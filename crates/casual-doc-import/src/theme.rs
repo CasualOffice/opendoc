@@ -19,9 +19,12 @@
 
 use std::io::Cursor;
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    ColorScheme, DashStyle, FillStyle, FontCollection, FontScheme, FormatScheme, LineStyle, Rgba,
-    SchemeColor, ScriptFont, StyleColor, SystemColor, ThemeFontEntry,
+    ColorScheme, ColorTransform, DashStyle, DefinitionMap, EffectStyle, FillStyle, FontCollection,
+    FontScheme, FormatScheme, GradientKind, GradientStyle, GradientStyleStop, LineStyle,
+    PatternStyle, Rgba, SchemeColor, ScriptFont, ShapeStyleRef, StyleColor, SystemColor,
+    ThemeFontEntry,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -438,27 +441,88 @@ fn bump(elements: &mut u64, max: u64) -> Result<(), ImportError> {
 enum StyleList {
     Fill,
     Line,
+    Effect,
 }
 
-/// The fields gathered for one style-list entry before it is pushed.
-#[derive(Default)]
-struct StyleEntry {
-    /// The entry's solid colour, if it declared one.
-    color: Option<StyleColor>,
-    /// Whether the entry itself is an `a:solidFill` (the only modeled fill kind).
-    solid_fill: bool,
+/// The style list an element name opens.
+fn style_list(local: &[u8]) -> Option<StyleList> {
+    Some(match local {
+        b"fillStyleLst" => StyleList::Fill,
+        b"lnStyleLst" => StyleList::Line,
+        b"effectStyleLst" => StyleList::Effect,
+        // The background fill list is NOT a modeled list: `a:fillRef@idx >= 1000`
+        // selects it and resolves to nothing, so contributing entries here would
+        // only give index arithmetic something wrong to find.
+        _ => return None,
+    })
+}
+
+/// An open `a:fillStyleLst` entry, by the kind its outermost element declared.
+enum FillEntry {
+    Solid(Option<StyleColor>),
+    Gradient {
+        stops: Vec<GradientStyleStop>,
+        kind: Option<GradientKind>,
+    },
+    Pattern {
+        preset: String,
+        foreground: Option<StyleColor>,
+        background: Option<StyleColor>,
+    },
+    /// `a:noFill` — representable, and it means "nothing". NOT a loss, which is
+    /// why it is distinct from [`FillEntry::Unmodeled`] even though both push a
+    /// `None`: a theme that says "no fill" is honoured exactly, and reporting it
+    /// would be inventing a finding.
+    NoFill,
+    /// `a:blipFill`, `a:grpFill`, or a kind this build does not recognise.
+    Unmodeled,
+}
+
+/// An open `a:lnStyleLst` entry.
+struct LineEntry {
     /// `a:ln@w`.
     width_emu: i64,
+    /// The colour of the entry's `a:solidFill`, if that is what it declared.
+    color: Option<StyleColor>,
     /// `a:prstDash@val`.
     dash: Option<DashStyle>,
+    /// Set when the outline's fill is something other than `a:solidFill`. Such an
+    /// entry is NOT modeled: `ShapeStroke` carries one colour, so taking a
+    /// gradient's first stop would draw a confidently wrong outline.
+    non_solid_fill: bool,
 }
 
-/// Whether an element name is a fill kind, and so begins an `a:fillStyleLst` entry.
-fn is_fill_kind(local: &[u8]) -> bool {
-    matches!(
-        local,
-        b"solidFill" | b"gradFill" | b"blipFill" | b"pattFill" | b"noFill" | b"grpFill"
-    )
+/// Where a committed colour belongs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorSlot {
+    FillSolid,
+    GradientStop,
+    PatternForeground,
+    PatternBackground,
+    LineSolid,
+}
+
+/// A colour element being accumulated with its (possibly deferred) transform.
+struct PendingStyleColor {
+    /// The base: the placeholder, or a concrete colour the theme fixed.
+    base: Option<Rgba>,
+    /// `a:lumMod`/`a:lumOff`/`a:tint`/`a:shade`/`a:alpha`, per-100000.
+    transform: ColorTransform,
+    slot: ColorSlot,
+}
+
+impl PendingStyleColor {
+    /// The modeled colour this accumulation became.
+    ///
+    /// A fixed base folds its transform NOW, because the base is known; the
+    /// placeholder carries the transform forward, because its base arrives only
+    /// when a shape's `a:fillRef`/`a:lnRef` supplies one.
+    fn finish(self) -> StyleColor {
+        match self.base {
+            Some(base) => StyleColor::Fixed(self.transform.apply(base)),
+            None => StyleColor::Placeholder(self.transform),
+        }
+    }
 }
 
 /// Parses the modeled subset of a captured `a:fmtScheme` subtree.
@@ -468,11 +532,13 @@ fn is_fill_kind(local: &[u8]) -> bool {
 /// was already on. Adding resolution therefore changed no output byte, and a failure
 /// to parse here costs resolution only, never fidelity.
 ///
-/// Entries are recognised by the list they sit in, not by their own name alone: an
-/// `a:solidFill` inside `a:lnStyleLst` is a line's COLOUR, while the same element
-/// inside `a:fillStyleLst` is an entry. `a:effectStyleLst` and `a:bgFillStyleLst` are
-/// skipped entirely rather than contributing entries that index arithmetic would then
-/// mis-select.
+/// Entries are recognised by the list they sit in AND by their nesting depth below
+/// it, not by their own name alone: an `a:solidFill` directly inside
+/// `a:fillStyleLst` is an entry, while the same element one level deeper inside an
+/// `a:ln` is that outline's colour. Depth is what tells them apart, and it is why
+/// `a:gradFill` can be both a fill entry and the fill of a line entry without the
+/// two confusing each other. `a:bgFillStyleLst` contributes nothing, because
+/// `a:fillRef@idx >= 1000` — the only way to select it — resolves to nothing.
 ///
 /// An unmodeled entry becomes `None` in place, so a later entry keeps its index. A
 /// reference to it resolves to nothing, which is the honest answer — substituting a
@@ -481,162 +547,454 @@ fn is_fill_kind(local: &[u8]) -> bool {
 /// Complexity: O(n) in the captured subtree, bounded by the import element cap.
 pub(crate) fn parse_format_scheme(xml: &str, config: &ImportConfig) -> Option<FormatScheme> {
     let mut reader = Reader::from_str(xml);
-    let mut list: Option<StyleList> = None;
-    let mut entry: Option<StyleEntry> = None;
-    let mut fill_styles: Vec<Option<FillStyle>> = Vec::new();
-    let mut line_styles: Vec<Option<LineStyle>> = Vec::new();
+    let mut state = SchemeParser::default();
     let mut elements = 0_u64;
 
     loop {
         let event = reader.read_event().ok()?;
-        let (element, empty) = match &event {
+        match &event {
             Event::Eof => break,
-            Event::Start(element) => (Some(element), false),
-            Event::Empty(element) => (Some(element), true),
+            Event::Start(element) | Event::Empty(element) => {
+                elements += 1;
+                if elements > config.max_elements {
+                    return None;
+                }
+                state.on_start(element, matches!(event, Event::Empty(_)));
+            }
             Event::End(element) => {
                 let local = element.local_name();
-                match local.as_ref() {
-                    b"fillStyleLst" | b"lnStyleLst" | b"effectStyleLst" | b"bgFillStyleLst" => {
-                        list = None;
-                        entry = None;
-                    }
-                    other => {
-                        if let (Some(kind), Some(open)) = (list, entry.take()) {
-                            let closes = match kind {
-                                StyleList::Fill => is_fill_kind(other),
-                                StyleList::Line => other == b"ln",
-                            };
-                            if closes {
-                                push_entry(kind, open, &mut fill_styles, &mut line_styles);
-                            } else {
-                                entry = Some(open);
-                            }
-                        }
-                    }
+                if style_list(local.as_ref()).is_some() || local.as_ref() == b"bgFillStyleLst" {
+                    state.close_list();
+                } else if state.list.is_some() {
+                    state.depth = state.depth.saturating_sub(1);
+                    state.on_end(local.as_ref());
                 }
-                continue;
             }
-            _ => continue,
-        };
-        let Some(element) = element else { continue };
-        elements += 1;
-        if elements > config.max_elements {
-            return None;
+            _ => {}
         }
+    }
+    state.close_list();
+    state.finish()
+}
+
+/// The `a:fmtScheme` state machine: which list is open, how deep inside it the
+/// cursor is, and whichever entry and colour are being accumulated.
+#[derive(Default)]
+struct SchemeParser {
+    list: Option<StyleList>,
+    /// Nesting depth below the open list element (`0` at its direct children).
+    depth: u32,
+    fill: Option<FillEntry>,
+    line: Option<LineEntry>,
+    /// The open `a:effectStyle`, and whether anything inside it is an effect.
+    effect: Option<bool>,
+    /// Depth of the open `a:effectLst`, so an element is only counted as an effect
+    /// when it is actually inside one (`a:scene3d` beside it is not an effect).
+    in_effect_lst: bool,
+    pending_color: Option<PendingStyleColor>,
+    /// `a:gs@pos` of the gradient stop being read.
+    stop_position: Option<i32>,
+    /// Set when an `a:gs` closed without yielding a colour this build can hold.
+    ///
+    /// The whole entry is then unmodeled, rather than a gradient missing a stop.
+    /// A three-stop gradient delivered as two stops is a *different* gradient that
+    /// still paints — exactly the confidently-wrong output this module refuses
+    /// elsewhere — and nothing downstream could tell it had happened.
+    gradient_stop_lost: bool,
+    /// Which pattern colour container is open.
+    pattern_slot: Option<ColorSlot>,
+    /// Whether the cursor is inside an `a:ln`'s own `a:solidFill`.
+    in_line_solid: bool,
+    fill_styles: Vec<Option<FillStyle>>,
+    line_styles: Vec<Option<LineStyle>>,
+    effect_styles: Vec<EffectStyle>,
+}
+
+impl SchemeParser {
+    fn on_start(&mut self, element: &BytesStart<'_>, empty: bool) {
         let local = element.local_name();
-        match local.as_ref() {
-            b"fillStyleLst" => {
-                list = Some(StyleList::Fill);
-                entry = None;
+        let local = local.as_ref();
+        if let Some(kind) = style_list(local) {
+            self.close_list();
+            // An empty list element (`<a:fillStyleLst/>`) has no `End` to close it,
+            // so leaving it open would let the next sibling's children be read as
+            // its entries.
+            if !empty {
+                self.list = Some(kind);
+                self.depth = 0;
             }
-            b"lnStyleLst" => {
-                list = Some(StyleList::Line);
-                entry = None;
+            return;
+        }
+        if local == b"bgFillStyleLst" {
+            self.close_list();
+            return;
+        }
+        let Some(kind) = self.list else { return };
+        if self.depth == 0 {
+            self.open_entry(kind, local, element, empty);
+        } else {
+            self.inside_entry(local, element, empty);
+        }
+        // The list element itself returned above, so depth counts only the nesting
+        // BELOW it: an entry opens at `0`, and its own children are at `1`.
+        if !empty {
+            self.depth = self.depth.saturating_add(1);
+        }
+    }
+
+    /// A direct child of the open style list: one entry.
+    fn open_entry(&mut self, kind: StyleList, local: &[u8], element: &BytesStart<'_>, empty: bool) {
+        match kind {
+            StyleList::Fill => {
+                self.fill = Some(match local {
+                    b"solidFill" => FillEntry::Solid(None),
+                    b"gradFill" => FillEntry::Gradient {
+                        stops: Vec::new(),
+                        kind: None,
+                    },
+                    b"pattFill" => FillEntry::Pattern {
+                        preset: bounded(element, b"prst").unwrap_or_default(),
+                        foreground: None,
+                        background: None,
+                    },
+                    b"noFill" => FillEntry::NoFill,
+                    _ => FillEntry::Unmodeled,
+                });
             }
-            // Not modeled, and deliberately not counted: an entry here would shift
-            // nothing, but a colour inside one must not land on an open entry.
-            b"effectStyleLst" | b"bgFillStyleLst" => {
-                list = None;
-                entry = None;
+            StyleList::Line if local == b"ln" => {
+                self.line = Some(LineEntry {
+                    width_emu: attribute_value(element, b"w")
+                        .as_deref()
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .unwrap_or(0),
+                    color: None,
+                    dash: None,
+                    non_solid_fill: false,
+                });
             }
-            b"schemeClr" | b"srgbClr" => {
-                // Only the FIRST colour of an entry: for an `a:ln` that is the one in
-                // its `a:solidFill`, and a later colour inside a dash or line end must
-                // not overwrite it.
-                if let Some(open) = entry.as_mut()
-                    && open.color.is_none()
-                {
-                    open.color = style_color(element, local.as_ref());
+            StyleList::Effect if local == b"effectStyle" => self.effect = Some(false),
+            // A child the list's schema does not define. Ignored rather than
+            // pushed: giving it an index would shift every entry after it, which
+            // is the one failure mode that silently paints the WRONG style.
+            StyleList::Line | StyleList::Effect => return,
+        }
+        if empty {
+            self.push_entry();
+        }
+    }
+
+    /// An element inside an open entry.
+    fn inside_entry(&mut self, local: &[u8], element: &BytesStart<'_>, empty: bool) {
+        match local {
+            b"gs" => {
+                self.stop_position = attribute_value(element, b"pos")
+                    .as_deref()
+                    .and_then(parse_position);
+            }
+            b"lin" => {
+                if let Some(FillEntry::Gradient { kind, .. }) = self.fill.as_mut() {
+                    *kind = Some(GradientKind::Linear {
+                        angle: attribute_value(element, b"ang")
+                            .as_deref()
+                            .and_then(|value| value.parse::<i32>().ok())
+                            .unwrap_or(0),
+                    });
+                }
+            }
+            b"path" => {
+                if let Some(FillEntry::Gradient { kind, .. }) = self.fill.as_mut() {
+                    *kind = Some(GradientKind::Radial);
+                }
+            }
+            b"fgClr" => self.pattern_slot = Some(ColorSlot::PatternForeground),
+            b"bgClr" => self.pattern_slot = Some(ColorSlot::PatternBackground),
+            b"solidFill" if self.line.is_some() => self.in_line_solid = true,
+            // The outline's fill is not solid, so the entry is not modeled.
+            b"gradFill" | b"pattFill" | b"blipFill" => {
+                if let Some(line) = self.line.as_mut() {
+                    line.non_solid_fill = true;
                 }
             }
             b"prstDash" => {
-                if let Some(open) = entry.as_mut() {
-                    open.dash = attribute_value(element, b"val")
+                if let Some(line) = self.line.as_mut() {
+                    line.dash = attribute_value(element, b"val")
                         .as_deref()
                         .and_then(crate::body::parse_dash_style);
                 }
             }
-            other => {
-                let Some(kind) = list else { continue };
-                let begins = match kind {
-                    StyleList::Fill => is_fill_kind(other),
-                    StyleList::Line => other == b"ln",
-                };
-                if !begins {
-                    continue;
+            b"effectLst" => self.in_effect_lst = !empty,
+            b"srgbClr" | b"schemeClr" | b"sysClr" => {
+                if let Some(slot) = self.color_slot() {
+                    // `a:phClr` is the placeholder; `a:srgbClr` is a colour the theme
+                    // fixes itself. A `a:schemeClr` naming anything else is a
+                    // theme-relative colour this build does not resolve here, so the
+                    // colour stays unset and its entry unmodeled.
+                    let base = match local {
+                        b"schemeClr" => match attribute_value(element, b"val").as_deref() {
+                            Some("phClr") => None,
+                            _ => return,
+                        },
+                        b"srgbClr" => match attribute_value(element, b"val")
+                            .as_deref()
+                            .and_then(parse_rgb)
+                        {
+                            Some(rgb) => Some(Rgba {
+                                r: rgb.r,
+                                g: rgb.g,
+                                b: rgb.b,
+                                a: 255,
+                            }),
+                            None => return,
+                        },
+                        _ => return,
+                    };
+                    self.pending_color = Some(PendingStyleColor {
+                        base,
+                        transform: ColorTransform::default(),
+                        slot,
+                    });
+                    if empty {
+                        self.commit_color();
+                    }
                 }
-                // A nested entry name cannot occur in the modeled lists, so an open
-                // entry here means the previous one never closed; push it rather than
-                // dropping it silently.
-                if let Some(previous) = entry.take() {
-                    push_entry(kind, previous, &mut fill_styles, &mut line_styles);
-                }
-                let mut open = StyleEntry {
-                    solid_fill: other == b"solidFill",
-                    ..StyleEntry::default()
-                };
-                if kind == StyleList::Line {
-                    open.width_emu = attribute_value(element, b"w")
+            }
+            b"lumMod" | b"lumOff" | b"tint" | b"shade" | b"alpha" => {
+                if let Some(pending) = self.pending_color.as_mut()
+                    && let Some(value) = attribute_value(element, b"val")
                         .as_deref()
-                        .and_then(|value| value.parse::<i64>().ok())
-                        .unwrap_or(0);
+                        .and_then(crate::body::parse_drawing_percentage)
+                    && let Ok(value) = i32::try_from(value)
+                {
+                    match local {
+                        b"lumMod" => pending.transform.lum_mod = Some(value),
+                        b"lumOff" => pending.transform.lum_off = Some(value),
+                        b"tint" => pending.transform.tint = Some(value),
+                        b"shade" => pending.transform.shade = Some(value),
+                        _ => pending.transform.alpha = Some(value),
+                    }
                 }
-                if empty {
-                    push_entry(kind, open, &mut fill_styles, &mut line_styles);
-                } else {
-                    entry = Some(open);
+            }
+            // An element inside an open `a:effectLst` IS an effect; nothing here
+            // renders one, so the entry only records that there was one.
+            _ if self.in_effect_lst => {
+                if let Some(carries) = self.effect.as_mut() {
+                    *carries = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_end(&mut self, local: &[u8]) {
+        match local {
+            b"srgbClr" | b"schemeClr" | b"sysClr" => self.commit_color(),
+            // The stop's position was never consumed, so no colour reached it.
+            b"gs" => self.gradient_stop_lost |= self.stop_position.take().is_some(),
+            b"fgClr" | b"bgClr" => self.pattern_slot = None,
+            b"solidFill" if self.depth > 0 && self.line.is_some() => self.in_line_solid = false,
+            b"effectLst" => self.in_effect_lst = false,
+            _ => {}
+        }
+        if self.depth == 0 {
+            self.push_entry();
+        }
+    }
+
+    /// Where a colour element starting here belongs, or `None` when it sits
+    /// somewhere this build reads no colour from (an `a:blipFill`'s duotone, a
+    /// line end, an effect).
+    fn color_slot(&self) -> Option<ColorSlot> {
+        if self.line.is_some() {
+            return self.in_line_solid.then_some(ColorSlot::LineSolid);
+        }
+        match self.fill.as_ref()? {
+            FillEntry::Solid(_) => Some(ColorSlot::FillSolid),
+            FillEntry::Gradient { .. } => self.stop_position.map(|_| ColorSlot::GradientStop),
+            FillEntry::Pattern { .. } => self.pattern_slot,
+            FillEntry::NoFill | FillEntry::Unmodeled => None,
+        }
+    }
+
+    fn commit_color(&mut self) {
+        let Some(pending) = self.pending_color.take() else {
+            return;
+        };
+        let slot = pending.slot;
+        let color = pending.finish();
+        match slot {
+            ColorSlot::LineSolid => {
+                if let Some(line) = self.line.as_mut()
+                    && line.color.is_none()
+                {
+                    line.color = Some(color);
+                }
+            }
+            ColorSlot::FillSolid => {
+                if let Some(FillEntry::Solid(slot)) = self.fill.as_mut()
+                    && slot.is_none()
+                {
+                    *slot = Some(color);
+                }
+            }
+            ColorSlot::GradientStop => {
+                if let Some(FillEntry::Gradient { stops, .. }) = self.fill.as_mut()
+                    && let Some(position) = self.stop_position.take()
+                {
+                    stops.push(GradientStyleStop { position, color });
+                }
+            }
+            ColorSlot::PatternForeground | ColorSlot::PatternBackground => {
+                if let Some(FillEntry::Pattern {
+                    foreground,
+                    background,
+                    ..
+                }) = self.fill.as_mut()
+                {
+                    let target = if slot == ColorSlot::PatternForeground {
+                        foreground
+                    } else {
+                        background
+                    };
+                    if target.is_none() {
+                        *target = Some(color);
+                    }
                 }
             }
         }
     }
 
-    (!fill_styles.is_empty() || !line_styles.is_empty()).then_some(FormatScheme {
-        fill_styles,
-        line_styles,
-    })
-}
-
-/// `a:phClr` is the placeholder; `a:srgbClr` is a colour the theme fixes itself. A
-/// `a:schemeClr` naming anything else inside a style entry is a theme-relative colour
-/// this build does not resolve here, so the entry stays unmodeled.
-fn style_color(element: &BytesStart<'_>, local: &[u8]) -> Option<StyleColor> {
-    let value = attribute_value(element, b"val")?;
-    if local == b"schemeClr" {
-        return (value == "phClr").then_some(StyleColor::Placeholder);
-    }
-    let rgb = parse_rgb(&value)?;
-    Some(StyleColor::Fixed(Rgba {
-        r: rgb.r,
-        g: rgb.g,
-        b: rgb.b,
-        a: 255,
-    }))
-}
-
-/// Pushes one gathered entry, as a modeled style or as a `None` placeholder that
-/// keeps every later entry's index correct.
-fn push_entry(
-    kind: StyleList,
-    entry: StyleEntry,
-    fill_styles: &mut Vec<Option<FillStyle>>,
-    line_styles: &mut Vec<Option<LineStyle>>,
-) {
-    match kind {
-        StyleList::Fill => {
-            let modeled = entry
-                .solid_fill
-                .then_some(entry.color)
-                .flatten()
-                .map(|color| FillStyle { color });
-            fill_styles.push(modeled);
-        }
-        StyleList::Line => {
-            let modeled = entry.color.map(|color| LineStyle {
-                width_emu: entry.width_emu,
-                color,
-                dash: entry.dash,
+    /// Pushes whichever entry is open, as a modeled style or as the `None` that
+    /// keeps every later entry's index correct.
+    fn push_entry(&mut self) {
+        self.pending_color = None;
+        self.stop_position = None;
+        self.pattern_slot = None;
+        self.in_line_solid = false;
+        self.in_effect_lst = false;
+        let gradient_stop_lost = std::mem::take(&mut self.gradient_stop_lost);
+        if let Some(entry) = self.fill.take() {
+            self.fill_styles.push(match entry {
+                FillEntry::Solid(color) => color.map(|color| FillStyle::Solid { color }),
+                // A gradient with no stops is not a gradient. Modelling it would
+                // put an empty stop list in front of the renderer, which paints
+                // nothing and reports nothing.
+                FillEntry::Gradient { stops, kind }
+                    if !stops.is_empty() && !gradient_stop_lost =>
+                {
+                    Some(FillStyle::Gradient(GradientStyle {
+                        stops,
+                        // ECMA-376 §20.1.8.33: a gradient with neither `a:lin` nor
+                        // `a:path` is a linear sweep along the default axis.
+                        kind: kind.unwrap_or(GradientKind::Linear { angle: 0 }),
+                    }))
+                }
+                FillEntry::Pattern {
+                    preset,
+                    foreground: Some(foreground),
+                    background: Some(background),
+                } => Some(FillStyle::Pattern(PatternStyle {
+                    preset,
+                    foreground,
+                    background,
+                })),
+                FillEntry::Gradient { .. }
+                | FillEntry::Pattern { .. }
+                | FillEntry::NoFill
+                | FillEntry::Unmodeled => None,
             });
-            line_styles.push(modeled);
+        }
+        if let Some(entry) = self.line.take() {
+            self.line_styles
+                .push((!entry.non_solid_fill).then_some(entry.color).flatten().map(
+                    |color| LineStyle {
+                        width_emu: entry.width_emu,
+                        color,
+                        dash: entry.dash,
+                    },
+                ));
+        }
+        if let Some(carries_effects) = self.effect.take() {
+            self.effect_styles.push(EffectStyle { carries_effects });
+        }
+    }
+
+    /// Closes the open list, pushing an entry the source left unclosed rather than
+    /// dropping it (which would shift every later index).
+    fn close_list(&mut self) {
+        self.push_entry();
+        self.list = None;
+        self.depth = 0;
+    }
+
+    fn finish(self) -> Option<FormatScheme> {
+        let found = !self.fill_styles.is_empty()
+            || !self.line_styles.is_empty()
+            || !self.effect_styles.is_empty();
+        found.then_some(FormatScheme {
+            fill_styles: self.fill_styles,
+            line_styles: self.line_styles,
+            effect_styles: self.effect_styles,
+        })
+    }
+}
+
+/// `a:gs@pos`, as the per-100000 position the model holds.
+fn parse_position(value: &str) -> Option<i32> {
+    crate::body::parse_drawing_percentage(value).and_then(|value| i32::try_from(value).ok())
+}
+
+/// Reports the appearance each shape's `wps:style` named and this build cannot
+/// paint, once per reference.
+///
+/// Run after the body parse, because it needs both halves: the theme's format
+/// scheme (which says what the entry IS) and the shape-style side table (which says
+/// which entries are actually asked for). Reporting from the theme parse alone would
+/// raise a finding for every Office theme, whose third effect style carries an
+/// `a:outerShdw` no shape in the document need reference.
+///
+/// Each reference is classified exactly as `themed_appearance` in
+/// `casual-doc-layout` resolves it, so a reported loss and an unfilled shape are the
+/// same event seen twice. The three reasons are:
+///
+/// * `pattern` — an `a:pattFill` entry. Modeled, and painted by nothing.
+/// * `unmodeled` — an `a:blipFill`/`a:grpFill` fill entry, a non-solid outline
+///   entry, or an index past the list; the entry itself resolved to nothing.
+/// * `effect-not-rendered` — an `a:effectStyle` that carries real effects. There is
+///   no shadow/glow/blur primitive here, so the reference resolves, reports, and
+///   renders nothing at all.
+///
+/// An `@idx` of `0` is NOT a loss: it means "no fill"/"no outline"/"no effect", and
+/// that is honoured exactly.
+///
+/// Complexity: O(styled shapes) — one index per reference, no scan of the document.
+pub(crate) fn report_unpaintable_style_refs(
+    scheme: &FormatScheme,
+    shape_styles: &DefinitionMap<NodeId, ShapeStyleRef>,
+    reporter: &mut Reporter,
+) {
+    for (_, reference) in shape_styles.iter() {
+        if let Some(idx) = reference.fill_idx.filter(|idx| *idx != 0) {
+            match scheme.fill_style(idx) {
+                Some(FillStyle::Solid { .. } | FillStyle::Gradient(_)) => {}
+                Some(FillStyle::Pattern(_)) => {
+                    reporter.report_theme_style_unpainted("fillStyleLst", "pattern");
+                }
+                None => reporter.report_theme_style_unpainted("fillStyleLst", "unmodeled"),
+            }
+        }
+        if let Some(idx) = reference.line_idx.filter(|idx| *idx != 0)
+            && scheme.line_style(idx).is_none()
+        {
+            reporter.report_theme_style_unpainted("lnStyleLst", "unmodeled");
+        }
+        // An effect style with an EMPTY `a:effectLst` is not a loss, and in the
+        // default Office theme two of the three are exactly that.
+        if let Some(idx) = reference.effect_idx.filter(|idx| *idx != 0)
+            && scheme
+                .effect_style(idx)
+                .is_some_and(|style| style.carries_effects)
+        {
+            reporter.report_theme_style_unpainted("effectStyleLst", "effect-not-rendered");
         }
     }
 }

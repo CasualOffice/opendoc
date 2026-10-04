@@ -838,6 +838,35 @@ impl Reporter {
         );
     }
 
+    /// Reports an appearance a shape's `wps:style` named in the theme's format
+    /// scheme that this build cannot paint — one finding per style list, with
+    /// `reason` naming which kind of entry it was.
+    ///
+    /// Raised per REFERENCE, not per theme entry. A theme is allowed to carry a
+    /// pattern fill style or a shadow effect style that no shape ever names; the
+    /// loss only exists once a shape asks for it. Reporting on the theme's contents
+    /// would add a finding to most Word documents (the default Office theme's third
+    /// effect style carries an `a:outerShdw`) and that is how a report becomes
+    /// something callers filter out — the same argument [`Reporter::report_rsid`]
+    /// records for revision-save ids.
+    ///
+    /// `Degraded`, matching [`Reporter::report_watermark`]: the shape is still
+    /// placed and still painted, it just is not wearing the appearance the theme
+    /// prescribed. The retention half of the disposition is conservative — the
+    /// `a:fmtScheme` subtree IS retained verbatim and re-emitted on save, so
+    /// nothing here is lost from the FILE, only from the render.
+    pub(crate) fn report_theme_style_unpainted(&mut self, list: &str, reason: &str) {
+        self.insert(
+            format!("fmtScheme/{list}"),
+            FeatureLocation {
+                part_name: None,
+                element: Some(list.to_owned()),
+                attribute: Some(reason.to_owned()),
+            },
+            Finding::Degraded,
+        );
+    }
+
     fn insert(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
         let retained_bytes = match finding {
             Finding::RetainedInModel(bytes) => bytes,

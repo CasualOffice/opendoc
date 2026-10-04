@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BorderEdge, DashStyle, NumberingInstanceId, RevisionGroup, Rgba, SectionId, Shading, StyleId,
-    TextDirection,
+    BorderEdge, DashStyle, GradientKind, NumberingInstanceId, RevisionGroup, Rgba, SectionId,
+    Shading, StyleId, TextDirection,
 };
 
 /// A format-change tracked revision (`w:rPrChange`, `w:pPrChange`,
@@ -731,6 +731,127 @@ impl Default for SchemeColor {
     }
 }
 
+/// A DrawingML colour transform (`a:lumMod`/`a:lumOff`/`a:tint`/`a:shade`/
+/// `a:alpha`) held UNAPPLIED, in the per-100000 units the file states.
+///
+/// It exists because a theme format-scheme colour may be the `a:phClr`
+/// placeholder, and a transform on a placeholder cannot be folded at parse time:
+/// there is no base colour yet. The default Office theme's gradient entries are
+/// exactly this case — all three stops are `phClr`, and ONLY the transforms tell
+/// them apart, so a build that dropped them would resolve a three-stop gradient
+/// to three copies of one colour. That is the flattening [`FillStyle`]'s
+/// documentation refuses, arriving by a different route.
+///
+/// A transform over a colour the theme fixes itself is folded at parse time
+/// instead, because there the base is known; that is why [`StyleColor::Fixed`]
+/// carries no transform.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColorTransform {
+    /// `a:lumMod@val` — luminance multiplier, per-100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lum_mod: Option<i32>,
+    /// `a:lumOff@val` — luminance offset, per-100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lum_off: Option<i32>,
+    /// `a:tint@val` — blend toward white, per-100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<i32>,
+    /// `a:shade@val` — blend toward black, per-100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shade: Option<i32>,
+    /// `a:alpha@val` — opacity, per-100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<i32>,
+}
+
+impl ColorTransform {
+    /// Whether this transform changes nothing.
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Folds this transform over `base`.
+    ///
+    /// The arithmetic is [`fold_color_modifiers`], shared with the importer's own
+    /// colour accumulator so the deferred (placeholder) and immediate (known
+    /// base) paths cannot drift apart.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn apply(&self, base: Rgba) -> Rgba {
+        let frac = |value: Option<i32>| value.map(|v| v as f32 / 100_000.0);
+        fold_color_modifiers(
+            base,
+            frac(self.lum_mod),
+            frac(self.lum_off),
+            frac(self.tint),
+            frac(self.shade),
+            frac(self.alpha),
+        )
+    }
+}
+
+/// Folds DrawingML colour modifiers over `base`, each given as a FRACTION
+/// (`0.67`, not `67000`).
+///
+/// `lumMod` scales and `lumOff` offsets luminance (applied channel-wise, exact
+/// for the grayscale bases these decorations use); `tint` lightens toward white
+/// and `shade` darkens toward black; `alpha` sets opacity.
+///
+/// One function rather than two: the importer folds modifiers over a base it
+/// already knows, and [`ColorTransform::apply`] folds the same modifiers over a
+/// base only a style reference supplies. Two implementations of one rule diverge,
+/// and a divergence here would show as a themed shape painting a slightly
+/// different colour from an explicitly-filled one.
+///
+/// `a:satMod` is absent on purpose: nothing in this build applies a saturation
+/// modifier, and adding a half-correct one here would be a silent change to every
+/// existing colour. The detail survives in the retained `a:fmtScheme`.
+///
+/// Complexity: O(1).
+#[must_use]
+pub fn fold_color_modifiers(
+    base: Rgba,
+    lum_mod: Option<f32>,
+    lum_off: Option<f32>,
+    tint: Option<f32>,
+    shade: Option<f32>,
+    alpha: Option<f32>,
+) -> Rgba {
+    let mut rgb = [f32::from(base.r), f32::from(base.g), f32::from(base.b)];
+    if let Some(m) = lum_mod {
+        for c in &mut rgb {
+            *c *= m;
+        }
+    }
+    if let Some(o) = lum_off {
+        for c in &mut rgb {
+            *c += o * 255.0;
+        }
+    }
+    if let Some(t) = tint {
+        let t = t.clamp(0.0, 1.0);
+        for c in &mut rgb {
+            *c = *c * t + 255.0 * (1.0 - t);
+        }
+    }
+    if let Some(s) = shade {
+        let s = s.clamp(0.0, 1.0);
+        for c in &mut rgb {
+            *c *= s;
+        }
+    }
+    let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
+    Rgba {
+        r: clamp(rgb[0]),
+        g: clamp(rgb[1]),
+        b: clamp(rgb[2]),
+        a: alpha.map_or(base.a, |a| clamp(a.clamp(0.0, 1.0) * 255.0)),
+    }
+}
+
 /// A colour inside a theme format-scheme entry.
 ///
 /// `a:phClr` is a **formal parameter**, not a colour: the matrix entry says "fill
@@ -742,28 +863,114 @@ impl Default for SchemeColor {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum StyleColor {
-    /// `a:phClr` — substituted by the referencing shape's own colour.
-    Placeholder,
-    /// A colour fixed by the theme itself.
+    /// `a:phClr` — the referencing shape's own colour, with this entry's
+    /// [`ColorTransform`] applied to it. The transform travels with the
+    /// placeholder because its base does not exist until resolution.
+    Placeholder(ColorTransform),
+    /// A colour fixed by the theme itself, with any transform already folded in.
     Fixed(Rgba),
 }
 
-/// One `a:fillStyleLst` entry of the theme format scheme, as far as this build
-/// models it: a solid fill.
+impl StyleColor {
+    /// Resolves this colour, substituting `placeholder` for `a:phClr`.
+    ///
+    /// `None` when the entry names the placeholder and the reference supplied no
+    /// colour: there is nothing to substitute, and inventing one would paint a
+    /// colour the document never states.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn resolve(&self, placeholder: Option<Rgba>) -> Option<Rgba> {
+        match self {
+            Self::Fixed(color) => Some(*color),
+            Self::Placeholder(transform) => placeholder.map(|base| transform.apply(base)),
+        }
+    }
+}
+
+/// One `a:gsLst/a:gs` of a theme gradient fill-style entry: a position plus a
+/// colour that is independently fixed or the `a:phClr` placeholder.
 ///
-/// A gradient, pattern or picture entry is NOT guessed at — the list keeps a `None`
-/// in its place so index arithmetic still lines up, and a shape referencing it keeps
-/// today's behaviour and is reported. Silently substituting a solid for a gradient
-/// would be worse than no fill, because it looks deliberate.
+/// Per-stop placeholder semantics are the whole point. The default Office theme
+/// writes three `phClr` stops differing only in their transforms, while a branded
+/// theme commonly mixes one `phClr` stop with a fixed one, and a model that put
+/// the placeholder on the entry rather than on the stop could represent neither.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FillStyle {
-    /// The solid fill's colour.
+pub struct GradientStyleStop {
+    /// `a:gs@pos` in per-100000 units (`0` = start, `100000` = end).
+    pub position: i32,
+    /// The stop's colour.
     pub color: StyleColor,
+}
+
+/// A gradient `a:fillStyleLst` entry: its ordered stops and its geometry.
+///
+/// The geometry type is [`super::GradientKind`], reused from the shape fill this
+/// resolves into rather than duplicated, so a theme gradient and an `a:gradFill`
+/// authored on the shape travel the same paint path.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GradientStyle {
+    /// The stops in document order; never empty when parsed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stops: Vec<GradientStyleStop>,
+    /// `a:lin` (linear, with its angle) or `a:path` (radial).
+    pub kind: GradientKind,
+}
+
+/// A pattern `a:fillStyleLst` entry (`a:pattFill`): a preset hatch name plus its
+/// foreground and background colours.
+///
+/// Modeled so the loss can be NAMED — nothing paints it. There is no pattern
+/// primitive in the display list, so a shape referencing one resolves to no fill
+/// and the import report says a pattern style entry is why. Without the entry
+/// kind in the model the report could only say "unmodeled", which is a finding a
+/// caller cannot act on.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternStyle {
+    /// `a:pattFill@prst` (e.g. `pct25`, `ltHorz`), as the file spells it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub preset: String,
+    /// `a:fgClr`'s colour.
+    pub foreground: StyleColor,
+    /// `a:bgClr`'s colour.
+    pub background: StyleColor,
+}
+
+/// One `a:fillStyleLst` entry of the theme format scheme, as far as this build
+/// models it.
+///
+/// A picture entry (`a:blipFill`) and a group entry (`a:grpFill`) are NOT guessed
+/// at — the list keeps a `None` in its place so index arithmetic still lines up,
+/// and a shape referencing one keeps today's behaviour and is reported.
+///
+/// [`FillStyle::Pattern`] is modeled but does not paint, for the same reason:
+/// silently substituting a solid for a pattern would be worse than no fill,
+/// because it looks deliberate. What modelling it buys is a report that says
+/// *pattern* instead of *unknown*.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FillStyle {
+    /// `a:solidFill`.
+    Solid {
+        /// The fill colour.
+        color: StyleColor,
+    },
+    /// `a:gradFill`.
+    Gradient(GradientStyle),
+    /// `a:pattFill`. Resolves to no fill; see the type's documentation.
+    Pattern(PatternStyle),
 }
 
 /// One `a:lnStyleLst` entry of the theme format scheme: a width, a solid colour and
 /// an optional preset dash.
+///
+/// Only a SOLID outline fill becomes an entry. An `a:ln` whose fill is a gradient
+/// or a pattern leaves a `None` in its place, because [`super::ShapeStroke`] holds
+/// one colour and nothing else: taking the gradient's first stop would draw a
+/// confidently wrong outline, which is how this list used to behave.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineStyle {
@@ -777,8 +984,36 @@ pub struct LineStyle {
     pub dash: Option<DashStyle>,
 }
 
+/// One `a:effectStyleLst` entry, modeled down to the ONE fact anything in this
+/// build can act on: whether the entry carries any effect at all.
+///
+/// Nothing renders a DrawingML effect here. There is no shadow, glow, reflection
+/// or soft-edge primitive in the display list, so modelling an `a:outerShdw`'s
+/// blur radius, distance, direction and colour would add a construct no user
+/// could reach — the single most expensive recurring mistake in this repository
+/// (`SKILL` §9.4).
+///
+/// So the model carries the predicate the loss report needs and nothing more.
+/// Resolving the entry is load-bearing even so: in the default Office theme the
+/// first two `a:effectStyle` entries hold an empty `a:effectLst` and only the
+/// third carries a shadow. A build that reported on `a:effectRef@idx != 0` alone
+/// would raise a false finding on most Word documents; one that reports only when
+/// the RESOLVED entry carries effects raises a finding exactly when a shadow was
+/// actually lost.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectStyle {
+    /// Whether the entry's `a:effectLst` holds at least one effect child.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub carries_effects: bool,
+}
+
 fn is_zero_i64(value: &i64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The theme format scheme (`a:fmtScheme`) style lists, as far as they are modeled.
@@ -796,6 +1031,10 @@ pub struct FormatScheme {
     /// `a:lnStyleLst` entries in order; `None` where the entry is not modeled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line_styles: Vec<Option<LineStyle>>,
+    /// `a:effectStyleLst` entries in order. Every entry is recognised — the model
+    /// carries only whether it holds effects — so there is no `None` here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_styles: Vec<EffectStyle>,
 }
 
 /// A shape's theme style reference (`wps:style`): which format-scheme entry supplies
@@ -822,6 +1061,14 @@ pub struct ShapeStyleRef {
     /// The colour `a:lnRef` names, substituted for `a:phClr`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_color: Option<Rgba>,
+    /// `a:effectRef@idx`.
+    ///
+    /// Captured so the reference RESOLVES, not so it renders: nothing in this
+    /// build paints a DrawingML effect (see [`EffectStyle`]). Its only consumer
+    /// is the loss report, which needs the index to find out whether the entry
+    /// the shape named actually carries an effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_idx: Option<u32>,
 }
 
 impl FormatScheme {
@@ -831,23 +1078,41 @@ impl FormatScheme {
     /// index at or above `1000` (the background fill list, not modeled) — so a
     /// reference this build cannot honour resolves to nothing rather than to a
     /// neighbouring entry that happens to exist.
+    ///
+    /// Borrowed rather than copied: a gradient entry owns its stops.
     #[must_use]
-    pub fn fill_style(&self, idx: u32) -> Option<FillStyle> {
-        Self::entry(&self.fill_styles, idx)
+    pub fn fill_style(&self, idx: u32) -> Option<&FillStyle> {
+        Self::slot(&self.fill_styles, idx)?.as_ref()
     }
 
     /// The modeled line style a one-based `a:lnRef@idx` selects, with the same
     /// index rules as [`FormatScheme::fill_style`].
     #[must_use]
     pub fn line_style(&self, idx: u32) -> Option<LineStyle> {
-        Self::entry(&self.line_styles, idx)
+        Self::slot(&self.line_styles, idx).copied().flatten()
     }
 
-    fn entry<T: Copy>(list: &[Option<T>], idx: u32) -> Option<T> {
+    /// The effect style a one-based `a:effectRef@idx` selects, with the same index
+    /// rules as [`FormatScheme::fill_style`].
+    ///
+    /// Resolving this is what keeps the effect loss report honest rather than
+    /// noisy — see [`EffectStyle`] for why an index alone is not enough.
+    #[must_use]
+    pub fn effect_style(&self, idx: u32) -> Option<EffectStyle> {
         if idx == 0 || idx >= 1000 {
             return None;
         }
-        list.get(usize::try_from(idx).ok()? - 1).copied().flatten()
+        self.effect_styles
+            .get(usize::try_from(idx).ok()? - 1)
+            .copied()
+    }
+
+    /// The list slot a one-based index selects, enforcing the index rules once.
+    fn slot<T>(list: &[Option<T>], idx: u32) -> Option<&Option<T>> {
+        if idx == 0 || idx >= 1000 {
+            return None;
+        }
+        list.get(usize::try_from(idx).ok()? - 1)
     }
 }
 

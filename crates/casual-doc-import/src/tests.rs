@@ -565,7 +565,10 @@ fn what_the_font_table_cannot_carry_is_reported() {
 
 #[test]
 fn a_real_themed_package_resolves_its_shape_styles_end_to_end() {
-    use casual_doc_model::v1::{FillStyle, GroupChild, Rgba, StyleColor};
+    use casual_doc_model::v1::{
+        ColorTransform, FillStyle, GradientKind, GradientStyle, GradientStyleStop, GroupChild,
+        PatternStyle, Rgba, StyleColor,
+    };
 
     // Until this fixture existed, NO `.docx` in the repository carried a theme part at
     // all, so every assertion about the format scheme and about `wps:style` ran on
@@ -583,19 +586,60 @@ fn a_real_themed_package_resolves_its_shape_styles_end_to_end() {
         .expect("the theme's format scheme is parsed");
     assert_eq!(
         scheme.fill_styles.len(),
-        3,
-        "three authored fill entries, the gradient included"
+        4,
+        "four authored fill entries: solid, gradient, pattern, theme-fixed solid"
     );
     assert_eq!(
         scheme.fill_style(1),
-        Some(FillStyle {
-            color: StyleColor::Placeholder
+        Some(&FillStyle::Solid {
+            color: StyleColor::Placeholder(ColorTransform::default()),
         })
     );
-    assert_eq!(scheme.fill_style(2), None, "the gradient is not modeled");
+    // The gradient resolves, and each stop keeps its OWN kind of colour: stop 1 is
+    // the placeholder carrying the entry's `a:tint` unapplied (there is no base to
+    // apply it to yet), stop 2 is a colour the theme fixed.
+    assert_eq!(
+        scheme.fill_style(2),
+        Some(&FillStyle::Gradient(GradientStyle {
+            stops: vec![
+                GradientStyleStop {
+                    position: 0,
+                    color: StyleColor::Placeholder(ColorTransform {
+                        tint: Some(40_000),
+                        ..ColorTransform::default()
+                    }),
+                },
+                GradientStyleStop {
+                    position: 100_000,
+                    color: StyleColor::Fixed(Rgba {
+                        r: 0,
+                        g: 0,
+                        b: 0xFF,
+                        a: 255,
+                    }),
+                },
+            ],
+            kind: GradientKind::Linear { angle: 5_400_000 },
+        })),
+        "a gradient entry is modeled with its stops, its deferred transforms and its angle"
+    );
     assert_eq!(
         scheme.fill_style(3),
-        Some(FillStyle {
+        Some(&FillStyle::Pattern(PatternStyle {
+            preset: "pct25".to_owned(),
+            foreground: StyleColor::Placeholder(ColorTransform::default()),
+            background: StyleColor::Fixed(Rgba {
+                r: 0xFF,
+                g: 0xFF,
+                b: 0xFF,
+                a: 255,
+            }),
+        })),
+        "a pattern entry is modeled so the loss can be named, not so it paints"
+    );
+    assert_eq!(
+        scheme.fill_style(4),
+        Some(&FillStyle::Solid {
             color: StyleColor::Fixed(Rgba {
                 r: 0xC0,
                 g: 0xFF,
@@ -603,10 +647,36 @@ fn a_real_themed_package_resolves_its_shape_styles_end_to_end() {
                 a: 255
             })
         }),
-        "entry 3 keeps its index despite the unmodeled gradient before it"
+        "entry 4 keeps its index despite the pattern before it"
+    );
+    // The outline list: entry 1 resolves, entry 2's fill is a gradient and
+    // `ShapeStroke` holds one colour, so it must not become the first stop.
+    assert_eq!(scheme.line_styles.len(), 2);
+    assert!(scheme.line_style(1).is_some());
+    assert_eq!(
+        scheme.line_style(2),
+        None,
+        "a gradient outline entry is not modeled as a solid of its first stop"
+    );
+    // The effect list: the empty entry and the one carrying a real shadow, which is
+    // the pair that lets a report tell a loss from a mere index.
+    assert_eq!(
+        scheme.effect_styles.len(),
+        2,
+        "the effect list contributes entries of its own"
+    );
+    assert_eq!(
+        scheme.effect_style(1).map(|style| style.carries_effects),
+        Some(false),
+        "an empty a:effectLst carries nothing, so referencing it is no loss"
+    );
+    assert_eq!(
+        scheme.effect_style(2).map(|style| style.carries_effects),
+        Some(true),
+        "the a:outerShdw entry carries an effect this build cannot paint"
     );
 
-    // Three shapes, each with a style reference and none with an spPr fill.
+    // Four shapes, each with a style reference and none with an spPr fill.
     let shapes: Vec<_> = import
         .document
         .body()
@@ -626,7 +696,7 @@ fn a_real_themed_package_resolves_its_shape_styles_end_to_end() {
             _ => None,
         })
         .collect();
-    assert_eq!(shapes.len(), 3, "three anchored shapes");
+    assert_eq!(shapes.len(), 4, "four anchored shapes");
     for shape in &shapes {
         assert!(shape.fill.is_none(), "no shape declares an spPr fill");
         assert!(shape.stroke.is_none(), "nor an outline");
@@ -652,40 +722,92 @@ fn a_real_themed_package_resolves_its_shape_styles_end_to_end() {
         }),
         "a:schemeClr val=accent2 resolves through the theme palette"
     );
-    // Shape 2 points at the gradient entry: the reference is captured, and resolution
-    // must find nothing rather than a neighbouring solid.
+    // Shape 2 points at the gradient entry and at the gradient OUTLINE entry.
     assert_eq!(reference(1).fill_idx, Some(2));
-    assert_eq!(scheme.fill_style(reference(1).fill_idx.unwrap()), None);
+    assert!(matches!(
+        scheme.fill_style(reference(1).fill_idx.unwrap()),
+        Some(FillStyle::Gradient(_))
+    ));
+    assert_eq!(reference(1).line_idx, Some(2));
     // Shape 3 points at the theme-fixed entry, whose colour wins over the shape's own.
-    assert_eq!(reference(2).fill_idx, Some(3));
-    // `a:effectRef idx="0"` is not captured at all.
-    for index in 0..3 {
+    assert_eq!(reference(2).fill_idx, Some(4));
+    // Shape 4 points at the pattern entry and at the shadow effect style.
+    assert_eq!(reference(3).fill_idx, Some(3));
+    assert_eq!(
+        reference(3).effect_idx,
+        Some(2),
+        "a:effectRef's index is captured so the entry can be resolved"
+    );
+    // `a:effectRef idx="0"` is captured as the zero it is, which is "no effect" and
+    // never a loss.
+    assert_eq!(reference(0).effect_idx, Some(0));
+    assert_eq!(reference(1).effect_idx, Some(1), "the empty effect style");
+    for index in 0..4 {
         assert!(
             reference(index).line_idx.is_some(),
             "shape {index} keeps its lnRef"
         );
     }
+
+    // The losses, reported once each, and ONLY the real ones. Shape 2's
+    // `a:effectRef idx="1"` resolves to an empty `a:effectLst`, and if that counted
+    // the effect finding would read 2 — which is the shape of a report that cries
+    // wolf on every Word document, since the Office theme's first two effect styles
+    // are empty too.
+    assert_eq!(
+        occurrences(&import, "fmtScheme/fillStyleLst"),
+        1,
+        "shape 4's pattern fill is the only unpaintable fill reference; report: {:?}",
+        features(&import)
+    );
+    assert_eq!(
+        occurrences(&import, "fmtScheme/lnStyleLst"),
+        1,
+        "shape 2's gradient outline is the only unpaintable outline reference"
+    );
+    assert_eq!(
+        occurrences(&import, "fmtScheme/effectStyleLst"),
+        1,
+        "only shape 4's effectRef names an entry that carries an effect"
+    );
+    let effect = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "fmtScheme/effectStyleLst")
+        .expect("the effect loss is reported");
+    assert_eq!(
+        effect.location.attribute.as_deref(),
+        Some("effect-not-rendered"),
+        "the finding says WHY, because there is no effect primitive to render into"
+    );
 }
 
 #[test]
 fn the_format_scheme_is_parsed_into_resolvable_styles_beside_the_retained_xml() {
-    use casual_doc_model::v1::{DashStyle, FillStyle, LineStyle, Rgba, StyleColor};
+    use casual_doc_model::v1::{
+        ColorTransform, DashStyle, EffectStyle, FillStyle, LineStyle, Rgba, StyleColor,
+    };
 
-    // Entry 2 of each list is deliberately an UNMODELED kind, so the test proves the
-    // index of entry 3 survives it. An implementation that skipped unmodeled entries
-    // instead of holding their place would shift every later index by one and resolve
-    // `idx="3"` to the wrong style — which still draws, and still looks deliberate.
+    // Entry 2 of the fill list is an `a:blipFill`, which this build does not model at
+    // all, so the test proves the index of entry 3 survives it. An implementation that
+    // skipped unmodeled entries instead of holding their place would shift every later
+    // index by one and resolve `idx="3"` to the wrong style — which still draws, and
+    // still looks deliberate.
+    //
+    // The `a:blipFill`'s `a:duotone` colours are there to be IGNORED: an entry this
+    // build cannot represent must not leak a colour into the one before or after it.
     let xml = br#"<a:theme xmlns:a="urn:a"><a:themeElements>
         <a:clrScheme name="Office"><a:dk1><a:srgbClr val="000000"/></a:dk1></a:clrScheme>
         <a:fmtScheme name="Office">
           <a:fillStyleLst>
             <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
-            <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"/></a:gs></a:gsLst></a:gradFill>
+            <a:blipFill><a:blip r:embed="rId9"/><a:duotone><a:srgbClr val="ABCDEF"/><a:schemeClr val="phClr"/></a:duotone></a:blipFill>
             <a:solidFill><a:srgbClr val="112233"/></a:solidFill>
           </a:fillStyleLst>
           <a:lnStyleLst>
             <a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="dash"/></a:ln>
-            <a:ln w="12700"><a:gradFill><a:gsLst/></a:gradFill></a:ln>
+            <a:ln w="12700"><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="445566"/></a:gs></a:gsLst></a:gradFill></a:ln>
           </a:lnStyleLst>
           <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
           <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
@@ -701,11 +823,11 @@ fn the_format_scheme_is_parsed_into_resolvable_styles_beside_the_retained_xml() 
     assert_eq!(
         scheme.fill_styles,
         vec![
-            Some(FillStyle {
-                color: StyleColor::Placeholder
+            Some(FillStyle::Solid {
+                color: StyleColor::Placeholder(ColorTransform::default()),
             }),
             None,
-            Some(FillStyle {
+            Some(FillStyle::Solid {
                 color: StyleColor::Fixed(Rgba {
                     r: 0x11,
                     g: 0x22,
@@ -714,24 +836,27 @@ fn the_format_scheme_is_parsed_into_resolvable_styles_beside_the_retained_xml() 
                 })
             }),
         ],
-        "an unmodeled gradient holds its place so later indices stay correct"
+        "an unmodeled picture fill holds its place so later indices stay correct"
     );
     assert_eq!(
         scheme.line_styles,
         vec![
             Some(LineStyle {
                 width_emu: 6_350,
-                color: StyleColor::Placeholder,
+                color: StyleColor::Placeholder(ColorTransform::default()),
                 dash: Some(DashStyle::Dash),
             }),
+            // The second `a:ln`'s fill is a gradient with a perfectly readable first
+            // stop. Taking it would give a confident, wrong, single-colour outline, so
+            // the entry is not modeled at all.
             None,
         ],
     );
     // One-based, and the out-of-range rules.
     assert_eq!(
         scheme.fill_style(1),
-        Some(FillStyle {
-            color: StyleColor::Placeholder
+        Some(&FillStyle::Solid {
+            color: StyleColor::Placeholder(ColorTransform::default()),
         })
     );
     assert_eq!(scheme.fill_style(2), None, "the unmodeled entry");
@@ -742,9 +867,77 @@ fn the_format_scheme_is_parsed_into_resolvable_styles_beside_the_retained_xml() 
         None,
         "1000+ selects the background list, which is not modeled"
     );
-    // The background list contributed NOTHING to the fill list, and the effect list
-    // contributed nothing at all.
+    // The background list contributed NOTHING to the fill list; the effect list now
+    // contributes to its OWN list and still not to this one.
     assert_eq!(scheme.fill_styles.len(), 3);
+    assert_eq!(scheme.effect_styles.len(), 1);
+    assert_eq!(
+        scheme.effect_style(1),
+        Some(EffectStyle {
+            carries_effects: false
+        }),
+        "an empty a:effectLst is not an effect, so referencing it loses nothing"
+    );
+}
+
+/// A theme gradient fill style whose stops this build cannot read in full is NOT
+/// delivered as a shorter gradient.
+///
+/// Dropping the unreadable stop would paint a *different* gradient that still looks
+/// deliberate, and nothing downstream could tell. `a:scrgbClr` is the stand-in for
+/// any colour choice outside the modeled set.
+#[test]
+fn a_gradient_style_entry_with_an_unreadable_stop_is_not_modeled_at_all() {
+    use casual_doc_model::v1::{FillStyle, GradientKind, StyleColor};
+
+    let theme = |stops: &str| {
+        let xml = format!(
+            r#"<a:theme xmlns:a="urn:a"><a:themeElements>
+            <a:fmtScheme name="Office"><a:fillStyleLst>
+              <a:gradFill><a:gsLst>{stops}</a:gsLst><a:path path="circle"/></a:gradFill>
+            </a:fillStyleLst></a:fmtScheme>
+        </a:themeElements></a:theme>"#
+        );
+        let mut reporter =
+            crate::report::Reporter::new(crate::report::SourceRetention::Regenerated);
+        crate::theme::parse(xml.as_bytes(), &mut reporter, ImportConfig::default())
+            .unwrap()
+            .format_scheme
+            .expect("the format scheme is parsed")
+    };
+
+    // The control: both stops readable, so the entry is a real radial gradient.
+    let scheme = theme(
+        r#"<a:gs pos="0"><a:schemeClr val="phClr"/></a:gs><a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>"#,
+    );
+    let Some(FillStyle::Gradient(gradient)) = scheme.fill_style(1) else {
+        panic!("two readable stops make a gradient: {:?}", scheme.fill_style(1));
+    };
+    assert_eq!(gradient.stops.len(), 2);
+    assert_eq!(
+        gradient.kind,
+        GradientKind::Radial,
+        "a:path is a radial sweep"
+    );
+    assert!(matches!(
+        gradient.stops[0].color,
+        StyleColor::Placeholder(_)
+    ));
+
+    // One stop names a colour outside the modeled set: the WHOLE entry is unmodeled.
+    let scheme = theme(
+        r#"<a:gs pos="0"><a:schemeClr val="phClr"/></a:gs><a:gs pos="100000"><a:scrgbClr r="50000" g="50000" b="50000"/></a:gs>"#,
+    );
+    assert_eq!(
+        scheme.fill_style(1),
+        None,
+        "a two-stop gradient must not arrive as a one-stop gradient"
+    );
+    assert_eq!(
+        scheme.fill_styles.len(),
+        1,
+        "and it still holds its index in the list"
+    );
 }
 
 #[test]

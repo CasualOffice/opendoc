@@ -596,10 +596,14 @@ pub struct Rgba {
 /// A floating shape/text-box/callout background fill: either a single flat color
 /// (`a:solidFill`) or a multi-stop gradient (`a:gradFill`).
 ///
-/// A gradient retains its ordered stops and direction so it round-trips, but
-/// layout currently flattens it to its first stop's color (see
-/// [`Fill::flat_color`]); real gradient rendering is a follow-up. Colors are
-/// resolved to concrete channels at import, exactly like [`Rgba`].
+/// A gradient retains its ordered stops and direction, and layout translates it
+/// into a real display gradient (`casual-doc-layout`'s `fill_to_display`), which
+/// the renderer and the PDF writer both paint. [`Fill::flat_color`] remains for
+/// the surfaces that genuinely need one colour — a connector's default hairline,
+/// a swatch in the wasm facade — and is NOT the shape paint path; this comment
+/// used to claim gradients were flattened everywhere, which stopped being true
+/// without the comment noticing. Colors are resolved to concrete channels at
+/// import, exactly like [`Rgba`].
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fill {
