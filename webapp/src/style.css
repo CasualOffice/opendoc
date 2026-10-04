@@ -335,6 +335,22 @@
      `e2e/panel-alignment.spec.mjs` measures the result. */
   --pnl-pad-x: var(--space-4);
   --pnl-pad-y: var(--space-2);
+  /* The File page's reading measure (HF-233 D4). The pane is 960px wide at
+     1280 and 1600px at 1920 — it is a two-column backstage, not a card — and
+     the content inside it was capped at a flat 760px while the HEADING over
+     that content was not capped at all. Measured: the heading ran 152px past
+     its own column at 1280 and 792px past it at 1920, which is a title that
+     stops looking like it belongs to the thing under it.
+
+     The fix is the measure, not the alignment: the heading joins the column
+     rather than the column chasing the heading. Centring a 760px column inside
+     a pane that is CHOSEN FROM A LEFT NAV would put the content nowhere near
+     the row that opened it (ONLYOFFICE's backstage, Word's File page and Google
+     Docs' settings all left-align a measured column under a heading of the same
+     width), and letting the column grow to 1600px is the "a four-field dialog as
+     wide as a twenty-field one" defect this stylesheet already names. One token,
+     read by the heading, the blurb and the pane, so the three cannot drift. */
+  --file-page-measure: 760px;
   /* Bottom edge of the fixed shell chrome: header bar (which now carries the
      tab strip) + ribbon band. Anything that floats over the workarea from a viewport-fixed
      position anchors to THIS, never to a literal, so the ribbon's right-hand
@@ -8624,8 +8640,13 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   overscroll-behavior: contain;
 }
 
+/* The heading takes the SAME measure as the content it heads — see
+ * `--file-page-measure`. It was uncapped, so at 1920 a one-line title was
+ * allowed 1552px of pane over a 760px column. `file-page-panes.spec.mjs`
+ * measures the three right edges against each other. */
 .file-page-detail h2 {
   margin: 0 0 4px;
+  max-width: var(--file-page-measure);
   font-size: 20px;
   font-weight: 600;
   color: var(--ink);
@@ -8633,6 +8654,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 .file-page-detail .file-detail-sub {
   margin: 0 0 20px;
+  max-width: var(--file-page-measure);
   color: var(--muted);
 }
 
@@ -11360,7 +11382,7 @@ body[data-shape-draw] .page-wrap * {
   display: block;
   inset: auto;
   width: auto;
-  max-width: 760px;
+  max-width: var(--file-page-measure);
   max-height: none;
   margin: 0;
   padding: 0;
