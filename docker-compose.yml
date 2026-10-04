@@ -1,17 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Two separable deployments, and this file keeps them separate on purpose
-# (`docs/162`).
+# ONE CONTAINER BY DEFAULT (`docs/162` §1a).
 #
-#   docker compose up editor                  the editor, alone. No server.
+#   docker compose up                         the editor, alone. No server.
 #   docker compose --profile relay up         the editor and an optional relay.
 #
-# THE EDITOR NEEDS NO RELAY. It is a static, local-first web app: format I/O is in
-# the WebAssembly module, so it opens, edits and writes a DOCX with nothing
-# running behind it. The `relay` service exists for the second deployment — a room
-# several people edit at once — it holds no document, and it is behind a compose
-# PROFILE so that `docker compose up` cannot start it by accident. Delete the
-# `relay*` services and the `volumes:` block and this file still works.
+# This file declares TWO services and `docker compose up` starts ONE of them.
+# It used to declare four, and the two extra entries were not services at all:
+# `create` and `inspect` are one-shot administrative commands that run and exit,
+# and a compose service that exits immediately is noise in `docker compose ps`
+# and an invitation to `up` it. They are `docker compose run` invocations against
+# the `relay` service now — the same image, the same volume, one entry — and
+# `webapp/tests/deployment_contract.test.mjs` checks those invocations against
+# the binary's real CLI wherever they are published, so moving them out of this
+# file removed clutter rather than coverage.
+#
+# THE EDITOR NEEDS NO RELAY. It is a static, local-first web app: format I/O is
+# in the WebAssembly module, so it opens, edits and writes a DOCX with nothing
+# running behind it. The `relay` service exists for the second deployment — a
+# room several people edit at once — it holds no document, and it is behind a
+# compose PROFILE so that `docker compose up` cannot start it by accident.
+# Delete the `relay` service and the `volumes:` block and this file still works.
 #
 # CONFIGURATION IS COMMAND ARGUMENTS, NOT ENVIRONMENT VARIABLES, and that is a
 # fact about the binary rather than a style choice. `server/src/main.rs` matches
@@ -30,7 +39,8 @@
 services:
   # ── The editor ──────────────────────────────────────────────────────────────
   # The whole product, for one person or for a thousand people editing their own
-  # documents. Static files over HTTP.
+  # documents. Static files over HTTP. No profile, because it is not optional:
+  # this one service is what `docker compose up` starts.
   editor:
     build:
       context: .
@@ -56,6 +66,27 @@ services:
   # ── The optional relay ──────────────────────────────────────────────────────
   # Behind a profile. `docker compose up` does not start it; only
   # `docker compose --profile relay up` does.
+  #
+  # IT IS ALSO WHERE THE TWO ADMINISTRATIVE COMMANDS RUN, because they are the
+  # same image with a different argv and there is no second service in them:
+  #
+  #     docker compose run --rm relay create  /var/lib/opendoc-relay/room.journal
+  #     docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal
+  #
+  # `run` overrides the `command` below, mounts the same journal volume, and
+  # publishes no ports — so neither of them collides with a running room. The
+  # arguments are spelled out because the CLI is positional; `docs/162` §5.2 and
+  # §6.3 are the same two lines with their operational warnings attached.
+  #
+  #   * `create` is a separate subcommand because `docs/152` records that the
+  #     HOST creates the room, not the first client. Run twice it FAILS, because
+  #     `Journal::create` refuses to write over an existing journal — "creating
+  #     over a room's order would destroy the only copy of it".
+  #   * `inspect` replays the journal and reports what it holds; it is the
+  #     verification step for a backup or a restore (`docs/162` §6). STOP THE
+  #     RELAY FIRST, or inspect a COPY: `Journal::open` reopens the file in
+  #     append mode, so two processes holding one journal is two writers on one
+  #     append-only log.
   relay:
     profiles:
       - relay
@@ -92,63 +123,6 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
-    depends_on:
-      relay-create:
-        condition: service_completed_successfully
-        required: false
-
-  # ── Creating the room, once ─────────────────────────────────────────────────
-  # `create` is a separate subcommand because `docs/152` records that the HOST
-  # creates the room, not the first client — a relay that created one on first
-  # connection would be a relay that made the rule unenforceable. So this is a
-  # one-shot service in its own profile:
-  #
-  #     docker compose --profile relay-init run --rm relay-create
-  #
-  # It is idempotent in the only sense that matters: run twice it FAILS, because
-  # `Journal::create` refuses to write over an existing journal — "creating over a
-  # room's order would destroy the only copy of it".
-  relay-create:
-    profiles:
-      - relay-init
-    build:
-      context: .
-      dockerfile: Dockerfile.relay
-    image: opendoc/relay:dev
-    command:
-      - create
-      - /var/lib/opendoc-relay/room.journal
-    volumes:
-      - opendoc-relay-journal:/var/lib/opendoc-relay
-    security_opt:
-      - no-new-privileges:true
-    restart: "no"
-
-  # ── Reading the room back ───────────────────────────────────────────────────
-  # `inspect` replays the journal and reports what it holds. It is the
-  # verification step for a backup or a restore (`docs/162` §6): a durable log
-  # that cannot be read without starting a server is a log nobody will check.
-  #
-  #     docker compose --profile relay-tools run --rm relay-inspect
-  #
-  # STOP THE RELAY FIRST, or inspect a COPY. `Journal::open` reopens the file in
-  # append mode, so two processes holding one journal is two writers on one
-  # append-only log. Its own profile, so `up` can never start it.
-  relay-inspect:
-    profiles:
-      - relay-tools
-    build:
-      context: .
-      dockerfile: Dockerfile.relay
-    image: opendoc/relay:dev
-    command:
-      - inspect
-      - /var/lib/opendoc-relay/room.journal
-    volumes:
-      - opendoc-relay-journal:/var/lib/opendoc-relay
-    security_opt:
-      - no-new-privileges:true
-    restart: "no"
 
 volumes:
   # Named, so `docker compose down` keeps it and only `docker compose down

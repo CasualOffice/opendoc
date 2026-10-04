@@ -1852,8 +1852,6 @@
   "site.service.editor": "The product: a static file server, with nothing behind it.",
   "site.service.noProfile": "none, so it starts by default",
   "site.service.relay": "The optional relay. It orders chunks, holds no document, and is not needed to edit.",
-  "site.service.relaycreate": "Creates the room's durable log, once. The host creates a room, not the first client.",
-  "site.service.relayinspect": "Replays that log and reports what it holds. Run it on a stopped room, or on a copy.",
   "spacing.addSpaceAfter": "Add space after paragraph",
   "spacing.addSpaceBefore": "Add space before paragraph",
   "spacing.fromStyleHint": "This paragraph takes its line spacing from its style. Type a value to set it here.",

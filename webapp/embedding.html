@@ -403,16 +403,6 @@ function resolveFor({ mode, can }</code></pre>
             <div class="disp-cell" data-i18n="site.service.relay">The optional relay. It orders chunks, holds no document, and is not needed to edit.</div>
             <div class="disp-cell"><code>relay</code></div>
           </div>
-          <div class="disp-row">
-            <div class="disp-name"><code>relay-create</code></div>
-            <div class="disp-cell" data-i18n="site.service.relaycreate">Creates the room's durable log, once. The host creates a room, not the first client.</div>
-            <div class="disp-cell"><code>relay-init</code></div>
-          </div>
-          <div class="disp-row">
-            <div class="disp-name"><code>relay-inspect</code></div>
-            <div class="disp-cell" data-i18n="site.service.relayinspect">Replays that log and reports what it holds. Run it on a stopped room, or on a copy.</div>
-            <div class="disp-cell"><code>relay-tools</code></div>
-          </div>
         </div>
         <!-- @end container-services -->
         <p class="doc-body" data-i18n="site.embedding.commandsBelowGenerated">
@@ -432,8 +422,12 @@ function resolveFor({ mode, can }</code></pre>
 docker compose up --build editor
 
 # Adding the optional relay: create the room's journal once, then serve it.
-docker compose --profile relay-init run --rm relay-create
-docker compose --profile relay up --build</code></pre>
+docker compose run --rm relay create /var/lib/opendoc-relay/room.journal
+docker compose --profile relay up --build
+
+# Reading the journal back, on a stopped room or on a copy. Not a service:
+# it runs and exits.
+docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal</code></pre>
         </div>
         <!-- @end container-commands -->
 

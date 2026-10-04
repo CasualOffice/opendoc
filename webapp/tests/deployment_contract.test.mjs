@@ -777,3 +777,262 @@ test("the relay stays optional in the compose file, not merely in the prose", ()
     "the editor service must NOT be behind a profile — it is the product",
   );
 });
+
+// ===========================================================================
+// ONE CONTAINER BY DEFAULT, and no service that is really a command.
+//
+// The owner's question was "why are there 4 container" — and the compose file
+// did declare four services against two images, two of which (`relay-create`,
+// `relay-inspect`) were one-shot administrative commands dressed as services:
+// they run, print, and exit. A service that exits immediately is noise in
+// `docker compose ps` and an invitation to `up` it, and four entries teach a
+// deployer that this is a four-part stack when `docker compose up` has always
+// started exactly one container.
+//
+// The three guards below are what makes removing them a removal of CLUTTER
+// rather than of COVERAGE: the file may not carry a service that exits, the
+// default `up` set is pinned at one, and every subcommand no service runs must
+// be published as a runnable invocation in `docs/162` — where it is then held
+// against `server/src/main.rs` exactly as a compose `command:` is.
+
+/** The subcommand that binds a port, read out of the binary's own bindings: the
+ *  one whose operand list names an address is the long-running one, and the
+ *  others run and exit. Derived rather than named, so a renamed `serve` does not
+ *  silently turn these guards off. */
+function longRunningSubcommand() {
+  const commands = binaryInterface();
+  const serving = [...commands].filter(([, operands]) => operands.includes("address"));
+  assert.equal(
+    serving.length,
+    1,
+    "exactly one of server/src/main.rs's subcommands should bind an address — the others " +
+      `run and exit. Found: ${serving.map(([name]) => name).join(", ") || "none"}`,
+  );
+  return serving[0][0];
+}
+
+test("no compose service is a one-shot command dressed as a service", () => {
+  const serve = longRunningSubcommand();
+  const services = compose().services;
+  const offenders = [];
+  for (const [name, service] of Object.entries(services)) {
+    if (Array.isArray(service.command) && service.command[0] !== serve) {
+      offenders.push(`${name}: runs \`${service.command[0]}\`, which exits`);
+    }
+    // `restart: "no"` is the tell on a service whose author knew it would exit.
+    if (service.restart === "no") offenders.push(`${name}: declares restart: "no"`);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "a compose service must be a process that stays up. `create` and `inspect` run and " +
+      "exit, so a service for each is two rows in `docker compose ps` that are never up. " +
+      "They belong in `docker compose run --rm <relay service> <subcommand>`, which " +
+      "overrides the command, mounts the same volume and publishes no port — and docs/162 " +
+      "must then publish each one (see the invocation guard below)",
+  );
+});
+
+test("`docker compose up` with no profile starts exactly one container", () => {
+  const services = compose().services;
+  const byDefault = Object.entries(services)
+    .filter(([, service]) => !Array.isArray(service.profiles) || service.profiles.length === 0)
+    .map(([name]) => name);
+  assert.deepEqual(
+    byDefault,
+    ["editor"],
+    "the default `docker compose up` must start the editor and nothing else. ONLYOFFICE " +
+      "Document Server and Collabora CODE each ship a single container because the server " +
+      "IS their product; this project's single container is one with NO server in it, which " +
+      "is a stronger claim and only true while this list has one entry",
+  );
+  // And the counts the guide publishes, so a reader quoting §2 is quoting the file.
+  assert.equal(
+    Number(statedConstant("Services the compose file declares")),
+    Object.keys(services).length,
+    "docs/162 §2 states a number of compose services the file does not declare",
+  );
+  assert.equal(
+    Number(statedConstant("Containers a default `docker compose up` starts")),
+    byDefault.length,
+    "docs/162 §2 states a default container count the compose file does not produce",
+  );
+});
+
+/** Every line inside a ```sh fence of docs/162 — the runnable ones. The usage
+ *  block in §5.1 is a ```text fence on purpose: it carries `<journal>`-style
+ *  placeholders rather than a command, and reading it here would be reading
+ *  prose as an invocation. */
+function guideShellLines() {
+  const lines = [];
+  let fence = null;
+  GUIDE.split("\n").forEach((line, index) => {
+    const open = line.match(/^```(\w*)/);
+    if (open) {
+      fence = fence === null ? open[1] : null;
+      return;
+    }
+    if (fence === "sh" && line.trim() && !line.trim().startsWith("#")) {
+      lines.push({ at: index + 1, text: line.trim() });
+    }
+  });
+  assert.ok(lines.length > 5, "docs/162 must carry runnable shell blocks");
+  return lines;
+}
+
+/** The relay invocations docs/162 publishes, in the two shapes it uses:
+ *
+ *    docker compose run [flags] <service> <subcommand> [operands]
+ *    opendoc-relay <subcommand> [operands]              (inside a docker run)
+ *
+ *  A line that overrides the entrypoint is NOT the first shape — `--entrypoint
+ *  sh` runs a shell, and the relay invocation it carries (if any) is caught by
+ *  the second shape instead. */
+function publishedRelayInvocations() {
+  const found = [];
+  const flagTakesValue = new Set(["--entrypoint", "-v", "--volume", "-e", "--env", "--name"]);
+  for (const { at, text } of guideShellLines()) {
+    const run = text.match(/^docker compose run\s+(.*)$/);
+    if (run && !/--entrypoint\b/.test(text)) {
+      const tokens = run[1].split(/\s+/);
+      while (tokens.length && tokens[0].startsWith("-")) {
+        const flag = tokens.shift();
+        if (flagTakesValue.has(flag)) tokens.shift();
+      }
+      const [service, subcommand, ...operands] = tokens;
+      found.push({ at, how: `docker compose run … ${service}`, service, subcommand, operands });
+    }
+    for (const direct of text.matchAll(/opendoc-relay\s+([a-z]+)((?:\s+[^\s'"&|]+)*)/g)) {
+      found.push({
+        at,
+        how: "opendoc-relay",
+        service: null,
+        subcommand: direct[1],
+        operands: direct[2].trim() ? direct[2].trim().split(/\s+/) : [],
+      });
+    }
+  }
+  return found;
+}
+
+test("every relay invocation docs/162 publishes is one the binary matches", () => {
+  const commands = binaryInterface();
+  const relays = relayServices();
+  const volume = RELAY_DOCKERFILE.match(/^VOLUME\s+\["([^"]+)"\]/m)[1];
+  const shape = (operand) => {
+    if (/^\d+\.\d+\.\d+\.\d+:\d+$|^\[?[0-9a-f:]*\]?:\d+$/i.test(operand)) return "address";
+    if (operand.includes("/")) return "journal";
+    return "role";
+  };
+
+  const invocations = publishedRelayInvocations();
+  assert.ok(
+    invocations.length > 0,
+    "docs/162 publishes no relay invocation at all, so either the guide stopped documenting " +
+      "the administrative commands or this reader stopped finding them — and in both cases " +
+      "the coverage the one-shot compose services used to carry is gone",
+  );
+
+  for (const { at, how, service, subcommand, operands } of invocations) {
+    if (service !== null) {
+      assert.ok(
+        relays.has(service),
+        `docs/162 line ${at} runs \`docker compose run … ${service}\`, which is not a ` +
+          `service that builds Dockerfile.relay. It knows: ${[...relays.keys()].join(", ")}`,
+      );
+    }
+    assert.ok(
+      commands.has(subcommand),
+      `docs/162 line ${at} (${how}) runs \`${subcommand}\`, which server/src/main.rs does ` +
+        `not match. It matches: ${[...commands.keys()].join(", ")}`,
+    );
+    const expected = commands.get(subcommand);
+    assert.equal(
+      operands.length,
+      expected.length,
+      `docs/162 line ${at} passes ${operands.length} operand(s) to \`${subcommand}\`, which ` +
+        `takes ${expected.length} (${expected.join(" ")}) — a wrong arity exits 2 with the ` +
+        "usage line, and this one is published for an operator to paste",
+    );
+    operands.forEach((operand, index) => {
+      assert.equal(
+        shape(operand),
+        expected[index],
+        `docs/162 line ${at}: \`${subcommand}\` argument ${index + 1} is ` +
+          `${shape(operand)}-shaped (${operand}), but main.rs binds it as ` +
+          `\`${expected[index]}\` — the positions are the whole interface`,
+      );
+      if (expected[index] === "journal") {
+        assert.ok(
+          operand.startsWith(`${volume}/`),
+          `docs/162 line ${at} names a journal at ${operand}, outside the volume ` +
+            `${volume} that Dockerfile.relay declares — written there it lives in the ` +
+            "container layer and is deleted with the container",
+        );
+      }
+    });
+  }
+
+  // THE COVERAGE ASSERTION, and the reason this test is not optional. Every
+  // subcommand the binary has that no compose service runs is now reachable only
+  // through the guide, so the guide must publish a runnable invocation of it.
+  // Derived from both sides: delete a `create` example and this fails; add a
+  // fourth subcommand to the binary and this fails until it is documented.
+  const inCompose = new Set([...relays.values()].map((command) => command[0]));
+  const published = new Set(invocations.map((invocation) => invocation.subcommand));
+  const undocumented = [...commands.keys()].filter(
+    (name) => !inCompose.has(name) && !published.has(name),
+  );
+  assert.deepEqual(
+    undocumented,
+    [],
+    "these subcommands are run by no compose service and published by no runnable example " +
+      "in docs/162, so nothing tells an operator how to run them and nothing checks the " +
+      "invocation when it changes. That is what deleting the one-shot services would have " +
+      "cost if the guide did not carry them",
+  );
+});
+
+test("the embedding guide's deployment commands are derived from the binary too", () => {
+  // `webapp/tools/build-embed-docs.mjs` generates the page's command panel, and
+  // it now reads `server/src/main.rs` for the administrative subcommand names
+  // rather than carrying them as literals — which is what stops the published
+  // page naming a `relay-create` service, or a subcommand, that does not exist.
+  // Asserted here because the generator's own failure mode is silence: it would
+  // happily print whatever string it was given.
+  const generator = readFileSync(join(WEBAPP, "tools", "build-embed-docs.mjs"), "utf8");
+  assert.match(
+    generator,
+    /join\(REPO,\s*"server",\s*"src",\s*"main\.rs"\)/,
+    "build-embed-docs.mjs must read server/src/main.rs for the relay's subcommands, so the " +
+      "deployment panel cannot publish a command the binary does not match",
+  );
+  const page = readFileSync(join(WEBAPP, "embedding.page.html"), "utf8");
+  const panel = page.slice(
+    page.indexOf("@generated container-commands"),
+    page.indexOf("@end container-commands"),
+  );
+  assert.ok(panel, "embedding.page.html must carry the generated container-commands region");
+  assert.doesNotMatch(
+    panel,
+    /relay-(create|inspect)/,
+    "the embedding page still names a one-shot relay service. The compose file has two " +
+      "services; regenerate the page (node webapp/tools/build-embed-docs.mjs)",
+  );
+  // Each subcommand is reachable from the panel in the one shape that suits it:
+  // the long-running one by bringing its profile up, the one-shots by
+  // `docker compose run` against the same service.
+  const serve = longRunningSubcommand();
+  const [relay, command] = [...relayServices()][0];
+  for (const [subcommand] of binaryInterface()) {
+    const expected =
+      subcommand === serve
+        ? `--profile ${compose().services[relay].profiles[0]} up`
+        : `run --rm ${relay} ${subcommand} ${command.find((argument) => argument.includes("/"))}`;
+    assert.ok(
+      panel.includes(expected),
+      `the deployment panel does not publish \`${expected}\`, so \`${subcommand}\` is not ` +
+        "reachable from the page that tells a host how to deploy this",
+    );
+  }
+});

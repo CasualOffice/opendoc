@@ -247,6 +247,7 @@ allowlisted
 alt
 altChunk
 app
+arity
 arrowing
 ary
 ascii
@@ -314,6 +315,7 @@ dedupe
 deduplication
 del
 deployable
+deployer
 deps
 desync
 desynchronized
@@ -367,6 +369,7 @@ frontend
 getter
 getters
 github
+glibc
 glyphs
 goldens
 grapheme
@@ -427,12 +430,14 @@ mousedown
 moveFrom
 moveTo
 multiset
+musl
 mut
 namespace
 namespaces
 natively
 nav
 newtype
+nginx
 nonmodal
 npm
 nspell
@@ -514,6 +519,7 @@ revisioned
 roadmap
 rsid
 rtf
+runnable
 rustdoc
 sRGB
 sandboxed
@@ -539,6 +545,7 @@ strikethrough
 struct
 structs
 stylesheet
+subcommand
 submenu
 subpath
 subpaths

@@ -203,7 +203,7 @@ L = more than a week. Both are carried across verbatim; neither was rescaled.
 
 ## Summary
 
-**197 rows in the one queue: 107 Hotfix, 71 Audit, 19 Roadmap.**
+**198 rows in the one queue: 107 Hotfix, 71 Audit, 20 Roadmap.**
 
 Derived from the rows below by `webapp/tests/tracker_counts.test.mjs`. Do not edit these
 cells by hand — re-derive them. (`104`'s summary drifted for exactly as long as nothing
@@ -215,8 +215,8 @@ and the old sum-to-Total check could not see either.)
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Hotfix | 107 | 0 | 17 | 56 | 34 | 0 |
 | Audit | 71 | 0 | 24 | 37 | 10 | 0 |
-| Roadmap | 19 | 0 | 0 | 1 | 4 | 14 |
-| **Total** | **197** | **0** | **41** | **94** | **48** | **14** |
+| Roadmap | 20 | 0 | 0 | 1 | 5 | 14 |
+| **Total** | **198** | **0** | **41** | **94** | **49** | **14** |
 
 **There are no P0s, and the table above is the authority on that.** This paragraph used to
 announce two, from the 2026-09-20 re-grade of HF-045 and HF-011 into P0 against `104`'s own
@@ -428,6 +428,7 @@ nothing and the table should say it.
 | 195 | RM-12 | Roadmap | No desktop shell: Tauri and OS host fonts are deliberately after the browser-first work, and still unstarted | P3 | L | Open | New 2026-10-04 (`14` P1G-004 / `99` §5, pulled in) | `P1G-004` | `14` carries this as `P1G-004`, `Not started`; `99` §5 names it "deliberately after the browser-first work". **Deferral is a decision, not an absence** — `SKILL.md` §1 lists desktop in scope and `docs/18`'s support matrix is a public claim, so this row exists to keep the deferral visible rather than to argue with it. It is also where the font-provisioning strategy lands on the desktop side: OS system fonts there, network-fetched in the browser, one dynamic registry seam for both. Priority is original (minted here); `106`-sourced Roadmap rows still carry `—`. |
 | 196 | RM-13 | Roadmap | No worker threading: layout and import run on the main thread, which is what makes every O(document) row a frozen tab | P3 | L | Open | New 2026-10-04 (`14` P1G-005 / `99` §5, pulled in) | `P1G-005`, HF-077, `MTB-001` | `14` carries this as `P1G-005` (`Not started`): SharedArrayBuffer plus OffscreenCanvas. It is listed last in its own lane and is the structural answer to a row that is not — `SKILL.md` §8 requires anything O(document) to stay off the main thread, HF-077 is that defect for opening a heavy document, and `14`'s `MTB-001` is the programme. Those rows are being closed one at a time on the main thread, which is the right order (a worker does not make a quadratic linear) but means this row is the ceiling they all eventually meet. Priority is original (minted here). |
 | 197 | RM-14 | Roadmap | The GPU half of the render backend has never been begun; CPU raster is the reference and the only backend | P3 | L | Open | New 2026-10-04 (`14` P1E-002/003 / `99` §5, pulled in) | `P1E-001`, `P1E-002`, `P1E-003` | `14` carries `P1E-002` and `P1E-003` as `Planned` and `P1E-001` as `Superseded`; `99` §5 states "CPU raster is the reference backend; Phase 1E's GPU half is not begun". Queued as one row because the two `Planned` rows are halves of one backend, and because the prior question — the native renderer choice — is one of the six undecided ADRs in Q8, so **this row is blocked by a decision rather than by effort**. Priority is original (minted here). |
+| 198 | RM-15 | Roadmap | The reference deployment asked a deployer to reason about four compose services for two images, and two of them were one-shot commands rather than services | P3 | S | Open — fixed on `fix/one-container`, not yet merged | New 2026-10-04 (owner: "why are there 4 container.. do you see 4 contianer for onlyofofice or collaboraonline") | RM-11 | `docker-compose.yml` (#763) declared `editor`, `relay`, `relay-create` and `relay-inspect`. `docker compose up` always started only the editor — the relay services were profiled — so the defect was the SHAPE, not the runtime: `create` and `inspect` run, print and exit, and a service that exits is a row in `docker compose ps` that is never up plus an invitation to `up` it. Now two services, one started by default, with the one-shots as `docker compose run --rm relay <subcommand>` in `162` §5.2/§6.3. **Also answered: should the editor and relay be ONE image?** No, and `162` §3.5 has the measurement rather than a preference — the relay binary is glibc-linked (`ld-linux-aarch64.so.1`, `GLIBC_2.28`) and the editor's runtime is Alpine/musl, so a merge is either a Debian base (+119% on the image every single-user deployment pulls, 141,728,057 → ≈310,508,108 B) or a musl rebuild (≈ +3.8%) that still puts nginx and a server under one PID 1, one healthcheck and one user — which loses the read-only root filesystem and hides a dead relay behind a live nginx. `deployment_contract.test.mjs` grew four guards so the removal cost no coverage: no service may be a one-shot, the default `up` set is pinned at `[editor]`, every subcommand no service runs must have a runnable example in `162` (checked for subcommand, arity, argument order and a journal inside the declared `VOLUME`), and the embedding page's panel is derived from `main.rs`. Both images were built and run from this branch. |
 
 ## Archive coverage — 99 and 14
 

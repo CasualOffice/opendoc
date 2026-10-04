@@ -184,6 +184,15 @@
         </tbody>
         </table>
         </div>
+        <h3 class="doc-h3" id="1a-one-container-by-default-and-why-there-are-not-four">1a. One container by default, and why there are not four</h3>
+        <p class="doc-body"><strong><code>docker compose up</code> starts one container.</strong> The compose file declares <strong>two services</strong> and only one of them is outside a profile; §2 states both numbers and <code>webapp/tests/deployment_contract.test.mjs</code> re-derives them from the file.</p>
+        <p class="doc-body">It declared <strong>four</strong> when this document first shipped, and that was wrong in a way worth recording rather than quietly fixing. Two of the four — <code>relay-create</code> and <code>relay-inspect</code> — were not services at all: <code>create</code> and <code>inspect</code> are one-shot administrative commands that run, print and exit, and a compose service that exits immediately is a row in <code>docker compose ps</code> that is never up, plus an invitation to <code>up</code> it. They are <code>docker compose run --rm relay &lt;subcommand&gt;</code> invocations now (§5.2, §6.3) against the one relay service: the same image, the same journal volume, no published port, one entry in the file. Nothing was lost by moving them — the guard that used to read their compose <code>command:</code> lines now reads the invocations <strong>here</strong>, against the same <code>server/src/main.rs</code>, and fails if this document stops publishing one of them (§15).</p>
+        <p class="doc-body">So the count a deployer reasons about is <strong>one container, or two if they want a room several people edit at once.</strong></p>
+        <blockquote class="doc-quote">
+        <p class="doc-body"><strong>The competitor comparison below is recollection, not evidence, and is fenced so that nothing downstream can cite it as sourced.</strong> <code>/Users/sachin/Desktop/melp/reference/</code> holds ONLYOFFICE's <code>sdkjs</code> and <code>web-apps</code> — both <strong>client</strong> repositories — and a search of them for <code>Dockerfile</code>, <code>docker-compose</code> or any image definition returns only syntax-highlighting fixtures in <code>web-apps/vendor/monaco</code> and <code>web-apps/vendor/ace</code>. No competitor's packaging is checked out on this machine, so <strong>nothing in this paragraph was read from a source.</strong> <code>SKILL.md</code> §9 exists because this repository has published fabricated competitive claims twice; treat the next two sentences as a hypothesis to verify before they inform a decision.</p>
+        <p class="doc-body">ONLYOFFICE Document Server is distributed as a single container image, and Collabora Online / CODE likewise — in both cases, as recalled, a single image that runs a supervisor over several processes, because <strong>their server is the product</strong> and a browser cannot open a document without it.</p>
+        <p class="doc-body">If that recollection holds, the comparison does not favour a merge here, it favours the opposite reading: their one container is one that <strong>must</strong> run a server, and ours is one that runs <strong>none</strong>. Matching their service count by baking a relay into the editor's image would be matching the number while giving up the thing the number is evidence for. §3.5 is the decision, with the measured cost.</p>
+        </blockquote>
         <p class="doc-body"><strong>The editor needs no server to function.</strong> <code>webapp/build.sh</code> compiles <code>crates/casual-doc-wasm</code> to WebAssembly and stages a flat static site beside it, so opening a DOCX, laying it out, editing it and writing it back all happen in the tab. The container for it is a file server; it could be a CDN, a bucket, or GitHub Pages — which is where this project already publishes it.</p>
         <p class="doc-body"><strong>That is the structural advantage, not a packaging detail.</strong> ONLYOFFICE's web client cannot open a file offline: its format I/O is the native <code>x2t</code> converter and <code>core/X2tConverter/build/</code> has only <code>Android/</code> and <code>Qt/</code> targets, with no WebAssembly build, and they do not ship the native core as an embeddable library. A guide that presented a relay as part of &quot;installing opendoc&quot; would be describing their architecture and giving away the only position this project occupies.</p>
         <p class="doc-body"><strong>The relay is additive.</strong> <code>server/</code> is a workspace member deliberately <strong>not</strong> under <code>crates/</code>, and the test <code>nothing_under_crates_depends_on_the_relay</code> fails the build if anything in <code>crates/</code> ever acquires a dependency on it. <code>server/src/lib.rs</code> gives the reason: a relay that <code>crates/</code> could depend on would be a relay that could become required by accident, one <code>use</code> at a time, &quot;and the licence-and-embeddability position this project occupies does not survive that.&quot;</p>
@@ -246,6 +255,16 @@
         <td>Roles <code>serve</code> accepts</td>
         <td><code>open_room_role</code>, <code>server/src/main.rs</code></td>
         </tr>
+        <tr>
+        <td>2</td>
+        <td>Services the compose file declares</td>
+        <td><code>docker-compose.yml</code></td>
+        </tr>
+        <tr>
+        <td>1</td>
+        <td>Containers a default <code>docker compose up</code> starts</td>
+        <td><code>docker-compose.yml</code>, the services outside a profile</td>
+        </tr>
         </tbody>
         </table>
         </div>
@@ -263,7 +282,7 @@
         <div class="code-panel-head"><span>sh</span></div>
         <pre><code>docker compose up --build editor</code></pre>
         </div>
-        <p class="doc-body"><code>docker compose up</code> with no service starts <strong>only</strong> the editor. The relay services sit behind compose profiles precisely so that they cannot be started by accident.</p>
+        <p class="doc-body"><code>docker compose up</code> with no service starts <strong>only</strong> the editor — one container, and the only one outside a profile (§1a). The relay sits behind a profile precisely so that it cannot be started by accident.</p>
         <h3 class="doc-h3" id="3-2-what-is-in-the-image-and-what-is-not">3.2 What is in the image, and what is not</h3>
         <p class="doc-body">The build is three stages — <code>node</code>, <code>build</code>, <code>runtime</code> — and the last one is <code>nginx:1.29-alpine</code>. There is <strong>no Rust, no cargo, no Node, no Python and no source</strong> in the runtime image: the toolchain exists in the earlier stages and nothing is copied forward but the staged site. (<code>webapp/tests/deployment_contract.test.mjs</code> counts the stages, because the first draft of this paragraph said four.)</p>
         <p class="doc-body">The builder runs <code>webapp/build.sh</code> unmodified. That matters for a reason beyond convenience: the script ends with five generators run in <code>--check</code> mode — the embedding guide, the white-label artefacts, the static pages, the published reference pages and the crawler manifests — so <strong>the image cannot be built from a checkout whose generated files have drifted from their sources.</strong> The same gate CI runs is enforced as a side effect of building the thing.</p>
@@ -279,7 +298,60 @@
         <li><strong>Embed them.</strong> Build the module without the feature — the four Roboto blobs go back into the bundle, at roughly 2 MB that every visitor downloads once, which is exactly the cost the feature was added to avoid.</li>
         </ol>
         <p class="doc-body">Neither is wired into these images, because choosing for an operator would be choosing between a 2 MB download and a CDN dependency on their behalf. <code>109</code> HF-176 (no CJK or Arabic or Indic face is bundled) and HF-132 (the font-provisioning decision) are the rows this sits behind.</p>
-        <h3 class="doc-h3" id="3-5-serving-it-from-something-other-than-a-container">3.5 Serving it from something other than a container</h3>
+        <h3 class="doc-h3" id="3-5-why-the-relay-is-not-in-this-image-the-decision-with-its-cost-measured">3.5 Why the relay is not in this image — the decision, with its cost measured</h3>
+        <p class="doc-body">The question was asked directly: should the editor and the relay be <strong>one image</strong>, since a single <code>docker run</code> is what a deployer expects? The answer is <strong>no, and here is the arithmetic rather than a preference.</strong> All figures are <code>docker image inspect … .Size</code> and <code>ls -l</code> on this machine, arm64, from the images this document's own files build.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Measured</th>
+        <th>Bytes</th>
+        <th></th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>opendoc/editor:dev</code></td>
+        <td>141,728,057</td>
+        <td>the single-user default today</td>
+        </tr>
+        <tr>
+        <td><code>opendoc/relay:dev</code></td>
+        <td>143,592,278</td>
+        <td>the optional second deployment</td>
+        </tr>
+        <tr>
+        <td><code>opendoc-relay</code>, the binary</td>
+        <td>5,378,792</td>
+        <td>stripped by <code>[profile.release]</code>, inside that image</td>
+        </tr>
+        <tr>
+        <td><code>nginx:1.29-alpine</code></td>
+        <td>91,758,413</td>
+        <td>the editor's runtime base</td>
+        </tr>
+        <tr>
+        <td><code>nginx:1.29</code> (bookworm)</td>
+        <td>255,159,672</td>
+        <td>the nearest Debian base a glibc binary can run on</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>The binary cannot simply be copied into the editor image.</strong> <code>file</code> reports it as an <code>ELF 64-bit LSB pie executable, ARM aarch64, dynamically linked, interpreter /lib/ld-linux-aarch64.so.1</code>, needing <code>GLIBC_2.28</code>/<code>2.33</code>; the editor's runtime is Alpine, which is musl and has no such loader. So a combined image is one of two concrete changes, and both cost something:</p>
+        <ol class="doc-list">
+        <li><strong>Move the editor's runtime to Debian</strong> so the existing binary runs beside nginx: 141,728,057 − 91,758,413 + 255,159,672 + 5,378,792 ≈ <strong>310,508,108 bytes</strong>, against 141,728,057 today. <strong>+119% on the image every single-user deployment pulls</strong>, to carry a server that deployment never starts.</li>
+        <li><strong>Build the relay for musl</strong> so it fits the Alpine runtime. The marginal content cost is then about the binary itself — <strong>≈ +3.8%</strong> on 141,728,057, taking the measured glibc size as the estimate; the musl figure is <strong>not measured here</strong>, and a musl build also adds a target and a linker to the builder stage.</li>
+        </ol>
+        <p class="doc-body">Option 2 is cheap enough that <strong>size is not the reason</strong>. The reasons are these:</p>
+        <ul class="doc-list">
+        <li><strong>The &quot;no server&quot; case must be no process, not a stopped one.</strong> A single container that runs both is two processes under a supervisor, and then the editor's container has a server in it that is merely idle. A dormant-unless-a-flag entrypoint does satisfy &quot;no process&quot; — but as soon as the flag is on, nginx and the relay share one PID 1, one healthcheck, one restart policy and one user; if the relay dies, the container stays up because nginx is alive, and the collaboration failure is invisible to every orchestrator. That is a worse deployment than two containers, in the only case where a merge would have helped.</li>
+        <li><strong>The editor image's root filesystem is read-only with a tmpfs on <code>/tmp</code></strong> (§4), which is possible <em>because</em> nothing in it writes. The relay writes a journal it must own, as uid 10001, and the editor serves as uid 101. One image means one of those two guarantees goes.</li>
+        <li><strong><code>nothing_under_crates_depends_on_the_relay</code> is enforced in the build</strong> for the reason <code>server/src/lib.rs</code> gives: a relay that could become required by accident, one <code>use</code> at a time. Shipping the relay inside the product's own image is that same accident at the packaging layer — the binary would be present on every deployment, and the next thing that reaches for it would find it there.</li>
+        </ul>
+        <p class="doc-body"><strong>What the decision is not.</strong> It is not &quot;a deployer composes two things&quot;. The default is <code>docker compose up</code>: one container, no server, no volume, no journal. The second container exists only for the second deployment, and <code>docker run -p 7070:7070 opendoc/relay:dev serve …</code> is a single command when that is what somebody wants.</p>
+        <p class="doc-body">Recorded here rather than as an ADR on purpose: three other lanes are editing this tree, and <code>SKILL.md</code> §5a.3 records two ADR-034s colliding and taking two published ADRs with them. This is a packaging shape, and this document owns packaging; §14's table carries the row.</p>
+        <h3 class="doc-h3" id="3-6-serving-it-from-something-other-than-a-container">3.6 Serving it from something other than a container</h3>
         <p class="doc-body">The runtime stage is a directory of static files. <code>docker create</code> plus <code>docker cp</code> of <code>/usr/share/opendoc/webapp</code> gives the same bytes for a bucket, a CDN or an existing web server. The only requirements are the ones in §3.3: serve <code>.wasm</code> as <code>application/wasm</code>, and do not rewrite font URLs.</p>
         <hr class="doc-rule" />
         <h2 class="doc-h2" id="4-single-user-and-what-it-costs">4. Single user, and what it costs</h2>
@@ -298,10 +370,11 @@
         <p class="doc-body">That is the whole configuration surface. §9 records env-var support as a follow-up with the exact change it needs; until then, a compose file that set <code>RELAY_ADDR</code> would be documenting an interface that does not exist.</p>
         <h3 class="doc-h3" id="5-2-the-host-creates-the-room-the-first-client-does-not">5.2 The host creates the room; the first client does not</h3>
         <p class="doc-body"><code>create</code> is a separate subcommand on purpose. <code>docs/152</code> records that the <strong>host</strong> creates the room, not the first client, and <code>server/src/lib.rs</code> enforces it through what the API makes possible: <code>Room::create</code> takes a host's decision and a path, and a client cannot call it. <code>Journal::create</code> refuses to write over an existing journal, &quot;because creating over a room's order would destroy the only copy of it&quot; — so <code>create</code> run twice fails, by design.</p>
+        <p class="doc-body"><strong>It is a command, not a service.</strong> <code>docker compose run</code> against the <code>relay</code> service overrides its <code>command</code>, mounts the same journal volume and publishes no port, so it does not collide with a running room; compose enables that service's own profile for <code>run</code>, so no <code>--profile</code> flag is needed either.</p>
         <div class="code-panel">
         <div class="code-panel-head"><span>sh</span></div>
         <pre><code># Once, before the first serve. Creates the durable log on the named volume.
-        docker compose --profile relay-init run --rm relay-create
+        docker compose run --rm relay create /var/lib/opendoc-relay/room.journal
 
         # Then the room, with the editor:
         docker compose --profile relay up --build</code></pre>
@@ -358,20 +431,20 @@
         <div class="code-panel">
         <div class="code-panel-head"><span>sh</span></div>
         <pre><code># A consistent copy without stopping the room.
-        docker compose --profile relay run --rm --no-deps --entrypoint sh relay \
+        docker compose run --rm --entrypoint sh relay \
           -c 'cat /var/lib/opendoc-relay/room.journal' &gt; room.journal.bak</code></pre>
         </div>
         <h3 class="doc-h3" id="6-3-verify-the-backup-with-inspect-which-is-what-it-is-for">6.3 Verify the backup with <code>inspect</code>, which is what it is for</h3>
         <p class="doc-body"><code>inspect</code> exists &quot;because a durable log that cannot be read without starting a server is a log nobody will check&quot;. It replays the journal and reports what it holds:</p>
         <div class="code-panel">
         <div class="code-panel-head"><span>sh</span></div>
-        <pre><code>docker compose --profile relay-tools run --rm relay-inspect
+        <pre><code>docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal
         # replayed N ordered chunks
         # ordered entries retained: M</code></pre>
         </div>
         <p class="doc-body"><strong>Two operational facts, both from the code rather than from habit:</strong></p>
         <ol class="doc-list">
-        <li><strong>Stop the relay first, or inspect a copy.</strong> <code>Journal::open</code> reopens the file in <strong>append mode</strong> — so <code>inspect</code> against a live journal is a second writer on a single-writer append-only log. The compose service is in its own profile so <code>up</code> can never start it.</li>
+        <li><strong>Stop the relay first, or inspect a copy.</strong> <code>Journal::open</code> reopens the file in <strong>append mode</strong> — so <code>inspect</code> against a live journal is a second writer on a single-writer append-only log. It is a <code>run</code> invocation rather than a service precisely so that no <code>up</code>, with or without a profile, can ever start it (§1a).</li>
         <li><strong>A non-zero <code>discarded … bytes of a partial final frame</code> line is information, not an error.</strong> It is reported rather than hidden because it is &quot;the only evidence the previous process did not shut down cleanly&quot;.</li>
         </ol>
         <p class="doc-body">To verify a backup, inspect the copy:</p>
@@ -431,7 +504,7 @@
         </tr>
         <tr>
         <td>Journal path</td>
-        <td><code>relay*</code> <code>command</code> argument 2</td>
+        <td><code>relay</code> <code>command</code> argument 2</td>
         <td>Must be inside the volume</td>
         </tr>
         <tr>
@@ -537,7 +610,7 @@
         docker compose --profile relay up -d relay
         docker compose --profile relay logs relay | head -5</code></pre>
         </div>
-        <p class="doc-body"><strong>Do not run <code>relay-create</code> as part of an upgrade.</strong> The volume already holds a journal and <code>create</code> will refuse — correctly. The only time <code>create</code> runs is once, for a new room.</p>
+        <p class="doc-body"><strong>Do not run <code>create</code> as part of an upgrade.</strong> The volume already holds a journal and <code>create</code> will refuse — correctly. The only time <code>create</code> runs is once, for a new room.</p>
         <p class="doc-body"><strong>If the new binary refuses the journal</strong>, that is the guard working: it means the replayed decision differs from the logged one, and the right move is to go back to the previous image and report the journal (not the error message) to the lane that owns <code>server/src</code>. Starting empty to get past it is the one thing that loses the room.</p>
         <p class="doc-body">Upgrading the <strong>editor</strong> has no durable state to lose at all: rebuild the image and replace the container. The HTML is served <code>no-cache</code> (<code>deploy/editor-nginx.conf</code>) precisely so a reader does not keep a stale page pointing at a module that no longer matches it.</p>
         <hr class="doc-rule" />
@@ -579,6 +652,16 @@
         <td>&quot;No mandatory server&quot; has to be true of the compose file too, or the file teaches the opposite</td>
         </tr>
         <tr>
+        <td>One service per process, and two images rather than one</td>
+        <td>One concern per container</td>
+        <td>A merged image is +119% on the single-user default to carry a server it never runs, or a musl rebuild that still puts two processes under one PID 1 — §3.5 has the measurements</td>
+        </tr>
+        <tr>
+        <td><code>run</code> for the one-shot commands</td>
+        <td>A job, not a service</td>
+        <td>A service that exits is never up: it is noise in <code>docker compose ps</code> and an invitation to <code>up</code> it (§1a)</td>
+        </tr>
+        <tr>
         <td>No <code>CMD</code> in the relay image</td>
         <td>Fail closed</td>
         <td>A default role would be the permission the binary refuses to choose</td>
@@ -611,8 +694,13 @@
         <li><strong>The pinned versions agree with their sources</strong> — Rust against <code>rust-toolchain.toml</code>, wasm-pack and the Node major against the CI workflow.</li>
         <li><strong>The invariants that are easy to erode</strong>: the relay image declares no <code>CMD</code> and a non-root <code>USER</code>, the journal volume path contains the journal the compose command names, and the nginx config contains no <code>sub_filter</code> and no Google-Fonts host.</li>
         <li><strong>The participant ceiling in this document is the constant</strong>, not a number typed here.</li>
+        <li><strong>No compose service is a one-shot command.</strong> Every <code>command:</code> in the file must be the subcommand that binds an address — derived from <code>main.rs</code>'s own bindings, not from the name <code>serve</code> — and no service may declare <code>restart: &quot;no&quot;</code>. This is what keeps <code>create</code> and <code>inspect</code> out of the file (§1a).</li>
+        <li><strong>The default <code>up</code> set is exactly <code>[editor]</code></strong>, and §2's two new counts are the file's.</li>
+        <li><strong>Every relay invocation this document publishes is one the binary matches.</strong> The runnable ``<code>sh lines are parsed for </code>docker compose run … &lt;service&gt; &lt;subcommand&gt;<code> and for </code>opendoc-relay &lt;subcommand&gt;<code>, and each is checked for the subcommand, the arity, the argument ORDER by shape, and a journal path inside the declared </code>VOLUME<code> — the same assertions a compose </code>command:` gets. And the coverage statement that makes removing the one-shot services safe: <strong>every subcommand no compose service runs must have a runnable example here</strong>, so deleting one of the two examples fails the build.</li>
+        <li><strong>The embedding page's deployment panel is derived from the binary too.</strong> The generator reads <code>server/src/main.rs</code> for the subcommand names, and the committed page may not name a <code>relay-create</code>/<code>relay-inspect</code> service.</li>
         </ol>
         <p class="doc-body">It was driven red before it was trusted; the mutations and their output are in the commit message.</p>
+        <p class="doc-body"><strong>One thing in this document is NOT guard-derived, and is labelled rather than left to be assumed:</strong> the five image and binary sizes in §3.5. They are <code>docker image inspect</code> and <code>ls -l</code> readings taken on an arm64 machine, and no test can re-derive them without a Docker daemon — the unit suite has none, and §8.7 records that no CI job builds these images. They are reported with the command that produced them and the architecture they were measured on, and they will drift as the images change; nothing downstream computes anything from them.</p>
         <hr class="doc-rule" />
         <h2 class="doc-h2" id="16-what-this-does-not-include">16. What this does not include</h2>
         <ul class="doc-list">

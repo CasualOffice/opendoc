@@ -506,14 +506,21 @@ test("how much English the reference pages put on the site, measured and publish
   // it, and the figure was measured AGAIN on the merged tree. 2093 + 409 = 2502,
   // which is the same total either way — but only because the measurement was
   // retaken; arithmetic on this branch's own baseline would have published 2499.
+  // 2502 -> 2586 with `docs/162` §1a and §3.5 (`109` RM-15): the compose file's
+  // four services became two, and the document gained the one-container section,
+  // the fenced competitor recollection, the image-size measurements and four
+  // guard entries. MEASURED from the regenerated page, not added up — the whole
+  // movement is in one file (`deployment-containers-and-configuration.html`,
+  // 479 against 395) and it is ARTICLE BODY in a published design document,
+  // which is the region this figure deliberately does not route.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2502,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2502). That ` +
+    2586,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2586). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

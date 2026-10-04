@@ -122,6 +122,13 @@ const SOURCES = Object.freeze({
   // `tests/deployment_contract.test.mjs` already holds that file against the
   // relay's real CLI (`server/src/main.rs`).
   compose: join(REPO, "docker-compose.yml"),
+  // The relay's REAL CLI, for the two administrative commands. They are not
+  // compose services — `create` and `inspect` run and exit, and a service that
+  // exits immediately is noise in `docker compose ps` — so they are
+  // `docker compose run` invocations against the one `relay` service, and the
+  // subcommand names are read out of the binary that matches them rather than
+  // typed here.
+  relayCli: join(REPO, "server", "src", "main.rs"),
 });
 
 /** What each capability is, in one clause.
@@ -540,18 +547,20 @@ function codeList(values) {
 const SERVICES = Object.freeze({
   editor: "The product: a static file server, with nothing behind it.",
   relay: "The optional relay. It orders chunks, holds no document, and is not needed to edit.",
-  "relay-create":
-    "Creates the room's durable log, once. The host creates a room, not the first client.",
-  "relay-inspect":
-    "Replays that log and reports what it holds. Run it on a stopped room, or on a copy.",
 });
 
-/** Every service in `docker-compose.yml`, with the profiles that enable it.
+/** Every service in `docker-compose.yml`, with the profiles that enable it and
+ *  the command it runs.
  *
  *  A deliberately narrow reader over the subset the compose file is written in,
  *  not a YAML parser: two-space indentation, one `services:` block, `profiles:`
- *  as a block sequence. It throws rather than guesses, because a reader that
- *  silently returned nothing would publish an empty table. */
+ *  and `command:` as block sequences. It throws rather than guesses, because a
+ *  reader that silently returned nothing would publish an empty table.
+ *
+ *  The COMMAND is read because the administrative invocations below need the
+ *  journal path, and the journal path is a positional argument of the service's
+ *  own `serve` line. Reading it here means the page cannot name a journal the
+ *  compose file does not use. */
 function composeServices() {
   const lines = read(SOURCES.compose).split("\n");
   const at = lines.findIndex((line) => line === "services:");
@@ -560,34 +569,64 @@ function composeServices() {
   }
   const services = new Map();
   let current = null;
-  let inProfiles = false;
+  let sequence = null;
   for (const line of lines.slice(at + 1)) {
     if (line.trim() && /^\S/.test(line)) break; // the next top-level key
     if (/^\s*#/.test(line) || !line.trim()) continue;
     const service = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
     if (service) {
       current = service[1];
-      services.set(current, []);
-      inProfiles = false;
+      services.set(current, { profiles: [], command: [] });
+      sequence = null;
       continue;
     }
-    if (/^ {4}profiles:\s*$/.test(line)) {
-      inProfiles = true;
+    const opens = line.match(/^ {4}(profiles|command):\s*$/);
+    if (opens) {
+      sequence = opens[1];
       continue;
     }
-    if (inProfiles) {
+    if (sequence) {
       const item = line.match(/^ {6}- (\S+)\s*$/);
       if (item) {
-        services.get(current).push(item[1]);
+        services.get(current)[sequence].push(item[1]);
         continue;
       }
-      inProfiles = false;
+      sequence = null;
     }
   }
   if (!services.size) {
     throw new Error("build-embed-docs: read no services out of docker-compose.yml");
   }
   return services;
+}
+
+/** The subcommands `server/src/main.rs` matches, with their operand names.
+ *
+ *  `main()` matches the argument slice against literal patterns — `["create",
+ *  journal]`, `["inspect", journal]`, `["serve", journal, address, role]` — so
+ *  the pattern list IS the interface. Read here so the commands this page
+ *  publishes cannot name a subcommand the binary does not have.
+ *  (`tests/deployment_contract.test.mjs` reads the same patterns and asserts the
+ *  same thing about the compose file and `docs/162`.) */
+function relaySubcommands() {
+  const source = read(SOURCES.relayCli);
+  const matched = new Map(
+    [...source.matchAll(/\[\s*"([a-z]+)"\s*((?:,\s*\w+\s*)*)\]\s*=>/g)].map(([, name, rest]) => [
+      name,
+      rest
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean),
+    ]),
+  );
+  if (matched.size < 3) {
+    throw new Error(
+      "build-embed-docs: read fewer than three subcommands out of " +
+        `${rel(SOURCES.relayCli)} — the CLI is parsed by matching a &[&str] against ` +
+        "literal patterns, and this reader reads those patterns",
+    );
+  }
+  return matched;
 }
 
 // ── The regions ────────────────────────────────────────────────────────────
@@ -614,7 +653,7 @@ function deploymentRows() {
         gone.join(", "),
     );
   }
-  return [...services].map(([name, profiles]) => [
+  return [...services].map(([name, { profiles }]) => [
     `<code>${escape(name)}</code>`,
     say(`site.service.${name.replaceAll("-", "")}`, SERVICES[name]),
     profiles.length
@@ -636,19 +675,55 @@ function deploymentRows() {
  *  line, where it is part of what a reader copies. */
 function deploymentCommands() {
   const services = composeServices();
-  const profileOf = (name) => services.get(name)?.[0];
-  const oneShot = (name) => {
-    const profile = profileOf(name);
-    return profile
-      ? `docker compose --profile ${profile} run --rm ${name}`
-      : `docker compose run --rm ${name}`;
-  };
+  const profileOf = (name) => services.get(name)?.profiles?.[0];
   const up = (name) => {
     const profile = profileOf(name);
     return profile
       ? `docker compose --profile ${profile} up --build`
       : `docker compose up --build ${name}`;
   };
+
+  // The relay service is the one whose command is the binary's long-running
+  // subcommand. Found rather than named, so a renamed service renames the
+  // commands below instead of publishing one that does not exist.
+  const subcommands = relaySubcommands();
+  const entry = [...services].find(([, service]) => service.command[0] === "serve");
+  if (!entry) {
+    throw new Error(
+      "build-embed-docs: no service in docker-compose.yml runs `serve`, so the deployment " +
+        "commands cannot be generated. If the relay service was renamed, nothing here needs " +
+        "editing; if it was removed, remove this region too",
+    );
+  }
+  const [relay, service] = entry;
+  const journal = service.command.find((argument) => argument.includes("/"));
+  if (!journal) {
+    throw new Error(`build-embed-docs: the ${relay} service's serve command names no journal`);
+  }
+
+  // `create` and `inspect` are NOT compose services, and that is the point: they
+  // run and exit, so a service for each would be two entries in
+  // `docker compose ps` that are never up. `docker compose run` against the one
+  // relay service overrides its command, mounts the same volume and publishes no
+  // port, which is what an administrative command wants. Compose enables the
+  // service's own profile for `run`, so no `--profile` flag is needed.
+  const administer = (subcommand) => {
+    const operands = subcommands.get(subcommand);
+    if (!operands) {
+      throw new Error(
+        `build-embed-docs: ${rel(SOURCES.relayCli)} does not match \`${subcommand}\`, so the ` +
+          "page must not tell a host to run it",
+      );
+    }
+    if (operands.length !== 1 || operands[0] !== "journal") {
+      throw new Error(
+        `build-embed-docs: \`${subcommand}\` now takes ${operands.join(" ")} rather than one ` +
+          "journal, so this line is no longer the whole command",
+      );
+    }
+    return `docker compose run --rm ${relay} ${subcommand} ${journal}`;
+  };
+
   return [
     `# ${rel(SOURCES.compose)} — generated from it, so a renamed profile changes this.`,
     "",
@@ -656,8 +731,12 @@ function deploymentCommands() {
     up("editor"),
     "",
     "# Adding the optional relay: create the room's journal once, then serve it.",
-    oneShot("relay-create"),
-    up("relay"),
+    administer("create"),
+    up(relay),
+    "",
+    "# Reading the journal back, on a stopped room or on a copy. Not a service:",
+    "# it runs and exits.",
+    administer("inspect"),
   ].join("\n");
 }
 
