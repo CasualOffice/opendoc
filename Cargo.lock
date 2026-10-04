@@ -117,6 +117,7 @@ name = "casual-doc-import"
 version = "0.0.1"
 dependencies = [
  "casual-doc-layout",
+ "casual-doc-loss",
  "casual-doc-model",
  "casual-doc-ooxml",
  "quick-xml",
@@ -129,6 +130,7 @@ version = "0.0.1"
 dependencies = [
  "casual-doc-export",
  "casual-doc-import",
+ "casual-doc-loss",
  "casual-doc-model",
  "casual-doc-odf",
  "casual-doc-ooxml",
@@ -149,6 +151,10 @@ dependencies = [
  "skrifa",
  "unicode-segmentation",
 ]
+
+[[package]]
+name = "casual-doc-loss"
+version = "0.0.1"
 
 [[package]]
 name = "casual-doc-model"

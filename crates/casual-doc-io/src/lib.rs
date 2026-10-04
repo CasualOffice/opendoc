@@ -49,7 +49,9 @@ pub use registry::{
     ProbeConfidence, ProbeRequest, ProbeResult,
 };
 pub use report::{
-    CompatibilityEntry, CompatibilityReport, FeatureLocation, ModelOutcome, RetentionOutcome,
+    CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
+    Finding, LedgerId, LedgerRecord, LossReporter, ModelOutcome, PartConstructDisposition,
+    PartDisposition, PreservationKind, PreservationLedger, RetentionOutcome, SourceRetention,
 };
 pub use rtf::RtfAdapter;
 pub use text::{PlainTextAdapter, PlainTextLimits};

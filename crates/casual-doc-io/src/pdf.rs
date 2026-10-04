@@ -36,9 +36,9 @@ use casual_doc_pdf::PdfSeverity;
 use casual_doc_pdf::export_document;
 
 use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
-    ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId, FormatProfile,
-    FormatRegistry, IoError, ModelOutcome, RetentionOutcome, formats,
+    AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, DocumentResources,
+    ExportArtifact, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
+    FormatProfile, FormatRegistry, IoError, PreservationLedger, formats,
 };
 
 const PDF_MIME: &str = "application/pdf";
@@ -109,14 +109,18 @@ impl FormatExporter for PdfAdapter {
                 feature: finding.code,
                 occurrences: u32::try_from(finding.occurrences).unwrap_or(u32::MAX),
                 location: FeatureLocation::default(),
-                model_outcome: match finding.severity {
-                    PdfSeverity::Note => ModelOutcome::Mapped,
-                    PdfSeverity::Degraded => ModelOutcome::Degraded,
+                // A `Note` is `mapped` + `not-applicable`, which doc 35 says is
+                // not a finding at all and should not be enumerated. It is kept
+                // here because removing it would change the published PDF export
+                // report, and a behaviour change does not belong in a refactor
+                // whose claim is that nothing changed — recorded so the next lane
+                // decides it on purpose rather than discovering it.
+                disposition: match finding.severity {
+                    PdfSeverity::Note => Disposition::MappedComplete,
+                    PdfSeverity::Degraded => Disposition::DegradedNotRetained,
                 },
-                retention_outcome: match finding.severity {
-                    PdfSeverity::Note => RetentionOutcome::NotApplicable,
-                    PdfSeverity::Degraded => RetentionOutcome::NotRetained,
-                },
+                ledger_id: None,
+                part: None,
             });
         }
         report.sort();
@@ -124,6 +128,9 @@ impl FormatExporter for PdfAdapter {
         Ok(ExportArtifact {
             bytes: export.bytes,
             report,
+            // A PDF is a rendering, not a container: it carries no source
+            // sidecar, so it makes no preservation claim and needs no record.
+            ledger: PreservationLedger::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some(PDF_PROFILE.to_owned()),
@@ -152,7 +159,7 @@ pub fn register_pdf_exporter(registry: &mut FormatRegistry) -> Result<(), IoErro
 mod tests {
     use super::*;
     use crate::{
-        ExportMode, FormatImporter, ImportRequest, PlainTextAdapter, PlainTextLimits,
+        ExportMode, FormatImporter, ImportRequest, ModelOutcome, PlainTextAdapter, PlainTextLimits,
         builtin_registry,
     };
     use casual_doc_model::v1::Document;
@@ -248,7 +255,7 @@ mod tests {
             .report
             .entries
             .iter()
-            .filter(|entry| entry.model_outcome == ModelOutcome::Degraded)
+            .filter(|entry| entry.model_outcome() == ModelOutcome::Degraded)
             .map(|entry| entry.feature.as_str())
             .collect();
         assert!(
@@ -258,7 +265,7 @@ mod tests {
                 .report
                 .entries
                 .iter()
-                .map(|entry| (entry.feature.as_str(), entry.model_outcome))
+                .map(|entry| (entry.feature.as_str(), entry.model_outcome()))
                 .collect::<Vec<_>>()
         );
     }

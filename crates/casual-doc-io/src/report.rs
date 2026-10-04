@@ -1,80 +1,41 @@
 //! Format-neutral compatibility reporting.
+//!
+//! This module used to declare a **second** taxonomy: a two-field
+//! `(model_outcome, retention_outcome)` pair that every adapter converted its own
+//! findings into, and that the DOCX adapter converted the importer's
+//! `35-DISPOSITION-TAXONOMY.md` vocabulary *down* into. The conversion was lossy
+//! in three ways, and the third is the one that mattered:
+//!
+//! 1. **The nine-pair invariant was gone.** `35` admits nine of the fifteen axis
+//!    pairs and calls the other six "an internal error [that] must fail import,
+//!    not be reported". A struct with one field per axis makes all fifteen
+//!    representable, and the repository was in fact publishing one of the six:
+//!    `casual-doc-odf` reports `odf.draw.image-missing-part` as `degraded` +
+//!    `not-applicable` (`casual-doc-odf/src/package.rs`), which this layer
+//!    carried straight through to hosts. `Disposition` makes that unrepresentable
+//!    rather than merely wrong.
+//! 2. **The whole-part axis was gone.** A finding about an admitted package part
+//!    the model does not consume carries the part's name *and its declared
+//!    content type*, which is what makes the disposition auditable. The old entry
+//!    had nowhere to put it.
+//! 3. **The preservation ledger never crossed the boundary.** The DOCX importer
+//!    builds one, validates every `preserved` claim against it, and hands it back
+//!    — and this layer dropped it on the floor, so a host reading the neutral
+//!    report could see the word `preserved` and had no way to audit it. `35`
+//!    recorded that as a known limitation. Meanwhile the ODT adapter, with no
+//!    ledger reachable at all, was upgrading `not-retained` to `preserved`
+//!    whenever the source happened to be retained — a preservation claim on the
+//!    honour system.
+//!
+//! So there is now one taxonomy, in `casual-doc-loss`, and this module is the
+//! re-export that keeps `casual_doc_io::CompatibilityReport` the name adapters
+//! and hosts already use. `ImportArtifact` and `ExportArtifact` carry the
+//! [`PreservationLedger`] beside the report, and every adapter validates its own
+//! report against its own ledger before returning it, so a `preserved` entry
+//! that nothing retains fails the import instead of reaching a host.
 
-/// How a source construct was represented in the normalized model.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ModelOutcome {
-    /// Fully represented.
-    Mapped,
-    /// Partially represented.
-    Degraded,
-    /// Not represented.
-    Omitted,
-}
-
-/// What happened to source detail the normalized model did not consume.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RetentionOutcome {
-    /// Retained in validated sidecar state.
-    Preserved,
-    /// Intentionally and reportably not retained.
-    NotRetained,
-    /// Refused by security or host policy.
-    Blocked,
-    /// Invalid or over-limit source data was rejected.
-    Rejected,
-    /// The construct was fully mapped with no remainder.
-    NotApplicable,
-}
-
-/// Bounded source location for a compatibility finding.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct FeatureLocation {
-    /// Package part containing the feature, when applicable.
-    pub part_name: Option<String>,
-    /// XML namespace identifier, when the adapter supplies one.
-    pub namespace: Option<String>,
-    /// XML local name or another adapter-defined logical feature name.
-    pub local_name: Option<String>,
-    /// XML local name of the attribute, when the finding is about an attribute of
-    /// `local_name` rather than the element itself (FID-R-03).
-    ///
-    /// Without this axis an adapter could describe a lost element but not a lost
-    /// attribute, and attribute-level facts had to be smuggled through as
-    /// feature-level pseudo-names (`theme:nameAttribute`). Attributes are where
-    /// most WordprocessingML meaning actually lives, so a report vocabulary
-    /// without them cannot be complete.
-    pub attribute_name: Option<String>,
-}
-
-/// One aggregated compatibility finding.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompatibilityEntry {
-    /// Stable adapter-defined feature identifier.
-    pub feature: String,
-    /// Bounded occurrence count.
-    pub occurrences: u32,
-    /// Source location, if one is available.
-    pub location: FeatureLocation,
-    /// Semantic mapping result.
-    pub model_outcome: ModelOutcome,
-    /// Preservation result for unconsumed source detail.
-    pub retention_outcome: RetentionOutcome,
-}
-
-/// Deterministically ordered import or export compatibility findings.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CompatibilityReport {
-    /// Findings ordered by adapter-defined feature identifier.
-    pub entries: Vec<CompatibilityEntry>,
-}
-
-impl CompatibilityReport {
-    /// Sorts entries into the required deterministic order.
-    pub(crate) fn sort(&mut self) {
-        self.entries.sort_by(|left, right| {
-            left.feature
-                .cmp(&right.feature)
-                .then_with(|| left.location.part_name.cmp(&right.location.part_name))
-        });
-    }
-}
+pub use casual_doc_loss::{
+    CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
+    Finding, LedgerId, LedgerRecord, LossReporter, ModelOutcome, PartConstructDisposition,
+    PartDisposition, PreservationKind, PreservationLedger, RetentionOutcome, SourceRetention,
+};

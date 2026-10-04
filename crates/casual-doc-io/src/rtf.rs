@@ -14,9 +14,9 @@ use casual_doc_rtf::import_rtf;
 use casual_doc_rtf::probe_rtf;
 
 use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, FeatureLocation,
-    FormatDescriptor, FormatId, FormatImporter, FormatProfile, ImportArtifact, ImportRequest,
-    ModelOutcome, ProbeRequest, ProbeResult, RetentionOutcome, SourceEnvelope, formats,
+    AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, DocumentResources,
+    FeatureLocation, FormatDescriptor, FormatId, FormatImporter, FormatProfile, ImportArtifact,
+    ImportRequest, PreservationLedger, ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
 
 /// Source bytes retained so a future RTF writer can offer exact export.
@@ -118,7 +118,8 @@ impl FormatImporter for RtfAdapter {
                     original_bytes: request.retain_source.then(|| request.bytes.to_vec()),
                 },
             ),
-            report: convert_report(&imported.report),
+            report: convert_report(&imported.report)?,
+            ledger: PreservationLedger::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some(version),
@@ -127,46 +128,86 @@ impl FormatImporter for RtfAdapter {
     }
 }
 
-fn convert_report(report: &RtfReport) -> CompatibilityReport {
-    let mut converted = CompatibilityReport {
-        entries: report
-            .entries
-            .iter()
-            .map(|entry| CompatibilityEntry {
-                feature: entry.feature.clone(),
-                occurrences: entry.occurrences,
-                location: FeatureLocation {
-                    part_name: None,
-                    namespace: None,
-                    local_name: Some(
-                        entry
-                            .control_word
-                            .clone()
-                            .unwrap_or_else(|| entry.feature.clone()),
-                    ),
-                    attribute_name: None,
-                },
-                model_outcome: match entry.model_outcome {
-                    RtfModelOutcome::Mapped => ModelOutcome::Mapped,
-                    RtfModelOutcome::Degraded => ModelOutcome::Degraded,
-                    RtfModelOutcome::Omitted => ModelOutcome::Omitted,
-                },
-                retention_outcome: match entry.retention_outcome {
-                    RtfRetentionOutcome::Preserved => RetentionOutcome::Preserved,
-                    RtfRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
-                    RtfRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
-                },
-            })
-            .collect(),
-    };
+/// Lifts an RTF finding's two axes into the single nine-pair disposition.
+///
+/// `casual-doc-rtf` keeps a third copy of the two-axis vocabulary of its own
+/// (`RtfModelOutcome`/`RtfRetentionOutcome`), which is the duplication
+/// `casual-doc-loss` exists to stop: it should report into the shared taxonomy
+/// directly. That crate is not this lane's to change, so the pairs are admitted
+/// here instead, and the illegal ones are refused rather than published — an RTF
+/// reader retains no sidecar, so `mapped` + `preserved` and
+/// `degraded`/`omitted` + `not-applicable` have no honest reading.
+fn disposition_of(model: RtfModelOutcome, retention: RtfRetentionOutcome) -> Option<Disposition> {
+    match (model, retention) {
+        (RtfModelOutcome::Mapped, RtfRetentionOutcome::NotApplicable) => {
+            Some(Disposition::MappedComplete)
+        }
+        (RtfModelOutcome::Mapped, RtfRetentionOutcome::Preserved) => {
+            Some(Disposition::MappedPreserved)
+        }
+        (RtfModelOutcome::Degraded, RtfRetentionOutcome::Preserved) => {
+            Some(Disposition::DegradedPreserved)
+        }
+        (RtfModelOutcome::Degraded, RtfRetentionOutcome::NotRetained) => {
+            Some(Disposition::DegradedNotRetained)
+        }
+        (RtfModelOutcome::Omitted, RtfRetentionOutcome::Preserved) => {
+            Some(Disposition::OmittedPreserved)
+        }
+        (RtfModelOutcome::Omitted, RtfRetentionOutcome::NotRetained) => {
+            Some(Disposition::OmittedNotRetained)
+        }
+        (RtfModelOutcome::Mapped, RtfRetentionOutcome::NotRetained)
+        | (
+            RtfModelOutcome::Degraded | RtfModelOutcome::Omitted,
+            RtfRetentionOutcome::NotApplicable,
+        ) => None,
+    }
+}
+
+fn convert_report(report: &RtfReport) -> Result<CompatibilityReport, AdapterError> {
+    let mut entries = Vec::with_capacity(report.entries.len());
+    for entry in &report.entries {
+        let disposition =
+            disposition_of(entry.model_outcome, entry.retention_outcome).ok_or_else(|| {
+                AdapterError::new(format!(
+                    "RTF disposition: {} reports {:?} + {:?}, which \
+                     35-DISPOSITION-TAXONOMY.md does not admit",
+                    entry.feature, entry.model_outcome, entry.retention_outcome
+                ))
+            })?;
+        entries.push(CompatibilityEntry {
+            feature: entry.feature.clone(),
+            occurrences: entry.occurrences,
+            location: FeatureLocation {
+                part_name: None,
+                element: Some(
+                    entry
+                        .control_word
+                        .clone()
+                        .unwrap_or_else(|| entry.feature.clone()),
+                ),
+                attribute: None,
+            },
+            disposition,
+            // An RTF import retains nothing: the reader has no sidecar and no
+            // byte floor, so there is no record to cite and no claim to make.
+            ledger_id: None,
+            part: None,
+        });
+    }
+    let mut converted = CompatibilityReport { entries };
     converted.sort();
-    converted
+    Ok(converted)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DetectionRequest, FormatSelection, IoError, PlainTextAdapter, builtin_registry};
+    use crate::{
+        DetectionRequest, FormatSelection, IoError, ModelOutcome, PlainTextAdapter,
+        RetentionOutcome, builtin_registry,
+    };
 
     // Note the doubled space after `\b0`: a control word swallows exactly one
     // following space as its delimiter, so `\b0 x` is "x" and `\b0  x` is " x".
@@ -336,8 +377,8 @@ mod tests {
                 .iter()
                 .find(|entry| entry.feature == feature)
                 .unwrap_or_else(|| panic!("{feature} must be reported, not silently dropped"));
-            assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-            assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+            assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+            assert_eq!(entry.retention_outcome(), RetentionOutcome::NotRetained);
         }
     }
 

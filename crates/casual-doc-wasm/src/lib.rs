@@ -51,10 +51,11 @@ use casual_doc_io::PlainTextLimits;
 use casual_doc_io::formats;
 use casual_doc_io::{
     CompatibilityEntry as IoCompatibilityEntry, CompatibilityReport as IoCompatibilityReport,
-    DetectionRequest, DocumentResources, ExportMode, ExportRequest,
-    FeatureLocation as IoFeatureLocation, FormatId, FormatSelection,
-    ModelOutcome as IoModelOutcome, RetentionOutcome as IoRetentionOutcome, SourceEnvelope,
-    builtin_registry_with_limits,
+    DetectionRequest, Disposition as IoDisposition, DocumentResources, ExportMode, ExportRequest,
+    FeatureLocation as IoFeatureLocation, FormatId, FormatSelection, LedgerId as IoLedgerId,
+    ModelOutcome as IoModelOutcome, PreservationKind as IoPreservationKind,
+    PreservationLedger as IoPreservationLedger, RetentionOutcome as IoRetentionOutcome,
+    SourceEnvelope, builtin_registry_with_limits,
 };
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
@@ -947,7 +948,7 @@ impl WasmDocument {
                 },
             )
             .map_err(|error| format!("export {format}: {error}"))?;
-        let report_json = compatibility_report_json(&artifact.report)?;
+        let report_json = compatibility_report_json(&artifact.report, &artifact.ledger)?;
 
         Ok(WasmExportArtifact {
             bytes: artifact.bytes,
@@ -24698,6 +24699,7 @@ fn open_document_bounded(
     let windowed = blocks > whole_layout_ceiling;
     let source_format = imported.format.format.as_str().to_owned();
     let mut report = imported.report;
+    let ledger = imported.ledger;
     let document = imported.document;
     let resources = imported.resources;
     let source = imported.source;
@@ -24713,8 +24715,8 @@ fn open_document_bounded(
     // Appended after the adapter's own (already sorted) entries, in
     // `fontTable.xml` order — deterministic without re-sorting a report whose
     // ordering the adapter owns.
-    report_embedded_font_failures(&mut report, &embedded_fonts);
-    let import_report_json = compatibility_report_json(&report)?;
+    report_embedded_font_failures(&mut report, &ledger, &embedded_fonts);
+    let import_report_json = compatibility_report_json(&report, &ledger)?;
     // Below the windowing threshold: one call for per-section geometry, flowed
     // headers/footers, anchored drawings, and page-number fields — the same
     // entry point the native renderer uses, and the same one this has always
@@ -24788,6 +24790,14 @@ fn open_document_bounded(
 #[serde(rename_all = "camelCase")]
 struct CompatibilityReportJson<'a> {
     entries: Vec<CompatibilityEntryJson<'a>>,
+    /// The preservation ledger the report's `preserved` entries cite.
+    ///
+    /// Host visible for the same reason the attribute axis is: a `preserved`
+    /// claim a host cannot resolve to a record is a claim it has to take on
+    /// trust, and the whole point of the ledger is that it does not have to.
+    /// `35-DISPOSITION-TAXONOMY.md` recorded the ledger stopping at the format
+    /// adapter as a known limitation; it no longer does.
+    ledger: Vec<LedgerRecordJson<'a>>,
 }
 
 #[derive(serde::Serialize)]
@@ -24796,21 +24806,45 @@ struct CompatibilityEntryJson<'a> {
     feature: &'a str,
     occurrences: u32,
     location: CompatibilityLocationJson<'a>,
+    /// The single nine-pair disposition. Both axes below derive from it, and are
+    /// still emitted because they are what a host filters and groups on.
+    disposition: &'static str,
     model_outcome: &'static str,
     retention_outcome: &'static str,
+    /// The ledger record licensing a `preserved` retention outcome, as an index
+    /// into `CompatibilityReportJson::ledger`.
+    ledger_id: Option<u32>,
+    /// Set when the finding dispositions a whole admitted package part, or a
+    /// construct charged to one.
+    part: Option<PartDispositionJson<'a>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PartDispositionJson<'a> {
+    part_name: &'a str,
+    content_type: Option<&'a str>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LedgerRecordJson<'a> {
+    id: u32,
+    kind: &'static str,
+    covers: Option<&'a str>,
+    retained_bytes: usize,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompatibilityLocationJson<'a> {
     part_name: Option<&'a str>,
-    namespace: Option<&'a str>,
-    local_name: Option<&'a str>,
+    element: Option<&'a str>,
     /// The attribute the finding is about, when it is about one (FID-R-03). Host
     /// visible: an attribute-level loss the adapter can now describe would
     /// otherwise stop at this boundary, and a capability no host can reach is not
     /// a capability.
-    attribute_name: Option<&'a str>,
+    attribute: Option<&'a str>,
 }
 
 /// Records every embedded (`.odttf`) face the engine could not use on the
@@ -24824,27 +24858,45 @@ struct CompatibilityLocationJson<'a> {
 /// carries the `.odttf` part name and the `w:embed*` element it came from.
 fn report_embedded_font_failures(
     report: &mut IoCompatibilityReport,
+    ledger: &IoPreservationLedger,
     outcome: &EmbeddedFontOutcome,
 ) {
     for failure in &outcome.failures {
+        // The face is modeled and round-trips, so what is lost is its USE and the
+        // run renders in a substitute — `degraded`, not omitted.
+        //
+        // The retention half used to be a flat `preserved`, which was an
+        // unevidenced claim: it is true only because the `.odttf` part is carried
+        // verbatim by the opaque side-table, and nothing here checked that a
+        // record for it exists. Now the record is looked up, and when there is
+        // none the weaker, true disposition is reported instead — the same choice
+        // `casual-doc-import`'s chart constructs make, and for the same reason: a
+        // bookkeeping mismatch must not turn into a document that will not open.
+        let ledger_id = ledger.opaque_part_record(&failure.part_name);
+        let disposition = if ledger_id.is_some() {
+            IoDisposition::DegradedPreserved
+        } else {
+            IoDisposition::DegradedNotRetained
+        };
         report.entries.push(IoCompatibilityEntry {
             feature: format!("docx.font.embedded.{}", failure.error.as_str()),
             occurrences: 1,
             location: IoFeatureLocation {
                 part_name: Some(failure.part_name.clone()),
-                namespace: None,
-                local_name: Some(failure.slot.to_owned()),
-                attribute_name: None,
+                element: Some(failure.slot.to_owned()),
+                attribute: None,
             },
-            // The face is modeled and round-trips; what is lost is its USE, so
-            // the run renders in a substitute — a degraded, not omitted, mapping.
-            model_outcome: IoModelOutcome::Degraded,
-            retention_outcome: IoRetentionOutcome::Preserved,
+            disposition,
+            ledger_id,
+            part: None,
         });
     }
 }
 
-fn compatibility_report_json(report: &IoCompatibilityReport) -> Result<String, String> {
+fn compatibility_report_json(
+    report: &IoCompatibilityReport,
+    ledger: &IoPreservationLedger,
+) -> Result<String, String> {
     let entries = report
         .entries
         .iter()
@@ -24853,25 +24905,54 @@ fn compatibility_report_json(report: &IoCompatibilityReport) -> Result<String, S
             occurrences: entry.occurrences,
             location: CompatibilityLocationJson {
                 part_name: entry.location.part_name.as_deref(),
-                namespace: entry.location.namespace.as_deref(),
-                local_name: entry.location.local_name.as_deref(),
-                attribute_name: entry.location.attribute_name.as_deref(),
+                element: entry.location.element.as_deref(),
+                attribute: entry.location.attribute.as_deref(),
             },
-            model_outcome: match entry.model_outcome {
+            disposition: match entry.disposition {
+                IoDisposition::MappedComplete => "mapped_complete",
+                IoDisposition::MappedPreserved => "mapped_preserved",
+                IoDisposition::DegradedPreserved => "degraded_preserved",
+                IoDisposition::DegradedNotRetained => "degraded_not_retained",
+                IoDisposition::DegradedBlocked => "degraded_blocked",
+                IoDisposition::OmittedPreserved => "omitted_preserved",
+                IoDisposition::OmittedNotRetained => "omitted_not_retained",
+                IoDisposition::OmittedBlocked => "omitted_blocked",
+                IoDisposition::OmittedRejected => "omitted_rejected",
+            },
+            model_outcome: match entry.model_outcome() {
                 IoModelOutcome::Mapped => "mapped",
                 IoModelOutcome::Degraded => "degraded",
                 IoModelOutcome::Omitted => "omitted",
             },
-            retention_outcome: match entry.retention_outcome {
+            retention_outcome: match entry.retention_outcome() {
                 IoRetentionOutcome::Preserved => "preserved",
                 IoRetentionOutcome::NotRetained => "not_retained",
                 IoRetentionOutcome::Blocked => "blocked",
                 IoRetentionOutcome::Rejected => "rejected",
                 IoRetentionOutcome::NotApplicable => "not_applicable",
             },
+            ledger_id: entry.ledger_id.map(IoLedgerId::get),
+            part: entry.part.as_ref().map(|part| PartDispositionJson {
+                part_name: part.part_name.as_str(),
+                content_type: part.content_type.as_deref(),
+            }),
         })
         .collect();
-    serde_json::to_string(&CompatibilityReportJson { entries })
+    let ledger = ledger
+        .records()
+        .iter()
+        .map(|record| LedgerRecordJson {
+            id: record.id.get(),
+            kind: match record.kind {
+                IoPreservationKind::SourceSnapshot => "source_snapshot",
+                IoPreservationKind::OpaquePart => "opaque_part",
+                IoPreservationKind::ModelSubtree => "model_subtree",
+            },
+            covers: record.covers.as_deref(),
+            retained_bytes: record.retained_bytes,
+        })
+        .collect();
+    serde_json::to_string(&CompatibilityReportJson { entries, ledger })
         .map_err(|error| format!("serialize compatibility report: {error}"))
 }
 

@@ -66,8 +66,9 @@ pub use opaque::{
 };
 pub use report::{
     CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
-    LedgerId, LedgerRecord, ModelOutcome, PartDisposition, PreservationKind, PreservationLedger,
-    RSID_CLASS_FEATURE, RetentionOutcome, WATERMARK_CLASS_FEATURE,
+    LedgerId, LedgerRecord, ModelOutcome, PartConstructDisposition, PartDisposition,
+    PreservationKind, PreservationLedger, RSID_CLASS_FEATURE, RetentionOutcome,
+    WATERMARK_CLASS_FEATURE,
 };
 pub use retain::RetainedSource;
 pub use vml::{
@@ -552,7 +553,7 @@ pub fn import_package(
     // each licensed by the part's own opaque-part ledger record.
     let chart_constructs = chart_construct_dispositions(&import.chart_parts, &import.ledger);
     import.report.add_part_dispositions(dispositions);
-    import.report.add_chart_constructs(chart_constructs);
+    import.report.add_part_constructs(chart_constructs);
     import
         .report
         .validate(&import.ledger)
@@ -735,10 +736,17 @@ fn build_retained_parts(
 /// export copies them. So a construct this projection did not understand is still
 /// in the saved file — which is the whole of `docs/155` §6.1 and the thing a
 /// convert-through-an-intermediate-model pipeline cannot say.
+///
+/// The feature identifier is `chart.<local name>` — a class name in the same
+/// shape as [`RSID_CLASS_FEATURE`] and [`WATERMARK_CLASS_FEATURE`], not a
+/// namespace prefix. It has to be qualified, and qualifying it is this crate's
+/// job rather than the shared report's: `spPr` and `marker` name constructs in
+/// the WordprocessingML drawing vocabulary too, and a finding that aggregated a
+/// chart's unmodeled series fill with a shape's would describe neither.
 fn chart_construct_dispositions(
     outcomes: &[crate::chart::ChartPartOutcome],
     ledger: &PreservationLedger,
-) -> Vec<(PartDisposition, String, Disposition, Option<LedgerId>)> {
+) -> Vec<PartConstructDisposition> {
     let mut entries = Vec::new();
     for outcome in outcomes {
         let ledger_id = ledger.opaque_part_record(&outcome.part_name);
@@ -767,15 +775,31 @@ fn chart_construct_dispositions(
             // `bar3DChart`" is information the part row cannot carry and is the
             // actionable half of the finding.
             if let Some(family) = &outcome.out_of_scope_family {
-                entries.push((part(), family.clone(), omitted, ledger_id));
+                entries.push(chart_construct(part(), family, omitted, ledger_id));
             }
             continue;
         }
         for construct in &outcome.unconsumed {
-            entries.push((part(), construct.clone(), degraded, ledger_id));
+            entries.push(chart_construct(part(), construct, degraded, ledger_id));
         }
     }
     entries
+}
+
+/// One chart-construct finding, with the `chart.` class qualifier applied.
+fn chart_construct(
+    part: PartDisposition,
+    construct: &str,
+    disposition: Disposition,
+    ledger_id: Option<LedgerId>,
+) -> PartConstructDisposition {
+    PartConstructDisposition {
+        part,
+        feature: format!("chart.{construct}"),
+        element: Some(construct.to_owned()),
+        disposition,
+        ledger_id,
+    }
 }
 
 /// Appends every relationship in `relationships` that targets a preserved part
