@@ -76,10 +76,17 @@ test("Compare is reachable from the Review band and from the rail, and both open
   await page.locator("#railCompare").click();
   await expect(page.locator("#comparePanel")).toBeVisible();
   await expect(page.locator("#railCompare")).toHaveAttribute("aria-pressed", "true");
-  // It says what it is and what it is NOT before anything is picked. Word's
-  // Compare produces a third document of tracked changes; this produces a list,
-  // and a reader who expects to accept a change deserves to know in advance.
-  await expect(page.locator("#compareBody")).toContainText(/cannot be accepted or rejected/i);
+  // It says what it DOES before anything is picked, and ADR-061 changed what that
+  // is. Word and Google Docs build a merged third document; we write the
+  // differences into the document on screen as tracked changes, which is
+  // ONLYOFFICE's answer — and that is the warning that matters, because the
+  // gesture mutates the open document. The old sentence promised the opposite
+  // ("they cannot be accepted or rejected") and is asserted gone, so the stale
+  // claim cannot come back.
+  await expect(page.locator("#compareBody")).toContainText(/as tracked changes/i);
+  await expect(page.locator("#compareBody")).not.toContainText(
+    /cannot be accepted or rejected/i,
+  );
   await page.locator("#compareClose").click();
   await expect(page.locator("#comparePanel")).toBeHidden();
 

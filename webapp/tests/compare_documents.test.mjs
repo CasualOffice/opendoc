@@ -23,6 +23,8 @@ import {
   MAX_SLICES,
   OBJECT_KEY,
   PARSING,
+  REFUSAL_KEY,
+  UNMARKED_KEY,
   WORKING,
   changeFields,
   changeObjectName,
@@ -30,9 +32,10 @@ import {
   runComparison,
   storyLabel,
   summariseDiff,
+  unmarkedReasons,
 } from "../src/compare_documents.mjs";
 import { EN_STRINGS } from "../src/en_strings.mjs";
-import { setCatalogue, setLocale } from "../src/i18n.mjs";
+import { setCatalogue, setLocale, t } from "../src/i18n.mjs";
 
 setCatalogue("en", { ...EN_STRINGS });
 setLocale("en");
@@ -273,6 +276,123 @@ test("every family, kind and finding code the engine can report has a catalogue 
   ]) {
     assert.ok(Object.hasOwn(EN_STRINGS, key), `${key} is in no string table`);
   }
+});
+
+// ---- ADR-061: the diff goes ON THE CANVAS ----------------------------------
+//
+// `applyDiffAsRevisions` can refuse with four codes and can report twenty-two
+// kinds of thing a tracked change cannot say. Both sets are DERIVED FROM THE
+// RUST here, for the reason the family/kind/finding guard above is: a code the
+// engine grows and this host has no sentence for reaches a reader as a dotted
+// identifier, and a loss report is the one thing that must not be hard to read.
+
+/** `crates/casual-doc-wasm/src/diff.rs`, where `applyDiffAsRevisions` lives. */
+function readApplySource() {
+  return readFileSync(new URL("../../crates/casual-doc-wasm/src/diff.rs", import.meta.url), "utf8");
+}
+
+test("every refusal `applyDiffAsRevisions` can throw has a catalogue sentence", () => {
+  // Scanned from the two shapes the engine builds a coded refusal with —
+  // `refused!("code", "sentence")` and `refusal::marked("code", …)` — inside that
+  // one file, plus `review.author-required`, which `validate_authored_revision_author`
+  // raises in `lib.rs` on the author this surface passes.
+  const source = readApplySource();
+  const codes = new Set(
+    [...source.matchAll(/(?:refused!|refusal::marked)\(\s*\n?\s*"([a-z][a-z0-9.-]+)"/g)].map(
+      ([, code]) => code,
+    ),
+  );
+  codes.add("review.author-required");
+  assert.ok(codes.size >= 4, `only ${codes.size} refusal codes found; the scan has drifted`);
+  assert.deepEqual(
+    [...codes].filter((code) => !REFUSAL_KEY[code]),
+    [],
+    "a refusal with no catalogue key reaches the reader as the engine's English or not at all",
+  );
+  for (const key of Object.values(REFUSAL_KEY)) {
+    assert.ok(Object.hasOwn(EN_STRINGS, key), `${key} is in no string table`);
+  }
+  // THE SENTENCE FOR THE DELIBERATE ONE says we refuse and why, rather than
+  // apologising for a shortfall. ADR-061: one `reviewType` cannot carry both "a
+  // person suggested this" and "a comparison computed this", so we refuse where
+  // ONLYOFFICE accepts every existing change first. A sentence that read "sorry,
+  // not supported yet" would describe a different product.
+  const refusal = t(REFUSAL_KEY["compare.document-has-revisions"]);
+  assert.match(refusal, /already has tracked changes/i);
+  assert.match(refusal, /accept or reject them first/i);
+  assert.doesNotMatch(refusal, /sorry|not supported|not yet|cannot be done/i);
+});
+
+test("every loss key `applyDiffAsRevisions` can report has a catalogue sentence", () => {
+  // The three shapes the engine records one with: `loss.insert("key")`,
+  // `unapplied(loss, "key")`, and `family_loss_key`'s twelve — which are the
+  // `DiffFamily` variants and are read from `record.rs` so the two scans cannot
+  // disagree about how many families there are.
+  const source = readApplySource();
+  const keys = new Set([
+    ...[...source.matchAll(/loss\.insert\(\s*"([A-Za-z][A-Za-z0-9]*)"/g)].map(([, key]) => key),
+    ...[...source.matchAll(/unapplied\(\s*loss,\s*"([A-Za-z][A-Za-z0-9]*)"/g)].map(([, key]) => key),
+    ...variants(readRecordSource(), "DiffFamily"),
+  ]);
+  assert.ok(keys.size >= 22, `only ${keys.size} loss keys found; the scan has drifted`);
+  assert.deepEqual(
+    [...keys].filter((key) => !UNMARKED_KEY[key]),
+    [],
+    "a loss key with no catalogue sentence is a difference the reader is never told about",
+  );
+  for (const key of Object.values(UNMARKED_KEY)) {
+    assert.ok(Object.hasOwn(EN_STRINGS, key), `${key} is in no string table`);
+  }
+});
+
+test("a loss report reaches the reader, and an unknown key is not quietly dropped", () => {
+  // THE RULE: nothing is swallowed. A comparison that applied nine of twelve
+  // changes and said "done" is the worst outcome available, and the engine
+  // computes this report precisely so a host can say it.
+  const rows = unmarkedReasons(["blockDeletion", "formatting", "somethingNewInTheEngine"]);
+  assert.deepEqual(
+    rows.map((row) => row.key),
+    ["blockDeletion", "formatting", "somethingNewInTheEngine"],
+    "every key is carried, in the engine's own (BTreeSet-sorted) order",
+  );
+  // A real sentence, not a key and not a bare identifier.
+  assert.match(rows[0].label, /paragraphs/i);
+  assert.ok(!rows[0].label.includes("compare.unmarked"));
+  // The twelve family keys route through `OBJECT_KEY`, which every catalogue
+  // already answers — so `formatting` is a noun, not `formatting`.
+  assert.equal(rows[1].label, t("compare.object.formatting"));
+  // And a key this build has never heard of still SHOWS, under its own name.
+  assert.equal(rows[2].label, "somethingNewInTheEngine");
+
+  // THE FIVE ALIASES ARE ONE SENTENCE, printed once. Five identical lines about
+  // anchor offsets would be noise presented as precision.
+  const aliases = unmarkedReasons([
+    "unresolvedAnchor",
+    "offsetSpace",
+    "nonParagraphBlock",
+    "notParagraphText",
+    "insertionNotText",
+  ]);
+  assert.equal(aliases.length, 1, "five aliases for one fact print one line");
+  assert.equal(aliases[0].label, t("compare.unmarked.notMarkable"));
+
+  // Nothing in, nothing out: a faithful comparison says nothing about loss.
+  for (const nothing of [[], undefined, null, "blockDeletion"]) {
+    assert.deepEqual(unmarkedReasons(nothing), [], `${JSON.stringify(nothing)} is not a report`);
+  }
+});
+
+test("the comparison driver carries the engine's own sidecar TEXT, not a re-serialisation", () => {
+  // `applyDiffAsRevisions` takes the string. Re-stringifying the parsed copy
+  // would hand the engine a document this host had re-serialised, at the one
+  // boundary where a mis-parse places a revision in the wrong text.
+  const json = '{"schema":1,"changes":[],"complete":true,"spacesInside":  true}';
+  const job = fakeJob([COMPLETE], { json });
+  return runComparison(driver(job)).then((outcome) => {
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.sidecar, json, "the sidecar is the engine's bytes, verbatim");
+    assert.notEqual(outcome.sidecar, JSON.stringify(outcome.diff));
+  });
 });
 
 test("no change can render as its kind label and nothing else", () => {
