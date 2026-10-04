@@ -28,3 +28,9 @@ node_modules
 /fixtures/corpus/SDS_ANTI-T..._ZH.docx
 /fixtures/corpus/Sample Document.docx
 /fixtures/corpus/demo.docx
+
+# Real decks and documents for local fidelity work. Never committed: they carry
+# their authors' copyright and are mostly media, so the committed corpus holds
+# synthetic fixtures reproducing their STRUCTURE instead (fixtures/local/README.md).
+fixtures/local/*
+!fixtures/local/README.md

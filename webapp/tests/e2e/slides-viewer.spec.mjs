@@ -76,9 +76,7 @@ test("the sorter lists the deck in presentation order, not part order", async ({
   await gotoSlides(page);
   await openDeck(page);
 
-  const labels = await page
-    .locator("#slidesSorter .slides-thumb-label")
-    .allTextContents();
+  const labels = await page.locator("#slidesSorter .page-thumb-num").allTextContents();
   // The fixture's parts are slide1 ("Opening"), slide2 ("Detail") and slide10
   // ("Appendix"), presented 1, 2, 10. EVERY lexical ordering of those part names
   // gives 1, 10, 2 — "Opening", "Appendix", "Detail" — so a page built on part
@@ -89,7 +87,7 @@ test("the sorter lists the deck in presentation order, not part order", async ({
   // A hidden slide is still IN the deck — retained, saved and sortable — so it is
   // marked rather than omitted. Omitting it would leave an author unable to see
   // what their own file contains.
-  await expect(page.locator("#slidesSorter .slides-thumb-hidden")).toHaveCount(1);
+  await expect(page.locator("#slidesSorter .slide-thumb-hidden")).toHaveCount(1);
 });
 
 test("arrow keys page through the deck and the position follows", async ({ page }) => {
@@ -114,18 +112,22 @@ test("arrow keys page through the deck and the position follows", async ({ page 
 
   // The current slide is announced by STATE, not only by styling: a reader with a
   // screen reader has no idea which of forty thumbnails is showing otherwise.
-  await expect(page.locator('#slidesSorter .slides-thumb[aria-current="true"]')).toHaveCount(1);
+  await expect(page.locator('#slidesSorter .page-thumb[aria-current="page"]')).toHaveCount(1);
 });
 
 test("clicking a thumbnail shows that slide", async ({ page }) => {
   await gotoSlides(page);
   await openDeck(page);
 
-  await page.locator("#slidesSorter .slides-thumb").nth(2).click();
+  await page.locator("#slidesSorter .page-thumb").nth(2).click();
   await expect(page.locator("#slidesPosition")).toHaveText(/3.*3/);
+  // `"page"`, not `"true"`: the mark is set by `reflectPagesPanelSelection`, the
+  // document navigator's own reflection, reused rather than reimplemented — so
+  // the deck's sorter and the document's page panel say the same thing to a
+  // screen reader instead of two surfaces inventing two vocabularies.
   await expect(
-    page.locator('#slidesSorter .slides-thumb').nth(2),
-  ).toHaveAttribute("aria-current", "true");
+    page.locator('#slidesSorter .page-thumb').nth(2),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("the fidelity report says what was not recovered", async ({ page }) => {
@@ -133,15 +135,21 @@ test("the fidelity report says what was not recovered", async ({ page }) => {
   await openDeck(page);
 
   // Surfaced rather than hidden. This is the one claim this engine can make that
-  // a converter cannot, and a page that opened silently would throw it away.
+  // a converter cannot, and a page that opened silently would throw it away. The
+  // count rides in the header chip the editor already uses for its own
+  // import/export findings — a neutral status chip, never an alert.
   await expect(page.locator("#slidesFidelity")).toBeVisible();
-  const summary = await page.locator("#slidesFidelitySummary").textContent();
-  expect(summary?.trim().length ?? 0).toBeGreaterThan(0);
+  const chip = await page.locator("#slidesFidelity").textContent();
+  expect(chip?.trim().length ?? 0).toBeGreaterThan(0);
 
+  // The detail lives in a rail panel, as every other list on this shell does.
   // The fixture deliberately carries constructs this build does not cover, so the
   // report must be non-empty — an empty one would be the overstatement `SKILL` §9
   // forbids rather than good news.
-  await page.locator("#slidesFidelityDetails summary").click();
+  await expect(page.locator("#slidesFidelityPanel")).toBeHidden();
+  await page.locator("#railFidelity").click();
+  await expect(page.locator("#slidesFidelityPanel")).toBeVisible();
+  await expect(page.locator("#railFidelity")).toHaveAttribute("aria-pressed", "true");
   const findings = await page.locator("#slidesFidelityList li").count();
   expect(findings, "the fixture loses things; the report must name them").toBeGreaterThan(0);
 });
@@ -156,11 +164,20 @@ test("a file that is not a presentation is refused, visibly", async ({ page }) =
   });
 
   // The engine refuses a package it cannot read correctly instead of opening it
-  // wrong, and the page shows that refusal. A viewer that swallowed it would turn
-  // a loud refusal into a blank page, which is the worse failure.
-  await expect(page.locator("#slidesError")).toBeVisible({ timeout: 30_000 });
+  // wrong, and the page shows that refusal in BOTH halves: the status bar a
+  // reader sees, and the body-level live region assistive technology hears. Two
+  // elements and not one for the reason `109` UX-017 records on the document
+  // side — the visible strip sheds indicators as the window narrows, and a
+  // `display: none` subtree is not in the accessibility tree.
+  await expect(page.locator("#status")).not.toBeEmpty({ timeout: 30_000 });
   await expect(page.locator("#slidesError")).not.toBeEmpty();
   await expect(page.locator("#slidesSave")).toBeDisabled();
+  // The SHELL stays. An earlier revision cleared `doc-loaded` on a refusal, which
+  // took the toolbar, the rail and the status bar off screen with it — so the one
+  // moment a reader most needs to see what the page is and try again was the one
+  // moment the page looked empty. Both reference products keep their chrome with
+  // nothing open; every command here says why it is disabled instead.
+  await expect(page.locator("body")).toHaveClass(/doc-loaded/);
 });
 
 // Sharpness has no logical consequence, so it needs its own guard and it has to
@@ -265,4 +282,60 @@ test("a screen reader can read the slide, which the canvas itself says nothing t
   // covered cell paints nothing" can be told apart from "a covered cell had
   // nothing to paint". It paints nothing, so it is read as nothing.
   await expect(page.locator("#slideText")).not.toContainText("Covered");
+});
+
+test("the page is actually laid out, not bare markup", async ({ page }) => {
+  await gotoSlides(page);
+  await openDeck(page);
+
+  // THIS IS THE GUARD THE PAGE SHIPPED WITHOUT. Every other spec in this file
+  // passes on a completely unstyled page: they query elements by id and read
+  // pixels out of a canvas, and a canvas with a backing store paints correctly
+  // whether or not anything around it has a layout. The page did ship that way —
+  // no stylesheet existed for any of its classes — and the first person to find
+  // out was the person who opened it. `slides_style.test.mjs` asserts the rules
+  // exist; this asserts they take EFFECT.
+  const layout = await page.evaluate(() => {
+    const box = (sel) => {
+      const el = typeof sel === "string" ? document.querySelector(sel) : sel;
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    };
+    return {
+      bar: box("header.bar"),
+      rail: box("nav.rail"),
+      sorter: box("#slidesSorterPanel"),
+      stage: box("#slideStage"),
+      footer: box("footer.footer"),
+      sheet: box("#slideSheet"),
+      input: box("#slidesFile"),
+      label: box(".btn-primary"),
+      thumb: box(".page-thumb"),
+    };
+  });
+
+  // Every band of the editor's shell is present and has real height. An unstyled
+  // page has a 0-height footer and no rail at all — which is exactly what
+  // `body:not(.doc-loaded)` produces, so this also pins that the deck viewer
+  // adopts the shell's own state contract rather than ignoring it.
+  expect(layout.bar.h, "the header band").toBeGreaterThan(30);
+  expect(layout.rail.h, "the rail").toBeGreaterThan(40);
+  expect(layout.footer.h, "the status bar").toBeGreaterThan(10);
+
+  // Rail, then sorter, then stage — left to right, in that order.
+  expect(layout.sorter.x).toBeGreaterThan(layout.rail.x + layout.rail.w - 1);
+  expect(layout.stage.x).toBeGreaterThan(layout.sorter.x + layout.sorter.w - 1);
+  expect(layout.thumb.h, "a thumbnail is a card, not a line of text").toBeGreaterThan(60);
+
+  // The real `<input type="file">` is hidden VISUALLY while the styled label
+  // stands in for it. Unstyled, the browser's own "Choose File" control shows and
+  // the label is plain text beside it — which is what was on screen.
+  expect(layout.input.w, "the raw file input is not what a reader sees").toBeLessThan(3);
+  expect(layout.label.w, "the label is").toBeGreaterThan(80);
+  expect(layout.label.h).toBeGreaterThan(20);
+
+  // The slide sits on the editor's SHEET, inside the viewport, with desk either
+  // side — not edge to edge, which is what dropping `DESK_MARGIN_PX` would give.
+  expect(layout.sheet.w).toBeLessThan(layout.stage.w);
+  expect(layout.sheet.w).toBeGreaterThan(layout.stage.w - 120);
 });

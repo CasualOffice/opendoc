@@ -38,6 +38,8 @@
 //! the distinction is load-bearing, not theoretical, and every absent `a:xfrm` is
 //! reported as a degraded `p:spPr`.
 
+use std::collections::BTreeSet;
+
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Extent, Fill, GroupChild, GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
@@ -129,6 +131,65 @@ pub(crate) struct Surface {
     pub(crate) height_emu: i64,
 }
 
+/// Keeps the FIRST shape in each placeholder slot and demotes any later one to a
+/// plain shape, reporting each demotion.
+///
+/// # Why this exists: a real deck was refused
+///
+/// `ShapeTree::validate` enforces one shape per `(type, idx)` slot and one title
+/// per tree, and `Presentation::new` validates — so a deck violating either was
+/// refused **whole**, with no slide reaching the screen. That is the wrong failure
+/// and it was observed on a real PowerPoint file, which refused with "has two title
+/// placeholders at index 4294967295": PowerPoint leaves an orphaned placeholder
+/// behind when a slide's layout is changed, writes a 32-bit `@idx` that is an
+/// identifier rather than a sequence number, and opens such a file without
+/// complaint. A viewer that refuses what the producer opens is the "loud refusal
+/// turned into a blank page" failure inverted — a loud refusal where the file is
+/// readable.
+///
+/// # Why demote rather than relax the invariant
+///
+/// Because the invariant is what makes slot resolution unambiguous. `ShapeTree`'s
+/// own `slot` lookup returns the FIRST match, so "the first shape in the slot" is
+/// already the engine's answer; making the model admit a second one would leave a
+/// rule stated in one place and relied on in another. Demoting makes the model say
+/// what the engine does.
+///
+/// # What it costs, stated rather than hidden
+///
+/// A demoted shape no longer inherits position, size or text properties from its
+/// layout, so one carrying `<p:spPr/>` and nothing else becomes a zero-sized box
+/// that paints nothing. That is why each demotion is REPORTED rather than done
+/// quietly: it is a real fidelity loss, it is smaller than losing every slide, and
+/// an orphaned duplicate is usually empty in practice — but "usually" is not
+/// "always", and the report is what keeps that honest.
+///
+/// # Complexity
+///
+/// O(children) with one `BTreeSet` of the slots seen — the same scan
+/// `validate_placeholders` performs, done once on the way in instead of once on
+/// the way out.
+fn demote_duplicate_slots(nodes: &mut [SlideNode], reporter: &mut Reporter, part: &str) {
+    let mut seen: BTreeSet<(casual_pres_model::PlaceholderKind, u32)> = BTreeSet::new();
+    let mut titled = false;
+    for node in nodes.iter_mut() {
+        let Some(placeholder) = node.placeholder else {
+            continue;
+        };
+        let title = placeholder.kind.is_title();
+        // Two conditions, not one: a second shape in the same slot, and a second
+        // TITLE whatever its slot — a `title` and a `ctrTitle` are one slot for
+        // inheritance everywhere else in this engine, so they collide with each
+        // other even though their `(kind, idx)` pairs differ.
+        if !seen.insert(placeholder.slot()) || (title && titled) {
+            node.placeholder = None;
+            reporter.degraded_attribute(part, b"ph", b"idx");
+            continue;
+        }
+        titled |= title;
+    }
+}
+
 /// Reads a `p:cSld`'s `p:spTree`, having just entered the `p:spTree`.
 ///
 /// # Complexity
@@ -179,6 +240,8 @@ pub(crate) fn read_shape_tree(
             }
         }
     })?;
+
+    demote_duplicate_slots(&mut nodes, reporter, &part);
 
     // The top-level identity mapping described on `Surface`.
     let extent = normalize_extent(transform.extent, surface);

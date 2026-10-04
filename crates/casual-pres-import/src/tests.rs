@@ -1824,3 +1824,111 @@ fn a_self_closing_paragraph_properties_element_keeps_its_attributes() {
         "algn=\"ctr\" from a self-closing a:pPr"
     );
 }
+
+/// A deck PowerPoint opens, opens here too: a duplicate placeholder slot is
+/// reported, not a reason to refuse the whole file.
+///
+/// # Why this guard exists
+///
+/// It was found by opening a real deck in the browser viewer, which refused the
+/// whole package with "shape tree ... has two title placeholders at index
+/// 4294967295" — every slide lost over an ambiguity about one shape. PowerPoint
+/// leaves an orphaned placeholder behind when a slide's layout is changed, and
+/// writes a 32-bit `@idx` that is an identifier rather than a sequence number, so
+/// this is an ordinary file rather than a malformed one.
+///
+/// Two perturbations in one deck, because the validator has two rules and either
+/// one alone refuses the file: a second shape in the SAME `(type, idx)` slot, and
+/// a second TITLE at a different index — `title` and `ctrTitle` are one slot for
+/// inheritance, so they collide with each other while their pairs differ.
+#[test]
+fn a_duplicate_placeholder_slot_is_reported_rather_than_refusing_the_deck() {
+    // `idx="4294967295"` is the value the real file carried, kept verbatim: it is
+    // within `u32` and so parses, which is exactly why it reached the validator
+    // rather than being rejected as an attribute.
+    let doubled = deck::deck_with(
+        "ppt/slides/slide1.xml",
+        SLIDE_WITH_DUPLICATE_SLOTS.as_bytes(),
+    );
+    let imported = import_pptx(&doubled, PackageLimits::default(), ImportLimits::default())
+        .expect("a deck with a duplicate slot must OPEN, not be refused whole");
+
+    // Every slide is still there. This is the assertion that matters: the failure
+    // being fixed was not a wrong shape, it was no deck at all.
+    assert_eq!(imported.presentation.slides().len(), 3);
+
+    // The FIRST shape in the slot keeps it, because `ShapeTree::slot` returns the
+    // first match — so the model now says what the engine already did.
+    let first = imported.presentation.slides().first().expect("slide 1");
+    let slots: Vec<(&str, u32)> = first
+        .shapes
+        .children
+        .iter()
+        .filter_map(|node| node.placeholder)
+        .map(|placeholder| (placeholder.kind.token(), placeholder.index))
+        .collect();
+    assert_eq!(
+        slots,
+        vec![("ctrTitle", 0), ("subTitle", 1)],
+        "the first shape in each slot keeps it; the duplicates are demoted"
+    );
+
+    // Both demotions are reported, and the shapes themselves survive as plain
+    // shapes rather than being dropped — a demoted placeholder loses its
+    // INHERITED geometry, which is a loss worth naming and much smaller than
+    // losing the deck.
+    assert_eq!(
+        first.shapes.children.len(),
+        5,
+        "nothing is dropped: two demoted placeholders plus the three original shapes"
+    );
+    let entry = imported
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "ph/@idx")
+        .expect("the ambiguity is reported");
+    assert_eq!(
+        entry.occurrences, 2,
+        "once per demoted shape, not once per deck"
+    );
+    assert_eq!(entry.model_outcome(), ModelOutcome::Degraded);
+}
+
+/// Slide 1 with two extra placeholders: a second `subTitle idx="1"` (the same slot
+/// as the real one) and a second title spelled `title` against the real
+/// `ctrTitle`. Both carry the `idx="4294967295"` the real file used.
+const SLIDE_WITH_DUPLICATE_SLOTS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+<p:cSld name="Opening">
+<p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr><p:ph type="ctrTitle"/></p:nvPr></p:nvSpPr>
+<p:spPr/>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>One</a:t></a:r></a:p></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="3" name="Subtitle 2"/><p:cNvSpPr/><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr/>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>First in presentation order</a:t></a:r></a:p></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="4" name="Orphaned Subtitle"/><p:cNvSpPr/><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr/>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Left behind by a layout change</a:t></a:r></a:p></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="5" name="Orphaned Title"/><p:cNvSpPr/><p:nvPr><p:ph type="title" idx="4294967295"/></p:nvPr></p:nvSpPr>
+<p:spPr/>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>A second title</a:t></a:r></a:p></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="6" name="Accent Bar"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="1524000" y="5486400"/><a:ext cx="3048000" cy="152400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+</p:sp>
+</p:spTree>
+</p:cSld>
+<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>"#;

@@ -1,0 +1,69 @@
+/* What a DECK needs that a document does not. Everything else on `slides.html`
+ * is the editor's chrome, used as the components it already is.
+ *
+ * # Why this file is four rules long
+ *
+ * Because that is how much of a presentation viewer is genuinely new. The header
+ * band, the rail, the side panels, the slide sorter (which IS the editor's page
+ * thumbnail panel), the viewport, the sheet, the status bar, the empty state, the
+ * buttons, the focus rings, both dark-mode entry points and the phone breakpoints
+ * all exist already and are reused by using their classes.
+ *
+ * An earlier revision of this page did the opposite: it invented a parallel
+ * `.slides-*` vocabulary for all of that and then shipped with no stylesheet for
+ * any of it, so the page rendered as bare markup. The correction is the same
+ * finding the engine rests on (`156` §1) — a slide and a page share most of their
+ * machinery, and a second copy of shared machinery is a liability rather than a
+ * shortcut.
+ *
+ * `style_contract.test.mjs` fails the build if this file ever declares a selector
+ * `style.css` already owns, which is what keeps that true as this page grows.
+ *
+ * Colour comes only from tokens, never a literal — `style.css`'s own colour
+ * contract, so this page has a dark mode for free. */
+
+/* The slide surface. `.page` gives it the sheet's box; this says the two things
+ * a slide does not share with a document page.
+ *
+ * `cursor: default` because the slide cannot be edited and a text cursor over it
+ * would promise a caret this page has no way to produce — the same honesty
+ * `.pages` applies to the desk around it. `height: auto` because `slides.mjs`
+ * sets the backing store and the CSS box explicitly from the deck's own
+ * `p:sldSz` aspect ratio, and `.page`'s `height: 100%` would stretch that to the
+ * wrapper instead. */
+.slide-canvas {
+  height: auto;
+  cursor: default;
+}
+
+/* A document page's sheet is sized by the page setup, so `.page-wrap` fills the
+ * desk column it sits in. A SLIDE's sheet is sized by the slide — `slides.mjs`
+ * sets the canvas box from the deck's own `p:sldSz` aspect ratio and the window's
+ * width — so the wrapper shrink-wraps the canvas instead. Without this the paper
+ * and its shadow run the full width of the viewport behind a narrower slide,
+ * which reads as a bug in the renderer rather than as a margin. */
+.slide-sheet {
+  width: fit-content;
+}
+
+/* A hidden slide is still IN the deck — retained, saved and sortable — so the
+ * sorter marks it rather than omitting it, which would leave an author unable to
+ * see what their own file contains. A badge and not dimming alone: dimming is
+ * invisible to anyone who cannot compare it against a neighbour. */
+.slide-thumb-hidden {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The deck's name is shown, never typed: this page has no operation set, so the
+ * title is a read-only input rather than a renameable one. Without this it keeps
+ * the editor's text cursor and looks like a field that does nothing. */
+.doc-title[readonly] {
+  cursor: default;
+}

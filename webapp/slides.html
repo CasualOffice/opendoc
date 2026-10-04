@@ -20,10 +20,24 @@
     <!-- @end brand-icons -->
     <link rel="canonical" href="https://opendoc.casualoffice.org/slides.html" />
     <link rel="stylesheet" href="./src/fonts.css" />
+    <!-- THE EDITOR'S STYLESHEET, and it is the whole chrome.
+         This page is built from the shell `editor.html` already has — `.bar`
+         with its brand/title/docstate/apptools grid, `.workarea` with `.rail`
+         and `.side-panel`, `.viewport`, `.footer` — because that shell is where
+         the investment is: the tokens, both dark-mode entry points, the focus
+         rings, the status-bar disclosure ladder and the phone breakpoints all
+         come with it. An earlier revision of this page invented a parallel
+         `.slides-*` vocabulary and shipped with no rules for any of it; the
+         lesson is the engine's own (`156` §1), that a second copy of something
+         shared is the thing to avoid, not a shortcut to it. -->
     <link rel="stylesheet" href="./src/style.css" />
     <!-- After style.css so a white-labelled host's tokens win by ordinary
          cascade order, with no `!important` and no script. -->
     <link rel="stylesheet" href="./src/brand.css" />
+    <!-- What a DECK needs and a document does not: the slide surface itself.
+         Everything else on this page is the editor's. `style_contract` fails
+         the build if this file ever redeclares a selector `style.css` owns. -->
+    <link rel="stylesheet" href="./src/slides.css" />
     <!-- Start the engine download at parse time rather than after the module
          graph has been fetched, parsed and evaluated: without these the two
          large transfers run back to back instead of together. `as="fetch"` with
@@ -37,102 +51,195 @@
     <link rel="modulepreload" href="./pkg/casual_pres_wasm.js" />
     <link rel="preload" as="fetch" type="application/wasm" crossorigin href="./pkg/casual_pres_wasm_bg.wasm" />
   </head>
-  <body>
+  <body class="compact-mode">
     <a data-i18n="slides.skipToSlide" class="skip-link" href="#slideCanvas">Skip to the slide</a>
+
+    <!-- `.bar` is the editor's header, used as the component it is rather than
+         overridden: `.document-chrome` is `display: contents`, so the title row
+         and the two control clusters place themselves into its named grid
+         areas (title / docstate / apptools) directly. -->
     <header class="bar">
       <div class="brand">
         <!-- @generated brand-mark -->
       <span class="brand-logo" aria-hidden="true"></span>
         <!-- @end brand-mark -->
       </div>
-      <div class="slides-chrome">
-        <!-- A label element rather than a styled button wrapping the input: the
-             input stays the real control, so it keeps its own keyboard
-             behaviour and its own accessible name instead of needing both
-             rebuilt in script. -->
-        <label class="slides-open" for="slidesFile" data-i18n="slides.chooseFile">Open a presentation</label>
-        <input id="slidesFile" class="slides-file" type="file" accept=".pptx,.potx,.ppsx" />
-        <!-- Disabled until a deck is open: a save button that throws because
-             there is nothing to save is worse than one that is visibly not
-             available yet. -->
-        <button id="slidesSave" type="button" data-i18n="slides.save" data-i18n-title="slides.saveHelp" title="Writes the deck back out, carrying the parts this build does not model through unchanged" disabled>Save a copy</button>
-        <!-- `aria-live="polite"` because the position changes under the
-             reader's own keystroke: a screen reader should hear the new slide
-             without the focus moving, and `assertive` would interrupt them
-             mid-word on every arrow key. -->
-        <output id="slidesPosition" class="slides-position" aria-live="polite"></output>
+      <div class="document-chrome">
+        <div class="document-title-row">
+          <!-- `readonly`, not a `<span>`: this page cannot rename a deck, because
+               it cannot EDIT one — `casual-pres-wasm` exposes no operation set,
+               and a surface that could type would be the defect `105` CQ-002
+               records. A read-only input says exactly that while reusing
+               `.doc-title` unchanged; a span would need a parallel rule for the
+               same appearance. -->
+          <input
+            class="doc-title"
+            id="deckTitle"
+            type="text"
+            readonly
+            aria-readonly="true"
+            autocomplete="off"
+            spellcheck="false"
+            data-i18n-label="slides.deckName"
+            aria-label="Presentation name"
+            data-i18n-placeholder="slides.noDeck"
+            placeholder="No presentation open"
+          />
+        </div>
+        <!-- The application menus. `createMenuBar` from `command_menu.mjs` drives
+             these — the same module the editor uses — so a row's label, its
+             enablement and its shortcut all come from the one command registry
+             rather than from a second set of listeners (`105` UX-004/UX-005). -->
+        <nav data-i18n-label="slides.appMenus" id="appMenuBar" class="app-menu-bar" aria-label="Application menus">
+          <button data-i18n="slides.menuFile" type="button" class="app-menu-button" data-menu="file" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">File</button>
+          <button data-i18n="slides.menuSlide" type="button" class="app-menu-button" data-menu="slide" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Slide</button>
+          <button data-i18n="slides.menuView" type="button" class="app-menu-button" data-menu="view" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">View</button>
+        </nav>
+        <div class="controls-doc">
+          <!-- The fidelity count, in the chip the editor already uses for its
+               import/export findings. Same claim, same vocabulary: a neutral
+               status chip and never an alert, because a converter cannot make
+               this claim at all and dressing it as an error would read as a
+               failure rather than as the advantage it is. -->
+          <span id="slidesFidelity" class="compatibility-status" role="status" hidden></span>
+        </div>
+        <div class="controls-app">
+          <!-- The real control, styled by the editor's own `.btn` pair. A label
+               over the input keeps the input's keyboard behaviour and accessible
+               name instead of rebuilding both in script. -->
+          <label class="btn btn-primary" for="slidesFile">Open a presentation</label>
+          <input id="slidesFile" class="sr-only" type="file" accept=".pptx,.potx,.ppsx" />
+          <!-- Disabled until a deck is open: a save button that throws because
+               there is nothing to save is worse than one that is visibly not
+               available yet. -->
+          <button id="slidesSave" type="button" class="btn" data-i18n-title="slides.saveHelp" title="Writes the deck back out, carrying the parts this build does not model through unchanged" disabled>Save a copy</button>
+        </div>
       </div>
     </header>
 
-    <main class="slides-main">
-      <!-- The sorter is a LIST, not a set of buttons in a div: a screen reader
-           needs the count and the position, and `role="list"` with one item per
-           slide is what carries both without any script announcing them. -->
-      <nav class="slides-sorter" aria-labelledby="slidesSorterHeading">
-        <h2 id="slidesSorterHeading" class="visually-hidden" data-i18n="slides.sorter">Slides in this deck</h2>
-        <ol id="slidesSorter" class="slides-strip"></ol>
+    <div data-i18n-label="slides.appMenu" id="appMenuPopover" class="app-menu-popover" role="menu" aria-label="Application menu" hidden></div>
+
+    <!-- EMPTY in markup on purpose, exactly as `editor.html`'s is: every control
+         is rendered from `SLIDE_TOOLBAR` and names a command id that exists in
+         the registry, so a command has one enablement path, one activation path
+         and one pressed-state source whichever surface is showing. Hand-binding
+         a button here would recreate the drift `105` UX-004/UX-005 records. -->
+    <div data-i18n-label="slides.toolbar" class="compact-toolbar" id="compactToolbar" role="toolbar"
+         aria-label="Slide toolbar" aria-controls="slideCanvas"></div>
+
+    <!-- The editor's workarea: a rail of panel toggles, the panels themselves,
+         and the viewport. The slide sorter IS the editor's page-thumbnail panel
+         (`.side-panel.pages-panel` + `.pages-grid` + `.page-thumb`), which is
+         the same thing for the same purpose — a column of page previews you
+         click to navigate — so it is reused rather than rebuilt.
+
+         No ribbon and no compact toolbar on this page YET, and that is a stated
+         phase rather than a different design: both are driven by `main.js`'s
+         command registry, and this facade exposes no operation set at all, so
+         every band would be empty. They arrive with the shared chrome module. -->
+    <div class="workarea">
+      <nav data-i18n-label="slides.deckNavigation" class="rail" aria-label="Deck navigation">
+        <button id="railSlides" type="button" class="rail-btn" title="Slides in this deck" aria-label="Slides in this deck" aria-pressed="true"><span class="ms" aria-hidden="true">auto_stories</span><span data-i18n="slides.railSlides">Slides</span></button>
+        <button id="railFidelity" type="button" class="rail-btn" title="What was not recovered" aria-label="What was not recovered" aria-pressed="false" disabled><span class="ms" aria-hidden="true">fact_check</span><span data-i18n="slides.railFidelity">Fidelity</span></button>
       </nav>
 
-      <section class="slides-stage" aria-labelledby="slidesCanvasHeading">
-        <h2 id="slidesCanvasHeading" class="visually-hidden" data-i18n="slides.canvas">The current slide</h2>
-        <!-- `tabindex="0"` so the stage itself takes the arrow keys: paging a
-             deck is the primary interaction and it must not require tabbing
-             into a thumbnail first. The canvas paints PIXELS and carries no
-             text, so the structure a screen reader reads is the mirror below
-             rather than this element. -->
-        <div id="slideStage" class="slide-stage" tabindex="0">
-          <canvas id="slideCanvas" class="slide-canvas"></canvas>
-          <p id="slidesEmpty" class="slides-empty" data-i18n="slides.empty">Open a .pptx to see it rendered by this engine</p>
+      <aside id="slidesSorterPanel" class="side-panel pages-panel" aria-label="Slides in this deck">
+        <div class="panel-head">
+          <span class="panel-title">Slides</span>
         </div>
+        <!-- `role="list"` is not needed: `.pages-grid` holds the same
+             `.page-thumb` buttons the editor's page panel does, and the position
+             a reader needs is announced by the footer's live region and by
+             `aria-current` on the thumbnail. -->
+        <div id="slidesSorter" class="panel-body pages-grid"></div>
+      </aside>
 
-        <!-- The slide's text, off screen, as STRUCTURE.
-             A rendered slide is pixels, so without this a screen reader gets a
-             deck it cannot read at all while the text sits in the model the
-             whole time — the "modelled but unreachable" shape `SKILL` §9.4
-             names. `editor.html` carries the document's equivalent
-             (`#a11yDocument`) and this is the same contract: visually hidden,
-             `role="document"`, never an editing surface, rebuilt from the
-             engine's own projection on every slide change.
-
-             Two regions, because a slide's own words and the furniture it
-             inherits from its layout and master are different kinds of thing:
-             the second repeats on every slide in the deck, and interleaved a
-             reader would hear the same footer between every pair of slides. The
-             inherited region is `hidden` until there is something in it, since
-             an empty labelled region announces itself as one. -->
-        <div
-          id="slideText"
-          class="visually-hidden"
-          role="document"
-          data-i18n-label="slides.textMirror"
-          aria-label="The current slide's text (read-only for assistive technology)"
-        >
-          <div id="slideTextOwn"></div>
-          <!-- The label is written by the script, which puts the item count in
-               it; this one is the floor for a reader who reaches the region
-               before the first slide is painted. -->
-          <div id="slideTextInherited" role="region" aria-label="Repeated on every slide" hidden></div>
+      <aside id="slidesFidelityPanel" class="side-panel" hidden aria-label="What was not recovered">
+        <div class="panel-head">
+          <span class="panel-title">Fidelity</span>
+          <button data-i18n-title="slides.closePanel" data-i18n-label="slides.closePanel" id="slidesFidelityClose" type="button" class="panel-close" title="Close" aria-label="Close"><span class="ms" aria-hidden="true">close</span></button>
         </div>
+        <div class="panel-body">
+          <p id="slidesFidelitySummary" class="muted"></p>
+          <ul id="slidesFidelityList"></ul>
+        </div>
+      </aside>
 
-        <!-- The fidelity report. Open by default when there is something to
-             report and absent when there is not: a disclosure a reader has to
-             find is a disclosure most readers never see, and this is the one
-             claim this engine can make that a converter cannot. -->
-        <section id="slidesFidelity" class="slides-fidelity" hidden>
-          <p id="slidesFidelitySummary" class="slides-fidelity-summary"></p>
-          <details id="slidesFidelityDetails">
-            <summary data-i18n="slides.fidelityToggle">Show what was not recovered</summary>
-            <ul id="slidesFidelityList" class="slides-fidelity-list"></ul>
-          </details>
-        </section>
+      <!-- `tabindex="0"` so the viewport itself takes the arrow keys: paging a
+           deck is the primary interaction and it must not require tabbing into a
+           thumbnail first. The canvas paints PIXELS and carries no text, so the
+           structure a screen reader reads is the mirror below rather than this
+           element. -->
+      <main id="slideStage" class="viewport" tabindex="0">
+        <div id="slidesEmpty" class="drop">
+          <div class="drop-card">
+            <span class="ms drop-icon" aria-hidden="true">slideshow</span>
+            <p data-i18n="slides.empty" class="drop-title">Open a <strong data-i18n="slides.pptx">.pptx</strong> to see it rendered by this engine</p>
+            <p data-i18n="slides.emptyHelp" class="muted">Rendered entirely in your browser by the OpenDoc engine (WASM). Nothing is uploaded.</p>
+          </div>
+        </div>
+        <!-- `.page-wrap` is the editor's SHEET — paper background, page shadow,
+             corner radius — and a slide is a sheet for the same reason a page
+             is. The canvas takes `.page` for the sheet's own box. -->
+        <div id="slideSheet" class="page-wrap slide-sheet" hidden>
+          <canvas id="slideCanvas" class="page slide-canvas"></canvas>
+        </div>
+      </main>
+    </div>
 
-        <!-- A refusal, shown. The engine refuses a package it cannot read
-             correctly rather than opening it wrong, and a viewer that swallowed
-             that would turn a loud refusal into a blank page. `role="alert"`
-             because it is the answer to an action the reader just took. -->
-        <p id="slidesError" class="slides-error" role="alert" hidden></p>
-      </section>
-    </main>
+    <!-- The editor's status bar. The position readout lives here rather than in
+         the header for the reason the editor puts its page number here: it is
+         live state about where you are, not a control. -->
+    <footer class="footer">
+      <span class="foot-left">
+        <span id="status" class="status">Loading engine…</span>
+      </span>
+      <span class="foot-right">
+        <!-- `aria-live="polite"` because the position changes under the reader's
+             own keystroke: a screen reader should hear the new slide without the
+             focus moving, and `assertive` would interrupt them mid-word on every
+             arrow key. -->
+        <output id="slidesPosition" class="status" aria-live="polite"></output>
+        <!-- The zoom readout, where ONLYOFFICE's status bar and Google Slides'
+             bottom bar both put it. Not a live region: it changes under a
+             deliberate command, and announcing it would talk over the reader on
+             every step. -->
+        <span id="slidesZoom" class="status"></span>
+      </span>
+    </footer>
+
+    <!-- A refusal, announced. The engine refuses a package it cannot read
+         correctly rather than opening it wrong; the visible half of that is the
+         status bar above, and this is the half assistive technology hears. The
+         editor keeps its live regions at body level for the same reason `109`
+         UX-017 records: a container that becomes `display: none` at a narrow
+         width takes its live region out of the accessibility tree with it. -->
+    <p id="slidesError" class="sr-only" role="alert"></p>
+
+    <!-- The slide's text, off screen, as STRUCTURE.
+         A rendered slide is pixels, so without this a screen reader gets a deck
+         it cannot read at all while the text sits in the model the whole time —
+         the "modelled but unreachable" shape `SKILL` §9.4 names. `editor.html`
+         carries the document's equivalent (`#a11yDocument`) with the same
+         `.sr-only` class, the same `role="document"` and the same read-only
+         contract; this is that, for slides.
+
+         Two regions, because a slide's own words and the furniture it inherits
+         from its layout and master are different kinds of thing: the second
+         repeats on every slide in the deck, and interleaved a reader would hear
+         the same footer between every pair of slides. The inherited region is
+         `hidden` until there is something in it, since an empty labelled region
+         announces itself as one. -->
+    <div
+      id="slideText"
+      class="sr-only"
+      role="document"
+      data-i18n-label="slides.textMirror"
+      aria-label="The current slide's text (read-only for assistive technology)"
+    >
+      <div id="slideTextOwn"></div>
+      <div id="slideTextInherited" role="region" aria-label="Repeated on every slide" hidden></div>
+    </div>
 
     <script type="module" src="./src/slides_page.mjs"></script>
   </body>

@@ -180,6 +180,17 @@ fn open_deck(bytes: &[u8]) -> Result<WasmPresentation, String> {
     })
 }
 
+/// The most faces a host may register in one batch.
+///
+/// The document facade's number, deliberately: the two boundaries are provisioned
+/// by the same `web_fonts.mjs` from the same pinned revision, so a batch that is
+/// acceptable to one and refused by the other would be a difference with no cause
+/// a host could act on.
+const MAX_HOST_FONT_FACES: usize = 16;
+
+/// The most bytes a host may register in one batch.
+const MAX_HOST_FONT_BYTES: usize = 32 * 1024 * 1024;
+
 /// One paragraph of a slide's text, as the host sees it.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -397,6 +408,107 @@ impl WasmPresentation {
             .slides()
             .get(index)
             .is_some_and(|slide| slide.hidden)
+    }
+
+    /// Registers a bounded batch of host-provided fonts, so slide text can be
+    /// shaped with the faces the deck actually names.
+    ///
+    /// # Why this exists, and why its absence was a rendering bug
+    ///
+    /// This crate is built with `web-host-fonts` by DEFAULT, which drops the
+    /// embedded face blobs from the WebAssembly bundle — about two megabytes
+    /// every visitor would otherwise download. The document facade pairs that
+    /// with `registerFonts`, and `webapp/src/web_fonts.mjs` fetches the faces
+    /// from the pinned revision and hands them over before the first paint.
+    ///
+    /// The presentation facade shipped with the feature and **without the
+    /// seam**, so there was no way to give it a font at all: the shaper is
+    /// `ParleyShaper::without_system_fonts`, deliberately blind to the host's
+    /// installed faces, and the bundle it would otherwise have fallen back to
+    /// was gone. Slide text was shaped against an empty registry. That is not a
+    /// fidelity gap in the engine — the glyphs, the cascade and the layout are
+    /// all correct — it is the engine being handed nothing to draw with.
+    ///
+    /// `bytes` is the concatenation of every font blob and `lengths` gives each
+    /// blob's byte length in the same order. The packed form keeps the JS↔WASM
+    /// boundary to one call and one copy rather than one per face, which is the
+    /// same trade the document side documents.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the batch exceeds `MAX_HOST_FONT_FACES` (16) or
+    /// `MAX_HOST_FONT_BYTES` (32 MiB), when a face is empty, or when `lengths`
+    /// does not
+    /// account for exactly `bytes`. A malformed batch is refused whole rather
+    /// than partly registered: half a font set is a deck rendered in a mixture
+    /// of the right faces and the wrong ones, which is harder to diagnose than
+    /// no fonts at all.
+    #[wasm_bindgen(js_name = registerFonts)]
+    pub fn register_fonts(&mut self, bytes: &[u8], lengths: Vec<u32>) -> Result<(), JsValue> {
+        self.register_fonts_inner(bytes, &lengths).map_err(to_js)
+    }
+
+    /// Registers one host-provided face and wires it as a script fallback.
+    ///
+    /// The companion to [`WasmPresentation::register_fonts`] for the coverage
+    /// case: a deck whose text runs into a script the named families do not
+    /// cover needs a face registered FOR that script rather than by family, or
+    /// the shaper has a name it cannot satisfy and falls through to nothing.
+    ///
+    /// `scripts` may be empty, which registers the face by family alone.
+    #[wasm_bindgen(js_name = registerFallbackFont)]
+    pub fn register_fallback_font(&mut self, bytes: &[u8], scripts: Vec<String>) {
+        let refs: Vec<&str> = scripts.iter().map(String::as_str).collect();
+        self.shaper.register_fallback_font(bytes.to_vec(), &refs);
+    }
+
+    /// The fallible half of [`WasmPresentation::register_fonts`], free of
+    /// `JsValue`.
+    ///
+    /// No re-layout at the end, which is the one place this differs from the
+    /// document facade's: a deck has no pagination to invalidate, and every
+    /// slide is laid out on demand by `renderSlide`. So registering a face
+    /// before the first paint costs nothing, and registering one after it takes
+    /// effect on the next render rather than needing a reflow here.
+    fn register_fonts_inner(&mut self, bytes: &[u8], lengths: &[u32]) -> Result<(), String> {
+        if lengths.is_empty() {
+            return Ok(());
+        }
+        if lengths.len() > MAX_HOST_FONT_FACES {
+            return Err(format!(
+                "font batch has {} faces; limit is {MAX_HOST_FONT_FACES}",
+                lengths.len()
+            ));
+        }
+        if bytes.len() > MAX_HOST_FONT_BYTES {
+            return Err(format!(
+                "font batch has {} bytes; limit is {MAX_HOST_FONT_BYTES}",
+                bytes.len()
+            ));
+        }
+        let mut total = 0usize;
+        for &length in lengths {
+            let length = usize::try_from(length).map_err(|_| "font length is too large")?;
+            if length == 0 {
+                return Err("font batch contains an empty face".into());
+            }
+            total = total
+                .checked_add(length)
+                .ok_or_else(|| "font batch length overflow".to_owned())?;
+        }
+        if total != bytes.len() {
+            return Err(format!(
+                "font batch lengths total {total} bytes, but payload has {}",
+                bytes.len()
+            ));
+        }
+        let mut start = 0usize;
+        for &length in lengths {
+            let end = start + length as usize;
+            self.shaper.register_font(bytes[start..end].to_vec());
+            start = end;
+        }
+        Ok(())
     }
 
     /// One slide's text as STRUCTURE, for an accessibility mirror.

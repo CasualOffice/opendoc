@@ -1298,6 +1298,64 @@ export const EN_STRINGS = Object.freeze({
   // reason the fidelity count is one, and the count is here rather than in the
   // markup because it is the part a translation cannot carry: a reader deciding
   // whether to walk into the region wants to know how much is in it.
+  // ---- The command registry (`slide_commands.mjs`) --------------------------
+  //
+  // These four were MARKUP-declared until the registry existed, and had to move.
+  // A site page's English is its markup, so `startSiteLocalisation` loads no
+  // English catalogue at all — which means `t()` on a markup-homed key returns
+  // the key itself, and the toolbar rendered four buttons labelled
+  // "slides.chooseFile". Measured, not reasoned. They are the registry's labels
+  // now and the markup takes its text from the registry, so there is one home
+  // and one source for each.
+  "slides.chooseFile": "Open a presentation",
+  "slides.save": "Save a copy",
+  "slides.sorter": "Slides",
+  "slides.fidelityPanel": "Fidelity",
+  //
+  // Every control on this page names a command id and the id resolves in ONE
+  // registry, so a label, an enablement rule and a shortcut cannot differ
+  // between the menu bar and the toolbar. These are that registry's labels.
+  // They are script-side because the registry is data, not markup: the same
+  // string reaches a menu row, a toolbar tooltip and the command palette.
+  // The sorter's window note. A windowed navigator must SAY it is windowed —
+  // showing a slice of a deck as if it were the deck is the same lie the
+  // document's page navigator refuses to tell.
+  "slides.window": "Slides {start}–{end} of {total}. Move through the deck to see others here.",
+  "slides.firstSlide": "First slide",
+  "slides.previousSlide": "Previous slide",
+  "slides.nextSlide": "Next slide",
+  "slides.lastSlide": "Last slide",
+  "slides.zoomIn": "Zoom in",
+  "slides.zoomOut": "Zoom out",
+  // "Fit slide" shows the whole surface; "Fit width" fills the desk and lets the
+  // slide run past the fold. Both reference products offer exactly this pair,
+  // and a presentation defaults to the WHOLE slide where a document defaults to
+  // page width — a slide is a fixed surface meant to be seen at once.
+  "slides.fitSlide": "Fit slide",
+  "slides.fitWidth": "Fit width",
+  // Why a command is unavailable, never a control that silently does nothing
+  // (docs/63). With no deck open there is nothing to move through, zoom or save.
+  "slides.noDeckReason": "Open a presentation first",
+  // The status bar's zoom readout. A percentage OF THE FIT rather than an
+  // absolute scale: a 4:3 deck and a 16:9 deck at the same window width are
+  // different pixel sizes, and only the multiplier means the same thing to a
+  // reader of either.
+  "slides.zoomReadout": "{percent}%",
+  // The menu bands. A band is a group of rows answering the same question, which
+  // is the rule the editor's own taxonomy states — so these name the question,
+  // not the commands.
+  // The toolbar's own group names. Never displayed as text — they are the
+  // `aria-label` of each group, which is how a screen reader is told a bar has
+  // structure rather than being handed eleven unrelated buttons.
+  "slides.toolbarGroupFile": "File",
+  "slides.toolbarGroupSlide": "Slide",
+  "slides.toolbarGroupZoom": "Zoom",
+  "slides.toolbarGroupPanels": "Panels",
+  "slides.menuGroupMove": "Move",
+  "slides.menuGroupEnds": "Jump",
+  "slides.menuGroupZoom": "Zoom",
+  "slides.menuGroupFit": "Fit",
+  "slides.menuGroupPanels": "Panels",
   "slides.inheritedText.one": "Repeated on every slide: {count} item",
   "slides.inheritedText.other": "Repeated on every slide: {count} items",
   // Save carries every part the engine does not model through byte-for-byte, so

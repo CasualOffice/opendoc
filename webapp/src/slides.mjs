@@ -26,6 +26,9 @@
 // catch it.
 
 import { t } from "./i18n.mjs";
+// ONE zoom ladder for the whole product. `view_zoom.mjs` owns it and the
+// document editor's View band walks the same eight rungs.
+import { ZOOM_STEPS, nextZoomStep } from "./view_zoom.mjs";
 
 /// A slide surface is stated in EMU; 914400 EMU is one inch.
 const EMU_PER_INCH = 914400;
@@ -44,7 +47,22 @@ const THUMBNAIL_DPI = 12;
 /// the same tab replaces it wholly — a half-replaced viewer showing one deck's
 /// slide count and another's pixels is the failure this shape prevents.
 export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
-  const state = { deck: null, index: 0 };
+  // `zoom` is a MULTIPLIER over the fit, not an absolute scale: a deck's own
+  // surface is the thing being fitted, so "100%" on a 4:3 deck and on a 16:9 deck
+  // at the same window width are different pixel sizes and only the multiplier is
+  // the same thing to a reader. `fit` says what 1.0 means — the width of the
+  // desk, or the whole slide — which is the pair ONLYOFFICE's status bar and
+  // Google Slides' zoom menu both offer.
+  const state = { deck: null, index: 0, zoom: 1, fit: "slide" };
+
+  /// The deck's own surface, in EMU, for a caller that needs the aspect ratio
+  /// before anything is painted — the sorter sizes each card's box from it.
+  function surfaceWidthEmu() {
+    return state.deck ? state.deck.slideWidthEmu : 0;
+  }
+  function surfaceHeightEmu() {
+    return state.deck ? state.deck.slideHeightEmu : 0;
+  }
 
   /// Opens bytes as a deck, or reports why not.
   ///
@@ -102,15 +120,72 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     return out;
   }
 
-  /// The CSS box a slide should occupy inside `availableWidth`, preserving the
-  /// deck's own aspect ratio.
-  function cssSize(availableWidth) {
+  /// The CSS box a slide should occupy inside `availableWidth` x `availableHeight`,
+  /// preserving the deck's own aspect ratio and applying the current zoom.
+  ///
+  /// `availableHeight` is optional and only consulted by the `slide` fit, which
+  /// is the one that has to see both axes: fitting the WIDTH of a 16:9 deck into
+  /// a tall window leaves the slide taller than the desk and the bottom of it
+  /// below the fold, which is why both reference products default a presentation
+  /// to whole-slide and a document to page-width.
+  function cssSize(availableWidth, availableHeight = Infinity) {
     if (!state.deck) return { width: 0, height: 0 };
     const widthEmu = state.deck.slideWidthEmu;
     const heightEmu = state.deck.slideHeightEmu;
     if (widthEmu <= 0 || heightEmu <= 0) return { width: 0, height: 0 };
-    const width = Math.max(1, Math.floor(availableWidth));
+    let width = Math.max(1, Math.floor(availableWidth));
+    if (state.fit === "slide" && Number.isFinite(availableHeight) && availableHeight > 0) {
+      // The narrower of the two constraints wins, which is what "fit the slide"
+      // means and what makes the whole surface visible without scrolling.
+      width = Math.min(width, Math.floor((availableHeight * widthEmu) / heightEmu));
+    }
+    width = Math.max(1, Math.round(width * state.zoom));
     return { width, height: Math.max(1, Math.round((width * heightEmu) / widthEmu)) };
+  }
+
+  /// The current zoom, as a percentage of the fit, for a readout.
+  function zoomPercent() {
+    return Math.round(state.zoom * 100);
+  }
+
+  /// Steps the zoom one rung up or down THE PRODUCT'S ladder.
+  ///
+  /// `nextZoomStep` and `ZOOM_STEPS` are `view_zoom.mjs`'s — the same eight rungs
+  /// the document editor's View band walks. An earlier revision of this file
+  /// declared its own nine-rung ladder, which meant "150%" in the deck viewer and
+  /// "150%" in the editor were different steps of different sequences in one
+  /// product. The clamp is this surface's, because the ends of the ladder belong
+  /// to the shell rather than to the arithmetic — here it simply refuses to move
+  /// past them, which is what a reader holding the control expects.
+  function stepZoom(direction) {
+    const next = nextZoomStep(state.zoom, direction, () => state.zoom);
+    state.zoom = Math.min(ZOOM_STEPS.at(-1), Math.max(ZOOM_STEPS[0], next));
+    return state.zoom;
+  }
+
+  /// Sets what 1.0 means — the whole slide, or the desk's width — and returns to
+  /// it. Changing the fit always resets the multiplier, because "fit the slide at
+  /// 150%" is not a fit.
+  function setFit(fit) {
+    state.fit = fit === "width" ? "width" : "slide";
+    state.zoom = 1;
+    return state.fit;
+  }
+
+  /// Which fit is in force, so a menu can mark it.
+  function currentFit() {
+    return state.fit;
+  }
+
+  /// Whether a zoom step in `direction` would change anything, so a control can
+  /// be disabled rather than dead at the end of the ladder.
+  function canZoom(direction) {
+    return direction > 0 ? state.zoom < ZOOM_STEPS.at(-1) : state.zoom > ZOOM_STEPS[0];
+  }
+
+  /// The zoom, as a fraction, for a caller that reflects a menu.
+  function zoomFactor() {
+    return state.zoom;
   }
 
   /// The dpi that fills `cssWidth` CSS pixels at `devicePixelRatio`.
@@ -126,9 +201,9 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
   }
 
   /// Renders the current slide into `canvas`.
-  function paint(canvas, availableWidth) {
+  function paint(canvas, availableWidth, availableHeight = Infinity) {
     if (!state.deck) return false;
-    const css = cssSize(availableWidth);
+    const css = cssSize(availableWidth, availableHeight);
     if (css.width === 0) return false;
     const bitmap = state.deck.renderSlide(state.index, dpiFor(css.width));
     // Dimensions before pixels, for the reason `paintThumbnail` records: `rgba`
@@ -210,6 +285,18 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     }
   }
 
+  /// Hands a packed batch of host fonts to the open deck.
+  ///
+  /// A passthrough rather than the viewer doing the fetching: which faces to
+  /// provision is the PAGE's policy (`web_fonts.mjs` owns the manifest and the
+  /// pinned revision), while owning the deck handle is this module's. Returns
+  /// false when nothing is open, so a caller need not race the open.
+  function registerFonts(bytes, lengths) {
+    if (!state.deck) return false;
+    state.deck.registerFonts(bytes, lengths);
+    return true;
+  }
+
   /// Saves the deck, carrying every part the engine does not model through.
   function save() {
     if (!state.deck) return null;
@@ -255,6 +342,16 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     paint,
     paintThumbnail,
     slideText,
+    cssSizeFor: cssSize,
+    surfaceWidthEmu,
+    surfaceHeightEmu,
+    zoomPercent,
+    zoomFactor,
+    registerFonts,
+    stepZoom,
+    setFit,
+    currentFit,
+    canZoom,
     findings,
     save,
     indexForKey,
