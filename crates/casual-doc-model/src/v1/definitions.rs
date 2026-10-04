@@ -21,6 +21,8 @@ use super::FieldUpdateState;
 use super::NumberingResolver;
 // Same rule: the typed chart projection's own imports go on their own line.
 use super::{Chart, ChartId};
+// Own line (anti-conflict): the shape fill/line side table's payload.
+use super::ShapeFillDetail;
 // Own line (anti-conflict): the shape theme-style side table's key.
 use crate::NodeId;
 
@@ -1426,6 +1428,25 @@ pub struct Definitions {
     /// byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub shape_styles: DefinitionMap<NodeId, ShapeStyleRef>,
+    /// The fill-and-line detail of a shape that [`Fill`](super::Fill) and
+    /// [`ShapeStroke`](super::ShapeStroke) cannot hold — a shape `a:blipFill` or
+    /// `a:pattFill`, the `a:gradFill` geometry a
+    /// [`GradientKind`](super::GradientKind) discards, and the `a:ln`
+    /// cap/join/compound/`a:custDash` — keyed by the shape's node id.
+    ///
+    /// A side table for the reason [`Definitions::shape_styles`] is one, and the
+    /// constraint is sharper here: a new `Fill` variant breaks an exhaustive
+    /// `match` in two other crates, and a `Vec` on the `Copy` `ShapeStroke`
+    /// breaks every literal of it in eight (`SKILL` §5a shape 1).
+    ///
+    /// **Retention, not reach.** Nothing outside import/export reads this, so
+    /// these shapes still paint as they did — unfilled, solid-dashed, single-line,
+    /// concentric — and the import report says so per construct. What it buys is
+    /// that a save no longer destroys the construct. `docs/156` §6 row 0.3 stays
+    /// open until layout consumes it. Additive: omitted when empty so existing
+    /// snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub shape_fill_detail: DefinitionMap<NodeId, ShapeFillDetail>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]

@@ -274,6 +274,37 @@ impl Reporter {
         );
     }
 
+    /// Reports a shape fill or outline construct that this build imports and
+    /// re-emits but cannot PAINT — one finding per construct, with `reason`
+    /// naming which part of it is not drawn.
+    ///
+    /// `Degraded`, for the same reason [`Reporter::report_theme_style_unpainted`]
+    /// is: the shape is still placed, still sized and still drawn, it just is not
+    /// wearing the appearance the file asked for. A picture-filled shape paints
+    /// unfilled, a `cmpd="dbl"` outline paints single, an `a:custDash` paints
+    /// solid, and a `path="shape"` gradient paints concentric.
+    ///
+    /// The retention half of the disposition understates this case, and that is
+    /// deliberate: the construct IS retained in `Definitions::shape_fill_detail`
+    /// and semantic export re-emits it, so a save does not destroy it even on the
+    /// regenerating path. What is lost is the render, which is why this reports at
+    /// all rather than staying silent on the strength of the round trip.
+    ///
+    /// `reason` becomes the location's attribute, which is the only field the
+    /// report carries that can say *which* part while keeping one feature name and
+    /// one occurrence count — the shape [`Reporter::report_watermark`] uses.
+    pub(crate) fn report_shape_appearance_unpainted(&mut self, construct: &str, reason: &str) {
+        self.inner.record(
+            format!("shape/{construct}"),
+            FeatureLocation {
+                part_name: None,
+                element: Some(construct.to_owned()),
+                attribute: Some(reason.to_owned()),
+            },
+            Finding::Degraded,
+        );
+    }
+
     /// Builds the report, resolving each finding's preservation claim against
     /// `ledger`.
     pub(crate) fn into_report(self, ledger: &mut PreservationLedger) -> CompatibilityReport {

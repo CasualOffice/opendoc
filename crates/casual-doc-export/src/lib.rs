@@ -1485,6 +1485,472 @@ mod semantic_tests {
         assert_eq!(m1, m2, "shape gradient fills survive write -> reopen");
     }
 
+    // --- Shape fill and line detail (`docs/156` §6 row 0.3) -----------------
+
+    /// Imports a hand-built package and returns the model with its compatibility
+    /// report, so a guard can assert that an unpainted construct is REPORTED and
+    /// not merely round-tripped.
+    ///
+    /// `reopen` drops the report, and dropping it is exactly what let "the bytes
+    /// survive" stand in for "the loss is named" — the two claims this row has to
+    /// keep apart.
+    fn reopen_with_report(
+        bytes: &[u8],
+    ) -> (
+        casual_doc_model::v1::Document,
+        casual_doc_import::CompatibilityReport,
+    ) {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        let import = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap();
+        (import.document, import.report)
+    }
+
+    /// The main-document XML of an already-written package.
+    fn written_main_document(bytes: &[u8]) -> String {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        String::from_utf8(package.read_part("word/document.xml").unwrap()).unwrap()
+    }
+
+    /// The disposition the report gives `feature`, or `None` when it is silent
+    /// about it.
+    fn reported(
+        report: &casual_doc_import::CompatibilityReport,
+        feature: &str,
+    ) -> Option<(casual_doc_import::Disposition, String)> {
+        report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == feature)
+            .map(|entry| {
+                (
+                    entry.disposition,
+                    entry.location.attribute.clone().unwrap_or_default(),
+                )
+            })
+    }
+
+    /// A shape `a:blipFill` — a picture-filled shape — must import into the fill
+    /// side table, be written back, and be REPORTED as unpainted.
+    ///
+    /// Three distinct facts are checked here, and the third is a bug this row
+    /// found rather than a feature it added:
+    ///
+    /// 1. The stretch and the tile cases both survive, with their `a:fillRect`,
+    ///    `a:srcRect`, `a:alphaModFix` and tile offsets/scales/flip/alignment.
+    /// 2. The loss is named. Nothing paints a picture fill, so a round trip alone
+    ///    would be the "modeled but not consumed" claim `SKILL` §9.4 warns about.
+    /// 3. **The shape's blip no longer leaks onto the next picture.** A shape's
+    ///    `a:blipFill` satisfies the same `blipfill_depth > 0` guard a
+    ///    `pic:blipFill` does, so before this change the shape wrote its
+    ///    relationship id into `pending_embed` and the lone picture after it in
+    ///    the same `w:drawing` consumed it — drawing the shape's texture as a
+    ///    picture of its own.
+    #[test]
+    fn shape_picture_fill_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, CropRect, GroupChild, InlineNode, PictureFillMode, RectAlignment,
+            RelativeRect, TileFlip,
+        };
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Stretched"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:blipFill rotWithShape="0"><a:blip r:embed="rId7"><a:alphaModFix amt="20000"/></a:blip><a:srcRect l="5000" b="7000"/><a:stretch><a:fillRect l="-20000" r="10000"/></a:stretch></a:blipFill></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Tiled"/><wps:spPr><a:xfrm><a:off x="0" y="500000"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:blipFill><a:blip r:embed="rId7"/><a:tile tx="91440" ty="-45720" sx="50000" sy="75000" flip="xy" algn="ctr"/></a:blipFill></wps:spPr><wps:bodyPr/></wps:wsp><pic:pic><pic:nvPicPr><pic:cNvPr id="4" name="Pic 1"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId8"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image2.png"/></Relationships>"#;
+
+        let (m1, report) = reopen_with_report(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        let GroupChild::Shape(stretched) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let GroupChild::Shape(tiled) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+
+        let detail = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&stretched.id)
+            .expect("the stretched shape has fill detail");
+        let picture = detail.picture.expect("the stretched shape's picture fill");
+        assert_eq!(
+            picture.mode,
+            PictureFillMode::Stretch {
+                fill_rect: Some(RelativeRect {
+                    left: -20_000,
+                    top: 0,
+                    right: 10_000,
+                    bottom: 0,
+                }),
+            },
+            "the authored a:fillRect survives, negative edge and all"
+        );
+        assert_eq!(
+            picture.crop,
+            Some(CropRect {
+                left: 5_000,
+                top: 0,
+                right: 0,
+                bottom: 7_000,
+            })
+        );
+        assert_eq!(picture.opacity, Some(20_000));
+        assert_eq!(picture.rotate_with_shape, Some(false));
+        assert!(
+            stretched.fill.is_none(),
+            "a picture fill is not a `Fill`; the shape's own fill stays unset"
+        );
+
+        let tile_detail = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&tiled.id)
+            .expect("the tiled shape has fill detail");
+        assert_eq!(
+            tile_detail.picture.expect("the tiled picture fill").mode,
+            PictureFillMode::Tile {
+                offset_x_emu: 91_440,
+                offset_y_emu: -45_720,
+                scale_x: Some(50_000),
+                scale_y: Some(75_000),
+                flip: TileFlip::Xy,
+                alignment: RectAlignment::Center,
+            }
+        );
+
+        // The shape's blip must NOT have been consumed by the sibling picture in
+        // the same `w:drawing`: that picture names `rId8`, and its media reference
+        // has to be the second image part, not the shape fill's.
+        //
+        // The sibling has to be INSIDE this drawing for the guard to be able to
+        // fail, because `pending_embed` is cleared at every `w:drawing` — a picture
+        // in a later paragraph could never have consumed the leak, so a fixture
+        // built that way would pass with the bug reintroduced.
+        let GroupChild::Picture(sibling) = &group.children[2] else {
+            panic!("expected a grouped picture, got {:?}", group.children[2]);
+        };
+        let media = m1
+            .definitions()
+            .media
+            .get(&sibling.media)
+            .expect("the sibling picture's media reference");
+        assert_eq!(
+            media.part_name, "word/media/image2.png",
+            "the sibling picture keeps its own blip; the shape fill's did not leak"
+        );
+
+        let (disposition, reason) =
+            reported(&report, "shape/blipFill").expect("the picture fill is reported");
+        assert_eq!(
+            disposition,
+            casual_doc_import::Disposition::DegradedNotRetained,
+            "the shape is still drawn, just not with its picture fill"
+        );
+        assert_eq!(reason, "picture-fill-not-painted");
+
+        let written = write_document(
+            &m1,
+            &media_bytes(&["word/media/image1.png", "word/media/image2.png"]),
+        )
+        .unwrap();
+        let written_xml = written_main_document(&written);
+        assert!(
+            written_xml.contains(r#"<a:fillRect l="-20000" r="10000"/>"#),
+            "the fill rect is written back: {written_xml}"
+        );
+        assert!(
+            written_xml.contains(
+                r#"<a:tile tx="91440" ty="-45720" sx="50000" sy="75000" flip="xy" algn="ctr"/>"#
+            ),
+            "the tile is written back: {written_xml}"
+        );
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "shape picture fills survive write -> reopen");
+    }
+
+    /// A shape `a:pattFill` must import into the fill side table with its preset
+    /// token and both resolved colours, be written back, and be reported.
+    ///
+    /// The policy is deliberately the one `FillStyle::Pattern` already records for
+    /// the theme's pattern entry: retain, re-emit, report, do not paint. A shape
+    /// whose hatch is replaced by its foreground colour looks deliberate, and
+    /// looking deliberate is worse than being visibly unfilled.
+    #[test]
+    fn shape_pattern_fill_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, Rgba};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="500000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="500000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Hatched"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:pattFill prst="ltUpDiag"><a:fgClr><a:srgbClr val="112233"/></a:fgClr><a:bgClr><a:srgbClr val="FFEEDD"/></a:bgClr></a:pattFill></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+        let (m1, report) = reopen_with_report(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let pattern = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&shape.id)
+            .and_then(|detail| detail.pattern.clone())
+            .expect("the shape's pattern fill");
+        assert_eq!(pattern.preset, "ltUpDiag");
+        assert_eq!(
+            pattern.foreground,
+            Rgba {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+                a: 255,
+            }
+        );
+        assert_eq!(
+            pattern.background,
+            Rgba {
+                r: 0xFF,
+                g: 0xEE,
+                b: 0xDD,
+                a: 255,
+            }
+        );
+        assert!(
+            shape.fill.is_none(),
+            "a pattern is not substituted by a solid; the shape stays unfilled"
+        );
+
+        let (disposition, reason) =
+            reported(&report, "shape/pattFill").expect("the pattern fill is reported");
+        assert_eq!(
+            disposition,
+            casual_doc_import::Disposition::DegradedNotRetained
+        );
+        assert_eq!(reason, "pattern-fill-not-painted");
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written_xml = written_main_document(&written);
+        assert!(
+            written_xml.contains(
+                r#"<a:pattFill prst="ltUpDiag"><a:fgClr><a:srgbClr val="112233"/></a:fgClr><a:bgClr><a:srgbClr val="FFEEDD"/></a:bgClr></a:pattFill>"#
+            ),
+            "the pattern is written back whole: {written_xml}"
+        );
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "shape pattern fills survive write -> reopen");
+    }
+
+    /// The `a:ln` geometry `ShapeStroke` cannot hold — `@cap`, `@cmpd`, `@algn`,
+    /// the corner join and an authored `a:custDash` — must survive, be written in
+    /// `CT_LineProperties` order, and be reported as unpainted. A `a:custDash`
+    /// past the ceiling must be REFUSED whole rather than truncated.
+    #[test]
+    fn shape_line_geometry_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, CompoundLine, DashStop, GroupChild, InlineNode, LineCap, LineJoin,
+            PenAlignment,
+        };
+
+        // Shape 2 authors seventeen `a:ds` stops, one past `MAX_CUSTOM_DASH_STOPS`.
+        let mut over_limit = String::new();
+        for index in 0..17 {
+            over_limit.push_str(&format!(r#"<a:ds d="{}" sp="1000"/>"#, 1_000 + index * 100));
+        }
+        let document_xml = format!(
+            r#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Geometry"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:ln w="28575" cap="sq" cmpd="thickThin" algn="in"><a:solidFill><a:srgbClr val="203040"/></a:solidFill><a:custDash><a:ds d="400000" sp="150000"/><a:ds d="100000" sp="150000"/></a:custDash><a:miter lim="800000"/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Overlong"/><wps:spPr><a:xfrm><a:off x="0" y="500000"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:ln w="9525" cap="rnd"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:custDash>{over_limit}</a:custDash></a:ln></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+        let (m1, report) = reopen_with_report(&pack(document_xml.as_bytes(), document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        let GroupChild::Shape(geometry) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let GroupChild::Shape(overlong) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+
+        let stroke = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&geometry.id)
+            .and_then(|detail| detail.stroke.clone())
+            .expect("the shape's line detail");
+        assert_eq!(stroke.cap, Some(LineCap::Square));
+        assert_eq!(stroke.compound, Some(CompoundLine::ThickThin));
+        assert_eq!(stroke.align, Some(PenAlignment::Inset));
+        assert_eq!(
+            stroke.join,
+            Some(LineJoin::Miter {
+                limit: Some(800_000)
+            })
+        );
+        assert_eq!(
+            stroke.custom_dash,
+            vec![
+                DashStop {
+                    dash: 400_000,
+                    space: 150_000,
+                },
+                DashStop {
+                    dash: 100_000,
+                    space: 150_000,
+                },
+            ]
+        );
+
+        let overlong_detail = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&overlong.id)
+            .and_then(|detail| detail.stroke.clone())
+            .expect("the overlong shape still keeps its cap");
+        assert_eq!(overlong_detail.cap, Some(LineCap::Round));
+        assert!(
+            overlong_detail.custom_dash.is_empty(),
+            "a pattern past the ceiling is refused whole, not truncated into a \
+             pattern the document never stated"
+        );
+        let (refused, _) =
+            reported(&report, "custDash").expect("the refused dash pattern is reported");
+        assert_eq!(
+            refused,
+            casual_doc_import::Disposition::OmittedRejected,
+            "over the ceiling is a refusal, not a quiet drop"
+        );
+
+        let (disposition, reason) =
+            reported(&report, "shape/ln").expect("the line geometry is reported");
+        assert_eq!(
+            disposition,
+            casual_doc_import::Disposition::DegradedNotRetained
+        );
+        assert_eq!(
+            reason, "cap+cmpd+algn+join+custDash",
+            "one finding naming every part, not one finding per attribute"
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written_xml = written_main_document(&written);
+        assert!(
+            written_xml.contains(r#"<a:ln w="28575" cap="sq" cmpd="thickThin" algn="in">"#),
+            "the outline attributes are written back: {written_xml}"
+        );
+        let dash = written_xml
+            .find(r#"<a:custDash><a:ds d="400000" sp="150000"/><a:ds d="100000" sp="150000"/></a:custDash>"#)
+            .expect("the custom dash is written back");
+        let miter = written_xml
+            .find(r#"<a:miter lim="800000"/>"#)
+            .expect("the miter join is written back");
+        assert!(
+            dash < miter,
+            "CT_LineProperties order: the dash precedes the join"
+        );
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "shape line geometry survives write -> reopen");
+    }
+
+    /// The `a:gradFill` geometry `GradientKind` discards must survive.
+    ///
+    /// This is the one construct in row 0.3 where the old behaviour was not a drop
+    /// but a **silent change of appearance**: `GradientKind::Radial` cannot tell
+    /// `shape` from `circle` from `rect`, and the writer emitted `path="circle"`
+    /// for all three, so saving a shape-following gradient turned it concentric
+    /// with nothing reporting it.
+    #[test]
+    fn shape_gradient_path_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GradientPath, GroupChild, InlineNode, RelativeRect};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Shaped"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill flip="x" rotWithShape="1"><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst><a:path path="shape"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path></a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Scaled"/><wps:spPr><a:xfrm><a:off x="0" y="500000"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="00FF00"/></a:gs><a:gs pos="100000"><a:srgbClr val="000000"/></a:gs></a:gsLst><a:lin ang="2700000" scaled="1"/></a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+        let (m1, report) = reopen_with_report(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        let GroupChild::Shape(shaped) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let GroupChild::Shape(scaled) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+
+        let detail = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&shaped.id)
+            .and_then(|detail| detail.gradient)
+            .expect("the path gradient's geometry");
+        assert_eq!(detail.path, Some(GradientPath::Shape));
+        assert_eq!(
+            detail.fill_to_rect,
+            Some(RelativeRect {
+                left: 50_000,
+                top: 50_000,
+                right: 50_000,
+                bottom: 50_000,
+            })
+        );
+        assert_eq!(detail.rotate_with_shape, Some(true));
+
+        let linear = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&scaled.id)
+            .and_then(|detail| detail.gradient)
+            .expect("the linear gradient's geometry");
+        assert_eq!(linear.scaled, Some(true));
+        assert_eq!(linear.path, None);
+
+        let (disposition, reason) =
+            reported(&report, "shape/gradFill").expect("the gradient geometry is reported");
+        assert_eq!(
+            disposition,
+            casual_doc_import::Disposition::DegradedNotRetained
+        );
+        assert_eq!(reason, "gradient-geometry-not-painted");
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written_xml = written_main_document(&written);
+        assert!(
+            written_xml.contains(r#"<a:path path="shape">"#),
+            "the authored path kind is written back, not rewritten to circle: \
+             {written_xml}"
+        );
+        assert!(
+            !written_xml.contains(r#"<a:path path="circle"/>"#),
+            "no path gradient is silently turned concentric: {written_xml}"
+        );
+        assert!(
+            written_xml.contains(r#"<a:fillToRect l="50000" t="50000" r="50000" b="50000"/>"#),
+            "the fill-to rect is written back: {written_xml}"
+        );
+        assert!(
+            written_xml.contains(r#"<a:lin ang="2700000" scaled="1"/>"#),
+            "a:lin@scaled is written back: {written_xml}"
+        );
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "shape gradient geometry survives write -> reopen");
+    }
     #[test]
     fn inline_picture_border_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, InlineNode, Rgba, ShapeStroke};

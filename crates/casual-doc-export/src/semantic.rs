@@ -42,6 +42,9 @@ use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
+// Own line (anti-conflict): the shape fill/line side table re-emitted by
+// `write_shape_fill`/`write_outline` (`docs/156` §6 row 0.3).
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -71,6 +74,11 @@ use casual_doc_model::v1::{
     TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef,
     VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
     VerticalTextAlignment, WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+};
+use casual_doc_model::v1::{
+    CompoundLine, GradientDetail, GradientPath, LineCap, LineJoin, PatternFill, PenAlignment,
+    PictureFill, PictureFillMode, RectAlignment, RelativeRect, ShapeFillDetail, StrokeDetail,
+    TileFlip,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -975,7 +983,11 @@ pub fn export_package(
         document_rels_xml(
             &rels,
             &extras,
-            &part_media(document.body(), &available_media),
+            &part_media(
+                document.body(),
+                &available_media,
+                &definitions.shape_fill_detail,
+            ),
             &embedded_rels,
             retained_parts,
         )?,
@@ -1748,7 +1760,7 @@ fn notes_xml(
     // hyperlink minted here cannot take an id an image already holds.
     let mut own_media: Vec<MediaRel> = Vec::new();
     for (_, note) in notes.iter() {
-        for entry in part_media(&note.blocks, available_media) {
+        for entry in part_media(&note.blocks, available_media, &defs.shape_fill_detail) {
             if !own_media.iter().any(|(id, _)| *id == entry.0) {
                 own_media.push(entry);
             }
@@ -1794,7 +1806,7 @@ fn comments_xml(
     let mut w = new_writer();
     let mut own_media: Vec<MediaRel> = Vec::new();
     for (_, comment) in comments.iter() {
-        for entry in part_media(&comment.blocks, available_media) {
+        for entry in part_media(&comment.blocks, available_media, &defs.shape_fill_detail) {
             if !own_media.iter().any(|(id, _)| *id == entry.0) {
                 own_media.push(entry);
             }
@@ -1976,7 +1988,7 @@ fn header_footer_xml(
     // The images this part uses, reserved so a hyperlink minted inside the part
     // cannot be handed an id an image already holds — which is how a header's
     // `r:embed` came to resolve to a hyperlink.
-    let mut own_media = part_media(blocks, available_media);
+    let mut own_media = part_media(blocks, available_media, &defs.shape_fill_detail);
     // A picture watermark's image belongs to THIS part, exactly like a header
     // logo's: the `v:imagedata r:id` is resolved through `header{n}.xml.rels`.
     if let Some((rel_id, target)) = watermark.and_then(|shape| shape.image_rel.clone())
@@ -5464,32 +5476,61 @@ type EmbeddedRelEntry = (String, String, String, String);
 /// placeholder or reported the content invalid, re-importing dropped the picture
 /// entirely, and if the same header also carried a hyperlink the image's
 /// `r:embed` resolved to the hyperlink instead. Nothing was reported.
-fn collect_block_media(block: &BlockNode, out: &mut BTreeSet<MediaId>) {
+/// `fill_detail` is consulted because a shape's `a:blipFill` references media
+/// from a SIDE TABLE rather than from the node, so a walk that only looked at
+/// nodes emitted the ZIP part and the content-type entry for a picture-filled
+/// shape while emitting no `/image` relationship for it — and a re-import then
+/// could not resolve the `r:embed` and dropped the fill. That is the same class
+/// of defect the doc comment above describes, arriving through a new door.
+fn collect_block_media(
+    block: &BlockNode,
+    fill_detail: &DefinitionMap<NodeId, ShapeFillDetail>,
+    out: &mut BTreeSet<MediaId>,
+) {
     match block {
         BlockNode::Paragraph(paragraph) => {
             for inline in &paragraph.inlines {
-                collect_inline_media(inline, out);
+                collect_inline_media(inline, fill_detail, out);
             }
         }
         BlockNode::Table(table) => {
             for row in &table.rows {
                 for cell in &row.cells {
                     for block in &cell.blocks {
-                        collect_block_media(block, out);
+                        collect_block_media(block, fill_detail, out);
                     }
                 }
             }
         }
         BlockNode::Sdt(sdt) => {
             for block in &sdt.blocks {
-                collect_block_media(block, out);
+                collect_block_media(block, fill_detail, out);
             }
         }
         BlockNode::AltChunk(_) => {}
     }
 }
 
-fn collect_inline_media(inline: &InlineNode, out: &mut BTreeSet<MediaId>) {
+/// The media a shape's own fill references, if its side-table entry has a picture
+/// fill.
+fn collect_fill_detail_media(
+    id: NodeId,
+    fill_detail: &DefinitionMap<NodeId, ShapeFillDetail>,
+    out: &mut BTreeSet<MediaId>,
+) {
+    if let Some(picture) = fill_detail
+        .get(&id)
+        .and_then(|detail| detail.picture.as_ref())
+    {
+        out.insert(picture.media);
+    }
+}
+
+fn collect_inline_media(
+    inline: &InlineNode,
+    fill_detail: &DefinitionMap<NodeId, ShapeFillDetail>,
+    out: &mut BTreeSet<MediaId>,
+) {
     match inline {
         InlineNode::Drawing(drawing) => {
             out.insert(drawing.media);
@@ -5497,7 +5538,7 @@ fn collect_inline_media(inline: &InlineNode, out: &mut BTreeSet<MediaId>) {
         InlineNode::AnchoredDrawing(drawing) => {
             out.insert(drawing.media);
         }
-        InlineNode::Group(group) => collect_group_media(group, out),
+        InlineNode::Group(group) => collect_group_media(group, fill_detail, out),
         // An OLE/chart object's preview picture is media too, referenced through
         // `v:imagedata` rather than a drawing — so a walk that only looked for
         // drawings dropped its relationship.
@@ -5508,46 +5549,54 @@ fn collect_inline_media(inline: &InlineNode, out: &mut BTreeSet<MediaId>) {
         }
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                collect_inline_media(child, out);
+                collect_inline_media(child, fill_detail, out);
             }
         }
         InlineNode::Field(field) => {
             for child in &field.inlines {
-                collect_inline_media(child, out);
+                collect_inline_media(child, fill_detail, out);
             }
         }
         InlineNode::Revision(revision) => {
             for child in &revision.inlines {
-                collect_inline_media(child, out);
+                collect_inline_media(child, fill_detail, out);
             }
         }
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
-                collect_inline_media(child, out);
+                collect_inline_media(child, fill_detail, out);
             }
         }
         InlineNode::TextBox(text_box) => {
+            collect_fill_detail_media(text_box.id, fill_detail, out);
             for block in &text_box.blocks {
-                collect_block_media(block, out);
+                collect_block_media(block, fill_detail, out);
             }
         }
         _ => {}
     }
 }
 
-fn collect_group_media(group: &WordprocessingGroup, out: &mut BTreeSet<MediaId>) {
+fn collect_group_media(
+    group: &WordprocessingGroup,
+    fill_detail: &DefinitionMap<NodeId, ShapeFillDetail>,
+    out: &mut BTreeSet<MediaId>,
+) {
     for child in &group.children {
         match child {
             GroupChild::Picture(picture) => {
                 out.insert(picture.media);
             }
             GroupChild::TextBox(text_box) => {
+                collect_fill_detail_media(text_box.id, fill_detail, out);
                 for block in &text_box.blocks {
-                    collect_block_media(block, out);
+                    collect_block_media(block, fill_detail, out);
                 }
             }
-            GroupChild::Group(nested) => collect_group_media(nested, out),
-            GroupChild::Shape(_) => {}
+            GroupChild::Group(nested) => collect_group_media(nested, fill_detail, out),
+            // A shape holds no media of its own, but its FILL may: a picture-filled
+            // `wps:wsp` names a blip through the side table.
+            GroupChild::Shape(shape) => collect_fill_detail_media(shape.id, fill_detail, out),
         }
     }
 }
@@ -5559,10 +5608,11 @@ fn collect_group_media(group: &WordprocessingGroup, out: &mut BTreeSet<MediaId>)
 fn part_media(
     blocks: &[BlockNode],
     media: &DefinitionMap<MediaId, MediaReference>,
+    fill_detail: &DefinitionMap<NodeId, ShapeFillDetail>,
 ) -> Vec<MediaRel> {
     let mut ids = BTreeSet::new();
     for block in blocks {
-        collect_block_media(block, &mut ids);
+        collect_block_media(block, fill_detail, &mut ids);
     }
     ids.into_iter()
         .filter_map(|id| media.get(&id))
@@ -6349,7 +6399,7 @@ fn write_pic_graphic(
     // A framed picture keeps its `a:ln` outline (schema order: after the geometry).
     // Absent border = no `a:ln` (the default), so it is only written when present.
     if look.border.is_some() {
-        write_outline(w, look.border)?;
+        write_outline(w, look.border, None)?;
     }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -6629,6 +6679,10 @@ fn write_wgp(
                     hlink
                         .as_ref()
                         .map(|(id, tip)| (id.as_str(), tip.as_deref())),
+                    ShapeAppearance {
+                        detail: ctx.defs.shape_fill_detail.get(&shape.id),
+                        media: ctx.media,
+                    },
                 )?;
             }
             GroupChild::Group(nested) => write_wgp(w, nested, "wpg:grpSp", ctx)?,
@@ -6737,7 +6791,7 @@ fn write_group_picture(
     write_prst_geom(w, "rect")?;
     // A framed grouped picture keeps its `a:ln` outline (only when present).
     if look.border.is_some() {
-        write_outline(w, look.border)?;
+        write_outline(w, look.border, None)?;
     }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -6746,11 +6800,24 @@ fn write_group_picture(
     Ok(())
 }
 
+/// What a shape's `spPr` needs besides the node itself: the fill/line detail the
+/// side table holds for it, and the media table a picture fill resolves through.
+///
+/// Grouped into one parameter because passing both separately put
+/// `write_group_shape` over clippy's argument limit — the same reason
+/// [`PictureAppearance`] exists.
+#[derive(Clone, Copy)]
+struct ShapeAppearance<'a> {
+    detail: Option<&'a ShapeFillDetail>,
+    media: &'a DefinitionMap<MediaId, MediaReference>,
+}
+
 /// Emits a group child shape (`wps:wsp`) with geometry, fill, and outline.
 fn write_group_shape(
     w: &mut Writer<Cursor<Vec<u8>>>,
     shape: &GroupShape,
     hlink: Option<(&str, Option<&str>)>,
+    appearance: ShapeAppearance<'_>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
@@ -6792,10 +6859,13 @@ fn write_group_shape(
             .unwrap_or_else(|| geometry_prst(shape.geometry));
         write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
     }
-    if let Some(fill) = &shape.fill {
-        write_fill(w, fill)?;
-    }
-    write_outline(w, shape.stroke)?;
+    let detail = appearance.detail;
+    write_shape_fill(w, shape.fill.as_ref(), detail, appearance.media)?;
+    write_outline(
+        w,
+        shape.stroke,
+        detail.and_then(|detail| detail.stroke.as_ref()),
+    )?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("wps:bodyPr")))
@@ -6852,13 +6922,16 @@ fn write_group_text_box(
         .as_deref()
         .unwrap_or_else(|| geometry_prst(text_box.geometry));
     write_prst_geom_with_adjustments(w, preset, &text_box.adjustments)?;
-    if let Some(fill) = &text_box.fill {
-        write_fill(w, fill)?;
-    } else {
+    let detail = ctx.defs.shape_fill_detail.get(&text_box.id);
+    if !write_shape_fill(w, text_box.fill.as_ref(), detail, ctx.media)? {
         w.write_event(Event::Empty(start("a:noFill")))
             .map_err(pkg)?;
     }
-    write_outline(w, text_box.border)?;
+    write_outline(
+        w,
+        text_box.border,
+        detail.and_then(|detail| detail.stroke.as_ref()),
+    )?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:txbx")))
@@ -7059,24 +7132,194 @@ fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
     Ok(())
 }
 
-/// Emits a shape/text-box background fill: a flat `a:solidFill` or a multi-stop
-/// `a:gradFill`.
-fn write_fill(w: &mut Writer<Cursor<Vec<u8>>>, fill: &Fill) -> Result<(), ExportError> {
-    match fill {
-        Fill::Solid(color) => write_solid_fill(w, *color),
-        Fill::Gradient { stops, kind } => write_grad_fill(w, stops, *kind),
+/// Emits the ONE fill child of a shape's `spPr`, choosing between the four
+/// DrawingML fills this build can write.
+///
+/// `EG_FillProperties` is a choice, so at most one of these is emitted, and the
+/// order of preference follows what the source had: a picture or pattern fill
+/// lives only in `detail` (neither can be represented as a [`Fill`]), so when one
+/// is present it IS the fill and `fill` is `None`. `media` resolves a picture
+/// fill's blip through the same table a `pic:pic` resolves through, and a blip
+/// whose bytes the caller did not supply writes no fill at all rather than a
+/// relationship pointing at an empty part (FID-R-06).
+///
+/// Returns whether anything was written, so a caller that needs an explicit
+/// `a:noFill` (a text box, whose default is a filled white box) can tell.
+///
+/// Complexity: O(gradient stops + dash stops), both bounded by the model.
+fn write_shape_fill(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    fill: Option<&Fill>,
+    detail: Option<&ShapeFillDetail>,
+    media: &DefinitionMap<MediaId, MediaReference>,
+) -> Result<bool, ExportError> {
+    if let Some(picture) = detail.and_then(|detail| detail.picture.as_ref())
+        && let Some(reference) = media.get(&picture.media)
+    {
+        write_blip_fill(w, picture, &reference.relationship_id)?;
+        return Ok(true);
     }
+    if let Some(pattern) = detail.and_then(|detail| detail.pattern.as_ref()) {
+        write_patt_fill(w, pattern)?;
+        return Ok(true);
+    }
+    match fill {
+        Some(Fill::Solid(color)) => {
+            write_solid_fill(w, *color)?;
+            Ok(true)
+        }
+        Some(Fill::Gradient { stops, kind }) => {
+            write_grad_fill(
+                w,
+                stops,
+                *kind,
+                detail.and_then(|detail| detail.gradient.as_ref()),
+            )?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+/// Emits a shape's own `a:blipFill` (a picture-filled shape), in
+/// `CT_BlipFillProperties` schema order: the blip and its alpha, the source crop,
+/// then the stretch-or-tile decision.
+///
+/// This is the writer half of the round trip for a construct **nothing paints**.
+/// It exists because without it a save destroyed the fill outright: the shape
+/// imported with no `Fill`, and the writer emitted no fill child at all.
+fn write_blip_fill(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    picture: &PictureFill,
+    embed: &str,
+) -> Result<(), ExportError> {
+    let mut blip_fill = start("a:blipFill");
+    if let Some(rotate) = picture.rotate_with_shape {
+        blip_fill.push_attribute(("rotWithShape", if rotate { "1" } else { "0" }));
+    }
+    w.write_event(Event::Start(blip_fill)).map_err(pkg)?;
+    let mut blip = start("a:blip");
+    blip.push_attribute(("r:embed", embed));
+    if picture.opacity.is_some_and(|amount| amount < OPACITY_FULL) {
+        w.write_event(Event::Start(blip)).map_err(pkg)?;
+        write_alpha_mod_fix(w, picture.opacity)?;
+        w.write_event(Event::End(BytesEnd::new("a:blip")))
+            .map_err(pkg)?;
+    } else {
+        w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    }
+    write_src_rect(w, picture.crop.as_ref())?;
+    match picture.mode {
+        PictureFillMode::Stretch { fill_rect } => {
+            w.write_event(Event::Start(start("a:stretch")))
+                .map_err(pkg)?;
+            write_relative_rect(w, "a:fillRect", fill_rect.as_ref())?;
+            w.write_event(Event::End(BytesEnd::new("a:stretch")))
+                .map_err(pkg)?;
+        }
+        PictureFillMode::Tile {
+            offset_x_emu,
+            offset_y_emu,
+            scale_x,
+            scale_y,
+            flip,
+            alignment,
+        } => {
+            let mut tile = start("a:tile");
+            let (tx, ty) = (offset_x_emu.to_string(), offset_y_emu.to_string());
+            let (sx, sy) = (
+                scale_x.map(|value| value.to_string()),
+                scale_y.map(|value| value.to_string()),
+            );
+            tile.push_attribute(("tx", tx.as_str()));
+            tile.push_attribute(("ty", ty.as_str()));
+            if let Some(sx) = sx.as_deref() {
+                tile.push_attribute(("sx", sx));
+            }
+            if let Some(sy) = sy.as_deref() {
+                tile.push_attribute(("sy", sy));
+            }
+            tile.push_attribute(("flip", tile_flip_token(flip)));
+            tile.push_attribute(("algn", rect_alignment_token(alignment)));
+            w.write_event(Event::Empty(tile)).map_err(pkg)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("a:blipFill")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a shape's `a:pattFill`: the preset token (omitted when the source wrote
+/// none, or wrote one too long to retain) and the two resolved colours.
+fn write_patt_fill(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    pattern: &PatternFill,
+) -> Result<(), ExportError> {
+    let mut patt = start("a:pattFill");
+    if !pattern.preset.is_empty() {
+        patt.push_attribute(("prst", pattern.preset.as_str()));
+    }
+    w.write_event(Event::Start(patt)).map_err(pkg)?;
+    for (tag, color) in [
+        ("a:fgClr", pattern.foreground),
+        ("a:bgClr", pattern.background),
+    ] {
+        w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+        write_srgb_color(w, color)?;
+        w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("a:pattFill")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a `CT_RelativeRect` (`a:fillRect`, `a:fillToRect`), omitting any edge
+/// that is zero. A `None` or identity rect writes the empty element, which is
+/// what the source's own `<a:fillRect/>` is.
+fn write_relative_rect(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    rect: Option<&RelativeRect>,
+) -> Result<(), ExportError> {
+    let mut el = start(tag);
+    if let Some(rect) = rect {
+        for (name, value) in [
+            ("l", rect.left),
+            ("t", rect.top),
+            ("r", rect.right),
+            ("b", rect.bottom),
+        ] {
+            if value != 0 {
+                el.push_attribute((name, value.to_string().as_str()));
+            }
+        }
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
 }
 
 /// Emits an `a:gradFill` with its stops (`a:gsLst/a:gs`) and geometry (`a:lin` or
 /// `a:path`) in `CT_GradientFillProperties` schema order.
+///
+/// `detail` carries the geometry [`GradientKind`] cannot: the authored
+/// `a:path@path`, its `a:fillToRect`, `a:lin@scaled`, and the element's own
+/// `@flip`/`@rotWithShape`. Without it every radial gradient was written back as
+/// `path="circle"`, so a `shape`- or `rect`-path gradient changed appearance on
+/// save with nothing reporting it.
 fn write_grad_fill(
     w: &mut Writer<Cursor<Vec<u8>>>,
     stops: &[GradientStop],
     kind: GradientKind,
+    detail: Option<&GradientDetail>,
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:gradFill")))
-        .map_err(pkg)?;
+    let mut grad = start("a:gradFill");
+    if let Some(flip) = detail.and_then(|detail| detail.flip) {
+        grad.push_attribute(("flip", tile_flip_token(flip)));
+    }
+    if let Some(rotate) = detail.and_then(|detail| detail.rotate_with_shape) {
+        grad.push_attribute(("rotWithShape", if rotate { "1" } else { "0" }));
+    }
+    w.write_event(Event::Start(grad)).map_err(pkg)?;
     w.write_event(Event::Start(start("a:gsLst"))).map_err(pkg)?;
     for stop in stops {
         let mut gs = start("a:gs");
@@ -7092,12 +7335,32 @@ fn write_grad_fill(
         GradientKind::Linear { angle } => {
             let mut lin = start("a:lin");
             lin.push_attribute(("ang", angle.to_string().as_str()));
+            if let Some(scaled) = detail.and_then(|detail| detail.scaled) {
+                lin.push_attribute(("scaled", if scaled { "1" } else { "0" }));
+            }
             w.write_event(Event::Empty(lin)).map_err(pkg)?;
         }
         GradientKind::Radial => {
             let mut path = start("a:path");
-            path.push_attribute(("path", "circle"));
-            w.write_event(Event::Empty(path)).map_err(pkg)?;
+            // The authored token when it survived, `circle` when the model holds
+            // only `GradientKind::Radial` — which is still a guess, but now only
+            // for a document that never stated anything better.
+            path.push_attribute((
+                "path",
+                detail
+                    .and_then(|detail| detail.path)
+                    .map_or("circle", gradient_path_token),
+            ));
+            let fill_to_rect = detail.and_then(|detail| detail.fill_to_rect.as_ref());
+            match fill_to_rect {
+                Some(rect) => {
+                    w.write_event(Event::Start(path)).map_err(pkg)?;
+                    write_relative_rect(w, "a:fillToRect", Some(rect))?;
+                    w.write_event(Event::End(BytesEnd::new("a:path")))
+                        .map_err(pkg)?;
+                }
+                None => w.write_event(Event::Empty(path)).map_err(pkg)?,
+            }
         }
     }
     w.write_event(Event::End(BytesEnd::new("a:gradFill")))
@@ -7107,22 +7370,71 @@ fn write_grad_fill(
 
 /// Emits an `a:ln` outline (width + solid fill, plus any dash/line-end
 /// decorations in schema order), or `a:ln > a:noFill` when absent.
+///
+/// `detail` carries the line geometry [`ShapeStroke`] cannot hold — `@cap`,
+/// `@cmpd`, `@algn`, the corner join and an authored `a:custDash`. None of it is
+/// painted; re-emitting it is what keeps a save from flattening a double,
+/// square-capped, custom-dashed outline into a plain one.
 fn write_outline(
     w: &mut Writer<Cursor<Vec<u8>>>,
     stroke: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
 ) -> Result<(), ExportError> {
     match stroke {
         Some(stroke) => {
             let mut ln = start("a:ln");
             ln.push_attribute(("w", stroke.width_emu.to_string().as_str()));
+            if let Some(cap) = detail.and_then(|detail| detail.cap) {
+                ln.push_attribute(("cap", line_cap_token(cap)));
+            }
+            if let Some(compound) = detail.and_then(|detail| detail.compound) {
+                ln.push_attribute(("cmpd", compound_line_token(compound)));
+            }
+            if let Some(align) = detail.and_then(|detail| detail.align) {
+                ln.push_attribute(("algn", pen_alignment_token(align)));
+            }
             w.write_event(Event::Start(ln)).map_err(pkg)?;
-            // Schema order (`CT_LineProperties`): fill, then prstDash, then the
-            // head/tail line-end decorations.
+            // Schema order (`CT_LineProperties`): fill, then the dash (ONE of
+            // `a:prstDash`/`a:custDash` — they are a choice), then the corner
+            // join, then the head/tail line-end decorations.
             write_solid_fill(w, stroke.color)?;
-            if let Some(dash) = stroke.dash {
-                let mut prst = start("a:prstDash");
-                prst.push_attribute(("val", dash_style_token(dash)));
-                w.write_event(Event::Empty(prst)).map_err(pkg)?;
+            let custom_dash = detail
+                .map(|detail| detail.custom_dash.as_slice())
+                .unwrap_or_default();
+            if custom_dash.is_empty() {
+                if let Some(dash) = stroke.dash {
+                    let mut prst = start("a:prstDash");
+                    prst.push_attribute(("val", dash_style_token(dash)));
+                    w.write_event(Event::Empty(prst)).map_err(pkg)?;
+                }
+            } else {
+                w.write_event(Event::Start(start("a:custDash")))
+                    .map_err(pkg)?;
+                for stop in custom_dash {
+                    let mut ds = start("a:ds");
+                    ds.push_attribute(("d", stop.dash.to_string().as_str()));
+                    ds.push_attribute(("sp", stop.space.to_string().as_str()));
+                    w.write_event(Event::Empty(ds)).map_err(pkg)?;
+                }
+                w.write_event(Event::End(BytesEnd::new("a:custDash")))
+                    .map_err(pkg)?;
+            }
+            if let Some(join) = detail.and_then(|detail| detail.join) {
+                match join {
+                    LineJoin::Round => {
+                        w.write_event(Event::Empty(start("a:round"))).map_err(pkg)?
+                    }
+                    LineJoin::Bevel => {
+                        w.write_event(Event::Empty(start("a:bevel"))).map_err(pkg)?
+                    }
+                    LineJoin::Miter { limit } => {
+                        let mut miter = start("a:miter");
+                        if let Some(limit) = limit {
+                            miter.push_attribute(("lim", limit.to_string().as_str()));
+                        }
+                        w.write_event(Event::Empty(miter)).map_err(pkg)?;
+                    }
+                }
             }
             write_line_end(w, "a:headEnd", stroke.head_end)?;
             write_line_end(w, "a:tailEnd", stroke.tail_end)?;
@@ -7176,6 +7488,68 @@ fn dash_style_token(dash: DashStyle) -> &'static str {
         DashStyle::SystemDot => "sysDot",
         DashStyle::SystemDashDot => "sysDashDot",
         DashStyle::SystemDashDotDot => "sysDashDotDot",
+    }
+}
+
+/// Maps a [`LineCap`] to its `a:ln@cap` (`ST_LineCap`) token.
+fn line_cap_token(cap: LineCap) -> &'static str {
+    match cap {
+        LineCap::Flat => "flat",
+        LineCap::Round => "rnd",
+        LineCap::Square => "sq",
+    }
+}
+
+/// Maps a [`CompoundLine`] to its `a:ln@cmpd` (`ST_CompoundLine`) token.
+fn compound_line_token(compound: CompoundLine) -> &'static str {
+    match compound {
+        CompoundLine::Single => "sng",
+        CompoundLine::Double => "dbl",
+        CompoundLine::ThickThin => "thickThin",
+        CompoundLine::ThinThick => "thinThick",
+        CompoundLine::Triple => "tri",
+    }
+}
+
+/// Maps a [`PenAlignment`] to its `a:ln@algn` (`ST_PenAlignment`) token.
+fn pen_alignment_token(align: PenAlignment) -> &'static str {
+    match align {
+        PenAlignment::Center => "ctr",
+        PenAlignment::Inset => "in",
+    }
+}
+
+/// Maps a [`GradientPath`] to its `a:path@path` (`ST_PathShadeType`) token.
+fn gradient_path_token(path: GradientPath) -> &'static str {
+    match path {
+        GradientPath::Shape => "shape",
+        GradientPath::Circle => "circle",
+        GradientPath::Rect => "rect",
+    }
+}
+
+/// Maps a [`TileFlip`] to its `@flip` (`ST_TileFlipMode`) token.
+fn tile_flip_token(flip: TileFlip) -> &'static str {
+    match flip {
+        TileFlip::None => "none",
+        TileFlip::X => "x",
+        TileFlip::Y => "y",
+        TileFlip::Xy => "xy",
+    }
+}
+
+/// Maps a [`RectAlignment`] to its `a:tile@algn` (`ST_RectAlignment`) token.
+fn rect_alignment_token(alignment: RectAlignment) -> &'static str {
+    match alignment {
+        RectAlignment::TopLeft => "tl",
+        RectAlignment::Top => "t",
+        RectAlignment::TopRight => "tr",
+        RectAlignment::Left => "l",
+        RectAlignment::Center => "ctr",
+        RectAlignment::Right => "r",
+        RectAlignment::BottomLeft => "bl",
+        RectAlignment::Bottom => "b",
+        RectAlignment::BottomRight => "br",
     }
 }
 
@@ -7638,10 +8012,13 @@ fn write_text_box(
         false,
     )?;
     write_prst_geom(w, "rect")?;
-    if let Some(fill) = &text_box.fill {
-        write_fill(w, fill)?;
-    }
-    write_outline(w, text_box.border)?;
+    let detail = ctx.defs.shape_fill_detail.get(&text_box.id);
+    write_shape_fill(w, text_box.fill.as_ref(), detail, ctx.media)?;
+    write_outline(
+        w,
+        text_box.border,
+        detail.and_then(|detail| detail.stroke.as_ref()),
+    )?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:txbx")))
