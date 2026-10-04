@@ -277,8 +277,8 @@ export const APP_MENU_SECTIONS = {
       "view.reflow",
       // Beside `view.reflow` because it is the question that view raises:
       // what is this layout not showing me the way the page does? The engine
-      // has answered it since reflow shipped and nothing asked (`docs/151`
-      // §8 item 8), and the answer is document-derived, so the row is honest in both
+      // has answered it since reflow shipped and nothing asked (`docs/166`
+      // R-7), and the answer is document-derived, so the row is honest in both
       // views rather than reciting a fixed list.
       "view.reflowApproximations",
       "view.compactRibbon",

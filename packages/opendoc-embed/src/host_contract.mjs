@@ -528,7 +528,7 @@ export const COMMAND_CONTRACT = Object.freeze([
   // reason the view itself does: it reads a list the layout already computed and
   // speaks it. It is enabled in the paged view too, where the answer is
   // "nothing" — a host offering a read-only embed can wire it and a reader can
-  // always ask (`docs/151` §8 item 8).
+  // always ask (`docs/166` R-7).
   exact("view.reflowApproximations", null),
   // Reconnecting a shared session requires NOTHING of the host, and that is the
   // interesting part rather than an omission. It mutates no document — it opens a
