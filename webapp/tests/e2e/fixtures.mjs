@@ -599,6 +599,40 @@ import {
 const TEST_PLATFORM =
   process.platform === "darwin" ? APPLE_PLATFORM : STANDARD_PLATFORM;
 
+/** The engine's own suffix for each measurement unit id.
+ *
+ *  A SECOND VOCABULARY, and it is here rather than in a spec because there were
+ *  two copies within an hour of each other: `object-command-reach` needed it for
+ *  the resize readout and `object-alignment-guides` for the crop readout, and two
+ *  tables for one mapping is how they start disagreeing. The engine is the
+ *  authority (`MeasurementUnit::suffix`, `casual-doc-wasm/src/quantity.rs`); the
+ *  chooser's `<option>` labels are the translated unit NAMES, not the symbols, so
+ *  the page cannot be asked for this. */
+const UNIT_SUFFIXES = { inch: "in", cm: "cm", mm: "mm", point: "pt", pica: "pi" };
+
+/**
+ * The suffix of the measurement unit currently in force.
+ *
+ *  Any readout or field that prints a distance must print it in THIS unit, and a
+ *  spec that hard-codes `in` instead asserts the mechanism: it fails honestly on
+ *  a machine whose default resolved to centimetres, and it would pass just as
+ *  happily on an unsubstituted `{unit}` placeholder — both of which happened.
+ */
+export async function measurementSuffix(page) {
+  const id = await page.evaluate(
+    () => document.getElementById("measurementUnitSelect")?.value ?? "",
+  );
+  return UNIT_SUFFIXES[id] ?? UNIT_SUFFIXES.inch;
+}
+
+/** `/^W × H <unit>$/` for the unit in force — the one sentence `sizeLabel`
+ *  produces, which the resize readout, the crop readout and Page setup's preview
+ *  caption all share. */
+export async function sizeReadoutPattern(page) {
+  const suffix = await measurementSuffix(page);
+  return new RegExp(`^\\d+\\.\\d{2} × \\d+\\.\\d{2} ${suffix}$`);
+}
+
 /** The hint text the editor will render for a Mac-notation chord, here. */
 export function shortcutHint(appleNotation) {
   return formatShortcut(appleNotation, TEST_PLATFORM);

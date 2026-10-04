@@ -43,6 +43,7 @@ async function exportedBorderWidths(page) {
   const artifact = await download;
   const snapshot = JSON.parse((await readFile(await artifact.path())).toString("utf8"));
   const byWidth = new Map();
+  const byStyle = new Map();
   const styles = new Set();
   const walk = (node) => {
     if (Array.isArray(node)) return void node.forEach(walk);
@@ -52,6 +53,10 @@ async function exportedBorderWidths(page) {
         for (const record of Object.values(value)) {
           if (record && typeof record === "object" && "style" in record) {
             styles.add(record.style);
+            // Counted as well as collected, for the same reason the widths are:
+            // four edges in the chosen style and two still in the old one would
+            // satisfy a set and must not satisfy this.
+            byStyle.set(record.style, (byStyle.get(record.style) ?? 0) + 1);
             const size = record.sizeEighthPoints;
             if (size !== undefined) byWidth.set(size, (byWidth.get(size) ?? 0) + 1);
           }
@@ -61,7 +66,7 @@ async function exportedBorderWidths(page) {
     }
   };
   walk(snapshot);
-  return { byWidth, styles: [...styles].sort() };
+  return { byWidth, byStyle, styles: [...styles].sort() };
 }
 
 async function insertTableAndOpenBorders(page) {
@@ -145,13 +150,18 @@ test("a border applied at a chosen width comes back at that width", async ({
   // engine's own default of ½ pt — untouched, because a cell gesture must not
   // rewrite the table.
   expect(byWidth.get(4), "the table's own gridlines are not rewritten").toBe(6);
-  // The style is still the one the engine's edge factory writes. The pen is a WIDTH
-  // control: there is no style argument anywhere in `setCellBorderRange`,
-  // `setTableBorder` or `setParagraphBorder` — `border_edge` in
-  // `crates/casual-doc-wasm` hard-codes `"single"` — so a line-style control could
-  // not be honest yet and is deliberately absent rather than shipped dead. This
-  // line is what will fail, loudly, the day the engine gains that argument and this
-  // chrome has not caught up.
+  // The style is the pen's DEFAULT, because this gesture never touched the style
+  // control — `single`, which is Word's and ONLYOFFICE's and the engine's own.
+  //
+  // This comment used to say something else, and it was true when it was written
+  // and is not now: *"there is no style argument anywhere in `setCellBorderRange`
+  // … so a line-style control could not be honest yet and is deliberately absent
+  // … This line is what will fail, loudly, the day the engine gains that argument
+  // and this chrome has not caught up."* The engine gained it, #732 shipped the
+  // control, and this line did not fail — because a spec that never moves the
+  // control only ever exercises the default. A test that cannot notice the
+  // capability it describes arriving is `SKILL` §9 in miniature, so the sentence is
+  // corrected here and the capability is asserted in the test below.
   expect(styles).toEqual(["single"]);
   expect(consoleErrors).toEqual([]);
 });
@@ -176,5 +186,62 @@ test("the pen draws TABLE borders at the chosen width too, not only cell borders
   expect(byWidth.get(48), "the all preset writes six table edges at the chosen width").toBe(6);
   expect(byWidth.get(4), "the table's old gridlines are replaced, not added to").toBeUndefined();
   expect(byWidth.get(8), "no edge may still carry the old hard-coded 1 pt").toBeUndefined();
+  expect(consoleErrors).toEqual([]);
+});
+
+// MUTATION PROOF for the test below: dropping the trailing `penStyle()` from
+// `setCellBorderRange` in `table_cell_chrome.mjs` — the shape the file had before
+// #732, which still compiles and still runs, because the argument is optional and
+// absent means `single`:
+//
+//   Error: the dashed pen drew solid borders
+//   expect(received).toEqual(expected)
+//     -   "dashed",
+//         "single",
+//   1 failed
+test("a border authored in a chosen line STYLE comes back in that style", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The other half of the pen (`docs/153` `table.border-width-style`). Read back
+  // out of a real export for the same reason the width is: `cellBorderStyle` can
+  // only answer for the caret's cell, and what has to be true is that the
+  // DOCUMENT carries the style — which is what any other application will read.
+  await insertTableAndOpenBorders(page);
+
+  const style = page.locator("#borderStyle");
+  await expect(style).toBeVisible();
+  await expect(style).toBeEnabled();
+  // Exactly the six renderings `border_pattern` can draw apart. A seventh entry
+  // would be a control promising a line the page cannot show.
+  expect(await style.locator("option").evaluateAll((os) => os.map((o) => o.value))).toEqual([
+    "single",
+    "double",
+    "dotted",
+    "dashed",
+    "dotDash",
+    "dotDotDash",
+  ]);
+  await expect(style, "the pen opens on Word's and the engine's own default").toHaveValue("single");
+  await expect(style).toHaveAttribute("aria-label", /line style/i);
+
+  // `dashed` — not the default, and not adjacent to it in the list, so a chrome
+  // that dropped the argument lands on `single` rather than on the right answer.
+  await style.selectOption("dashed");
+  await page.locator('.border-btn[data-cellborder="box"]').click();
+  await expect(page.locator('.border-btn[data-cellborder="box"]')).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  const { byStyle, styles } = await exportedBorderWidths(page);
+  // FOUR edges dashed — the box preset's top, bottom, start and end on the one
+  // cell the caret is in — and the table's own SIX gridlines from `insertTable`
+  // still single, because a cell gesture must not rewrite the table. Exact counts,
+  // so "dashed appears somewhere" cannot pass, and neither can a chrome that
+  // dashed the whole table.
+  expect(styles, "the dashed pen drew solid borders").toEqual(["dashed", "single"]);
+  expect(byStyle.get("dashed"), "the box preset writes four cell edges dashed").toBe(4);
+  expect(byStyle.get("single"), "the table's own gridlines are not restyled").toBe(6);
   expect(consoleErrors).toEqual([]);
 });

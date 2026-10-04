@@ -54,6 +54,12 @@ test("the Review tab exposes Word's tracking, changes and comments groups", asyn
     // own Compare band and the left rail are its three faces, and
     // `compare.spec.mjs` drives the comparison each of them opens.
     "Compare",
+    // Word's Review tab really does carry a Protect group — Block Authors and
+    // Restrict Editing sit in it — so this is parity rather than an addition.
+    // #732 shipped the group without telling this roster, which is what turned
+    // `main` red: a band spec that enumerates groups is the only thing that can
+    // notice a band growing one, and that is the point of enumerating them.
+    "Protect",
   ]);
   for (const id of [
     "#reviewTrackBtn",
