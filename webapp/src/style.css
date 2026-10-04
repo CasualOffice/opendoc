@@ -6719,7 +6719,13 @@ body.is-format-painting .page-wrap * {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  contain: strict;
+  /* `content`, NOT `strict`. `strict` implies SIZE containment, which makes the
+     box's height independent of its contents — so `max-height` with no `height`
+     collapses the scroller to nothing and the diff renders into a zero-high box.
+     `content` is layout + paint + style containment, which is the part that is
+     actually wanted here: it keeps the windowed rows' layout and painting from
+     escaping into the panel. */
+  contain: content;
 }
 
 .compare-diff-sizer {
