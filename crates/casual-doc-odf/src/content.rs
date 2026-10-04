@@ -3188,6 +3188,7 @@ fn parse_fo_border(value: &str) -> Option<BorderEdge> {
         size_eighth_points: width,
         color,
         space_points: None,
+        theme_color: None,
     })
 }
 

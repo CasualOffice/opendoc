@@ -9294,25 +9294,54 @@ fn no_op_document() -> String {
 
 /// A border edge's theme colour must either survive the import or be reported.
 ///
-/// `BorderEdge::color` is `Option<RgbColor>` and its own doc comment says
-/// `auto`/theme is "reported" — it was not. Measured over the owner's corpus,
-/// five of nineteen documents lose a border theme colour with a compatibility
-/// report that never names it, and the element-name loss gate
-/// (`casual-doc-export/tests/source_element_coverage.rs`) structurally cannot see
-/// it: the element `w:top` survives the save, only its attribute does not.
+/// `BorderEdge` carried `color: Option<RgbColor>` and nothing else, and the
+/// model's own doc comment on that field already said `auto`/theme was
+/// "reported" — it was not. Measured over the owner's corpus, five of nineteen
+/// documents lose a border theme colour with a compatibility report that never
+/// names it, and the element-name loss gate
+/// (`casual-doc-export/tests/source_element_coverage.rs`) structurally cannot
+/// see it: the element `w:top` survives the save, only its attribute does not.
 ///
 /// The assertion is at the altitude where the invariant actually holds — *the
-/// value survives or is reported* — so it stays green if a later change models
-/// the colour instead of reporting it, and goes red only on silence. It walks
-/// report `location` pairs, never feature text: the feature string for this
-/// finding is `top/@themeColor`, which *contains* `themeColor`, so a substring
-/// test over feature strings could pass on an unrelated entry.
+/// value survives or is reported* — so it goes red only on silence, whichever
+/// way the gap is closed. That altitude is not hypothetical: the gap was closed
+/// both ways in turn. It was first closed by reporting the triple as `Degraded`,
+/// and then by modelling it in [`BorderEdge::theme_color`] — at which point the
+/// report became a false finding of exactly the class the measurement existed to
+/// remove, and was deleted. A guard pinned to the reporting half would have
+/// reddened on its own fix.
 ///
-/// Both parsers are exercised, because the edge builder exists twice — once in
+/// Where it reads the report it walks `location` pairs, never feature text: the
+/// feature string for that finding is `top/@themeColor`, which *contains*
+/// `themeColor`, so a substring test over feature strings could pass on an
+/// unrelated entry.
+///
+/// Both parsers are exercised, because the edge builder existed twice — once in
 /// the body parser and once in the styles parser — and fixing one of two copies
-/// is how a defect class survives its own fix.
+/// is how a defect class survives its own fix. The two are now one shared
+/// `properties::parse_border_edge`, and these two inputs are what keeps them one.
 #[test]
-fn a_border_theme_color_is_reported_rather_than_silently_dropped() {
+fn a_border_theme_color_survives_the_import_or_is_reported() {
+    use casual_doc_model::v1::{BorderEdge, ThemeColorRef};
+
+    /// The `w:top` table-border edge the document carries, from whichever parser
+    /// built it: the body parser's `w:tbl/w:tblPr/w:tblBorders` or the styles
+    /// parser's `w:style/w:tblPr/w:tblBorders`.
+    fn top_edge(import: &Import) -> Option<&BorderEdge> {
+        if let Some(edge) =
+            first_table(import).and_then(|table| table.properties.borders.top.as_ref())
+        {
+            return Some(edge);
+        }
+        import
+            .document
+            .definitions()
+            .styles
+            .iter()
+            .filter_map(|(_, style)| style.table.as_ref())
+            .find_map(|table| table.borders.top.as_ref())
+    }
+
     for (what, import) in [
         (
             "body",
@@ -9350,24 +9379,53 @@ fn a_border_theme_color_is_reported_rather_than_silently_dropped() {
                 ))
             })
             .collect();
-        assert!(
-            located.contains(&("top", "themeColor")),
-            "the {what} parser dropped w:top/@w:themeColor without a finding: {located:?}"
+        let theme = top_edge(&import).and_then(|edge| edge.theme_color.as_ref());
+        // The concrete `@w:color` Word writes beside the reference is the
+        // fallback, not a substitute: it must survive too, or "the value
+        // survived" would be true of a parser that kept the reference and threw
+        // the fallback away.
+        assert_eq!(
+            top_edge(&import).and_then(|edge| edge.color),
+            Some(RgbColor {
+                r: 0xED,
+                g: 0x7D,
+                b: 0x31
+            }),
+            "the {what} parser lost the concrete @w:color fallback beside the theme reference"
         );
-        assert!(
-            located.contains(&("top", "themeTint")),
-            "the {what} parser dropped w:top/@w:themeTint without a finding: {located:?}"
-        );
+        for (attribute, modelled) in [
+            (
+                "themeColor",
+                theme.is_some_and(|theme| theme.slot == ThemeColorRef::Accent2),
+            ),
+            (
+                "themeTint",
+                theme.is_some_and(|theme| theme.theme_tint == Some(0xBF)),
+            ),
+        ] {
+            assert!(
+                modelled || located.contains(&("top", attribute)),
+                "the {what} parser dropped w:top/@w:{attribute} without modelling it \
+                 and without a finding: modelled {theme:?}, located {located:?}"
+            );
+        }
     }
 
-    // The precondition, kept explicit: an edge with no theme reference must stay
-    // silent, or the guard above would be satisfied by a reporter that fires on
-    // every border in every healthy document.
+    // The precondition, kept explicit: an edge with no theme reference must model
+    // no reference and report no loss. Without it the guard above is satisfied
+    // either by a reporter that fires on every border in every healthy document,
+    // or by a parser that invents a slot nothing in the source asked for.
     let plain = import(
         br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
         <w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="000000"/></w:tblBorders></w:tblPr>
         <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
         </w:body></w:document>"#,
+    );
+    assert!(
+        top_edge(&plain)
+            .and_then(|edge| edge.theme_color.as_ref())
+            .is_none(),
+        "an sRGB-only border modelled a theme reference the source never carried"
     );
     let plain_attrs: Vec<&str> = plain
         .report

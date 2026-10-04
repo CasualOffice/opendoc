@@ -1730,6 +1730,13 @@ fn post_pagination_passes(
     // `PAGE`/`NUMPAGES` (body and running content), then anchored drawings are
     // placed onto the pages their paragraphs landed on.
     let mirror_margins = document.definitions().settings.mirror_margins;
+    // Resolved once for the document, not per page: a themed page border resolves
+    // against the same palette the body runs use.
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(crate::flow::resolve_palette);
     let mut section_page_numbers: BTreeMap<SectionId, u32> = BTreeMap::new();
     for page in &mut layout.pages {
         let section_page_number = section_page_numbers.entry(page.section).or_default();
@@ -1746,6 +1753,7 @@ fn post_pagination_passes(
             *section_page_number,
             page.page_size,
             page.content_area,
+            palette.as_ref(),
         );
     }
     // Per-page `PAGE` labels honoring each section's `w:pgNumType` (@fmt format +

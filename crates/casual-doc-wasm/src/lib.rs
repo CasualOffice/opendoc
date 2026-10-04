@@ -12018,6 +12018,7 @@ impl WasmDocument {
             size_eighth_points: Some(size_eighth_points.clamp(2, 96)),
             color: Some(RgbColor { r, g, b }),
             space_points: None,
+            theme_color: None,
         };
         let edges = edges.to_string();
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
@@ -22492,6 +22493,7 @@ fn border_edge(style: &str, r: u8, g: u8, b: u8, size_eighth_points: u32) -> Bor
         size_eighth_points: Some(size_eighth_points.clamp(2, 96)),
         color: Some(RgbColor { r, g, b }),
         space_points: None,
+        theme_color: None,
     }
 }
 

@@ -59,6 +59,7 @@ use crate::properties::{
     parse_shading, parse_table_width, symbol_glyph,
 };
 // Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::parse_border_edge;
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -6354,30 +6355,12 @@ impl BodyParser<'_> {
 
     /// Builds a `BorderEdge` from an edge element's attributes. Returns `None`
     /// (caller reports) when the required `w:val` style is missing/empty/oversized.
-    fn build_border_edge(&mut self, element: &BytesStart<'_>) -> Option<BorderEdge> {
-        // Charged before the early return, so an edge rejected for a missing
-        // `w:val` still reports the theme reference it carried: the caller reports
-        // the container on `None`, which names the element but not the attribute.
-        crate::properties::report_border_theme_color(self.reporter, element);
-        let style = attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32)?;
-        let size_eighth_points = attribute_value(element, b"sz")
-            .and_then(|value| value.parse::<u32>().ok())
-            .map(|size| size.min(1024));
-        // Only an explicit sRGB color is modeled; `auto` is the automatic color
-        // and a theme reference is reported above (the edge itself is still
-        // captured, so the finding is `Degraded`, not `Omitted`).
-        let color = attribute_value(element, b"color")
-            .filter(|value| value != "auto")
-            .and_then(|value| parse_rgb(&value));
-        let space_points = attribute_value(element, b"space")
-            .and_then(|value| value.parse::<u32>().ok())
-            .map(|space| space.min(31));
-        Some(BorderEdge {
-            style,
-            size_eighth_points,
-            color,
-            space_points,
-        })
+    ///
+    /// A thin alias for the shared [`parse_border_edge`]: this parser had its own
+    /// copy of the mapping, which is why `@w:themeColor` was dropped here and in
+    /// the styles parser independently.
+    fn build_border_edge(&self, element: &BytesStart<'_>) -> Option<BorderEdge> {
+        parse_border_edge(element)
     }
 
     /// Applies a `w:tblLook`: either the explicit boolean attributes

@@ -763,6 +763,7 @@ mod tests {
             size_eighth_points: Some(size),
             color: Some(color),
             space_points: None,
+            theme_color: None,
         }
     }
 
