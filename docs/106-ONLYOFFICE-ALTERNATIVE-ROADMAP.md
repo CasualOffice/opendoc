@@ -47,10 +47,23 @@ is counted in **concurrent browser tabs** ("one document opened by two users = t
 connections"). White-labelling is Developer-only.
 
 Crucially, the gating is **in the code, not just in the contract**:
-`LayoutManager._applyCustomization` and `_isElementVisible` early-return when `!_licensed`,
-so the entire host-customization and layout-hiding API — the thing an integrator embeds it
-*for* — is licence-gated. `asc_onLicenseChanged` can degrade a live session. The OSS
-`readLicense()` is a stub returning `hasLicense: false`.
+`LayoutManager._applyCustomization` and `_isElementVisible` early-return when `!_licensed`
+(`web-apps/apps/common/main/lib/controller/LayoutManager.js:68`), so the entire
+host-customization and layout-hiding API — the thing an integrator embeds it *for* — is
+licence-gated. `asc_onLicenseChanged` can degrade a live session. The OSS `readLicense()`
+is a stub returning `hasLicense: false`.
+
+**With one refinement, stated because overstating and understating are both false
+(`105` EV-003/EV-006).** The early-return is in the AGPL source, but the *flag* it reads is
+not set there: `sdkjs/common/Local/license.js:38-46` — the offline/local fallback —
+unconditionally calls `setLicenseType(Success)`, `setCanBranding(true)`,
+`setCustomization(true)` and `setRights(Edit)`. So an AGPL build run standalone is
+permissive, and what actually gates customization in a deployment is
+`asc_onGetEditorPermissions`, which their **proprietary Document Server** drives. The
+competitive point survives intact and is sharper for being exact: customization is gated
+behind a commercial component rather than behind the licence text, so an integrator cannot
+reach it from the open-source stack as shipped. Both halves verified by reading the source
+at the lines cited, not from marketing material.
 
 Two consequences:
 
@@ -345,7 +358,7 @@ directly, with a flat capped undo stack and no revision chain. `casual-doc-edit`
 dependency on `casual-doc-transaction`. Unifying them (`107` §2.1) is therefore step one —
 and it is debt that was owed anyway, because it is what ADR-005 already requires.
 
-**What makes 47 operations tractable** (`107` §3): most of the op set addresses *nodes*, not
+**What makes 59 operations tractable** (`107` §3): most of the op set addresses *nodes*, not
 text offsets, so it needs anchor-validity checking rather than pairwise transform. Three
 tiers — **T1 positional** (~9 ops: text, split/join, inline format — full pairwise transform,
 the hot path, and `PositionMap` already covers 4 of its step kinds); **T2 node-addressed**

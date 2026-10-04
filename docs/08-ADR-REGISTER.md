@@ -459,7 +459,7 @@ object locks, so matching it does not require OT. OT is chosen anyway because:
 - OT makes offline-then-merge possible, and makes version history, restore, and document
   compare/combine consequences of one mechanism rather than three separate features.
 
-**Tractability over 47 operations.** Operations are classified in three tiers: **T1
+**Tractability over 59 operations.** Operations are classified in three tiers: **T1
 positional** (~9 text/inline ops — full pairwise transform, the hot path); **T2
 node-addressed** (the bulk — addressed by `NodeId` per invariant I3, so they need anchor
 liveness plus a tombstone rule, not offset math); **T3 document-scope** (serialised,
@@ -1341,7 +1341,7 @@ blind to what never went near it.
 
 Closed by three operations modelled on `SetStyleDefinition` — `SetAbstractNumbering`,
 `SetNumberingInstance`, `SetMediaReference` — each ordered first in the same transaction as
-the nodes that name it (an ADR-030 I2 op-set change: 58 operations, and the compiler found all
+the nodes that name it (an ADR-030 I2 op-set change: 59 operations, and the compiler found all
 eleven exhaustive matches that had to decide). The guard now forbids the facade taking a
 **mutable borrow of the definitions at all**, because a first version listing table names was
 defeated in one line by `let defs = …definitions_mut();`. `147` §6a records the mechanism,
