@@ -459,6 +459,55 @@ export const EN_STRINGS = Object.freeze({
   // the findings list directly below already names what was skipped.
   "compare.partial":
     "Some of what differs could not be characterised; the list below says which.",
+  // VERSION HISTORY'S HEADING (ADR-062). Both instants, in the reader's own
+  // locale, because every version of a document shares one file name and the
+  // timestamp is the only thing that tells two of them apart. Older first,
+  // matching the comparison's own orientation: an insertion is what the newer
+  // version added.
+  "compare.betweenVersions": "Changes between {older} and {newer}",
+  // Said before the counts on the version-history route, and only there. The
+  // reader asked a question about the past; this is the promise that asking it
+  // changed nothing. Review ▸ Compare keeps ADR-061 and says the opposite
+  // sentence (`compare.marked`), so these two can never both be on screen.
+  "compare.readOnlyProjection":
+    "Read-only: these differences are not written into your document.",
+  // WORD'S FIVE CATEGORIES, and the one our engine has that Word has no name
+  // for. Microsoft's wording is the sourced spec — the Reviewing Pane shows "the
+  // total number of changes and the number of insertions, deletions, moves,
+  // formatting changes, and comments" — so these are those five, in that order,
+  // plus `properties` for a typed model field that differs. Labelled numbers
+  // rather than plural families, which is this surface's established decision:
+  // one form per language instead of six in Arabic.
+  "compare.summary.title": "What happened:",
+  "compare.summary.insertions": "Insertions: {count}",
+  "compare.summary.deletions": "Deletions: {count}",
+  "compare.summary.moves": "Moves: {count}",
+  "compare.summary.formatting": "Formatting changes: {count}",
+  "compare.summary.properties": "Property changes: {count}",
+  "compare.summary.comments": "Comments: {count}",
+  // THE UNIFIED DIFF — GitHub's shape over blocks. The owner's words: "diff
+  // should be like how GitHub diff appears on a PR — things added or removed, on
+  // that changes, while you can expect to see more."
+  "compare.diff.title": "The differences:",
+  "compare.diff.at": "Paragraph {position}",
+  // A difference the engine found and this surface could not place: it carries no
+  // anchor on either side, so there is no position to show context around. Said
+  // rather than dropped — a difference nobody can see is worse than one nobody
+  // can navigate to.
+  "compare.diff.unplaced": "Elsewhere in the document",
+  "compare.diff.more": "Show more",
+  "compare.diff.moreAbove": "Show more of the document above this change",
+  "compare.diff.moreBelow": "Show more of the document below this change",
+  "compare.diff.noMoreContext": "There is no more of the document to show here",
+  // A block with no projected text — a table, an external content chunk. Named
+  // rather than rendered as a blank line a reader would take for an empty
+  // paragraph.
+  "compare.diff.notText": "(not text)",
+  // `nodeAtStoryPath` returned nothing: the path no longer resolves against the
+  // document on screen, which an edit made since the comparison can do. Said
+  // rather than guessed at — `DiffAnchor.node` would scroll somewhere, and
+  // somewhere wrong is worse than nowhere.
+  "compare.diff.unresolved": "That change is no longer where the comparison found it",
   // WHAT A ROW IS ABOUT when there is no text and no typed field to name — the
   // bracketed convention ONLYOFFICE uses, where theirs reads `<Image>`, `<Shape>`,
   // `<Chart>` or `<Equation>`.
@@ -812,11 +861,18 @@ export const EN_STRINGS = Object.freeze({
   // §8-13 already said. Show changes is live now, and this sentence is what it
   // says when the surface that shows a comparison is not available at all: an
   // embedded editor composed without the Compare panel, where the capability
-  // genuinely is not there. `headNotComparable` is the other refusal.
+  // genuinely is not there. `earliestNotComparable` is the other refusal.
   "versionHistory.action.showChangesUnavailable":
     "Comparing versions is not available in this editor",
-  "versionHistory.headNotComparable":
-    "This is the current version — comparing it with itself would show nothing",
+  // RENAMED FROM `headNotComparable` 2026-10-05, English and all eighteen
+  // translations, because the row that refuses has changed. That sentence read
+  // "This is the current version — comparing it with itself would show nothing",
+  // and it was true of a comparison against the document on screen. ADR-062
+  // compares a version against its PREDECESSOR, so the head is now the most
+  // useful row in the panel and the one with nothing to compare against is the
+  // earliest version still kept.
+  "versionHistory.earliestNotComparable":
+    "This is the earliest version kept — there is nothing before it to compare with",
 
   // The counts and the policy, under the list. A person who cannot see the bound
   // cannot trust the promise (docs/139 §12).

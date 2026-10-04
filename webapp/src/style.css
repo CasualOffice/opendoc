@@ -6695,6 +6695,157 @@ body.is-format-painting .page-wrap * {
   margin-inline-start: 0.4em;
 }
 
+/* THE UNIFIED DIFF — GitHub's shape over blocks, and a WINDOWED list.
+   `compare_documents.mjs` owns the arithmetic: it writes `--diff-row-h` onto
+   `.compare-diff` so there is ONE source for the row height, because a
+   virtualizer whose height disagrees with its stylesheet scrolls to the wrong
+   place and has no other symptom. Every rule below that touches height reads
+   that property rather than repeating the number.
+
+   NO NEW TOKENS AND NO NEW COLOURS (SKILL §11): the added/removed colours are
+   `--review-insert*` / `--review-delete*`, which are the ones the canvas already
+   paints a tracked change with and are already defined for both themes — a diff
+   and a redline are the same two ideas, so a third pair of greens and reds would
+   be two spellings of one thing.
+
+   Rows are `nowrap` with their own horizontal overflow, which is what a GitHub
+   diff line does and is the one case `SKILL`'s no-horizontal-scroll rule allows:
+   a code-shaped block in its own `overflow-x` container. It is also what makes
+   every row exactly one `--diff-row-h` tall, which is what the window needs. */
+.compare-diff {
+  --diff-row-h: 22px;
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  contain: strict;
+}
+
+.compare-diff-sizer {
+  position: relative;
+}
+
+.compare-diff .compare-changes {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  will-change: transform;
+}
+
+.compare-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  height: var(--diff-row-h);
+  padding-inline: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  /* The gutter mark a diff is read by. Set per kind below; declared here so a
+     row kind this stylesheet has not heard of still lines up with the rest. */
+  border-inline-start: 3px solid transparent;
+}
+
+.compare-diff-hunk {
+  color: var(--muted);
+  background: var(--surface-alt);
+  border-block: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.compare-diff-context {
+  color: var(--muted);
+}
+
+.compare-diff-context.is-empty {
+  font-style: italic;
+}
+
+.compare-diff-del {
+  background: var(--review-delete-soft);
+  border-inline-start-color: var(--review-delete-line);
+}
+
+.compare-diff-del .compare-kind,
+.compare-diff-del .compare-diff-text {
+  color: var(--review-delete);
+}
+
+.compare-diff-add {
+  background: var(--review-insert-soft);
+  border-inline-start-color: var(--review-insert-line);
+}
+
+.compare-diff-add .compare-kind,
+.compare-diff-add .compare-diff-text {
+  color: var(--review-insert);
+}
+
+/* A formatting or property change: real, and neither added nor removed, so it
+   gets the neutral accent rather than borrowing one of the two meanings. */
+.compare-diff-meta {
+  border-inline-start-color: var(--line);
+}
+
+.compare-diff-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The row is a BUTTON when there is somewhere to go (Review ▸ Compare, where the
+   right-hand side is the open document). It fills the row so the whole line is
+   the target — a 22px row with a small inline link in it is a pointer target
+   below the floor and a keyboard stop that is hard to see. */
+.compare-diff-goto {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.compare-diff-goto:hover {
+  text-decoration: underline;
+}
+
+.compare-diff-more {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.compare-diff-more:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* A phone: the panel is narrower than a diff line, and a diff line is allowed to
+   scroll (see above) — but the panel itself must not. The row keeps its own
+   scroller and nothing wider than the viewport is handed to the body. */
+@media (max-width: 520px) {
+  .compare-diff {
+    max-height: 38vh;
+  }
+}
+
 .version-foot-line {
   margin: 0 0 2px;
   font-size: var(--fs-small);

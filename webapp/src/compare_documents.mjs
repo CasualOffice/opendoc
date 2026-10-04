@@ -268,6 +268,7 @@ export const NO_ANSWER = new Set([EXHAUSTED, COMPLETE]);
 export async function runComparison(io) {
   const job = io.begin();
   const budget = io.slice();
+  let retained = false;
   try {
     for (let slices = 0; slices < MAX_SLICES; slices += 1) {
       if (io.cancelled?.()) {
@@ -292,6 +293,15 @@ export async function runComparison(io) {
       if (phase === COMPLETE) {
         const json = job.result();
         if (!json) return { ok: false, reason: COMPLETE };
+        // RETAINED ONLY WHEN ASKED. The handle owns the two parsed sides, which
+        // is what `blockTextAt` reads a unified diff's context from, so a caller
+        // that wants context takes ownership of the handle and must `free()` it
+        // — the `finally` below is skipped for exactly that case. A caller that
+        // wants only the sidecar passes nothing and pays what it always paid.
+        if (io.retain) {
+          retained = true;
+          return { ok: true, diff: JSON.parse(json), sidecar: json, job };
+        }
         return { ok: true, diff: JSON.parse(json), sidecar: json };
       }
       // GIVE THE THREAD BACK between slices. Without this the loop is one long
@@ -304,7 +314,7 @@ export async function runComparison(io) {
     job.cancel();
     return { ok: false, reason: EXHAUSTED };
   } finally {
-    job.free?.();
+    if (!retained) job.free?.();
   }
 }
 
@@ -415,11 +425,92 @@ export function summariseDiff(diff) {
     families: [...byFamily.entries()]
       .sort((a, b) => (rank.get(a[0]) ?? unknown) - (rank.get(b[0]) ?? unknown))
       .map(([family, count]) => ({ family, count })),
-    rows: [...changes].sort(
-      (a, b) => (rank.get(a.family) ?? unknown) - (rank.get(b.family) ?? unknown),
-    ),
+    categories: wordCategories(diff, byFamily),
+    // DOCUMENT ORDER, which is the engine's own order and is now simply kept.
+    //
+    // This used to be `[...changes].sort(by family)`, and that sort was a
+    // regression of a guarantee the engine already makes: `DiffJob::finish`
+    // sorts `pending` by `(story, path, family, kind)` before sealing the
+    // sidecar, and `record.rs` documents `changes` as "in document order of the
+    // right side, then of the left". Re-sorting by family threw the position
+    // away and handed the reader a list grouped by what a change IS rather than
+    // by where it is — which cannot be walked alongside the document, cannot
+    // become a unified diff, and was `docs/164` §4 gap 2.
+    //
+    // Nothing replaces it: the family grouping a reader wants is the per-family
+    // COUNTS, which `families` above still carries.
+    rows: changes,
   };
 }
+
+/** The five categories Word's Reviewing Pane publishes, plus the one kind our
+ *  engine has that Word has no name for.
+ *
+ *  Microsoft's wording is fully sourced and is the competitive spec: the summary
+ *  shows "the total number of changes and the number of insertions, deletions,
+ *  moves, formatting changes, and comments". So those five ship, in that order,
+ *  beside the per-family counts rather than instead of them — a family count
+ *  answers "what kind of thing changed" and a category count answers "what
+ *  happened to it", and a redline reader counts the second.
+ *
+ *  THE NUMBERS ARE THE ENGINE'S, not recomputed here. `VersionDiff.kindCounts`
+ *  is built in `DiffJob::finish` from the same records this panel lists, so the
+ *  breakdown and the total cannot come to disagree — which is the drift a second
+ *  count in the host would introduce.
+ *
+ *  THREE PLACES THE MAPPING IS NOT ONE-TO-ONE, each decided rather than fudged:
+ *
+ *    * **A move is ONE move.** The engine reports a move as two records,
+ *      `move_from` at the origin and `move_to` at the destination, and adding
+ *      both would print "2 moves" for one block that moved. The destination is
+ *      counted, because every move has exactly one and `move_from` without a
+ *      `move_to` is reported through `pasteLoss` rather than as a move.
+ *    * **Comments are a FAMILY, not a kind.** Word counts comments among the
+ *      five; our engine classifies a comment change by its family and by
+ *      whatever happened to it, so the count comes from `familyCounts`.
+ *    * **`property` is ours and Word has no word for it.** It is a typed model
+ *      field that differs — `alignment`, `spacing.beforeTwips` — and it is
+ *      published as a sixth row rather than folded into "formatting", because
+ *      folding it would overstate a formatting count, and dropping it would
+ *      leave the six rows summing to less than the total with no explanation.
+ *      Absence from a published breakdown is an overstatement by omission
+ *      (`SKILL` §9.3).
+ *
+ *  Every row is returned even at zero. "0 deletions" is a fact a reader of a
+ *  redline wants, and a surface whose rows come and go cannot be read at a
+ *  glance or asserted by a guard.
+ *
+ *  O(kinds), over a list of six.
+ *
+ *  @param {object|null|undefined} diff the parsed sidecar.
+ *  @param {Map<string, number>} byFamily family -> count, already tallied.
+ *  @returns {{category: string, count: number}[]}
+ */
+export function wordCategories(diff, byFamily) {
+  const kinds = new Map();
+  for (const entry of Array.isArray(diff?.kindCounts) ? diff.kindCounts : []) {
+    if (Array.isArray(entry) && entry.length === 2) kinds.set(entry[0], Number(entry[1]) || 0);
+  }
+  return [
+    { category: "insertions", count: kinds.get("insertion") ?? 0 },
+    { category: "deletions", count: kinds.get("deletion") ?? 0 },
+    { category: "moves", count: kinds.get("move_to") ?? 0 },
+    { category: "formatting", count: kinds.get("formatting") ?? 0 },
+    { category: "properties", count: kinds.get("property") ?? 0 },
+    { category: "comments", count: byFamily.get("comment") ?? 0 },
+  ];
+}
+
+/** Word's five categories plus ours -> catalogue key, written out for the reason
+ *  `FAMILY_KEY` is: a composed `t()` key is a key no translator is ever shown. */
+export const CATEGORY_KEY = Object.freeze({
+  insertions: "compare.summary.insertions",
+  deletions: "compare.summary.deletions",
+  moves: "compare.summary.moves",
+  formatting: "compare.summary.formatting",
+  properties: "compare.summary.properties",
+  comments: "compare.summary.comments",
+});
 
 /** The story a change is in, as a sentence. `null` for the body, because saying
  *  "in the body" on every row of a body-only comparison is noise. */
@@ -669,6 +760,249 @@ export function unmarkedReasons(keys) {
   return rows;
 }
 
+// ---------------------------------------------------------------------------
+// THE UNIFIED DIFF — GitHub's shape, over blocks instead of lines
+// ---------------------------------------------------------------------------
+//
+// The owner's words: "diff should be like how GitHub diff appears on a PR —
+// things added or removed, on that changes, while you can expect to see more."
+//
+// ## Why unified and not side-by-side
+//
+// Side-by-side needs two synchronised document renders and our body is ONE
+// canvas — a second render surface is a second paginator, a second scroll
+// coupling and a second place every fidelity fix has to land. Word's own
+// tri-pane is a desktop app's answer and its own documentation admits the
+// reading surface it produces "is not the best tool for making changes". A
+// unified diff needs one column, which is what we have.
+//
+// ## The known pattern, named before the code (`SKILL` §8)
+//
+// Three of them, and none is new:
+//
+//   1. **A unified diff with hunks.** Changed regions, each with a few lines of
+//      unchanged context, separated by elisions that can be expanded. Our unit
+//      is a BLOCK rather than a text line, because the engine's projection is a
+//      block forest — which is the honest unit, not an approximation of one.
+//   2. **Windowed (virtual) scrolling.** A flat row array of FIXED height, a
+//      sizer of `rows × height`, and only the visible slice in the DOM. This is
+//      what makes a scroll tick O(window) rather than O(changes), which `docs/107`
+//      §4 requires of every interaction.
+//   3. **Lazy pull for context.** The unchanged blocks are not in the sidecar —
+//      a change record names only what changed — so they are fetched from the
+//      engine per hunk, O(depth) each, exactly as GitHub fetches the lines it
+//      elided. `WasmVersionDiff.blockTextAt` is that read.
+//
+// The three pure functions below produce the hunks and the flat rows, so the
+// grouping and the ordering are testable in node without a DOM.
+
+/** Unchanged blocks shown on each side of a hunk before anything is expanded.
+ *  GitHub's own default, and it is a default rather than a setting because a
+ *  figure nobody has asked to change is one more thing to persist and migrate. */
+export const DIFF_CONTEXT = 3;
+
+/** How many more blocks one press of an expand control reveals on that side. */
+export const DIFF_EXPAND_STEP = 10;
+
+/** One diff row's height in CSS pixels.
+ *
+ *  JS OWNS THIS NUMBER and writes it onto the container as `--diff-row-h`, so
+ *  the stylesheet cannot drift from the arithmetic the window is computed with.
+ *  A virtualizer whose row height disagrees with the CSS scrolls to the wrong
+ *  place and there is no symptom except that. Rows are therefore `nowrap` with
+ *  their own horizontal overflow — which is also what a GitHub diff line does,
+ *  and is the one exception `SKILL`'s no-horizontal-scroll rule allows for a
+ *  code-shaped block in its own `overflow-x` container. */
+export const DIFF_ROW_HEIGHT = 22;
+
+/** Rows rendered beyond each edge of the viewport, so a fast scroll does not
+ *  show a blank band before the next frame lands. */
+export const DIFF_OVERSCAN = 6;
+
+/** The sibling index of the block a `DiffAnchor.path` names, or `null` when the
+ *  path ends at a row or a cell — which `block_at_path` refuses to resolve, so
+ *  neither does this. O(1). */
+export function blockIndexOfPath(path) {
+  const last = Array.isArray(path) && path.length > 0 ? path[path.length - 1] : null;
+  return last && last.kind === "block" && Number.isInteger(last.index) ? last.index : null;
+}
+
+/** The same path with its final block index set to `index`, or `null` when the
+ *  path does not end at a block or `index` is before the first sibling.
+ *
+ *  This is how a caller asks the engine for a NEIGHBOUR: there is no "next
+ *  sibling" call and there should not be one, because the end of a sibling list
+ *  is exactly what `blockTextAt` returning `null` already tells you. O(depth). */
+export function pathAtIndex(path, index) {
+  if (blockIndexOfPath(path) === null || !Number.isInteger(index) || index < 0) return null;
+  return [...path.slice(0, -1), { kind: "block", index }];
+}
+
+/** The side of a change a unified diff reads its coordinates from: the right
+ *  (newer) when it has one, else the left. An insertion has only a right and a
+ *  deletion only a left, so this is "whichever exists" rather than a preference,
+ *  and a change with neither is unplaceable and says so. O(1). */
+export function anchorOf(change) {
+  if (change?.right) return { side: "right", anchor: change.right };
+  if (change?.left) return { side: "left", anchor: change.left };
+  return null;
+}
+
+/**
+ * Groups ordered changes into hunks.
+ *
+ * Two changes share a hunk when they sit on the same side, in the same story,
+ * under the same parent container, and within `context * 2` blocks of each
+ * other — the standard rule, and the reason it is `context * 2` is that any
+ * wider gap would render as two context runs with nothing between them, which
+ * is two hunks wearing one header.
+ *
+ * `rows` must already be in document order. It is: `DiffJob::finish` sorts by
+ * `(story, path, family, kind)` and `summariseDiff` now keeps that order. A
+ * caller that hands this a family-sorted list gets hunks that interleave
+ * positions, which is the bug this ordering was restored to prevent.
+ *
+ * A change with no anchor at all becomes its own unplaceable hunk — rendered
+ * with no context and no expand controls, because there is no position to expand
+ * around. It is NOT dropped: a difference the engine found and this surface
+ * could not place is still a difference, and dropping it is the silent loss
+ * `AGENTS.md` puts first.
+ *
+ * Complexity: **O(changes)**, one pass, no document access.
+ *
+ * @param {readonly object[]} rows ordered change records.
+ * @param {{context?: number}} [options]
+ */
+export function diffHunks(rows, { context = DIFF_CONTEXT } = {}) {
+  const hunks = [];
+  for (const change of Array.isArray(rows) ? rows : []) {
+    const placed = anchorOf(change);
+    const index = placed ? blockIndexOfPath(placed.anchor.path) : null;
+    if (!placed || index === null) {
+      hunks.push({
+        placeable: false,
+        side: null,
+        story: null,
+        path: null,
+        start: null,
+        end: null,
+        changes: [change],
+        before: 0,
+        after: 0,
+      });
+      continue;
+    }
+    const storyKey = JSON.stringify(placed.anchor.story ?? null);
+    const parentKey = JSON.stringify(placed.anchor.path.slice(0, -1));
+    const last = hunks[hunks.length - 1];
+    if (
+      last?.placeable &&
+      last.side === placed.side &&
+      last.storyKey === storyKey &&
+      last.parentKey === parentKey &&
+      index - last.end <= context * 2
+    ) {
+      last.changes.push(change);
+      last.end = Math.max(last.end, index);
+      continue;
+    }
+    hunks.push({
+      placeable: true,
+      side: placed.side,
+      story: placed.anchor.story ?? null,
+      storyKey,
+      parentKey,
+      path: placed.anchor.path,
+      start: index,
+      end: index,
+      changes: [change],
+      before: context,
+      after: context,
+    });
+  }
+  return hunks;
+}
+
+/**
+ * The lines one change contributes, in GitHub's order: removed, then added.
+ *
+ * Decided by WHICH TEXTS EXIST rather than by the kind label, because the kinds
+ * do not partition the cases: a `formatting` change has the same text on both
+ * sides, a `property` change has neither, and the engine's weaker-key second
+ * pass pairs an edited block against the block it replaced, which has both and
+ * is a `text` change. The kind still rides on every line, because it is what the
+ * row is LABELLED with.
+ *
+ * A change with no text on either side renders one `meta` line — the typed field
+ * paths or the bracketed object name, which `changeFields` and `changeObjectName`
+ * already produce. That is the row that used to read only "Reformatted".
+ *
+ * O(1).
+ */
+export function changeLines(change, hunk) {
+  const left = String(change?.leftText ?? "");
+  const right = String(change?.rightText ?? "");
+  const line = (kind, text) => ({ kind, hunk, change, text });
+  if (left && right && left !== right) return [line("del", left), line("add", right)];
+  if (left && !right) return [line("del", left)];
+  if (right && !left) return [line("add", right)];
+  if (left && right) return [line("meta", right)];
+  return [line("meta", "")];
+}
+
+/**
+ * The flat, fixed-height row array the window is cut from.
+ *
+ * Every visual element is a row — the hunk header, each expand control, each
+ * context block, each removed and added line — because a virtualizer can only
+ * be exact over a uniform array. Variable heights would mean measuring, and
+ * measuring every row is the O(changes) work the window exists to avoid.
+ *
+ * Context rows carry a `delta` relative to the hunk's `start` (negative, above)
+ * or `end` (positive, below) rather than an absolute index, so expanding a hunk
+ * changes one number and the paths are recomputed from it.
+ *
+ * Complexity: **O(changes + total context shown)**, which is bounded by what the
+ * reader has expanded. Called when a hunk is expanded, not per scroll tick.
+ */
+export function diffLines(hunks) {
+  const lines = [];
+  for (const [index, hunk] of (Array.isArray(hunks) ? hunks : []).entries()) {
+    lines.push({ kind: "hunk", hunk: index });
+    if (hunk.placeable) lines.push({ kind: "expand", hunk: index, side: "before" });
+    for (let step = hunk.before; step >= 1; step -= 1) {
+      lines.push({ kind: "context", hunk: index, delta: -step });
+    }
+    for (const change of hunk.changes) lines.push(...changeLines(change, index));
+    for (let step = 1; step <= hunk.after; step += 1) {
+      lines.push({ kind: "context", hunk: index, delta: step });
+    }
+    if (hunk.placeable) lines.push({ kind: "expand", hunk: index, side: "after" });
+  }
+  return lines;
+}
+
+/**
+ * The slice of a flat row array a scroller is showing.
+ *
+ * Pure arithmetic, separated so the one thing a virtualizer gets wrong — the
+ * window — is testable without a browser. Clamped at both ends, so a scroller
+ * taller than its content, a negative `scrollTop` (which rubber-banding
+ * produces) and an empty list all return a valid range rather than a negative
+ * length.
+ *
+ * O(1), which is the whole point: this runs on every scroll tick.
+ */
+export function diffWindow(count, scrollTop, viewport, { rowHeight = DIFF_ROW_HEIGHT, overscan = DIFF_OVERSCAN } = {}) {
+  const total = Math.max(0, Math.trunc(count));
+  if (total === 0) return { first: 0, last: 0 };
+  const top = Math.max(0, Number(scrollTop) || 0);
+  const height = Math.max(rowHeight, Number(viewport) || rowHeight);
+  const first = Math.max(0, Math.floor(top / rowHeight) - overscan);
+  const last = Math.min(total, Math.ceil((top + height) / rowHeight) + overscan);
+  return { first, last: Math.max(first, last) };
+}
+
 /**
  * Binds the Compare panel and its two entry points.
  *
@@ -691,6 +1025,12 @@ export function unmarkedReasons(keys) {
  *   revisions, so it is a mutation and goes through that gate like every other.
  * @param {() => string} [io.readOnlyReason] the engine's own
  *   `editingUnavailableReason`, for a document no edit can ever apply to.
+ * @param {(anchor: object) => unknown} [io.navigate] scrolls the live document to
+ *   a change, given that change's RIGHT-hand `DiffAnchor`. It must resolve the
+ *   anchor's `story` + `path` through `nodeAtStoryPath` and must never use the
+ *   anchor's own `node`, which addresses a throwaway parse. Absent, change rows
+ *   render as text rather than as buttons — the Review ▸ Compare route supplies
+ *   it, and version history's read-only route has nowhere to scroll to.
  */
 export function bindComparePanel(io) {
   const panel = document.getElementById("comparePanel");
@@ -709,9 +1049,9 @@ export function bindComparePanel(io) {
   ].filter(Boolean);
   if (!panel || !body || !fileInput || entryPoints.length === 0) {
     // No surface in this composition — an embed built without the Compare panel.
-    // `compareWith: null` is what the version panel's Show changes row tests, so
-    // it reports the capability as unavailable rather than throwing on click.
-    return { open: () => {}, compareWith: null };
+    // `compareVersions: null` is what the version panel's Show changes row tests,
+    // so it reports the capability as unavailable rather than throwing on click.
+    return { open: () => {}, compareWith: null, compareVersions: null };
   }
 
   let cancelled = false;
@@ -828,10 +1168,18 @@ export function bindComparePanel(io) {
     return [paragraph(t("compare.unmarkedTitle"), "muted"), notes];
   }
 
-  function renderResult(summary, otherName, applied = null) {
+  function renderResult(summary, otherName, applied = null, options = null) {
     const children = [
-      paragraph(t("compare.against", { name: otherName })),
+      paragraph(options?.heading ?? t("compare.against", { name: otherName })),
     ];
+    // Said before the numbers, because it is what the reader is owed first on
+    // this route: the comparison they just asked for changed nothing. Only the
+    // read-only route says it; saying it where ADR-061 applies would be false.
+    if (options?.readOnly) {
+      const note = paragraph(t("compare.readOnlyProjection"), "muted");
+      note.dataset.compareReadOnly = "1";
+      children.push(note);
+    }
     // "No differences" is a CLAIM, and it is only honest when the comparison
     // actually compared everything. A document whose drawings this build has no
     // typed comparison for can produce zero changes and a `not_compared`
@@ -839,6 +1187,12 @@ export function bindComparePanel(io) {
     // agree about something the engine never looked at. So the finding wins, and
     // the sentence becomes "no differences in what could be compared".
     if (summary.total === 0) {
+      // OWNERSHIP OF THE RETAINED HANDLE ENDS HERE on this branch. There is no
+      // diff to render, so nothing takes it, and leaving it alive would hold two
+      // parsed documents for a panel that says "No differences". Every other
+      // branch hands it to `diffElements`, which owns it until `releaseDiff`.
+      releaseDiff();
+      options?.job?.free?.();
       children.push(
         paragraph(summary.findings.length > 0 ? t("compare.identicalPartly") : t("compare.identical")),
       );
@@ -901,55 +1255,332 @@ export function bindComparePanel(io) {
       list.append(item);
     }
     children.push(list);
+    // WORD'S FIVE CATEGORIES, plus the one kind Word has no name for.
+    // `wordCategories` says why each mapping is what it is. Rendered after the
+    // families and before the findings: "what happened" after "to what", and
+    // both before the limits of the answer.
+    const summaryList = document.createElement("ul");
+    summaryList.className = "compare-list compare-categories";
+    for (const { category, count } of summary.categories) {
+      const item = document.createElement("li");
+      item.dataset.compareCategory = category;
+      item.dataset.compareCategoryCount = String(count);
+      item.textContent = t(CATEGORY_KEY[category], { count });
+      summaryList.append(item);
+    }
+    children.push(paragraph(t("compare.summary.title"), "muted"), summaryList);
     // WHAT COULD NOT BE COMPARED, before the changes themselves: a reader
     // deciding whether to trust this list needs its limits before they start
     // reading, not after.
     children.push(...findingNotes(summary));
-    const rows = document.createElement("ol");
-    rows.className = "compare-changes";
-    for (const change of summary.rows) {
-      const item = document.createElement("li");
-      item.dataset.compareKind = change.kind;
-      item.dataset.compareChangeFamily = change.family;
-      const kind = document.createElement("span");
-      kind.className = "compare-kind";
-      kind.textContent = KIND_KEY[change.kind] ? t(KIND_KEY[change.kind]) : change.kind;
-      item.append(kind);
-      // WHAT THE ROW IS ABOUT, and never nothing. Text first, because an excerpt
-      // of the words is what a reader recognises; then the typed field paths,
-      // which are what a formatting or property change actually is; then the
-      // bracketed object name, so a row about an untexted block still names a
-      // thing. A row that carried only its kind label is the defect this order
-      // closes, and `compare_documents.test.mjs` fails if one can still happen.
-      const text = changeText(change);
-      const fields = changeFields(change);
-      if (text) {
-        const quote = document.createElement("q");
-        quote.textContent = text;
-        item.append(quote);
-      } else if (fields.length > 0) {
-        const named = document.createElement("span");
-        named.className = "compare-object";
-        named.dataset.compareFields = fields.join(",");
-        named.textContent = fields.join(", ");
-        item.append(named);
-      } else {
-        const named = document.createElement("span");
-        named.className = "compare-object";
-        named.textContent = changeObjectName(change);
-        item.append(named);
-      }
-      const where = storyLabel(change.left?.story ?? change.right?.story);
-      if (where) {
-        const story = document.createElement("span");
-        story.className = "compare-where";
-        story.textContent = where;
-        item.append(story);
-      }
-      rows.append(item);
-    }
-    children.push(rows);
+    children.push(...diffElements(summary, options));
     render(children);
+  }
+
+  // ---------------------------------------------------------------------------
+  // The unified diff view: a windowed row list over `diffLines`
+  // ---------------------------------------------------------------------------
+
+  /** Blocks of fetched context text held at once.
+   *
+   *  A cap rather than a weak map, because the keys are strings. It is generous
+   *  — a reader cannot expand two thousand blocks without noticing — and the
+   *  overflow behaviour is a clear rather than an eviction policy: an LRU here
+   *  would be a cache implementation nobody asked for, and re-fetching a block
+   *  is one O(depth) engine call. */
+  const CONTEXT_CACHE_MAX = 2_000;
+
+  /** The live diff view, or `null`. Holds the RETAINED engine handle, so
+   *  `releaseDiff` is the one place that frees it and every path that replaces
+   *  or closes a result goes through it. */
+  let diffView = null;
+
+  /** Drops the view and the two parsed documents behind it. Idempotent. O(1). */
+  function releaseDiff() {
+    if (!diffView) return;
+    diffView.scroller?.removeEventListener("scroll", diffView.onScroll);
+    if (diffView.frame) cancelAnimationFrame(diffView.frame);
+    diffView.job?.free?.();
+    diffView = null;
+  }
+
+  /** One block of context text on a hunk's side, or `null` at the end of the
+   *  sibling list — which is how the expand control learns there is no more.
+   *
+   *  Complexity: **O(depth)** per uncached block, in the engine. Per
+   *  interaction, never per document. */
+  function contextText(hunk, delta) {
+    if (!diffView?.job || !hunk.placeable) return null;
+    const base = delta < 0 ? hunk.start : hunk.end;
+    const path = pathAtIndex(hunk.path, base + delta);
+    if (!path) return null;
+    const serialised = JSON.stringify(path);
+    const key = `${hunk.side}|${hunk.storyKey}|${serialised}`;
+    if (diffView.cache.has(key)) return diffView.cache.get(key);
+    let text = null;
+    try {
+      text = diffView.job.blockTextAt(hunk.side, hunk.storyKey, serialised) ?? null;
+    } catch {
+      // A path that does not resolve is an ANSWER — the document stops here —
+      // and the engine returns `None` for it rather than throwing. This catch is
+      // for a freed handle reached by a stale frame, which must not take the
+      // panel down with it.
+      text = null;
+    }
+    if (diffView.cache.size >= CONTEXT_CACHE_MAX) diffView.cache.clear();
+    diffView.cache.set(key, text);
+    return text;
+  }
+
+  /** The hunk header: where in the document this run of changes is. */
+  function hunkRow(hunk) {
+    const label = document.createElement("span");
+    label.className = "compare-diff-at";
+    label.textContent = hunk.placeable
+      ? t("compare.diff.at", { position: n(hunk.start + 1) })
+      : t("compare.diff.unplaced");
+    const parts = [label];
+    const where = storyLabel(hunk.story);
+    if (where) {
+      const story = document.createElement("span");
+      story.className = "compare-where";
+      story.textContent = where;
+      parts.push(story);
+    }
+    return parts;
+  }
+
+  /** An expand control, disabled WITH ITS REASON when the document stops here —
+   *  never a dead control (`SKILL` §10). */
+  function expandRow(hunkIndex, side) {
+    const hunk = diffView.hunks[hunkIndex];
+    const next = side === "before" ? -(hunk.before + 1) : hunk.after + 1;
+    const more = contextText(hunk, next) !== null;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "compare-diff-more";
+    button.dataset.compareExpand = side;
+    button.textContent = t("compare.diff.more");
+    button.setAttribute(
+      "aria-label",
+      side === "before" ? t("compare.diff.moreAbove") : t("compare.diff.moreBelow"),
+    );
+    button.disabled = !more;
+    if (!more) button.title = t("compare.diff.noMoreContext");
+    else button.addEventListener("click", () => expandHunk(hunkIndex, side));
+    return [button];
+  }
+
+  /** Reveals `DIFF_EXPAND_STEP` more blocks on one side of one hunk.
+   *
+   *  Complexity: O(rows) to rebuild the flat array plus O(step) engine reads for
+   *  the blocks that actually become visible. The array rebuild is the one
+   *  non-O(window) step on this surface and it happens on an explicit press, not
+   *  on a scroll tick. */
+  function expandHunk(hunkIndex, side) {
+    const hunk = diffView?.hunks?.[hunkIndex];
+    if (!hunk) return;
+    if (side === "before") hunk.before += DIFF_EXPAND_STEP;
+    else hunk.after += DIFF_EXPAND_STEP;
+    diffView.lines = diffLines(diffView.hunks);
+    diffView.sizer.style.height = `${diffView.lines.length * DIFF_ROW_HEIGHT}px`;
+    diffView.dirty = true;
+    paintDiff();
+  }
+
+  /** The contents of one change line: its kind label, then what it is about.
+   *
+   *  The ORDER is the one `docs/164` §4 recorded as fixed and this keeps: the
+   *  text excerpt first, because an excerpt of the words is what a reader
+   *  recognises; then the typed field paths, which are what a formatting or
+   *  property change actually is; then the bracketed object name, so a row about
+   *  an untexted block still names a thing. A row carrying only its kind label is
+   *  the defect, and `compare_documents.test.mjs` fails if one can still happen. */
+  function changeRow(line) {
+    const change = line.change;
+    const kind = document.createElement("span");
+    kind.className = "compare-kind";
+    kind.textContent = KIND_KEY[change.kind] ? t(KIND_KEY[change.kind]) : change.kind;
+    const parts = [kind];
+    const fields = changeFields(change);
+    if (line.text) {
+      const quote = document.createElement("q");
+      quote.className = "compare-diff-text";
+      quote.textContent = line.text;
+      parts.push(quote);
+    } else if (fields.length > 0) {
+      const named = document.createElement("span");
+      named.className = "compare-object";
+      named.dataset.compareFields = fields.join(",");
+      named.textContent = fields.join(", ");
+      parts.push(named);
+    } else {
+      const named = document.createElement("span");
+      named.className = "compare-object";
+      named.textContent = changeObjectName(change);
+      parts.push(named);
+    }
+    return parts;
+  }
+
+  /** One row of the window, as an element. O(1). */
+  function diffRowElement(line, index, total) {
+    const item = document.createElement("li");
+    item.className = `compare-diff-row compare-diff-${line.kind}`;
+    item.dataset.compareRow = line.kind;
+    // A windowed list must publish the real list's shape, or a screen reader
+    // announces "1 of 40" over a document of four thousand changes.
+    item.setAttribute("aria-posinset", String(index + 1));
+    item.setAttribute("aria-setsize", String(total));
+    const hunk = diffView.hunks[line.hunk];
+    if (line.kind === "hunk") {
+      item.append(...hunkRow(hunk));
+      return item;
+    }
+    if (line.kind === "expand") {
+      item.append(...expandRow(line.hunk, line.side));
+      return item;
+    }
+    if (line.kind === "context") {
+      const text = contextText(hunk, line.delta);
+      const span = document.createElement("span");
+      span.className = "compare-diff-text";
+      // A block that is not a paragraph has no projected text — a table, an
+      // alt-chunk — and says so rather than rendering an empty line a reader
+      // would read as a blank paragraph.
+      span.textContent = text ?? "";
+      if (text === null) {
+        item.classList.add("is-empty");
+        span.textContent = t("compare.diff.notText");
+      }
+      item.append(span);
+      return item;
+    }
+    // A change line. These are the ENTRIES — the index `docs/164` §4 asked to
+    // become a navigation surface — so they carry the kind and family a guard
+    // and a stylesheet read off, and they are clickable when there is somewhere
+    // to go.
+    item.dataset.compareKind = line.change.kind;
+    item.dataset.compareChangeFamily = line.change.family;
+    const target = navigableAnchor(line.change);
+    if (target) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "compare-diff-goto";
+      button.dataset.compareGoto = line.change.id ?? "";
+      button.append(...changeRow(line));
+      button.addEventListener("click", () => void io.navigate(target));
+      item.append(button);
+    } else {
+      item.append(...changeRow(line));
+    }
+    return item;
+  }
+
+  /** The right-hand anchor a click can navigate to, or `null`.
+   *
+   *  NAVIGATION IS ONLY OFFERED WHERE A PATH CAN RESOLVE, which is the Review ▸
+   *  Compare route: there the right-hand side IS the open document, so the
+   *  change's `right.path` addresses a block the reader is looking at and
+   *  `nodeAtStoryPath` turns it into that paragraph's real NodeId. In version
+   *  history's read-only route neither compared state is on screen, so there is
+   *  nowhere to scroll to — and the unified diff above IS the reading surface,
+   *  which is why no row pretends otherwise. `DiffAnchor.node` is never used for
+   *  this: it addresses a throwaway parse whose id counter restarted at 1, so
+   *  handing it to `navigateToReviewAnchor` lands on an unrelated paragraph with
+   *  the same ordinal and reports nothing wrong. O(1). */
+  function navigableAnchor(change) {
+    if (typeof io.navigate !== "function" || diffView?.readOnly) return null;
+    const right = change?.right;
+    if (!right || blockIndexOfPath(right.path) === null) return null;
+    return right;
+  }
+
+  /** Paints the visible slice. O(window) — the rule this surface exists to keep
+   *  (`docs/107` §4: per-interaction work is O(1) in document size, and a scroll
+   *  tick is an interaction). */
+  function paintDiff() {
+    const view = diffView;
+    if (!view?.scroller) return;
+    const { first, last } = diffWindow(
+      view.lines.length,
+      view.scroller.scrollTop,
+      view.scroller.clientHeight,
+    );
+    if (!view.dirty && first === view.first && last === view.last) return;
+    view.first = first;
+    view.last = last;
+    view.dirty = false;
+    const items = [];
+    for (let index = first; index < last; index += 1) {
+      items.push(diffRowElement(view.lines[index], index, view.lines.length));
+    }
+    view.list.replaceChildren(...items);
+    view.list.style.transform = `translateY(${first * DIFF_ROW_HEIGHT}px)`;
+  }
+
+  /**
+   * The unified diff, as elements.
+   *
+   * Replaces a flat `<ol>` that built one `<li>` per change in one synchronous
+   * loop — an O(changes) main-thread render, uncapped and unvirtualized, which is
+   * the shape `SKILL` §8 forbids and `docs/164` §4 gap 3 recorded.
+   *
+   * Complexity: **O(hunks) to group, O(rows) to flatten, O(window) to paint**,
+   * and O(window) per scroll tick thereafter. The flatten is O(changes) once per
+   * comparison and per expand press, not per tick.
+   */
+  function diffElements(summary, options) {
+    releaseDiff();
+    if (summary.rows.length === 0) return [];
+    const hunks = diffHunks(summary.rows);
+    const scroller = document.createElement("div");
+    scroller.className = "compare-diff";
+    scroller.dataset.compareDiff = String(summary.rows.length);
+    scroller.style.setProperty("--diff-row-h", `${DIFF_ROW_HEIGHT}px`);
+    const sizer = document.createElement("div");
+    sizer.className = "compare-diff-sizer";
+    const list = document.createElement("ol");
+    list.className = "compare-changes";
+    sizer.append(list);
+    scroller.append(sizer);
+    const onScroll = () => {
+      if (diffView?.frame) return;
+      diffView.frame = requestAnimationFrame(() => {
+        diffView.frame = 0;
+        paintDiff();
+      });
+    };
+    diffView = {
+      hunks,
+      lines: diffLines(hunks),
+      job: options?.job ?? null,
+      readOnly: options?.readOnly === true,
+      scroller,
+      sizer,
+      list,
+      cache: new Map(),
+      first: -1,
+      last: -1,
+      dirty: true,
+      frame: 0,
+      onScroll,
+    };
+    sizer.style.height = `${diffView.lines.length * DIFF_ROW_HEIGHT}px`;
+    scroller.addEventListener("scroll", onScroll);
+    // Painted once now, with the scroller's height still 0 — `diffWindow`
+    // clamps the viewport to one row, so the first paint is one row plus the
+    // overscan, and the `requestAnimationFrame` below repaints with the real
+    // height as soon as the layout exists. Rendering nothing until a frame had
+    // passed would leave an empty diff in a synchronous test.
+    paintDiff();
+    requestAnimationFrame(() => {
+      if (diffView?.scroller === scroller) {
+        diffView.dirty = true;
+        paintDiff();
+      }
+    });
+    return [paragraph(t("compare.diff.title"), "muted"), scroller];
   }
 
   /** ADR-061: applies the sidecar to the open document as tracked changes.
@@ -1053,6 +1684,9 @@ export function bindComparePanel(io) {
         yieldToHost: io.yieldToHost,
         onProgress: renderProgress,
         cancelled: () => cancelled,
+        // The handle is kept so the unified diff can pull its context blocks
+        // from the two parsed sides. `releaseDiff` frees it.
+        retain: true,
       });
       if (!outcome.ok) {
         if (outcome.reason === CANCELLED) {
@@ -1100,11 +1734,116 @@ export function bindComparePanel(io) {
           note.dataset.compareRefused = String(result?.code ?? "");
           render([paragraph(t("compare.against", { name: otherName })), note]);
           io.setStatus(message, "error");
+          // Nothing renders the diff on a refusal, so nothing takes the handle.
+          outcome.job?.free?.();
           return;
         }
         applied = result;
       }
-      renderResult(summary, otherName, applied);
+      renderResult(summary, otherName, applied, { job: outcome.job ?? null });
+    } finally {
+      running = false;
+    }
+  }
+
+  /**
+   * VERSION HISTORY'S ROUTE: one stored version against its PREDECESSOR,
+   * read-only (**ADR-062**).
+   *
+   * ## Why this is not `compareWith`, and why that is a split rather than a
+   * second mechanism
+   *
+   * `compareWith` is Review ▸ Compare: a deliberate, warned, undoable act on the
+   * document in front of the reader, which ADR-061 decided and which keeps every
+   * word of it. This is version history, and it is a different question: *what
+   * changed in this version?* Three facts make routing it through `compareWith`
+   * wrong rather than merely untidy, and all three were measured:
+   *
+   *   1. **It compared a version against ITSELF.** Clicking a row opens a
+   *      preview, the preview assigns `doc = previewDoc` in `main.js`, and
+   *      `compareWith`'s own right-hand side is `comparableBytes(doc, …)`. A
+   *      freshly parsed preview has `revision == 0`, so `ExactIfUnchanged`
+   *      returns the retained original bytes VERBATIM — byte-identical to the
+   *      checkpoint handed in as the other side. The comparison could not find
+   *      anything, and `compare.spec.mjs` asserted `/Compared with|No
+   *      differences/` over it, which passes either way.
+   *   2. **No competitor routes history through a mutation.** Word and Google
+   *      produce a third document; ONLYOFFICE mutates only from Review ▸ Compare
+   *      and its history is read-only by construction. Writing tracked changes
+   *      into the reader's current document because they asked a question about
+   *      the past is a behaviour nobody has, and it is not a weak version of
+   *      anyone's feature.
+   *   3. **`docs/139` §9.4 already specified this** — "Version diff is derived
+   *      data. It does not add tracked changes, comments, nodes, or marks to
+   *      either source document" — and ADR-061 reversed it for both routes when
+   *      it only needed to reverse it for one.
+   *
+   * ## What makes it read-only, mechanically
+   *
+   * Both sides are checkpoint byte arrays. The live document is never exported,
+   * `applyDiffAsRevisions` is never called, `io.landed` is never called, so
+   * `setShowingChanges` never fires and no `Operation::UpdateReviewState` is
+   * built. There is nothing to undo because nothing happened. The panel renders
+   * `[data-compare-read-only]` and never `[data-compare-marked]` — which is what
+   * `compare.spec.mjs` asserts, against `compare-on-canvas.spec.mjs`'s assertion
+   * that Review ▸ Compare still renders `[data-compare-marked]` visible.
+   *
+   * It is also NOT gated on `blockedReason`. A comparison that writes revisions
+   * is a mutation and goes through the Viewing-mode gate; this one writes
+   * nothing, and a preview is read-only by definition — so gating it there would
+   * refuse the feature in precisely the state a reader reaches it from.
+   *
+   * Complexity: O(both checkpoints) to parse, sliced with progress and a Cancel,
+   * then O(window) to render. No live-document work at all.
+   *
+   * @param {Uint8Array} olderBytes the predecessor's checkpoint.
+   * @param {Uint8Array} newerBytes the selected version's checkpoint.
+   * @param {string} olderLabel when the predecessor was.
+   * @param {string} newerLabel when the selected version was.
+   */
+  async function compareVersions(olderBytes, newerBytes, olderLabel, newerLabel) {
+    if (running) return;
+    releaseDiff();
+    setOpen(true);
+    running = true;
+    cancelled = false;
+    try {
+      renderProgress({ phase: PARSING, done: 0, total: 0 });
+      await io.yieldToHost();
+      if (cancelled) {
+        render([paragraph(t("compare.cancelled"), "muted")]);
+        return;
+      }
+      const outcome = await runComparison({
+        // The older state is LEFT and the newer is RIGHT, which is review's
+        // orientation and the engine's: an insertion is what the newer version
+        // has and the older did not. Reversed, every addition in a version would
+        // read as a removal and the count would still be right — the mistake a
+        // reader cannot detect, which is why the spec names the text it expects.
+        begin: () => io.engine.begin(olderBytes, newerBytes),
+        slice: () => io.engine.slice(),
+        yieldToHost: io.yieldToHost,
+        onProgress: renderProgress,
+        cancelled: () => cancelled,
+        retain: true,
+      });
+      if (!outcome.ok) {
+        if (outcome.reason === CANCELLED) {
+          render([paragraph(t("compare.cancelled"), "muted")]);
+          return;
+        }
+        const message = NO_ANSWER.has(outcome.reason)
+          ? t("compare.noAnswer")
+          : t("compare.failed", { reason: outcome.reason });
+        render([paragraph(message, "muted")]);
+        io.setStatus(message, "error");
+        return;
+      }
+      renderResult(summariseDiff(outcome.diff), newerLabel, null, {
+        job: outcome.job ?? null,
+        readOnly: true,
+        heading: t("compare.betweenVersions", { older: olderLabel, newer: newerLabel }),
+      });
     } finally {
       running = false;
     }
@@ -1134,16 +1873,31 @@ export function bindComparePanel(io) {
     button.addEventListener("click", () => {
       const open = panel.hidden;
       setOpen(open);
-      if (open && !running) renderChooser();
+      // CLOSING RELEASES THE TWO PARSED SIDES. They are the largest thing this
+      // surface holds and they exist only to answer "show me more context", so
+      // the panel going away is the release point — not a timer, and not a
+      // weak reference the engine has no notion of.
+      if (!open) releaseDiff();
+      if (open && !running) {
+        releaseDiff();
+        renderChooser();
+      }
     });
   }
-  document.getElementById("compareClose")?.addEventListener("click", () => setOpen(false));
+  document.getElementById("compareClose")?.addEventListener("click", () => {
+    setOpen(false);
+    releaseDiff();
+  });
 
   return {
     open: () => {
       setOpen(true);
-      if (!running) renderChooser();
+      if (!running) {
+        releaseDiff();
+        renderChooser();
+      }
     },
     compareWith,
+    compareVersions,
   };
 }
