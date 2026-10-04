@@ -403,6 +403,7 @@ const lineNumbersBtn = document.getElementById("lineNumbersBtn");
 const watermarkBtn = document.getElementById("watermarkBtn");
 const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertShapeBtn = document.getElementById("insertShapeBtn");
+const insertChartBtn = document.getElementById("insertChartBtn");
 const layoutSendBackwardBtn = document.getElementById("layoutSendBackwardBtn");
 const layoutGroupBtn = document.getElementById("layoutGroupBtn");
 const layoutUngroupBtn = document.getElementById("layoutUngroupBtn");
@@ -7668,6 +7669,7 @@ const INSERT_SURFACE = [
   // galleries), so wiring `activate` here too would open it on mousedown and
   // immediately close it again.
   { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
+  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
   { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
   { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },

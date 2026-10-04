@@ -89,6 +89,10 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertBreaksBtn",
     "insertPictureBtn",
     "insertShapeBtn",
+    // Chart sits after Shapes, which is Word's Illustrations order
+    // (Pictures, Shapes, Icons, 3D Models, SmartArt, Chart); Text Box is in
+    // Word's Text group and follows here because this band holds both.
+    "insertChartBtn",
     "insertTextBoxBtn",
     "insertLinkBtn",
     "insertBookmarkBtn",
