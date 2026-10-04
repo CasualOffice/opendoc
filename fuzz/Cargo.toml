@@ -10,11 +10,19 @@ license = "Apache-2.0"
 cargo-fuzz = true
 
 [dependencies]
+casual-doc-cfb = { path = "../crates/casual-doc-cfb", version = "=0.0.1" }
 casual-doc-package = { path = "../crates/casual-doc-package", version = "=0.0.1" }
 casual-doc-ooxml = { path = "../crates/casual-doc-ooxml", version = "=0.0.1" }
 casual-doc-odf = { path = "../crates/casual-doc-odf", version = "=0.0.1" }
 casual-doc-rtf = { path = "../crates/casual-doc-rtf", version = "=0.0.1" }
 libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "cfb_container"
+path = "fuzz_targets/cfb_container.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "bounded_package"

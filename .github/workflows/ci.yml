@@ -149,6 +149,7 @@ jobs:
           --locked
       - name: Build package and content fuzz targets
         run: |
+          cargo +nightly-2026-07-20 fuzz build cfb_container
           cargo +nightly-2026-07-20 fuzz build bounded_package
           cargo +nightly-2026-07-20 fuzz build docx_package
           cargo +nightly-2026-07-20 fuzz build odt_package

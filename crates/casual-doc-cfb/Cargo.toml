@@ -1,0 +1,15 @@
+[package]
+name = "casual-doc-cfb"
+description = "Bounded MS-CFB compound-file recognition for OpenDoc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

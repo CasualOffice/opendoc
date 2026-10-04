@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/casual-doc-cfb",
     "crates/casual-doc-diff",
     "crates/casual-doc-edit",
     "crates/casual-doc-export",
@@ -34,6 +35,7 @@ repository = "https://github.com/CasualOffice/opendoc"
 authors = ["CasualOffice contributors"]
 
 [workspace.dependencies]
+casual-doc-cfb = { path = "crates/casual-doc-cfb", version = "=0.0.1" }
 casual-doc-diff = { path = "crates/casual-doc-diff", version = "=0.0.1" }
 casual-doc-edit = { path = "crates/casual-doc-edit", version = "=0.0.1" }
 casual-doc-export = { path = "crates/casual-doc-export", version = "=0.0.1" }
