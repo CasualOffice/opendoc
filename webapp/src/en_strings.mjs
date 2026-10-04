@@ -47,6 +47,7 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.font": "Font",
   "menuGroup.formattingMarks": "Formatting marks",
   "menuGroup.headerFooter": "Header & footer",
+  "menuGroup.headings": "Document headings",
   "menuGroup.help": "Help",
   "menuGroup.history": "History",
   "menuGroup.illustrations": "Illustrations",

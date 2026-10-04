@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "rtl",
   "@@locale": "ar",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "حول OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "محرّر مستندات بترخيص Apache-2.0 يعمل بالكامل داخل هذا المستعرض.",
@@ -544,6 +544,7 @@
   "menuGroup.font": "الخط",
   "menuGroup.formattingMarks": "علامات التنسيق",
   "menuGroup.headerFooter": "الرأس والتذييل",
+  "menuGroup.headings": "عناوين المستند",
   "menuGroup.help": "التعليمات",
   "menuGroup.history": "السجل",
   "menuGroup.illustrations": "الرسوم التوضيحية",

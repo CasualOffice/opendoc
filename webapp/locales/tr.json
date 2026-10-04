@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "tr",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "OpenDoc hakkında",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Tamamen bu tarayıcıda çalışan Apache-2.0 lisanslı bir belge düzenleyicisi.",
@@ -540,6 +540,7 @@
   "menuGroup.font": "Yazı tipi",
   "menuGroup.formattingMarks": "Biçimlendirme işaretleri",
   "menuGroup.headerFooter": "Üstbilgi ve altbilgi",
+  "menuGroup.headings": "Belge başlıkları",
   "menuGroup.help": "Yardım",
   "menuGroup.history": "Geçmiş",
   "menuGroup.illustrations": "Çizimler",

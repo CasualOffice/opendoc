@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "it",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "Informazioni su OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Un editor di documenti Apache-2.0 che funziona interamente in questo browser.",
@@ -541,6 +541,7 @@
   "menuGroup.font": "Carattere",
   "menuGroup.formattingMarks": "Segni di formattazione",
   "menuGroup.headerFooter": "Intestazione e piè di pagina",
+  "menuGroup.headings": "Titoli del documento",
   "menuGroup.help": "Guida",
   "menuGroup.history": "Cronologia",
   "menuGroup.illustrations": "Illustrazioni",

@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "ru",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "О OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Редактор документов под лицензией Apache-2.0, работающий полностью в этом браузере.",
@@ -542,6 +542,7 @@
   "menuGroup.font": "Шрифт",
   "menuGroup.formattingMarks": "Знаки форматирования",
   "menuGroup.headerFooter": "Колонтитулы",
+  "menuGroup.headings": "Заголовки документа",
   "menuGroup.help": "Справка",
   "menuGroup.history": "История",
   "menuGroup.illustrations": "Иллюстрации",

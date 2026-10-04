@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "ja",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "OpenDoc について",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "このブラウザー内で完全に動作する Apache-2.0 ライセンスの文書エディターです。",
@@ -539,6 +539,7 @@
   "menuGroup.font": "フォント",
   "menuGroup.formattingMarks": "編集記号",
   "menuGroup.headerFooter": "ヘッダーとフッター",
+  "menuGroup.headings": "文書の見出し",
   "menuGroup.help": "ヘルプ",
   "menuGroup.history": "履歴",
   "menuGroup.illustrations": "図",

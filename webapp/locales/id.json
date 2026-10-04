@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "id",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "Tentang OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Editor dokumen Apache-2.0 yang berjalan sepenuhnya di browser ini.",
@@ -539,6 +539,7 @@
   "menuGroup.font": "Fon",
   "menuGroup.formattingMarks": "Tanda format",
   "menuGroup.headerFooter": "Header & footer",
+  "menuGroup.headings": "Judul dokumen",
   "menuGroup.help": "Bantuan",
   "menuGroup.history": "Riwayat",
   "menuGroup.illustrations": "Ilustrasi",
