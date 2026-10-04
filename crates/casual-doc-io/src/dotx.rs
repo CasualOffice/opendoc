@@ -92,19 +92,29 @@ impl FormatExporter for DotxAdapter {
                 feature: "dotx.export.retained_parts".to_owned(),
                 occurrences: 1,
                 location: crate::FeatureLocation {
-                    local_name: Some("dotx.export.retained_parts".to_owned()),
+                    element: Some("dotx.export.retained_parts".to_owned()),
                     ..crate::FeatureLocation::default()
                 },
-                model_outcome: crate::ModelOutcome::Omitted,
-                retention_outcome: crate::RetentionOutcome::NotRetained,
+                disposition: crate::Disposition::OmittedNotRetained,
+                ledger_id: None,
+                part: None,
             });
         }
         report.sort();
         let report: CompatibilityReport = report;
 
+        // A `.dotx` carries no retained parts by construction (the writer is
+        // handed an empty side-table above), so there is no preservation claim
+        // and nothing to license.
+        let ledger = crate::PreservationLedger::default();
+        report.validate(&ledger).map_err(|violation| {
+            AdapterError::new(format!("dotx export disposition: {violation}"))
+        })?;
+
         Ok(ExportArtifact {
             bytes: exported.bytes,
             report,
+            ledger,
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some("ecma-376".to_owned()),

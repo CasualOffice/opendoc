@@ -57,9 +57,9 @@ use casual_doc_model::v1::{
 };
 
 use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, ExportArtifact, ExportMode,
+    AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, ExportArtifact, ExportMode,
     ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId, FormatProfile,
-    ModelOutcome, RetentionOutcome, formats,
+    ModelOutcome, PreservationLedger, formats,
 };
 
 /// The media type registered for Markdown, and the one the artifact carries.
@@ -199,6 +199,7 @@ impl FormatExporter for MarkdownAdapter {
         Ok(ExportArtifact {
             bytes: writer.finish(),
             report: losses.finish(),
+            ledger: PreservationLedger::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some("commonmark".to_owned()),
@@ -994,23 +995,42 @@ impl Losses {
             .or_insert((count, outcome));
     }
 
+    /// Builds the report, resolving each finding's model outcome into the one
+    /// disposition that is honest for this target.
+    ///
+    /// The retention half is `not-retained` for every finding, and that is a
+    /// property of the FORMAT rather than a per-mode constant of the kind
+    /// FID-R-02 removed: this target is a flat text encoding with no sidecar, no
+    /// side-table and no byte floor, so there is nowhere for an unconsumed
+    /// remainder to be kept. A `mapped` finding is therefore skipped rather than
+    /// paired: `mapped` + `not-retained` is one of the six combinations
+    /// `35-DISPOSITION-TAXONOMY.md` refuses, and a construct this writer emitted
+    /// in full is not a finding in the first place. No call site records one
+    /// today, so nothing is skipped — the arm exists so that the type cannot be
+    /// used to publish an illegal pair later.
     fn finish(self) -> CompatibilityReport {
         let mut report = CompatibilityReport {
             entries: self
                 .entries
                 .into_iter()
-                .map(
-                    |(feature, (occurrences, model_outcome))| CompatibilityEntry {
+                .filter_map(|(feature, (occurrences, model_outcome))| {
+                    let disposition = match model_outcome {
+                        ModelOutcome::Mapped => return None,
+                        ModelOutcome::Degraded => Disposition::DegradedNotRetained,
+                        ModelOutcome::Omitted => Disposition::OmittedNotRetained,
+                    };
+                    Some(CompatibilityEntry {
                         feature: feature.to_owned(),
                         occurrences,
                         location: FeatureLocation {
-                            local_name: Some(feature.to_owned()),
+                            element: Some(feature.to_owned()),
                             ..FeatureLocation::default()
                         },
-                        model_outcome,
-                        retention_outcome: RetentionOutcome::NotRetained,
-                    },
-                )
+                        disposition,
+                        ledger_id: None,
+                        part: None,
+                    })
+                })
                 .collect(),
         };
         report.sort();

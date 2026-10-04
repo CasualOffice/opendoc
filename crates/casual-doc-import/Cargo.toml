@@ -10,6 +10,10 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+# The format-neutral loss taxonomy, preservation ledger and report sink
+# (`35-DISPOSITION-TAXONOMY.md`). It used to live in this crate, which made a
+# ledger-validated preservation claim something only DOCX could make.
+casual-doc-loss.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 quick-xml.workspace = true

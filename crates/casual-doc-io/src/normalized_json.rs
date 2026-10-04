@@ -3,10 +3,10 @@
 use casual_doc_model::{SnapshotLimits, v1::Document};
 
 use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
-    ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
-    FormatImporter, FormatProfile, ImportArtifact, ImportRequest, ModelOutcome, ProbeRequest,
-    ProbeResult, RetentionOutcome, SourceEnvelope, formats,
+    AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, DocumentResources,
+    ExportArtifact, ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter,
+    FormatId, FormatImporter, FormatProfile, ImportArtifact, ImportRequest, PreservationLedger,
+    ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
 
 const JSON_MIME: &str = "application/vnd.casualoffice.document+json";
@@ -76,6 +76,10 @@ impl FormatImporter for NormalizedJsonAdapter {
                 },
             ),
             report: CompatibilityReport::default(),
+            // A normalized-JSON snapshot IS the model, so there is nothing the
+            // model did not consume and nothing to retain: an empty report beside
+            // an empty ledger is the consistent state, not a missing one.
+            ledger: PreservationLedger::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some("1".to_owned()),
@@ -131,6 +135,7 @@ impl FormatExporter for NormalizedJsonAdapter {
         Ok(ExportArtifact {
             bytes,
             report,
+            ledger: PreservationLedger::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some("1".to_owned()),
@@ -146,11 +151,12 @@ fn loss(feature: &str, occurrences: u32) -> CompatibilityEntry {
         feature: feature.to_owned(),
         occurrences,
         location: FeatureLocation {
-            local_name: Some(feature.to_owned()),
+            element: Some(feature.to_owned()),
             ..FeatureLocation::default()
         },
-        model_outcome: ModelOutcome::Omitted,
-        retention_outcome: RetentionOutcome::NotRetained,
+        disposition: Disposition::OmittedNotRetained,
+        ledger_id: None,
+        part: None,
     }
 }
 
