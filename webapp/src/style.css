@@ -1131,9 +1131,27 @@ input {
    is also why the previous value here was expressed as `max-inline-size`. At
    640 the reviewer-identity pair no longer fits side by side and stacks, so
    this is load-bearing rather than cosmetic. */
+/* Wide enough for THREE columns, which is what keeps every section above the
+   fold.
+ *
+ * At 720px the `column-width: 17rem` track below fits exactly two columns, so
+ * the body's height is half the total content — and when the measurement-units
+ * section arrived (105px plus its 20px group margin) that half grew past the
+ * card's own box: 571px of content in a 560px body at 1280x720, which
+ * `dialog-fit.spec.mjs` fails by 11px. The body already scrolls, so nothing was
+ * unreachable, but that guard asserts something stronger and correct — a
+ * settings dialog that hides a section below a fold is one nobody discovers.
+ *
+ * Three columns rather than a taller card or a trimmed section: the comment
+ * below already says the point of the multi-column flow is to put more than one
+ * topic in view at once, and the 720px cap was the only thing holding it to
+ * two. 960px fits 3x17rem plus two gaps inside the padding, still leaves a
+ * margin either side of a 1280px laptop, and collapses to two columns and then
+ * one on narrower viewports with no breakpoint enumerated — the same mechanism,
+ * one number changed. */
 .dialog-card.settings-dialog {
-  width: min(720px, 100%);
-  max-inline-size: min(100%, 720px);
+  width: min(960px, 100%);
+  max-inline-size: min(100%, 960px);
 }
 
 /* Six topics, read down one column then down the next.
