@@ -19,19 +19,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EN_STRINGS } from "../src/en_strings.mjs";
-import {
-  FOLD_LEVELS,
-  FOLD_MAX_LEVEL,
-  foldCommands,
-  hasChildren,
-  pageCountCaveat,
-  parentIndex,
-  parseOutlineRow,
-  parseOutlineRows,
-  siblingPositions,
-  treeKeyAction,
-  visibleOutlineRows,
-} from "../src/fold_view.mjs";
+import { FOLD_LEVELS, FOLD_MAX_LEVEL, chevronPlacement, foldCommands, hasChildren, pageCountCaveat, parentIndex, parseOutlineRow, parseOutlineRows, siblingPositions, treeKeyAction, visibleOutlineRows } from "../src/fold_view.mjs";
 
 /** An engine outline row. */
 const row = (level, node, collapsed, text) => `${level}\t${node}\t${collapsed ? "1" : "0"}\t${text}`;
@@ -371,4 +359,36 @@ test("while anything is folded the editor says the page count is not the printed
   const many = pageCountCaveat(4, t);
   assert.match(many, /^4 headings are collapsed/);
   assert.match(many, /always include collapsed content/);
+});
+
+// The rule a clamp got wrong. The chevron is an absolutely-positioned button, so
+// one pixel over the text captures the tap that should place the caret.
+test("the chevron never covers the text: shown only when the margin holds it whole", () => {
+  const WIDTH = 18;
+  const GUTTER = 20;
+  // Desktop: a real page margin, so it is shown and sits entirely left of the text.
+  const wide = chevronPlacement({ x: 96 }, GUTTER);
+  assert.equal(wide.show, true);
+  assert.ok(
+    wide.left + WIDTH <= 96,
+    `shown at left ${wide.left} with width ${WIDTH} would reach ${wide.left + WIDTH}, ` +
+      "which is over a text edge at 96",
+  );
+
+  // Phone reflow: a 16px inset is narrower than the chevron needs, so withheld.
+  assert.deepEqual(chevronPlacement({ x: 16 }, GUTTER), { show: false, left: 0 });
+
+  // The boundary is exact: a margin of exactly the gutter still fits.
+  assert.deepEqual(chevronPlacement({ x: 20 }, GUTTER), { show: true, left: 0 });
+  assert.equal(chevronPlacement({ x: 19 }, GUTTER).show, false);
+});
+
+test("whenever it is shown, it is left of the text — at every margin, not just two", () => {
+  const GUTTER = 20;
+  for (let x = 0; x <= 200; x += 1) {
+    const p = chevronPlacement({ x }, GUTTER);
+    if (!p.show) continue;
+    assert.ok(p.left >= 0, `x=${x}: left ${p.left} is outside the window`);
+    assert.ok(p.left + 18 <= x, `x=${x}: the chevron reaches ${p.left + 18}, over the text`);
+  }
 });
