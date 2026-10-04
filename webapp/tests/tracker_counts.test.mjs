@@ -12,63 +12,21 @@
 //
 // Buildless on purpose — it runs in the existing `npm run test:unit` lane
 // (`node --test tests/*.test.mjs`), which CI already invokes.
+// The parser lives in `tracker_parse.mjs` and is shared with
+// `tracker_single_queue.test.mjs`. Two copies of a row filter is how two guards
+// come to disagree about what a row IS — see that module's opening comment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import {
+  LANES,
+  PRIORITIES,
+  cells,
+  isOpen,
+  queueRows,
+  read,
+  rows,
+} from "./tracker_parse.mjs";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const read = (name) => readFileSync(join(repoRoot, "docs", name), "utf8");
-
-// A table cell may legally contain a pipe inside a `code span`. Splitting on
-// every pipe miscounts exactly those rows, which is how a malformed row hides:
-// it looks wide enough while its cells are off by one.
-// A sentinel that cannot occur in Markdown. Written as an escape, not as a
-// literal NUL byte: a raw NUL makes git classify this file as binary and
-// silently stop showing its diffs.
-const SENTINEL = "\u0000";
-
-function cells(row) {
-  const masked = row.replace(/`[^`]*`/g, (m) => m.replaceAll("|", SENTINEL));
-  return masked
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((c) => c.replaceAll(SENTINEL, "|").trim());
-}
-
-// "Still open" is a PREFIX test, not equality: real statuses qualify themselves
-// ("Open (owner decision)", "Partly fixed (the declaration is now read…)").
-// Anything else — Fixed, Re-opened, Closed — is not open.
-const OPEN_PREFIXES = ["Open", "Partly fixed", "Partly", "In progress", "Re-opened"];
-// A status may be emphasised (`**Partly fixed** (#541) — …`), so strip markdown
-// emphasis before testing the prefix; otherwise a bolded status reads as closed.
-const normalise = (status) => status.replace(/^[*_\s]+/, "");
-const isOpen = (status) => OPEN_PREFIXES.some((p) => normalise(status).startsWith(p));
-
-/**
- * Every `| ID | … |` row in a document, with its id, last cell, and the `##`/`###`
- * heading it sits under. The heading is what lets a summary be checked cell by
- * cell instead of only in total.
- */
-function rows(text, idPattern) {
-  const out = [];
-  let heading = "";
-  for (const line of text.split("\n")) {
-    const h = line.match(/^#{2,3} +(.*?)\s*$/);
-    if (h) {
-      heading = h[1];
-      continue;
-    }
-    if (!line.startsWith("|")) continue;
-    const c = cells(line);
-    if (!c.length || !idPattern.test(c[0])) continue;
-    out.push({ id: c[0], status: c[c.length - 1], cells: c, line, heading });
-  }
-  return out;
-}
 
 test("docs/104: every summary cell is what the rows actually say", () => {
   const text = read("104-HOTFIX-TRACKER.md");
@@ -294,163 +252,17 @@ test("docs/105: every class count is derived, and no row is malformed", () => {
 });
 
 // ---------------------------------------------------------------------------
-// docs/109 — the one queue.
+// docs/109 — the one queue, arithmetic only.
 //
 // The owner's decision on 2026-09-20 was that there is exactly ONE tracker to
-// work from. 104, 105 and 106 became archives; 109 holds the order. The failure
-// mode that decision creates is obvious and quiet: a row that is still open in
-// an archive silently stops being worked, because nobody reads the archive any
-// more. So the load-bearing assertion here is not the arithmetic — it is
-// COVERAGE: every open row of 104 and 105 must be reachable from 109, either as
-// a row of its own or as a merged id named in the Supersedes/see-also column.
-//
-// The rest guards what a hand-edited table gets wrong: a duplicated id (the
-// work is then done twice, or one copy silently overwritten), a drifted summary
-// cell, and a row inserted in the wrong place — which matters here because the
-// ordering IS the product of this document. Lane order (Hotfix -> Audit ->
-// Roadmap) and the within-lane priority order are the owner's instruction, so
-// they are asserted rather than trusted.
-
-/** The queue rows of docs/109: the ones whose first cell is a position number. */
-function queueRows(text) {
-  const lines = text.split("\n");
-  const headerAt = lines.findIndex((l) => l.startsWith("| # | Id | Lane |"));
-  assert.ok(headerAt > 0, "docs/109 must carry a queue table headed '| # | Id | Lane |'");
-  const header = cells(lines[headerAt]);
-  const col = (name) => {
-    const i = header.findIndex((h) => h.toLowerCase().startsWith(name));
-    assert.ok(i >= 0, `docs/109's queue table must carry a ${name} column`);
-    return i;
-  };
-  const idx = {
-    n: col("#"),
-    id: col("id"),
-    lane: col("lane"),
-    priority: col("priority"),
-    effort: col("effort"),
-    status: col("status"),
-    source: col("source"),
-    supersedes: col("supersedes"),
-  };
-  const out = [];
-  for (const line of lines.slice(headerAt + 1)) {
-    // The queue table ends where the next section begins. This bound matters now
-    // that a row is recognised by its Id rather than by a numeric first cell:
-    // `Dropped, and on whose authority` and `What was merged` are also id-bearing
-    // tables, and without the bound their rows would be read as queue rows.
-    if (line.startsWith("## ")) break;
-    if (!line.startsWith("|")) continue;
-    const c = cells(line);
-    // A queue row is one whose first cell is position-SHAPED — digits, optionally
-    // with a letter suffix. It used to require a plain integer, and that
-    // `continue` was a hole rather than a filter: rows had been inserted with a
-    // suffixed position (`1b`, `2e`, `64a`) instead of renumbering, so every
-    // assertion below skipped them — the 1..N enumeration, the duplicate-id
-    // check, the lane order, the priority order and the derived counts alike.
-    //
-    // What that cost, measured rather than supposed: seventeen rows were
-    // invisible, so the summary said 129 rows against an actual 142 (`docs/99`
-    // §9 rule 6 — understating is also false); a P2 row sat inside the P1 block
-    // and the ordering assertion could not see it; and two DIFFERENT defects were
-    // both numbered HF-179, which the duplicate-id check would have caught except
-    // that one of them was a skipped row.
-    //
-    // Accepting the suffix here is what makes it FAIL, loudly, in the enumeration
-    // assertion below, instead of vanishing. The id is deliberately NOT the test:
-    // ids in this queue take four shapes (`HF-011`, `FID-L-07b`, `RM-01`, `Q3`),
-    // and a filter written to match ids silently dropped six rows the first time
-    // this was attempted — including the five owner-decision rows.
-    if (!/^\d+[a-z]*$/.test(c[0])) continue;
-    assert.equal(
-      c.length,
-      header.length,
-      `docs/109 row ${c[0]} has ${c.length} cells against the header's ${header.length} — ` +
-        "a missing cell shifts every later column left and the derived counts go wrong",
-    );
-    out.push({
-      // Kept verbatim as well as coerced: `Number("2e")` is NaN, and a position
-      // that silently becomes NaN is how a malformed row hides.
-      nRaw: c[idx.n],
-      n: Number(c[idx.n]),
-      id: c[idx.id],
-      lane: c[idx.lane],
-      priority: c[idx.priority],
-      effort: c[idx.effort],
-      status: c[idx.status],
-      source: c[idx.source],
-      supersedes: c[idx.supersedes],
-    });
-  }
-  assert.ok(out.length > 0, "docs/109 must carry queue rows");
-  return out;
-}
-
-const LANES = ["Hotfix", "Audit", "Roadmap"];
-const PRIORITIES = ["P0", "P1", "P2", "P3"];
-
-test("docs/109: the queue is well formed and ordered the way the owner asked", () => {
-  const queue = queueRows(read("109-BACKLOG.md"));
-
-  // The # column is a position, not an identity. It must enumerate the queue.
-  assert.deepEqual(
-    queue.map((r) => r.nRaw),
-    Array.from({ length: queue.length }, (_, i) => String(i + 1)),
-    "docs/109's # column must run 1..N with no gaps, repeats or suffixes. The # is a " +
-      "position, not an identity (the Id is the identity), so inserting a row means " +
-      "renumbering — a suffixed position such as `2e` is how sixteen rows once escaped " +
-      "every assertion in this file",
-  );
-
-  // An id appearing twice means the same work is queued twice — or, worse, that
-  // one row was overwritten by a copy-paste and has silently left the queue.
-  const seen = new Map();
-  for (const r of queue) {
-    assert.ok(!seen.has(r.id), `docs/109 lists ${r.id} twice (rows ${seen.get(r.id)} and ${r.n})`);
-    seen.set(r.id, r.n);
-  }
-
-  // Lanes run Hotfix -> Audit -> Roadmap, contiguously: "lets complete the
-  // hotfix.. target those than audit and than roadmap".
-  let lane = 0;
-  for (const r of queue) {
-    assert.ok(LANES.includes(r.lane), `docs/109 row ${r.n} has unknown lane ${r.lane}`);
-    const at = LANES.indexOf(r.lane);
-    assert.ok(
-      at >= lane,
-      `docs/109 row ${r.n} (${r.id}) is lane ${r.lane} after lane ${LANES[lane]} — ` +
-        "the lanes must run Hotfix, then Audit, then Roadmap",
-    );
-    lane = at;
-  }
-
-  // Within Hotfix and Audit, priority never goes back up the scale. The Roadmap
-  // lane is ordered by phase and carries no priority, which the header states.
-  for (const name of ["Hotfix", "Audit"]) {
-    let pri = 0;
-    for (const r of queue.filter((x) => x.lane === name)) {
-      const at = PRIORITIES.indexOf(r.priority);
-      assert.ok(at >= 0, `docs/109 row ${r.n} (${r.id}) in lane ${name} needs a P0-P3 priority`);
-      assert.ok(
-        at >= pri,
-        `docs/109 row ${r.n} (${r.id}) is ${r.priority} after ${PRIORITIES[pri]} — ` +
-          `the ${name} lane must run P0 to P3`,
-      );
-      pri = at;
-    }
-  }
-  for (const r of queue.filter((x) => x.lane === "Roadmap")) {
-    assert.ok(
-      !PRIORITIES.includes(r.priority),
-      `docs/109 row ${r.n} (${r.id}) carries priority ${r.priority}, but 106 states none — ` +
-        "inventing one here would be re-grading, which this document forbids",
-    );
-  }
-
-  // A queue of closed work is not a queue.
-  for (const r of queue) {
-    assert.ok(isOpen(r.status), `docs/109 row ${r.n} (${r.id}) is not open: "${r.status}"`);
-  }
-});
+// work from. 104, 105 and 106 became archives and 109 holds the order; 14 and 99
+// joined the scheme on 2026-10-04. The STRUCTURE of that arrangement — the
+// coverage of every archive, the duplicate-id check, the 1..N enumeration and
+// the lane and priority order — now lives in `tracker_single_queue.test.mjs`,
+// because it is one set of invariants about one decision and splitting it across
+// two files is how a guard ends up half-armed. What remains here is what this
+// file was written for: every published COUNT re-derived from the rows that
+// justify it, in 104, 105 and 109 alike.
 
 test("docs/109: every summary cell is what the rows actually say", () => {
   const text = read("109-BACKLOG.md");
@@ -546,82 +358,4 @@ test("docs/109: every summary cell is what the rows actually say", () => {
       `docs/109 headline ${name} count`,
     );
   });
-});
-
-test("docs/109: no open row of 104 or 105 has fallen out of the one queue", () => {
-  const queue = queueRows(read("109-BACKLOG.md"));
-
-  // A merged row keeps its id but gets no row of its own: it is DECLARED in the
-  // "What was merged" table, and named in the Supersedes/see-also column of the
-  // row that absorbed it. Both are required. An earlier draft of this guard
-  // accepted a bare see-also mention as coverage, and deleting the OO-010 row
-  // did not turn it red — OO-010 is cited by five other rows, so the queue
-  // could lose the row that actually carries the work while the guard stayed
-  // green. Coverage therefore means "has a row, or is declared merged".
-  const listed = new Set(queue.map((r) => r.id));
-  const seeAlso = new Set();
-  for (const r of queue) {
-    for (const m of r.supersedes.match(/\b(?:HF|EV|UX|CQ|OO)-\d+\b|\bFID-[PLR]-\d+\b/g) ?? []) {
-      seeAlso.add(m);
-    }
-  }
-
-  const merged = new Set(
-    rows(
-      read("109-BACKLOG.md").split("## What was merged")[1] ?? "",
-      /^(?:HF|EV|UX|CQ|OO)-\d+$|^FID-[PLR]-\d+$/,
-    ).map((r) => r.id),
-  );
-  assert.ok(merged.size > 0, "docs/109 must carry a 'What was merged' table");
-  for (const id of merged) {
-    assert.ok(
-      !listed.has(id),
-      `docs/109 declares ${id} merged away and also queues it as a row of its own`,
-    );
-    assert.ok(
-      seeAlso.has(id),
-      `docs/109 declares ${id} merged, but no row names it in Supersedes / see also — ` +
-        "the work it stands for is now unreachable from the queue",
-    );
-  }
-  const mentioned = new Set([...listed, ...merged]);
-
-  const sources = [
-    ["104-HOTFIX-TRACKER.md", [/^HF-\d+$/]],
-    [
-      "105-AUDIT-2026-09-TRACKER.md",
-      [/^EV-\d+$/, /^UX-\d+$/, /^CQ-\d+$/, /^FID-[PLR]-\d+$/, /^OO-\d+$/],
-    ],
-  ];
-
-  const missing = [];
-  const closedButQueued = [];
-  for (const [file, patterns] of sources) {
-    const text = read(file);
-    for (const pattern of patterns) {
-      for (const r of rows(text, pattern)) {
-        if (isOpen(r.status)) {
-          if (!mentioned.has(r.id)) missing.push(`${r.id} (open in ${file.slice(0, 3)})`);
-        } else if (listed.has(r.id)) {
-          closedButQueued.push(
-            `${r.id} (closed in ${file.slice(0, 3)}: "${r.status.slice(0, 60)}")`,
-          );
-        }
-      }
-    }
-  }
-
-  // Checked before the coverage list, so that mis-typing one row's id reports
-  // the closed row it now points at rather than only the row it stopped being.
-  assert.deepEqual(
-    closedButQueued,
-    [],
-    "docs/109 queues rows their own source records as closed: " + closedButQueued.join(", "),
-  );
-  assert.deepEqual(
-    missing,
-    [],
-    "these rows are open in an archive and appear nowhere in docs/109 — work has " +
-      "fallen out of the one queue: " + missing.join(", "),
-  );
 });
