@@ -337,10 +337,12 @@ docProps
 docprops
 documentProtection
 docx
+dpi
 draggable
 drawingml
 dropdown
 dropdowns
+dxa
 editability
 editorConfig
 embeddability
