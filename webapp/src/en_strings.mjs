@@ -1254,4 +1254,47 @@ export const EN_STRINGS = Object.freeze({
   "collab.reconnecting": "Connection lost — reconnecting. Changes you make now are not shared yet",
   "collab.stopped": "Not connected to this shared document — your changes are staying on this device",
 
+  // ---- The deck viewer (docs/156 Tier 3) -----------------------------------
+  //
+  // A separate page, so a separate band. The viewer opens, renders and saves a
+  // presentation and deliberately CANNOT edit one: `casual-pres-wasm` exposes no
+  // operation set, because a presentation editing surface has to route through
+  // `casual-doc-transaction` and bypassing it is the defect `105` CQ-002 records.
+  // So nothing here says "edit", and the empty state says what the page is for
+  // rather than promising a feature that is a design decision away.
+  "slides.untitled": "Slide {number}",
+  // The count is the sentence a reader checks the deck opened by, so it names
+  // the unit rather than standing alone as a number beside an icon.
+  "slides.position": "Slide {current} of {total}",
+  // A hidden slide is still IN the deck — retained, saved and sortable — so the
+  // sorter says so rather than omitting it, which would make the author unable
+  // to see what their own file contains.
+  "slides.hiddenBadge": "Hidden",
+  // The report is the thing a converter cannot offer. Phrased as a count of what
+  // was NOT recovered, because "opened cleanly" and "opened with 12 constructs
+  // this build does not cover" are the two answers a reader needs to tell apart.
+  "slides.fidelityClean": "Opened with nothing lost that this build can detect",
+  // A plural FAMILY, not a string: "1 constructs" is wrong in English and the
+  // mistake is invisible on a deck that happens to lose two things. English
+  // declares the two forms it has; a Russian catalogue adds `.few` and `.many`
+  // without this call site changing, which is the whole reason plural selection
+  // lives in `i18n.mjs`.
+  "slides.fidelityLossy.one": "Opened with {count} construct this build does not cover",
+  "slides.fidelityLossy.other": "Opened with {count} constructs this build does not cover",
+  "slides.fidelityToggle": "Show what was not recovered",
+  // A refusal, not a crash. The engine refuses a package it cannot read
+  // correctly rather than opening it wrong, and the message carries the engine's
+  // own reason instead of replacing it with a generic apology.
+  "slides.openFailed": "That file could not be opened as a presentation: {reason}",
+  "slides.empty": "Open a .pptx to see it rendered by this engine",
+  "slides.chooseFile": "Open a presentation",
+  "slides.save": "Save a copy",
+  // Save carries every part the engine does not model through byte-for-byte, so
+  // the label promises a copy rather than an edit — and the help text says what
+  // survives, because that is the claim worth making and the one a converter
+  // cannot.
+  "slides.saveHelp": "Writes the deck back out, carrying the parts this build does not model through unchanged",
+  "slides.sorter": "Slides in this deck",
+  "slides.canvas": "The current slide",
+
 });
