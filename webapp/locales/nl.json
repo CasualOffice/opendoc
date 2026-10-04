@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "nl",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "Over OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Een Apache-2.0-documenteditor die volledig in deze browser werkt.",
@@ -540,6 +540,7 @@
   "menuGroup.font": "Lettertype",
   "menuGroup.formattingMarks": "Opmaaktekens",
   "menuGroup.headerFooter": "Kop- en voettekst",
+  "menuGroup.headings": "Koppen van het document",
   "menuGroup.help": "Help",
   "menuGroup.history": "Geschiedenis",
   "menuGroup.illustrations": "Illustraties",

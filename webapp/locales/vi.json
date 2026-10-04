@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "vi",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "Giới thiệu OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Trình biên tập văn bản Apache-2.0 chạy hoàn toàn trong trình duyệt này.",
@@ -539,6 +539,7 @@
   "menuGroup.font": "Phông chữ",
   "menuGroup.formattingMarks": "Dấu định dạng",
   "menuGroup.headerFooter": "Đầu trang & chân trang",
+  "menuGroup.headings": "Tiêu đề của tài liệu",
   "menuGroup.help": "Trợ giúp",
   "menuGroup.history": "Lịch sử",
   "menuGroup.illustrations": "Hình minh họa",

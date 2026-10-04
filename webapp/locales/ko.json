@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "ko",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "OpenDoc 정보",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "이 브라우저에서 전부 실행되는 Apache-2.0 문서 편집기입니다.",
@@ -539,6 +539,7 @@
   "menuGroup.font": "글꼴",
   "menuGroup.formattingMarks": "서식 기호",
   "menuGroup.headerFooter": "머리글 및 바닥글",
+  "menuGroup.headings": "문서 제목",
   "menuGroup.help": "도움말",
   "menuGroup.history": "기록",
   "menuGroup.illustrations": "일러스트레이션",

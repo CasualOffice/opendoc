@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "zh-Hant",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "關於 OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "完全在本瀏覽器中執行的 Apache-2.0 文件編輯器。",
@@ -539,6 +539,7 @@
   "menuGroup.font": "字型",
   "menuGroup.formattingMarks": "格式標記",
   "menuGroup.headerFooter": "頁首及頁尾",
+  "menuGroup.headings": "文件標題",
   "menuGroup.help": "說明",
   "menuGroup.history": "歷程記錄",
   "menuGroup.illustrations": "圖例",

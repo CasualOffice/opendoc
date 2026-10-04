@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "fr",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "À propos d’OpenDoc",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Un éditeur de documents sous licence Apache-2.0 qui fonctionne entièrement dans ce navigateur.",
@@ -541,6 +541,7 @@
   "menuGroup.font": "Police",
   "menuGroup.formattingMarks": "Marques de mise en forme",
   "menuGroup.headerFooter": "En-tête et pied de page",
+  "menuGroup.headings": "Titres du document",
   "menuGroup.help": "Aide",
   "menuGroup.history": "Historique",
   "menuGroup.illustrations": "Illustrations",

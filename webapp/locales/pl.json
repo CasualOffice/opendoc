@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "pl",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "OpenDoc — informacje",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "Edytor dokumentów na licencji Apache-2.0 działający w całości w tej przeglądarce.",
@@ -542,6 +542,7 @@
   "menuGroup.font": "Czcionka",
   "menuGroup.formattingMarks": "Znaki formatowania",
   "menuGroup.headerFooter": "Nagłówek i stopka",
+  "menuGroup.headings": "Nagłówki dokumentu",
   "menuGroup.help": "Pomoc",
   "menuGroup.history": "Historia",
   "menuGroup.illustrations": "Ilustracje",

@@ -1,7 +1,7 @@
 {
+  "@@reviewed": false,
   "@@direction": "ltr",
   "@@locale": "hi",
-  "@@reviewed": false,
   "aboutDialog.aboutOpendoc": "OpenDoc के बारे में",
   "aboutDialog.apache20": "Apache-2.0",
   "aboutDialog.apache20Document": "एक Apache-2.0 दस्तावेज़ संपादक जो पूरी तरह इस ब्राउज़र में चलता है।",
@@ -540,6 +540,7 @@
   "menuGroup.font": "फ़ॉन्ट",
   "menuGroup.formattingMarks": "फ़ॉर्मेटिंग चिह्न",
   "menuGroup.headerFooter": "हेडर और फ़ुटर",
+  "menuGroup.headings": "दस्तावेज़ के शीर्षक",
   "menuGroup.help": "सहायता",
   "menuGroup.history": "इतिहास",
   "menuGroup.illustrations": "चित्र",
