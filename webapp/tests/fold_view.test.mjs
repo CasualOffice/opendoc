@@ -392,3 +392,53 @@ test("whenever it is shown, it is left of the text — at every margin, not just
     assert.ok(p.left + 18 <= x, `x=${x}: the chevron reaches ${p.left + 18}, over the text`);
   }
 });
+
+// Surface beside the measure is somewhere to paint. Two
+// individually-correct rules used to compose into an unreachable capability: the
+// chevron needs more margin than a reflow tile's 16px gutter, and it is only
+// shown while the outline panel is open — so the view where folding matters most
+// had no in-body disclosure at all. The premise behind the first rule was that
+// beyond the page box lies the DESK; in reflow the surface is one colour edge to
+// edge, so beyond the tile is the same surface the text is on.
+test("in reflow the chevron borrows the surface beside the measure, and only ever leftwards", () => {
+  const GUTTER = 20;
+  const WIDTH = 18;
+  const REFLOW_INSET = 16; // REFLOW_GUTTER_PX — the tile's whole left margin.
+
+  // On paper, unchanged, and this is the precondition rather than a decoration:
+  // with no surface to borrow the refusal must still be a refusal, which is what
+  // keeps the clamp defect closed where it was real (a phone, a 390px tile).
+  assert.deepEqual(chevronPlacement({ x: REFLOW_INSET }, GUTTER, 0), { show: false, left: 0 });
+
+  // In reflow at a desktop width there are hundreds of px of surface each side.
+  const onSurface = chevronPlacement({ x: REFLOW_INSET }, GUTTER, 470);
+  assert.equal(onSurface.show, true, "a reflow heading still has no disclosure");
+  assert.equal(onSurface.left, REFLOW_INSET - GUTTER, "the left edge is not the gutter rule");
+  assert.ok(
+    onSurface.left + WIDTH <= REFLOW_INSET,
+    `reaches ${onSurface.left + WIDTH}, over text that starts at ${REFLOW_INSET}`,
+  );
+
+  // THE GUARANTEE, not the two cases above: a wider surface NEVER moves the
+  // chevron rightwards. It can only turn a refusal into the placement the gutter
+  // rule already implied, so no amount of surface can put a button on a glyph.
+  for (let x = 0; x <= 200; x += 1) {
+    for (const overhang of [0, 1, 4, 16, 40, 470, 9_999]) {
+      const p = chevronPlacement({ x }, GUTTER, overhang);
+      if (!p.show) continue;
+      assert.equal(p.left, x - GUTTER, `x=${x} overhang=${overhang}: left moved`);
+      assert.ok(p.left + WIDTH <= x, `x=${x} overhang=${overhang}: over the text`);
+      assert.ok(p.left >= -overhang, `x=${x} overhang=${overhang}: past the surface`);
+    }
+  }
+
+  // A junk or negative overhang cannot widen the reach — a host reporting -100
+  // must get the paged answer, not a chevron 120px into nowhere.
+  for (const bad of [-100, Number.NaN, undefined, null, "lots"]) {
+    assert.equal(
+      chevronPlacement({ x: REFLOW_INSET }, GUTTER, bad).show,
+      false,
+      `overhang ${String(bad)} was treated as surface`,
+    );
+  }
+});

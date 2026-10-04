@@ -388,6 +388,93 @@ async function paintedColumn(page) {
   });
 }
 
+/** WHAT COLOUR IS PAINTED INSIDE THE MEASURE AND BESIDE IT.
+ *
+ *  The `inside` half is read out of the RASTER — `getImageData` on the sheet's
+ *  own canvas, which `main.js` fills with `putImageData` from the engine's
+ *  pixels — because the colour a reader's eye measures inside the column is the
+ *  colour the engine painted, not the colour a stylesheet declares. Sampled two
+ *  device pixels in, which is inside the tile's 16px gutter, so it is the
+ *  surface rather than a glyph.
+ *
+ *  The `left`/`right` halves are read the way a browser resolves a painted
+ *  background: take the element at that point and walk up until something
+ *  declares a background that is not transparent. `.pages` and `.page-band`
+ *  declare none, so whatever answers is the thing actually painting the field
+ *  beside the column.
+ *
+ *  Returns `null` when there is no raster yet, so a caller asserts on a measured
+ *  colour or on nothing — never on a default. */
+async function surfaceColours(page) {
+  return page.evaluate(() => {
+    const viewport = document.getElementById("viewport");
+    const wrap = document.querySelector(".page-band > .page-wrap");
+    const canvas = wrap?.querySelector("canvas.page");
+    if (!viewport || !wrap || !canvas) return null;
+    const box = wrap.getBoundingClientRect();
+    const port = viewport.getBoundingClientRect();
+
+    const pixel = canvas.getContext("2d").getImageData(2, Math.floor(canvas.height / 2), 1, 1).data;
+    const painted = (x, y) => {
+      let el = document.elementFromPoint(x, y);
+      while (el) {
+        const bg = getComputedStyle(el).backgroundColor;
+        const parts = bg.match(/[\d.]+/g)?.map(Number) ?? [];
+        // A fully transparent background paints nothing; keep walking up.
+        if (parts.length >= 3 && (parts[3] === undefined || parts[3] > 0)) {
+          return { rgb: parts.slice(0, 3), from: el.id || el.className || el.tagName };
+        }
+        el = el.parentElement;
+      }
+      return { rgb: null, from: null };
+    };
+    const midY = Math.round(Math.max(port.top + 4, Math.min(port.bottom - 4, box.top + box.height / 2)));
+    return {
+      inside: { rgb: [pixel[0], pixel[1], pixel[2]], alpha: pixel[3], from: "raster" },
+      left: painted(Math.round(port.left + 4), midY),
+      right: painted(Math.round(port.right - 4), midY),
+      leftGap: Math.round(box.left - port.left),
+      rightGap: Math.round(port.right - box.right),
+      boundary: {
+        boxShadow: getComputedStyle(wrap).boxShadow,
+        borderRadius: getComputedStyle(wrap).borderRadius,
+        canvasRadius: getComputedStyle(canvas).borderRadius,
+      },
+    };
+  });
+}
+
+/** Asserts the guarantee this view exists to provide: ONE surface, so the
+ *  measure is where the text is and not where the paper is.
+ *
+ *  Stated as "the same colour on both sides of the column as inside it", which
+ *  is a guarantee, rather than as "there are 0px of desk", which is a
+ *  measurement that would redden on a change that removed nothing. The
+ *  precondition — that there is a field beside the column at all to be the wrong
+ *  colour — is asserted explicitly rather than inherited. */
+function expectOneSurface(surface, where) {
+  expect(surface, `${where}: no raster to sample`).not.toBeNull();
+  expect(surface.inside.alpha, `${where}: the raster is not opaque`).toBe(255);
+  // The precondition. Without a field on each side this would pass on a tile
+  // that filled the window — which is exactly how a 390px-only evaluation hid
+  // the missing cap (`docs/154` §3.2).
+  expect(surface.leftGap, `${where}: nothing beside the column to be a desk`).toBeGreaterThan(20);
+  expect(surface.rightGap, `${where}: nothing beside the column to be a desk`).toBeGreaterThan(20);
+  for (const side of ["left", "right"]) {
+    expect(
+      surface[side].rgb,
+      `${where}: the field on the ${side} of the measure is ${JSON.stringify(surface[side].rgb)} ` +
+        `(painted by ${surface[side].from}) against ${JSON.stringify(surface.inside.rgb)} inside ` +
+        "it. A differently-coloured field around a white rectangle is a page " +
+        "silhouette, which is the one thing reflow must not be",
+    ).toEqual(surface.inside.rgb);
+  }
+  // And nothing draws the edge the colours no longer draw.
+  expect(surface.boundary.boxShadow, `${where}: a tile with a sheet shadow`).toBe("none");
+  expect(surface.boundary.borderRadius, `${where}: a tile with rounded corners`).toBe("0px");
+  expect(surface.boundary.canvasRadius, `${where}: a raster with rounded corners`).toBe("0px");
+}
+
 /** Chooses a width step through the ribbon popover and returns the column once
  *  the engine has been re-shaped at it. Polled on `aria-checked` rather than
  *  slept on, so it waits for the control's own report. */
@@ -440,15 +527,23 @@ test("in Reading at 1440px the column is capped and CENTRED, not window-wide", a
       "docs/154 §3.2 measured at 241 characters",
   ).toBeLessThan(reading.clientWidth * 0.6);
 
-  // Centred on the app desk. `#viewport.is-reflow` already takes the sheet's
-  // shadow and radius off, so what is left is a text column on the application
-  // background — what Docs, Immersive Reader and every reader in `154` §2.4 do.
+  // Centred, so the measure sits in the middle of the surface rather than
+  // against one edge.
   expect(
     Math.abs(reading.leftGap - reading.rightGap),
     `the column sits ${reading.leftGap}px from the left and ${reading.rightGap}px from ` +
       "the right — a capped column pinned to one edge is half the fix",
   ).toBeLessThanOrEqual(2);
-  expect(reading.leftGap, "and there is real desk on each side").toBeGreaterThan(100);
+
+  // THIS ASSERTION USED TO READ `expect(reading.leftGap).toBeGreaterThan(100)`
+  // — "there is real desk on each side" — and it was guarding the behaviour the
+  // owner rejected. A desk is what makes the capped column a PAGE: a #ffffff
+  // tile in a #eef1f7 (or #141619) field is a sheet with its shadow filed off,
+  // and the surface Docs' pageless presents is one region, which is why Google
+  // renames *Page color* to *Background color* there
+  // (support.google.com/docs/answer/10296604, first-party).
+  // The guarantee that replaces it is that the surface is one colour.
+  expectOneSurface(await surfaceColours(page), "Reading at 1440px");
 
   expect(reading.scrollWidth).toBeLessThanOrEqual(reading.clientWidth);
   // The fixture's own paper is wider than the cap, so this is a narrowing of the
@@ -622,4 +717,126 @@ test("the width control is disabled WITH A REASON on paper, never dead", async (
   // rather than mysterious.
   expect((await button.textContent()).trim()).not.toBe("");
   expect(await button.getAttribute("title")).toMatch(/80 characters/i);
+});
+
+// ---- 5. The surface, and the panel that navigates it ------------------------
+// `docs/151` §6.2 corrected, and item 3 of the owner's own description: "no
+// separate of page with background, all became uniform same colour, not visible
+// boundary, like an outline of left and whole scroll on right with no concept of
+// pages." The light-theme half of the surface is asserted inside the capped
+// column test above, where the guard it replaces used to live.
+
+test("the reflow surface is one colour in the DARK theme too, where a desk shows most", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The theme a light-only e2e suite cannot see, and the most visible instance
+  // of the defect: a 500px #ffffff strip in a #141619 room. The surface joins
+  // the PAPER layer rather than the chrome palette, so a dark reader gets a
+  // white surface — deliberate, and the only answer that keeps the `--paper-*`
+  // marker family contrast-safe without an ink rule.
+  await page.setViewportSize(WIDE);
+  await gotoEditor(page);
+  await page.addStyleTag({
+    content: "*, *::before, *::after { transition: none !important; animation: none !important; }",
+  });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  // THE PRECONDITION, and it is the whole reason this test is not vacuous: in
+  // PAPER the two regions must differ. Without it a stylesheet that had never
+  // themed the desk at all would satisfy everything below.
+  const paper = await surfaceColours(page);
+  expect(paper, "no raster in the paged view").not.toBeNull();
+  expect(
+    paper.left.rgb,
+    `the dark desk is ${JSON.stringify(paper.left.rgb)} against ` +
+      `${JSON.stringify(paper.inside.rgb)} of paper — if those are equal the dark ` +
+      "theme is not painting a desk and nothing here is being tested",
+  ).not.toEqual(paper.inside.rgb);
+
+  await page.locator('.ribbon-tab[data-tab="view"]').click();
+  await page.locator("#viewReflowBtn").click();
+  await expectReflow(page, true);
+  await chooseWidth(page, "reading");
+  expectOneSurface(await surfaceColours(page), "Reading at 1440px, dark theme");
+
+  // The scrollbar is the first thing a white surface breaks: `--scrollbar-thumb`
+  // is a CHROME token, so in dark theme it is a near-white translucent thumb and
+  // the document scroller would have no visible thumb at all over the surface.
+  const thumb = await page.evaluate(() => {
+    const viewport = document.getElementById("viewport");
+    return getComputedStyle(viewport).scrollbarColor;
+  });
+  expect(thumb, "the reflow scroller kept the chrome thumb over a white track").toMatch(
+    /rgba?\(\s*74[,\s]/,
+  );
+  expect(consoleErrors).toEqual([]);
+});
+
+test("turning reflow on opens the outline, and the reader's close STICKS", async ({
+  page,
+  consoleErrors,
+}) => {
+  // There are no page numbers in reflow, so the outline is the navigation that
+  // replaces them — item 3 of the owner's description, and orthogonal-to-mode in
+  // Docs (support.google.com/docs/answer/6367684, first-party, which describes
+  // the outline with no mode qualifier). It is asked for once per transition INTO
+  // reflow rather than enforced per render, which is the difference between a
+  // default and a panel the reader cannot get rid of.
+  await page.setViewportSize(WIDE);
+  await gotoEditor(page);
+  await expectReflow(page, false);
+  const outline = page.locator("#outlinePanel");
+  // The precondition: on paper it is shut, so "it is open" below is this view's
+  // doing and not the app's startup state.
+  await expect(outline, "the outline is not supposed to be open on paper").toBeHidden();
+
+  await page.locator('.ribbon-tab[data-tab="view"]').click();
+  await page.locator("#viewReflowBtn").click();
+  await expectReflow(page, true);
+  await expect(outline).toBeVisible();
+  // And the rail tile agrees — a panel opened without its tile leaves a control
+  // that says the panel is shut while it is on screen.
+  await expect(page.locator("#railOutline")).toHaveAttribute("aria-pressed", "true");
+  // Built, not merely shown: an empty panel that happens to be visible is not
+  // navigation (`SKILL.md` §9.4).
+  await expect(page.locator("#outlineBody .outline-tree[role='tree']")).toBeVisible();
+
+  // The reader still owns it. A width step is a full O(document) re-render in
+  // reflow, so if the request were made per render rather than per transition
+  // the panel would come back and the close would be unclosable.
+  await page.locator("#outlineClose").click();
+  await expect(outline).toBeHidden();
+  await chooseWidth(page, "narrow");
+  await expectReflow(page, true);
+  await expect(outline, "the view re-opened a panel the reader had closed").toBeHidden();
+
+  // Leaving and re-entering reflow is a new transition, so it asks again.
+  await page.locator("#viewReflowBtn").click();
+  await expectReflow(page, false);
+  await page.locator("#viewReflowBtn").click();
+  await expectReflow(page, true);
+  await expect(outline).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("at the phone rung reflow does NOT open the outline, because there is no left there", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The boundary of the rule above, and it is not a detail: `.side-panel` is a
+  // bottom SHEET at this rung (`style.css` `body.phone-mode .side-panel`,
+  // `max-height: 55vh`), so auto-opening it would cover more than half of the
+  // document it exists to navigate — on boot, since reflow is on by default
+  // here. "Outline left, document right" has no left in a 390px window.
+  await page.setViewportSize(PHONE);
+  await gotoEditor(page);
+  await expect(page.locator("body")).toHaveClass(/phone-mode/);
+  await expectReflow(page, true);
+  await expect(page.locator("#outlinePanel")).toBeHidden();
+  // And the document still fills the window rather than sharing it.
+  const painted = await paintedColumn(page);
+  expect(painted.scrollWidth).toBeLessThanOrEqual(painted.clientWidth);
+  expect(consoleErrors).toEqual([]);
 });

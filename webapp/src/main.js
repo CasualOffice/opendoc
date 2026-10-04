@@ -68,11 +68,10 @@ import { createNamePrompt } from "./name_dialog.mjs";
 import { createVersionHistory } from "./version_panel.mjs";
 import { CAPTURE_REASON } from "./version_history.mjs";
 import {
-  MAX_SCROLL_PX,
-  PAGE_GAP_PX,
   PAGE_WINDOW_OVERSCAN_PX,
   buildPageBand,
   docToScroll,
+  pageBandPitch,
   pageClientRect,
   pageRangeAt,
   scrollToDoc,
@@ -1746,14 +1745,8 @@ function renderReviewMarginItems() {
   // Mutually exclusive with the outline panel (see toggleOutline): whenever the
   // review sidebar is shown the outline closes, so the canvas is only ever
   // inset from one side at a time.
-  if (show && outlinePanel && !outlinePanel.hidden) {
-    outlinePanel.hidden = true;
-    railOutline.setAttribute("aria-pressed", "false");
-  }
-  if (show && pagesPanel && !pagesPanel.hidden) {
-    pagesPanel.hidden = true;
-    railPages.setAttribute("aria-pressed", "false");
-  }
+  if (show) closeFlankingPanel(outlinePanel, railOutline);
+  if (show) closeFlankingPanel(pagesPanel, railPages);
   // Reserve the comment column's width in the page stack only while the column
   // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
   // sits past the comments (never between the canvas and the comments).
@@ -3643,9 +3636,7 @@ async function renderAll() {
 
   if (token !== renderToken) return;
   pages = nextPages;
-  // `gap: 0` in reflow: the 22px pitch is the desk between two SHEETS, and a tile
-  // is cut mid-paragraph, so the same gap there is a band across a sentence.
-  pageBandModel = buildPageBand(sizes, cssPerTwip, { gap: reflowing ? 0 : PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
+  pageBandModel = buildPageBand(sizes, cssPerTwip, pageBandPitch(reflowing));
   // Publish the sheet's rendered width so the stylesheet can size the review
   // gutter against the space that is ACTUALLY spare. CSS cannot know this —
   // it depends on paper size and zoom — and a gutter reserved from space that
@@ -7551,12 +7542,14 @@ window.addEventListener("resize", () => hideContextMenu());
 
 // The engine seam for reflow is one setter; everything the shell owes it, and
 // why each number is that number, is `reflow_chrome.mjs` (`docs/151` §6).
+// `openOutline` is a request the view makes and this file arbitrates.
 const reflowView = createReflowChrome({
   button: document.getElementById("viewReflowBtn"),
   viewport: viewportEl,
   getDoc: () => doc,
   unavailableReason: () => readOnlyReason,
   onChanged: () => renderAll(),
+  openOutline: () => void (outlinePanel.hidden && reviewSidebar.hidden && toggleOutline()),
   setStatus,
 });
 
@@ -7568,6 +7561,7 @@ const foldView = createFoldChrome({
   caretNode: () => selection?.focus?.node ?? "",
   getPages: () => pages,
   outlineOpen: () => !outlinePanel.hidden,
+  surfaceSlackPx: reflowView.surfaceSlackPx,
   scaleOf,
   onChanged: () => renderAll().then(() => scheduleChromeRefresh({ stats: true, outline: true })),
   setStatus,
@@ -10942,16 +10936,23 @@ function reanchorPageOverlays() {
   if (doc) drawSelection();
 }
 
+/** Closes one flanking panel AND the rail tile that owns it — one control, so
+ *  one statement of the rule. Three sites spelled this out (the review gutter,
+ *  `toggleOutline`, the Pages navigator's `onExclusive`) and a panel closed
+ *  without its tile leaves a rail button pressed over a panel that is gone. */
+function closeFlankingPanel(panel, rail) {
+  if (!panel || panel.hidden) return;
+  panel.hidden = true;
+  rail?.setAttribute("aria-pressed", "false");
+}
+
 function toggleOutline() {
   outlinePanel.hidden = !outlinePanel.hidden;
   // Outline (left) and the review sidebar (right) are mutually exclusive so the
   // canvas is never squeezed from both sides at once. Opening the outline closes
   // the review sidebar; the reverse is enforced in renderReviewMarginItems.
   if (!outlinePanel.hidden && !reviewSidebar.hidden) toggleReview(false);
-  if (!outlinePanel.hidden && !pagesPanel.hidden) {
-    pagesPanel.hidden = true;
-    railPages.setAttribute("aria-pressed", "false");
-  }
+  if (!outlinePanel.hidden) closeFlankingPanel(pagesPanel, railPages);
   railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   buildOutline();
   reanchorPageOverlays();
@@ -10978,8 +10979,7 @@ const pagesPanelView = createPagesPanel({
   pageInView,
   bandTop: () => bandTopInScroller,
   onExclusive: () => {
-    outlinePanel.hidden = true;
-    railOutline.setAttribute("aria-pressed", "false");
+    closeFlankingPanel(outlinePanel, railOutline);
     if (!reviewSidebar.hidden) toggleReview(false);
     reanchorPageOverlays();
   },

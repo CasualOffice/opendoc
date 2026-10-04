@@ -17,11 +17,20 @@
 //     width feed in `reflow_view.mjs` is what makes it not;
 //   * the View band's face, so the toggle is never a control that looks live and
 //     then does nothing;
-//   * `#viewport`'s `is-reflow` class, which is what takes the sheet shadow and
-//     the corner radius off a TILE. A tile is not a sheet: it is a rasterisation
-//     unit, it is cut mid-paragraph at a line boundary, and drawing a paper edge
-//     across the middle of a sentence would be a lie about the document. The
-//     `gap: 0` half of the same claim is `main.js`'s `buildPageBand` call.
+//   * `#viewport`'s `is-reflow` class, which is what makes the surface ONE
+//     colour edge to edge. A tile is not a sheet: it is a rasterisation unit, it
+//     is cut mid-paragraph at a line boundary, and both a paper edge across the
+//     middle of a sentence and a differently-coloured field around it are lies
+//     about the document. The `gap: 0` half of the same claim is `main.js`'s
+//     `buildPageBand` call; the rest is `style.css`'s `#viewport.is-reflow`,
+//     which is where the whole argument is written down, correcting `docs/151`
+//     §6.2's claim that removing the shadow and the radius is enough;
+//   * WHICH PANELS THE VIEW WANTS. Reflow has no page numbers, so the outline
+//     is the navigation that replaces them, and it opens when reflow turns on
+//     (the owner's description of the view: outline left, document scroll
+//     right). The DECISION is here; the mechanics are the host's
+//     `openOutline`, because panel exclusivity is the shell's rule and not this
+//     module's — see the dep.
 //
 // WHAT IT DOES NOT OWN: print. `print.mjs` forces `Paged` itself, because the
 // requirement is about the PDF and the raster the printer gets, not about the
@@ -61,10 +70,18 @@ import {
  *   unavailableReason: () => string,
  *   onChanged: () => void,
  *   setStatus: (message: string, kind?: string) => void,
+ *   openOutline?: () => void,
  *   view?: Window,
  *   widthButton?: HTMLButtonElement|null,
  *   widthMenu?: HTMLElement|null,
  * }} deps
+ *
+ * `openOutline` is called once each time reflow TURNS ON, above the phone rung.
+ * It must be a request, not a command: the host decides whether a panel slot is
+ * free, because the outline, the review sidebar and the Pages navigator already
+ * arbitrate between themselves so the canvas is never squeezed from both sides,
+ * and a view asking for a panel must not win that argument. Omit it and reflow
+ * changes no panel at all, which is what a non-DOM host wants.
  */
 export function createReflowChrome({
   button,
@@ -73,6 +90,7 @@ export function createReflowChrome({
   unavailableReason,
   onChanged,
   setStatus,
+  openOutline = () => {},
   view = window,
   widthButton = view.document?.getElementById("viewTextWidthBtn") ?? null,
   widthMenu = view.document?.getElementById("textWidthMenu") ?? null,
@@ -98,9 +116,21 @@ export function createReflowChrome({
   let lastCssPerTwip = null;
   /** The engine's own list of what reflow approximates, reported not hidden. */
   let approximations = [];
+  /** The last measure handed to the engine, kept for `surfaceSlackPx` — the one
+   *  question about the view that something OUTSIDE the column has to ask.
+   *  `null` before the first sync, which reads as "no surface", not as a guess. */
+  let lastMeasure = null;
+  /** The view state the panels were last adopted for. `null` rather than `false`
+   *  so the FIRST resolution counts as a transition: below the phone rung reflow
+   *  is on from boot with no reader involved, and a transition detector seeded
+   *  `false` would call that "already on" and never ask for the panel. */
+  let adopted = null;
 
-  const wanted = () =>
-    chosen === null ? view.matchMedia(`(max-width: ${PHONE_MAX_WIDTH}px)`).matches : chosen === "1";
+  /** The phone rung, asked once so the default and the panel rule cannot
+   *  disagree about where it is. */
+  const onPhoneRung = () => view.matchMedia(`(max-width: ${PHONE_MAX_WIDTH}px)`).matches;
+
+  const wanted = () => (chosen === null ? onPhoneRung() : chosen === "1");
 
   const availability = () => reflowAvailability(unavailableReason(), t("reflow.unavailable"));
 
@@ -165,6 +195,63 @@ export function createReflowChrome({
     return reflowMeasure(viewport.clientWidth, cssPerTwip, { capTwip: capTwip(doc) });
   }
 
+  /**
+   * The panels this view wants, asked for once per transition INTO reflow.
+   *
+   * Reflow has no page numbers, so the outline is what replaces them, and the
+   * owner's description of the view is "an outline on the left and the whole
+   * scroll on the right". It is a REQUEST through `openOutline`: the host owns
+   * panel exclusivity and may refuse.
+   *
+   * Called BEFORE the measure is taken, and that ordering is the reason this is
+   * not folded into `reflect()`. Opening a 252px panel narrows the scroller by
+   * that much; a column measured first and a panel opened after would hand the
+   * engine a width that had already stopped being true, and the reader would see
+   * one render at the wrong measure. `reflect()` runs at the END of `sync`.
+   *
+   * NOT at the phone rung. There, `.side-panel` is a bottom sheet
+   * (`style.css`, `body.phone-mode .side-panel`) that covers 55vh of the
+   * document it exists to navigate, and "outline left" has no left in a 390px
+   * window — which is also the rung where reflow is on by DEFAULT, so this is
+   * the common case rather than an edge. Same `matchMedia` as the default, so
+   * there is one statement of where the phone tier starts.
+   *
+   * Complexity: O(1). The host's `openOutline` is not — building the outline is
+   * a document walk — but it runs once per mode change, which is already the one
+   * interaction in this module that is allowed to cost O(document).
+   */
+  function adoptPanels() {
+    const on = isOn();
+    if (on === adopted) return;
+    adopted = on;
+    if (on && !onPhoneRung()) openOutline();
+  }
+
+  /**
+   * How much uniform surface there is beside the measure, per side, in CSS px —
+   * `0` whenever there is no surface to speak of, which includes every paged
+   * view.
+   *
+   * This exists because the uniform surface changed what the space beside the
+   * column IS. On paper that space is the desk and nothing may be painted on it;
+   * in reflow it is the same surface the text sits on, so it is a margin, and an
+   * affordance that belongs beside a line of text can live there. Its one caller
+   * is the fold disclosure, which was unreachable in reflow for want of exactly
+   * this — see `fold_chrome.mjs`'s `syncBodyChevron`.
+   *
+   * Derived from the last measure rather than from the DOM, so it is the same
+   * number the engine was given and cannot drift from it. Deliberately
+   * SYMMETRIC, and therefore conservative: with the review sidebar open the
+   * stack reserves a right-hand gutter and the column shifts left, so the true
+   * left slack is larger than this and the answer errs towards withholding.
+   *
+   * Complexity: O(1), one `clientWidth` read.
+   */
+  function surfaceSlackPx() {
+    if (!isOn() || !lastMeasure) return 0;
+    return Math.max(0, Math.floor((viewport.clientWidth - lastMeasure.totalPx) / 2));
+  }
+
   const feed = createWidthFeed({
     onSettled: () => {
       // The width bucket moved and the gesture has settled: this is the only
@@ -227,9 +314,12 @@ export function createReflowChrome({
   function sync(cssPerTwip) {
     const doc = getDoc();
     if (!doc) return false;
+    // The panels first: they change `clientWidth`, which the measure reads.
+    adoptPanels();
     const on = isOn();
     lastCssPerTwip = cssPerTwip > 0 ? cssPerTwip : lastCssPerTwip;
     const measure = on ? measureAt(cssPerTwip, doc) : null;
+    lastMeasure = measure;
     const next = measure
       ? [measure.contentWidthTwip, 0, measure.gutterTwip]
       : [0, 0, 0];
@@ -334,6 +424,8 @@ export function createReflowChrome({
     withheldReason: () => (isOn() ? t("reflow.pagesWithheld") : ""),
     /** "" when the ruler may be drawn, the reason when it may not. */
     rulerWithheldReason: () => (isOn() ? t("reflow.rulerWithheld") : ""),
+    /** Paintable surface beside the measure, per side, in CSS px. See above. */
+    surfaceSlackPx,
     /** What the engine says reflow approximates — surfaced, not hidden. */
     approximations: () => approximations,
     setEnabled: reflect,
