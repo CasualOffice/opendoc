@@ -81,13 +81,13 @@ const FIDELITY = [
   },
   {
     family: "Charts",
-    note: "Modeled as first-class references and preserved byte-for-byte on export. Not rendered as a live chart — an embedded preview image shows if the file provides one, otherwise a text placeholder.",
-    modeled: "full", rendered: "preserved", editable: "none", roundtrips: "full",
+    note: "Modeled as first-class references and preserved byte-for-byte on export. Bar, column, line, area, scatter, pie and doughnut are typed; 3-D, surface, stock, radar, bubble, pie-of-pie and the chartex families are preserved but not typed. Not rendered as a live chart: a text placeholder stands in. No preview bitmap is ever used — the importer passes none, and Word writes none for a classic chart part.",
+    modeled: "partial", rendered: "preserved", editable: "none", roundtrips: "full",
   },
   {
     family: "SmartArt",
-    note: "Modeled as references and preserved for export. Not rendered as a diagram — a preview image shows if present, otherwise a text placeholder.",
-    modeled: "full", rendered: "preserved", editable: "none", roundtrips: "full",
+    note: "Preserved byte-for-byte on export as an opaque reference. NOT modeled: nothing under word/diagrams is parsed, so there is no typed diagram — only the relationship. Not rendered as a diagram: a text placeholder stands in. No preview bitmap is ever used — the importer passes none.",
+    modeled: "none", rendered: "preserved", editable: "none", roundtrips: "full",
   },
   {
     family: "VML pictures & shapes",
