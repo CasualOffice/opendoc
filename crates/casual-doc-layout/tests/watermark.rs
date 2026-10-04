@@ -243,7 +243,10 @@ fn the_stamp_paints_last_and_multiplies() {
     );
 
     // Multiplied, which is what lets it be painted on top at all.
-    let Some(PaintItem::PushLayer { blend, transform }) = list.items.get(open) else {
+    let Some(PaintItem::PushLayer {
+        blend, transform, ..
+    }) = list.items.get(open)
+    else {
         panic!("a layer");
     };
     assert_eq!(
@@ -275,7 +278,10 @@ fn a_horizontal_watermark_carries_no_rotation() {
         .iter()
         .position(|item| matches!(item, PaintItem::PushLayer { .. }))
         .expect("a level stamp still opens a layer");
-    let Some(PaintItem::PushLayer { transform, blend }) = list.items.get(open) else {
+    let Some(PaintItem::PushLayer {
+        transform, blend, ..
+    }) = list.items.get(open)
+    else {
         panic!("a layer");
     };
     assert!(

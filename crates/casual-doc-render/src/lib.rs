@@ -22,6 +22,8 @@ use std::io::Cursor;
 use casual_doc_layout::display::{DisplayList, PaintItem};
 // Own line (anti-conflict): the layer blend the watermark composites through.
 use casual_doc_layout::display::LayerBlend;
+// Own `use` line (anti-conflict): the drop shadow a layer casts.
+use casual_doc_layout::display::LayerShadow;
 // Own line (anti-conflict): the path primitive's command.
 use casual_doc_layout::display::PathCommand;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/geometry
@@ -168,7 +170,12 @@ pub fn render(
     let mut items = list.items.iter();
     #[allow(clippy::while_let_on_iterator)] // the transform arm consumes ahead
     while let Some(item) = items.next() {
-        if let PaintItem::PushLayer { transform, blend } = item {
+        if let PaintItem::PushLayer {
+            transform,
+            blend,
+            shadow,
+        } = item
+        {
             let nested = collect_layer(&mut items);
             draw_layer(
                 &nested,
@@ -178,6 +185,7 @@ pub fn render(
                 media,
                 *transform,
                 *blend,
+                *shadow,
                 &clip_stack,
             );
             continue;
@@ -494,6 +502,7 @@ fn draw_layer(
     media: &dyn MediaSource,
     transform: Option<ShapeTransform>,
     blend: LayerBlend,
+    shadow: Option<LayerShadow>,
     clip_stack: &[Mask],
 ) {
     let (width, height) = (surface.pixmap.width(), surface.pixmap.height());
@@ -502,6 +511,27 @@ fn draw_layer(
     };
     let mut offscreen = Surface { pixmap };
     render(nested, &mut offscreen, dpi, fonts, media);
+    // The shadow is the layer's own silhouette, blurred, tinted and offset — painted
+    // BEFORE the layer so it sits behind it. Taking it from the rendered layer rather
+    // than from each shape is what makes it correct for an outlined shape, a
+    // picture-filled one and a text box alike: it is the shadow of what was actually
+    // painted, not of a bounding box.
+    if let Some(shadow) = shadow
+        && let Some(cast) = shadow_pixmap(&offscreen.pixmap, shadow)
+    {
+        surface.pixmap.draw_pixmap(
+            shadow.offset_x.round() as i32,
+            shadow.offset_y.round() as i32,
+            cast.as_ref(),
+            &PixmapPaint {
+                quality: FilterQuality::Nearest,
+                blend_mode: BlendMode::SourceOver,
+                ..PixmapPaint::default()
+            },
+            object_transform(transform.as_ref(), dpi),
+            clip_stack.last(),
+        );
+    }
     surface.pixmap.draw_pixmap(
         0,
         0,
@@ -521,6 +551,115 @@ fn draw_layer(
         object_transform(transform.as_ref(), dpi),
         clip_stack.last(),
     );
+}
+
+/// The shadow a rendered layer casts: its alpha silhouette, blurred, tinted.
+///
+/// # Why a box blur rather than a Gaussian
+///
+/// `tiny-skia` has no blur, so this is hand-rolled. **Three successive box blurs
+/// approximate a Gaussian** to within a few percent — a standard result, and the
+/// reason every compositor does it this way: a true Gaussian is O(r) per pixel per
+/// axis, while a box blur is O(1) per pixel via a running sum, so three passes cost
+/// less than one exact kernel and are visually indistinguishable at shadow radii.
+///
+/// Operates on the ALPHA channel only. The silhouette is what casts a shadow, so the
+/// layer's colours are irrelevant and blurring them would be both slower and wrong —
+/// a dark shape and a light one of the same outline cast the same shadow.
+///
+/// # Complexity
+///
+/// O(pixels) per pass, six passes (three horizontal, three vertical), independent of
+/// the blur radius.
+fn shadow_pixmap(layer: &Pixmap, shadow: LayerShadow) -> Option<Pixmap> {
+    let (width, height) = (layer.width(), layer.height());
+    let count = (width as usize).checked_mul(height as usize)?;
+    // The silhouette: the layer's alpha, as f32 so the running sums do not quantise
+    // away a wide blur's low tail.
+    let mut alpha: Vec<f32> = layer
+        .pixels()
+        .iter()
+        .map(|pixel| f32::from(pixel.alpha()))
+        .collect();
+    if alpha.len() != count {
+        return None;
+    }
+    let radius = shadow.blur_px.max(0.0).round() as usize;
+    if radius > 0 {
+        let mut scratch = vec![0.0_f32; count];
+        for _ in 0..3 {
+            box_blur_rows(
+                &alpha,
+                &mut scratch,
+                width as usize,
+                height as usize,
+                radius,
+            );
+            box_blur_columns(
+                &scratch,
+                &mut alpha,
+                width as usize,
+                height as usize,
+                radius,
+            );
+        }
+    }
+    let mut out = Pixmap::new(width, height)?;
+    let (r, g, b) = (shadow.color.r, shadow.color.g, shadow.color.b);
+    let tint = f32::from(shadow.color.a) / 255.0;
+    for (pixel, blurred) in out.pixels_mut().iter_mut().zip(alpha.iter()) {
+        let a = (blurred * tint).clamp(0.0, 255.0) as u8;
+        if a == 0 {
+            continue;
+        }
+        // PREMULTIPLIED, which is what `PremultipliedColorU8` means and what
+        // `draw_pixmap` expects: writing straight channels here makes a shadow that
+        // brightens as it fades, because the compositor divides by an alpha the
+        // channels were never multiplied by.
+        let scale = f32::from(a) / 255.0;
+        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+            (f32::from(r) * scale) as u8,
+            (f32::from(g) * scale) as u8,
+            (f32::from(b) * scale) as u8,
+            a,
+        )?;
+    }
+    Some(out)
+}
+
+/// One horizontal box-blur pass, by running sum.
+fn box_blur_rows(src: &[f32], dst: &mut [f32], width: usize, height: usize, radius: usize) {
+    let window = (radius * 2 + 1) as f32;
+    for y in 0..height {
+        let row = y * width;
+        // The edges clamp rather than wrap: a shadow must not bleed from the opposite
+        // side of the page.
+        let mut sum: f32 = (0..=radius.min(width - 1)).map(|x| src[row + x]).sum();
+        sum += src[row] * radius.min(width) as f32;
+        for x in 0..width {
+            dst[row + x] = sum / window;
+            let leaving = src[row + x.saturating_sub(radius)];
+            let entering = src[row + (x + radius + 1).min(width - 1)];
+            sum += entering - leaving;
+        }
+    }
+}
+
+/// One vertical box-blur pass, by running sum.
+fn box_blur_columns(src: &[f32], dst: &mut [f32], width: usize, height: usize, radius: usize) {
+    let window = (radius * 2 + 1) as f32;
+    for x in 0..width {
+        let mut sum: f32 = (0..=radius.min(height - 1))
+            .map(|y| src[y * width + x])
+            .sum();
+        sum += src[x] * radius.min(height) as f32;
+        for y in 0..height {
+            dst[y * width + x] = sum / window;
+            let leaving = src[y.saturating_sub(radius) * width + x];
+            let entering = src[(y + radius + 1).min(height - 1) * width + x];
+            sum += entering - leaving;
+        }
+    }
 }
 
 /// Extracts the visible source sub-rectangle described by an `a:srcRect` crop
@@ -4041,5 +4180,140 @@ mod tests {
                 );
             }
         }
+    }
+
+    use casual_doc_layout::display::{LayerBlend, LayerShadow};
+
+    /// A black square in a layer, with a shadow offset down-right.
+    fn square_with_shadow(shadow: Option<LayerShadow>) -> Surface {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::PushLayer {
+            transform: None,
+            blend: LayerBlend::Normal,
+            shadow,
+        });
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: Rect::new(
+                    Point::new(Twip(10), Twip(10)),
+                    Size::new(Twip(30), Twip(30)),
+                ),
+            },
+            fill: Some(Fill::Solid(ShapeColor::BLACK)),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        list.push(PaintItem::PopLayer);
+        let mut surface = Surface::new(100, 100).unwrap();
+        render(
+            &list,
+            &mut surface,
+            1440.0,
+            &SingleFontSource::new(ROBOTO_REGULAR),
+            &NoMediaSource,
+        );
+        surface
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_layer_shadow_paints_ink_outside_the_shape_and_behind_it() {
+        // `a:outerShdw` had NO representation anywhere — a populated `a:effectLst`
+        // was pure loss. This is the primitive: the layer's own silhouette, blurred,
+        // tinted and offset, composited before the layer so it sits behind.
+        let grey = ShapeColor {
+            r: 128,
+            g: 128,
+            b: 128,
+            a: 255,
+        };
+        let shadowed = square_with_shadow(Some(LayerShadow {
+            blur_px: 4.0,
+            offset_x: 8.0,
+            offset_y: 8.0,
+            color: grey,
+        }));
+        let plain = square_with_shadow(None);
+
+        // Just past the square's bottom-right corner: inside the offset shadow,
+        // outside the square itself. Measured on the COLOUR channel, not alpha — the
+        // page surface starts opaque white, so alpha is 255 everywhere and an
+        // alpha assertion would pass for an unpainted pixel.
+        let outside = pixel_at(&shadowed, 100, 44, 44);
+        let bare = pixel_at(&plain, 100, 44, 44);
+        assert_eq!(
+            bare,
+            [255, 255, 255, 255],
+            "without a shadow that pixel is bare white"
+        );
+        assert!(
+            outside[0] < 250,
+            "the shadow darkens a pixel outside the shape (got {outside:?})"
+        );
+
+        // And the shape itself is still black there — the shadow is BEHIND it, not
+        // over it. A shadow composited after the layer would grey this out.
+        let inside = pixel_at(&shadowed, 100, 20, 20);
+        assert!(
+            inside[0] < 40 && inside[3] > 200,
+            "the shape paints over its own shadow (got {inside:?})"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_wider_blur_spreads_the_shadow_further() {
+        // The blur radius has to DO something, and a radius that was ignored would
+        // still produce a shadow — just a hard-edged one. Measured as reach: a wider
+        // blur puts ink further from the silhouette.
+        let grey = ShapeColor {
+            r: 128,
+            g: 128,
+            b: 128,
+            a: 255,
+        };
+        let reach = |blur_px: f32| {
+            let surface = square_with_shadow(Some(LayerShadow {
+                blur_px,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                color: grey,
+            }));
+            // Scan right along the square's mid-line from its right edge and find
+            // how far any ink reaches.
+            (41..99)
+                .take_while(|x| pixel_at(&surface, 100, *x, 25)[0] < 250)
+                .count()
+        };
+        let narrow = reach(2.0);
+        let wide = reach(10.0);
+        assert!(
+            wide > narrow,
+            "a wider blur must reach further: narrow={narrow} wide={wide}"
+        );
+        assert!(narrow > 0, "even a narrow blur softens the edge");
+
+        // The PASS COUNT, not just the radius. Three successive box blurs are what
+        // approximate a Gaussian, and a single pass would still spread and still
+        // soften — so "it blurs" cannot distinguish them. The support can: one box
+        // pass of radius r reaches about r, three reach about 1.5r. Measured at 16
+        // for r=10, against roughly 10 for a single pass.
+        //
+        // Written because the obvious guards did not catch it: dropping to one pass
+        // left both assertions above green.
+        //
+        // The limit, stated rather than left to be discovered: this discriminates ONE
+        // pass from three, not two from three — two reaches about 14 and still
+        // satisfies this. Tightening the bound to catch that would make it depend on
+        // sub-pixel rounding across platforms, and the difference between a two- and
+        // three-pass falloff is not visible to a reader. One pass is the plausible
+        // "simplify this" edit, and that is what this catches.
+        assert!(
+            wide >= 13,
+            "three box passes must reach past a single pass's radius; r=10 reached \
+             {wide}, which is a one-pass support"
+        );
     }
 }

@@ -284,7 +284,16 @@ impl<'a> Transcriber<'a> {
             // modelled on. Counted on the same counter as clips: both are `q`/`Q`
             // pairs, and a `PopLayer` arriving with nothing open must not emit a
             // bare `Q` that would pop the page's own state.
-            PaintItem::PushLayer { transform, blend } => {
+            // A PDF drop shadow needs a soft mask (`/SMask`) over a blurred
+            // silhouette, which this writer has no machinery for — so the shadow is
+            // DROPPED here rather than faked with a hard-edged offset copy, which
+            // would look like a second object. Named explicitly so the omission is a
+            // decision in the code rather than a wildcard swallowing a field.
+            PaintItem::PushLayer {
+                transform,
+                blend,
+                shadow: _,
+            } => {
                 out.op("q");
                 out.clips += 1;
                 // `/BM /Multiply` through an `ExtGState`, the same mechanism the

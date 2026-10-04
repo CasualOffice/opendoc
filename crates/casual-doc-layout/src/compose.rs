@@ -647,6 +647,9 @@ fn compose_watermark(list: &mut DisplayList, page: &Page) {
     list.push(PaintItem::PushLayer {
         transform: stamp.transform,
         blend: LayerBlend::Multiply,
+        // A watermark casts no shadow: it is ink on the paper, not an object
+        // above it.
+        shadow: None,
     });
     match &stamp.content {
         PlacedWatermarkContent::Text { runs } => {
@@ -1041,6 +1044,9 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                 list.push(PaintItem::PushLayer {
                     transform: Some(*transform),
                     blend: LayerBlend::Normal,
+                    // The text's own rotation layer casts nothing; a shape's shadow
+                    // is its own bracket outside this one.
+                    shadow: None,
                 });
             }
             let clip = text_box_clip(anchor.rect, *content_layout);

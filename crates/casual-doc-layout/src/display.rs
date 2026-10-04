@@ -443,9 +443,36 @@ pub enum PaintItem {
         /// How the layer composites onto what is already painted.
         #[serde(default)]
         blend: LayerBlend,
+        /// A drop shadow cast by everything in the layer, painted BEHIND it.
+        ///
+        /// On the layer rather than on each shape, because that is what makes it
+        /// correct for free: the shadow is cast by the layer's combined silhouette,
+        /// so a shape with an outline, a picture-filled shape and a text box all
+        /// cast the shadow of what they actually paint rather than of their
+        /// bounding box. A per-shape shadow would have to re-derive each one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shadow: Option<LayerShadow>,
     },
     /// Pop the most recent layer.
     PopLayer,
+}
+
+/// A drop shadow cast by a [`PaintItem::PushLayer`] group (`a:outerShdw`).
+///
+/// Everything is already resolved to device units and a concrete colour, so the
+/// backend needs no DrawingML knowledge: `a:outerShdw`'s `@dist` and `@dir` are polar
+/// and are converted to a cartesian offset during layout, where the DPI is known.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct LayerShadow {
+    /// `a:outerShdw@blurRad` as a device-pixel blur radius. Zero is a hard-edged
+    /// offset copy, which is a legal shadow and not a no-op.
+    pub blur_px: f32,
+    /// The horizontal offset in device pixels, from `@dist` and `@dir`.
+    pub offset_x: f32,
+    /// The vertical offset in device pixels.
+    pub offset_y: f32,
+    /// The shadow colour, with the effect's alpha already folded in.
+    pub color: Color,
 }
 
 /// How a [`PaintItem::PushLayer`] group composites onto the page beneath it.

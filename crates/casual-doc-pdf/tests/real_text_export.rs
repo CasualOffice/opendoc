@@ -530,6 +530,8 @@ fn a_watermark_layer_exports_with_a_multiply_blend_state() {
                 center: Point::new(Twip(6_120), Twip(7_920)),
             }),
             blend: LayerBlend::Multiply,
+            // This fixture is about the multiply blend, not a shadow.
+            shadow: None,
         });
         list.push(PaintItem::PopLayer);
         list
