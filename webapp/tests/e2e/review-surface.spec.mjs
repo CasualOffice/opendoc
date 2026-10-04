@@ -74,6 +74,13 @@ test("the Review tab exposes Word's tracking, changes and comments groups", asyn
     "#reviewPanelBtn",
     "#reviewSpellCheckBtn",
     "#reviewSmartQuotesBtn",
+    // Manage access, in the Protect group beside Restrict Editing — Word keeps
+    // both authority questions there. VISIBLE here and disabled, which is the
+    // standalone state: outside a room there are no other people's permissions to
+    // change, and the absent thing is a session rather than a permission. It is
+    // HIDDEN only for a participant whose own grant withholds `manageAccess`,
+    // which `session-rights.spec.mjs` is the guard for.
+    "#reviewManageAccessBtn",
   ]) {
     await expect(page.locator(id)).toBeVisible();
   }

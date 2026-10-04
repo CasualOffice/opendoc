@@ -1209,6 +1209,23 @@ export const EN_STRINGS = Object.freeze({
   "session.suggestionsOnly": "You can comment and suggest changes, but not change the document directly",
   "session.reviewOnly": "You can accept or reject other people's changes and add comments, but not change this document yourself",
   "session.noProtectionChange": "You are not allowed to change how this document is protected",
+  // `AccessChangeRefusal`'s five, which answer the OTHER question the engine's
+  // access vocabulary asks: not "may this gesture touch the document" but "may
+  // this participant change the room". They are in this one table for the reason
+  // the block header gives, and `session.noAccessChange` is also what `ODC-7011`
+  // resolves to — the wire's answer is deliberately undetailed, and the sentence
+  // a reader sees must not differ depending on whether the chrome knew first.
+  //
+  // Four of the five are unreachable from an honest chrome: the surface is absent
+  // without `manageAccess`, it omits the reader's own row, and it offers no role
+  // outside the ceiling the relay reported. They are translated anyway, because
+  // "unreachable from our chrome" is not "unreachable", and an untranslated
+  // sentence is what a reader of eighteen languages would get the day it is.
+  "session.noAccessChange": "You are not allowed to change what other people may do with this document",
+  "session.ownAccessUnchangeable": "You cannot change your own access to this document",
+  "session.aboveGrantCeiling": "That is more than this person was given access to do",
+  "session.aboveOwnAccess": "You cannot give somebody access you do not have yourself",
+  "session.notAParticipant": "That person is not in this shared document",
   // A grant this build could not read — an unknown capability name, or a
   // participant number that is not one. The chrome narrows to read-only and SAYS
   // SO, because silently granting less is a bug that looks like a working
@@ -1257,5 +1274,58 @@ export const EN_STRINGS = Object.freeze({
     "This document is not shared, so there is nothing to reconnect to",
   "collab.reconnecting": "Connection lost — reconnecting. Changes you make now are not shared yet",
   "collab.stopped": "Not connected to this shared document — your changes are staying on this device",
+  // Managing what OTHER people may do — the rights surface, which exists only in
+  // a shared session (`session_rights.mjs`). The ROLE names are the vocabulary
+  // `casual_doc_edit::access`'s presets already use, deliberately: a second set
+  // of words for one permission model is how two parts of a product come to
+  // disagree about what somebody is.
+  "rights.command": "Manage access…",
+  "rights.role.viewer": "Viewer",
+  "rights.role.commenter": "Commenter",
+  "rights.role.suggester": "Suggester",
+  "rights.role.reviewer": "Reviewer",
+  "rights.role.editor": "Editor",
+  "rights.role.owner": "Owner",
+  // A grant the host composed by hand rather than from a preset, which `143` §10
+  // exists to allow. Named rather than rounded to the nearest role: a person
+  // shown a role they do not hold has been told the wrong thing about their own
+  // access.
+  "rights.role.custom": "Custom",
+  // A NUMBER, because that is all the protocol carries — `Identity` is opaque to
+  // this engine and presence reports a participant number and nothing else.
+  // Inventing a display name would be inventing an identity system.
+  "rights.participant": "Participant {number}",
+  // Outside a room there is no other participant whose permissions could change,
+  // so the command ships DISABLED WITH THIS REASON rather than absent — the
+  // absent thing is a session, not a permission. The same shape as
+  // `collab.standalone`, which is the sibling case.
+  "rights.standalone": "This document is not shared, so there are no other people's permissions to change",
+  "rights.notSent": "Not connected to this shared document, so the access change was not sent",
+  // What the RELAY decided, reported when its answer arrives rather than when the
+  // request leaves. Announcing a success at the point of asking would be
+  // reporting the request and calling it the result.
+  "rights.applied": "{who} is now {role}",
+  // The persistent access indicator (`access_badge.mjs`), which answers "what can
+  // I do with this document" from first paint, in every mode — including the
+  // standalone and embedded ones, where it is the only thing that says so.
+  //
+  // The LEVEL and the SOURCE are two strings because they answer two questions a
+  // reader asks in sequence: what can I do, and who said so. Naming the wrong
+  // authority is the failure the `session.*` / `document.*` split exists to
+  // prevent — "this document is protected" sends a read-only guest to look at the
+  // wrong thing.
+  "access.level.full": "Full access",
+  "access.level.suggest": "Suggesting only",
+  "access.level.comment": "Comments only",
+  "access.level.read": "Read only",
+  // Each source names WHERE the limit was decided, in the reader's terms rather
+  // than the mechanism's: "set when this document was opened" is something a
+  // reader can act on (ask whoever opened it), "the container grant withheld
+  // edit" is not.
+  "access.source.engine": "this document cannot be edited here",
+  "access.source.document": "set in the document itself",
+  "access.source.shared": "in this shared document",
+  "access.source.host": "set when this document was opened",
+  "access.source.local": "on this device, where you are the only authority",
 
 });

@@ -363,6 +363,12 @@
         <td>The room already holds as many participants as it admits, so this connection was not admitted. Terminal for this connection and <strong>not</strong> retryable on it — a client that resends the same join down the same socket spins — but a room's occupancy is a property of a moment, so a later connection may be admitted. Separate from <code>ODC-7003</code> because only one of the two is worth waiting out.</td>
         </tr>
         <tr>
+        <td><code>ODC-7011</code></td>
+        <td><code>collaboration_access_change_refused</code></td>
+        <td>error</td>
+        <td>A request to change what another participant may do was refused. <strong>Deliberately undetailed</strong>, carrying none of <code>AccessChangeRefusal</code>'s five distinctions, for the reason <code>ODC-7003</code> gives: what an attacker would be enumerating here is a <em>ceiling</em>, one request at a time. Not terminal — the session is otherwise fine, and dropping a co-editing connection over a refused administrative request would cost the reader their unsent work — and not retryable, because nothing about resending it would change the answer. Every one of the five is unreachable from an honest chrome, so a reader never meets this code; the relay returns the distinction for an operator's log.</td>
+        </tr>
+        <tr>
         <td><code>ODC-8001</code></td>
         <td><code>plugin_failed</code></td>
         <td>error</td>

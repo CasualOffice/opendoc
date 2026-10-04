@@ -145,6 +145,8 @@ import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs"
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
 import { openRoom, resumeKey } from "./collab_transport.mjs";
+import { createAccessChrome } from "./access_chrome.mjs";
+import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 import { insertChartAtCaret } from "./chart_insert.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
@@ -3059,7 +3061,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     collab = openRoom(doc, hostConfig().room, globalThis.WebSocket, {
       identity: settings.authorName.trim() || "You",
       resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
-      onOutcome: (o) => { if (o.documentChanged) arrivalPaint = arrivalPaint.then(() => paintArrival(o)); },
+      onOutcome: (o) => { const said = accessChrome.received(o); if (said) setStatus(said); if (o.documentChanged) arrivalPaint = arrivalPaint.then(() => paintArrival(o)); },
       onState: (s) => setStatus(t(s.key), s.name === "connected" ? "" : "warn"),
     });
     // Word/Docs: an open document always has an insertion point, so Insert ▸
@@ -7945,6 +7947,12 @@ const REVIEW_SURFACE = [
   // Protect button is a state too — so a document that arrives protected shows the
   // button pressed before anyone opens anything.
   { command: "review.restrictEditing", buttons: () => [document.getElementById("reviewProtectBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", pressed: () => documentProtection.isActive(), run: () => documentProtection.open() },
+  // Manage access. `requires: "doc"` because there is nothing to manage access TO
+  // without one; whether the button is PRESENT at all is `accessChrome.reflect`'s
+  // answer and not this table's, because absence is a permission decision and
+  // this table only knows about enablement. Same group as Restrict Editing, which
+  // is Word's own grouping of the two authority questions.
+  { command: "review.manageAccess", buttons: () => [document.getElementById("reviewManageAccessBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => accessChrome.open() },
 ];
 
 function insertCommandEnabled(commandId, context = {}) {
@@ -8976,6 +8984,10 @@ for (const entry of INSERT_SURFACE) {
   // states and the ROOM's grant — in `ribbon_surface.mjs` beside the Layout and
   // References one, with the rationale that used to sit here.
   reflectReviewSurface(REVIEW_SURFACE, { hasDoc: !!doc, hasRange: !!range, hasComment: !!activeReviewCommentId, refusalFor: (c) => SESSION.refusalFor(c), authoredTitle: (b) => authoredTitle(b, EDITOR_KEYBOARD_PLATFORM) });
+  // AFTER the review sweep, because it decides whether Manage access is on screen
+  // at all and that outranks whether the sweep enabled it. O(1) — every input is a
+  // field read, so it costs nothing on the per-interaction path (`107` §4 B1).
+  accessChrome.reflect();
   // The ¶ control owns both of its halves and its popover's five checkmarks, so
   // it reflects itself rather than being swept here: its state is the ENGINE's
   // `any`, not a local flag, and nothing else on the band knows how to read it.
@@ -10511,6 +10523,24 @@ const measurement = createMeasurementUnits({
     });
   },
 });
+/** "Who may do what", in one handle — `access_chrome.mjs`, which composes the
+ *  rights dialog and the persistent access indicator over the same four
+ *  authorities. One call here rather than two modules wired separately, because a
+ *  permission resolved at two call sites is a permission two call sites can
+ *  disagree about. Constructed after `documentProtection` because it reads that
+ *  module's state, which is the DOCUMENT's own authority. */
+const accessChrome = createAccessChrome({
+  getDoc: () => doc,
+  getTransport: () => collab,
+  getGrant: () => SESSION.grant,
+  getProtection: () => documentProtection.state(),
+  getCapabilities: () => HOST_CAPS,
+  getReadOnlyReason: () => readOnlyReason,
+  registerModal,
+  fallbackFocus: () => pagesEl,
+  setStatus,
+  t: (key, values) => t(key, values),
+});
 const documentProtection = createDocumentProtection({
   getDoc: () => doc,
   runEdit,
@@ -10677,56 +10707,15 @@ tablePropertiesPanel.addEventListener("change", (event) => {
   commitTableProperties();
 });
 
+/** The form's live fields, named once so the patch builder is a pure function of
+ *  its bag rather than of this file's eighteen consts. */
+const TABLE_PROPERTIES_FORM = { width: tableWidth, indent: tableIndent, columnWidth: tableColumnWidth, rowHeight: tableRowHeight, rowHeightRule: tableRowHeightRule, cellMargin: tableCellMargin, cellSpacing: tableCellSpacing, fixedLayout: tableFixedLayout, headerRow: tableHeaderRow, caption: tableCaption, description: tableDescription };
+/** Validation and the CHANGED-only diff live in `table_properties_patch.mjs`,
+ *  where a test can reach them — `main.js` has no exports, so the diff that
+ *  decides whether eleven untouched properties are re-asserted was unreachable
+ *  from node. */
 function tablePropertiesPatch() {
-  const inputs = [
-    tableWidth,
-    tableIndent,
-    tableColumnWidth,
-    tableRowHeight,
-    tableCellMargin,
-    tableCellSpacing,
-  ].filter((input) => !input.disabled);
-  for (const input of inputs) {
-    input.setCustomValidity("");
-    if (!input.checkValidity()) {
-      input.reportValidity();
-      input.focus();
-      return null;
-    }
-  }
-  if (tableRowHeightRule.value !== "auto" && tableRowHeight.value.trim() === "") {
-    tableRowHeight.setCustomValidity("Enter a row height or choose Auto.");
-    tableRowHeight.reportValidity();
-    tableRowHeight.focus();
-    return null;
-  }
-
-  const next = {
-    alignment: tableAlignGroup.value() ?? "left",
-    tableWidthTwips: optionalInchesToTwips(tableWidth.value),
-    tableIndentTwips: signedInchesToTwips(tableIndent.value),
-    fixedLayout: tableFixedLayout.checked,
-    headerRow: tableHeaderRow.checked,
-    columnWidthTwips: optionalInchesToTwips(tableColumnWidth.value),
-    rowHeightTwips:
-      tableRowHeightRule.value === "auto" ? -1 : optionalInchesToTwips(tableRowHeight.value),
-    rowHeightRule: tableRowHeightRule.value,
-    cellMarginTwips: optionalInchesToTwips(tableCellMargin.value),
-    cellSpacingTwips: optionalInchesToTwips(tableCellSpacing.value),
-    caption: tableCaption.value,
-    description: tableDescription.value,
-  };
-  const patch = {};
-  for (const [key, value] of Object.entries(next)) {
-    if (key === "columnWidthTwips" && tableColumnWidth.disabled) continue;
-    if (value !== tablePropertiesCurrent[key]) patch[key] = value;
-  }
-  // The bridge requires the value and rule together whenever row height changes.
-  if ("rowHeightTwips" in patch || "rowHeightRule" in patch) {
-    patch.rowHeightTwips = next.rowHeightTwips;
-    patch.rowHeightRule = next.rowHeightRule;
-  }
-  return patch;
+  return tablePatch(TABLE_PROPERTIES_FORM, { alignment: tableAlignGroup.value() ?? "left", current: tablePropertiesCurrent, inchesToTwips: optionalInchesToTwips, signedInchesToTwips, rowHeightRequired: "Enter a row height or choose Auto." });
 }
 
 function commitTableProperties() {
@@ -11836,6 +11825,7 @@ function editorCommands(context = { surface: "palette" }) {
     ...formattingMarks.commands(),
     ...measurement.commands(),
     ...documentProtection.commands(),
+    ...accessChrome.commands(),
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     // Ribbon density (docs/104 HF-094). The choice was already real and already

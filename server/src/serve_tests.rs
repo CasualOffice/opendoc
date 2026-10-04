@@ -387,7 +387,11 @@ impl Peer {
             ServerMessage::Welcome { .. }
             | ServerMessage::Resumed { .. }
             | ServerMessage::Awareness { .. }
-            | ServerMessage::Departed { .. } => {}
+            | ServerMessage::Departed { .. }
+            // A rights change is not something a `ClientSession` has state for: it governs what
+            // the CHROME offers, and the authority stays the relay's own copy. Returned to the
+            // caller like every other message, so a guard can assert on it.
+            | ServerMessage::AccessChanged { .. } => {}
         }
         message
     }

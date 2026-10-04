@@ -580,6 +580,22 @@ pub struct WasmDocument {
     /// [`WasmDocument::adopt_participant_capabilities`], never from a document and
     /// never from a wire message this engine read itself.
     capabilities: Capabilities,
+    /// The most the **host** has allowed this participant, which `capabilities` is
+    /// never raised above.
+    ///
+    /// Two fields for two authorities, which is the split
+    /// [`casual_doc_edit::access`]'s own header draws and the reason this is not one
+    /// value with two writers. The HOST's grant narrows this one and can only ever
+    /// narrow it; the ROOM's live word
+    /// ([`WasmDocument::apply_room_access`]) moves `capabilities` anywhere **inside**
+    /// it. Before this field existed there was only the ratchet, and the ratchet made
+    /// a legitimate promotion unreachable: an owner restoring a participant they had
+    /// demoted could not be obeyed by that participant's replica, so their chrome
+    /// stayed disabled with a reason that was no longer true.
+    ///
+    /// [`Capabilities::local`] until a host says otherwise — the standalone mode, for
+    /// the reason `capabilities` gives.
+    host_ceiling: Capabilities,
     /// Numeric `w:id` allocator for editor-authored revisions. Imported opaque
     /// ids remain untouched; allocated values are never reused within a session,
     /// including after Undo.
@@ -13701,6 +13717,38 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Sets what this participant may do to what the **room** last said, bounded by the host's
+    /// ceiling — `ServerMessage::Welcome`, `Resumed` and `AccessChanged`.
+    ///
+    /// # Why this is not `adopt_participant_capabilities`
+    ///
+    /// Because the two inputs are different authorities and composing them the same way is wrong
+    /// in one direction each. A host grant may only narrow, so adoption intersects. A room's word
+    /// may move a participant **either way** inside what the host allowed — that is the whole of
+    /// what a rights change is — so intersecting with the value already held would make every
+    /// demotion permanent, and a promotion the relay has already accepted would leave this
+    /// replica refusing edits the network would take.
+    ///
+    /// What is still impossible is widening past the host: the result is intersected with
+    /// `host_ceiling`, which only [`WasmDocument::adopt_participant_capabilities`] writes. So a
+    /// relay — or anything pretending to be one — can redistribute inside the host's grant and
+    /// cannot exceed it, which is the invariant ADR-063 states for the wire value.
+    ///
+    /// This replica's copy is not an authority in either case, and never was: the relay keeps its
+    /// own and judges every submission against it (`casual_doc_edit::access`'s header says so in
+    /// as many words). What it buys is a control that disables itself with a reason instead of
+    /// offering a gesture the network will refuse.
+    ///
+    /// # Errors
+    ///
+    /// An unknown capability name, refused rather than ignored, for the reason adoption gives.
+    ///
+    /// O(the names).
+    #[wasm_bindgen(js_name = applyRoomAccess)]
+    pub fn apply_room_access(&mut self, granted: Vec<String>) -> Result<(), JsValue> {
+        self.apply_room_access_internal(&granted).map_err(to_js)
+    }
+
     /// What this participant is allowed to do, as the capability names a host passes to
     /// `WasmDocument::adopt_participant_capabilities`, sorted.
     ///
@@ -13714,6 +13762,9 @@ impl WasmDocument {
         }
         if self.capabilities.may_edit() {
             names.push("edit".to_owned());
+        }
+        if self.capabilities.may_manage_access() {
+            names.push("manageAccess".to_owned());
         }
         if self.capabilities.may_manage_protection() {
             names.push("manageProtection".to_owned());
@@ -13860,6 +13911,35 @@ impl WasmDocument {
         &mut self,
         granted: &[String],
     ) -> Result<(), String> {
+        let capabilities = Self::capabilities_from_names(granted)?;
+        // Intersection, never replacement: a HOST grant can only ever narrow what this replica
+        // holds, so re-applying a stale one cannot restore a revoked right.
+        //
+        // The ceiling is narrowed in the same breath, and that is what makes it a ceiling rather
+        // than a remembered first value: `apply_room_access` may move the effective set anywhere
+        // inside it, so a host grant that did not narrow the ceiling too would be a grant a room
+        // could undo.
+        self.host_ceiling = self.host_ceiling.narrowed_to(capabilities);
+        self.capabilities = self.capabilities.narrowed_to(capabilities);
+        Ok(())
+    }
+
+    /// The capability set a list of names denotes, or a refusal naming the one it could not read.
+    ///
+    /// ONE PARSER, shared by the host path and the room path, because two matches over one
+    /// vocabulary is how `Capabilities::review` came to be modelled by the engine and refused by
+    /// the facade — in both directions — with nothing noticing. `collab.rs`'s `capability_names`
+    /// is the inverse and `session_access.test.mjs` reads this function's arms to check the chrome
+    /// knows the same list.
+    ///
+    /// # Errors
+    ///
+    /// An unknown name. Unknown names are refused rather than ignored: a host that misspells
+    /// `"suggest"` must hear about it, because silently granting less is a bug that looks like a
+    /// working read-only mode.
+    ///
+    /// O(the names).
+    fn capabilities_from_names(granted: &[String]) -> Result<Capabilities, String> {
         let mut capabilities = Capabilities::viewer();
         for name in granted {
             capabilities = match name.as_str() {
@@ -13868,17 +13948,23 @@ impl WasmDocument {
                 "review" => capabilities.with_review(),
                 "edit" => capabilities.with_edit(),
                 "manageProtection" => capabilities.with_manage_protection(),
+                "manageAccess" => capabilities.with_manage_access(),
                 other => {
                     return Err(format!(
                         "unknown capability {other:?}; the grant may name comment, suggest, \
-                         review, edit or manageProtection"
+                         review, edit, manageProtection or manageAccess"
                     ));
                 }
             };
         }
-        // Intersection, never replacement: a grant can only ever narrow what this replica
-        // holds, so re-applying a stale one cannot restore a revoked right.
-        self.capabilities = self.capabilities.narrowed_to(capabilities);
+        Ok(capabilities)
+    }
+
+    /// See [`WasmDocument::apply_room_access`]. Plain `Result<_, String>` so the access guards
+    /// run under `cargo test` on native targets.
+    fn apply_room_access_internal(&mut self, granted: &[String]) -> Result<(), String> {
+        let named = Self::capabilities_from_names(granted)?;
+        self.capabilities = self.host_ceiling.narrowed_to(named);
         Ok(())
     }
 
@@ -26253,6 +26339,7 @@ fn open_document_bounded(
         typing_history: None,
         editing_a_form_field: false,
         capabilities: Capabilities::local(),
+        host_ceiling: Capabilities::local(),
         revision_ids,
         revision: 0,
         // Populated lazily on the first edit's incremental re-pagination; the open
@@ -34653,6 +34740,7 @@ mod tests {
         let mut d = WasmDocument {
             editing_a_form_field: false,
             capabilities: Capabilities::local(),
+            host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -35102,6 +35190,7 @@ mod tests {
         let d = WasmDocument {
             editing_a_form_field: false,
             capabilities: Capabilities::local(),
+            host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -35411,6 +35500,7 @@ mod tests {
         let mut d = WasmDocument {
             editing_a_form_field: false,
             capabilities: Capabilities::local(),
+            host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -39271,6 +39361,7 @@ mod tests {
         WasmDocument {
             editing_a_form_field: false,
             capabilities: Capabilities::local(),
+            host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -40452,6 +40543,7 @@ mod tests {
         WasmDocument {
             editing_a_form_field: false,
             capabilities: Capabilities::local(),
+            host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -41944,6 +42036,7 @@ mod tests {
         let handle = WasmDocument {
             editing_a_form_field: false,
             capabilities: Capabilities::local(),
+            host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -47855,10 +47948,17 @@ mod tests {
     fn every_capability_the_engine_models_has_a_facade_name_in_both_directions() {
         // Sorted, because the getter promises sorted and a host diffing two grants compares
         // the lists.
-        let every_name: Vec<String> = ["comment", "edit", "manageProtection", "review", "suggest"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        let every_name: Vec<String> = [
+            "comment",
+            "edit",
+            "manageAccess",
+            "manageProtection",
+            "review",
+            "suggest",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
         let mut d = open_document(&text_of_lines(1)).expect("must open");
         d.adopt_participant_capabilities_internal(&every_name)
             .expect("every capability the engine models must have a name the facade accepts");

@@ -71,6 +71,15 @@ impl<W: Write> Participants<W> {
         self.writers.remove(&client)
     }
 
+    /// Who is connected, in participant-number order.
+    ///
+    /// Ids only. There is deliberately no way to look at a participant's writer through this —
+    /// see [`Participants::take`] — and a caller that wants to say something to one of them
+    /// goes through [`Participants::fan_out`], so the one-write-per-frame rule stays here.
+    pub fn connected(&self) -> impl ExactSizeIterator<Item = ClientId> + '_ {
+        self.writers.keys().copied()
+    }
+
     /// How many participants are connected.
     #[must_use]
     pub fn len(&self) -> usize {

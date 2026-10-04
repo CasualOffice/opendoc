@@ -1081,6 +1081,21 @@
           <div class="rgroup" data-group="review-protect">
             <div class="rgroup-ctl">
               <button data-i18n-title="protect.tip" data-i18n-label="panelReview.restrictEditing.label" id="reviewProtectBtn" type="button" class="fmt" title="Restrict what readers may change in this document" aria-label="Restrict editing" aria-haspopup="dialog" aria-pressed="false" disabled><span class="ms" aria-hidden="true">lock</span></button>
+              <!-- Manage access: what the OTHER people in a shared session may do.
+                   In this group rather than a new one because Word's own Review ▸
+                   Protect group is where authority over who may change the
+                   document lives, and because a new `rgroup` would move
+                   `review-surface.spec.mjs`'s ordered label list for no
+                   reader-visible gain. Two 32px buttons on a band
+                   `ribbon-width-budget.spec.mjs` measures as fitting far below
+                   1280px.
+                   HIDDEN rather than disabled for a participant whose grant
+                   withholds it — the owner's decision, "not greyed, not present",
+                   and `session_rights.mjs`'s header carries the argument for why
+                   that does not break "never a dead control". `hidden` here is
+                   the FIRST-PAINT state, because the grant is not known until a
+                   document is open: the sweep in `main.js` reveals it. -->
+              <button data-i18n-title="rights.tip" data-i18n-label="panelReview.manageAccess.label" id="reviewManageAccessBtn" type="button" class="fmt" title="Change what other people in this shared document may do" aria-label="Manage access" aria-haspopup="dialog" disabled hidden><span class="ms" aria-hidden="true">manage_accounts</span></button>
             </div>
             <span data-i18n="panelReview.protect" class="rgroup-label">Protect</span>
           </div>
@@ -2042,6 +2057,51 @@
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="restrictEditingCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="restrictEditingApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- Manage access. The rights-changing dialog for a shared session, and for
+         nothing else: it is reachable only from a room, and only by a participant
+         whose own grant carries `manageAccess` (the owner's decision — "for owner
+         and editor, not viewer"). `session_rights.mjs` is the whole of that
+         policy, in one place, so the ribbon, the menu and the palette cannot
+         disagree about it.
+         The rows are GENERATED rather than authored, unlike every other dialog in
+         this file, and that is not a departure from the adopt-the-markup rule —
+         there is no fixed set of controls to author, because the rows are the
+         people in the room. What is authored is everything that is not a row:
+         the heading, the description, the empty state and the actions, so the
+         labels and the `aria-*` wiring stay where every other dialog keeps
+         them. -->
+    <div id="sessionRightsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="sessionRightsTitle" aria-describedby="sessionRightsDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="rights.title" id="sessionRightsTitle">Manage access</h2>
+              <p data-i18n="rights.description" id="sessionRightsDescription">Change what the other people in this shared document may do. Each person can only be moved within the access they were given when they joined.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="rights.close.label" id="sessionRightsClose" type="button" class="dialog-close" title="Close" aria-label="Close manage access"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <div class="settings-section">
+            <div data-i18n="rights.people" class="settings-label" id="sessionRightsListLabel">People in this document</div>
+            <div class="rights-list" id="sessionRightsList" role="group" aria-labelledby="sessionRightsListLabel"></div>
+            <!-- A room of one is a real and common state — one doc, one room — so
+                 the dialog opens and SAYS SO rather than refusing to open. A
+                 control that will not open cannot deliver the information that
+                 there is nobody to change. -->
+            <p data-i18n="rights.empty" class="settings-note" id="sessionRightsEmpty">Nobody else has this document open, so there is nothing to change yet.</p>
+          </div>
+          <p data-i18n="rights.authority" class="settings-note">Access here lasts as long as each person stays connected. The permissions they were given when the document was opened are what they get again if they reconnect, and changing those is done where the document is shared from.</p>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="rights.note" class="dialog-note">Everyone in the document is told.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="sessionRightsCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="watermarkDialog.apply" id="sessionRightsApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
         </footer>
       </section>
@@ -3062,6 +3122,24 @@
             <button data-i18n="reviewModeControl.readOnly" type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Read only</button>
           </span>
         </span>
+        <!-- What THIS reader may do with THIS document, from first paint, in every
+             mode including standalone and embedded. `access_badge.mjs` carries
+             the argument; the two things to know here are WHERE and WHAT IT IS
+             NOT.
+             WHERE: `.foot-right` rather than `.foot-left`, measured — style.css's
+             narrow breakpoint sets `.footer .foot-left { display: none }` and
+             gives `.foot-right` the full width, so an indicator in the left half
+             would be invisible at exactly the width where a reader is least
+             likely to have discovered their permissions another way. No
+             `data-status-priority` either, because every priority is shed at that
+             same breakpoint.
+             WHAT IT IS NOT: a control. No `data-command`, no `tabindex`, nothing
+             happens when it is clicked. A viewer must see what they may do and
+             must NOT be offered a rights surface, and an indicator satisfies both
+             where a button could only satisfy one by breaking the other.
+             `role="status"` and not `aria-live`: it is state a reader consults,
+             not an event to interrupt them with. -->
+        <span data-i18n-title="access.badge.tip" id="accessBadge" class="access-badge" role="status" title="What you can do with this document, and where that was decided"><span class="ms" aria-hidden="true">shield_person</span><span id="accessBadgeLevel" class="access-badge-level"></span><span id="accessBadgeSource" class="access-badge-source"></span></span>
         <span data-i18n="ui.page11" id="statPages" class="stat-pages" data-status-priority="1" hidden>Page 1 of 1</span>
         <!-- Language, in the status bar. Word and Google Docs both put the
              document's language here, at the bottom right, because it is

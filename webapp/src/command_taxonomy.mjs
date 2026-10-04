@@ -593,7 +593,16 @@ export const APP_MENU_SECTIONS = {
     // Compare because the rule every band in these menus follows is that a
     // document-wide, hard-to-notice action does not sit one keystroke from a
     // reversible navigation one.
-    band("menuGroup.protect", "review.restrictEditing"),
+    // Protect holds BOTH authority questions, which is the grouping Word's own
+    // Review tab uses: what this document asks of everyone (`restrictEditing`,
+    // `w:documentProtection`) and what the people in a shared session may do
+    // (`manageAccess`). They are genuinely different authorities — `access.rs`
+    // is built on keeping them apart — and they are the same QUESTION to a
+    // reader looking for "who can change this", which is what a menu band is
+    // for. A band of its own would have cost a new `menuGroup.*` key in
+    // nineteen catalogues to separate two rows nobody is looking for
+    // separately.
+    band("menuGroup.protect", "review.restrictEditing", "review.manageAccess"),
   ],
 };
 

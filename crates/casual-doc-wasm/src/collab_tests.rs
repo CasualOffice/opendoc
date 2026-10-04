@@ -45,6 +45,7 @@ fn welcome(client: u64, capabilities: Capabilities) -> Vec<u8> {
         client: ClientId::new(client),
         revision: Revision::new(0),
         capabilities,
+        participants: Vec::new(),
     })
 }
 

@@ -454,6 +454,22 @@ export const COMMAND_CONTRACT = Object.freeze([
   // trap ADR-059 removed in the engine, and the one a `requires` that read the
   // document's own state would have rebuilt here.
   exact("review.restrictEditing", "edit"),
+  // Manage access — change what the OTHER people in a shared session may do.
+  //
+  // `null`, and not `"edit"`, which is the one surprising entry in this block.
+  // `requires` says what a host must grant for the command to be reachable, and
+  // this command touches no document at all: it changes the ROOM. A host that
+  // embeds a read-only viewer in a shared session still wants its owner able to
+  // demote somebody — withholding `edit` must not withhold that — and the
+  // capability that actually gates it is the PARTICIPANT's `manageAccess`, which
+  // is a different authority with a different source and is enforced by
+  // `session_access.mjs`'s own table and by the relay. Declaring `edit` here
+  // would be a second, wrong gate on the same command.
+  //
+  // `collab.reconnect` is the precedent and the shape is identical: a session
+  // command, `requires: null`, gated by the session's own state rather than by a
+  // container capability.
+  exact("review.manageAccess", null),
 
   // ---- style --------------------------------------------------------------
   // Both write to the document's style table, so both are mutations. Declared

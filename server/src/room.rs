@@ -15,9 +15,10 @@
 
 use std::path::Path;
 
+use casual_doc_edit::access::AccessChangeRefusal;
 use casual_doc_edit::access::Capabilities;
 use casual_doc_transaction::protocol::{
-    ClientMessage, Outcome, Revision, ServerMessage, Submission,
+    ClientId, ClientMessage, Outcome, Revision, ServerMessage, Submission,
 };
 use casual_doc_transaction::session::{Ordered, ServerSession};
 
@@ -155,6 +156,30 @@ impl Room {
         revision: Revision,
     ) -> Option<impl ExactSizeIterator<Item = &Ordered>> {
         self.session.history_since(revision)
+    }
+
+    /// Changes what `target` may do, at `actor`'s request — `ClientMessage::SetAccess`.
+    ///
+    /// **Not journalled, and that is the one place this type's own contract does not apply.**
+    /// Every other mutation here is journalled before it is answered, because a client that has
+    /// been told something took must not be able to outlive the record of it. A rights change is
+    /// different in kind: it already ends at the target's next reconnect, where the grant is
+    /// re-verified and `ServerSession::join` overwrites the entry — so a journal would make a
+    /// *crash* the one reconnect it survived, and one rule with two behaviours is the pair that
+    /// diverges. `ServerSession::set_access` carries the full argument.
+    ///
+    /// # Errors
+    ///
+    /// The `AccessChangeRefusal` the session decided. No [`RoomError`], because nothing durable
+    /// is touched — which is why this signature does not carry one rather than carrying an error
+    /// that can never happen.
+    pub fn set_access(
+        &mut self,
+        actor: ClientId,
+        target: ClientId,
+        requested: Capabilities,
+    ) -> Result<Capabilities, AccessChangeRefusal> {
+        self.session.set_access(actor, target, requested)
     }
 
     /// The relay's state, for a caller that needs to checkpoint it or report on it.

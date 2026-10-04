@@ -744,3 +744,231 @@ fn every_access_refusal_carries_a_distinct_routed_reason() {
     codes.dedup();
     assert_eq!(before, codes.len(), "two refusals share a routing code");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Changing somebody ELSE's access — `refuse_access_change`, `Capabilities::manage_access`.
+//
+// The owner's decision these exist for: "In case of co-editing we need a full rights-changing
+// dialog for owner and editor — not viewer. And for SDK or single user, the role is pre-decided
+// while loading the file." The engine's half of that is a capability that authorises the change
+// and a rule that bounds it; the chrome's half is a surface, and a surface is not a boundary.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_request_above_the_target_s_own_host_signed_grant_is_refused_by_the_engine() {
+    // THE INVARIANT, and the one a crafted client goes for: a room may redistribute the rights a
+    // host has issued and may not mint one. The actor here is an owner — the most authority the
+    // vocabulary has — and the target's own grant says `commenter`, so promoting them to an
+    // editor is refused however legitimate the asker is.
+    let refusal = refuse_access_change(
+        Capabilities::owner(),
+        false,
+        Capabilities::commenter(),
+        Capabilities::editor(),
+    )
+    .expect_err("an owner cannot exceed the host's grant for somebody else");
+    assert_eq!(refusal, AccessChangeRefusal::AboveCeiling);
+
+    // ...and the same request INSIDE that ceiling is allowed, so the guard is about the bound and
+    // not about the function refusing everything. A commenter may be narrowed to a viewer.
+    refuse_access_change(
+        Capabilities::owner(),
+        false,
+        Capabilities::commenter(),
+        Capabilities::viewer(),
+    )
+    .expect("narrowing inside the ceiling is the whole point of the feature");
+    refuse_access_change(
+        Capabilities::owner(),
+        false,
+        Capabilities::commenter(),
+        Capabilities::commenter(),
+    )
+    .expect("restoring a participant to their own ceiling is inside it");
+}
+
+#[test]
+fn nobody_may_hand_out_access_they_do_not_hold_themselves() {
+    // A room where an editor may appoint an owner is a room in which owner is not a privilege.
+    // The target's ceiling admits it — they were granted owner by the host — and the ACTOR is the
+    // one who cannot, which is why this is a separate line from the ceiling check.
+    let refusal = refuse_access_change(
+        Capabilities::editor(),
+        false,
+        Capabilities::owner(),
+        Capabilities::owner(),
+    )
+    .expect_err("an editor cannot grant `manageProtection` it does not hold");
+    assert_eq!(refusal, AccessChangeRefusal::AboveActor);
+
+    // The same editor restoring the same participant to `editor` is fine: inside both bounds.
+    refuse_access_change(
+        Capabilities::editor(),
+        false,
+        Capabilities::owner(),
+        Capabilities::editor(),
+    )
+    .expect("an editor may move somebody to a level the editor itself holds");
+}
+
+#[test]
+fn a_participant_who_may_not_manage_access_is_refused_before_a_target_is_read() {
+    // Checked FIRST, deliberately: the later answers describe a target, and an unauthorised actor
+    // must not be able to use them to probe one. Asserted by giving the call a request that would
+    // produce `AboveCeiling` — if the order were wrong, that is the answer that would come back,
+    // and it would tell the asker something about somebody else.
+    for actor in [
+        Capabilities::viewer(),
+        Capabilities::commenter(),
+        Capabilities::suggester(),
+        Capabilities::reviewer(),
+    ] {
+        let refusal =
+            refuse_access_change(actor, false, Capabilities::viewer(), Capabilities::editor())
+                .expect_err("a participant without `manage_access` changes nobody");
+        assert_eq!(refusal, AccessChangeRefusal::NotPermitted, "{actor:?}");
+    }
+}
+
+#[test]
+fn a_participant_may_not_change_their_own_access() {
+    // Google Docs and Word both hold this line, and the reason is not escalation — the ceiling
+    // rule already stops that, since a participant's ceiling is their own grant. It is that the
+    // one change nobody can undo for you is the one that took your ability to make changes.
+    let refusal = refuse_access_change(
+        Capabilities::owner(),
+        true,
+        Capabilities::owner(),
+        Capabilities::viewer(),
+    )
+    .expect_err("a sole owner must not be able to lock the room out with one click");
+    assert_eq!(refusal, AccessChangeRefusal::OwnAccessUnchangeable);
+
+    // And it is the SELF-ness that refuses, not the narrowing: the identical request about
+    // somebody else is allowed.
+    refuse_access_change(
+        Capabilities::owner(),
+        false,
+        Capabilities::owner(),
+        Capabilities::viewer(),
+    )
+    .expect("narrowing somebody else to a viewer is inside every bound");
+}
+
+#[test]
+fn managing_access_is_not_permission_to_change_the_document() {
+    // `may_write` is the one line a relay holding no document can hold, and `manage_access` is
+    // deliberately not a term in it: changing what somebody else may do changes the ROOM and
+    // leaves the bytes untouched. A participant holding only this must still be refused on the
+    // keystroke path.
+    let only_access = Capabilities::viewer().with_manage_access();
+    assert!(!only_access.may_write());
+    let document = document(None);
+    let refusal = refuse_if_not_permitted(Some(&document), &[typing()], only_access)
+        .expect_err("a rights manager who was granted no edit may not type");
+    assert_eq!(refusal, AccessRefusal::ReadOnly);
+    // Nor comment, suggest, decide a revision, or touch the document's own policy.
+    assert!(!only_access.may_comment());
+    assert!(!only_access.may_suggest());
+    assert!(!only_access.may_review());
+    assert!(!only_access.may_edit());
+    assert!(!only_access.may_manage_protection());
+}
+
+#[test]
+fn the_review_vehicle_is_not_admitted_by_manage_access_alone() {
+    // `admitted_by` is read by `intersects`, so ANY capability in the value it returns admits the
+    // operation. It used to spell the review vehicle's answer `Capabilities::editor()`, and the
+    // day `manage_access` joined that preset is the day a rights manager holding nothing else
+    // would have been admitted to send a review change. The four content classes are named there
+    // now, and this is the guard that they stay named.
+    // The one the file's own helper builds, so the guard exercises the shape the review path
+    // really sends rather than one invented here.
+    let vehicle = review(vec![run(11, "abcdefgh")]);
+    let admitted = admitted_by(&vehicle);
+    assert!(
+        !admitted.may_manage_access(),
+        "the review vehicle admits a participant who may only manage access"
+    );
+    let document = document(None);
+    let refusal = refuse_if_not_permitted(
+        Some(&document),
+        &[vehicle],
+        Capabilities::viewer().with_manage_access(),
+    )
+    .expect_err("managing access is not a licence to decide somebody's revision");
+    assert_eq!(refusal, AccessRefusal::ReadOnly);
+}
+
+#[test]
+fn the_rights_dialog_is_for_an_owner_and_an_editor_and_for_nobody_below() {
+    // The owner's decision, read off the presets rather than off a comment: "a full
+    // rights-changing dialog for owner and editor — not viewer."
+    assert!(Capabilities::owner().may_manage_access());
+    assert!(Capabilities::editor().may_manage_access());
+    for below in [
+        Capabilities::viewer(),
+        Capabilities::commenter(),
+        Capabilities::suggester(),
+        Capabilities::reviewer(),
+    ] {
+        assert!(
+            !below.may_manage_access(),
+            "{below:?} would be offered the rights dialog"
+        );
+    }
+    // Standalone is the owner's other half — "for SDK or single user, the role is pre-decided
+    // while loading the file" — and `local()` says the local reader is the only authority. It
+    // holds the capability because it holds all of them; what makes the dialog absent there is
+    // that there is no room, which is the chrome's answer and `session_access.mjs`'s guard.
+    assert!(Capabilities::local().may_manage_access());
+}
+
+#[test]
+fn narrowing_cannot_restore_the_right_to_manage_access() {
+    // Intersection is the only composition `Capabilities` offers, and the sixth field has to be
+    // in it or a narrowed grant would carry a capability neither side granted. This is the shape
+    // that went wrong for `review`: a field the engine modelled and a composition that did not
+    // know about it.
+    let narrowed = Capabilities::owner().narrowed_to(Capabilities::commenter());
+    assert!(!narrowed.may_manage_access());
+    let kept = Capabilities::owner().narrowed_to(Capabilities::editor());
+    assert!(kept.may_manage_access());
+    assert!(
+        !Capabilities::viewer()
+            .narrowed_to(Capabilities::owner())
+            .may_manage_access()
+    );
+}
+
+#[test]
+fn every_access_change_refusal_carries_a_distinct_routed_reason() {
+    // The same contract `every_access_refusal_carries_a_distinct_routed_reason` holds for the
+    // other vocabulary, and for the same reason: two refusals sharing a code are two refusals a
+    // non-English reader cannot tell apart. Held separately because the two enums are separate
+    // vocabularies on purpose — one is about the document, one about the room.
+    let all = [
+        AccessChangeRefusal::NotPermitted,
+        AccessChangeRefusal::OwnAccessUnchangeable,
+        AccessChangeRefusal::AboveCeiling,
+        AccessChangeRefusal::AboveActor,
+        AccessChangeRefusal::NotAParticipant,
+    ];
+    let mut codes = Vec::new();
+    for refusal in all {
+        let reason = refusal.reason();
+        assert!(
+            reason.starts_with(crate::refusal::MARKER),
+            "{refusal:?} is not marked as already explained: {reason}"
+        );
+        let (_, code) = reason
+            .split_once(crate::refusal::CODE_SEPARATOR)
+            .expect("a routed reason carries its code");
+        assert!(code.starts_with("session."), "{refusal:?} -> {code}");
+        codes.push(code);
+    }
+    codes.sort_unstable();
+    let before = codes.len();
+    codes.dedup();
+    assert_eq!(before, codes.len(), "two refusals share a routing code");
+}

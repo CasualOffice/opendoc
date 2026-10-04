@@ -20,12 +20,12 @@
 
 use std::io::Write;
 
-use casual_doc_edit::access::refuse_if_not_permitted;
+use casual_doc_edit::access::{Capabilities, refuse_if_not_permitted};
 
 use casual_doc_transaction::codec::encode_frame;
 use casual_doc_transaction::presence::{Accepted, MAX_PARTICIPANTS, Roster};
 use casual_doc_transaction::protocol::{
-    Arrival, ClientId, ClientMessage, Outcome, Refusal, ServerMessage,
+    Arrival, ClientId, ClientMessage, Member, Outcome, Refusal, ServerMessage,
 };
 
 use crate::access::Access;
@@ -180,7 +180,10 @@ impl<W: Write> Relay<W> {
                 // `Room::commit` does for a chunk, so a participant number cannot outlive the
                 // record of it (ADR-058). The `?` is the whole of "a caller that cannot journal
                 // must not admit".
-                let answer = self.room.join(message, granted)?;
+                // Two statements rather than one: `with_membership` reads the room and `join`
+                // mutates it, so nesting the call borrows it both ways at once.
+                let admitted = self.room.join(message, granted)?;
+                let answer = self.with_membership(admitted, granted);
                 let mut handled = Handled {
                     answer: Some(answer.clone()),
                     ..Handled::default()
@@ -326,10 +329,151 @@ impl<W: Write> Relay<W> {
                 }
                 Ok(Handled::default())
             }
+            ClientMessage::SetAccess {
+                target,
+                capabilities,
+            } => {
+                // **The actor is the connection, never a field.** `Submission` carries a `client`
+                // because the dedupe table is keyed on it, so there the claim has to be checked;
+                // `SetAccess` has no such field at all, which is `152` §2b's discipline — a forged
+                // actor is unexpressible rather than merely rejected. `None` is a connection that
+                // has not joined, and it is refused with the same undetailed answer as everything
+                // else here: before a `Join` there is nobody to tell anything.
+                let Some(actor) = me else {
+                    return Ok(Handled {
+                        answer: Some(ServerMessage::Refused {
+                            seq: None,
+                            reason: Refusal::AccessChangeRefused,
+                        }),
+                        ..Handled::default()
+                    });
+                };
+                // The decision is the session's, which is where both values it needs live
+                // (`ServerSession::set_access`). What this boundary adds is the line above — which
+                // connection asked — and nothing else, so there is exactly one implementation of
+                // the ceiling rule and a third-party relay driving `ServerSession` gets it too.
+                let applied = match self.room.set_access(actor, *target, *capabilities) {
+                    Ok(applied) => applied,
+                    // The five distinctions are collapsed on the wire on purpose — what an
+                    // attacker would be enumerating here is a ceiling, one request at a time.
+                    // `AccessChangeRefusal` keeps them for an operator's log.
+                    Err(_) => {
+                        return Ok(Handled {
+                            answer: Some(ServerMessage::Refused {
+                                seq: None,
+                                reason: Refusal::AccessChangeRefused,
+                            }),
+                            ..Handled::default()
+                        });
+                    }
+                };
+                // Everybody hears it, the actor included — which is why the actor's answer is this
+                // same message rather than a bare acknowledgement. The target narrows its own
+                // chrome, a rights surface keeps its list live, and the actor learns the change
+                // took. The CEILING is not on this message: that is the room's policy, and it only
+                // ever goes to somebody who may act on it.
+                let announcement = ServerMessage::AccessChanged {
+                    client: *target,
+                    capabilities: applied,
+                };
+                let unreachable = self
+                    .participants
+                    .fan_out(actor, &encode_frame(&announcement));
+                let evicted = self.evict_unreachable(unreachable);
+                Ok(Handled {
+                    answer: Some(announcement),
+                    evicted,
+                    ..Handled::default()
+                })
+            }
             ClientMessage::Leave => Ok(Handled {
                 leaving: true,
                 ..Handled::default()
             }),
+        }
+    }
+
+    /// Fills a `Welcome`'s or a `Resumed`'s membership list, for a joiner who may act on it.
+    ///
+    /// # Why the relay does this and the session does not
+    ///
+    /// Because occupancy is a property of the **open connections** and `ServerSession` has no
+    /// notion of one: it holds an entry for every participant it has ever admitted, and a list
+    /// built from that would offer a rights surface rows for people who left hours ago. So the
+    /// session emits an empty list and this fills it, which is the same division
+    /// [`ServerSession::commit`]'s doc comment draws when it says the one check a pure state
+    /// machine cannot make is which connection a message arrived on.
+    ///
+    /// # Why it is filtered, and on what
+    ///
+    /// **Only a participant who may change access gets a list at all**, and the reason is the
+    /// `ceiling` field: that value is the *room's policy* for somebody else, and a reader with no
+    /// use for it has no business holding it. A reader's own capabilities already travel on the
+    /// same message, so nothing legible is withheld — what is withheld is other people's bounds.
+    ///
+    /// The joiner's own row is left out too. A rights surface must not offer it (a participant may
+    /// not change their own access) so a row for it would be one the surface has to drop, and a
+    /// list whose consumer filters it is a list that was built wrong.
+    ///
+    /// A participant admitted before the ceiling table existed (an old checkpoint — see
+    /// `SessionState`) is **omitted rather than guessed at**: `set_access` would refuse them with
+    /// `NotAParticipant`, and offering a row that cannot be acted on is the dead control one
+    /// layer out.
+    ///
+    /// # Complexity
+    ///
+    /// O(connected participants × log participants), once per join. Never O(document).
+    fn with_membership(&self, answer: ServerMessage, granted: Capabilities) -> ServerMessage {
+        let (ServerMessage::Welcome { client, .. } | ServerMessage::Resumed { client, .. }) =
+            answer
+        else {
+            return answer;
+        };
+        if !granted.may_manage_access() {
+            return answer;
+        }
+        let members: Vec<Member> = self
+            .participants
+            .connected()
+            .filter(|other| *other != client)
+            .filter_map(|other| {
+                Some(Member {
+                    client: other,
+                    capabilities: self.room.session().granted_for(other)?,
+                    ceiling: self.room.session().ceiling_for(other)?,
+                })
+            })
+            .collect();
+        match answer {
+            ServerMessage::Welcome {
+                protocol,
+                client,
+                revision,
+                capabilities,
+                ..
+            } => ServerMessage::Welcome {
+                protocol,
+                client,
+                revision,
+                capabilities,
+                participants: members,
+            },
+            ServerMessage::Resumed {
+                protocol,
+                client,
+                revision,
+                missed,
+                capabilities,
+                ..
+            } => ServerMessage::Resumed {
+                protocol,
+                client,
+                revision,
+                missed,
+                capabilities,
+                participants: members,
+            },
+            other => other,
         }
     }
 
