@@ -1204,7 +1204,7 @@ impl WasmDocument {
     /// Returns a JSON object: `{ "reflow": bool, "approximations": [string] }`.
     /// The approximations are **reported, not hidden**, and they are derived from
     /// **this document at this measure** rather than recited: content wider than
-    /// the reading column has been fitted to it (`docs/151` §6.3), a page- or
+    /// the reading column has been fitted to it (`docs/166` R-1), a page- or
     /// margin-anchored drawing keeps its paper-relative position (`docs/151` §8
     /// item 1 is still open), a footnote lands at a tile bottom rather than a page
     /// bottom, and a `PAGE`/`NUMPAGES` field prints a refusal because a tile index
@@ -30524,7 +30524,7 @@ mod tests {
         assert_eq!(view.tile_height_twip, Some(PHONE_TILE));
         assert_eq!(view.gutter_twip, Some(PHONE_GUTTER));
         // The approximations are DERIVED from this document now, not recited
-        // (`docs/151` §8 item 8), so what is asserted is that property and not a count:
+        // (`docs/166` R-7), so what is asserted is that property and not a count:
         // every sentence reported names one of the four things reflow can
         // approximate, and a document with none of them gets none of them. A
         // count would have gone stale the first time the fixture changed, and a

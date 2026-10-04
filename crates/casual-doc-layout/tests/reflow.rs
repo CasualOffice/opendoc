@@ -1273,7 +1273,7 @@ fn reflow_geometry_that_is_not_a_reading_column_is_refused_with_a_reason() {
 /// but `is_reflow()`, so a document with no footnotes was told where its footnotes
 /// go and a document with no `PAGE` field was told that its page numbers refuse —
 /// and the one approximation a reader can actually see, content fitted to the
-/// measure, was not in the list at all (`docs/151` §8 item 8 and §6.3).
+/// measure, was not in the list at all (`docs/166` R-7 and R-1).
 ///
 /// MUTATION PROOF: restoring the constant list (returning all four sentences
 /// whenever `is_reflow()`) fails on the first assertion with
@@ -1358,7 +1358,7 @@ fn table_cell_paragraph(row: u64, col: u64) -> NodeId {
 /// available width, and it **fitted**. Every assertion below was therefore
 /// satisfied by arithmetic and could not have failed however badly an over-wide
 /// table behaved, which is exactly the shape `SKILL.md` §4 forbids and is why
-/// the gap survived two design documents (`docs/151` §6.3a).
+/// `docs/166` R-1 survived two design documents (`docs/166` §5, last paragraph).
 ///
 /// So it now declares `w:tblW` in `dxa` at 12,960 twips over a four-column grid
 /// of 3,240 each: the one input the solver consulted `available` for neither
@@ -1567,7 +1567,7 @@ fn entering_reflow_costs_the_document_and_a_keystroke_in_it_costs_the_edit() {
 }
 
 // --------------------------------------------------------------------------
-// Nothing authored is unreachable — `docs/151` §6.3
+// Nothing authored is unreachable — `docs/166` R-1
 // --------------------------------------------------------------------------
 
 /// **No authored content is unreachable in reflow.** Asserted over a table nine
@@ -1641,7 +1641,7 @@ fn no_cell_of_a_table_wider_than_the_reading_column_is_unreachable() {
 /// proportions kept**, not laid out past the raster and cut off.
 ///
 /// Google document exactly this behaviour for pageless — *"images will adjust to
-/// your screen size"* ([answer/11528737], quoted in `docs/151` §6.3b) — and
+/// your screen size"* ([answer/11528737], quoted in `docs/166` §5 **[G1]**) — and
 /// `hr_item`, the function immediately below `image_item` in `flow.rs`, already
 /// resolved its width against the measure. Only the image did not.
 ///

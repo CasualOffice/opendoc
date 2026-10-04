@@ -184,7 +184,7 @@ fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author:
 
 /// Whether content that declares itself wider than the measure may be laid out
 /// outside it — the one question paper and a reflowed column answer differently,
-/// and the whole of `docs/151` §6.3.
+/// and the whole of `docs/166` R-1.
 ///
 /// On paper the measure is the *text column* and there is paper beyond it: a
 /// table with an explicit `w:tblW` in `dxa`, or an inline image with a declared
@@ -3166,7 +3166,7 @@ fn solve_column_widths(
             TableLayout::Autofit => pref_sum.clamp(min_sum, available.max(min_sum)),
         },
     };
-    // `docs/151` §6.3. Two of the three arms above can land past `available`: a
+    // `docs/166` R-1. Two of the three arms above can land past `available`: a
     // `dxa` preferred width is the author's number and consults nothing, and a
     // fixed layout with a declared grid takes `grid_sum`. On paper that is
     // correct — the table bleeds into the margin and the page raster still holds
@@ -5012,7 +5012,7 @@ fn field_style(inlines: &[InlineNode], value: &str, ctx: &mut FlowCtx) -> FieldS
 /// `measure` is the width the drawing is being flowed at — the body column, or a
 /// cell's or a text box's inner width — and is consulted only under
 /// [`MeasureFit::Fit`], where a declared extent wider than it would be laid out
-/// past the raster and lost (`docs/151` §6.3). This is what `hr_item` next door
+/// past the raster and lost (`docs/166` R-1). This is what `hr_item` next door
 /// already does with its `width`, and what Google document for pageless:
 /// *"images will adjust to your screen size"*. `None` for the intrinsic-width
 /// passes, which must see the drawing's natural extent — that IS the preferred

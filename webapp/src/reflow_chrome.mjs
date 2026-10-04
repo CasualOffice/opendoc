@@ -421,7 +421,7 @@ export function createReflowChrome({
       // had no caller in the product, so a reader was never told that a
       // page-anchored drawing had moved, that a footnote had landed at a tile
       // boundary, or — the one that loses content — that a table had been fitted
-      // to the measure (`docs/151` §8 item 8 and §6.3).
+      // to the measure (`docs/166` R-7 and R-1).
       //
       // ENABLED IN BOTH VIEWS, never disabled. On paper the honest answer is
       // "nothing", and that is an answer rather than a refusal — a greyed row
@@ -431,7 +431,7 @@ export function createReflowChrome({
       //
       // THE STATUS CHANNEL, not a dialog, and the reason is competitive: the
       // nearest prior art in the field is ONLYOFFICE's snackbar naming a mode
-      // change, Google Docs put theirs on a help page, and `docs/151` §6.3c
+      // change, Google Docs put theirs on a help page, and `docs/166` §10 item 3
       // records that no product has a "what this view is withholding" surface at
       // all. A modal for a question a reader asks in passing is heavier than
       // either reference, and `createStatusChannel` already routes one message to

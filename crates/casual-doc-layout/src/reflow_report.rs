@@ -6,7 +6,7 @@
 //! footnotes was told about footnote placement and a document with no `PAGE`
 //! field about page numbers, and the one approximation that actually loses
 //! something a reader can see — content wider than the measure — was not in it
-//! at all (`docs/151` §8 item 8, and §6.3 for the omission).
+//! at all (`docs/166` R-7, and R-1 for the omission).
 //!
 //! So the report is derived. One walk answers four yes/no questions and stops as
 //! soon as all four are answered, which is the shape a report of this kind
@@ -36,7 +36,7 @@ use crate::units::{Twip, emu_to_twip_extent};
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Survey {
     /// A table or an inline drawing that declares itself wider than the measure,
-    /// and has therefore been fitted to it (`docs/151` §6.3).
+    /// and has therefore been fitted to it (`docs/166` R-1).
     pub(crate) over_wide_content: bool,
     /// A drawing anchored to the page or to a margin, whose paper-relative
     /// position a tile cannot honour (`docs/151` §8 item 1).

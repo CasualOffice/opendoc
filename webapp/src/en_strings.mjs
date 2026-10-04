@@ -119,7 +119,7 @@ export const EN_STRINGS = Object.freeze({
   // a windowed body is already read-only. Disabled WITH this, never dead.
   "reflow.unavailable":
     "This document is too large to lay out whole, so it is shown one page-window at a time and cannot be reflowed.",
-  // What the view is approximating, on demand (`docs/151` §8 item 8). The command is
+  // What the view is approximating, on demand (`docs/166` R-7). The command is
   // enabled in BOTH views, because "nothing" is an answer and a greyed row is
   // not: a reader asking what the page view is withholding has earned being told
   // that it is withholding nothing.

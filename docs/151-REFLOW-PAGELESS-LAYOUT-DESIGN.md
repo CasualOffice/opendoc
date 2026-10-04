@@ -727,9 +727,9 @@ neither: a table with an explicit `w:tblW` in `dxa`, and an inline image with a
 declared extent, were laid out at their declared width *past the tile's raster* —
 and nothing outside the raster is painted, so the overflow was **not drawn at
 all**. No scrollbar, no edge cue, no report, and `approximations` did not mention
-it either. The pageless-surface competitive study on branch
-`research/pageless-surface-competitive-study` read the code and ranked it R-1,
-flagging its own reading as unverified; the experiment below measured it.
+it either. `docs/166` read the code and ranked it R-1, flagging its own reading
+as a code read rather than an executed experiment; the experiment below measured
+it.
 
 The original text, kept because it is the design the scroller spike inherits:
 
@@ -770,8 +770,8 @@ Three facts compose into it:
 grid was 2,600 + 2,600 = 5,200 against a `COLUMN` of 5,400 and declared no
 `w:tblW` at all — so it was an `Auto`/`Autofit` table, the one arm the solver has
 always clamped, and **it fitted**. Its assertion was satisfied by arithmetic.
-`SKILL.md` §4 names exactly this shape, and it is why the gap survived two design
-documents. The fixture is now the 12,960-twip one above.
+`SKILL.md` §4 names exactly this shape, and `docs/166` §5 records that it is why
+the gap survived two design documents. The fixture is now the 12,960-twip one above.
 
 #### 6.3b What ships: fit to the measure (`MeasureFit`)
 
@@ -779,8 +779,8 @@ The field offers three answers and we had a fourth nobody chose:
 
 | | answer to "this is wider than the measure" |
 | --- | --- |
-| Google Docs | contain the overflow in the element — the table gets its own horizontal scroller (the pageless study §5 **[G1]**/**[G2]**) |
-| ONLYOFFICE | **scale the table down** — `GetScaleBySection`, `min(W/origW, H/origH)` clamped at 1, multiplied into the table grid and the cell min/max widths; on a 3× phone a wide table draws at about a third size while the body type is unscaled (the pageless study §5 **[O]**) |
+| Google Docs | contain the overflow in the element — the table gets its own horizontal scroller (`docs/166` §5 **[G1]**/**[G2]**) |
+| ONLYOFFICE | **scale the table down** — `GetScaleBySection`, `min(W/origW, H/origH)` clamped at 1, multiplied into the table grid and the cell min/max widths; on a 3× phone a wide table draws at about a third size while the body type is unscaled (`docs/166` §5 **[O]**) |
 | Word | Read Mode refits the layout with columns and larger type, both reader-adjustable |
 | us, before this | **drop the part that does not fit** |
 
@@ -835,8 +835,7 @@ sub-region can be painted at a horizontal offset; a per-table scroll offset keye
 on `NodeId` that survives re-layout; an overlay scrollbar layer whose hit test is
 `O(1)` and not `O(tables)` (`docs/107` §4); and the caret, selection-drag,
 Find-reveal and screen-reader integration that makes it a feature rather than a
-trap. The pageless study §10 item 7 names it as the technical unknown that decides
-this defect's cost.
+trap. `docs/166` §10 item 7 names it as the technical unknown that decides R-1's cost.
 
 So R-1 ships as the fit, which is cheap, lossless and needs no new paint
 primitive. **The scroller is not cancelled** — it is strictly better than a fit
@@ -853,7 +852,7 @@ it**, so the spike inherits decisions rather than re-making them:
 | A-4 | **`Home` from inside a scrolled table returns the view to the left edge.** | Scroll a table fully right, put the caret in a cell, press **Home**. If Docs moves the caret to the start of the cell's line without moving the scroller, the two behaviours have to be separated — ours keeps them together deliberately, because a caret at a line start that is off-screen is the trap A-1 exists to prevent. |
 | A-5 | The **page does not scroll horizontally while the pointer is over an overflowing table.** | Put the pointer over the table and scroll sideways (trackpad, shift-wheel) in pageless Docs. If the page scrolls too, the two scrollers compose; ours do not, because the page has no horizontal scroll to give (§6.2). |
 
-**None of the five is sourced.** The pageless study §5 **[U]** records that no first-party or
+**None of the five is sourced.** `docs/166` §5 **[U]** records that no first-party or
 secondary source covers any of them, and ONLYOFFICE has no scroller to study. They
 are the owner's decisions, written down here rather than left in a brief so the
 spike cannot quietly choose otherwise.
@@ -1025,7 +1024,7 @@ Opened by the shell half, 2026-10-01:
    through the status channel from the View menu and the palette. A plain-prose
    document reports nothing, which is the point. The sentences are the engine's
    own English and are **not** routed through `i18n` — `casual-doc-layout` has no
-   catalogue; recorded as a gap rather than hidden.
+   catalogue; recorded as a gap rather than hidden. `docs/166` R-7.
 
 Opened by the competitive re-analysis, 2026-10-01 (`154` §8 is the live list):
 

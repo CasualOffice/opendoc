@@ -73,7 +73,7 @@ use crate::flow::{
     line_grid_for_section,
 };
 // Own line (anti-conflict): whether content wider than the measure may be laid
-// out past it (`docs/151` §6.3).
+// out past it (`docs/166` R-1).
 use crate::flow::MeasureFit;
 // Own line (anti-conflict): the per-viewer fold filter (ADR-049).
 use crate::fold::FoldSet;
@@ -327,7 +327,7 @@ impl LayoutView {
     /// replaces told every reader about footnote placement and `PAGE` fields
     /// whether or not the document had any — four sentences of which three were
     /// usually false is not a report, and a host that showed it would have been
-    /// publishing a guess (`docs/151` §8 item 8).
+    /// publishing a guess (`docs/166` R-7).
     ///
     /// The widths matter too, which is why this reads `self`: whether a table or
     /// a drawing is *over-wide* is a question about this measure, and a document
