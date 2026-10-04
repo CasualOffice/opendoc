@@ -1549,10 +1549,14 @@ export function bindComparePanel(io) {
     list.className = "compare-changes";
     sizer.append(list);
     scroller.append(sizer);
+    // rAF-COALESCED, so a scroll that fires twenty times between frames paints
+    // once. `releaseDiff` removes this listener, and the null guard is for the
+    // event already in flight when it does — a scroll handler that throws takes
+    // the whole panel with it.
     const onScroll = () => {
-      if (diffView?.frame) return;
+      if (!diffView || diffView.frame) return;
       diffView.frame = requestAnimationFrame(() => {
-        diffView.frame = 0;
+        if (diffView) diffView.frame = 0;
         paintDiff();
       });
     };
