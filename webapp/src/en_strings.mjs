@@ -327,8 +327,44 @@ export const EN_STRINGS = Object.freeze({
   // findings sentence records: it reports a labelled number, which reads the same
   // in every language and needs one form per locale instead of Arabic's six.
   "compare.changeCount": "Differences: {count}",
+  // CORRECTED 2026-10-04, English and all eighteen translations. This read "This
+  // comparison did not finish, so the list below is incomplete", on a comment in
+  // `compare_documents.mjs` claiming `complete: false` happens only on a cancelled
+  // job. `record.rs` says the opposite in as many words — `complete` is "False
+  // whenever `findings` is non-empty" — so a perfectly ordinary comparison that
+  // met one construct this build cannot compare in detail was telling the reader
+  // it had broken. Measured on bolding one word in the demo document: four
+  // differences found, and "did not finish" printed above them. A comparison that
+  // finished and skipped something is not a comparison that did not finish, and
+  // the findings list directly below already names what was skipped.
   "compare.partial":
-    "This comparison did not finish, so the list below is incomplete.",
+    "Some of what differs could not be characterised; the list below says which.",
+  // WHAT A ROW IS ABOUT when there is no text and no typed field to name — the
+  // bracketed convention ONLYOFFICE uses, where theirs reads `<Image>`, `<Shape>`,
+  // `<Chart>` or `<Equation>`.
+  //
+  // Ours can only be as specific as the sidecar, and `family_of` in
+  // `casual-doc-diff/src/job.rs` maps a table row or cell to `table` and
+  // EVERYTHING else to `block` — so a deleted image-only paragraph is `<Block>`
+  // here and `<Image>` there. That gap is the engine's, it is reported as the
+  // engine's, and it is not papered over by printing `<Image>` on the grounds that
+  // images are the commonest untexted block: a plausible guess presented as a fact
+  // is what this repository has published by accident twice.
+  //
+  // All twelve families, enumerated rather than defaulted (SKILL §9.3), and
+  // `compare_documents.test.mjs` fails if the engine grows a family with no entry.
+  "compare.object.block": "<Block>",
+  "compare.object.text": "<Text>",
+  "compare.object.formatting": "<Formatting>",
+  "compare.object.style": "<Style>",
+  "compare.object.table": "<Table>",
+  "compare.object.object": "<Object>",
+  "compare.object.section": "<Page setup>",
+  "compare.object.definition": "<Definition>",
+  "compare.object.resource": "<Resource>",
+  "compare.object.comment": "<Comment>",
+  "compare.object.review": "<Tracked change>",
+  "compare.object.metadata": "<Document property>",
   "compare.cannotExport":
     "This document could not be written out, so there is nothing to compare.",
   // The engine's own sentence about this document — an admission limit, a corrupt

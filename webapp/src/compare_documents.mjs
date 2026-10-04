@@ -334,6 +334,89 @@ export function changeText(change) {
 }
 
 /**
+ * WHAT A ROW IS ABOUT, when it is not about text.
+ *
+ * Measured in Chromium on 2026-10-04: bold one word and compare, and three of
+ * the four rows name nothing at all.
+ *
+ *   <li data-compare-kind="formatting"><span class="compare-kind">Reformatted</span></li>
+ *   <li data-compare-kind="property" data-compare-change-family="object">
+ *     <span class="compare-kind">Property changed</span></li>
+ *   <li data-compare-kind="property" data-compare-change-family="section">
+ *     <span class="compare-kind">Property changed</span>
+ *     <span class="compare-where">in the document's definitions</span></li>
+ *
+ * "Reformatted." That is the whole entry. The owner's words on this surface were
+ * "what the fuck will i understand from this", and they are literally correct:
+ * the row says a change happened and refuses to say what changed.
+ *
+ * `changeText`'s own doc comment already says where the answer lives — "a
+ * property change has neither, which is why the field list carries that row
+ * instead" — and `renderResult` never rendered `change.fields`. The intention was
+ * written down and not implemented, which is why reading the code made the surface
+ * look finished. `fields` is reflected from the model type's own serde names
+ * (`record.rs`), so it is exactly the typed path that differs: `alignment`,
+ * `spacing.beforeTwips`, `inlineObject`, `revision`, `story`, `runBoundary`.
+ *
+ * THE PATHS ARE SHOWN VERBATIM, and that is a decision rather than laziness. They
+ * are engine identifiers, not prose, and this module has an established rule for
+ * exactly that case: an unknown family and an unknown finding code both render
+ * with their own name rather than blank, because a name a reader can search for
+ * beats a sentence that says nothing. A hand-written English phrase per model
+ * field would be a second place to update and the first to rot, and it would
+ * silently omit every field added to the model after it was written.
+ *
+ * O(fields) over a list the engine bounds per change.
+ */
+export function changeFields(change) {
+  const fields = Array.isArray(change?.fields) ? change.fields : [];
+  return fields.filter((field) => typeof field === "string" && field.length > 0);
+}
+
+/** The bracketed name for a row with no text and no typed fields.
+ *
+ *  ONLYOFFICE's convention, and a deliberate partial match to it. Theirs reads
+ *  `<Image>`, `<Shape>`, `<Chart>` or `<Equation>`; ours can only be as specific
+ *  as the sidecar, and the sidecar's `DiffFamily` does not distinguish a picture
+ *  from a shape from a chart — `family_of` in `casual-doc-diff/src/job.rs` maps a
+ *  row or cell to `table` and EVERYTHING ELSE to `block`. So a deleted
+ *  image-only paragraph is `<Block>` here and `<Image>` there.
+ *
+ *  That gap is the engine's and is reported as such rather than guessed at: the
+ *  comparison would have to tag an untexted block with its construct for us to
+ *  say "Image". Printing `<Image>` on a `block` row because images are the
+ *  commonest untexted block would be the fabrication this repository has
+ *  published twice (SKILL §9).
+ *
+ *  Enumerated over every family rather than defaulted, per SKILL §9.3 — absence
+ *  from a matrix is an overstatement by omission — and
+ *  `compare_documents.test.mjs` fails if a family the engine can report has no
+ *  entry here. O(1). */
+export const OBJECT_KEY = Object.freeze({
+  block: "compare.object.block",
+  text: "compare.object.text",
+  formatting: "compare.object.formatting",
+  style: "compare.object.style",
+  table: "compare.object.table",
+  object: "compare.object.object",
+  section: "compare.object.section",
+  definition: "compare.object.definition",
+  resource: "compare.object.resource",
+  comment: "compare.object.comment",
+  review: "compare.object.review",
+  metadata: "compare.object.metadata",
+});
+
+/** The bracketed object name for a change, or `""` when the family is unknown to
+ *  this build — in which case the raw family name is shown instead, by the same
+ *  rule the rest of this module follows. O(1). */
+export function changeObjectName(change) {
+  const family = String(change?.family ?? "");
+  if (!family) return "";
+  return OBJECT_KEY[family] ? t(OBJECT_KEY[family]) : `<${family}>`;
+}
+
+/**
  * Binds the Compare panel and its two entry points.
  *
  * @param {object} io
@@ -478,10 +561,21 @@ export function bindComparePanel(io) {
     total.dataset.compareTotal = String(summary.total);
     total.textContent = t("compare.changeCount", { count: summary.total });
     children.push(total);
-    // A comparison the engine could not finish must not be read as a complete
-    // one. `complete: false` only happens on a cancelled job, which this code
-    // never renders — but asserting it here means a future partial result cannot
-    // arrive looking whole.
+    // CORRECTED 2026-10-04, and the comment it replaces was wrong about the
+    // engine. It said "`complete: false` only happens on a cancelled job, which
+    // this code never renders". `record.rs` says the opposite in as many words:
+    // `complete` is "**False whenever `findings` is non-empty**". So every
+    // ordinary comparison that met one construct this build has no typed
+    // comparison for was being labelled with "This comparison did not finish, so
+    // the list below is incomplete" — measured on bolding one word in the demo
+    // document, which produces one `not_compared` finding for an inline object.
+    //
+    // A comparison that finished and skipped something is not a comparison that
+    // did not finish, and telling a reader their comparison broke when it did not
+    // is the fastest way to make a working surface untrustworthy. The sentence now
+    // says what the flag means, and the findings list immediately below says which
+    // constructs. A genuinely interrupted job is the `CANCELLED` branch in
+    // `compareWith` and has its own sentence.
     if (!summary.complete) children.push(paragraph(t("compare.partial"), "muted"));
     const list = document.createElement("ul");
     list.className = "compare-list";
@@ -512,11 +606,29 @@ export function bindComparePanel(io) {
       kind.className = "compare-kind";
       kind.textContent = KIND_KEY[change.kind] ? t(KIND_KEY[change.kind]) : change.kind;
       item.append(kind);
+      // WHAT THE ROW IS ABOUT, and never nothing. Text first, because an excerpt
+      // of the words is what a reader recognises; then the typed field paths,
+      // which are what a formatting or property change actually is; then the
+      // bracketed object name, so a row about an untexted block still names a
+      // thing. A row that carried only its kind label is the defect this order
+      // closes, and `compare_documents.test.mjs` fails if one can still happen.
       const text = changeText(change);
+      const fields = changeFields(change);
       if (text) {
         const quote = document.createElement("q");
         quote.textContent = text;
         item.append(quote);
+      } else if (fields.length > 0) {
+        const named = document.createElement("span");
+        named.className = "compare-object";
+        named.dataset.compareFields = fields.join(",");
+        named.textContent = fields.join(", ");
+        item.append(named);
+      } else {
+        const named = document.createElement("span");
+        named.className = "compare-object";
+        named.textContent = changeObjectName(change);
+        item.append(named);
       }
       const where = storyLabel(change.left?.story ?? change.right?.story);
       if (where) {

@@ -6407,6 +6407,37 @@ body.is-format-painting .page-wrap * {
   border-top: 1px solid var(--line);
 }
 
+/* The comparison list had no rules at all, so its three inline parts ran
+   together: `<span>Added</span><q>…</q>` renders as `Added“…”` and
+   `<span>Property changed</span><span>in the document's definitions</span>`
+   renders as `Property changedin the document's definitions` — measured in
+   Chromium, and visible in the panel the owner was reading. Spacing only, from
+   existing tokens: the kind leads, what the row is about follows, and where it
+   is trails in the muted colour every other secondary line here uses. No new
+   colours, radii or weights (SKILL §11 — the token set is deliberate and a
+   visual change is the owner's call, not this lane's). */
+.compare-kind {
+  font-weight: 600;
+}
+
+.compare-object,
+.compare-where {
+  margin-inline-start: 0.4em;
+}
+
+.compare-object {
+  color: var(--muted);
+}
+
+.compare-where {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.compare-changes q {
+  margin-inline-start: 0.4em;
+}
+
 .version-foot-line {
   margin: 0 0 2px;
   font-size: var(--fs-small);
