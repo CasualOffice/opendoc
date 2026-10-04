@@ -1207,6 +1207,51 @@ mod tests {
         })
     }
 
+    /// A diff offset is NOT a review offset, and the difference is a tab.
+    ///
+    /// `DiffAnchor` claimed the two spaces were the same; they agree for runs and
+    /// symbols and disagree for everything whose projected text and anchor length
+    /// differ. A tab is one byte of projected text and zero anchor bytes, so
+    /// applying a diff offset directly would mark the wrong characters in any
+    /// paragraph with a tab in it - which is most of the ones that look tabular.
+    #[test]
+    fn a_diff_offset_is_translated_into_the_review_offset_space() {
+        let run = |id: u128, text: &str| {
+            InlineNode::Run(Run {
+                id: casual_doc_model::NodeId::new(id).expect("a non-zero id"),
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let inlines = vec![
+            run(1, "ab"),
+            InlineNode::Tab(casual_doc_model::v1::Tab {
+                id: casual_doc_model::NodeId::new(2).expect("a non-zero id"),
+            }),
+            run(3, "cd"),
+        ];
+        let notes = NoteAnchorLengths::default();
+        let mut plain = String::new();
+        append_node_plain_text(&inlines, ReviewProjection::FinalWithMarkup, &mut plain);
+        assert_eq!(
+            plain, "ab\tcd",
+            "the precondition: the tab is a byte of plain text"
+        );
+        assert_eq!(
+            crate::inlines_anchor_len(&notes, &inlines),
+            4,
+            "and none of the anchor space, so the two spaces really do differ here"
+        );
+
+        for (diff_offset, review_offset) in [(0, 0), (2, 2), (3, 2), (5, 4)] {
+            assert_eq!(
+                plain_offset_to_anchor_offset(&notes, &inlines, diff_offset),
+                Some(review_offset),
+                "plain offset {diff_offset} is review offset {review_offset}"
+            );
+        }
+    }
+
     /// The moment Compare stops being a count: one text edit becomes one tracked
     /// insertion that `listRevisions` reports and that the markup render paints in
     /// the author's colour.
@@ -1412,20 +1457,24 @@ mod tests {
         let result = document
             .apply_diff_as_revisions_inner(&sidecar, "Compared document", None)
             .expect("the comparison is applied as far as it can be");
-        assert!(
-            result.paste_loss().contains(&"truncatedText".to_owned()),
-            "the truncated removal is reported: {:?}",
-            result.paste_loss()
-        );
+        // The invention is asserted BEFORE the reporting, so a mutation that
+        // applies the excerpt anyway shows the invented text in its failure
+        // rather than only an empty loss list.
         let listed = document.list_revisions();
         assert!(
             !listed.contains('\u{2026}'),
-            "and NOT applied: no tracked change carries the excerpt's ellipsis: {listed}"
+            "no tracked change carries the excerpt's ellipsis, i.e. nothing was \
+             invented: {listed}"
         );
         let rejected = original_text(&document);
         assert!(
             !rejected.contains('\u{2026}'),
             "nor would rejecting every change write it into the document: {rejected}"
+        );
+        assert!(
+            result.paste_loss().contains(&"truncatedText".to_owned()),
+            "and the removal that could not be applied is reported: {:?}",
+            result.paste_loss()
         );
     }
 
@@ -1508,5 +1557,4 @@ mod tests {
              whole-document scans ({few_scans} then {many_scans})"
         );
     }
-
 }
