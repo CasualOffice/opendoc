@@ -414,6 +414,108 @@ fn before_projection(inlines: &[InlineNode]) -> Vec<InlineNode> {
     out
 }
 
+/// `inlines` as they stand if every tracked change in them is **accepted**, with comment
+/// markers dropped.
+///
+/// The mirror of [`before_projection`], and the second half of what makes a review decision
+/// exactly testable. An insertion contributes its content unwrapped, because accepting it makes
+/// the text plain; a deletion contributes nothing, because accepting it removes the text. So
+/// two inline lists have the same after-projection exactly when they describe the same
+/// *resolved* text, however the tracked marks over it differ.
+///
+/// # Why both projections are needed and neither alone is enough
+///
+/// Accepting a tracked change leaves the after-state untouched and moves the before-state;
+/// rejecting one leaves the before-state untouched and moves the after-state. One projection
+/// therefore recognises one direction of decision and mistakes the other for an edit. Together
+/// they recognise both, and an edit smuggled alongside either moves **both**, which is what
+/// [`is_review_only`] relies on.
+fn after_projection(inlines: &[InlineNode]) -> Vec<InlineNode> {
+    let mut out = Vec::with_capacity(inlines.len());
+    for inline in inlines {
+        match inline {
+            InlineNode::CommentReference(_)
+            | InlineNode::CommentRangeStart(_)
+            | InlineNode::CommentRangeEnd(_) => {}
+            InlineNode::Revision(revision) => match revision.kind {
+                // Accepting an insertion makes its content plain: contribute it unwrapped, so
+                // the insertion and the already-accepted text project alike.
+                RevisionKind::Insertion | RevisionKind::MoveTo => {
+                    out.extend(after_projection(&revision.inlines));
+                }
+                // Accepting a deletion removes the content, so it contributes nothing.
+                RevisionKind::Deletion | RevisionKind::MoveFrom => {}
+            },
+            other => out.push(map_children(other, after_projection)),
+        }
+    }
+    out
+}
+
+/// Whether `op` only **resolves** tracked changes — `143` §10's `review` class, exactly.
+///
+/// # Why this is exact, where the module's notes once said it could not be
+///
+/// `access`'s own documentation recorded that no exact rule separated a reviewer from an
+/// editor, because [`is_tracked_only`] is a *negative* test that accept, reject and untracked
+/// typing all fail alike. That was a true statement about `is_tracked_only` and a false
+/// conclusion about the question. The positive rule needs two facts, and both are already here:
+///
+/// 1. **A revision disappeared, and none appeared.** [`revision_ids`] gives this exactly.
+///    Nothing but an accept or a reject removes a revision from a paragraph through this
+///    operation, and a reviewer authors no suggestions of their own.
+/// 2. **The decision explains the whole new state.** Accepting leaves
+///    [`after_projection`] untouched; rejecting leaves [`before_projection`] untouched; and an
+///    untracked edit carried in alongside either moves **both**, because every projection
+///    retains all plain content. So *one of the two projections is unchanged* is the exact
+///    test, with no heuristic and no third projection invented.
+///
+/// # What it deliberately refuses, named rather than hidden
+///
+/// A single paragraph that **accepts one revision and rejects another in one operation**
+/// satisfies neither projection and is refused. That is a real narrowing and it is stated
+/// rather than papered over: no gesture in Word or Docs produces it — accept and reject are
+/// per-change or per-selection commands, and "accept all"/"reject all" are each one direction —
+/// so the refusal is reachable only by a client that batched two opposite decisions into one
+/// paragraph's rewrite, which it can split. Two *different* paragraphs deciding in opposite
+/// directions in one operation is fine, because the test is per paragraph.
+///
+/// # Complexity
+///
+/// O(the inlines of the paragraphs named), the same cost [`is_tracked_only`] already pays and
+/// for the same reason: it reuses projections rather than walking the document.
+pub(crate) fn is_review_only(document: &Document, op: &Operation) -> bool {
+    let Operation::UpdateReviewState { paragraphs, .. } = op else {
+        return false;
+    };
+    let mut resolved_any = false;
+    for state in paragraphs {
+        let Some(current) = current_inlines(document, state.node) else {
+            // A write this check cannot place is refused rather than waved through — the rule
+            // `current_inlines` documents.
+            return false;
+        };
+        let held = revision_ids(current);
+        let proposed = revision_ids(&state.inlines);
+        // A reviewer decides on other people's suggestions; it never authors one. An id the
+        // paragraph did not already hold is a new tracked change, which is `suggest`.
+        if proposed.iter().any(|id| !held.contains(id)) {
+            return false;
+        }
+        let accepted_only = after_projection(current) == after_projection(&state.inlines);
+        let rejected_only = before_projection(current) == before_projection(&state.inlines);
+        if !accepted_only && !rejected_only {
+            return false;
+        }
+        resolved_any |= held.iter().any(|id| !proposed.contains(id));
+    }
+    // An operation that resolves nothing is not a review decision. Without this an untouched
+    // paragraph list would satisfy every clause above and `review` would admit a no-op that a
+    // commenter's own class should answer — and, worse, a comment-marker-only change, which is
+    // `comment`'s business and must not be reachable through this class instead.
+    resolved_any
+}
+
 /// Every revision node id in `inlines`, including nested ones.
 ///
 /// What catches a *rejection*, which the projection alone cannot: rejecting an insertion

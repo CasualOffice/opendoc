@@ -73,7 +73,7 @@ use casual_doc_model::v1::Document;
 use serde::{Deserialize, Serialize};
 
 use crate::Operation;
-use crate::protection::{is_comment_only, is_tracked_only};
+use crate::protection::{is_comment_only, is_review_only, is_tracked_only};
 
 /// What one participant may do in one document session.
 ///
@@ -100,22 +100,31 @@ use crate::protection::{is_comment_only, is_tracked_only};
 ///
 /// # What is deliberately not here
 ///
-/// `143` §10 lists `review`, `history.read`, `history.restore` and `share.admin` as well.
-/// None of them is here, because none has an enforcement point in this crate yet and a
-/// capability nothing enforces is the "modeled is not shipped" failure the working contract
-/// names:
+/// `143` §10 also lists `history.read`, `history.restore` and `share.admin`. None of them is
+/// here, and — unlike `review`, which is now a field — that is a **decision** rather than a
+/// deferral, because none of the three has anything in the closed operation set to check:
 ///
-/// - **`review`** (accept/reject a tracked change) would need a *positive* classifier for an
-///   accept or a reject. `protection::is_tracked_only` is the negative one: it says an operation
-///   only *added* tracked marks. Accepting and rejecting both fail it, and so does untracked
-///   typing, so there is no exact test that separates a reviewer's gesture from an editor's.
-///   ADR-052 built the two projections it could make exact and no third; inventing a heuristic
-///   here would break that rule for a flag no caller has asked for. A reviewer is therefore granted
-///   [`Capabilities::editor`] today, which is **wider** than the role, and that is recorded
-///   rather than hidden.
-/// - **`history.read` / `history.restore` / `share.admin`** are host-side and version-history
-///   surfaces (`140`), not operations in this crate's set, so there is nothing here to check
-///   them against.
+/// - **`share.admin`** changes a room's grants, and `143` §10 says in the same line that it is
+///   *host-side only*. A room's policy is an [`Access`](../../casual_doc_relay/access/enum.Access.html)
+///   value handed to the relay at construction and no message changes it, so there is no
+///   operation and no wire frame for a capability bit to gate. A bit here would gate nothing.
+/// - **`history.read`** is a read. Admission to a room *is* the view right — see above — and
+///   version listing and diffing (`140`) are reads of storage rather than operations, so the
+///   check belongs where the storage call is, not in a vocabulary about mutations.
+/// - **`history.restore`** arrives as **ordinary operations**: a restore is a transaction of
+///   edits, and `Origin` has `Edit`, `Undo` and `Redo` and no `Restore`. Separating it would
+///   mean gating on a label the *client* writes, which is forgeable and therefore not a
+///   boundary at all — the same reason `Capabilities` never travels from a client. So a restore
+///   is exactly `edit`, deliberately, and a host that wants it narrower enforces that at the
+///   surface that reads the version.
+///
+/// **`review` was here until 2026-10-04 and is now a field.** The note said no exact rule could
+/// separate a reviewer from an editor, because `protection::is_tracked_only` is a *negative*
+/// test that accept, reject and untracked typing all fail alike. That was a true statement about
+/// `is_tracked_only` and a false conclusion about the question: the positive rule is *a revision
+/// disappeared, none appeared, and one of the two projections is unchanged*, which needs no
+/// heuristic and no third projection. `protection::is_review_only` has it, with the one case it
+/// narrows named there.
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
@@ -124,6 +133,8 @@ pub struct Capabilities {
     comment: bool,
     #[serde(default)]
     suggest: bool,
+    #[serde(default)]
+    review: bool,
     #[serde(default)]
     edit: bool,
     #[serde(default)]
@@ -137,6 +148,7 @@ impl Capabilities {
         Self {
             comment: false,
             suggest: false,
+            review: false,
             edit: false,
             manage_protection: false,
         }
@@ -157,14 +169,34 @@ impl Capabilities {
         Self::commenter().with_suggest()
     }
 
-    /// Read, comment, suggest, and change content directly.
+    /// Read, comment, and decide other people's tracked changes — `143` §10's `review`.
+    ///
+    /// **Not** a superset of [`Capabilities::suggester`], and that asymmetry is the role: a
+    /// reviewer resolves suggestions and does not author them, which is exactly what
+    /// `protection::is_review_only` tests. A host wanting a reviewer who may also suggest
+    /// composes it — `Capabilities::suggester().with_review()` — rather than having the wider
+    /// right handed over silently, because a preset that grants more than its name says is how
+    /// this capability spent its first increment.
+    ///
+    /// Commenting is included because `143` §10 defines the class as "accept/reject suggestions
+    /// **and moderate comments**", and because resolving a suggestion without being able to
+    /// answer the comment thread attached to it is not a reviewable document.
+    #[must_use]
+    pub const fn reviewer() -> Self {
+        Self::commenter().with_review()
+    }
+
+    /// Read, comment, suggest, review, and change content directly.
+    ///
+    /// `review` is included because an editor can already produce any state a reviewer can, so
+    /// withholding the bit would make the bit a lie rather than a restriction.
     ///
     /// **Not** permission to change the document's protection: that is
     /// [`Capabilities::with_manage_protection`], and the split is the whole point of this
     /// module — see [`crate::protection::exempt_from_protection`].
     #[must_use]
     pub const fn editor() -> Self {
-        Self::suggester().with_edit()
+        Self::suggester().with_review().with_edit()
     }
 
     /// Everything, including imposing and lifting `w:documentProtection`.
@@ -201,6 +233,13 @@ impl Capabilities {
         self
     }
 
+    /// The same capabilities plus deciding other people's tracked changes.
+    #[must_use]
+    pub const fn with_review(mut self) -> Self {
+        self.review = true;
+        self
+    }
+
     /// The same capabilities plus direct content change.
     #[must_use]
     pub const fn with_edit(mut self) -> Self {
@@ -226,6 +265,7 @@ impl Capabilities {
         Self {
             comment: self.comment && other.comment,
             suggest: self.suggest && other.suggest,
+            review: self.review && other.review,
             edit: self.edit && other.edit,
             manage_protection: self.manage_protection && other.manage_protection,
         }
@@ -241,6 +281,12 @@ impl Capabilities {
     #[must_use]
     pub const fn may_suggest(self) -> bool {
         self.suggest
+    }
+
+    /// Whether other people's tracked changes may be accepted or rejected.
+    #[must_use]
+    pub const fn may_review(self) -> bool {
+        self.review
     }
 
     /// Whether content may be changed directly.
@@ -261,7 +307,7 @@ impl Capabilities {
     /// reason `Refusal::ReadOnlyAccess` exists as a single code rather than one per class.
     #[must_use]
     pub const fn may_write(self) -> bool {
-        self.comment || self.suggest || self.edit || self.manage_protection
+        self.comment || self.suggest || self.review || self.edit || self.manage_protection
     }
 
     /// Whether this and `other` share at least one capability.
@@ -269,6 +315,7 @@ impl Capabilities {
     const fn intersects(self, other: Self) -> bool {
         (self.comment && other.comment)
             || (self.suggest && other.suggest)
+            || (self.review && other.review)
             || (self.edit && other.edit)
             || (self.manage_protection && other.manage_protection)
     }
@@ -288,6 +335,9 @@ pub enum AccessRefusal {
     CommentsOnly,
     /// This participant may comment and suggest, and the operation was neither.
     SuggestionsOnly,
+    /// This participant may comment and decide other people's tracked changes, and the
+    /// operation was neither.
+    ReviewOnly,
     /// This participant may not change the document's protection.
     NoProtectionChange,
 }
@@ -314,6 +364,11 @@ impl AccessRefusal {
                 "session.suggestions-only-access",
                 "You can comment and suggest changes to this document, but not change it \
                  directly."
+            ),
+            Self::ReviewOnly => crate::refused!(
+                "session.review-only-access",
+                "You can accept or reject other people's changes and add comments, but not \
+                 change this document yourself."
             ),
             Self::NoProtectionChange => crate::refused!(
                 "session.no-protection-change",
@@ -392,10 +447,13 @@ pub fn refuse_if_not_permitted(
             // refusing here would refuse a legitimate commenter's comment.
             continue;
         };
-        // ADR-052's two exact projections, reused rather than re-derived. A tracked proposal is
+        // ADR-052's exact projections, reused rather than re-derived. A tracked proposal is
         // judged first because Word's tracked-changes level is a superset of its comments
-        // level, so a suggester's comment satisfies `is_tracked_only` too.
+        // level, so a suggester's comment satisfies `is_tracked_only` too. `review` is a
+        // *disjoint* class rather than a rung on the same ladder — a reviewer resolves what it
+        // did not author — so it is its own clause and not an ordering of the others.
         let permitted = (capabilities.may_suggest() && is_tracked_only(document, op))
+            || (capabilities.may_review() && is_review_only(document, op))
             || (capabilities.may_comment() && is_comment_only(document, op));
         if !permitted {
             return Err(refusal_for(capabilities, op));
@@ -414,8 +472,14 @@ fn refusal_for(capabilities: Capabilities, op: &Operation) -> AccessRefusal {
     {
         return AccessRefusal::NoProtectionChange;
     }
+    // Widest write class held first, because the reader needs to know what they *may* do. A
+    // participant holding both `suggest` and `review` is told about suggesting: it is the
+    // class whose gestures are the commoner ones, and the sentence does not claim the other
+    // is absent.
     if capabilities.may_suggest() {
         AccessRefusal::SuggestionsOnly
+    } else if capabilities.may_review() {
+        AccessRefusal::ReviewOnly
     } else if capabilities.may_comment() {
         AccessRefusal::CommentsOnly
     } else {
