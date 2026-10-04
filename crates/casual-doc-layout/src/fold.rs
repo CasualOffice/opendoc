@@ -13,7 +13,7 @@
 //! incremental tokenizer's line-start state, equally the paginator's existing
 //! continuation state. [`flow_blocks_into`](crate::flow) already visits blocks
 //! in document order, so suppression is a one-integer state machine on that
-//! walk ([`step`]), and the integer crosses a chunk seam inside
+//! walk (`step`), and the integer crosses a chunk seam inside
 //! [`MeasureResume`](crate::flow::MeasureResume) rather than in a parallel
 //! mechanism of folding's own.
 //!
@@ -238,7 +238,7 @@ pub(crate) fn step(
 }
 
 /// Whether `block` is visible under `folds`, advancing the suppression state —
-/// [`step`] for a caller outside this crate.
+/// `step` for a caller outside this crate.
 ///
 /// The accessibility mirror is the caller this exists for. It is model-derived,
 /// so an unfiltered mirror would read out what a sighted reader has folded away,

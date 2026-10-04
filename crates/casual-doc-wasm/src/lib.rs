@@ -12734,6 +12734,41 @@ impl WasmDocument {
         self.fold_to_level_inner(level).map_err(to_js)
     }
 
+    /// Replace the whole fold set at once, from a JSON array of node ids,
+    /// returning the new fold state as JSON.
+    ///
+    /// The restore half of [`fold_state`](Self::fold_state): a host that has to
+    /// expand a document for a moment — printing and export are the ones that
+    /// must (`print.mjs`, `AGENTS.md`'s no-silent-data-loss rule) — reads the
+    /// set, unfolds, does its work, and hands the same array back here.
+    ///
+    /// It exists rather than leaving the host to loop over
+    /// [`set_fold`](Self::set_fold) because that loop costs ONE re-layout per
+    /// heading: a reader who collapsed two hundred headings would pay two
+    /// hundred `O(document)` passes to get them back, which is the
+    /// lookup-in-a-loop shape `docs/116` names, one level up. This is one pass.
+    ///
+    /// Ids that are not headings **any more**, or not in the document at all,
+    /// are skipped rather than refused: the only caller is restoring a set this
+    /// engine itself produced, and a refusal would land inside its `finally`
+    /// and strand the reader on an expanded document. What was actually set
+    /// comes back in the returned state, so a skip is observable rather than
+    /// silent. A malformed payload IS refused — that is a host bug, not a
+    /// document change.
+    ///
+    /// Complexity: one document walk to resolve the heading set, then one
+    /// re-layout. `O(document)`, once, for a gesture — not per id.
+    ///
+    /// # Errors
+    ///
+    /// The payload is not a JSON array of strings, or folding is unavailable
+    /// (a windowed body — [`fold_state`](Self::fold_state)'s `withheldReason`
+    /// says so).
+    #[wasm_bindgen(js_name = setFoldSet)]
+    pub fn set_fold_set(&mut self, nodes_json: &str) -> Result<String, JsValue> {
+        self.set_fold_set_inner(nodes_json).map_err(to_js)
+    }
+
     /// The current fold state as JSON — `{ "folded": ["<node>", ...],
     /// "available": bool, "withheldReason": "<why not>" }`.
     ///
@@ -12794,6 +12829,39 @@ impl WasmDocument {
         if !changed {
             return Ok(self.fold_state());
         }
+        self.relayout_for_fold();
+        Ok(self.fold_state())
+    }
+
+    /// See [`WasmDocument::set_fold_set`]. A plain `Result<_, String>` so the
+    /// guards run under `cargo test` on native targets.
+    fn set_fold_set_inner(&mut self, nodes_json: &str) -> Result<String, String> {
+        if let Some(reason) = self.fold_refusal() {
+            return Err(reason);
+        }
+        let nodes: Vec<String> = serde_json::from_str(nodes_json)
+            .map_err(|error| format!("fold set must be a JSON array of node ids: {error}"))?;
+        // ONE walk, collecting every heading, and the requested set is then
+        // intersected with it. Asking `is_heading` per id would walk the
+        // document once per id — the lookup-by-id-inside-a-loop shape `SKILL.md`
+        // §8 forbids, and the exact defect that made `documentOutline`
+        // quadratic.
+        let wanted: BTreeSet<NodeId> = nodes.iter().filter_map(|id| id.parse().ok()).collect();
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut folds = FoldSet::new();
+        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            if wanted.contains(&paragraph.id)
+                && self
+                    .heading_level_of(paragraph.properties.get(), &cascade)
+                    .is_some()
+            {
+                folds.insert(paragraph.id);
+            }
+        });
+        if folds == self.folds {
+            return Ok(self.fold_state());
+        }
+        self.folds = folds;
         self.relayout_for_fold();
         Ok(self.fold_state())
     }
@@ -35065,6 +35133,11 @@ mod tests {
         assert_eq!(
             d.document_outline()
                 .first()
+                // `splitn`, not `split`: the TEXT field is last and a heading's
+                // text can itself contain a tab, so the limit is what keeps the
+                // field whole. (Clippy flags `splitn` only where the limit is
+                // unreachable, which is why the sibling rows above take
+                // `split`.)
                 .and_then(|row| row.splitn(4, '\t').nth(3)),
             Some("final heading")
         );
@@ -40305,11 +40378,17 @@ mod tests {
     /// one paragraph — long enough that folding `Alpha` must drop whole pages.
     ///
     /// Built directly rather than imported, because no fixture in the repository
-    /// is both multi-page AND carries `w:outlineLvl` headings: the Markdown and
-    /// HTML importers produce neither outline level nor a `Heading N` style
-    /// (`documentOutline` is empty for both — measured, not assumed), which is a
-    /// real gap in those two adapters and is noted as `109` FOLD-005 rather than
-    /// worked around here.
+    /// is both multi-page AND carries `w:outlineLvl` headings.
+    ///
+    /// This comment used to blame "the Markdown and HTML importers", and that was
+    /// wrong: **there are no such importers.** Both adapters are
+    /// `can_import: false` (`casual-doc-io/src/markdown.rs`, `html.rs`) and both
+    /// READ `outline_level` on the way out, so nothing is owed there. Re-measured
+    /// 2026-10-04: the importer that really drops a heading's identity is **RTF**
+    /// — `outline_level`, `style_id` and `style_name` are each zero hits across
+    /// `crates/casual-doc-rtf` and `casual-doc-io/src/rtf.rs` — so an imported
+    /// `.rtf` has an empty `documentOutline()` and nothing to fold. That is `109`
+    /// FOLD-005.
     fn folded_report(fill: usize) -> WasmDocument {
         use casual_doc_model::v1::Definitions;
 
@@ -40421,7 +40500,7 @@ mod tests {
         let collapsed_rows = d
             .document_outline()
             .iter()
-            .filter(|row| row.splitn(4, '\t').nth(2) == Some("1"))
+            .filter(|row| row.split('\t').nth(2) == Some("1"))
             .count();
         assert_eq!(
             collapsed_rows,
@@ -40513,7 +40592,7 @@ mod tests {
         let headings: Vec<String> = d
             .document_outline()
             .iter()
-            .filter_map(|row| row.splitn(4, '\t').nth(1).map(str::to_owned))
+            .filter_map(|row| row.split('\t').nth(1).map(str::to_owned))
             .collect();
         let mut nodes = Vec::new();
         collect_block_text(d.document.body(), &mut nodes);
@@ -40643,11 +40722,141 @@ mod tests {
         );
     }
 
+    /// `setFoldSet` restores an arbitrary fold set in ONE re-layout, which is
+    /// what lets print expand the document and put the reader's folds back.
+    ///
+    /// The guarantee under test is the one `print.mjs`'s `withPagedLayout`
+    /// depends on: the state that comes out of `foldState()` can be handed back
+    /// and produces the SAME layout, for the same cost whatever its size. Without
+    /// it the host's only restore is a `setFold` per heading, and each of those is
+    /// its own `O(document)` re-layout — so a reader who had collapsed two
+    /// hundred headings would pay two hundred full passes after the print dialog
+    /// closed, with no progress and nothing to cancel.
+    ///
+    /// Guarded by DOUBLING rather than by a clock (`SKILL.md` §8): the view epoch
+    /// (`self.revision`) advances once per re-layout, so restoring two folds and
+    /// restoring four must each move it by exactly one.
+    ///
+    /// Mutations that redden it:
+    ///   * restore with `for (id) { self.folds.insert(id); self.relayout_for_fold(); }`
+    ///     — the epoch then moves twice for two folds and four times for four,
+    ///     which is the per-heading re-layout this exists to prevent;
+    ///   * drop the `heading_level_of` test inside the walk — the unknown and
+    ///     non-heading ids are then accepted into the set and the returned state
+    ///     claims folds the layout cannot honour;
+    ///   * `Ok(self.fold_state())` on a parse failure instead of `Err` — a host
+    ///     typo then silently clears every fold.
+    #[test]
+    fn set_fold_set_restores_a_whole_fold_set_in_one_relayout() {
+        let mut d = open_document(COLLAPSED_DOCX).expect("open the heading fixture");
+        d.fold_to_level_inner(0).expect("start from unfolded");
+        let opening_pages = d.page_count();
+        let headings: Vec<String> = d
+            .document_outline()
+            .iter()
+            .filter_map(|row| row.split('\t').nth(1).map(str::to_owned))
+            .collect();
+        assert!(
+            headings.len() >= 2,
+            "the fixture must carry at least two headings: {headings:?}",
+        );
+
+        // Fold two headings the slow way, and remember what that layout was.
+        for node in headings.iter().take(2) {
+            d.set_fold_inner(node, true).expect("fold one at a time");
+        }
+        let pages_folded_individually = d.page_count();
+        let state_individually: serde_json::Value =
+            serde_json::from_str(&d.fold_state()).expect("json");
+
+        // Back to nothing folded, then restore the SAME set in one call.
+        d.fold_to_level_inner(0).expect("unfold");
+        assert_eq!(
+            d.page_count(),
+            opening_pages,
+            "the fixture reopens as it opened"
+        );
+        let before = d.revision;
+        let wanted = serde_json::to_string(&headings[..2]).expect("payload");
+        let restored: serde_json::Value = serde_json::from_str(
+            &d.set_fold_set_inner(&wanted)
+                .expect("restore the whole set"),
+        )
+        .expect("json");
+
+        assert_eq!(
+            restored["folded"], state_individually["folded"],
+            "the restored set must be the set that was read out, member for member",
+        );
+        assert_eq!(
+            d.page_count(),
+            pages_folded_individually,
+            "and it must produce the same LAYOUT, not merely the same bookkeeping",
+        );
+        assert_eq!(
+            d.revision - before,
+            1,
+            "one re-layout for the whole set: {} for {} folds",
+            d.revision - before,
+            2,
+        );
+
+        // Doubling: twice the folds, still one pass.
+        d.fold_to_level_inner(0).expect("unfold");
+        let before = d.revision;
+        let all = serde_json::to_string(&headings).expect("payload");
+        d.set_fold_set_inner(&all).expect("restore every heading");
+        assert_eq!(
+            d.revision - before,
+            1,
+            "{} headings must still cost one re-layout, not one each",
+            headings.len(),
+        );
+
+        // An id that is not a heading, and one that is not in the document, are
+        // skipped — and the returned state SAYS which ids were actually set, so a
+        // skip is observable rather than silent.
+        d.fold_to_level_inner(0).expect("unfold");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .find(|id| !headings.contains(id))
+            .expect("a non-heading paragraph");
+        let mixed = serde_json::to_string(&[
+            headings[0].clone(),
+            body,
+            NodeId::from_parts(0x_dead, 7)
+                .expect("non-zero")
+                .to_string(),
+            "not-a-node-id".to_owned(),
+        ])
+        .expect("payload");
+        let partial: serde_json::Value =
+            serde_json::from_str(&d.set_fold_set_inner(&mixed).expect("accepted")).expect("json");
+        assert_eq!(
+            partial["folded"].as_array().map(Vec::len),
+            Some(1),
+            "only the real heading is folded, and the state reports exactly that: {partial}",
+        );
+
+        // A malformed payload IS refused: that is a host bug, and silently
+        // clearing the reader's folds for it would be the worst of both.
+        let error = d
+            .set_fold_set_inner("{\"folded\": []}")
+            .expect_err("an object is not an array of ids");
+        assert!(
+            error.contains("JSON array of node ids"),
+            "the refusal says what was wrong: {error}",
+        );
+    }
+
     /// The first heading node id in the document.
     fn first_heading_node(d: &WasmDocument) -> String {
         d.document_outline()
             .first()
-            .and_then(|row| row.splitn(4, '\t').nth(1).map(str::to_owned))
+            .and_then(|row| row.split('\t').nth(1).map(str::to_owned))
             .expect("the corpus document has a heading")
     }
 

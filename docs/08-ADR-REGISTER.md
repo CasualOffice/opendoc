@@ -1937,10 +1937,17 @@ work and no folding seam**.
 writer with its `w15` namespace declarations, `fixtures/generated/collapsed-headings.docx`
 (the first `.docx` in the repository to carry `w15:collapsed`), and six guards in
 `casual-doc-export/tests/collapsed_heading_state.rs`, each driven red by a production
-mutation. The **behaviour tier** (`casual-doc-layout`) and the **affordance tier**
-(`webapp/`) are **not started**: `grep -rin "foldset\|fold_set" crates webapp/src` returns
-zero hits. §"What layout owes" below is the specification for the first, written here
-deliberately rather than implemented, because `casual-doc-layout` is another lane's tonight.
+mutation.
+
+**The behaviour and affordance tiers are built as of 2026-10-04** (`109` FOLD-001 and
+FOLD-004), and this supersedes the "not started" line that stood here: `casual-doc-layout`'s
+`fold.rs` carries `FoldSet` and the one `heading_level` rule for the whole product, the
+facade exposes `setFold`/`foldAll`/`unfoldAll`/`foldToLevel`/`foldState`/`setFoldSet`,
+`outline_panel.mjs` is a real `role="tree"`, and `main.js` wires the chrome. A folded H1 with
+40 paragraphs under it paginates to one page where five is unfolded, and
+`geometry_snapshot.golden` did not move. Three gaps are carried as `109` FOLD-002 (a
+positioned table in a folded range), FOLD-003 (a windowed body is not foldable) and FOLD-005
+(RTF import drops every heading's identity) rather than left implied here.
 
 **Why it is Accepted rather than still Proposed.** The Proposed status was waiting on a
 competitive answer and there is one, read from `reference/sdkjs` at `72b0421` and
@@ -2006,9 +2013,17 @@ tri-state, written, round-tripped, with a fixture and six mutation-proven guards
   being "never fed to caret/selection/hit-test" — the document stays editable while folded.
 - **Two tiers of state, which is Google's model and the only one that can honour a Word
   file**: `w15:collapsed` is the **document default**, parsed, modelled, round-tripped and
-  exported; the live per-viewer fold state lives beside `docReflow` in `prefs.mjs` and a
-  viewer's toggling is never written into the file. Google states this split outright — an
-  editor sets the saved default for everyone, a viewer's own changes "will not be saved".
+  exported; the live per-viewer fold state is the **engine's**, read back through
+  `foldState()`, and a viewer's toggling is never written into the file. Google states this
+  split outright — an editor sets the saved default for everyone, a viewer's own changes
+  "will not be saved". **Corrected 2026-10-04 (FOLD-001/FOLD-004):** this sentence used to
+  say the live set "lives beside `docReflow` in `prefs.mjs`", and that was wrong rather than
+  merely different. `prefs.mjs` persists across sessions, and `NodeId`s are **minted at
+  import** — so a persisted fold set would restore one document's folds onto whatever ids a
+  later open happened to assign, folding arbitrary headings of a document the reader never
+  collapsed. The cross-session tier is `w15:collapsed`, which is a real document property
+  with real identity, and the engine seeds the set from it at open. There is one `FoldSet`
+  and it is the layout's.
 - **Find searches folded text and reveals by unfolding.** `findText` walks the **model**
   (`casual-doc-wasm/src/lib.rs:3503`), so it already searches folded content by
   construction; the work is that revealing a match unfolds its ancestors. VS Code's
@@ -2023,7 +2038,16 @@ tri-state, written, round-tripped, with a fixture and six mutation-proven guards
   exists: `print.mjs`'s `withPagedLayout` already forces `Paged` with the restore in a
   `finally`, and forcing "unfolded" belongs in the same wrapper, next to the rule it is a
   rule about. DOCX export writes `w15:collapsed`, so the *state* survives while the
-  *content* always does.
+  *content* always does. **Built 2026-10-04 (FOLD-001):** `expandFolds` in the same wrapper,
+  restoring through the new `setFoldSet` so a reader who collapsed two hundred headings pays
+  one re-layout back rather than two hundred. The measurement that scoped it is worth
+  recording, because it is narrower than this item implies: the real-text PDF writer and
+  `exportAs` for DOCX/ODT/text were already expanded *by accident* — they encode or paginate
+  from the MODEL and the session's fold set never reaches them — and the path that really
+  printed folded was the 150-DPI raster fallback, which reads `pageCount`/`renderPage` off
+  the live layout. The rule is enforced at the seam anyway, because `casual_doc_io::pdf`'s
+  own doc comment names seeding the export's pagination from the session as planned work, and
+  that change would turn the accident into the bug.
 - **The accessibility mirror is filtered by the same set.** `webapp/src/a11y_mirror.mjs` is
   model-derived, so an unfiltered mirror would read out what a sighted reader has folded
   away — the fold would be a lie to one class of reader. The disclosure carries
@@ -2164,8 +2188,9 @@ Not built, and not to be built by the layout lane. The chrome lane owns it.
   `view.fold.all`, `view.fold.none`, and `view.fold.level` (a level picker). Each must be
   reachable from ≥2 surfaces, and until the layout tier lands each must ship **disabled with
   a reason** rather than as a control that does nothing (`SKILL` §10: never a dead control).
-- **The live per-viewer fold state lives beside `docReflow` in `prefs.mjs`** and a viewer's
-  toggling is never written into the file.
+- **The live per-viewer fold state is the ENGINE's**, read back through `foldState()`, and a
+  viewer's toggling is never written into the file. Not `prefs.mjs`, which is what this said
+  until 2026-10-04 — see the two-tiers item above for why a persisted set is unsound.
 - **`a11y_mirror.mjs` is filtered by the same set**, and a collapsed heading announces how
   much is hidden.
 - **Say that the on-screen page count is not the printed one while anything is folded**

@@ -28,8 +28,10 @@
 //
 // WHAT IT DOES NOT OWN: print. `print.mjs` forces `Paged` itself and the same
 // wrapper is where "fully expanded" belongs — a rule enforced next to the thing
-// it is a rule about cannot be forgotten by a second caller. That is this lane's
-// one unfinished thread and it is named in the report rather than implied.
+// it is a rule about cannot be forgotten by a second caller. **Built there, not
+// here, as of `109` FOLD-001:** `expandFolds` inside `withPagedLayout`, restoring
+// through `setFoldSet` in one re-layout, with the rule guarded over the wrapper
+// rather than over either printer.
 
 import { t } from "./i18n.mjs";
 import { foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
@@ -37,13 +39,28 @@ import { foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs
 /**
  * Wires folding.
  *
+ * `onChanged` must REPAINT AND REFRESH THE CHROME, not merely repaint. A fold
+ * changes the layout and the projection of the document together, so a host that
+ * only re-rasters the pages leaves the outline tree and the accessibility mirror
+ * describing the old fold state while the canvas shows the new one — the panel
+ * that drives the fold disagreeing with the fold. In this shell that is
+ * `renderAll()` followed by `scheduleChromeRefresh({ stats: true, outline: true })`;
+ * the outline flag carries the mirror with it. Stated here because an e2e run
+ * caught it and nothing at the model tier could have.
+ *
+ * `getPages` and `scaleOf` are the pair `ruler.mjs` and `touch_selection.mjs`
+ * already take, and they are here for the same reason: an overlay element has to
+ * land on the page record the engine named, at that page's own scale. They are
+ * optional — omit them and the margin chevron simply does not paint, which is
+ * what a non-DOM host wants.
+ *
  * @param {{
  *   getDoc: () => any,
  *   caretNode: () => string,
  *   onChanged: () => void,
  *   setStatus: (message: string, kind?: string) => void,
- *   chevronHost?: () => HTMLElement|null,
- *   caretRect?: () => ({x: number, y: number, height: number}|null),
+ *   getPages?: () => Array<{overlay?: HTMLElement}>,
+ *   scaleOf?: (page: any) => ({sx: number, sy: number}),
  * }} deps
  */
 export function createFoldChrome({
@@ -51,8 +68,8 @@ export function createFoldChrome({
   caretNode,
   onChanged,
   setStatus,
-  chevronHost = () => null,
-  caretRect = () => null,
+  getPages = () => [],
+  scaleOf = () => ({ sx: 1, sy: 1 }),
 }) {
   /** The last state the ENGINE reported, re-read after every call rather than
    *  mutated here. One state, and it is not this module's. */
@@ -105,6 +122,46 @@ export function createFoldChrome({
     return row ? { node: row.node, collapsed: row.collapsed } : null;
   };
 
+  /**
+   * Where the margin chevron goes: the overlay of the page the caret's heading
+   * STARTS on, and that heading's start rectangle in the overlay's own
+   * coordinates. `null` when there is nothing to anchor to.
+   *
+   * Host and rectangle come back together, from ONE engine call, deliberately:
+   * two independent getters can answer about different pages between them — a
+   * repaint, a scroll out of the window, a page record replaced wholesale — and
+   * a chevron placed on page 3's overlay at page 7's y lands off the sheet.
+   *
+   * Offset `0`, not the caret's offset, so the chevron sits beside the start of
+   * the heading instead of sliding along the line as the caret moves. The
+   * -20px margin that puts it OUTSIDE the text column is in `style.css`, with
+   * the rest of the control's look.
+   *
+   * Complexity: one `caretRect`, which is answered from the laid-out page the
+   * caret is on — O(1) in document size, per `docs/107` §4.
+   */
+  const chevronAnchor = () => {
+    const doc = getDoc();
+    const node = caretNode();
+    if (!doc || !node) return null;
+    let flat;
+    try {
+      flat = doc.caretRect(node, 0);
+    } catch {
+      return null;
+    }
+    // `[page, x, y, w, h]` in twips, or empty when the node is not placed —
+    // which is exactly what a heading inside ANOTHER fold looks like.
+    if (!flat || flat.length < 5) return null;
+    const page = getPages()[flat[0] - 1];
+    if (!page?.overlay) return null;
+    const { sx, sy } = scaleOf(page);
+    return {
+      host: page.overlay,
+      rect: { x: flat[1] * sx, y: flat[2] * sy, height: flat[4] * sy },
+    };
+  };
+
   /** Runs one engine fold call, reports a refusal rather than swallowing it,
    *  and lets the host repaint. */
   const run = (call) => {
@@ -122,8 +179,12 @@ export function createFoldChrome({
       return;
     }
     read();
-    announce();
-    onChanged();
+    // AFTER the repaint, not before. `renderAll` publishes its own
+    // "Rendering N pages…" line and then clears it, so a caveat announced first
+    // was overwritten and then wiped — set, and never seen. `onChanged` is
+    // allowed to be synchronous, so the result is normalised rather than
+    // assumed to be a promise, and the announcement happens either way round.
+    Promise.resolve(onChanged()).then(announce, announce);
   };
 
   /** Says that the on-screen page count is not the printed one, once per change
@@ -151,9 +212,22 @@ export function createFoldChrome({
     unfoldAll: () => run((doc) => doc.unfoldAll()),
     foldToLevel: (level) => run((doc) => doc.foldToLevel(level)),
     /** The four command rows (twelve, with the level picker's rungs), for
-     *  `main.js` to spread into its registry. */
-    commands: () =>
-      foldCommands({
+     *  `main.js` to spread into its registry.
+     *
+     *  Re-reads the engine FIRST, rather than trusting whatever the last `sync`
+     *  left behind. Without that, `view.fold.toggle` would refuse with "put the
+     *  caret in a heading" for any reader who had never opened the outline
+     *  panel — the rows would be generated from an empty outline — which is the
+     *  shape of a control that is present, enabled-looking and wrong.
+     *
+     *  Affordable because `editorCommands()` is rebuilt per GESTURE: opening the
+     *  palette, opening a menu, a chord press, a context menu. `docs/107` §4
+     *  budgets an interaction at `O(1)` in document size; a gesture that is
+     *  already building the whole registry is not that interaction, and one
+     *  `documentOutline()` is in proportion to it. */
+    commands: () => {
+      read();
+      return foldCommands({
         t,
         reason,
         caretHeading,
@@ -168,7 +242,8 @@ export function createFoldChrome({
         foldAll: () => run((doc) => doc.foldAll()),
         unfoldAll: () => run((doc) => doc.unfoldAll()),
         pickLevel: (level) => run((doc) => doc.foldToLevel(level)),
-      }),
+      });
+    },
     /** The options `renderOutline` needs to make its disclosures live. */
     outlineOptions: () => ({
       onToggle: state.available ? toggle : null,
@@ -192,17 +267,37 @@ export function createFoldChrome({
      *
      * Idempotent: it reuses the one element it owns, so calling it on every
      * render costs a class toggle and two style writes.
+     *
+     * **WHAT IT DOES NOT DO, stated because the bound is real and would
+     * otherwise read as a bug:** it does not re-read the outline. It paints from
+     * whatever the last `sync` left, so the chevron is live once the outline
+     * state has been synced — which is on every content change while the outline
+     * panel is open, after any fold command, and on open — and absent before
+     * that. It is NOT synced per repaint on purpose: `documentOutline()` is
+     * `O(document)`, `drawSelection` runs on every caret move, and paying a
+     * document walk per arrow key is precisely the per-interaction budget
+     * `docs/107` §4 forbids. Closing it properly needs an `O(1)` "is this node a
+     * heading" from the engine — `is_heading` walks every surface — which is
+     * `109` FOLD-006 and not worked around here. Folding itself is reachable
+     * without the chevron from the outline tree, the View menu and the palette,
+     * so no capability depends on this.
      */
     syncBodyChevron: () => {
-      const host = chevronHost();
-      if (!host) return;
-      let chevron = host.querySelector(".fold-body-chevron");
       const heading = caretHeading();
-      const rect = caretRect();
-      if (!heading || !rect || !state.available) {
-        chevron?.remove();
-        return;
+      const anchor = heading && state.available ? chevronAnchor() : null;
+      // A chevron on any OTHER overlay is stale — the caret has moved to a
+      // different sheet, or there is nothing to anchor to at all. Sweeping
+      // rather than remembering the last host is what keeps a chevron from
+      // being orphaned by a repaint that replaced the page records. O(pages
+      // in the DOM), which is the viewport's window and not the document.
+      for (const page of getPages()) {
+        if (page.overlay && page.overlay !== anchor?.host) {
+          page.overlay.querySelector(".fold-body-chevron")?.remove();
+        }
       }
+      if (!anchor) return;
+      const { host, rect } = anchor;
+      let chevron = host.querySelector(".fold-body-chevron");
       if (!chevron) {
         chevron = document.createElement("button");
         chevron.type = "button";

@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   byteOffsetToStringIndex,
   isWholeWordAt,
+  recaseRichRuns,
   smartQuoteChar,
   transformCase,
 } from "../src/text_rules.mjs";
@@ -122,4 +123,62 @@ test("whole-word matching is Unicode-aware, not [A-Za-z]", () => {
   assert.equal(isWholeWordAt("naïveté here", 0, 7), true);
   assert.equal(isWholeWordAt("ünmatched", 0, 2), false, "a letter follows, so it is not a word");
   assert.equal(isWholeWordAt("λόγος", 0, 5), true);
+});
+
+// ---------------------------------------------------------------------------
+// `recaseRichRuns` — the cross-run half of Change case.
+//
+// It moved out of `main.js` with the folding chrome (`109` FOLD-004), and it is
+// the part of Change case that was never testable: `transformCase` above is a
+// string rule, while this is where the SELECTION meets the formatting runs, and
+// both of its branches go wrong in ways a browser run would not notice.
+
+// Mutation that reddens it: case each run on its own — replace the body with
+// `runs.map((r) => ({ ...r, text: transformCase(String(r.text ?? ""), mode) }))`,
+// dropping the join and the re-slice. "hello. world" split by a bold boundary
+// then comes back as "Hello. Wor" + "Ld", because the second run's first letter
+// looks like the start of a sentence to a rule that cannot see the run before it.
+test("sentence case reads across a formatting boundary, not within one run", () => {
+  const runs = [{ text: "hello. wor" }, { text: "ld", bold: true }];
+  assert.deepEqual(
+    recaseRichRuns(runs, "sentence").map((r) => r.text),
+    ["Hello. Wor", "ld"],
+    "the capital belongs on the w of `world`, and nowhere else",
+  );
+});
+
+// Mutation that reddens it: count a `paragraphBreak` run as 0 characters
+// (`const len = r.paragraphBreak ? 0 : ...`). Every run after the first
+// paragraph then takes its text one character early.
+test("a paragraph break counts as the one character the join writes", () => {
+  const runs = [{ text: "one" }, { paragraphBreak: true }, { text: "two" }];
+  assert.deepEqual(
+    recaseRichRuns(runs, "upper").map((r) => r.text ?? "(break)"),
+    ["ONE", "(break)", "TWO"],
+    "offsets must stay in step across a paragraph, or the text lands in the wrong run",
+  );
+});
+
+// Mutation that reddens it: always re-slice, by changing the length guard to
+// `if (false)`. `ß` upper-cases to two characters, so the re-slice runs long:
+// the first run swallows a character that belongs to the second and the tail of
+// the selection is dropped outright.
+test("a transform that changes length falls back rather than mis-slicing", () => {
+  const runs = [{ text: "straße" }, { text: "x", bold: true }];
+  assert.deepEqual(
+    recaseRichRuns(runs, "upper").map((r) => r.text),
+    ["STRASSE", "X"],
+    "`ß` becomes `SS`, so the whole-selection re-slice cannot be used — using it anyway " +
+      "shifts every later run's text and loses the end of the selection",
+  );
+});
+
+// Mutation that reddens it: `const out = runs;` instead of a copy. The caller's
+// payload is then already cased when it is written back, which stays invisible
+// until something reads the original — undo, a loss report, a second transform.
+test("the caller's runs are not mutated, and formatting is carried through", () => {
+  const runs = [{ text: "abc", bold: true, sizeHalfPoints: 24 }];
+  const out = recaseRichRuns(runs, "upper");
+  assert.equal(runs[0].text, "abc", "the input is left alone");
+  assert.deepEqual(out, [{ text: "ABC", bold: true, sizeHalfPoints: 24 }]);
 });

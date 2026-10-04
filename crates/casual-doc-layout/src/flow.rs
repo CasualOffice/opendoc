@@ -1018,6 +1018,14 @@ pub fn build_galley_cached(
 /// (`docs/105` FID-L-05). Without this the editor's own layout path would quietly
 /// keep the old decimal-ordinal behavior.
 #[must_use]
+// Eight inputs because the incremental path must be handed every input the fresh
+// path resolves from — notes, review view and the fold set included — or it
+// serves a galley built under different rules than `build_galley_for_blocks`
+// would (`docs/105` FID-L-05 is exactly that bug, for note labels alone).
+// Grouping them behind a struct would only move the eight names one level down
+// while adding a type nothing else wants, which is why the surrounding crate
+// already carries this allow on fourteen sibling pipeline functions.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_galley_cached_labeled(
     document: &Document,
     shaper: &dyn LineShaper,

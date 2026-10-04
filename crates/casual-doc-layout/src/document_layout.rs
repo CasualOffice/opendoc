@@ -1235,7 +1235,7 @@ pub fn paginate_document_in(
 /// [`paginate_document_in`] with a [`FoldSet`] — the one entry point that can
 /// produce a **folded** layout (ADR-049, `docs/157`).
 ///
-/// `folds` is the set of collapsed heading [`NodeId`](casual_doc_model::NodeId)s
+/// `folds` is the set of collapsed heading [`NodeId`]s
 /// this viewer is looking at. The blocks of each collapsed subtree contribute no
 /// fragments and no height, so pagination closes up and **the page count falls**
 /// — reflow, not blanking, which is Word's behaviour and the one thing

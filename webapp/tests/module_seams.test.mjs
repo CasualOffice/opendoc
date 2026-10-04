@@ -384,8 +384,25 @@ const SRC = new URL("../src/", import.meta.url);
  *  the two met. Neither 16,168 nor #736's implicit 16,189 describes the merged
  *  file; `wc -l` does, and it says 16,178. That is the third time in one session
  *  this exact arithmetic has been wrong, which is why the rule is to measure
- *  LAST, after the rebase, and never to carry a number across one. */
-const MAIN_JS_LINE_CEILING = 16178;
+ *  LAST, after the rebase, and never to carry a number across one.
+ *
+ *  Lowered to 16,177 by the folding round (`109` FOLD-004), which is the ratchet
+ *  doing its job with ONE line of headroom to work in. The chrome
+ *  (`fold_chrome.mjs`, `fold_view.mjs`) was complete, translated into nineteen
+ *  locales, and imported by nothing — `SKILL.md` §9 rule 4, "built" is not
+ *  "reachable" — and reaching it costs five lines here plus a construction
+ *  block. It paid with two rules that had no business being in this file and
+ *  could not be tested from it:
+ *    * Change case's cross-run RE-SLICE moved to `text_rules.mjs` beside
+ *      `transformCase`, where four guards now cover the formatting-boundary
+ *      case and the `ß → SS` length change that silently drops the end of a
+ *      selection;
+ *    * the font-size ladder and its stepper moved to `style_picker.mjs` beside
+ *      `previewPx`, as `nextZoomStep`'s sibling, where the past-the-end
+ *      behaviour and the `w:sz` clamps are asserted rather than pressed.
+ *  MEASURED with `wc -l` on this tree AFTER the rebase onto `origin/main`
+ *  564db686, not carried from the branch. */
+const MAIN_JS_LINE_CEILING = 16177;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

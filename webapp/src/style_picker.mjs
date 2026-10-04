@@ -188,6 +188,54 @@ export function previewPx(sizePoints) {
   return Math.max(12, Math.min(22, Math.round(sizePoints * 0.95)));
 }
 
+/** The ladder the font-size dropdown offers and the A▲/A▼ steppers walk, in
+ *  points. Word's own list. */
+export const FONT_SIZE_STEPS = Object.freeze([
+  8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96,
+]);
+
+/** Smallest and largest font size `w:sz` can carry, in points: `w:sz` is in
+ *  HALF-points and OOXML bounds it at 1..3276. */
+const FONT_PT_MIN = 1;
+const FONT_PT_MAX = 1638;
+
+/**
+ * The next size either side of `current` on [`FONT_SIZE_STEPS`], or a step off
+ * the end of it, in points.
+ *
+ * The sibling of `nextZoomStep` in `view_zoom.mjs` — same ladder shape, same
+ * `1e-6` epsilon, extracted for the same reason: `main.js` was at its ratchet
+ * and a table plus a search needs no browser. Both halves of the rule are the
+ * interesting part and neither was reachable from a unit test:
+ *
+ *   * **Strictness.** The comparison is strict, so a step from a rung lands on
+ *     the NEXT rung rather than back on the one the caret is already at. A
+ *     stepper that returns its input is a control that does nothing.
+ *     (The `1e-6` is defensive only, and is recorded as such rather than
+ *     claimed as load-bearing: every size this is called with is exact —
+ *     `Number(select.value)` or `sizeHalfPoints / 2` — and a guard written for
+ *     the epsilon could not be driven red, so there is not one.)
+ *   * **Past the ends.** Beyond 96pt Word keeps going in 2pt increments rather
+ *     than stopping, and the result is rounded to a HALF point because `w:sz`
+ *     cannot express anything finer. Clamped to OOXML's own bounds, so a caret
+ *     at 1638pt refuses to grow instead of writing a size no reader can open.
+ *
+ * Complexity: O(steps) — 24 comparisons, independent of document size.
+ *
+ * @param {number} current the caret's size in points
+ * @param {number} direction above zero grows, otherwise shrinks
+ * @returns {number} the next size in points, a multiple of a half point
+ */
+export function nextFontSizeStep(current, direction) {
+  const half = (pt) => Math.round(pt * 2) / 2;
+  if (direction > 0) {
+    const up = FONT_SIZE_STEPS.find((s) => s > current + 1e-6);
+    return up ?? Math.min(FONT_PT_MAX, half(current + 2));
+  }
+  const down = FONT_SIZE_STEPS.filter((s) => s < current - 1e-6);
+  return down.length ? down[down.length - 1] : Math.max(FONT_PT_MIN, half(current - 1));
+}
+
 /**
  * The full menu: the suggested group, then everything else the document
  * defines, filtered by `query`.
