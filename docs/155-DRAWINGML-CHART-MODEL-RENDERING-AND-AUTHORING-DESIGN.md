@@ -70,7 +70,8 @@ possible starting position, and the thing this design must not spend.
 And the question the task asked to settle before any code:
 
 > **D4 — is `PaintItem::Path` required first?** **For pie and doughnut, yes. For
-> bar, column, line, area and scatter, no.** It is the same primitive FID-L-04
+> bar, column, line, area and scatter, no.** *(Settled: the primitive landed, and
+> pie/doughnut ship on it without an `ArcTo` — §7.5.)* It is the same primitive FID-L-04
 > needs for ~165 preset shapes and the same one a SmartArt renderer would need,
 > so it is built **once, in the shapes lane, as a display-list primitive** — not
 > invented inside a chart renderer. That splits delivery into tier 1A (ships on
@@ -308,8 +309,8 @@ reach `colors1.xml`, `style1.xml`, `chartUserShapes.xml` and the workbook.
 | Line | `c:lineChart` | polylines and markers need no new primitive |
 | Area | `c:areaChart` | closed polygons need no new primitive |
 | Scatter | `c:scatterChart` (`c:scatterStyle` lineMarker\|marker\|line) | markers plus straight connectors need no new primitive |
-| Pie | `c:pieChart` (`c:firstSliceAng`) | very common; **needs an arc — tier 1B** |
-| Doughnut | `c:doughnutChart` (`c:holeSize`) | same geometry as pie; **tier 1B** |
+| Pie | `c:pieChart` (`c:firstSliceAng`) | very common; tier 1B — **drawn**, via `arc::sector` (§7.5) |
+| Doughnut | `c:doughnutChart` (`c:holeSize`) | same geometry as pie; tier 1B — **drawn**, the same `sector` call with an inner radius |
 | **Combo** | two or more chart groups in one `c:plotArea` | **free**: the plot area is modelled as a *list* of chart groups, so a bar+line combo is not a feature, it is the absence of a restriction |
 | Secondary axis | a second `c:valAx` with its own `c:axId`, referenced by a group's `c:axId` | **free** for the same reason: axes are a list and a group names its own axis ids |
 
@@ -515,7 +516,16 @@ claims to have read a *chart*. It ships with its own mutation proof.
 
 ## 7. The rendering path, and whether `PaintItem::Path` comes first (D4)
 
-### 7.1 The measured constraint
+### 7.1 The measured constraint — **superseded 2026-10-04, kept for the record**
+
+> **This measurement no longer describes the tree.** The shapes lane has since
+> replaced the display list's vertex-list `Polygon` with
+> `ShapeGeometry::Path { commands, closed }` carrying
+> `PathCommand::{MoveTo, LineTo, CubicTo, QuadTo}`, and `casual-doc-render`'s
+> `command_path` walks all four — starting a new subpath on a mid-list `MoveTo`,
+> so multiple subpaths work too. `FID-L-04`'s first clause is **done**. What
+> follows is the state as measured on 2026-10-01 and is retained because §7.3's
+> verdict was reached against it; the live position is in §7.5.
 
 `casual-doc-layout/src/display.rs` — `PaintItem` (`:189`) has exactly twelve
 variants: `Glyphs`, `Rect`, `Ellipse`, `RoundedRect`, `Polygon`, `Image`, `Line`,
@@ -586,7 +596,13 @@ design **does not add the primitive**; it specifies what charts need from it
   curve mechanism we would have to delete. It is also a smaller hole than the
   earlier draft implied, because smooth lines moved out of it.
 
-### 7.4 What charts need from `PaintItem::Path`, when the shapes lane builds it
+**Both tiers have now shipped.** Tier 1A in #744; tier 1B on
+`feat/charts-arcs-and-reach`, which did not wait for an `ArcTo` because it did
+not need one — see §7.5. `chart::is_drawable` no longer refuses any
+`ChartGroupKind`, so the §6.2 `omitted` path is no longer reached by any tier-1
+family.
+
+### 7.4 What charts needed from `PaintItem::Path` — the ask, as filed
 
 Stated here so the primitive is designed once for all three consumers:
 
@@ -603,6 +619,70 @@ Stated here so the primitive is designed once for all three consumers:
   `Geometry.js:1556` is the second caller that therefore did not need its own.
   If the primitive ends up Bézier-only, charts will use the standard
   four-segment-per-quadrant approximation and say so in code.
+
+### 7.5 What was actually built (2026-10-04) — and why it is not a fifth primitive
+
+The shapes lane delivered the first three bullets of §7.4 and **not** the fourth:
+`ShapeGeometry::Path` is a command list, it carries `fill` and `stroke` like
+`PaintItem::Shape`, and `command_path` opens a new subpath on a mid-list
+`MoveTo`. It is **Bézier-only** — there is no `ArcTo` — which §7.4's last
+sentence already pre-authorised, and that is the branch taken.
+
+`casual-doc-layout/src/arc.rs` is therefore a **constructor over the existing
+primitive, not an addition to it**. No display-list variant was added. The one
+public function is
+
+```rust
+pub fn sector(
+    center: Point,
+    outer_radius: Twip,
+    inner_radius: Twip,
+    start: i32,   // ST_Angle: 60000ths of a degree, clockwise from 3 o'clock
+    sweep: i32,
+) -> Vec<PathCommand>
+```
+
+Four decisions worth recording, because they are the ones a reader will want to
+re-litigate:
+
+1. **Cubic approximation, one segment per <=90 degrees**, handle length
+   `k = (4/3)·tan(Δ/4)·r` — the textbook result SVG, PostScript, cairo and Skia
+   all use. Maximum radial error is `2.8e-4·r`, published as
+   `arc::MAX_RADIAL_ERROR_RATIO` so the guard cites the same number the doc
+   comment does. On a 3-inch pie that is under 0.6 twip, i.e. **finer than the
+   1-twip resolution the display list stores points at**, so there is no
+   tolerance to tune and none is exposed.
+2. **An `ArcTo` command was still not added**, and the reason is narrower than
+   §7.4 assumed: `PathCommand` is the display-list mirror of
+   `casual_doc_model::v1::ShapePathCommand`, so a fifth variant on the display
+   side alone diverges the mirror, and the model crate is held by another lane.
+   The preference in §7.4 and Q-B stands on merit — if the model gains
+   `a:arcTo`, `arc::append_arc` is the function that becomes its backend
+   lowering unchanged, and it is already the single shared flattener that
+   `ArcTo.js:216` is cited for.
+3. **A doughnut is a pie with an inner radius, not a second function.** A sector
+   is emitted as a *single closed contour* — outer arc forward, radial segment
+   inward, inner arc backward, closing radial segment — so the hole falls outside
+   the contour and is empty under **any** fill rule. This answers §7.4's third
+   bullet differently and better: a ring does not need multiple subpaths or a
+   stated fill rule after all. Only a **full-turn** ring, which has no radii to
+   cut, uses a second reversed subpath and relies on nonzero winding (which
+   `casual-doc-render` uses at every `fill_path` call site).
+4. **Angles are `ST_Angle`, clockwise from three o'clock** — DrawingML's own
+   convention, and the unit `ShapeTransform::rotation` already uses — so the
+   preset table and the `a:custGeom` evaluator reuse `arc` without a second frame
+   of reference. A chart's `c:firstSliceAng` is measured from twelve o'clock;
+   that quarter-turn offset lives in `chart::draw_pie`, not in the geometry.
+
+`ChartPrimitive::Path` changed from a vertex list to the same `Vec<PathCommand>`
+in the same work, so there is one chart path primitive rather than a straight one
+and a curved one — the consolidation `ShapeGeometry` had already made.
+
+The other two consumers §7.3 names are **still waiting**: the ~165-preset table
+(FID-L-04's second clause) and `a:custGeom` curves (`119`, FID-G-02). `arc` is
+built for them, not only for charts — several presets (`pie`, `arc`, `blockArc`,
+`chord`, `circularArrow`) are sectors, and `sector` is already the function they
+need.
 
 ---
 
@@ -797,7 +877,7 @@ believed, and each states whether a user can reach it.
 | 3 | **Disposition reporting per construct** — the §6.2 `degraded` + `preserved` rows, replacing one line about a part with named findings. | `casual-doc-import` | **Yes** — the compatibility report is a user-visible surface, and this is the first increment with a real answer to "what did you not understand about my chart?" |
 | 4 | **The export writer + the never-a-byte-changed guard**: `chart1.xml` byte-copied while clean, regeneration refused while `coverage == Partial`, and the round-trip guard extended to a chart with out-of-scope constructs. | `casual-doc-export` | **Yes**, as a guarantee rather than a feature: saving a document with a chart provably does not touch it. |
 | 5 | **The layout/render consumer — tier 1A.** *Belongs to the layout lane.* This lane supplies the projection, the fixture and the expected geometry; it does not edit `casual-doc-layout`. | (layout lane) | **Yes** — this is the increment where a chart stops reading `[chart]`. |
-| 6 | **Tier 1B** (pie and doughnut) once `PaintItem::Path` exists. | (render + layout lanes) | Yes. |
+| 6 | **Tier 1B** (pie and doughnut) once `PaintItem::Path` exists. **Done** — `feat/charts-arcs-and-reach`, on a Bézier-only primitive via `arc::sector` (§7.5); no `ArcTo` was needed. | (render + layout lanes) | Yes. |
 | 7 | **Authoring**: insert a chart, chart elements, type and style, and data editing on charts we authored (§5.3). | `webapp` + facade lanes | Yes — and not before, which is why `153`'s four chart rows stay open until then. |
 
 Increments 2–4 are this lane's and are buildable now. Increments 5–7 are
@@ -854,7 +934,7 @@ moves from out-of-scope to tier 1.
 | # | Question | Recommendation |
 | --- | --- | --- |
 | Q-A | Should an **imported** chart's data become editable behind an explicit "this replaces the embedded workbook" confirmation? (§5.3) | Yes, after the values-only writer exists and the replacement can be named in the report. It destroys producer-authored content, so it is the owner's call. |
-| Q-B | Does `PaintItem::Path` get an explicit `ArcTo`, or Bézier-only? (§7.4) | `ArcTo`, flattened in the backend. Their renderer keeps `arcTo` in the command vocabulary and expands it to per-quadrant cubics in **one** shared function (`ArcTo.js:216`), which is what stops every caller growing its own flattener (§3.3). |
+| Q-B | Does `PaintItem::Path` get an explicit `ArcTo`, or Bézier-only? (§7.4) | **Shipped Bézier-only**; the preference below still stands for when the model mirror can carry `a:arcTo` (§7.5 point 2). `ArcTo`, flattened in the backend. Their renderer keeps `arcTo` in the command vocabulary and expands it to per-quadrant cubics in **one** shared function (`ArcTo.js:216`), which is what stops every caller growing its own flattener (§3.3). |
 | Q-C | Floating (`wp:anchor`) charts: fix `EmbeddedObject`'s missing `DrawingAnchor` in this programme or as one row for charts + SmartArt + OLE together? | Together, separately. It is not a chart limit and scoping it here would hide it. |
 | Q-D | Do chart **theme** colours resolve against `Definitions::color_scheme`, or does a chart carry its own `colors1.xml` palette? | Resolve against the document theme, which already exists; treat `colors1.xml` as out of scope and preserved. Revisit if real files disagree. |
 
