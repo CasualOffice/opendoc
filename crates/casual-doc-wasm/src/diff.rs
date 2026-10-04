@@ -677,7 +677,7 @@ impl WasmDocument {
     ///
     /// `sidecar` is `VersionDiff`'s JSON (`casual-doc-diff` `DIFF_SCHEMA` 1)
     /// produced by comparing `left` = the other document against `right` = THIS
-    /// document's own exported bytes — [`begin_version_diff`]'s orientation,
+    /// document's own exported bytes — `beginVersionDiff`'s orientation,
     /// which is review's. Each `DiffChange` becomes an `InlineNode::Revision`
     /// authored to `author`/`date`, and the lot is applied as **one**
     /// `Operation::UpdateReviewState` under `HistoryKind::Review`: a single undo
@@ -816,7 +816,7 @@ impl WasmDocument {
                     loss.insert("unresolvedAnchor");
                     continue;
                 };
-                group.sort_by(|a, b| b.start.cmp(&a.start));
+                group.sort_by_key(|edit| std::cmp::Reverse(edit.start));
                 planned.push((group, vec![BlockNode::Paragraph(paragraph.clone())]));
             }
         }
@@ -862,7 +862,7 @@ impl WasmDocument {
     fn apply_comparison_edit(
         &mut self,
         notes: &NoteAnchorLengths,
-        body: &mut Vec<BlockNode>,
+        body: &mut [BlockNode],
         edit: &ComparisonEdit,
         author: &str,
         date: &Option<String>,

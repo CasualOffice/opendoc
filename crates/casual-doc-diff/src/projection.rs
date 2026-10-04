@@ -826,8 +826,8 @@ pub fn story_blocks<'a>(document: &'a Document, story: &Story) -> Option<&'a [Bl
 /// block-level content control contributes itself *and* is descended into; a
 /// paragraph and an alt-chunk are leaves. A hand-rolled walk over
 /// `Document::body()` would be subtly wrong at exactly those three points, and
-/// nothing would catch it drifting. This reuses [`descend`] and
-/// [`story_blocks`], so the producer and the resolver cannot disagree.
+/// nothing would catch it drifting. This reuses the producer's own `descend`
+/// walk and [`story_blocks`], so the producer and the resolver cannot disagree.
 ///
 /// Returns `None` when the path is empty, names a row or a cell rather than a
 /// block, leaves the document's shape (a stale path against an edited
@@ -856,7 +856,7 @@ pub fn block_at_path<'a>(
 }
 
 /// The sibling index a path segment carries, whichever kind it is. The kind
-/// names what the *segment's own block* is; [`descend`] already knows what a
+/// names what the *segment's own block* is; `descend` already knows what a
 /// step into each list yields, so the walk needs only the number.
 const fn segment_index(segment: PathSegment) -> u32 {
     match segment {
