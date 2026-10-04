@@ -46,6 +46,7 @@ use crate::page::{
 };
 use crate::paginate::PageConfig;
 use crate::shape_guide::{GuideBox, guide_value};
+use crate::shape_preset;
 // Own line (anti-conflict): the theme style resolution types.
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
@@ -976,6 +977,7 @@ fn place_group_children(
                 } else {
                     preset_geometry_content(
                         shape.geometry,
+                        shape.preset.as_deref(),
                         &shape.adjustments,
                         rect,
                         fill.as_ref(),
@@ -1474,6 +1476,7 @@ fn star_points(g: PresetBox, shape: &StarShape, ratio: f64) -> Vec<Point> {
 /// Complexity: O(1) in document size — see [`preset_polygon`].
 fn preset_geometry_content(
     geometry: ShapeGeometry,
+    preset: Option<&str>,
     adjustments: &[ShapeAdjustment],
     rect: Rect,
     fill: Option<&Fill>,
@@ -1518,10 +1521,31 @@ fn preset_geometry_content(
         // an object is, and Word does not erase them either. Weighed and
         // recorded in docs/119 §6 "Rejected". Every remaining variant is
         // polygonal and returned above.
-        _ => AnchorContent::Rectangle {
-            fill: fill.cloned(),
-            stroke: shape_stroke(stroke),
-        },
+        // Not one of the typed presets: resolve the authored token from the committed
+        // ECMA-376 table (`shape_preset`) before falling back. This is the row that
+        // made every Word arrow, callout, banner and flowchart symbol paint as a box —
+        // 124 of the 187 presets resolve here today, the rest needing `a:arcTo`.
+        //
+        // The 22 typed presets deliberately still come from `preset_polygon` above.
+        // Collapsing them into table entries is what `119` §6 anticipates, but it would
+        // move their geometry from hand-written vertices to the specification's own and
+        // so move committed goldens — a separate, deliberate change, not a side effect
+        // of adding the long tail.
+        _ => preset
+            .and_then(|token| {
+                shape_preset::preset_outline(token, adjustments, rect).map(|commands| {
+                    AnchorContent::Path {
+                        commands,
+                        closed: shape_preset::preset_is_closed(token),
+                        fill: fill.cloned(),
+                        stroke: shape_stroke(stroke),
+                    }
+                })
+            })
+            .unwrap_or_else(|| AnchorContent::Rectangle {
+                fill: fill.cloned(),
+                stroke: shape_stroke(stroke),
+            }),
     }
 }
 
@@ -1534,14 +1558,32 @@ fn text_box_backdrop(
     text_box: &casual_doc_model::v1::GroupTextBox,
     rect: Rect,
 ) -> Option<Box<AnchorContent>> {
-    if matches!(
-        text_box.geometry,
-        ShapeGeometry::Rectangle | ShapeGeometry::Other
-    ) {
+    // A plain rectangle never needs a backdrop: the text-box content already paints
+    // its fill and outline, and a second rectangle over the top would just be the
+    // same shape twice.
+    if matches!(text_box.geometry, ShapeGeometry::Rectangle) {
         return None;
+    }
+    // `Other` used to be refused here for the same reason — there was nothing to
+    // draw. Now the committed preset table may resolve the authored token, so a text
+    // box shaped like a callout paints the callout behind its text. It is resolved
+    // ONCE and the backdrop taken only if that succeeded: falling through to
+    // `preset_geometry_content` would hand back a plain rectangle for a token the
+    // table cannot draw, which is the redundant second rectangle this guard exists to
+    // avoid.
+    if matches!(text_box.geometry, ShapeGeometry::Other) {
+        let token = text_box.preset.as_deref()?;
+        let commands = shape_preset::preset_outline(token, &text_box.adjustments, rect)?;
+        return Some(Box::new(AnchorContent::Path {
+            commands,
+            closed: shape_preset::preset_is_closed(token),
+            fill: text_box.fill.clone(),
+            stroke: shape_stroke(text_box.border),
+        }));
     }
     Some(Box::new(preset_geometry_content(
         text_box.geometry,
+        text_box.preset.as_deref(),
         &text_box.adjustments,
         rect,
         text_box.fill.as_ref(),
