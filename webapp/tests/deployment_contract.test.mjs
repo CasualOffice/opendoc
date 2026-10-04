@@ -200,6 +200,60 @@ function port(mapping) {
 
 // ===========================================================================
 
+test("every repository-root file build.sh reads is in the editor image's context", () => {
+  // THE BUG THIS EXISTS FOR, because it is the expensive kind. The embedding
+  // guide's generator gained `docker-compose.yml` as a source, and
+  // `Dockerfile.editor` copies an ENUMERATED list of inputs rather than `COPY . .`
+  // — so the editor build ran apt, Node, wasm-pack and an 18m50s wasm compile and
+  // then died on
+  //
+  //   Error: ENOENT: no such file or directory, open '/src/docker-compose.yml'
+  //
+  // nineteen minutes in. Worse, `.dockerignore` is an ALLOWLIST, so the file was
+  // excluded from the build context twice over and neither file said so.
+  //
+  // `webapp/build.sh` runs the generator, so every source the generator reads is
+  // an input to the image. Those under `webapp/` arrive with `COPY webapp`; the
+  // ones at the repository root have to be named, and this is what names them.
+  const generator = readFileSync(
+    join(WEBAPP, "tools", "build-embed-docs.mjs"),
+    "utf8",
+  );
+  const sources = [...generator.matchAll(/join\(REPO,\s*((?:"[^"]+"\s*,?\s*)+)\)/g)].map(
+    (match) =>
+      [...match[1].matchAll(/"([^"]+)"/g)]
+        .map((part) => part[1])
+        .join("/"),
+  );
+  // Only the root-level ones: a nested path arrives with the directory that
+  // contains it, and `COPY docs`/`COPY packages` already cover those.
+  const roots = [...new Set(sources.map((path) => path.split("/")[0]))].sort();
+  assert.ok(
+    roots.includes("docker-compose.yml"),
+    "the generator no longer reads docker-compose.yml, so this guard is reading the wrong " +
+      `thing — it found: ${roots.join(", ")}`,
+  );
+
+  const ignore = read(".dockerignore");
+  const copied = [...EDITOR_DOCKERFILE.matchAll(/^COPY\s+(?!--from)([^\n]+)$/gm)]
+    .flatMap((match) => match[1].trim().split(/\s+/).slice(0, -1));
+
+  const missing = [];
+  for (const root of roots) {
+    if (!copied.includes(root)) missing.push(`${root}: no COPY in Dockerfile.editor`);
+    // The allowlist: `*` excludes everything, so each entry needs its own `!`.
+    if (!new RegExp(`^!${root.replace(/[.]/g, "\\.")}/?$`, "m").test(ignore)) {
+      missing.push(`${root}: not allowlisted in .dockerignore`);
+    }
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    "webapp/build.sh reads these from the repository root, so the editor image cannot be " +
+      "built without them — and the failure arrives after the wasm compile, not before it",
+  );
+});
+
 test("the compose file's parser read something real", () => {
   const parsed = compose();
   assert.ok(parsed.services.editor, "there must be an `editor` service");

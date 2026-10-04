@@ -103,8 +103,15 @@ WORKDIR /src
 #   * `docs/` — `build-doc-pages.mjs` renders the published reference pages from
 #     the committed Markdown, and `build.sh` stages `docs/assets/editor.jpg`;
 #   * `fixtures/corpus/real-producer-rich.docx` and `sample.docx` — the two demo
-#     documents `build.sh` copies in by name.
+#     documents `build.sh` copies in by name;
+#   * `docker-compose.yml` — `build-embed-docs.mjs` generates the embedding guide's
+#     deployment section from it, so the compose file is an input to `build.sh`.
+#     This line is missing-and-added rather than written correctly first time: the
+#     build got through the wasm compile and then failed with
+#     `ENOENT: no such file or directory, open '/src/docker-compose.yml'`,
+#     nineteen minutes in. The guard named above now asserts the list.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY docker-compose.yml ./docker-compose.yml
 COPY crates ./crates
 COPY tools ./tools
 COPY server ./server

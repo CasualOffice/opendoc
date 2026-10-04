@@ -35,8 +35,15 @@
 !fixtures/
 !sample.docx
 
-# The static-server configuration the editor image copies.
+# The static-server configuration the editor image copies, and the compose file
+# the embedding guide's generator now reads (`build-embed-docs.mjs`'s `SOURCES`).
+# The compose file is an INPUT to `webapp/build.sh`, which is not obvious from
+# either file — `webapp/tests/deployment_contract.test.mjs` asserts every
+# repository-root source the generator reads is allowlisted here and copied by
+# `Dockerfile.editor`, because the editor build discovered this one by failing
+# after a nineteen-minute wasm build.
 !deploy/
+!docker-compose.yml
 
 # Re-excluded inside the allowed trees: build output, dependencies and test
 # artefacts. All of it is produced by the builder stages, and copying a host
