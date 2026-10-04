@@ -1,0 +1,43 @@
+[package]
+name = "casual-pres-layout"
+description = "Slide layout: a presentation model onto the shared display list"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+casual-doc-layout.workspace = true
+casual-doc-model.workspace = true
+casual-pres-model.workspace = true
+
+[lints]
+workspace = true
+RUST
+cat > crates/casual-pres-layout/src/lib.rs <<'RUST'
+// SPDX-License-Identifier: Apache-2.0
+
+//! Slide layout: a [`casual_pres_model::Presentation`] onto the backend-neutral
+//! display list `casual-doc-layout` already defines.
+//!
+//! Skeleton only — see `casual-pres-import`'s note on why the manifest entry lands
+//! ahead of the work.
+
+#![deny(missing_docs)]
+#![forbid(unsafe_code)]
+RUST
+python3 - <<'PY'
+p='Cargo.toml'
+s=open(p).read()
+s=s.replace('    "crates/casual-pres-model",\n', '    "crates/casual-pres-import",\n    "crates/casual-pres-layout",\n    "crates/casual-pres-model",\n')
+s=s.replace('casual-pres-model = { path = "crates/casual-pres-model", version = "=0.0.1" }\n',
+ 'casual-pres-import = { path = "crates/casual-pres-import", version = "=0.0.1" }\n'
+ 'casual-pres-layout = { path = "crates/casual-pres-layout", version = "=0.0.1" }\n'
+ 'casual-pres-model = { path = "crates/casual-pres-model", version = "=0.0.1" }\n')
+open(p,'w').write(s)
+print('registered')
+PY
+export CARGO_INCREMENTAL=0 && cargo check --workspace --all-features 2>&1 | grep -E "^(error|warning)" -A 4 | head -15; if cargo check --workspace --all-features >/dev/null 2>&1; then echo "PASS check"; else echo FAIL; fi
