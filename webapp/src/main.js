@@ -150,6 +150,7 @@ import { insertChartAtCaret } from "./chart_insert.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
+import { scrollTargetFor } from "./scroll_into_view.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
@@ -7565,6 +7566,7 @@ const foldView = createFoldChrome({
   getDoc: () => doc,
   caretNode: () => selection?.focus?.node ?? "",
   getPages: () => pages,
+  outlineOpen: () => !outlinePanel.hidden,
   scaleOf,
   onChanged: () => renderAll().then(() => scheduleChromeRefresh({ stats: true, outline: true })),
   setStatus,
@@ -8024,29 +8026,16 @@ function selectionModelRect() {
  * document state. */
 function scrollOverlayIntoView(marker, block = "nearest") {
   if (!marker) return;
-  const markerRect = marker.getBoundingClientRect();
-  const viewportRect = viewportEl.getBoundingClientRect();
-  const current = viewportEl.scrollTop;
-  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  // A pixel of scroll is not a pixel of content once the document is
-  // compressed onto a bounded scroll range: it is `scale` of them (see
-  // `page_scroll.mjs`). A delta measured on screen therefore has to be divided
-  // by that before it becomes a scroll position, or every "scroll this into
-  // view" overshoots by the compression factor — which, above 2, oscillates
-  // instead of converging.
-  const perScrollPx = pageBandModel?.scale > 1 ? pageBandModel.scale : 1;
-  let delta = 0;
-  if (block === "center") {
-    delta = markerRect.top + markerRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
-  } else if (markerRect.top < viewportRect.top) {
-    delta = markerRect.top - viewportRect.top - SCROLL_INTO_VIEW_MARGIN;
-  } else if (markerRect.bottom > viewportRect.bottom) {
-    delta = markerRect.bottom - viewportRect.bottom + SCROLL_INTO_VIEW_MARGIN;
-  } else {
-    return;
-  }
-  const target = current + delta / perScrollPx;
-  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
+  const target = scrollTargetFor({
+    marker: marker.getBoundingClientRect(),
+    viewport: viewportEl.getBoundingClientRect(),
+    current: viewportEl.scrollTop,
+    max: Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight),
+    scale: pageBandModel?.scale ?? 1,
+    block,
+    margin: SCROLL_INTO_VIEW_MARGIN,
+  });
+  if (target !== null) viewportEl.scrollTo({ top: target, behavior: "auto" });
 }
 
 /** Scroll the caret in the editor viewport. Navigation callers can request a
@@ -10941,6 +10930,16 @@ function navigateToNode(node) {
   scrollCaretIntoView("center");
 }
 
+/** Re-anchors everything positioned against PAGE geometry. Every flanking panel
+ *  changes the canvas WIDTH, which re-centres the sheet, and the review markers
+ *  and fold chevron are positioned against where the sheet WAS. `toggleReview`
+ *  re-rendered the markers and `toggleOutline` did not, so opening and closing
+ *  the outline left comment icons inside the page instead of beside it. */
+function reanchorPageOverlays() {
+  scheduleReviewMarginRender();
+  if (doc) drawSelection();
+}
+
 function toggleOutline() {
   outlinePanel.hidden = !outlinePanel.hidden;
   // Outline (left) and the review sidebar (right) are mutually exclusive so the
@@ -10953,6 +10952,7 @@ function toggleOutline() {
   }
   railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   buildOutline();
+  reanchorPageOverlays();
 }
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
@@ -10979,6 +10979,7 @@ const pagesPanelView = createPagesPanel({
     outlinePanel.hidden = true;
     railOutline.setAttribute("aria-pressed", "false");
     if (!reviewSidebar.hidden) toggleReview(false);
+    reanchorPageOverlays();
   },
   onJumped: () => {
     updatePageWindow();
@@ -11461,7 +11462,7 @@ function toggleReview(open) {
     activeReviewCommentId = null;
     reviewComposerState = null;
   }
-  scheduleReviewMarginRender();
+  reanchorPageOverlays();
   // Focus management (REVIEW-GAP-023): closing the sidebar returns focus to the
   // rail toggle that owns it, so keyboard/AT users are not stranded.
   if (!show) railReview?.focus?.({ preventScroll: true });

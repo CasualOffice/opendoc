@@ -6285,7 +6285,7 @@ body.is-format-painting .page-wrap * {
 /* The in-body chevron at the caret's heading — Word's affordance, which
    ONLYOFFICE does not have at all. Positioned by the chrome against the caret
    rectangle, so it needs an absolute box in the page's own coordinate space. */
-.fold-body-chevron {
+.overlay .fold-body-chevron {
   position: absolute;
   display: inline-flex;
   align-items: center;
@@ -6306,9 +6306,14 @@ body.is-format-painting .page-wrap * {
      and must not follow the theme. */
   color: var(--paper-ink);
   cursor: pointer;
+  /* The overlay is `pointer-events: none` so a click reaches the page canvas
+     and places the caret. A CONTROL in that overlay has to opt back in, the way
+     `.review-revision-marker` below does — without this the chevron paints,
+     shows a pointer cursor, and cannot be clicked at all. */
+  pointer-events: auto;
 }
 
-.fold-body-chevron .ms {
+.overlay .fold-body-chevron .ms {
   font-size: 16px;
   line-height: 1;
 }
@@ -6318,7 +6323,7 @@ body.is-format-painting .page-wrap * {
    A 10% wash of the paper's own ink instead — no new token and no new hue, so
    `docs/63`'s palette is untouched — and the glyph keeps its full-contrast
    colour rather than trading contrast for emphasis. */
-.fold-body-chevron:hover {
+.overlay .fold-body-chevron:hover {
   background: color-mix(in srgb, var(--paper-ink) 10%, var(--paper));
 }
 
