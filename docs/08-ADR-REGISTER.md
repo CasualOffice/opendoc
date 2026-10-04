@@ -3654,3 +3654,184 @@ a mechanical answer.
 - plugin ABI stability;
 - proofing context pack: which source corpus is redistributable — **ADR-042** leaves it open;
 - whether layout uses fixed-point units internally.
+
+## ADR-063 — The relay's WebSocket is a framing adaptor, not an async runtime: `opendoc-relay` stays in the workspace and in the wasm gate
+
+- **Status:** **Accepted**, 2026-10-04, **implemented** in the same branch —
+  `server/src/websocket.rs` (RFC 6455 as a `Read`/`Write` adaptor), `server/src/serve.rs` (the
+  per-connection loop, moved into the library), and five end-to-end guards in
+  `server/src/serve_tests.rs` that drive real `ClientSession`s over real sockets.
+- **Date:** 2026-10-04.
+- **Closes:** the `107` 6.6 transport question — how a browser reaches the relay — and the
+  dependency question in front of it.
+- **Relates to:** **ADR-047** (a dumb relay: it orders chunks and holds no document), **ADR-057**
+  (the `ODC1` byte codec this carries), **ADR-058** (durability; the journal is what makes the
+  resume guard meaningful), **ADR-060** (the host-signed grant that arrives on `Welcome`),
+  `docs/152` §2c (back-pressure), `docs/107` §4 B1 (the per-interaction budget), and `SKILL` §8
+  (name the established pattern before designing).
+- **Evidence:** measured in this branch. The relay's 58 tests, the five transport guards, and the
+  mutation output recorded below.
+
+### Context: the decision that was framed, and why it was the wrong frame
+
+The question arrived as a choice between two options. The client is a browser, so the relay has
+to speak WebSocket; the obvious library is `tokio-tungstenite`; `tokio` fails the `wasm` CI job,
+because that job runs `cargo check --workspace --target wasm32-unknown-unknown` and
+`opendoc-relay` is a workspace member, so `mio` refuses the target outright —
+
+```text
+This wasm target is unsupported by mio. If using Tokio, disable the net feature.
+```
+
+— and a configuration with no `net` and no multi-thread runtime is not a transport. So: **exclude
+`opendoc-relay` from the workspace wasm gate, or move it out of the workspace.**
+
+Both options cost something real, and both were costed before either was taken:
+
+| Option | What it costs |
+| --- | --- |
+| Exclude the member from the wasm gate (`cargo check --workspace --exclude opendoc-relay`) | The gate stops being "the workspace compiles for the browser" and becomes a list somebody maintains. Every future member must be remembered, and the failure of forgetting is a crate that silently leaves the browser build — which is exactly the class `nothing_under_crates_depends_on_the_relay` exists to catch, now half-enforced. |
+| Move `server/` out of the workspace | A second lockfile, a second `target/`, a second CI matrix entry, and the `path` dependency on `casual-doc-transaction` becomes a cross-workspace path — so a breaking change in the engine is no longer caught by the engine's own `cargo check --workspace --all-targets`, which `SKILL` §5a names as the main defence against two green PRs making a red `main`. On a machine whose disk has filled eight times in a day, a second `target/` is not a neutral cost either. |
+
+### The decision: neither, because the premise is removable
+
+**WebSocket is a framing layer, not a concurrency model.** RFC 6455 is a handshake (one HTTP
+`Upgrade`, one SHA-1, one base64) and a length-prefixed binary frame with a mask. None of it
+needs an async runtime, and the relay already has a concurrency model — thread-per-connection
+`std`, documented in `opendoc_relay::transport` as suited to tens of participants per room, which
+is what a dumb relay is for. `tokio` was never required by WebSocket; it was required by the
+*library* that was reached for first.
+
+So the relay stays a workspace member, stays in the wasm gate unmodified, and gains ~450 lines
+implementing the specification directly, shaped as a **framing adaptor** — the decorator pattern
+`std::io::BufReader` has:
+
+- `websocket::Unframed<R>` is a `Read` yielding the payloads of the data messages it receives;
+- `websocket::Framed<W>` is a `Write` turning each `write` call into exactly one binary message.
+
+`Relay`, `transport::Frames` and `fanout::Participants` compile over them **unchanged**, so every
+test those types already had still exercises the real thing, and the layer above does not know
+the adaptor is there. The alternative shape — a `Message` enum a caller matches on, which is what
+a WebSocket library exposes — would have given the relay a second record layer on top of the
+`ODC1` frames it already has, and two mechanisms for one rule is what `SKILL` §8 says to avoid.
+
+This decision is **not** a claim that async is unnecessary at scale, and it does not reopen that
+question. It is narrower: the relay's per-message work is "append, assign a number, write to N
+sockets", there is no computation to overlap, and moving to an async runtime is an optimisation
+of a working mechanism with a dependency decision in front of it. When that decision is taken,
+the table above is the cost of the two options and this ADR is superseded, not contradicted.
+
+### What is paid for it, stated rather than glossed
+
+Two primitives are implemented here: **SHA-1** and **base64**. SHA-1 is not used as a hash
+function in the security sense — RFC 6455 §1.3 specifies it as a fixed, publicly-known
+transformation of a nonce the client sends in the clear, and what it buys is that a proxy cannot
+be fed a crafted HTTP request that looks like a cacheable response. Both are checked against
+**published vectors** (FIPS 180-4's four examples, RFC 4648 §10's seven, and RFC 6455 §1.3's
+worked `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`) rather than against themselves, because a hand-written
+SHA-1 that agrees with its own test is a hand-written SHA-1. Mutating one index in the message
+schedule (`words[index - 8]` to `words[index - 7]`) reddens all four vectors and the handshake
+value: `left: "a12b3c21c2f1c3ec6da081d6967099fbe7a6636b"`, `right:
+"da39a3ee5e6b4b0d3255bfef95601890afd80709"`.
+
+The relay also now speaks **WebSocket and nothing else**. There was no raw-framing client in the
+tree when this landed — the only client that exists is a browser — so a sniffing dual path would
+have been a second mechanism serving nobody. A deployment that wants raw frames has
+`transport::Frames` over whatever stream it likes; what it does not get is this binary doing two
+things.
+
+### Which side owns which transport
+
+The browser's transport is **the host's `WebSocket`**, not a Rust socket. `websocket::connect` —
+the client half of the handshake — exists for tests and for a native client, and takes its nonce
+as an argument rather than generating one, for the same reason nothing in the engine reads a
+clock or mints an identity. Nothing in `casual-doc-wasm` opens a socket; `cargo check --workspace
+--target wasm32-unknown-unknown` stays green with no exclusions.
+
+### Three defects this surfaced, each fixed in the same branch
+
+Moving the per-connection loop into the library — `opendoc_relay::serve`, for the reason
+`opendoc_relay::relay`'s own header already gives about `main.rs` being untestable — made three
+things visible that had been true and unreachable:
+
+1. **The answer to a sender was written outside the room lock.** `relay`'s header states the
+   contract as "decide → journal → answer → fan out, all under one lock held by the caller", and
+   the binary wrote the answer after releasing it. So this connection's thread wrote the answer to
+   its own socket while another participant's thread wrote the fan-out to the same socket through
+   a different descriptor, and nothing but luck stopped them interleaving. A torn frame is not a
+   dropped message: a self-describing length framing has no delimiter to resynchronise on, so the
+   peer can never recover. The answer is now written under the lock.
+2. **A journal failure skipped the cleanup its own comment called mandatory.** The loop used `?`
+   on `Relay::handle`, which returned from the function past the `disconnected` call — and
+   "a writer left behind is a socket every future chunk is written to and reported as failed
+   forever" is that comment. A failure to journal is exactly when a relay must not also leak a
+   participant. Every path now reaches the bottom.
+3. **`Join::resume`'s doc comment said "when this is a reconnect".** A key is recorded only by
+   the join that *presented* it, so a client following that sentence — withholding the key on its
+   first connection — can never be recognised on its second: it is handed a fresh `Welcome` and a
+   new `ClientId`, and whatever it had not had acknowledged is gone with no refusal naming the
+   loss. The comment now says what the code does. This cost this lane a debugging cycle and would
+   cost an integrator more.
+
+### Two mechanisms remove a dead participant, and that was measured rather than assumed
+
+`docs/152` §2c's back-pressure policy is eviction on a failed write. Over a real socket there is
+a second route to the same outcome, and the guard asserts the **outcome**: with nothing mutated,
+a dropped connection is noticed by its own reader and `Relay::disconnected` removes the
+participant, producing no eviction notice at all; with `disconnected` neutered the guard stays
+green, which is the evidence that `evict_unreachable` is genuinely reachable over a socket and
+not only over a failing `Vec`. Pinning which mechanism won would be a guard on the circumstance
+rather than the guarantee (`SKILL` §4), so the mutation that reddens it is the one line both
+paths share — `Participants::left` returning `contains_key` instead of removing — measured at
+`left: 2, right: 1`.
+
+The client's half of eviction is the transport's: from a client, an eviction is indistinguishable
+from any other dropped connection, because eviction *is* a failed write and there is no socket
+left to send a refusal down. That is why no `Refusal` variant was added for it and the protocol
+version was not bumped: the reader-facing state is a transport state, routed the way
+`session.grant-unreadable` already is in `webapp/src/session_access.mjs` — a code in the chrome's
+one table that the engine never produces, because the engine is never handed the condition.
+
+### Addendum, 2026-10-04 — the browser half, and the one thing it changed about this decision
+
+Built in the same branch: `casual-doc-wasm/src/collab.rs` (the session, sans-I/O) and
+`webapp/src/collab_transport.mjs` (the socket, with its opener, timers and randomness injected).
+Both are **not yet reachable from the product** — `webapp/src/main.js` has no call site — and
+that is stated here rather than implied, because a capability recorded as built and not
+reachable is the most expensive recurring pattern in this repository (`SKILL` §9.4, `109` RM-16).
+
+The division above survived contact. One thing about it did not, and it is worth recording
+because the obvious implementation of the browser half is wrong:
+
+> **`ClientSession::flush` advances its mark AS IT HANDS A CHUNK OVER, and no path rewinds it
+> except a `Refused` the client actually received.** `flush` sets `self.flushed = upto` and
+> pushes to `self.sent` before returning; `resumed` replaces the capabilities and sets
+> `awaiting`, and rewinds neither.
+
+So the reasonable-sounding design — "the engine holds the unacknowledged work, therefore the
+browser needs no queue, and anything queued may be dropped on a reconnect" — loses data. A
+chunk the browser takes from `collabNextChunk()` and fails to write is offered by nothing ever
+again. `152` §5.4 says "the log is the pending queue" and that remains true of what has *not
+been flushed*; it is not true of what has. The transport therefore holds **custody**, not a
+cache: it never polls while the socket is shut (a poll is a handover), it keeps a frame until
+`send` returns, and it replays the queue in order ahead of anything new on the next connection.
+Replaying a chunk the relay may already hold is the designed recovery rather than a hazard —
+`(client, seq)` suppresses the duplicate, or `ODC-7009 StaleBase` comes back and
+`ClientSession::refused` rewinds the mark so the engine re-offers a rebased chunk.
+
+Two consequences follow for anyone writing a second client:
+
+- the browser must not treat `collabNextChunk()` as idempotent or cheap to discard;
+- a `Join` is the exception — it is rebuilt per connection from `collabState.revision`, so a
+  join whose write failed must **not** be held, or the next connection sends two.
+
+The reader-facing state is three values with a sentence each (`collab.connected`,
+`collab.reconnecting`, `collab.stopped`) plus the chrome-only `session.connection-lost` this
+ADR's previous section specifies, and the backoff is full jitter per AWS's "Exponential Backoff
+And Jitter", guarded as a doubling ratio rather than against a clock (`107` §4). Twenty-one
+mutations were run across the two new guard files and every one reddened its guard; two guards
+had to be rewritten first, because the mutation exposed the guard rather than the code — one
+asserted a join ordering a queue-everything implementation also satisfies, and one drove only
+the phases whichever of two redundant gates happened to check first. The second of those is now
+**one** gate in `connect`, for the reason `SKILL` §8 gives about two mechanisms for one rule: a
+gate split in two is a gate whose halves cannot both be driven red.

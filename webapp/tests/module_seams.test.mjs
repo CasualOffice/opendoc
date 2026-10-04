@@ -391,6 +391,15 @@ const MAIN_JS_LINE_CEILING = 16178;
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
  *  them that way is that adding a `document.` to one fails here. */
 const PURE_MODULES = [
+  // The browser's end of a shared session (ADR-063). Its socket opener, its
+  // timers and its randomness are all injected, which is what lets a dropped
+  // connection, an exhausted retry budget, a replayed outbound queue and the
+  // whole backoff curve be driven in node. Purity is load-bearing twice here:
+  // a module that reached for `WebSocket` could not be handed a host's own
+  // transport, and a backoff only a stopwatch can observe is a backoff nothing
+  // checks — which is `docs/107` §4's rule about counts rather than clocks,
+  // one layer out. The DOM half is `main.js`'s status line.
+  "collab_transport.mjs",
   // Holds the vertical goal column and nothing else: no DOM and no engine, so
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",

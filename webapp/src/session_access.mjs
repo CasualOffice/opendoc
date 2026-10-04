@@ -159,6 +159,22 @@ export const COLLABORATION_REFUSAL_KEYS = Object.freeze({
  *  translated like any other. */
 export const GRANT_UNREADABLE = "session.grant-unreadable";
 
+/** The code a connection the transport lost reports.
+ *
+ *  Not an engine code either, and for a sharper reason than
+ *  [`GRANT_UNREADABLE`]'s: an EVICTION is a failed write, so by the time the
+ *  relay has decided to drop a participant there is no socket left to send a
+ *  refusal down. `protocol::Refusal` therefore has no variant for it and
+ *  `PROTOCOL_VERSION` was not bumped for one — `docs/20` is pinned to that enum
+ *  in both directions, and a code the wire can never carry does not belong in
+ *  it. From a client an eviction is indistinguishable from a cable, so this one
+ *  code covers both and the sentence says only what is known.
+ *
+ *  It is in this table because it reaches the reader by the same route as every
+ *  other refusal and has to be translated like one. `collab_transport.mjs` is
+ *  the only thing that raises it. */
+export const CONNECTION_LOST = "session.connection-lost";
+
 /** Every refusal code the chrome can be asked to explain, in one table.
  *
  *  Derived from the three above rather than listed a fourth time. */
@@ -167,6 +183,7 @@ export const REFUSAL_KEYS = Object.freeze({
   ...PROTECTION_REFUSAL_KEYS,
   ...COLLABORATION_REFUSAL_KEYS,
   [GRANT_UNREADABLE]: "session.grantUnreadable",
+  [CONNECTION_LOST]: "session.connectionLost",
 });
 
 /**
@@ -299,6 +316,59 @@ function parseParticipant(value) {
   if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+/**
+ * The grant inputs narrowed by the capability list that arrived ON THE WIRE.
+ *
+ * A `Welcome` or a `Resumed` carries what the relay decided, and that is the
+ * moment the URL grant stops being the source of truth (`143` §10: a resume
+ * REPLACES the grant, so a revocation cannot be undone by reconnecting). The
+ * engine already applies it the safe way — `adoptParticipantCapabilities`
+ * intersects — and this is the chrome's half of the same rule, so a control is
+ * disabled for exactly the reason a submission would be refused.
+ *
+ * NARROWING ONLY, in both directions it could fail:
+ *
+ *   * a name the wire sent that this participant does not hold is dropped, so a
+ *     relay (or anything pretending to be one) cannot widen what the chrome
+ *     offers;
+ *   * a name this build does not know is passed STRAIGHT THROUGH to
+ *     [`participantGrant`], which fails closed on it to a viewer with
+ *     [`GRANT_UNREADABLE`]. Filtering it out here would leave the two sides
+ *     disagreeing, because the engine refuses the whole call.
+ *
+ * A STANDALONE grant is the one case where the wire list is taken whole, and
+ * that is not an exception: a document with no room holds everything, like
+ * `Capabilities::local`, so intersecting with it is the identity.
+ *
+ * Returns the `{granted, participant}` shape [`sessionAccess`] takes rather than
+ * a mutated grant, because the object it returns is frozen and a seam that can
+ * be re-derived cannot drift from one that was patched. The participant number
+ * is the RELAY's — it is what partitions this replica's minting (`152` §4.2) —
+ * and falls back to the one already held when the wire did not say.
+ *
+ * Complexity: O(names).
+ *
+ * @param {{shared: boolean, names: readonly string[], participant: number|null}} grant
+ * @param {readonly string[]|null|undefined} wire the `capabilities` field of a
+ *        `welcome` or `resumed` outcome
+ * @param {number|null} [participant] the `participant` field of the same outcome
+ * @returns {{granted: string[]|null, participant: number|null}}
+ */
+export function narrowedToWire(grant, wire, participant = null) {
+  const held = grant?.shared ? (grant.names ?? []) : null;
+  const number = parseParticipant(participant) ?? grant?.participant ?? null;
+  if (!Array.isArray(wire)) {
+    return { granted: held === null ? null : [...held], participant: number };
+  }
+  const arrived = wire.map((entry) => String(entry).trim()).filter((entry) => entry !== "");
+  const unknown = arrived.some((entry) => !PARTICIPANT_CAPABILITIES.includes(entry));
+  if (unknown) return { granted: arrived, participant: number };
+  return {
+    granted: held === null ? arrived : arrived.filter((entry) => held.includes(entry)),
+    participant: number,
+  };
 }
 
 /**

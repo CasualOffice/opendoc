@@ -162,6 +162,7 @@ PowerPoint
 Pre
 ProseMirror
 README
+RFC
 RGB
 RGBA
 RSS
@@ -266,6 +267,7 @@ autosave
 autoshape
 backend
 backends
+backoff
 backpressure
 basedOn
 bbox

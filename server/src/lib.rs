@@ -44,13 +44,16 @@ pub mod fanout;
 pub mod journal;
 pub mod relay;
 pub mod room;
+pub mod serve;
 pub mod transport;
+pub mod websocket;
 
 pub use access::{Access, GrantRefusal, GrantVerifier};
 pub use fanout::Participants;
 pub use journal::{Journal, JournalError, Recovered};
 pub use relay::{Handled, Relay};
 pub use room::{Room, RoomError};
+pub use serve::{Notice, accept_loop, participant};
 
 #[cfg(test)]
 mod policy_tests;

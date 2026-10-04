@@ -224,7 +224,7 @@ test("the URL is the one configuration channel, read in one place", () => {
     location: {
       search:
         "?mode=readonly&can=-print&chrome=-find&autosave=1&prefs=%7B%22spellcheck%22%3Afalse%7D" +
-        "&granted=comment,review&participant=4",
+        "&granted=comment,review&participant=4&room=wss%3A%2F%2Frelay.example%2Fdoc%2F1",
     },
     self: 1,
     top: 2,
@@ -244,14 +244,21 @@ test("the URL is the one configuration channel, read in one place", () => {
     // how a host configures this editor.
     granted: "comment,review",
     participant: "4",
+    // The room's endpoint, verbatim: this function reads and does not decide.
+    // `collab_transport.mjs`'s `roomUrl` refuses anything that is not ws:/wss:.
+    room: "wss://relay.example/doc/1",
     framed: true,
   });
   // And absent on a page nobody shared: a document opened from a file has no
   // room, so the two must come back `null` rather than as an empty grant — which
   // is the difference between "standalone" and "a participant granted nothing".
   assert.deepEqual(
-    [hostConfig({ location: { search: "" } }).granted, hostConfig({ location: { search: "" } }).participant],
-    [null, null],
+    [
+      hostConfig({ location: { search: "" } }).granted,
+      hostConfig({ location: { search: "" } }).participant,
+      hostConfig({ location: { search: "" } }).room,
+    ],
+    [null, null, null],
   );
   assert.deepEqual([...hostRegions(view)].sort(), regions({ mode: "readonly", framed: true, withhold: "-find" }));
   // A cross-origin parent makes `self !== top` throw in some engines; a throw means

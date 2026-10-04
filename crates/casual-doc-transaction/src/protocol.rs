@@ -336,7 +336,18 @@ pub struct Join {
     /// rather than inferred from a missing key.
     #[serde(default)]
     pub grant: Option<GrantToken>,
-    /// A key from a previous connection, when this is a reconnect.
+    /// The key this client will be recognised by, and the position it has reached.
+    ///
+    /// **Presented on every join, including the first**, and that is not a precaution: a key is
+    /// recorded only by the join that presented it, so a client which withheld it on its first
+    /// connection cannot be recognised on its second — it is handed a fresh
+    /// [`ServerMessage::Welcome`] and a new [`ClientId`], and whatever it had not had
+    /// acknowledged is gone with no refusal to name the loss.
+    ///
+    /// This used to read "a key from a previous connection, when this is a reconnect", which is
+    /// how a correct-looking client ends up unable to resume. On a first join the key is simply
+    /// unknown, so [`Resume::revision`] is ignored and the answer is a `Welcome` that registers
+    /// it; `None` is for a client that does not intend to survive a reconnect at all.
     pub resume: Option<Resume>,
 }
 

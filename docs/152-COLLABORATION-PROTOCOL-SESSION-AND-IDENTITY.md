@@ -19,6 +19,14 @@ and why, and §3 records the one place its answer is wrong for us.
 binary, presence and cursors, collaborative undo, and any change to `casual-doc-wasm`. §9
 says why each is out and what it is waiting for.
 
+> **All but two of those exclusions have since been built, and §9's table carries each
+> one's date rather than this sentence.** The codec is ADR-057, the relay binary and its
+> durability ADR-058, presence §2b, the `casual-doc-wasm` change §4.4, and the chrome
+> `109` OO-026. The **transport** — the one thing this document never listed, because it
+> was `107` 6.6's — is ADR-063, and `casual-doc-wasm/src/collab.rs` is now the session
+> facade the browser drives. What is still out is **collaborative undo** and **per-user
+> cursors**, the second blocked on `107` P-4 as §2b says.
+
 **Two modes, not one mode with an optional extra.** §2a records the owner's decision of
 2026-10-01: standalone editing needs no server and never will, and a **shared** document joins
 a room from its first open even with one participant — "one doc, one room". Wherever
@@ -60,11 +68,31 @@ reading the sibling is what showed it: the driver needs the log, the document an
 in one place, and splitting the session from the driver means splitting one mechanism across
 two crates so that neither is complete. The sibling has one crate and no tension. So do we.
 
-The relay, when it exists, is a workspace member under `server/`, and **nothing under
-`crates/` may depend on it**. That is the sibling's CI rule and it is the structural half of
-"no mandatory server" — the other half being that `casual-doc-wasm` does not reach these
-modules at all, which `the_live_editor_has_no_collaboration_dependency` now fails the build
-over.
+The relay is a workspace member under `server/` — `opendoc-relay`, built since ADR-058 — and
+**nothing under `crates/` may depend on it**. That is the sibling's CI rule and it is the structural half of
+"no mandatory server" — the other half being that the live editor's reach into these modules
+is bounded, which `the_live_editor_has_no_collaboration_dependency` fails the build over.
+
+> **Narrowed 2026-10-04 (ADR-063), and the sentence above used to be stronger.** It read
+> "`casual-doc-wasm` does not reach these modules **at all**", and the guard asserted exactly
+> that. ADR-063's division makes it false by design: the browser owns the socket and the
+> *engine* owns the session, so `casual-doc-wasm/src/collab.rs` is the session facade the
+> browser's transport drives and it names `ClientSession`, the codec and the protocol. The
+> guard failed, correctly, on the lane that landed the facade.
+>
+> What replaced it is a **boundary rather than a count**, because the old wording was pinned
+> to the circumstance and the guarantee is that a *lone editor executes none of it*: the
+> collaboration surface of the live editor is **exactly one module**. `collab.rs` may name the
+> machinery, every other file in the crate may not, and `lib.rs` is admitted one line — the
+> `session: Option<ClientSession>` field, by exact text and counted once, because the field
+> has to sit beside the document and the log the facade borrows. A second mention anywhere in
+> those 26,000 lines offends, and so does an exception naming a module that is not there.
+>
+> That is deliberately **not** a re-export or a type alias in `collab.rs`. Either would let any
+> file reach the same types while the scan reported clean, which is the shape the guard's own
+> `ClientId` note already warns about: a guard that lies. The standalone guarantee itself is
+> structural — `session` is `None` after `open_document_bounded`, and every `collab_*` entry
+> point needs a `Welcome` to fill it (§2a mode 1).
 
 ---
 
@@ -240,11 +268,18 @@ edits changed.
 
 ### Still owed by the editor chrome
 
-`doc.adoptParticipantIdentity(welcome.client)` on joining — the one call Phase 6 needs from
-`webapp/`, and under §2a it is now on the **first** open of a shared document rather than when a
-second participant arrives. A roster with nothing rendering it is built and unreachable, which
-is the pattern `SKILL` §9.4 names; this is reported with every increment of this lane until the
-chrome lands.
+~~`doc.adoptParticipantIdentity(welcome.client)` on joining~~ — **it has a caller, 2026-10-04.**
+`casual-doc-wasm`'s `collab` module calls it from `collab_adopt`, on the `Welcome` and on every
+`Resumed`, identity before capabilities so the minting space is partitioned before the first
+edit the participant intends to share (§4.2). Under §2a that is now the **first** open of a
+shared document rather than the arrival of a second participant.
+
+**What is still owed is one layer further out, and it is the same pattern rather than a new
+one.** Nothing in `webapp/src/main.js` constructs the transport, so the session facade and
+`webapp/src/collab_transport.mjs` are both built and not yet reachable from the product —
+`SKILL` §9.4. The ROSTER is in the same position and for the same reason. Both are carried by
+`109` RM-16, and this is reported with every increment of this lane until the chrome lands,
+because a capability recorded as built and not reachable is how this row came to exist.
 
 ## 2c. Room occupancy and back-pressure — decided 2026-10-04
 
@@ -927,7 +962,7 @@ construction rather than by promise. The op set derives `serde` — one schema d
 | ~~**The host-signed grant**~~ | **Built 2026-10-02 — ADR-060.** `Join.grant`, `capabilities` on `Welcome`/`Resumed`, `casual_doc_edit::access` as the engine's enforcement point, and `server::access` as the verification seam. **No signature profile** is chosen; §10 Q4 says why that is a decision rather than an omission. `Refusal::{NotAuthorised, ReadOnlyAccess}` are now emitted, which is the pair §7 used as its example of described-but-unreachable wire surface. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
 | ~~**Any `casual-doc-wasm` change**~~ | **Done 2026-10-01** (§4.4). The editor mints through the model's `IdSpace`, not through the collaboration modules, so `the_live_editor_has_no_collaboration_dependency` still holds unchanged — which is the reason the partition was put in `casual-doc-model` rather than in `wire`. |
-| ~~**Any chrome for the grant**~~ | **Built 2026-10-04 — `109` OO-026.** This row existed because the layer above was out of scope three increments running, and the result was measurable rather than arguable: `adoptParticipantCapabilities`, `participantCapabilities` and `adoptParticipantIdentity` each appeared **exactly once in the whole tree**, at their own definition, with no caller in `webapp/src`; none of `AccessRefusal`'s five `session.*` codes was routed anywhere in the chrome, nor `ODC-7010`; and `review.restrictEditing` was declared `requires: "doc"` with no reference to `manageProtection`. `webapp/src/session_access.mjs` is the chrome half: the grant is adopted into the engine per document (identity first, then capabilities), **one table** keys both the sentence a disabled control carries and the sentence a refusal produces so the two cannot drift, and `decide()` returns `{allowed, code, key}` rather than a boolean — deliberately unlike `ObjectCapabilities`, whose bare booleans are how an inline-picture gesture shipped dead. **Two engine defects fell out of building the caller**, which is the argument for building callers: the facade's capability names knew nothing of `Capabilities::review`, in **both** directions, so a verified `Capabilities::reviewer()` grant was an error on arrival and could never be reported to a chrome. **Still waiting on the transport:** with no `Welcome` frame to carry it, the grant arrives from the host on the URL. That is safe by construction rather than by trust — `adopt_participant_capabilities` intersects, so a value from the client side can only ever *narrow* — and the relay remains the authority, which the module says out loud. |
+| ~~**Any chrome for the grant**~~ | **Built 2026-10-04 — `109` OO-026.** This row existed because the layer above was out of scope three increments running, and the result was measurable rather than arguable: `adoptParticipantCapabilities`, `participantCapabilities` and `adoptParticipantIdentity` each appeared **exactly once in the whole tree**, at their own definition, with no caller in `webapp/src`; none of `AccessRefusal`'s five `session.*` codes was routed anywhere in the chrome, nor `ODC-7010`; and `review.restrictEditing` was declared `requires: "doc"` with no reference to `manageProtection`. `webapp/src/session_access.mjs` is the chrome half: the grant is adopted into the engine per document (identity first, then capabilities), **one table** keys both the sentence a disabled control carries and the sentence a refusal produces so the two cannot drift, and `decide()` returns `{allowed, code, key}` rather than a boolean — deliberately unlike `ObjectCapabilities`, whose bare booleans are how an inline-picture gesture shipped dead. **Two engine defects fell out of building the caller**, which is the argument for building callers: the facade's capability names knew nothing of `Capabilities::review`, in **both** directions, so a verified `Capabilities::reviewer()` grant was an error on arrival and could never be reported to a chrome. ~~**Still waiting on the transport:** with no `Welcome` frame to carry it, the grant arrives from the host on the URL.~~ **The `Welcome` frame now carries it, 2026-10-04 (ADR-063).** The URL remains the channel for a document opened without a room, and the two compose by *intersection* in both halves: `adopt_participant_capabilities` intersects in the engine, and `session_access.mjs`'s `narrowedToWire` intersects in the chrome, so a value arriving from either side can only ever *narrow*. A relay that widened a grant mid-session is therefore not obeyed by this replica, which is the safe direction; the relay keeps its own copy and judges every submission against it, so a chrome defeated from devtools still cannot write above its level. |
 
 ---
 

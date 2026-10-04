@@ -10,6 +10,16 @@
 relay, and any new engine operation. This lane makes transform *possible*; it does not write
 it. Adding an operation stays forbidden by ADR-030 I2.
 
+> **The network exists now, and §4's choke point is what made it safe to add.** `150` writes
+> the transform, `152` / ADR-047 the sessions, ADR-063 the transport. The rule this document
+> establishes is load-bearing in one more place than it was: `casual-doc-wasm/src/collab.rs`
+> is a **second** file that can reach the document, and it mutates only through
+> `ClientSession::receive`, which goes down `RevisionLog::apply` inside the engine crate —
+> the same envelope, one layer further in.
+> `the_collab_facade_applies_nothing_outside_the_session` holds that for the new file the way
+> `every_document_mutation_is_a_transaction` holds it for `lib.rs`. §3's `horizon()` rule
+> (§4.2) is the invariant the browser's outbound queue depends on.
+
 ---
 
 ## 1. The established pattern, named before any code

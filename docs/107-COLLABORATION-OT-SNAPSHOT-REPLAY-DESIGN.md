@@ -500,8 +500,8 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 | **6.3** | T1 transform + tie-break + TP1 property tests + the §4 benchmarks. **No network yet** | Yes — offline compare/combine becomes possible. **Transform and TP1 landed 2026-09-30** (`150`, ADR-045); the §4 benchmarks remain |
 | **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set. **The rebase and the `Tombstoned` outcome landed with 6.3**; what remains is the *reporting* — routing a tombstone into the disposition taxonomy (`35`), which has no caller until 6.6 |
 | **6.5** | Compare and combine documents | **Yes** — closes OO-007 |
-| **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction` and all with no transport. What remains is the byte codec, the relay binary, presence, the host-signed grant, and durability — plus the one prerequisite `152` §4.4 names, which is a live editor that mints in a session-supplied identity space instead of a document-derived one |
-| **6.7** | Roles and permission enforcement, against the Phase 4 permissions object. **Built 2026-10-01/02.** The document's own `w:documentProtection` is enforced at the operation by projection equality (ADR-052); `Operation::SetDocumentProtection` makes it changeable rather than write-once-from-a-file (ADR-059); and the **session's** access level is a host-signed grant — host signs, boundary verifies, engine enforces (ADR-060), which closes `152` §10 Q4 and Q5. **Still open:** no signature profile is chosen (`143` §16 Q5, a supply-chain decision), `review` has no exact enforcement point so a reviewer is granted `editor()` — wider than the role — and the chrome owes four refusal-code routings plus a self-disabling Review ▸ Restrict Editing | Closes OO-018 |
+| **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction`. **The clause that used to end that sentence — "and all with no transport" — is no longer true, and neither is the list that followed it.** The byte codec is ADR-057 (`ODC1`), the relay binary and its durability ADR-058, presence `152` §2b, the host-signed grant ADR-060, and the §4.4 prerequisite closed 2026-10-01. The transport is **ADR-063**: the relay speaks RFC 6455 as a framing adaptor over its own `std` thread-per-connection loop, and the browser's end is `casual-doc-wasm/src/collab.rs` (the session) plus `webapp/src/collab_transport.mjs` (the socket). `two_clients_through_one_relay_converge_on_one_document` is the guard that two people can edit one document. **What remains is per-user cursors** (blocked on P-4, §2.1) **and reaching the transport from the editor chrome** — `webapp/src/main.js` has no call site yet, which is `SKILL` §9.4 one more time and is named in `109` RM-16 rather than implied |
+| **6.7** | Roles and permission enforcement, against the Phase 4 permissions object. **Built 2026-10-01/02.** The document's own `w:documentProtection` is enforced at the operation by projection equality (ADR-052); `Operation::SetDocumentProtection` makes it changeable rather than write-once-from-a-file (ADR-059); and the **session's** access level is a host-signed grant — host signs, boundary verifies, engine enforces (ADR-060), which closes `152` §10 Q4 and Q5. **Still open:** no signature profile is chosen (`143` §16 Q5, a supply-chain decision), `review` has no exact enforcement point so a reviewer is granted `editor()` — wider than the role — and `review` has no exact enforcement point. **The chrome's four refusal-code routings and the self-disabling Review ▸ Restrict Editing were paid by `webapp/src/session_access.mjs` (OO-026);** that module now routes the whole `ODC-7xxx` family, both chrome-only codes and the document's own protection refusals | Closes OO-018 |
 
 Note 6.0–6.5 deliver four tracker rows and **no** networking. If collaboration were cancelled
 tomorrow, everything through 6.5 would still be the right work.
@@ -553,12 +553,22 @@ Recorded rather than hidden, per AGENTS.md.
    the receiver with `ODC-7008` whenever the discipline was not followed, which is what today's
    live editor does: it derives its namespace from the *document*, so two replicas mint
    identical ids for different nodes from the first edit. `152` §4.4 owns the fix.
-7. **Relay protocol and transport.** The *protocol* is now specified — `152` / ADR-047,
-   `casual-doc-transaction::{protocol, session, wire}`. The **transport and the byte codec are
-   still open**, deliberately: `casual-doc-edit` has no `serde` and the op-set lane is about to
-   move the operation shapes, so freezing an encoding now would freeze a compatibility surface
-   over shapes that are about to change. ONLYOFFICE uses socket.io; that remains an
-   implementation detail, not a constraint on us.
+7. **Relay protocol and transport.** ~~Still open.~~ **Closed 2026-10-04, both halves.** The
+   *protocol* was specified first — `152` / ADR-047,
+   `casual-doc-transaction::{protocol, session, wire}` — and this question deliberately held the
+   encoding open behind it, because `casual-doc-edit` had no `serde` and the op-set lane was
+   about to move the operation shapes. Both preconditions cleared, so:
+
+   - the **byte codec** is `ODC1`, ADR-057, in `casual_doc_transaction::codec`;
+   - the **transport** is WebSocket, ADR-063, and the decision worth recording is that it is
+     implemented as a *framing adaptor* over `std::io` rather than as a library with an async
+     runtime behind it. `Unframed<R>: Read` and `Framed<W>: Write`, so `opendoc-relay` stays a
+     workspace member and stays in `cargo check --target wasm32-unknown-unknown` unmodified. No
+     `tokio` entered the tree and there is no second lockfile.
+
+   ONLYOFFICE uses socket.io, and that remains an implementation detail rather than a
+   constraint — but note the measured fact `SKILL` §1 carries: their co-editing is not OT and
+   not a CRDT, so the transport was never the interesting difference.
 
 ---
 
