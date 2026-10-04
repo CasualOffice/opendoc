@@ -619,7 +619,17 @@ test("every Charts grade is derived from the painter, the writer and the host su
       "none",
       'the engine publishes a chart as an ObjectBox with kind: "chart" and ' +
         "embedded-object capabilities, so it selects, resizes and deletes " +
-        "through the generic object surface — \"none\" understates that",
+        'through the generic object surface — "none" understates that',
+    );
+  } else {
+    // The other direction, so losing the capability cannot quietly relax the
+    // guard: with no chart ObjectBox and no host insert path there is nothing
+    // left to author, and the grade has to say so.
+    assert.equal(
+      charts.editable,
+      "none",
+      "the engine no longer publishes a chart as a selectable object, so " +
+        `"${charts.editable}" claims editing that nothing provides`,
     );
   }
 });
