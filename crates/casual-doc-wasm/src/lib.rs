@@ -40462,6 +40462,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            session: None,
         }
     }
 
