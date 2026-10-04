@@ -232,6 +232,44 @@ for (const panel of PANELS) {
     // 3. Symmetric, as the dialog heads are: the close button's side was 8px
     //    where the title's side was 14px, which is the same disagreement read
     //    from the other end.
+    // 3b. And so does every BAND between them. A panel is not only a head and a
+    //     body: Version history has a filter row under its head and a footer
+    //     under its body, and the glyph panels have a footer too. Those were
+    //     12px while the head and body were 14 and 6, so the "flow bottom" half
+    //     of the report was a footer whose text started 4px inside the body's.
+    //     Derived from the DOM rather than listed, so a band added later is
+    //     covered the day it is added.
+    const bands = await page.evaluate((selector) => {
+      const root = document.querySelector(selector);
+      const shell = root.querySelector(".glyph-panel-content") ?? root;
+      const out = [];
+      for (const el of shell.children) {
+        const style = getComputedStyle(el);
+        if (style.display === "none" || el.getClientRects().length === 0) continue;
+        const pad = parseFloat(style.paddingLeft);
+        // A band is a child that pays an inset of its own. A child with none is
+        // a full-bleed element (a rule, a canvas) and has no edge to share.
+        if (!(pad > 0)) continue;
+        out.push({
+          what: el.className || el.tagName.toLowerCase(),
+          content:
+            Math.round(
+              (el.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + pad) * 100,
+            ) / 100,
+          padding: `${style.paddingLeft}/${style.paddingRight}`,
+        });
+      }
+      return out;
+    }, selector);
+    expect(bands.length, `${panel.name}: no band measured, so this proves nothing`).toBeGreaterThan(
+      1,
+    );
+    expect(
+      bands.filter((b) => b.content !== m.bodyContent),
+      `${panel.name}: these bands of the shell do not start where the body does ` +
+        `(${m.bodyContent}) — one shell, one inset: ${JSON.stringify(bands)}`,
+    ).toEqual([]);
+
     expect(m.headPaddingRight, `${panel.name}: the head's inset is not symmetric`).toBe(
       m.headPaddingLeft,
     );
