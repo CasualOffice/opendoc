@@ -149,11 +149,25 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // dropdown form fields cannot be operated at all.
   assert.equal(by["Fields"].editable, "partial");
   assert.notEqual(by["Fields"].editable, "full");
-  // Only the `forms` protection mode is enforced. Claiming "full" editable
-  // here would say `readOnly`, `comments` and `trackedChanges` are enforced
-  // too, and they are not - nor is any password checked.
+  // All four `w:edit` levels are enforced since ADR-052 - `forms` at the
+  // facade's mutation choke point, `readOnly`/`comments`/`trackedChanges` at
+  // the operation in `casual-doc-edit`. The pin used to say the other three
+  // were NOT enforced, which had been false since ADR-052 landed: a guard can
+  // pin a lie (SKILL §9 rule 6), so this one now states what keeps the cell off
+  // "full" - `w:formatting` style locking is not enforced, and a
+  // `trackedChanges`-protected document does not force Suggesting on open.
   assert.equal(by["Document protection & forms"].editable, "partial");
   assert.equal(by["Document protection & forms"].rendered, "none");
+  // Round-trip is NOT full, and it never was: the sixteen `AG_Password` /
+  // `AG_TransitionalPassword` attributes on `w:documentProtection` and
+  // `w:writeProtection` have no home in the model, and `word/settings.xml` is a
+  // consumed part the semantic writer regenerates - so a password-protected
+  // document saves with the restriction intact and the password gone. The
+  // importer now REPORTS every one of those attributes by name
+  // (`documentProtection/@hashValue`, ...) so the loss is not silent, which is
+  // what makes "partial" the honest grade rather than "full".
+  assert.equal(by["Document protection & forms"].roundtrips, "partial");
+  assert.notEqual(by["Document protection & forms"].roundtrips, "full");
   // Math is fully typed as of Layer 1 (all 20 OMML math elements mapped or
   // raw-retained), but rendering is a bounded subset and it stays read-only.
   assert.equal(by["Math (OMML)"].modeled, "full");

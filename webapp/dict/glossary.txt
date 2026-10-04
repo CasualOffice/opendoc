@@ -611,6 +611,7 @@ vMerge
 val
 validator
 var
+verifier
 vertAlign
 viewport
 virtualised
