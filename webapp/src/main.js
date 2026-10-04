@@ -146,7 +146,9 @@ import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs"
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
 import { openRoom, resumeKey } from "./collab_transport.mjs";
+import { insertChartAtCaret } from "./chart_insert.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
+import { smallestContaining } from "./review_anchor.mjs";
 import { matchWithinScope } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
