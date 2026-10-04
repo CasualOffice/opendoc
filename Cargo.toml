@@ -18,6 +18,8 @@ members = [
     "crates/casual-doc-selection",
     "crates/casual-doc-transaction",
     "crates/casual-doc-wasm",
+    "crates/casual-pres-import",
+    "crates/casual-pres-layout",
     "crates/casual-pres-model",
     "server",
     "tools/opendoc-benchmark",
@@ -54,6 +56,8 @@ casual-doc-sdk = { path = "crates/casual-doc-sdk", version = "=0.0.1" }
 casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1" }
 casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
 casual-doc-wasm = { path = "crates/casual-doc-wasm", version = "=0.0.1" }
+casual-pres-import = { path = "crates/casual-pres-import", version = "=0.0.1" }
+casual-pres-layout = { path = "crates/casual-pres-layout", version = "=0.0.1" }
 casual-pres-model = { path = "crates/casual-pres-model", version = "=0.0.1" }
 quick-xml = { version = "0.41.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
