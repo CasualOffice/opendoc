@@ -1249,6 +1249,7 @@ fn page_border_edge() -> BorderEdge {
             b: 120,
         }),
         space_points: Some(24),
+        theme_color: None,
     }
 }
 

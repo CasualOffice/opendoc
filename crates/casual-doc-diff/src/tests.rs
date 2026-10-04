@@ -417,6 +417,7 @@ fn the_field_comparator_names_a_property_this_crate_never_spells_out() {
         size_eighth_points: Some(size),
         color: None,
         space_points: None,
+        theme_color: None,
     };
     let mut left = ParagraphProperties::default();
     let mut right = ParagraphProperties::default();

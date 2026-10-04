@@ -599,6 +599,7 @@ pub fn caption_style(based_on: Option<StyleId>) -> Style {
         table_row: None,
         table_cell: None,
         conditional: Vec::new(),
+        custom_style: false,
     }
 }
 

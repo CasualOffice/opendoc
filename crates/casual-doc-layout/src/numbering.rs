@@ -1018,6 +1018,7 @@ mod tests {
             table_row: None,
             table_cell: None,
             conditional: Vec::new(),
+            custom_style: false,
         }
     }
 

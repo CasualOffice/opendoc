@@ -44,7 +44,7 @@
 //! measure), and dragging a float across the column centre made the surrounding
 //! text **jump from indented-left to indented-right** on a one-twip crossing.
 
-use casual_doc_model::v1::DrawingAnchor;
+use casual_doc_model::v1::{DrawingAnchor, WrapSide};
 
 use crate::text::InlineFloatSide;
 use crate::units::Twip;
@@ -55,13 +55,6 @@ use crate::units::Twip;
 /// [`Self::BothSides`] is the default because it is Word's: when `wrapText` is
 /// absent the float wraps on both sides.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "`Left`/`Right`/`Largest` are constructed by `wrap_sides` as soon as \
-              `DrawingAnchor` carries `wrapText`; the arithmetic that consumes them \
-              is complete and guarded by this module's own tests, so they are kept \
-              here rather than added later alongside a second edit to the rule."
-)]
 pub(crate) enum WrapSides {
     /// `bothSides` — text in both gaps. The engine approximates this as
     /// [`Self::Largest`]; see the module docs.
@@ -86,20 +79,34 @@ pub(crate) struct SideExclusion {
     pub(crate) width: Twip,
 }
 
+impl From<WrapSide> for WrapSides {
+    fn from(side: WrapSide) -> Self {
+        match side {
+            WrapSide::BothSides => Self::BothSides,
+            WrapSide::Left => Self::Left,
+            WrapSide::Right => Self::Right,
+            WrapSide::Largest => Self::Largest,
+        }
+    }
+}
+
 /// The authored `w:wrap@wrapText` of one anchor.
 ///
-/// **Temporary seam, deliberately one function wide.** `DrawingAnchor` does not
-/// carry `wrapText` yet — the model, import and export half is landing
-/// separately — so today every anchor reports the documented fallback,
-/// [`WrapSides::BothSides`], which is Word's own default when the attribute is
-/// absent. When the field lands, this body becomes the one-line map
-/// `anchor.wrap_text.map_or(WrapSides::BothSides, WrapSides::from)` and nothing
-/// else in the engine changes, because every exclusion already asks this
-/// function rather than guessing from geometry.
+/// The seam this module was built around, now joined up. It stayed one function
+/// wide while `DrawingAnchor` did not carry `wrapText`, and in that state it
+/// **ignored its argument** and returned [`WrapSides::BothSides`] for every
+/// float — so the authored value was discarded at layout for every float in
+/// every document, including the DrawingML path where the model, import and
+/// export halves had already landed (#738, #739). The exclusion arithmetic in
+/// [`band_exclusion`] was complete and guarded the whole time; it was simply
+/// never being told what the author asked for.
+///
+/// [`DrawingAnchor::wrap_side`] is total — it applies Word's `bothSides` default
+/// for an absent attribute — so there is no fallback left to decide here.
 ///
 /// O(1).
-pub(crate) fn wrap_sides(_anchor: &DrawingAnchor) -> WrapSides {
-    WrapSides::BothSides
+pub(crate) fn wrap_sides(anchor: &DrawingAnchor) -> WrapSides {
+    anchor.wrap_side().into()
 }
 
 /// Resolves one float's wrap band against one measure into the line exclusion

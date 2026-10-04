@@ -430,6 +430,7 @@ fn suppress_line_numbers_is_honoured_when_it_comes_from_a_style() {
             table_row: None,
             table_cell: None,
             conditional: Vec::new(),
+            custom_style: false,
         },
     );
     let styled = ParagraphProperties {

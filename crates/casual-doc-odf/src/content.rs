@@ -3188,6 +3188,7 @@ fn parse_fo_border(value: &str) -> Option<BorderEdge> {
         size_eighth_points: width,
         color,
         space_points: None,
+        theme_color: None,
     })
 }
 
@@ -10216,6 +10217,7 @@ fn build_document(
                 table_row: None,
                 table_cell: None,
                 conditional: Vec::new(),
+                custom_style: false,
             },
         );
         style_ids.insert(name.clone(), style_id);
@@ -10257,6 +10259,7 @@ fn build_document(
                 table_row: None,
                 table_cell: None,
                 conditional: Vec::new(),
+                custom_style: false,
             },
         );
         paragraph_style_ids.insert(name.clone(), style_id);

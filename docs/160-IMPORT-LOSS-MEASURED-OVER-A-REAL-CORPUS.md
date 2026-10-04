@@ -145,17 +145,23 @@ edge builders — `styles.rs::border_edge` and `body.rs::build_border_edge`; the
 exists twice — read `@w:val`, `@w:sz`, `@w:color`, `@w:space` and let the theme triple fall
 off the end with no reporter in reach.
 
-Now reported as a `Degraded` attribute finding per attribute, from one shared
-`report_border_theme_color` wired into both builders, charged before each builder's early
-return so an edge rejected for a missing `w:val` still reports the theme reference it
-carried.
+This was first closed by *reporting* it: one shared `report_border_theme_color` wired into
+both builders emitted a `Degraded` attribute finding per attribute. Reported rather than
+modelled deliberately, because widening `BorderEdge::color` to the `Color` type runs
+already use would change a widely-constructed model struct, and honouring a theme colour
+on the page needs a consumer in `casual-doc-layout` — both of which that lane named as
+follow-on work rather than implying them.
 
-**Reported, not modelled, and the reason is recorded rather than implied.** Giving
-`BorderEdge::color` the `Color` type runs already use would change a widely-constructed
-model struct — the breakage shape that took `main` down twice this week — and honouring a
-theme colour on the page needs a consumer in `casual-doc-layout`, which that lane did not
-own. So the silence is closed and the colour is still wrong on the page. That is a
-deliberate half, not an oversight, and it now has a measured frequency behind it.
+**That follow-on work has since landed, and the report is gone with it.** `docs/161`
+models the triple in `BorderEdge::theme_color` beside the sRGB fallback Word writes next to
+it, collapses the two edge builders into one shared `properties::parse_border_edge` — the
+duplication is why the triple had to be dropped twice to be dropped at all — and gives
+`casual-doc-layout` the consumer that paints the resolved slot. Once the value survives,
+reporting it `Degraded` is a false finding of exactly the class this measurement existed to
+remove, so `report_border_theme_color` was deleted. The guard that holds the line,
+`a_border_theme_color_survives_the_import_or_is_reported`, is deliberately written at the
+altitude of *survives or is reported*, which is why it stayed green across both halves
+instead of reddening on the fix.
 
 ## 5. Three recorded gaps, verified
 

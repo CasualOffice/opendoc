@@ -857,6 +857,13 @@ fn finish_window_pages(
     let section = sections.first();
     let plan = &measures.plan;
     let mirror = document.definitions().settings.mirror_margins;
+    // Resolved once for the window, not per page: a themed page border resolves
+    // against the same palette the body runs use.
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(crate::flow::resolve_palette);
     let mut layout = crate::page::PaginatedLayout { pages };
     apply_page_vertical_alignment(&mut layout, sections);
     for page in &mut layout.pages {
@@ -869,6 +876,7 @@ fn finish_window_pages(
             section_page_number,
             page.page_size,
             page.content_area,
+            palette.as_ref(),
         );
     }
     let labels: Vec<String> = (0..layout.pages.len())

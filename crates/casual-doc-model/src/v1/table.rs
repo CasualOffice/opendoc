@@ -168,9 +168,22 @@ pub struct BorderEdge {
     /// Line width in eighth-points (`w:sz`; `0..=1024`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_eighth_points: Option<u32>,
-    /// Line color (`w:color`), explicit sRGB only; `auto`/theme reported.
+    /// Line color (`w:color`), explicit sRGB only; `auto` yields `None`. A theme
+    /// reference lives in [`Self::theme_color`], which takes precedence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<RgbColor>,
+    /// Theme line color (`w:themeColor`, with optional `w:themeTint`/
+    /// `w:themeShade`), a palette slot resolved by the consumer.
+    ///
+    /// Modeled **beside** [`Self::color`] rather than by widening that field,
+    /// for the same reason [`Shading::theme_fill`] is: Word writes the concrete
+    /// `w:color` as a *fallback* next to the theme reference, so the two are not
+    /// alternatives in the source and collapsing them would throw away the
+    /// fallback a consumer without a theme needs. When both are present the
+    /// theme reference wins, because that is what Word repaints when the
+    /// document's theme changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_color: Option<ThemeColor>,
     /// Padding between border and text in points (`w:space`; `0..=31`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space_points: Option<u32>,

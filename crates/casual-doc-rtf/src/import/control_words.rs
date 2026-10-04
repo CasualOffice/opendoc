@@ -1163,6 +1163,7 @@ fn default_border_edge() -> casual_doc_model::v1::BorderEdge {
         size_eighth_points: None,
         color: None,
         space_points: None,
+        theme_color: None,
     }
 }
 

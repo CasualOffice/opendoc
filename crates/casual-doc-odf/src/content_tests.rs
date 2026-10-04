@@ -442,6 +442,7 @@ fn table_cell_borders_round_trip_to_a_fixed_point() {
         size_eighth_points: Some(4), // 0.5pt
         color: Some(RgbColor { r: 0, g: 0, b: 0 }),
         space_points: None,
+        theme_color: None,
     };
     let cell = &mut table.rows[0].cells[0];
     cell.properties.borders.top = Some(edge.clone());
@@ -494,6 +495,7 @@ fn cell_border_with_zero_padding_is_emitted_not_dropped() {
         size_eighth_points: Some(4),
         color: Some(RgbColor { r: 0, g: 0, b: 0 }),
         space_points: Some(0),
+        theme_color: None,
     };
     let cell = &mut table.rows[0].cells[0];
     cell.properties.borders.top = Some(edge.clone());

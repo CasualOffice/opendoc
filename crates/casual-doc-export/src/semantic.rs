@@ -3089,6 +3089,12 @@ fn styles_xml(
         if style.is_default {
             el.push_attribute(("w:default", "1"));
         }
+        // `@w:customStyle` — the author's style rather than an application
+        // built-in. Written only when set, because Word omits it for a built-in
+        // and an explicit `"0"` would be a value where the source had silence.
+        if style.custom_style {
+            el.push_attribute(("w:customStyle", "1"));
+        }
         w.write_event(Event::Start(el)).map_err(pkg)?;
         // Metadata in `CT_Style` order. `w:name` is emitted only when modeled: a
         // style with no captured name re-imports to `None`, so emitting a
@@ -4919,6 +4925,22 @@ fn write_border_edge(
     }
     if let Some(color) = &edge.color {
         el.push_attribute(("w:color", rgb_hex(color).as_str()));
+    }
+    // Theme line colour (`w:themeColor` + optional tint/shade). Written beside the
+    // concrete `w:color` rather than instead of it, because that is how Word writes
+    // the pair: the sRGB is the fallback and the theme reference is what a
+    // theme change repaints. The formatted bytes are bound to `let`s so the
+    // `&str` handed to `push_attribute` outlives the call.
+    if let Some(theme) = &edge.theme_color {
+        el.push_attribute(("w:themeColor", theme_color_token(theme.slot)));
+        let tint = theme.theme_tint.map(|tint| format!("{tint:02X}"));
+        if let Some(tint) = &tint {
+            el.push_attribute(("w:themeTint", tint.as_str()));
+        }
+        let shade = theme.theme_shade.map(|shade| format!("{shade:02X}"));
+        if let Some(shade) = &shade {
+            el.push_attribute(("w:themeShade", shade.as_str()));
+        }
     }
     if let Some(space) = edge.space_points {
         el.push_attribute(("w:space", space.to_string().as_str()));

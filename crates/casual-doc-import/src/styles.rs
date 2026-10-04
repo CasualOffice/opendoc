@@ -24,10 +24,11 @@ use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
-    apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_rgb,
-    parse_shading, parse_table_width, style_kind_from,
+    apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_shading,
+    parse_table_width, style_kind_from,
 };
 // Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::parse_border_edge;
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 
@@ -126,6 +127,7 @@ struct RawStyle {
     style_id: String,
     kind: Option<StyleKind>,
     is_default: bool,
+    custom_style: bool,
     name: Option<String>,
     aliases: Option<String>,
     based_on: Option<String>,
@@ -232,6 +234,7 @@ pub(crate) fn parse(
             Style {
                 kind,
                 is_default: style.is_default,
+                custom_style: style.custom_style,
                 name: style.name,
                 aliases: style.aliases,
                 based_on,
@@ -552,6 +555,18 @@ fn empty_style(element: &BytesStart<'_>) -> RawStyle {
             .as_deref()
             .and_then(style_kind_from),
         is_default: style_default_attr(element),
+        // `@w:customStyle` — the author's style rather than an application
+        // built-in.
+        //
+        // Through [`on_off_attr`], NOT through `is_true` directly: `is_true` is
+        // the CT_OnOff ELEMENT helper, where the element's presence is the
+        // assertion and so `None` means on. An absent ATTRIBUTE asserts nothing
+        // and must be `false`. Writing `is_true(attribute_value(..))` here
+        // marked every built-in style as the author's, and the guard
+        // `a_custom_style_is_marked_custom_in_the_model_and_a_builtin_is_not`
+        // caught it on arrival, which is the one reason that mistake is worth
+        // recording instead of just fixing.
+        custom_style: on_off_attr(element, b"customStyle"),
         name: None,
         aliases: None,
         based_on: None,
@@ -574,7 +589,18 @@ fn empty_style(element: &BytesStart<'_>) -> RawStyle {
 }
 
 fn style_default_attr(element: &BytesStart<'_>) -> bool {
-    attribute_value(element, b"default")
+    on_off_attr(element, b"default")
+}
+
+/// One `ST_OnOff` **attribute** of `element`: absent is `false`, and a present
+/// value is read with the usual `0`/`false`/`off` spellings.
+///
+/// Distinct from [`is_true`], which is for a CT_OnOff ELEMENT, where presence is
+/// itself the assertion and so an absent `@w:val` means on. Handing an absent
+/// attribute to `is_true` therefore reads as `true`, which is how
+/// `@w:customStyle` briefly marked every built-in style as the author's.
+fn on_off_attr(element: &BytesStart<'_>, name: &[u8]) -> bool {
+    attribute_value(element, name)
         .as_deref()
         .map(|value| is_true(Some(value)))
         .unwrap_or(false)
@@ -968,7 +994,7 @@ fn read_run_container(
                 }
                 run.shading = shading;
             }
-            b"bdr" => match border_edge(ctx, &child) {
+            b"bdr" => match border_edge(&child) {
                 Some(edge) => run.border = Some(edge),
                 None => ctx.report(b"bdr"),
             },
@@ -1244,7 +1270,7 @@ fn read_borders(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        let edge = border_edge(ctx, &child);
+        let edge = border_edge(&child);
         let slot = match child.local_name().as_ref() {
             b"top" => Some(&mut borders.top),
             b"bottom" => Some(&mut borders.bottom),
@@ -1376,7 +1402,7 @@ fn read_paragraph_borders(
             _ => None,
         };
         match slot {
-            Some(slot) => match border_edge(ctx, &child) {
+            Some(slot) => match border_edge(&child) {
                 Some(edge) => *slot = Some(edge),
                 None => ctx.report(b"pBdr"),
             },
@@ -1477,28 +1503,12 @@ fn dxa_twips(element: &BytesStart<'_>) -> Option<i32> {
 
 /// Builds a `BorderEdge` from an edge element; `None` when the `w:val` style is
 /// missing/empty/oversized (the caller reports the container).
-fn border_edge(ctx: &mut Ctx<'_>, element: &BytesStart<'_>) -> Option<BorderEdge> {
-    // Charged before the early return, so an edge rejected for a missing `w:val`
-    // still reports the theme reference it carried: the caller reports the
-    // container on `None`, which names the element but not the attribute.
-    crate::properties::report_border_theme_color(ctx.reporter, element);
-    let style =
-        attribute_value(element, b"val").filter(|value| !value.is_empty() && value.len() <= 32)?;
-    let size_eighth_points = attribute_value(element, b"sz")
-        .and_then(|value| value.parse::<u32>().ok())
-        .map(|size| size.min(1024));
-    let color = attribute_value(element, b"color")
-        .filter(|value| value != "auto")
-        .and_then(|value| parse_rgb(&value));
-    let space_points = attribute_value(element, b"space")
-        .and_then(|value| value.parse::<u32>().ok())
-        .map(|space| space.min(31));
-    Some(BorderEdge {
-        style,
-        size_eighth_points,
-        color,
-        space_points,
-    })
+///
+/// A thin alias for the shared [`parse_border_edge`]: this parser had its own
+/// copy of the mapping, which is why `@w:themeColor` was dropped here and in the
+/// body parser independently.
+fn border_edge(element: &BytesStart<'_>) -> Option<BorderEdge> {
+    parse_border_edge(element)
 }
 
 /// Applies a `w:tblLook`: explicit boolean attributes when present, else the

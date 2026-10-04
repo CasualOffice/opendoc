@@ -59,6 +59,7 @@ use crate::properties::{
     parse_shading, parse_table_width, symbol_glyph,
 };
 // Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::parse_border_edge;
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -2755,6 +2756,40 @@ impl BodyParser<'_> {
             // past it, and the nesting survives the round trip.
             b"hyperlink" if self.paragraph_open && !self.run_open => {
                 self.hyperlink_depth += 1;
+                // `@w:history` — "add this link to the viewed-hyperlinks list",
+                // which is what makes a followed link paint with the
+                // `FollowedHyperlink` theme colour instead of `Hyperlink`.
+                //
+                // Reported, not modelled, and the reason is worth stating
+                // because it is not a preference. Adding a field to
+                // `v1::Hyperlink` breaks every struct literal of it (Rust has no
+                // source-compatible way to add one — `SKILL` §5a), and there are
+                // 37 across `casual-doc-edit`, `casual-doc-transaction` and
+                // `casual-doc-wasm`, three crates other lanes own. So the
+                // silence is closed here and the model half waits for a lane
+                // that owns those files.
+                //
+                // This does not reintroduce the report noise HF-174 and the
+                // empty-`w:ind` class are about: `report_attribute` keys a
+                // finding by `(feature, kind)` and counts occurrences, so the 54
+                // occurrences measured across six of the owner's nineteen
+                // documents are ONE entry reading `hyperlink/@history`, not 54.
+                //
+                // Reported on PRESENCE rather than on a non-default value, and
+                // that is a deliberate over-report with the reason recorded: the
+                // `ST_OnOff` default for this attribute is not verified from the
+                // specification here, and every value measured is `"1"`. Since
+                // the writer emits the attribute in neither case, one of the two
+                // values is genuinely lost whichever way the default goes, and
+                // over-reporting by one feature entry is the cheaper error than
+                // dropping it on an unchecked assumption.
+                //
+                // Charged before the target check below, so a hyperlink rejected
+                // for an unresolvable target still reports the attribute it
+                // carried.
+                if attribute_value(element, b"history").is_some() {
+                    self.reporter.report_attribute(b"hyperlink", b"history");
+                }
                 if self.hyperlink_depth == 1 {
                     match self.resolve_hyperlink_target(element) {
                         Some((target, tooltip)) => {
@@ -3574,11 +3609,33 @@ impl BodyParser<'_> {
                     shape.descr = Some(descr);
                 }
             }
-            // The same element on a drawing with no open group child - a
-            // top-level picture's `pic:cNvPr`. Only the scope is needed here;
-            // its `@descr` is taken from `wp:docPr` above it.
+            // The same element on a drawing with no open group child — a
+            // top-level picture's `pic:cNvPr` or a lone shape's `wps:cNvPr`.
+            //
+            // Its `@descr` is normally the SAME alt text `wp:docPr` above it
+            // already supplied, so this is a **fallback**, not a second source:
+            // it is taken only when `wp:docPr` gave nothing. Measured over the
+            // owner's nineteen documents — 64 drawings, five carrying a
+            // non-empty `pic:cNvPr@descr`, and all five carrying an IDENTICAL
+            // `wp:docPr@descr`, with no drawing carrying the picture-level one
+            // alone and none where the two disagree. So the verdict `160` §3.2
+            // gave it ("picture alt text — an accessibility loss") does not hold
+            // on that evidence and is corrected in `docs/161` §3: nothing was
+            // being lost, because the alt text arrived through the other
+            // element.
+            //
+            // The arm exists anyway, and deliberately: a producer that writes
+            // only the picture-level `@descr` is schema-valid, we had no reader
+            // for it, and the cost of the fallback is one condition. `wp:docPr`
+            // precedes `pic:nvPicPr` in `CT_Inline`/`CT_Anchor`, so by the time
+            // this runs the preferred source has already been read — which is
+            // what makes "only when nothing was captured" an ordering-safe test
+            // rather than a race.
             b"cNvPr" if self.drawing_depth > 0 => {
                 self.nvpr_depth = self.nvpr_depth.saturating_add(1);
+                if !self.drawing_descr_captured() {
+                    self.capture_drawing_descr(element);
+                }
             }
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
@@ -6354,30 +6411,12 @@ impl BodyParser<'_> {
 
     /// Builds a `BorderEdge` from an edge element's attributes. Returns `None`
     /// (caller reports) when the required `w:val` style is missing/empty/oversized.
-    fn build_border_edge(&mut self, element: &BytesStart<'_>) -> Option<BorderEdge> {
-        // Charged before the early return, so an edge rejected for a missing
-        // `w:val` still reports the theme reference it carried: the caller reports
-        // the container on `None`, which names the element but not the attribute.
-        crate::properties::report_border_theme_color(self.reporter, element);
-        let style = attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32)?;
-        let size_eighth_points = attribute_value(element, b"sz")
-            .and_then(|value| value.parse::<u32>().ok())
-            .map(|size| size.min(1024));
-        // Only an explicit sRGB color is modeled; `auto` is the automatic color
-        // and a theme reference is reported above (the edge itself is still
-        // captured, so the finding is `Degraded`, not `Omitted`).
-        let color = attribute_value(element, b"color")
-            .filter(|value| value != "auto")
-            .and_then(|value| parse_rgb(&value));
-        let space_points = attribute_value(element, b"space")
-            .and_then(|value| value.parse::<u32>().ok())
-            .map(|space| space.min(31));
-        Some(BorderEdge {
-            style,
-            size_eighth_points,
-            color,
-            space_points,
-        })
+    ///
+    /// A thin alias for the shared [`parse_border_edge`]: this parser had its own
+    /// copy of the mapping, which is why `@w:themeColor` was dropped here and in
+    /// the styles parser independently.
+    fn build_border_edge(&self, element: &BytesStart<'_>) -> Option<BorderEdge> {
+        parse_border_edge(element)
     }
 
     /// Applies a `w:tblLook`: either the explicit boolean attributes
@@ -7622,6 +7661,28 @@ impl BodyParser<'_> {
     /// non-visual-property scope for `a:hlinkClick`, and one arm doing both
     /// reads as though the two were related.
     fn drawing_doc_pr(&mut self, element: &BytesStart<'_>) {
+        self.capture_drawing_descr(element);
+    }
+
+    /// Whether this drawing's alt text has already been captured, so a
+    /// lower-precedence source (`pic:cNvPr@descr`) knows to stand down.
+    fn drawing_descr_captured(&self) -> bool {
+        self.pending_inline_descr.is_some()
+            || self
+                .pending_anchor
+                .as_ref()
+                .is_some_and(|anchor| anchor.descr.is_some())
+    }
+
+    /// Takes one element's `@descr` as this drawing's alt text, onto the open
+    /// anchor or the pending inline drawing.
+    ///
+    /// Shared by `wp:docPr` — the element Word's own alt-text UI reads and
+    /// writes, and therefore the preferred source — and by the `pic:cNvPr`
+    /// fallback. One function rather than two arms because it is the same field
+    /// read from two elements, and two copies of the length and emptiness rules
+    /// would be two places for them to diverge.
+    fn capture_drawing_descr(&mut self, element: &BytesStart<'_>) {
         match attribute_value(element, b"descr") {
             Some(descr) if descr.is_empty() => {}
             Some(descr) if descr.len() <= MAX_DESCR_BYTES => {

@@ -712,6 +712,7 @@ mod tests {
             table_row: None,
             table_cell: None,
             conditional: Vec::new(),
+            custom_style: false,
         }
     }
 
@@ -740,6 +741,7 @@ mod tests {
             table_row: None,
             table_cell,
             conditional,
+            custom_style: false,
         }
     }
 
@@ -763,6 +765,7 @@ mod tests {
             size_eighth_points: Some(size),
             color: Some(color),
             space_points: None,
+            theme_color: None,
         }
     }
 
