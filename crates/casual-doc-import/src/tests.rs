@@ -1000,20 +1000,263 @@ fn a_shapes_wps_style_reference_is_captured_with_its_substituted_colour() {
             a: 255
         })
     );
-    // `a:effectRef` and `a:fontRef` stay suppressed: neither index nor colour is
-    // captured, because neither is modeled. Their blue and yellow must appear nowhere.
+    // REWRITTEN ASSERTION, with the reasoning. This used to read "`a:effectRef`
+    // and `a:fontRef` stay suppressed: neither index nor colour is captured,
+    // because neither is modeled", and asserted the yellow appeared nowhere. Half
+    // of that is now false rather than merely incomplete: `ShapeStyleRef::font_ref`
+    // exists, so `a:fontRef`'s collection AND its colour are captured, and
+    // asserting their absence would be asserting the loss this commit removes.
+    //
+    // What the suppression actually existed to prevent still holds exactly, and is
+    // what is asserted instead: a colour inside a style REFERENCE must not become
+    // the shape's own fill or outline. The effectRef's blue is still suppressed
+    // entirely (there is no effect for an `a:phClr` argument to parameterise), and
+    // the fontRef's yellow lands on the font reference and NOWHERE else.
     for color in [reference.fill_color, reference.line_color] {
-        assert_ne!(
-            color,
-            Some(Rgba {
+        for leak in [
+            // `a:effectRef`'s blue.
+            Rgba {
                 r: 0,
                 g: 0,
                 b: 255,
-                a: 255
-            }),
-            "an effectRef colour must not leak into the fill or line"
+                a: 255,
+            },
+            // `a:fontRef`'s yellow.
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+        ] {
+            assert_ne!(
+                color,
+                Some(leak),
+                "an effectRef or fontRef colour must not leak into the fill or line"
+            );
+        }
+    }
+    let font = reference.font_ref.expect("the a:fontRef is captured");
+    assert_eq!(
+        font.index,
+        casual_doc_model::v1::FontCollectionIndex::Minor,
+        "`idx=\"minor\"` is ST_FontCollectionIndex, not a numeric style index"
+    );
+    assert_eq!(
+        font.color,
+        Some(Rgba {
+            r: 255,
+            g: 255,
+            b: 0,
+            a: 255
+        }),
+        "a:fontRef's own colour child is the shape's statement about its text"
+    );
+    assert!(
+        reference.effect_idx.is_some(),
+        "a:effectRef's INDEX is still captured, and its colour still is not"
+    );
+}
+
+/// `a:fontRef@idx` is `ST_FontCollectionIndex`, and all three tokens are read —
+/// including `none`, which is a STATEMENT ("this shape's text takes no theme
+/// typeface") and not an absence.
+///
+/// A token outside the type is reported rather than defaulted to `minor`: giving a
+/// shape's text the body collection the file never named would look deliberate.
+///
+/// Mutation: parse `@idx` with `value.parse::<u32>().ok()` (the numeric grammar the
+/// other three references use) instead of `FontCollectionIndex::from_token`.
+#[test]
+fn a_font_ref_reads_all_three_font_collection_tokens_and_reports_a_fourth() {
+    use casual_doc_model::v1::{FontCollectionIndex, GroupChild};
+
+    for (token, expected) in [
+        ("none", FontCollectionIndex::None),
+        ("major", FontCollectionIndex::Major),
+        ("minor", FontCollectionIndex::Minor),
+    ] {
+        let style = format!(r#"<wps:style><a:fontRef idx="{token}"/></wps:style>"#);
+        let import = import_standalone_drawingml_shape_with_style(
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#,
+            &style,
+        );
+        let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected a standalone shape group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected the group child to be a shape");
+        };
+        let reference = import
+            .document
+            .definitions()
+            .shape_styles
+            .get(&shape.id)
+            .copied()
+            .expect("the shape carries a style reference");
+        let font = reference
+            .font_ref
+            .unwrap_or_else(|| panic!("idx=\"{token}\" must be captured"));
+        assert_eq!(font.index, expected, "idx=\"{token}\"");
+        assert_eq!(
+            font.color, None,
+            "a self-closing a:fontRef carries no colour, and none must be invented"
+        );
+        assert!(
+            !features(&import).contains(&"fontRef/@idx"),
+            "a legal token must not be reported as invalid"
         );
     }
+
+    // And a token outside `ST_FontCollectionIndex`.
+    let import = import_standalone_drawingml_shape_with_style(
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#,
+        r#"<wps:style><a:fontRef idx="2"/></wps:style>"#,
+    );
+    assert!(
+        features(&import).contains(&"fontRef/@idx"),
+        "an @idx outside ST_FontCollectionIndex must be reported, not guessed; the \
+         report said {:?}",
+        features(&import)
+    );
+}
+
+/// `a:fontRef` resolves to a concrete typeface through the theme's `a:fontScheme`
+/// — major and minor give DIFFERENT answers, and `none` gives none.
+///
+/// The resolution is `FontScheme::typeface`, which is also what a
+/// `w:rFonts@*Theme` slot now resolves through, so there is one
+/// collection-and-axis rule rather than two.
+///
+/// Mutation: make `FontReference::typeface` return `scheme.typeface(false, axis)`
+/// for `Major` as well — the major answer becomes the minor one.
+#[test]
+fn a_font_ref_resolves_a_typeface_through_the_theme_font_scheme() {
+    use casual_doc_model::v1::{
+        FontCollectionIndex, FontReference, FontScheme, ThemeFontAxis, ThemeFontEntry,
+    };
+
+    let import = import_with_theme(
+        PLAIN_BODY,
+        br#"<a:theme xmlns:a="urn:a" name="T"><a:themeElements>
+            <a:fontScheme name="Office">
+                <a:majorFont><a:latin typeface="Garamond"/><a:ea typeface=""/><a:cs typeface="Vrinda"/></a:majorFont>
+                <a:minorFont><a:latin typeface="Futura"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+            </a:fontScheme>
+        </a:themeElements></a:theme>"#,
+    );
+    let scheme: &FontScheme = import
+        .document
+        .definitions()
+        .theme(None)
+        .font_scheme
+        .expect("the theme font scheme is parsed");
+
+    let reference = |index| FontReference { index, color: None };
+    assert_eq!(
+        reference(FontCollectionIndex::Major).typeface(scheme, ThemeFontAxis::Latin),
+        Some("Garamond"),
+        "idx=\"major\" is the heading collection"
+    );
+    assert_eq!(
+        reference(FontCollectionIndex::Minor).typeface(scheme, ThemeFontAxis::Latin),
+        Some("Futura"),
+        "idx=\"minor\" is the body collection, and it is a DIFFERENT answer"
+    );
+    assert_eq!(
+        reference(FontCollectionIndex::None).typeface(scheme, ThemeFontAxis::Latin),
+        None,
+        "idx=\"none\" names no collection, so it resolves to nothing rather than \
+         to the body default"
+    );
+
+    // The axis rule, shared with `w:rFonts@*Theme`: an empty `@typeface` is
+    // DrawingML's "fall back to latin" marker, not a family called "".
+    assert_eq!(
+        reference(FontCollectionIndex::Major).typeface(scheme, ThemeFontAxis::ComplexScript),
+        Some("Vrinda"),
+        "a stated complex-script entry is used"
+    );
+    assert_eq!(
+        reference(FontCollectionIndex::Major).typeface(scheme, ThemeFontAxis::EastAsia),
+        Some("Garamond"),
+        "an EMPTY east-asian entry inherits the latin entry"
+    );
+    assert_eq!(
+        reference(FontCollectionIndex::Minor).typeface(
+            &FontScheme {
+                minor: casual_doc_model::v1::FontCollection {
+                    latin: ThemeFontEntry::default(),
+                    ..casual_doc_model::v1::FontCollection::default()
+                },
+                ..FontScheme::default()
+            },
+            ThemeFontAxis::Latin
+        ),
+        None,
+        "a collection whose latin entry is itself empty resolves to nothing, not \
+         to the empty family name"
+    );
+}
+
+/// A captured `a:fontRef` is REPORTED as unapplied, with a reason that
+/// distinguishes losing a typeface from losing a colour — and `idx="none"` with no
+/// colour is reported as nothing, because nothing was asked for.
+///
+/// This is the honest half. Nothing in this build applies a shape-scoped text
+/// default, so a themed typeface and a themed text colour both go unpainted;
+/// capturing them without saying so would be the "modeled is not shipped" claim
+/// `SKILL` §9.4 names as the most expensive mistake here. Before this commit the
+/// DOCX reader dropped `a:fontRef` with NO finding at all.
+///
+/// Mutation: delete the `theme::report_unapplied_font_refs(...)` call from
+/// `casual-doc-import`'s `lib.rs`.
+#[test]
+fn an_unapplied_font_ref_is_reported_with_the_half_that_was_lost() {
+    fn reasons(style: &str) -> Vec<String> {
+        let document = format!(
+            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="S"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>{style}<wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+        );
+        let theme = br#"<a:theme xmlns:a="urn:a" name="T"><a:themeElements>
+            <a:fontScheme name="Office">
+                <a:majorFont><a:latin typeface="Garamond"/></a:majorFont>
+                <a:minorFont><a:latin typeface="Futura"/></a:minorFont>
+            </a:fontScheme>
+        </a:themeElements></a:theme>"#;
+        let import = import_with_theme(document.as_bytes(), theme);
+        import
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.feature == "shape/fontRef")
+            .filter_map(|entry| entry.location.attribute.clone())
+            .collect()
+    }
+
+    assert_eq!(
+        reasons(
+            r#"<wps:style><a:fontRef idx="minor"><a:srgbClr val="FFFF00"/></a:fontRef></wps:style>"#
+        ),
+        vec!["typeface-and-colour-not-applied".to_owned()],
+        "a resolvable collection plus a colour loses both"
+    );
+    assert_eq!(
+        reasons(r#"<wps:style><a:fontRef idx="major"/></wps:style>"#),
+        vec!["typeface-not-applied".to_owned()],
+        "a resolvable collection with no colour loses only the typeface"
+    );
+    assert_eq!(
+        reasons(
+            r#"<wps:style><a:fontRef idx="none"><a:srgbClr val="FFFF00"/></a:fontRef></wps:style>"#
+        ),
+        vec!["colour-not-applied".to_owned()],
+        "idx=\"none\" names no collection, so only the colour is lost"
+    );
+    assert!(
+        reasons(r#"<wps:style><a:fontRef idx="none"/></wps:style>"#).is_empty(),
+        "idx=\"none\" with no colour asked for nothing, so nothing is reported — \
+         the same rule as an @idx of 0 on the other three references"
+    );
 }
 
 #[test]

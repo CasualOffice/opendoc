@@ -24,7 +24,7 @@ use casual_doc_model::v1::{
     ColorScheme, ColorTransform, DashStyle, DefinitionMap, EffectStyle, FillStyle, FontCollection,
     FontScheme, FormatScheme, GradientKind, GradientStyle, GradientStyleStop, LineStyle,
     PatternStyle, Rgba, SchemeColor, ScriptFont, ShapeStyleRef, StyleColor, SystemColor,
-    ThemeFontEntry,
+    ThemeFontAxis, ThemeFontEntry,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -999,5 +999,65 @@ pub(crate) fn report_unpaintable_style_refs(
         {
             reporter.report_theme_style_unpainted("effectStyleLst", "effect-not-rendered");
         }
+    }
+}
+
+/// Reports each shape whose `a:fontRef` resolves to a typeface or a colour that
+/// nothing in this build applies.
+///
+/// # Why this is a separate pass from the one above
+///
+/// `a:fontRef` resolves against the theme's `a:fontScheme`, not its
+/// `a:fmtScheme`, and a shape may carry an `a:fontRef` in a package whose theme
+/// has no format scheme at all — so folding this into
+/// [`report_unpaintable_style_refs`] would have made the finding conditional on an
+/// unrelated part being present.
+///
+/// # What is and is not a loss
+///
+/// `idx="none"` with no colour child is **not** a loss: the shape is saying its
+/// text takes no theme typeface and no theme colour, and that is honoured exactly
+/// — the same rule as an `@idx` of `0` on the other three references. Anything
+/// else is reported, because nothing here applies a shape-scoped text default: a
+/// text box's runs still resolve their typeface from their own `w:rFonts` and the
+/// document's defaults, so a themed typeface and a themed text colour both go
+/// unpainted.
+///
+/// The reason distinguishes the two halves, so a shape that lost only a colour is
+/// not reported as having lost a typeface:
+///
+/// * `typeface-and-colour-not-applied` — the reference names a resolvable
+///   collection AND a colour.
+/// * `typeface-not-applied` — a resolvable collection, no colour.
+/// * `colour-not-applied` — a colour, and a collection that resolves to nothing
+///   (`idx="none"`, or a theme with no font scheme or an empty entry).
+///
+/// Before `ShapeStyleRef::font_ref` existed the DOCX reader dropped `a:fontRef`
+/// with NO finding at all, which is the silent loss `AGENTS.md` forbids; this is
+/// the half that makes it visible.
+///
+/// Complexity: O(styled shapes) — one resolution per reference, no document scan.
+pub(crate) fn report_unapplied_font_refs(
+    font_scheme: Option<&FontScheme>,
+    shape_styles: &DefinitionMap<NodeId, ShapeStyleRef>,
+    reporter: &mut Reporter,
+) {
+    for (_, reference) in shape_styles.iter() {
+        let Some(font) = reference.font_ref else {
+            continue;
+        };
+        // The Latin axis, because that is the axis a `w:txbxContent` run resolves
+        // on unless it states otherwise, and the entry falls back to Latin anyway.
+        let typeface = font_scheme
+            .and_then(|scheme| font.typeface(scheme, ThemeFontAxis::Latin))
+            .is_some();
+        let reason = match (typeface, font.color.is_some()) {
+            (true, true) => "typeface-and-colour-not-applied",
+            (true, false) => "typeface-not-applied",
+            (false, true) => "colour-not-applied",
+            // `idx="none"` with no colour: the shape asked for nothing.
+            (false, false) => continue,
+        };
+        reporter.report_shape_appearance_unpainted("fontRef", reason);
     }
 }

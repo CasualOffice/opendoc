@@ -45,6 +45,8 @@ use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeSt
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 // Own line (anti-conflict): the shape theme-style side table's value.
 use casual_doc_model::v1::ShapeStyleRef;
+// Own line (anti-conflict): the `a:fontRef` half of that same value.
+use casual_doc_model::v1::{FontCollectionIndex, FontReference};
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 // Own line (anti-conflict): the shape fill/line side table's value and the types
@@ -537,6 +539,10 @@ enum ColorDest {
     StyleRefFill,
     /// The color an `a:lnRef` names, substituted the same way for the outline.
     StyleRefLine,
+    /// The colour an `a:fontRef` names for the shape's text. NOT a theme
+    /// placeholder argument like the two above: `a:fontRef`'s colour child is the
+    /// shape's own statement about its text, so it is folded and kept outright.
+    StyleRefFont,
     /// An `a:pattFill/a:fgClr` — the pattern's ink.
     PatternForeground,
     /// An `a:pattFill/a:bgClr` — the pattern's ground.
@@ -1200,7 +1206,10 @@ struct BodyParser<'a> {
     style_ref_depth: u32,
     /// Which style reference is open, so a color inside it lands on the right half of
     /// the shape's reference instead of on the shape's own fill or stroke. `None`
-    /// inside `a:effectRef`/`a:fontRef`, which stay suppressed.
+    /// inside `a:effectRef` alone, which stays suppressed: there is no effect for
+    /// an `a:phClr` argument to parameterise. `a:fontRef`'s colour routes to
+    /// [`ColorDest::StyleRefFont`], because it is the shape's own statement about
+    /// its text rather than a placeholder argument.
     style_ref_dest: Option<ColorDest>,
     /// The `wps:style` reference being gathered for the open shape.
     pending_style_ref: Option<ShapeStyleRef>,
@@ -3860,34 +3869,65 @@ impl BodyParser<'_> {
             // theme style index, not the shape's own fill/stroke — suppress capture.
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.pending_shape.is_some() => {
                 self.style_ref_depth += 1;
-                // `a:effectRef`/`a:fontRef` keep today's behaviour: counted so their
-                // colors stay suppressed, but not captured.
+                // `a:effectRef` keeps today's behaviour: counted so its colour stays
+                // suppressed, but not captured — there is no effect for an `a:phClr`
+                // argument to parameterise. `a:fontRef`'s colour IS captured, because
+                // it is not a placeholder argument at all: it is what the shape says
+                // its own text is coloured.
                 self.style_ref_dest = match local {
                     b"fillRef" => Some(ColorDest::StyleRefFill),
                     b"lnRef" => Some(ColorDest::StyleRefLine),
+                    b"fontRef" => Some(ColorDest::StyleRefFont),
                     _ => None,
                 };
-                let idx = attribute_value(element, b"idx")
-                    .as_deref()
-                    .and_then(|value| value.parse::<u32>().ok());
-                let reference = self.pending_style_ref.get_or_insert_with(Default::default);
-                match local {
-                    b"fillRef" => reference.fill_idx = idx,
-                    b"lnRef" => reference.line_idx = idx,
-                    // `a:effectRef`'s INDEX is captured although nothing in this
-                    // build paints a DrawingML effect, because resolving the entry
-                    // is what tells a false loss from a real one: in the default
-                    // Office theme the first two `a:effectStyle` entries are empty
-                    // and only the third carries a shadow. Its colour is still
-                    // suppressed (`style_ref_dest` stays `None` above) — there is
-                    // no effect for a `a:phClr` argument to parameterise.
-                    b"effectRef" => reference.effect_idx = idx,
-                    _ => {}
+                // `a:fontRef@idx` is `ST_FontCollectionIndex` — the tokens
+                // `none`/`major`/`minor` — and NOT a one-based index into a style
+                // list, so it has its own grammar. Reading it as a number would
+                // yield `None` for every real file while looking like it worked.
+                if local == b"fontRef" {
+                    match attribute_value(element, b"idx")
+                        .as_deref()
+                        .and_then(FontCollectionIndex::from_token)
+                    {
+                        Some(index) => {
+                            let reference =
+                                self.pending_style_ref.get_or_insert_with(Default::default);
+                            reference
+                                .font_ref
+                                .get_or_insert_with(FontReference::default)
+                                .index = index;
+                        }
+                        // An `@idx` outside `ST_FontCollectionIndex`: reported rather
+                        // than defaulted to `minor`, because giving the shape's text
+                        // the body collection the file never named would look
+                        // deliberate.
+                        None => self.reporter.report_attribute(b"fontRef", b"idx"),
+                    }
+                } else {
+                    let idx = attribute_value(element, b"idx")
+                        .as_deref()
+                        .and_then(|value| value.parse::<u32>().ok());
+                    let reference = self.pending_style_ref.get_or_insert_with(Default::default);
+                    match local {
+                        b"fillRef" => reference.fill_idx = idx,
+                        b"lnRef" => reference.line_idx = idx,
+                        // `a:effectRef`'s INDEX is captured although nothing in
+                        // this build paints a DrawingML effect, because resolving
+                        // the entry is what tells a false loss from a real one: in
+                        // the default Office theme the first two `a:effectStyle`
+                        // entries are empty and only the third carries a shadow.
+                        // Its colour is still suppressed (`style_ref_dest` stays
+                        // `None` above) — there is no effect for a `a:phClr`
+                        // argument to parameterise.
+                        b"effectRef" => reference.effect_idx = idx,
+                        _ => {}
+                    }
                 }
             }
             // A color inside an open `a:fillRef`/`a:lnRef` is the argument the theme's
-            // `a:phClr` placeholder takes, so it is captured to the shape's style
-            // reference rather than suppressed. Inside `a:effectRef`/`a:fontRef`
+            // `a:phClr` placeholder takes, and a colour inside an `a:fontRef` is the
+            // shape's own text colour, so all three are captured to the shape's
+            // style reference rather than suppressed. Inside `a:effectRef`
             // `style_ref_dest` is `None` and the guard still refuses, as before.
             b"srgbClr" | b"schemeClr" | b"sysClr"
                 if self.pending_shape.is_some()
@@ -5809,6 +5849,16 @@ impl BodyParser<'_> {
                 } else {
                     reference.line_color = Some(rgba);
                 }
+            }
+            // `a:fontRef`'s colour child, through the same fold, so a `lumMod` or
+            // an `a:alpha` on a themed text colour is honoured exactly as it is on
+            // a fill.
+            ColorDest::StyleRefFont => {
+                let reference = self.pending_style_ref.get_or_insert_with(Default::default);
+                reference
+                    .font_ref
+                    .get_or_insert_with(FontReference::default)
+                    .color = Some(rgba);
             }
             // A gradient stop color: attach it to the open stop position rather than
             // the flat fill. Access the gradient buffers before borrowing the shape.

@@ -690,6 +690,31 @@ impl ThemeFontEntry {
     }
 }
 
+impl FontCollection {
+    /// The typeface this collection supplies for one script axis.
+    ///
+    /// An East-Asian or complex-script entry whose `@typeface` is empty inherits
+    /// the Latin entry — that empty string is DrawingML's "fall back to latin"
+    /// marker, not a typeface named "" — and a Latin entry that is itself empty
+    /// resolves to nothing rather than to the empty family name.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn typeface(&self, axis: ThemeFontAxis) -> Option<&str> {
+        let entry = match axis {
+            ThemeFontAxis::Latin => &self.latin,
+            ThemeFontAxis::EastAsia => &self.ea,
+            ThemeFontAxis::ComplexScript => &self.cs,
+        };
+        let typeface = if entry.typeface.is_empty() {
+            &self.latin.typeface
+        } else {
+            &entry.typeface
+        };
+        (!typeface.is_empty()).then_some(typeface.as_str())
+    }
+}
+
 /// The theme font scheme (`theme1.xml` `a:fontScheme`): the major (heading) and
 /// minor (body) collections against which `w:rFonts@*Theme` slots resolve.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -699,6 +724,26 @@ pub struct FontScheme {
     pub major: FontCollection,
     /// The minor (body) collection (`a:minorFont`).
     pub minor: FontCollection,
+}
+
+impl FontScheme {
+    /// The typeface one collection of this scheme supplies for one script axis:
+    /// `major` when `major` is true, `minor` otherwise.
+    ///
+    /// The single place the collection-and-axis rule lives. A `w:rFonts@*Theme`
+    /// slot and an `a:fontRef` are two different references that both land here,
+    /// and two copies of the empty-entry fallback would diverge the first time one
+    /// was corrected.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn typeface(&self, major: bool, axis: ThemeFontAxis) -> Option<&str> {
+        if major {
+            self.major.typeface(axis)
+        } else {
+            self.minor.typeface(axis)
+        }
+    }
 }
 
 /// A system color (`a:sysClr`, ECMA-376 §20.1.2.3.33): a named system-palette
@@ -1135,6 +1180,109 @@ pub struct FormatScheme {
     pub effect_styles: Vec<EffectStyle>,
 }
 
+/// Which per-script entry of a theme font collection a reference resolves
+/// against (`a:latin`/`a:ea`/`a:cs`).
+///
+/// Public because two independent references pick an entry this way — a
+/// `w:rFonts@*Theme` slot, which encodes the axis in the slot name, and an
+/// `a:fontRef`, which does not and takes it from the run's script — and the
+/// empty-entry rule below must not be written twice.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemeFontAxis {
+    /// `a:latin`, which is also the fallback for the other two.
+    #[default]
+    Latin,
+    /// `a:ea`.
+    EastAsia,
+    /// `a:cs`.
+    ComplexScript,
+}
+
+/// `a:fontRef@idx` (`ST_FontCollectionIndex`, ECMA-376 §20.1.10.25): which font
+/// collection of the theme a shape's text takes its typeface from.
+///
+/// `none` is a real value and not an absence — it says "this shape's text takes
+/// no theme typeface" — which is why it is a variant rather than being folded into
+/// the `Option` around [`FontReference`]. An absent `a:fontRef` and an
+/// `a:fontRef idx="none"` are different statements, and collapsing them would make
+/// a round trip invent one from the other.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FontCollectionIndex {
+    /// `none`.
+    #[default]
+    None,
+    /// `major` — the heading collection (`a:majorFont`).
+    Major,
+    /// `minor` — the body collection (`a:minorFont`).
+    Minor,
+}
+
+impl FontCollectionIndex {
+    /// The index an `a:fontRef@idx` token names.
+    ///
+    /// `None` for anything outside `ST_FontCollectionIndex`, which the caller
+    /// reports rather than substituting a collection: guessing `minor` would give
+    /// a shape's text the body typeface and look deliberate.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        Some(match token.trim() {
+            "none" => Self::None,
+            "major" => Self::Major,
+            "minor" => Self::Minor,
+            _ => return None,
+        })
+    }
+
+    /// The token this index is written as.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Major => "major",
+            Self::Minor => "minor",
+        }
+    }
+}
+
+/// A shape's `a:fontRef`: the theme font collection its text takes its typeface
+/// from, and the colour its text takes.
+///
+/// Both halves travel, because `a:fontRef` states both and a shape that kept only
+/// one would paint a themed typeface in an unthemed colour or the reverse. The
+/// colour is already resolved to a concrete [`Rgba`] when it reaches here, by the
+/// same fold every other shape colour goes through — `a:fontRef`'s colour child is
+/// the shape's own statement, not a theme placeholder, so there is nothing to
+/// defer.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontReference {
+    /// `a:fontRef@idx`.
+    pub index: FontCollectionIndex,
+    /// The colour `a:fontRef`'s child names, folded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgba>,
+}
+
+impl FontReference {
+    /// The typeface this reference resolves to in `scheme`, for one script axis.
+    ///
+    /// `None` for `idx="none"` (which names no collection), and for a collection
+    /// whose entry and Latin fallback are both the empty "no typeface" marker — so
+    /// an unresolvable reference hands back nothing rather than an invented family.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn typeface<'a>(&self, scheme: &'a FontScheme, axis: ThemeFontAxis) -> Option<&'a str> {
+        match self.index {
+            FontCollectionIndex::None => None,
+            FontCollectionIndex::Major => scheme.typeface(true, axis),
+            FontCollectionIndex::Minor => scheme.typeface(false, axis),
+        }
+    }
+}
+
 /// A shape's theme style reference (`wps:style`): which format-scheme entry supplies
 /// its fill and outline, and the colour each substitutes for `a:phClr`.
 ///
@@ -1167,6 +1315,20 @@ pub struct ShapeStyleRef {
     /// the shape named actually carries an effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_idx: Option<u32>,
+    /// `a:fontRef` — the theme font collection the shape's text takes, and the
+    /// colour it takes.
+    ///
+    /// Captured for the reason [`ShapeStyleRef::effect_idx`] is: so the reference
+    /// RESOLVES. Nothing in this build applies a shape-scoped text default, so a
+    /// text box's runs still take their typeface from their own `w:rFonts` and the
+    /// document's defaults — but the reference now resolves far enough for the
+    /// compatibility report to say whether the shape lost a typeface, a colour, or
+    /// nothing at all, which an uncaptured `a:fontRef` could not.
+    ///
+    /// Before this field the DOCX reader dropped `a:fontRef` with no finding at
+    /// all, which is the silent loss `AGENTS.md` forbids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_ref: Option<FontReference>,
 }
 
 impl FormatScheme {

@@ -23,7 +23,7 @@
 use casual_doc_model::v1::{
     CnfStyle, DocumentDefaults, FontRef, FontScheme, Indentation, ParagraphProperties, RgbColor,
     RunProperties, Spacing, Style, StyleId, StyleKind, TableBorders, TableLook, TableStyleRegion,
-    ThemeFontRef,
+    ThemeFontAxis, ThemeFontRef,
 };
 use casual_doc_model::v1::{DefinitionMap, Definitions};
 
@@ -399,36 +399,25 @@ pub fn requested_font_family_for(
     }
 }
 
-/// Which per-script entry of a theme font collection a slot resolves against.
-enum ThemeAxis {
-    Latin,
-    EastAsia,
-    ComplexScript,
-}
-
 /// Resolves a `w:rFonts@*Theme` slot to a concrete typeface via the theme font
-/// scheme. Empty East-Asian/complex-script entries inherit the Latin entry.
+/// scheme.
+///
+/// The slot decides WHICH collection and WHICH script axis; `FontScheme::typeface`
+/// decides what that pair resolves to, including the rule that an empty
+/// East-Asian or complex-script `@typeface` inherits the Latin entry. That half
+/// used to live here as a private `ThemeAxis` plus its own fallback, and now lives
+/// in the model because `a:fontRef` resolves the same pair by a different route —
+/// two copies of the fallback would diverge the first time one was corrected.
 fn theme_font_family(slot: ThemeFontRef, scheme: Option<&FontScheme>) -> Option<String> {
-    let scheme = scheme?;
-    let (collection, axis) = match slot {
-        ThemeFontRef::MajorAscii | ThemeFontRef::MajorHAnsi => (&scheme.major, ThemeAxis::Latin),
-        ThemeFontRef::MajorEastAsia => (&scheme.major, ThemeAxis::EastAsia),
-        ThemeFontRef::MajorBidi => (&scheme.major, ThemeAxis::ComplexScript),
-        ThemeFontRef::MinorAscii | ThemeFontRef::MinorHAnsi => (&scheme.minor, ThemeAxis::Latin),
-        ThemeFontRef::MinorEastAsia => (&scheme.minor, ThemeAxis::EastAsia),
-        ThemeFontRef::MinorBidi => (&scheme.minor, ThemeAxis::ComplexScript),
+    let (major, axis) = match slot {
+        ThemeFontRef::MajorAscii | ThemeFontRef::MajorHAnsi => (true, ThemeFontAxis::Latin),
+        ThemeFontRef::MajorEastAsia => (true, ThemeFontAxis::EastAsia),
+        ThemeFontRef::MajorBidi => (true, ThemeFontAxis::ComplexScript),
+        ThemeFontRef::MinorAscii | ThemeFontRef::MinorHAnsi => (false, ThemeFontAxis::Latin),
+        ThemeFontRef::MinorEastAsia => (false, ThemeFontAxis::EastAsia),
+        ThemeFontRef::MinorBidi => (false, ThemeFontAxis::ComplexScript),
     };
-    let entry = match axis {
-        ThemeAxis::Latin => &collection.latin,
-        ThemeAxis::EastAsia => &collection.ea,
-        ThemeAxis::ComplexScript => &collection.cs,
-    };
-    let typeface = if entry.typeface.is_empty() {
-        &collection.latin.typeface
-    } else {
-        &entry.typeface
-    };
-    (!typeface.is_empty()).then(|| typeface.clone())
+    scheme?.typeface(major, axis).map(str::to_owned)
 }
 
 /// Overlays `over`'s set fields onto `base` (a higher-precedence run layer): every
