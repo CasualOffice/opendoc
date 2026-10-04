@@ -58,3 +58,25 @@ export function revealControl(el, options = {}) {
     el.focus?.({ preventScroll: true });
   });
 }
+
+/**
+ * Opens the surface Settings currently lives on, and reveals `control` on it.
+ *
+ * The dialog and the File-page pane are the SAME element — the File page
+ * reparents it — so asking the pane first is the only way not to raise a
+ * half-dialog out of a pane. Both halves are injected because this module must
+ * stay importable under `node --test`, where neither exists.
+ *
+ * Lives here rather than in `main.js` for the reason ADR-062 C1 gives: opening
+ * a container and revealing a control on it are one act, and splitting them
+ * across two files is how the second half got forgotten in the first place.
+ *
+ * @param {{showPane: () => boolean, openDialog: () => void}} surface
+ * @param {{closest: Function, focus: Function} | null} [control]
+ * @param {object} [options] forwarded to `revealControl`.
+ * @returns {void}
+ */
+export function revealOnSettings(surface, control = null, options = {}) {
+  if (!surface.showPane()) surface.openDialog();
+  if (control) revealControl(control, options);
+}
