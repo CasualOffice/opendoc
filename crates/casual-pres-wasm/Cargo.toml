@@ -1,0 +1,52 @@
+[package]
+name = "casual-pres-wasm"
+description = "wasm-bindgen façade over the presentation engine (import → lay out → render) for the browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# `cdylib` for the browser (wasm-pack output); `rlib` so the parity tests below
+# run under a plain `cargo test` and exercise the same facade the browser gets.
+# `casual-doc-wasm` is set up the same way and for the same reason.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Mirrors `casual-doc-wasm`: a browser build registers the host's faces at
+# runtime rather than carrying the deterministic bundle, and the feature is
+# target-gated in the layout crate so native tests keep the complete bundle.
+default = ["web-host-fonts"]
+web-host-fonts = ["casual-doc-layout/external-web-fonts"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
+
+[dependencies]
+casual-doc-layout.workspace = true
+# The loss taxonomy, for the boundary's own report shape. The engine vocabulary
+# and the published JSON are deliberately separate types — see `report_json`.
+casual-doc-loss.workspace = true
+casual-doc-model.workspace = true
+casual-doc-package.workspace = true
+casual-doc-render.workspace = true
+casual-pres-export.workspace = true
+casual-pres-import.workspace = true
+casual-pres-layout.workspace = true
+casual-pres-model.workspace = true
+# The fidelity report and the slide descriptors cross the boundary as one JSON
+# string — bridge, not engine — rather than as a wasm-bindgen struct array.
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+# The parity tests drive a genuine package through the facade, built by the
+# importer's own fixture generator.
+zip.workspace = true
+
+[lints]
+workspace = true

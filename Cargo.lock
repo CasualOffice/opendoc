@@ -326,6 +326,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-pres-wasm"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-layout",
+ "casual-doc-loss",
+ "casual-doc-model",
+ "casual-doc-package",
+ "casual-doc-render",
+ "casual-pres-export",
+ "casual-pres-import",
+ "casual-pres-layout",
+ "casual-pres-model",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "zip",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

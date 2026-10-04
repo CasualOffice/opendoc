@@ -22,6 +22,7 @@ members = [
     "crates/casual-pres-import",
     "crates/casual-pres-layout",
     "crates/casual-pres-model",
+    "crates/casual-pres-wasm",
     "server",
     "tools/opendoc-benchmark",
     "tools/opendoc-fidelity",
@@ -61,6 +62,7 @@ casual-pres-export = { path = "crates/casual-pres-export", version = "=0.0.1" }
 casual-pres-import = { path = "crates/casual-pres-import", version = "=0.0.1" }
 casual-pres-layout = { path = "crates/casual-pres-layout", version = "=0.0.1" }
 casual-pres-model = { path = "crates/casual-pres-model", version = "=0.0.1" }
+casual-pres-wasm = { path = "crates/casual-pres-wasm", version = "=0.0.1" }
 quick-xml = { version = "0.41.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
