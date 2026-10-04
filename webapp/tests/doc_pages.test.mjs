@@ -469,6 +469,13 @@ test("how much English the reference pages put on the site, measured and publish
   // side of the merge forward would publish a count the pages never had.
   // Re-measured from the regenerated pages on the merged tree.
   //
+  // 2090 -> 2093 when `20-ERROR-CODES.md` gained `ODC-7010`
+  // (`collaboration_room_full`), the refusal a relay returns when a room is at
+  // its participant ceiling (`error-code-registry.html`, 131 -> 134). One row,
+  // three strings: the code, its sentence and its cause column. Re-measured
+  // from the regenerated page, not derived by adding three -- the figure's
+  // whole purpose is that nobody predicts it.
+  //
   // Both movements are ARTICLE BODY in published design documents, which is the
   // region this figure deliberately does not route: routing a design document's
   // prose through the string table, or machine translating it, would be a worse
@@ -480,8 +487,8 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2090,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2090). That ` +
+    2093,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2093). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),
