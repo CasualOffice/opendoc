@@ -171,6 +171,33 @@ test("no panel re-states the shell's padding for itself", () => {
   );
 });
 
+test("the review column reads the panel pair rather than a literal that matches it", () => {
+  // It is deliberately NOT in the `.panel-head`/`.panel-body` shell — it is
+  // absolutely positioned and rides the document scroll so each card stays
+  // pinned to its anchor — but it takes the shell's INSET, and its header and
+  // its cards both said `8px 10px`.
+  //
+  // This is a SOURCE assertion and has to be: `getComputedStyle` cannot tell
+  // `8px 16px` from `var(--pnl-pad-y) var(--pnl-pad-x)`, so the browser-side
+  // guard in `e2e/panel-alignment.spec.mjs` measures what a browser can answer
+  // (the geometry, and header-against-card agreement) and this one reads the
+  // stylesheet. Written down because the first version of that e2e test claimed
+  // to catch a literal and was measured not to.
+  for (const selector of [".review-sidebar-header", ".review-margin-card"]) {
+    for (const body of rules(selector)) {
+      const padding = body.match(/(?:^|\n)\s*padding:\s*([^;]+);/);
+      if (!padding) continue;
+      assert.match(
+        padding[1],
+        /--pnl-pad-[xy]/,
+        `${selector} states its inset as ${padding[1].trim()}. A literal that happens ` +
+          `to equal the token today is not the token: it does not follow it, and no ` +
+          `computed-style guard can see the difference.`,
+      );
+    }
+  }
+});
+
 test("a dialog that shrank its contents is allowed to shrink", () => {
   // Page setup's preview and spinners were cut to their content; if the card
   // stays pinned to the "wide" constant the dialog is still as big and no more

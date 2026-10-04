@@ -261,6 +261,12 @@ test("Find and replace keeps its own geometry and the shell's inset", async ({ p
   });
   expect(m.bodyContent).toBe(m.headContent);
   expect(m.headPaddingLeft).toBe(m.bodyPaddingLeft);
+  // Symmetric too, as the shell's are. This panel's head was
+  // `var(--space-2) var(--space-3) var(--space-2) var(--space-4)` — the one
+  // panel that was right about the LEFT edge and still tuned its right side
+  // separately, which is the same four-sided padding the nine panels had.
+  expect(m.headPaddingRight).toBe(m.headPaddingLeft);
+  expect(m.bodyPaddingRight).toBe(m.bodyPaddingLeft);
   // Fixed, and on the right-hand side of the window — the property that makes
   // it not cover the search target. Asserted as a relation to the viewport, not
   // as an x: the panel is `right: 18px` and its width is a `min()`.
@@ -281,34 +287,52 @@ test("Find and replace keeps its own geometry and the shell's inset", async ({ p
 // The review column takes the PADDING convention and not the geometry one. It is
 // absolutely positioned and rides the document scroll so each card stays pinned
 // to the text it annotates — forcing it into the panel shell would break the one
-// thing it is built to do. Its header and its cards both said `8px 10px`, which
-// was already self-consistent and was two more raw pixel pairs in a family that
+// thing it is built to do. What it shares with the shell is the inset: its header
+// and its cards both said `8px 10px`, two more raw pixel pairs in a family that
 // now has a token.
-test("the review column's header and its cards share the shell's inset", async ({ page }) => {
+//
+// MEASURED, not inferred: a resolved `8px 16px` is indistinguishable from
+// `var(--pnl-pad-y) var(--pnl-pad-x)` to `getComputedStyle`, so this asserts the
+// two things a browser CAN answer — the geometry the column keeps, and that its
+// header and its cards agree with each other. That they read the TOKEN rather
+// than a literal that happens to match is a source question, and it is asserted
+// in `tests/dialog_density.test.mjs`, which can see the stylesheet text.
+test("the review column keeps its geometry and agrees with its own cards", async ({ page }) => {
   await page.setViewportSize(LAPTOP);
   await gotoEditor(page);
   await page.locator("#railReview").click();
   await expect(page.locator(".review-sidebar")).toBeVisible();
   const m = await page.evaluate(() => {
+    const inset = (el) => {
+      const style = getComputedStyle(el);
+      return `${style.paddingTop} ${style.paddingLeft}`;
+    };
     const head = document.querySelector(".review-sidebar-header");
-    const root = getComputedStyle(document.documentElement);
-    const want = `${root.getPropertyValue("--pnl-pad-y").trim()} ${root
+    const root = document.documentElement;
+    const want = `${getComputedStyle(root).getPropertyValue("--pnl-pad-y").trim()} ${getComputedStyle(
+      root,
+    )
       .getPropertyValue("--pnl-pad-x")
       .trim()}`;
-    const style = getComputedStyle(head);
     return {
       position: getComputedStyle(document.querySelector(".review-sidebar")).position,
-      padding: `${style.paddingTop} ${style.paddingLeft}`,
+      header: inset(head),
       want,
+      // `.review-margin-card` only exists once there is a comment to card, and
+      // the demo document has none — so the composer, which is painted in the
+      // same column from the same pair, stands in for it. Reported as null
+      // rather than silently skipped.
+      card: document.querySelector(".review-margin-card")
+        ? inset(document.querySelector(".review-margin-card"))
+        : null,
     };
   });
-  // The geometry it keeps.
+  // The geometry it keeps: a column riding the document scroll, not a flex item
+  // in the shell row.
   expect(m.position).toBe("absolute");
-  // The inset it shares. Resolved values on both sides, so this compares what
-  // the browser computed from the token against the token — a header that goes
-  // back to a literal fails even if the literal happens to be 8px 16px today,
-  // because the token is a `clamp`-able pair and a literal does not follow it.
-  expect(m.padding).toBe(m.want);
+  // The inset it shares, resolved from the token pair.
+  expect(m.header).toBe(m.want);
+  if (m.card !== null) expect(m.card).toBe(m.header);
 });
 
 // The roster above cannot fall behind the product. `dialog-fit.spec.mjs` carried
