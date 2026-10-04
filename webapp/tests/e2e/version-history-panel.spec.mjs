@@ -610,18 +610,22 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
     "Show changes",
     expect.stringContaining("Delete this version"),
   ]);
-  // Show changes, LIVE on this row. It used to be present and disabled, carrying
-  // "Comparing one version with another is not built yet" — and that sentence was
-  // wrong about which half was missing: `crates/casual-doc-diff` and
-  // `crates/casual-doc-wasm/src/diff.rs` were complete the whole time and
-  // `webapp/` called neither. `compare_documents.mjs` is the panel they were
-  // waiting for, and `compare.spec.mjs` drives this row and asserts the
-  // comparison it produces. This is the OLDEST row; the head's own refusal — the
-  // head is the document on screen, so comparing it with itself shows nothing —
-  // is asserted there too.
+  // Show changes, and THIS ROW IS THE OLDEST, which is now the one that refuses.
+  //
+  // Two corrections live in this one assertion. It used to be present and
+  // disabled carrying "Comparing one version with another is not built yet",
+  // which was wrong about which half was missing — the diff crate was complete
+  // the whole time and `webapp/` called neither half. Then it was enabled here
+  // and refused on the HEAD, because the comparison ran against the document on
+  // screen. ADR-062 compares against a PREDECESSOR, so the head is live (the
+  // most useful row: what changed in the latest save?) and the earliest version
+  // kept is the one with nothing before it. `compare.spec.mjs` drives both and
+  // asserts the comparison each produces.
   const changes = page.locator(`${rowMenu} [data-command-id="version.changes"]`);
-  await expect(changes).toBeEnabled();
+  await expect(changes).toBeDisabled();
+  await expect(changes).toHaveAttribute("title", /earliest version/i);
   await expect(changes).not.toHaveAttribute("title", /not built yet/i);
+  await expect(changes).not.toHaveAttribute("title", /comparing it with itself/i);
   // Keep is a STATE, so it is a checkbox row rather than a label that flips.
   await expect(page.locator(`${rowMenu} [data-command-id="version.keep"]`)).toHaveAttribute(
     "role",

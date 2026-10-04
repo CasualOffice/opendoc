@@ -330,6 +330,13 @@ test("every entry in the list names what it is about, never only its kind", asyn
   // THE CONDITION IS A FORMATTING-ONLY CHANGE, deliberately: a text edit already
   // rendered its excerpt, so a test that only inserted a paragraph passed over
   // the defect — which is exactly what the four tests above do.
+  //
+  // THE BOLD IS NOW SAVED, which it was not before, and it had to change with
+  // ADR-062. The comparison used to run against the LIVE document, so an unsaved
+  // bold was in it; it now runs between two stored versions, so a bold that was
+  // never saved is in neither side and the formatting condition this test needs
+  // would not exist. Three versions: the import baseline, the typed sentence,
+  // and the bold.
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+Home`);
@@ -340,13 +347,18 @@ test("every entry in the list names what it is about, never only its kind", asyn
   await page.keyboard.press(`${MOD}+Home`);
   for (let i = 0; i < 8; i += 1) await page.keyboard.press("Shift+ArrowRight");
   await page.locator("#bold").click();
+  await saveDocument(page);
 
   await runAppMenuCommand(page, "file", "file.versionHistory");
   const rows = page.locator("#versionPanelBody .version-item");
-  await expect(rows, "two versions, or there is nothing to compare against").toHaveCount(2, {
+  await expect(rows, "three versions, or there is nothing to compare against").toHaveCount(3, {
     timeout: 45_000,
   });
-  await rows.last().locator(".version-item-menu").click();
+  // THE NEWEST row, not the oldest. ADR-062 compares against a PREDECESSOR, so
+  // the oldest row has nothing before it and refuses (asserted in the test
+  // above); the newest holds the bold and its predecessor does not, which is the
+  // formatting-only difference this test is about.
+  await rows.first().locator(".version-item-menu").click();
   const changes = page.locator('#versionRowMenu [data-command-id="version.changes"]');
   await expect(changes).toBeEnabled();
   await changes.click();
@@ -354,7 +366,13 @@ test("every entry in the list names what it is about, never only its kind", asyn
     timeout: 45_000,
   });
 
-  const entries = page.locator("#compareBody .compare-changes li");
+  // `li[data-compare-kind]` — the CHANGE rows, which is what this rule is about.
+  // The unified diff puts hunk headers, context blocks and expand controls in the
+  // same list, and those are not entries about a change: only a change row
+  // carries `data-compare-kind`, and selecting on it keeps the guarantee exactly
+  // ("every entry names what it is about") while naming the rows it is a
+  // guarantee over.
+  const entries = page.locator("#compareBody .compare-changes li[data-compare-kind]");
   // NON-VACUITY: a comparison that found nothing would make every assertion
   // below pass over an empty list, and a formatting change is exactly the kind
   // this build might have failed to detect.
