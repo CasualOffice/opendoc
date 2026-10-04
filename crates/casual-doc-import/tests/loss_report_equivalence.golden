@@ -1,0 +1,488 @@
+rsid-class-feature: docx.rsid
+watermark-class-feature: docx.watermark
+
+== corpus/real-producer-footnotes.docx [Semantic]
+  report: 2 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    themeFontLang x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("themeFontLang") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-footnotes.docx [Retention]
+  report: 2 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    themeFontLang x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("themeFontLang") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=27289 retains=true
+  validate: Ok(())
+
+== corpus/real-producer-header-footer.docx [Semantic]
+  report: 2 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    themeFontLang x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("themeFontLang") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-header-footer.docx [Retention]
+  report: 2 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    themeFontLang x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("themeFontLang") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=27507 retains=true
+  validate: Ok(())
+
+== corpus/real-producer-hyperlinks.docx [Semantic]
+  report: 2 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    view x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-hyperlinks.docx [Retention]
+  report: 2 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    view x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=12220 retains=true
+  validate: Ok(())
+
+== corpus/real-producer-libreoffice.docx [Semantic]
+  report: 2 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    view x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-libreoffice.docx [Retention]
+  report: 2 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    view x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=12201 retains=true
+  validate: Ok(())
+
+== corpus/real-producer-rich.docx [Semantic]
+  report: 4 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    graphicFrameLocks x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("graphicFrameLocks") loc.attribute=None ledger=None
+    picLocks x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("picLocks") loc.attribute=None ledger=None
+    view x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-rich.docx [Retention]
+  report: 4 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    graphicFrameLocks x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("graphicFrameLocks") loc.attribute=None ledger=Some(0)
+    picLocks x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("picLocks") loc.attribute=None ledger=Some(0)
+    view x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=16272 retains=true
+  validate: Ok(())
+
+== corpus/real-producer-table-list.docx [Semantic]
+  report: 2 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    view x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-table-list.docx [Retention]
+  report: 2 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    view x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=24086 retains=true
+  validate: Ok(())
+
+== corpus/real-producer-table-merges.docx [Semantic]
+  report: 2 entries
+    formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
+    view x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/real-producer-table-merges.docx [Retention]
+  report: 2 entries
+    formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
+    view x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("view") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=16113 retains=true
+  validate: Ok(())
+
+== corpus/synthetic-declared-family-substitution.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/synthetic-declared-family-substitution.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=4043 retains=true
+  validate: Ok(())
+
+== corpus/synthetic-rich-metadata.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== corpus/synthetic-rich-metadata.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=5133 retains=true
+  validate: Ok(())
+
+== generated/cell-hit-routing.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/cell-hit-routing.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=5532 retains=true
+  validate: Ok(())
+
+== generated/chart.docx [Semantic]
+  report: 4 entries
+    chart.trendline x1 DegradedPreserved model=Degraded retention=Preserved part=Some("word/charts/chart1.xml") content_type=None loc.part=Some("word/charts/chart1.xml") loc.element=Some("trendline") loc.attribute=None ledger=Some(0)
+    word/charts/colors1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/colors1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartColorStyle+xml") loc.part=Some("word/charts/colors1.xml") loc.element=None loc.attribute=None ledger=Some(1)
+    word/charts/style1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/style1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartStyle+xml") loc.part=Some("word/charts/style1.xml") loc.element=None loc.attribute=None ledger=Some(2)
+    word/embeddings/Microsoft_Excel_Worksheet1.xlsx x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") content_type=Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") loc.part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") loc.element=None loc.attribute=None ledger=Some(3)
+  ledger: 4 records, snapshot=None
+    #0 OpaquePart covers=Some("word/charts/chart1.xml") bytes=3492 retains=true
+    #1 OpaquePart covers=Some("word/charts/colors1.xml") bytes=298 retains=true
+    #2 OpaquePart covers=Some("word/charts/style1.xml") bytes=278 retains=true
+    #3 OpaquePart covers=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") bytes=35 retains=true
+  validate: Ok(())
+
+== generated/chart.docx [Retention]
+  report: 4 entries
+    chart.trendline x1 DegradedPreserved model=Degraded retention=Preserved part=Some("word/charts/chart1.xml") content_type=None loc.part=Some("word/charts/chart1.xml") loc.element=Some("trendline") loc.attribute=None ledger=Some(1)
+    word/charts/colors1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/colors1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartColorStyle+xml") loc.part=Some("word/charts/colors1.xml") loc.element=None loc.attribute=None ledger=Some(2)
+    word/charts/style1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/style1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartStyle+xml") loc.part=Some("word/charts/style1.xml") loc.element=None loc.attribute=None ledger=Some(3)
+    word/embeddings/Microsoft_Excel_Worksheet1.xlsx x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") content_type=Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") loc.part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") loc.element=None loc.attribute=None ledger=Some(4)
+  ledger: 5 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=6512 retains=true
+    #1 OpaquePart covers=Some("word/charts/chart1.xml") bytes=3492 retains=true
+    #2 OpaquePart covers=Some("word/charts/colors1.xml") bytes=298 retains=true
+    #3 OpaquePart covers=Some("word/charts/style1.xml") bytes=278 retains=true
+    #4 OpaquePart covers=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") bytes=35 retains=true
+  validate: Ok(())
+
+== generated/collapsed-headings.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/collapsed-headings.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=1863 retains=true
+  validate: Ok(())
+
+== generated/custom-geometry.docx [Semantic]
+  report: 1 entries
+    custGeom x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("custGeom") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/custom-geometry.docx [Retention]
+  report: 1 entries
+    custGeom x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("custGeom") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=5897 retains=true
+  validate: Ok(())
+
+== generated/duplicate-part.docx [Semantic]
+  package refused: DOCX package contains a duplicate part
+
+== generated/duplicate-part.docx [Retention]
+  package refused: DOCX package contains a duplicate part
+
+== generated/emoji-containers.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/emoji-containers.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2924 retains=true
+  validate: Ok(())
+
+== generated/floating-table.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/floating-table.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=3247 retains=true
+  validate: Ok(())
+
+== generated/floating-text-box.docx [Semantic]
+  report: 1 entries
+    drawing x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/floating-text-box.docx [Retention]
+  report: 1 entries
+    drawing x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2419 retains=true
+  validate: Ok(())
+
+== generated/form-checkbox.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/form-checkbox.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=4992 retains=true
+  validate: Ok(())
+
+== generated/forms-protected.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/forms-protected.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2619 retains=true
+  validate: Ok(())
+
+== generated/grouped-text-boxes.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/grouped-text-boxes.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2894 retains=true
+  validate: Ok(())
+
+== generated/high-expansion.docx [Semantic]
+  package refused: package limit entry_expansion_ratio exceeded: observed 830, allowed 200
+
+== generated/high-expansion.docx [Retention]
+  package refused: package limit entry_expansion_ratio exceeded: observed 830, allowed 200
+
+== generated/inline-text-box.docx [Semantic]
+  report: 2 entries
+    shape x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("shape") loc.attribute=None ledger=None
+    textbox x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("textbox") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/inline-text-box.docx [Retention]
+  report: 2 entries
+    shape x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("shape") loc.attribute=None ledger=Some(0)
+    textbox x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("textbox") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=1525 retains=true
+  validate: Ok(())
+
+== generated/legacy-form.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/legacy-form.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2043 retains=true
+  validate: Ok(())
+
+== generated/malformed-truncated.docx [Semantic]
+  package refused: DOCX ZIP structure is malformed
+
+== generated/malformed-truncated.docx [Retention]
+  package refused: DOCX ZIP structure is malformed
+
+== generated/minimal-valid.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/minimal-valid.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=760 retains=true
+  validate: Ok(())
+
+== generated/mixed-unicode.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/mixed-unicode.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=1003 retains=true
+  validate: Ok(())
+
+== generated/nested-group.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/nested-group.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=3444 retains=true
+  validate: Ok(())
+
+== generated/note-references.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/note-references.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2610 retains=true
+  validate: Ok(())
+
+== generated/pagination-fidelity.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/pagination-fidelity.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=26292 retains=true
+  validate: Ok(())
+
+== generated/path-traversal.docx [Semantic]
+  package refused: DOCX package part name is unsafe
+
+== generated/path-traversal.docx [Retention]
+  package refused: DOCX package part name is unsafe
+
+== generated/picture-hyperlink.docx [Semantic]
+  report: 1 entries
+    drawing x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/picture-hyperlink.docx [Retention]
+  report: 1 entries
+    drawing x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=6466 retains=true
+  validate: Ok(())
+
+== generated/shapes.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/shapes.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=3940 retains=true
+  validate: Ok(())
+
+== generated/tab-hit-offsets.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/tab-hit-offsets.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2767 retains=true
+  validate: Ok(())
+
+== generated/themed-shape.docx [Semantic]
+  report: 7 entries
+    fmtScheme/effectStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("effectStyleLst") loc.attribute=Some("effect-not-rendered") ledger=None
+    fmtScheme/fillStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fillStyleLst") loc.attribute=Some("pattern") ledger=None
+    fmtScheme/lnStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("lnStyleLst") loc.attribute=Some("unmodeled") ledger=None
+    fontScheme/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fontScheme") loc.attribute=Some("name") ledger=None
+    schemeClr x8 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("schemeClr") loc.attribute=None ledger=None
+    style x4 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("style") loc.attribute=None ledger=None
+    theme/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("theme") loc.attribute=Some("name") ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/themed-shape.docx [Retention]
+  report: 7 entries
+    fmtScheme/effectStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("effectStyleLst") loc.attribute=Some("effect-not-rendered") ledger=Some(0)
+    fmtScheme/fillStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fillStyleLst") loc.attribute=Some("pattern") ledger=Some(0)
+    fmtScheme/lnStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("lnStyleLst") loc.attribute=Some("unmodeled") ledger=Some(0)
+    fontScheme/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fontScheme") loc.attribute=Some("name") ledger=Some(0)
+    schemeClr x8 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("schemeClr") loc.attribute=None ledger=Some(0)
+    style x4 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("style") loc.attribute=None ledger=Some(0)
+    theme/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("theme") loc.attribute=Some("name") ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=7851 retains=true
+  validate: Ok(())
+
+== generated/unknown-safe-part.docx [Semantic]
+  report: 1 entries
+    customXml/item1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("customXml/item1.xml") content_type=Some("application/xml") loc.part=Some("customXml/item1.xml") loc.element=None loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=None
+    #0 OpaquePart covers=Some("customXml/item1.xml") bytes=71 retains=true
+  validate: Ok(())
+
+== generated/unknown-safe-part.docx [Retention]
+  report: 1 entries
+    customXml/item1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("customXml/item1.xml") content_type=Some("application/xml") loc.part=Some("customXml/item1.xml") loc.element=None loc.attribute=None ledger=Some(1)
+  ledger: 2 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=831 retains=true
+    #1 OpaquePart covers=Some("customXml/item1.xml") bytes=71 retains=true
+  validate: Ok(())
+
+== generated/visual-containment.docx [Semantic]
+  report: 0 entries
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/visual-containment.docx [Retention]
+  report: 0 entries
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=8980 retains=true
+  validate: Ok(())
+
+== generated/watermark.docx [Semantic]
+  report: 5 entries
+    fill x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fill") loc.attribute=None ledger=None
+    path x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("path") loc.attribute=None ledger=None
+    shape x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("shape") loc.attribute=None ledger=None
+    shapetype x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("shapetype") loc.attribute=None ledger=None
+    textpath x2 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("textpath") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/watermark.docx [Retention]
+  report: 5 entries
+    fill x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fill") loc.attribute=None ledger=Some(0)
+    path x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("path") loc.attribute=None ledger=Some(0)
+    shape x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("shape") loc.attribute=None ledger=Some(0)
+    shapetype x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("shapetype") loc.attribute=None ledger=Some(0)
+    textpath x2 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("textpath") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=2682 retains=true
+  validate: Ok(())
+
+== generated/wrap-text-sides.docx [Semantic]
+  report: 1 entries
+    drawing x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=None
+  ledger: 0 records, snapshot=None
+  validate: Ok(())
+
+== generated/wrap-text-sides.docx [Retention]
+  report: 1 entries
+    drawing x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=Some(0)
+  ledger: 1 records, snapshot=Some(0)
+    #0 SourceSnapshot covers=None bytes=9829 retains=true
+  validate: Ok(())
