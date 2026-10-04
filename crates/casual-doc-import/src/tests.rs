@@ -9283,12 +9283,166 @@ fn no_op_document() -> String {
           <mc:Choice Requires="w14"><w:r><w:t xml:space="preserve">Once.</w:t></w:r></mc:Choice>
           <mc:Fallback><w:r><w:t xml:space="preserve">Once.</w:t></w:r></mc:Fallback>
         </mc:AlternateContent></w:p>
+        <w:p><w:pPr><w:ind/><w:spacing/></w:pPr><w:r><w:t>Unindented.</w:t></w:r></w:p>
         <w:tbl><w:tr><w:tc>
           <w:tcPr><w:tcBorders><w:tl2br w:val="nil"/><w:tr2bl w:val="nil"/></w:tcBorders></w:tcPr>
           <w:p><w:r><w:t>Cell</w:t></w:r></w:p>
         </w:tc></w:tr></w:tbl>
         </w:body></w:document>"#
     )
+}
+
+/// A border edge's theme colour must either survive the import or be reported.
+///
+/// `BorderEdge::color` is `Option<RgbColor>` and its own doc comment says
+/// `auto`/theme is "reported" — it was not. Measured over the owner's corpus,
+/// five of nineteen documents lose a border theme colour with a compatibility
+/// report that never names it, and the element-name loss gate
+/// (`casual-doc-export/tests/source_element_coverage.rs`) structurally cannot see
+/// it: the element `w:top` survives the save, only its attribute does not.
+///
+/// The assertion is at the altitude where the invariant actually holds — *the
+/// value survives or is reported* — so it stays green if a later change models
+/// the colour instead of reporting it, and goes red only on silence. It walks
+/// report `location` pairs, never feature text: the feature string for this
+/// finding is `top/@themeColor`, which *contains* `themeColor`, so a substring
+/// test over feature strings could pass on an unrelated entry.
+///
+/// Both parsers are exercised, because the edge builder exists twice — once in
+/// the body parser and once in the styles parser — and fixing one of two copies
+/// is how a defect class survives its own fix.
+#[test]
+fn a_border_theme_color_is_reported_rather_than_silently_dropped() {
+    for (what, import) in [
+        (
+            "body",
+            import(
+                br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+                <w:tbl><w:tblPr><w:tblBorders>
+                  <w:top w:val="single" w:sz="4" w:color="ED7D31" w:themeColor="accent2" w:themeTint="BF"/>
+                </w:tblBorders></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+                </w:body></w:document>"#,
+            ),
+        ),
+        (
+            "styles",
+            import_with_styles(
+                br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+                <w:p><w:r><w:t>Body</w:t></w:r></w:p>
+                </w:body></w:document>"#,
+                br#"<?xml version="1.0"?><w:styles xmlns:w="urn:w">
+                <w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:tblPr><w:tblBorders>
+                  <w:top w:val="single" w:sz="4" w:color="ED7D31" w:themeColor="accent2" w:themeTint="BF"/>
+                </w:tblBorders></w:tblPr></w:style>
+                </w:styles>"#,
+            ),
+        ),
+    ] {
+        let located: Vec<(&str, &str)> = import
+            .report
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry.location.element.as_deref()?,
+                    entry.location.attribute.as_deref()?,
+                ))
+            })
+            .collect();
+        assert!(
+            located.contains(&("top", "themeColor")),
+            "the {what} parser dropped w:top/@w:themeColor without a finding: {located:?}"
+        );
+        assert!(
+            located.contains(&("top", "themeTint")),
+            "the {what} parser dropped w:top/@w:themeTint without a finding: {located:?}"
+        );
+    }
+
+    // The precondition, kept explicit: an edge with no theme reference must stay
+    // silent, or the guard above would be satisfied by a reporter that fires on
+    // every border in every healthy document.
+    let plain = import(
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="000000"/></w:tblBorders></w:tblPr>
+        <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        </w:body></w:document>"#,
+    );
+    let plain_attrs: Vec<&str> = plain
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| entry.location.attribute.as_deref())
+        .collect();
+    assert!(
+        !plain_attrs.contains(&"themeColor") && !plain_attrs.contains(&"themeTint"),
+        "an sRGB-only border reported a theme loss that did not happen: {plain_attrs:?}"
+    );
+}
+
+/// An attribute-less `w:ind`/`w:spacing` specifies nothing, so it must raise
+/// nothing — and one carrying an attribute this parser cannot read must still
+/// raise a finding.
+///
+/// Both halves are in one test because the fix is the *distinction*, not either
+/// side of it. Silencing the first without keeping the second is the failure the
+/// no-op class exists to avoid in the other direction: a blanket silence buys an
+/// empty report by giving up loss detection, which `35-DISPOSITION-TAXONOMY.md`
+/// calls the worse of the two errors.
+///
+/// Measured: over the owner's nineteen-document corpus the attribute-less form
+/// raised 1,833 `w:ind` and 1,689 `w:spacing` findings in two documents, which
+/// was the largest single contributor to report volume anywhere in the corpus.
+/// The dominant location is `w:style/w:tblStylePr/w:pPr`, so the styles parser is
+/// exercised alongside the body one.
+///
+/// The assertions walk report *locations*, not the report's text: a feature
+/// string is `"ind"` for the element and `"ind/@leftChars"` for the attribute, and
+/// a `contains` test over either would also match the other.
+#[test]
+fn an_empty_indent_or_spacing_specifies_nothing_and_reports_nothing() {
+    let silent = import_with_styles(
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:ind/><w:spacing/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>
+        </w:body></w:document>"#,
+        br#"<?xml version="1.0"?><w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="Plain"><w:name w:val="Plain"/>
+          <w:pPr><w:ind/><w:spacing/></w:pPr>
+        </w:style>
+        <w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/>
+          <w:tblStylePr w:type="firstRow"><w:pPr><w:ind/><w:spacing/></w:pPr></w:tblStylePr>
+        </w:style>
+        </w:styles>"#,
+    );
+    let named: Vec<&str> = silent
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| entry.location.element.as_deref())
+        .collect();
+    assert!(
+        !named.contains(&"ind") && !named.contains(&"spacing"),
+        "an attribute-less w:ind/w:spacing reported a loss that did not happen: {named:?}"
+    );
+
+    // The precondition, kept explicit: the parser still cannot read character-unit
+    // indentation, and must still say so.
+    let lossy = import(
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:ind w:leftChars="720"/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>
+        </w:body></w:document>"#,
+    );
+    let lossy_named: Vec<&str> = lossy
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| entry.location.element.as_deref())
+        .collect();
+    assert!(
+        lossy_named.contains(&"ind"),
+        "character-unit indentation was dropped with no finding: {lossy_named:?}"
+    );
 }
 
 /// The DrawingML half of the class, on the `wps:wsp` text-box shape Word writes
