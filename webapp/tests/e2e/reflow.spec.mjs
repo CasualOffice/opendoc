@@ -840,3 +840,62 @@ test("at the phone rung reflow does NOT open the outline, because there is no le
   expect(painted.scrollWidth).toBeLessThanOrEqual(painted.clientWidth);
   expect(consoleErrors).toEqual([]);
 });
+
+// ---- 6. What the view approximates, asked for and answered -----------------
+
+/** The exact English of `reflowNotes.none`. Written out rather than imported so
+ *  this spec fails if the sentence changes without anyone re-reading what it is
+ *  claiming to a reader; the catalogue coverage is `locale_coverage.test.mjs`'s
+ *  job, not this file's. */
+const NOTHING_APPROXIMATED =
+  "Nothing: every part of this document is laid out the way the document asks for it.";
+
+test("the view says what it approximates, from two surfaces, in both views", async ({
+  page,
+  consoleErrors,
+}) => {
+  // THE DEFECT THIS CLOSES. `LayoutView::approximations` has reported what reflow
+  // approximates since reflow shipped, `reflow_chrome.mjs` held the list — and
+  // nothing in the product called the accessor. One getter, zero callers: the
+  // engine's report reached no reader through any surface, in any view, behind
+  // any click (`docs/151` §8 item 8, `SKILL.md` §9.4 — built is not reachable).
+  //
+  // So what is asserted here is REACHABILITY and TRUTHFULNESS, not wording:
+  // the row exists on two surfaces, it is enabled in both views rather than
+  // greyed, and in the paged view — where nothing IS approximated — it says so
+  // instead of reciting the reflow list. That last clause is what makes this a
+  // guard on the derivation rather than on the plumbing: the list it replaced
+  // was a fixed constant that would have answered a paged reader with three
+  // sentences about tiles.
+  await page.setViewportSize(DESKTOP);
+  await gotoEditor(page);
+  await expectReflow(page, false);
+
+  // Surface 1: the View menu, beside the reflow toggle, which is where the
+  // question arises.
+  await runAppMenuCommand(page, "view", "view.reflowApproximations");
+  await expect(page.locator("#status")).toHaveText(NOTHING_APPROXIMATED);
+  await expect(page.locator("#status")).not.toHaveClass(/error/);
+
+  // Surface 2: the palette. `runPaletteCommand` asserts the row is offered AND
+  // enabled before clicking it, so a dead control fails here rather than
+  // silently doing nothing.
+  await runPaletteCommand(page, "view.reflowApproximations", "approximates");
+  await expect(page.locator("#status")).toHaveText(NOTHING_APPROXIMATED);
+
+  // And in reflow it answers about the document rather than refusing. The
+  // sentences are the engine's, and which of them apply is this document's
+  // business — so the assertion is that SOMETHING is said and that the control
+  // is not withheld, which is the part the shell owns.
+  // Through the command rather than the ribbon button: `runAppMenuCommand` above
+  // switched the shell into compact chrome, where the ribbon's `#viewReflowBtn`
+  // is not painted. Driving the registry row is also the better test of the
+  // pair — the two rows are faces of one command either way.
+  await runPaletteCommand(page, "view.reflow", "reflow");
+  await expectReflow(page, true);
+  await runPaletteCommand(page, "view.reflowApproximations", "approximates");
+  await expect(page.locator("#status")).not.toBeEmpty();
+  await expect(page.locator("#status")).not.toHaveClass(/error/);
+
+  expect(consoleErrors).toEqual([]);
+});
