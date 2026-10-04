@@ -120,12 +120,26 @@ RUN ./webapp/build.sh
 # `src/`, `assets/`, `locales/`, `dict/`, `packs/` and `pkg/` are all fetched at
 # runtime by the editor: the module, the self-hosted fonts, the nineteen locale
 # catalogues, the spelling word lists and the glossary.
+# Two things are copied in and then removed, rather than never matched: the
+# `*.page.html` TEMPLATES and `llms.page.txt`. `build-site.py` inlines the shared
+# partials into each template and writes the flat file the site serves, and
+# `build-seo.mjs` does the same for the crawler manifest — so shipping a template
+# beside its output would serve a page still carrying its partial markers to
+# anyone who guessed the URL.
+#
+# `CNAME` is deliberately NOT staged. It is GitHub Pages' custom-domain file; it
+# means nothing in a container, and naming somebody else's domain inside a
+# self-hosted image is worse than leaving it out.
+#
+# (The comments are here and not inside the RUN: a `#` line inside a continued
+# shell command is a Dockerfile comment on some parsers and the start of a shell
+# comment that swallows the rest of the joined line on others.)
 RUN set -eu; \
     mkdir -p /stage; \
     cd webapp; \
-    cp -a *.html *.txt *.svg *.png *.docx CNAME sitemap.xml brand.json /stage/; \
-    rm -f /stage/*.page.html; \
+    cp -a *.html *.txt *.svg *.png *.docx sitemap.xml brand.json /stage/; \
     cp -a src assets locales dict packs pkg reference /stage/; \
+    rm -f /stage/*.page.html /stage/llms.page.txt; \
     find /stage -name '.DS_Store' -delete
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
