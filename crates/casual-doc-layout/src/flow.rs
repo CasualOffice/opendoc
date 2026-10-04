@@ -10855,21 +10855,65 @@ mod tests {
     }
 
     #[test]
-    fn a_pie_only_chart_keeps_the_placeholder_because_there_is_no_arc_primitive() {
-        // Tier 1B (`docs/155` 7.3): a sector is an arc between two radii and
-        // `display::PathCommand` has `CubicTo`/`QuadTo` but no `ArcTo`. A polygon
-        // fan is rejected rather than shipped, so pie keeps today's reported
-        // placeholder - pinned here so a fan cannot be slipped in unnoticed.
+    fn a_pie_only_chart_paints_sectors_instead_of_the_placeholder() {
+        // Tier 1B (`docs/155` 7.3). This guard previously asserted the OPPOSITE -
+        // that a pie keeps the `[chart]` placeholder "until the arc primitive
+        // exists". The primitive exists: `ShapeGeometry::Path` carries
+        // `PathCommand::CubicTo`, and `crate::arc::sector` builds a sector from
+        // it. The inversion is the evidence that tier 1B is reachable from the
+        // flow consumer and not merely unit-tested in isolation.
         let mut chart = bar_chart(&["1", "2", "3", "4"]);
         chart.plot_area.groups[0].kind = casual_doc_model::v1::ChartGroupKind::Pie {
             first_slice_angle: 0,
         };
         let (definitions, inlines) = chart_document(Some(chart));
         let items = collected_items(&definitions, &inlines);
+        assert!(
+            run_texts(&items).is_empty(),
+            "a painted pie must not ALSO emit the placeholder run, got {items:?}"
+        );
+        let Some(FlowItem::Chart { primitives, .. }) = items
+            .iter()
+            .find(|item| matches!(item, FlowItem::Chart { .. }))
+        else {
+            panic!("a pie chart must flow as a chart box, got {items:?}");
+        };
+        // Four values, so four sectors - each a curved path, not a polygon fan.
+        let curved = primitives
+            .iter()
+            .filter(|primitive| match primitive {
+                crate::text::ChartPrimitive::Path { commands, .. } => commands
+                    .iter()
+                    .any(|command| matches!(command, crate::display::PathCommand::CubicTo { .. })),
+                _ => false,
+            })
+            .count();
         assert_eq!(
-            run_texts(&items),
-            vec!["[chart]"],
-            "a pie chart keeps the placeholder until the arc primitive exists"
+            curved, 4,
+            "four values must paint four curved sectors, got {curved} in {primitives:?}"
+        );
+    }
+
+    #[test]
+    fn a_doughnut_chart_paints_rings_through_the_same_consumer() {
+        // The same path for the other tier-1B family, so a pie that works and a
+        // doughnut that does not cannot both be green.
+        let mut chart = bar_chart(&["3", "4", "5"]);
+        chart.plot_area.groups[0].kind = casual_doc_model::v1::ChartGroupKind::Doughnut {
+            first_slice_angle: 0,
+            hole_size: 50,
+        };
+        let (definitions, inlines) = chart_document(Some(chart));
+        let items = collected_items(&definitions, &inlines);
+        assert!(
+            run_texts(&items).is_empty(),
+            "a painted doughnut must not also emit the placeholder, got {items:?}"
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| matches!(item, FlowItem::Chart { .. })),
+            "a doughnut must flow as a chart box, got {items:?}"
         );
     }
 
