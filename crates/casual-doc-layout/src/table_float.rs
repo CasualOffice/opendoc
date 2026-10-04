@@ -519,6 +519,15 @@ fn flow_rows(
         crate::flow::ReviewView::Editing,
         crate::flow::NoteFlow::default(),
         None,
+        // KNOWN GAP, stated rather than hidden: a positioned table whose anchor
+        // paragraph sits inside a collapsed heading's range is still flowed and
+        // still placed, because the float layer resolves it from the BODY INDEX
+        // and never asks the flow whether that block was laid out. The body
+        // float gate in `crate::anchor` closes the drawing/text-box half of the
+        // same problem by deriving placement from the layout; a positioned table
+        // is lifted out of the galley before pagination, so it has no fragment
+        // to be absent. `109` FOLD-002.
+        &crate::fold::FoldSet::EMPTY,
     )
 }
 

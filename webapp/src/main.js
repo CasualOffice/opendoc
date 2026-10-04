@@ -54,7 +54,7 @@ import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
 import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
-import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { FONT_SIZE_STEPS, RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
@@ -172,8 +172,8 @@ import {
 import {
   byteOffsetToStringIndex,
   isWholeWordAt,
+  recaseRichRuns,
   smartQuoteForTyped,
-  transformCase,
 } from "./text_rules.mjs";
 import {
   EMU_PER_TWIP,
@@ -238,6 +238,7 @@ import { createTableGutter } from "./table_gutter.mjs";
 import { createTableRange } from "./table_range.mjs";
 import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createReflowChrome } from "./reflow_chrome.mjs";
+import { createFoldChrome } from "./fold_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
@@ -4099,6 +4100,7 @@ function paintOverlayLayer() {
 function drawSelection() {
   if (!doc) return;
   paintOverlayLayer();
+  foldView.syncBodyChevron(); // after the overlay repaint, which clears it
   updateObjectSelectionState();
   updateObjectContextBar();
   updateToolbar();
@@ -7554,6 +7556,18 @@ const reflowView = createReflowChrome({
   setStatus,
 });
 
+// Folding (ADR-049): the engine calls, the command rows and the margin chevron
+// are `fold_chrome.mjs`; the decisions are `fold_view.mjs`. `getPages`/`scaleOf`
+// are the pair the ruler and touch selection already take, for the same reason.
+const foldView = createFoldChrome({
+  getDoc: () => doc,
+  caretNode: () => selection?.focus?.node ?? "",
+  getPages: () => pages,
+  scaleOf,
+  onChanged: () => renderAll().then(() => scheduleChromeRefresh({ stats: true, outline: true })),
+  setStatus,
+});
+
 // ---- Horizontal ruler ---------------------------------------------------------
 // The strip itself lives in `ruler.mjs`. It is bound to the live `doc`,
 // `selection`, `pages` and `pageBandModel` through getters rather than values,
@@ -10078,9 +10092,9 @@ fontMenuList.addEventListener("click", (e) => {
 });
 
 // ---- Grow / shrink font (Q5) -------------------------------------------------
-const FONT_STEP_SIZES = [
-  8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96,
-];
+// The ladder and the step rule are `nextFontSizeStep` in `style_picker.mjs`,
+// beside `previewPx`: both are point sizes, and the epsilon and the past-the-end
+// behaviour are exactly the parts that want a unit test rather than a browser.
 function currentFontPt() {
   const v = Number(fontSizeSel.value);
   if (Number.isFinite(v) && v >= 1) return v;
@@ -10088,14 +10102,7 @@ function currentFontPt() {
   return 11;
 }
 function stepFontSize(dir) {
-  const cur = currentFontPt();
-  let next;
-  if (dir > 0) {
-    next = FONT_STEP_SIZES.find((s) => s > cur + 1e-6) ?? Math.min(1638, Math.round((cur + 2) * 2) / 2);
-  } else {
-    const smaller = FONT_STEP_SIZES.filter((s) => s < cur - 1e-6);
-    next = smaller.length ? smaller[smaller.length - 1] : Math.max(1, Math.round((cur - 1) * 2) / 2);
-  }
+  const next = nextFontSizeStep(currentFontPt(), dir);
   armOrApplyRun({ sizeHalfPoints: Math.round(next * 2) }, () =>
     runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, next)),
   );
@@ -10104,6 +10111,9 @@ onButton(growFontBtn, () => stepFontSize(1));
 onButton(shrinkFontBtn, () => stepFontSize(-1));
 
 // ---- Change case (Q5): transform selected text, preserving per-run format ----
+// The cross-run re-slicing rule is `recaseRichRuns` in `text_rules.mjs`, with
+// the two formatting boundaries that make it hard; what is left here is reading
+// the runs out of the engine and writing them back.
 async function applyChangeCase(mode) {
   if (!doc || !hasRange()) return;
   const { anchor, focus } = selection;
@@ -10114,22 +10124,7 @@ async function applyChangeCase(mode) {
     return;
   }
   if (!Array.isArray(runs) || !runs.length) return;
-  const full = runs.map((r) => (r.paragraphBreak ? "\n" : String(r.text ?? ""))).join("");
-  const transformed = transformCase(full, mode);
-  const out = runs.map((r) => ({ ...r }));
-  if (transformed.length === full.length) {
-    // Length-preserving: re-slice so cross-run sentence/title casing is correct.
-    let i = 0;
-    for (const r of out) {
-      const len = r.paragraphBreak ? 1 : String(r.text ?? "").length;
-      if (!r.paragraphBreak && r.text != null) r.text = transformed.slice(i, i + len);
-      i += len;
-    }
-  } else {
-    // Rare Unicode length change (e.g. ß→SS): fall back to per-run transform.
-    for (const r of out) if (!r.paragraphBreak && r.text != null) r.text = transformCase(String(r.text), mode);
-  }
-  await pasteRichRunsJson(JSON.stringify(out));
+  await pasteRichRunsJson(JSON.stringify(recaseRichRuns(runs, mode)));
 }
 const changeCasePopover = registerPopover(changeCaseBtn, changeCaseMenu, () => {});
 changeCaseMenu.addEventListener("click", (e) => {
@@ -10909,10 +10904,12 @@ function buildAccessibilityTree() {
 /** Rebuilds the outline list from the document's headings (no-op when hidden). */
 function buildOutline() {
   if (!doc || outlinePanel.hidden) return;
+  foldView.sync();
   renderOutline(outlineBody, doc.documentOutline(), {
     emptyText: t("outline.noHeadings"),
     onPick: navigateToNode,
     activeNode: selection?.focus?.node ?? "",
+    ...foldView.outlineOptions(),
   });
 }
 
@@ -11586,7 +11583,7 @@ function editorCommands(context = { surface: "palette" }) {
         : "Autosave is off in an embedded editor",
       run: () => showDraftRecovery(),
     },
-    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", enabled: HOST_CAPS.has("print"), disabledReason: t("capability.notGranted"), run: () => printDocument(doc) },
+    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", enabled: HOST_CAPS.has("print"), disabledReason: t("capability.notGranted"), run: () => void printDocument(doc).finally(() => { void renderAll(); scheduleChromeRefresh({ stats: true, outline: true }); }) },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => propertiesUi.toggle(true) },
     // Version history. `docs/139` §8.1's first entry point, and the primary one:
     // File is where Docs, ONLYOFFICE and Word all keep it, and a File row costs
@@ -11813,6 +11810,9 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.reflow", label: t(reflowView.isOn() ? "reflow.commandOn" : "reflow.commandOff"), group: "View", kw: "reflow pageless continuous column mobile phone reader web layout wrap width", enabled: !readOnlyReason, disabledReason: t("reflow.unavailable"), run: () => reflowView.toggle() },
     ...reflowView.commands(),
+    // Fold at the caret, Collapse/Expand All and the level rungs, generated from
+    // the module's one table so no two surfaces can offer different sets.
+    ...foldView.commands(),
     // The ¶ toggle and its five switches, the measurement-unit preference, and
     // Restrict Editing. Each module generates its own rows from its own table, so
     // the palette, the menu and the control cannot offer different sets — and
@@ -12019,7 +12019,7 @@ function editorCommands(context = { surface: "palette" }) {
         run: () => applyFontFamily(name),
       });
     }
-    for (const points of FONT_STEP_SIZES) {
+    for (const points of FONT_SIZE_STEPS) {
       cmds.push({
         id: `format.size.${points}`,
         label: `Font size: ${points} pt`,

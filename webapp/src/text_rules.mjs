@@ -49,6 +49,52 @@ export function transformCase(text, mode) {
   }
 }
 
+/**
+ * `runs` — a `copyRichRuns` payload — with Change-case `mode` applied to its
+ * text, every run's formatting untouched.
+ *
+ * Moved out of `main.js` to pay for the folding chrome's wiring (`109` FOLD-004),
+ * and it belongs here anyway: the hard part is not the case mapping but the
+ * RE-SLICING, which is pure and was previously only reachable through a browser.
+ *
+ * Why the whole selection is cased as one string and then re-sliced, rather
+ * than each run cased on its own: `sentence` and `title` are **not local
+ * rules**. A selection split as `["Hello. wor", "ld"]` by a bold boundary cases
+ * per-run to `"Hello. Wor" + "Ld"` — the second run's first character looks
+ * like the start of a word to a rule that cannot see the run before it. Joining
+ * first makes the boundary invisible to the rule, which is the only way the
+ * answer can be independent of where the formatting happens to change.
+ *
+ * The re-slice is valid only while the transform preserves LENGTH, which every
+ * mode does for almost every input and `ß → SS` (and the final sigma, and the
+ * Turkish dotted capital I) does not. Where the length moves, the per-run
+ * fallback is taken: the boundary rule degrades, and that is stated rather than
+ * silently producing text misaligned with its formatting — which is what a
+ * re-slice over a changed length does, shifting every later run's characters
+ * into the wrong format for the rest of the selection.
+ *
+ * A `paragraphBreak` run carries no `text` and counts as exactly one character
+ * (the `\n` the join writes), so the offsets stay in step across paragraphs.
+ *
+ * Returns fresh run objects; `runs` is not mutated. `O(characters)`.
+ */
+export function recaseRichRuns(runs, mode) {
+  const full = runs.map((r) => (r.paragraphBreak ? "\n" : String(r.text ?? ""))).join("");
+  const transformed = transformCase(full, mode);
+  const out = runs.map((r) => ({ ...r }));
+  if (transformed.length !== full.length) {
+    for (const r of out) if (!r.paragraphBreak && r.text != null) r.text = transformCase(String(r.text), mode);
+    return out;
+  }
+  let i = 0;
+  for (const r of out) {
+    const len = r.paragraphBreak ? 1 : String(r.text ?? "").length;
+    if (!r.paragraphBreak && r.text != null) r.text = transformed.slice(i, i + len);
+    i += len;
+  }
+  return out;
+}
+
 /** Characters after which a quote is an OPENING quote. */
 export const QUOTE_OPENERS = new Set(["(", "[", "{", "‘", "“", "—", "–", "-", "/"]);
 

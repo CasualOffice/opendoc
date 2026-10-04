@@ -9,9 +9,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  FONT_SIZE_STEPS,
   OFFERED_STYLE_COUNT,
   RECOMMENDED_STYLES,
   caretContexts,
+  nextFontSizeStep,
   offeredStyleNames,
   previewPx,
   styleMenuGroups,
@@ -331,3 +333,61 @@ test("machinery styles sort last inside the full list too", () => {
 function defined_(...names) {
   return new Set(names);
 }
+
+// ---------------------------------------------------------------------------
+// The A▲ / A▼ ladder, moved out of `main.js` with the folding chrome
+// (`109` FOLD-004). Both steppers are reachable from the ribbon and the command
+// palette, and until now the only way to find out what either did at the ends of
+// the ladder — or at `10.5`, the one non-integer rung — was to press it.
+
+// The comparison is strict, so a step always MOVES.
+//
+// Mutation that reddens it: accept equality — `s >= current - 1e-6` growing and
+// `s <= current + 1e-6` shrinking. Both steppers then return the size the caret
+// is already at for every size on the ladder, which is every size the font
+// dropdown offers: a control that visibly does nothing.
+//
+// (This replaced a guard asserting the `1e-6` epsilon was load-bearing.
+// Dropping the epsilon altogether left the suite GREEN — every size this is
+// called with is exact — so that guard could not be driven red and was rewritten
+// rather than kept as evidence, per `SKILL.md` §4.)
+test("a step from a rung lands on the next rung, never back on itself", () => {
+  assert.equal(nextFontSizeStep(11, 1), 12);
+  assert.equal(nextFontSizeStep(11, -1), 10.5);
+  assert.equal(nextFontSizeStep(10.5, 1), 11, "the half-point rung is a rung like any other");
+  assert.equal(nextFontSizeStep(10.5, -1), 10);
+});
+
+// Mutation that reddens it: `Math.min(FONT_PT_MAX, current + 2)` without the
+// half-point rounding. A size at 96.3 (a document can carry one; `w:sz` is in
+// half-points) then grows to 98.3, which cannot be written as `w:sz` and is
+// rounded by whoever writes it — so the value the toolbar shows and the value
+// the file carries drift apart.
+test("past the ends of the ladder it keeps going, on half-point boundaries", () => {
+  assert.equal(nextFontSizeStep(96, 1), 98, "beyond 96pt Word steps by 2, it does not stop");
+  assert.equal(nextFontSizeStep(96.3, 1), 98.5, "and the result is a multiple of a half point");
+  assert.equal(nextFontSizeStep(8, -1), 7, "below the ladder it steps by 1");
+});
+
+// Mutation that reddens it: remove the `Math.min`/`Math.max` clamps. The stepper
+// then writes a size OOXML cannot express — `w:sz` is bounded at 3276 half-points
+// — which is a document another reader cannot open rather than a refusal.
+test("the clamps are OOXML's own bounds on `w:sz`, not arbitrary", () => {
+  assert.equal(nextFontSizeStep(1638, 1), 1638, "1638pt is 3276 half-points: the ceiling");
+  assert.equal(nextFontSizeStep(1, -1), 1, "and 1pt is the floor");
+});
+
+// The ladder itself is shared with the font-size dropdown, which is the point:
+// the control and the steppers offered different sets while the array lived in
+// `main.js` and only the dropdown read it.
+//
+// Mutation that reddens it: drop `Object.freeze`. A caller can then push a rung
+// onto the one array the dropdown and both steppers share.
+test("the ladder is frozen, because three surfaces read the same array", () => {
+  assert.ok(Object.isFrozen(FONT_SIZE_STEPS));
+  assert.deepEqual(
+    [FONT_SIZE_STEPS[0], FONT_SIZE_STEPS.at(-1)],
+    [8, 96],
+    "Word's own list, 8pt to 96pt",
+  );
+});

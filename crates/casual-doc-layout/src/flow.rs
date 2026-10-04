@@ -48,6 +48,8 @@ use casual_doc_model::v1::Chart;
 
 use crate::block::BlockBorderSpace;
 use crate::chart;
+// Own line (anti-conflict): the per-viewer fold filter (ADR-049).
+use crate::fold::{BlockVisibility, FoldSet};
 // Own line (anti-conflict): the chart box's layout-level carriers.
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorderReserve,
@@ -183,6 +185,18 @@ fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author:
 struct FlowCtx<'a> {
     /// The review presentation policy for this galley (docs/93).
     review_view: ReviewView,
+    /// The headings this viewer has collapsed (ADR-049). The third per-viewer
+    /// view parameter, beside [`ReviewView`] and
+    /// [`LayoutView`](crate::document_layout::LayoutView), and empty for every
+    /// entry point that does not name one.
+    folds: &'a FoldSet,
+    /// The outline level of the innermost collapsed heading whose range the
+    /// walk is inside, or `None` outside any — the whole of folding's state, a
+    /// lexer-resume integer on the walk that already happens
+    /// ([`crate::fold::step`]). Carried on the context rather than only in
+    /// [`flow_blocks_into`]'s frame because it has to cross a measure chunk
+    /// seam inside [`MeasureResume`].
+    suppress_above_level: Option<u8>,
     resolver: &'a FontResolver,
     scheme: Option<&'a FontScheme>,
     /// The generic class the document declared for each face in
@@ -241,7 +255,7 @@ struct FlowCtx<'a> {
     /// pair). So the next chunk restarts at the second-to-last block of this
     /// one, and it must restart with the counters this pass held *before*
     /// flowing it — not after, which is all the pass's return value could say.
-    resume_snapshot: Option<NumberingState>,
+    resume_snapshot: Option<MeasureResume>,
     /// Cumulative `a:normAutofit@fontScale` applied to runs in the current text
     /// body (`100000` = 100%).
     text_scale: u32,
@@ -440,6 +454,8 @@ pub fn build_galley_with_report_view(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        folds: &FoldSet::EMPTY,
+        suppress_above_level: None,
         resume_snapshot: None,
         text_scale: 100_000,
         line_spacing_reduction: 0,
@@ -479,6 +495,7 @@ pub fn build_galley_for_blocks(
         ReviewView::Editing,
         NoteFlow::default(),
         single_section_line_grid(document),
+        &FoldSet::EMPTY,
     )
 }
 
@@ -531,6 +548,9 @@ pub(crate) fn build_galley_for_note_blocks(
             labels,
         },
         None,
+        // A note's own body is not part of the outline, so nothing in it can be
+        // folded: there is no heading tree to fold against.
+        &FoldSet::EMPTY,
     )
 }
 
@@ -544,6 +564,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: &FoldSet,
 ) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
     flow_body_into(
@@ -555,7 +576,8 @@ pub(crate) fn build_galley_for_blocks_inner(
         review_view,
         notes,
         line_grid,
-        None,
+        folds,
+        MeasureResume::default(),
         &mut galley,
         BlockMarks::Skip,
     );
@@ -592,6 +614,7 @@ pub fn build_measures_for_blocks(
         ReviewView::Editing,
         NoteFlow::default(),
         single_section_line_grid(document),
+        &FoldSet::EMPTY,
     )
 }
 
@@ -614,6 +637,8 @@ pub(crate) fn flow_body_range(
     block_starts: &[u32],
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: &FoldSet,
+    resume: MeasureResume,
 ) -> (Vec<BlockFragment>, u32) {
     let from_block = from_block.min(blocks.len());
     let offset = block_starts.get(from_block).copied().unwrap_or_default() as usize;
@@ -640,7 +665,8 @@ pub(crate) fn flow_body_range(
         ReviewView::Editing,
         notes,
         line_grid,
-        None,
+        folds,
+        resume,
         &mut sink,
         BlockMarks::Skip,
     );
@@ -669,7 +695,8 @@ pub fn flow_body_into_sink<S: GalleySink + ?Sized>(
         ReviewView::Editing,
         NoteFlow::default(),
         single_section_line_grid(document),
-        None,
+        &FoldSet::EMPTY,
+        MeasureResume::default(),
         sink,
         BlockMarks::Record,
     );
@@ -689,6 +716,7 @@ pub(crate) fn build_measures_for_blocks_inner(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: &FoldSet,
 ) -> (Vec<FragmentMeasure>, Vec<u32>) {
     let (measures, block_starts, _) = build_measures_for_blocks_resumed(
         document,
@@ -699,6 +727,7 @@ pub(crate) fn build_measures_for_blocks_inner(
         review_view,
         notes,
         line_grid,
+        folds,
         MeasureResume::default(),
     );
     (measures, block_starts)
@@ -716,11 +745,24 @@ pub(crate) fn build_measures_for_blocks_inner(
 /// paragraph's marker is `10.` rather than `1.`, which is wider, which can
 /// change where its first line breaks and therefore how tall it is. Nothing
 /// else the flow carries survives a top-level block boundary — style, table and
-/// scale context are re-entered per block — so this one value is the whole of
-/// the resume state, and it is a `NumberingState`, not a summary of one.
+/// scale context are re-entered per block — so these values are the whole of
+/// the resume state, and the counters are a `NumberingState`, not a summary of
+/// one.
+///
+/// **Folding joins it rather than inventing a parallel mechanism** (ADR-049
+/// item 3, `SKILL` §8: one mechanism, not two). A window that starts
+/// mid-document cannot know whether its first block is inside a collapsed
+/// heading's range, and recomputing that from the document top would be the
+/// `O(document)` cost the whole design avoids — so the suppression integer
+/// crosses the seam here, beside the counters, and is snapshotted at the *same*
+/// point they are. Snapshotting one without the other would resume the next
+/// chunk with the wrong half of the state.
 #[derive(Clone, Debug, Default)]
 pub struct MeasureResume {
     numbering: NumberingState,
+    /// The outline level of the collapsed heading whose range the previous
+    /// chunk was inside on entering its second-to-last block, or `None`.
+    suppress_above_level: Option<u8>,
 }
 
 /// [`build_measures_for_blocks_inner`] resumed from a previous chunk's
@@ -740,10 +782,11 @@ pub(crate) fn build_measures_for_blocks_resumed(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    folds: &FoldSet,
     resume: MeasureResume,
 ) -> (Vec<FragmentMeasure>, Vec<u32>, MeasureResume) {
     let mut sink = MeasureSink::new();
-    let numbering = flow_body_into(
+    let next = flow_body_into(
         document,
         shaper,
         blocks,
@@ -752,12 +795,13 @@ pub(crate) fn build_measures_for_blocks_resumed(
         review_view,
         notes,
         line_grid,
-        Some(resume.numbering),
+        folds,
+        resume,
         &mut sink,
         BlockMarks::Record,
     );
     let (measures, block_starts) = sink.finish_with_block_marks();
-    (measures, block_starts, MeasureResume { numbering })
+    (measures, block_starts, next)
 }
 
 /// The shared body-flow constructor both tiers go through: one
@@ -776,10 +820,11 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
-    resume: Option<NumberingState>,
+    folds: &FoldSet,
+    resume: MeasureResume,
     sink: &mut S,
     marks: BlockMarks,
-) -> NumberingState {
+) -> MeasureResume {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
     let palette = document
@@ -802,7 +847,9 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         table_style: None,
         sections: &document.definitions().sections,
         definitions: document.definitions(),
-        numbering: resume.unwrap_or_default(),
+        numbering: resume.numbering,
+        folds,
+        suppress_above_level: resume.suppress_above_level,
         resume_snapshot: None,
         text_scale: 100_000,
         line_spacing_reduction: 0,
@@ -817,7 +864,10 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     // The snapshot when the pass took one (an outermost pass over two or more
     // blocks); otherwise the state it ended in, which for a one-block or
     // final chunk is the same thing.
-    ctx.resume_snapshot.take().unwrap_or(ctx.numbering)
+    ctx.resume_snapshot.take().unwrap_or(MeasureResume {
+        numbering: ctx.numbering,
+        suppress_above_level: ctx.suppress_above_level,
+    })
 }
 
 /// Flows a header's or footer's block content into a galley of fragments at
@@ -913,6 +963,8 @@ fn flow_running_blocks(
         sections: &[],
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        folds: &FoldSet::EMPTY,
+        suppress_above_level: None,
         resume_snapshot: None,
         text_scale,
         line_spacing_reduction,
@@ -957,6 +1009,7 @@ pub fn build_galley_cached(
         dirty,
         NoteFlow::default(),
         ReviewView::Editing,
+        &FoldSet::EMPTY,
     )
 }
 
@@ -965,6 +1018,14 @@ pub fn build_galley_cached(
 /// (`docs/105` FID-L-05). Without this the editor's own layout path would quietly
 /// keep the old decimal-ordinal behavior.
 #[must_use]
+// Eight inputs because the incremental path must be handed every input the fresh
+// path resolves from — notes, review view and the fold set included — or it
+// serves a galley built under different rules than `build_galley_for_blocks`
+// would (`docs/105` FID-L-05 is exactly that bug, for note labels alone).
+// Grouping them behind a struct would only move the eight names one level down
+// while adding a type nothing else wants, which is why the surrounding crate
+// already carries this allow on fourteen sibling pipeline functions.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_galley_cached_labeled(
     document: &Document,
     shaper: &dyn LineShaper,
@@ -973,6 +1034,7 @@ pub(crate) fn build_galley_cached_labeled(
     dirty: &DirtySet,
     notes: NoteFlow<'_>,
     review_view: ReviewView,
+    folds: &FoldSet,
 ) -> Vec<BlockFragment> {
     // A drop-cap paragraph and its following body paragraph are one coupled flow
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
@@ -992,6 +1054,7 @@ pub(crate) fn build_galley_cached_labeled(
             review_view,
             notes,
             single_section_line_grid(document),
+            folds,
         );
     }
     // The cache path resolves fonts exactly like the fresh path so a reused
@@ -1025,6 +1088,8 @@ pub(crate) fn build_galley_cached_labeled(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        folds,
+        suppress_above_level: None,
         resume_snapshot: None,
         text_scale: 100_000,
         line_spacing_reduction: 0,
@@ -1039,15 +1104,49 @@ pub(crate) fn build_galley_cached_labeled(
     // under the same note labels; a note added, removed or renumbered changes
     // markers that are not in any paragraph's content hash.
     let labels_generation = notes.labels.map_or(0, NoteLabels::fingerprint);
+    // The fold set is a generation input to the retained galley, exactly as the
+    // width and the note labels are (ADR-049 / `109` FOLD-001). This is the
+    // deliberate answer to a real cost: bypassing the cache while anything is
+    // folded would make a KEYSTROKE re-shape the body — `O(document)` work on a
+    // per-interaction budget that is `O(1)` in document size (`docs/107` §4) —
+    // and reusing the galley across a fold change would hand back fragments for
+    // invisible blocks. Making it a generation input gives both: a fold toggle
+    // pays one full re-shape, which is a gesture and is allowed to, and typing
+    // at a fixed fold set stays `O(edit)`.
     cache.begin_build(
         content_width,
         review_view == ReviewView::Markup,
         labels_generation,
+        folds.fingerprint(),
         dirty,
     );
     let mut galley = Vec::new();
+    // The cached path has its own block loop, so it needs the same filter — but
+    // not a second copy of the RULE: `crate::fold::step` is the one state
+    // machine, called from both walks.
+    let mut suppress = None;
     for (block_index, block) in document.body().iter().enumerate() {
         let block_start = galley.len();
+        let fold_step =
+            crate::fold::step(&mut suppress, block, folds, ctx.definitions, &ctx.cascade);
+        if fold_step.visibility == BlockVisibility::Hidden {
+            // Zero fragments, recorded. The block record must still exist or
+            // `reuse_block`'s index would address the wrong block on the next
+            // build — the same reason the fresh path still calls `mark_block`
+            // for a hidden block.
+            let id = match block {
+                BlockNode::Paragraph(paragraph) => paragraph.id,
+                BlockNode::Table(table) => table.id,
+                BlockNode::Sdt(sdt) => sdt.id,
+                BlockNode::AltChunk(chunk) => chunk.id,
+            };
+            // Same structure-not-content rule as the fresh path, and it must be
+            // the same rule: the two builders have to agree fragment for
+            // fragment and marker for marker.
+            advance_hidden_structure(block, fold_step.effective.as_ref(), &mut ctx);
+            cache.note_block(id, block_start, 0, 0, true, false);
+            continue;
+        }
         match block {
             BlockNode::Paragraph(paragraph) => {
                 // The incremental path: an unchanged paragraph's fragments move
@@ -1632,18 +1731,70 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
     // table cell / content control to the following paragraphs in the same cell,
     // so their text wraps beside it instead of under it.
     let mut active_carries: Vec<ParagraphFloatExclusion> = Vec::new();
+    // Folding's whole state, TAKEN for the duration of this sequence so a
+    // recursive call (a table cell, a block content control) starts unsuppressed
+    // — a heading inside a cell can legitimately be folded, and a fold armed in
+    // the body must not swallow a cell's content. A suppressed block is never
+    // descended into, so the parent never recurses while armed; the write-back
+    // at the bottom is what restores the sequence's own state for
+    // `MeasureResume`. A nested call's own end state is overwritten by it, which
+    // is correct: it belongs to a sequence that has finished.
+    let mut suppress = ctx.suppress_above_level.take();
     while index < blocks.len() {
         if marks == BlockMarks::Record {
             galley.mark_block();
             // See `FlowCtx::resume_snapshot`. `len - 2` and not `len - 1`
             // because the caller re-flows the last block for forward context
-            // and commits nothing from it.
+            // and commits nothing from it. BOTH values are snapshotted at this
+            // one point: taking the counters without the fold integer would
+            // resume the next chunk with half the state.
             if index + 2 == blocks.len() {
-                ctx.resume_snapshot = Some(ctx.numbering.clone());
+                ctx.resume_snapshot = Some(MeasureResume {
+                    numbering: ctx.numbering.clone(),
+                    suppress_above_level: suppress,
+                });
             }
+        }
+        // The fold filter (ADR-049 item 4): **before** measurement, before
+        // shaping, before any fragment is produced — the same position as the
+        // run-tier precedent in `push_styled_runs`. After `mark_block` above,
+        // because the marks key `block_starts` by VISIT order: a hidden block
+        // must still be marked and contribute zero fragments, or every window
+        // that resumes from a block index past the fold would resume at the
+        // wrong block.
+        let fold_step = crate::fold::step(
+            &mut suppress,
+            &blocks[index],
+            ctx.folds,
+            ctx.definitions,
+            &ctx.cascade,
+        );
+        if fold_step.visibility == BlockVisibility::Hidden {
+            // No fragments and no height, so pagination closes up and the page
+            // count falls — reflow, not blanking. A `w:pageBreakBefore` inside
+            // the folded range goes with it, because the break belongs to a
+            // block that laid nothing out; a break on the collapsed heading
+            // itself is honoured normally, since the heading is visible.
+            //
+            // `prev_para` is NOT reset: `w:contextualSpacing` compares a
+            // paragraph against the previous *flowed* one, and a block that
+            // produced no fragment is not a visual neighbour of anything.
+            //
+            // But folding filters CONTENT, never DOCUMENT STRUCTURE: the list
+            // counters a hidden paragraph would have advanced are read by the
+            // VISIBLE items after the fold, so skipping them would silently
+            // renumber a list the reader did not touch. The resolved properties
+            // come from the filter, which already walked the cascade.
+            advance_hidden_structure(&blocks[index], fold_step.effective.as_ref(), ctx);
+            index += 1;
+            continue;
         }
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
             (&blocks[index], blocks.get(index + 1))
+            // A fold armed on THIS block hides the next one, and a drop cap is a
+            // two-block flow unit — so the pair cannot be taken here or the
+            // hidden body paragraph would be flowed through the back door.
+            && suppress.is_none()
             && let Some(frame) =
                 effective_drop_cap_frame(drop_cap, &ctx.cascade, ctx.table_style.as_ref())
             && is_single_character_drop_cap(drop_cap)
@@ -1754,7 +1905,63 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
         }
         index += 1;
     }
+    // The write-back half of the `take` at the top: this sequence's own
+    // suppression state, which `flow_body_into` turns into the chunk's
+    // `MeasureResume` when the pass never reached a snapshot point.
+    ctx.suppress_above_level = suppress;
     float_floor
+}
+
+/// Applies the document-structure side effects of a block the fold filter hid
+/// (ADR-049 item 7).
+///
+/// Folding filters **content**, not structure: a hidden paragraph still advances
+/// the list counters that the visible items after the fold read, or folding a
+/// section would renumber a list nobody edited. `effective` is the paragraph's
+/// already-resolved properties when the filter had them, so the common case
+/// costs no second cascade walk.
+///
+/// A hidden table or content control is descended into for the same reason — its
+/// cell paragraphs advance the same counters — and that descent is part of the
+/// honestly stated `O(hidden blocks stepped)` term rather than a hidden cost: it
+/// reads properties and shapes nothing.
+fn advance_hidden_structure(
+    block: &BlockNode,
+    effective: Option<&ParagraphProperties>,
+    ctx: &mut FlowCtx<'_>,
+) {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            let reference = match effective {
+                Some(effective) => effective.numbering,
+                None => {
+                    ctx.cascade
+                        .resolve_paragraph(paragraph.properties.get())
+                        .numbering
+                }
+            };
+            if let Some(reference) = reference {
+                // The return value is the marker, which nothing paints; the
+                // point is the counter it advanced.
+                let _ = ctx.numbering.resolve(ctx.definitions, &reference);
+            }
+        }
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for nested in &cell.blocks {
+                        advance_hidden_structure(nested, None, ctx);
+                    }
+                }
+            }
+        }
+        BlockNode::Sdt(sdt) => {
+            for nested in &sdt.blocks {
+                advance_hidden_structure(nested, None, ctx);
+            }
+        }
+        BlockNode::AltChunk(_) => {}
+    }
 }
 
 /// Flows one paragraph while carrying square-family wrap-float exclusions across
@@ -3016,6 +3223,8 @@ fn block_intrinsic(
         // A throwaway counter state: measuring intrinsic widths must not advance the
         // document's real list counters.
         numbering: NumberingState::default(),
+        folds: &FoldSet::EMPTY,
+        suppress_above_level: None,
         resume_snapshot: None,
         text_scale: ctx.text_scale,
         line_spacing_reduction: ctx.line_spacing_reduction,
@@ -8075,6 +8284,8 @@ mod tests {
                 &block_starts,
                 NoteFlow::default(),
                 None,
+                &FoldSet::EMPTY,
+                MeasureResume::default(),
             );
             assert_eq!(
                 base as usize, from,
@@ -8135,6 +8346,8 @@ mod tests {
                 &block_starts,
                 NoteFlow::default(),
                 None,
+                &FoldSet::EMPTY,
+                MeasureResume::default(),
             );
             assert_eq!(base as usize, from);
             assert_eq!(
@@ -8246,6 +8459,8 @@ mod tests {
             sections: &[],
             definitions,
             numbering: NumberingState::new(),
+            folds: &FoldSet::EMPTY,
+            suppress_above_level: None,
             resume_snapshot: None,
             text_scale: 100_000,
             line_spacing_reduction: 0,
@@ -8306,6 +8521,8 @@ mod tests {
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
+            folds: &FoldSet::EMPTY,
+            suppress_above_level: None,
             resume_snapshot: None,
             text_scale: 100_000,
             line_spacing_reduction: 0,
@@ -12542,6 +12759,8 @@ mod tests {
                 sections: &definitions.sections,
                 definitions,
                 numbering: NumberingState::new(),
+                folds: &FoldSet::EMPTY,
+                suppress_above_level: None,
                 resume_snapshot: None,
                 text_scale: 100_000,
                 line_spacing_reduction: 0,

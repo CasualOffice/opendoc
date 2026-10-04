@@ -73,8 +73,10 @@ use crate::flow::MeasureResume;
 use crate::flow::NoteFlow;
 use crate::flow::ReviewView;
 use crate::flow::build_measures_for_blocks_resumed;
+// Own line (anti-conflict): the per-viewer fold filter (ADR-049).
 use crate::flow::flow_body_range;
 use crate::flow::single_section_line_grid;
+use crate::fold::FoldSet;
 use crate::incremental::PageRange;
 use crate::incremental::ViewportLayout;
 use crate::incremental::VisiblePage;
@@ -473,6 +475,14 @@ fn measure_chunk(
         ReviewView::Editing,
         NoteFlow::with_labels(&measures.labels),
         single_section_line_grid(document),
+        // A windowed body is never folded: `casual-doc-wasm` refuses a fold
+        // toggle while the body is windowed, with a reason, exactly as it
+        // refuses the show-changes preview — because a window's measure tier is
+        // built in chunks that the host scrolls through, and invalidating it on
+        // a fold would re-measure the document. The suppression integer still
+        // crosses this seam inside `MeasureResume`, so the seam is correct the
+        // day that refusal is lifted (`109` FOLD-003).
+        &FoldSet::EMPTY,
         measures.numbering.clone(),
     );
 
@@ -754,6 +764,9 @@ pub fn window_of(
         &measures.block_starts,
         NoteFlow::with_labels(&measures.labels),
         single_section_line_grid(document),
+        // See `measure_chunk`: a windowed body is never folded.
+        &FoldSet::EMPTY,
+        MeasureResume::default(),
     );
     let shaped_fragments = galley.len();
 

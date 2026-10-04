@@ -65,6 +65,25 @@ const PDF_FORMAT = "application.pdf";
  *  preview still needs it cancels the job, so the cleanup errs late. */
 const PRINT_FRAME_TTL_MS = 120_000;
 
+/** How long to wait for the print frame to LOAD the PDF before giving up on the
+ *  handoff and rastering instead.
+ *
+ *  Not a nicety — without it `printDocument` can never resolve. A browser with
+ *  no in-frame PDF viewer (viewing disabled by policy, a build without the
+ *  viewer, and headless Chromium, which is how this was found) fires neither
+ *  `load` nor `error` on a `blob:` PDF frame, so `await loaded` waits forever:
+ *  the Print command hangs with no feedback, and — the half that matters —
+ *  `withPagedLayout`'s `finally` is never reached, so the reader's reflow view
+ *  and their collapsed headings are never put back. That restore had been
+ *  unreachable on this path since the PDF handoff landed; the fold work is what
+ *  made it observable.
+ *
+ *  Four seconds because the export has already happened by this point: all that
+ *  is left is handing the browser bytes it already holds, which is immediate
+ *  where it works at all. The fallback is the raster path, which is exactly what
+ *  `printViaPdf`'s `false` return is for. */
+const PRINT_FRAME_LOAD_TIMEOUT_MS = 4_000;
+
 /** Print through the real-text PDF, which is what `PDF-PRINT-0` in `docs/98`
  *  specifies: "PDF → browser print handoff (`window.print()` on a PDF
  *  object/hidden frame)".
@@ -92,14 +111,22 @@ async function printViaPdf(doc) {
   // print view to invoke in Chromium.
   frame.style.cssText =
     "position:fixed; right:0; bottom:0; width:1px; height:1px; opacity:0; border:0; pointer-events:none;";
+  let loadTimer = 0;
   const loaded = new Promise((resolve, reject) => {
     frame.addEventListener("load", resolve, { once: true });
     frame.addEventListener("error", reject, { once: true });
+    // A frame that neither loads nor errors is a Print that never returns — see
+    // `PRINT_FRAME_LOAD_TIMEOUT_MS`.
+    loadTimer = setTimeout(
+      () => reject(new Error("the print frame did not load the PDF")),
+      PRINT_FRAME_LOAD_TIMEOUT_MS,
+    );
   });
   frame.src = url;
   document.body.appendChild(frame);
   try {
     await loaded;
+    clearTimeout(loadTimer);
     const view = frame.contentWindow;
     if (!view) throw new Error("print frame has no view");
     let cleaned = false;
@@ -116,6 +143,7 @@ async function printViaPdf(doc) {
     return true;
   } catch (err) {
     console.warn("print: PDF handoff failed, falling back to raster:", err?.message ?? err);
+    clearTimeout(loadTimer);
     frame.remove();
     URL.revokeObjectURL(url);
     return false;
@@ -130,6 +158,15 @@ async function printViaPdf(doc) {
  *  600-DPI printer and — because "Print" is how most people produce a PDF —
  *  produced PDFs with no selectable, searchable or screen-readable text at all.
  *  It stays as the fallback for a build whose engine cannot write PDF.
+ *
+ *  **THE CALLER MUST REPAINT WHEN THIS RESOLVES.** `withPagedLayout` borrows two
+ *  view parameters and puts both back — the layout view and the fold set — and
+ *  neither restore repaints by itself. Without a repaint the canvas, the outline
+ *  tree and the accessibility mirror are all left describing the borrowed view
+ *  after the reader's own has been restored underneath them, which is a shell
+ *  that disagrees with its own engine. Stated here rather than assumed because
+ *  the fold restore made it observable and the layout-view restore had the same
+ *  property unnoticed.
  */
 export async function printDocument(doc) {
   if (!doc) return;
@@ -182,11 +219,76 @@ export async function withPagedLayout(doc, build) {
     // a message about an internal view parameter in front of a print dialog.
     restore = null;
   }
+  const refold = expandFolds(doc);
   try {
     await build();
   } finally {
+    refold();
     if (restore) doc.setLayoutView(...restore);
   }
+}
+
+/**
+ * Expands every collapsed heading for the duration of an export, and returns the
+ * thunk that puts the reader's folds back.
+ *
+ * **A FOLD IS A VIEW; PAPER IS THE DOCUMENT.** A collapsed heading hides content
+ * on screen and the page count falls with it (`fold.rs`, ADR-049) — which is
+ * right for reading and is silent data loss on paper. Printing the folded
+ * document drops whole sections out of the sheets, out of the PDF, and out of
+ * anything produced through the print path, with no message and nothing in the
+ * output to say a section was omitted. `AGENTS.md` forbids exactly that: *no
+ * silent data loss in release behavior*. So the rule is not "print what is on
+ * screen"; it is **print the document**, and the folds come back afterwards.
+ *
+ * It is enforced HERE rather than at each caller for the reason the paper rule
+ * above is: `printDocument` already has two entry points, and `withPagedLayout`
+ * is what both of them go through. A rule placed beside the thing it is a rule
+ * about cannot be forgotten by the next printer added next to these two.
+ *
+ * MEASURED, so the scope of the bug is not overstated: today the real-text PDF
+ * path is already expanded by accident — `casual_doc_io::pdf` paginates from the
+ * MODEL (`export_document(request.document, …)`) and the session's fold set
+ * never reaches it — and so is `exportAs` for DOCX/ODT/text, which encode the
+ * model directly. The path that was really printing folded is the 150-DPI raster
+ * fallback, which reads `doc.pageCount` and `doc.renderPage(i)` straight off the
+ * live, fold-filtered layout. Enforcing it at the seam covers that fallback AND
+ * the planned change `casual_doc_io::pdf`'s own doc comment names — seeding the
+ * export's pagination from the session — which would hand the live fold set to
+ * the PDF writer and turn the accident into the bug.
+ *
+ * COST: one re-layout out and one back, each O(document), on top of the view
+ * switch above and only when something is actually folded. `setFoldSet` restores
+ * the whole set in ONE re-layout rather than one per heading, so a reader who
+ * collapsed two hundred headings pays two passes and not two hundred.
+ *
+ * A fold issues no `Operation`, so none of this touches the document, its
+ * revision, its undo history or its dirty state.
+ *
+ * @param {any} doc the open engine document
+ * @returns {() => void} idempotent-enough restore; a no-op when nothing moved
+ */
+function expandFolds(doc) {
+  let folded = [];
+  try {
+    folded = JSON.parse(doc.foldState()).folded ?? [];
+    if (!folded.length) return () => {};
+    doc.unfoldAll();
+  } catch {
+    // An engine with no fold seam, or one that refused to unfold: print what it
+    // has rather than not printing. Silent, like the layout-view arm above — but
+    // note the asymmetry, because it matters: a refusal HERE means the output may
+    // be short, so the fold set is left alone and nothing is restored either.
+    return () => {};
+  }
+  return () => {
+    try {
+      doc.setFoldSet(JSON.stringify(folded));
+    } catch {
+      // The reader keeps an expanded document rather than a half-restored one.
+      // Visible and recoverable (one Collapse All), unlike a silently short PDF.
+    }
+  };
 }
 
 /** The 150-DPI page-image path. Fallback only — see `printDocument`. */

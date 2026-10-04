@@ -252,7 +252,31 @@ export const APP_MENU_SECTIONS = {
     // it changes what is laid out, not how large it is drawn. All three
     // references file their equivalent under View for the same reason
     // (`docs/151` §6.1).
-    band("menuGroup.show", "view.outline", "view.pages", "view.showChanges", "view.reflow", "view.compactRibbon"),
+    // Folding joins Show, and the three rows are the three Word offers on a
+    // heading's context menu: Expand/Collapse, Collapse All Headings, Expand All
+    // Headings. They are view STATES of what the window shows — which is the
+    // test every row in this band passes — and they sit beside `view.outline`
+    // because the outline panel is the other surface that drives the same
+    // `FoldSet`.
+    //
+    // The NINE level rungs (`view.fold.level.*`) stay palette-only, deliberately
+    // and not by omission: nine inline rows for one choice would be three times
+    // the longest band in this menu, a flyout would need a band name and
+    // therefore a new key in nineteen catalogues, and Word itself puts level
+    // selection in the Table-of-Contents dialog rather than on a menu. The
+    // palette is a real surface and `view.fold.all` / `view.fold.none` are the
+    // two rungs anybody reaches for.
+    band(
+      "menuGroup.show",
+      "view.outline",
+      "view.pages",
+      "view.fold.toggle",
+      "view.fold.all",
+      "view.fold.none",
+      "view.showChanges",
+      "view.reflow",
+      "view.compactRibbon",
+    ),
     // Formatting marks. Google Docs' only surface for this is View ▸ Show
     // non-printing characters, so the View menu is where a reader trained on Docs
     // looks; the ribbon's ¶ button is where a reader trained on Word looks, and

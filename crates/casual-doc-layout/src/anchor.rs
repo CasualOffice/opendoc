@@ -85,6 +85,9 @@ pub fn place_floats(
     // anchoring paragraph landed on.
     let body_sections = body_section_ids(document, config.section);
     for (block, section) in document.body().iter().zip(body_sections) {
+        if !block_is_placed(layout, block) {
+            continue;
+        }
         collect_block(layout, &mut ctx, block, None, PageScope::Body, section);
     }
     // Header/footer band floats: the SDS's floating objects live in the header
@@ -138,6 +141,9 @@ pub(crate) fn body_wrap_rects(
         let BlockNode::Paragraph(paragraph) = block else {
             continue;
         };
+        if !block_is_placed(layout, block) {
+            continue;
+        }
         collect_body_wrap_inlines(
             layout,
             &ctx,
@@ -307,6 +313,46 @@ fn inlines_have_anchor(inlines: &[InlineNode]) -> bool {
         InlineNode::Revision(revision) => inlines_have_anchor(&revision.inlines),
         InlineNode::Sdt(sdt) => inlines_have_anchor(&sdt.inlines),
         _ => false,
+    })
+}
+
+/// Whether a top-level body block that anchors a float was actually **laid
+/// out** — the gate both body float passes open with.
+///
+/// Derived from the LAYOUT, deliberately, and not from the fold set: `locate`
+/// falls back to page 1 and the page's margin box whenever it cannot find the
+/// anchoring paragraph, so a float in a paragraph that produced no fragment
+/// would paint on the first page of the document, which is exactly the visible
+/// evidence of invisible content folding must not produce. Asking the layout
+/// covers every reason a paragraph can be absent — a collapsed heading's range
+/// today, and whatever else later — where a fold-set test would cover only one
+/// and would have to be kept in step with the filter by hand.
+///
+/// Cheap to the point of free for the document that anchors nothing: the anchor
+/// test comes first and is a walk of this block's own inlines, so a layout walk
+/// happens only for a block that really does carry a float. `O(pages ×
+/// fragments)` when it does, which is the same order `locate` is about to pay
+/// for that float anyway.
+fn block_is_placed(layout: &PaginatedLayout, block: &BlockNode) -> bool {
+    let BlockNode::Paragraph(paragraph) = block else {
+        // A table or a content control is descended into, and its nested
+        // paragraphs answer for themselves; folding only ever hides whole
+        // top-level blocks, so a visible table is not the case this gates.
+        return true;
+    };
+    if !inlines_have_anchor(&paragraph.inlines) {
+        return true;
+    }
+    layout.pages.iter().any(|page| {
+        page.placed.iter().any(|placed| {
+            find_paragraph_rect(
+                &placed.fragment,
+                placed.rect.origin,
+                placed.rect.size.width,
+                paragraph.id,
+            )
+            .is_some()
+        })
     })
 }
 

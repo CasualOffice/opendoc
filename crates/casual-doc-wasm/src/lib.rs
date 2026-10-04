@@ -69,8 +69,6 @@ use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
 use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
 use casual_doc_layout::document_layout::LayoutView;
-use casual_doc_layout::document_layout::paginate_document_after_edit_in;
-use casual_doc_layout::document_layout::paginate_document_in;
 use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
@@ -81,6 +79,10 @@ use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
+// Own line (anti-conflict): the per-viewer fold filter (ADR-049).
+use casual_doc_layout::document_layout::paginate_document_after_edit_folded;
+use casual_doc_layout::document_layout::paginate_document_folded;
+use casual_doc_layout::fold::FoldSet;
 use casual_doc_model::v1::BreakKind;
 // The start type a section break gives the section that follows it.
 use casual_doc_model::v1::DrawingHyperlink;
@@ -643,6 +645,19 @@ pub struct WasmDocument {
     /// way. `FormattingMarks::default` is all-off, which is why a document whose
     /// host never calls the setter rasterizes the display list it always did.
     marks: FormattingMarks,
+    /// The headings **this viewer** has collapsed (ADR-049, `docs/157`).
+    ///
+    /// The third per-viewer view parameter, beside `layout_view` and the review
+    /// view: a fold issues no `Operation`, and `w15:collapsed` on the document is
+    /// a separate, saved tier that this is SEEDED from at open and never written
+    /// back to by a viewer's own toggling. `NodeId`s are minted at import, so
+    /// persisting a live fold set would restore one document's folds onto another
+    /// open's ids — which is why ADR-049's "lives beside `docReflow` in
+    /// `prefs.mjs`" sentence is wrong and has been corrected there.
+    ///
+    /// Empty for a windowed body: `fold_refusal` says why, with a reason, rather
+    /// than offering a control that does nothing.
+    folds: FoldSet,
 }
 
 #[derive(Debug)]
@@ -12658,10 +12673,287 @@ impl WasmDocument {
         props
     }
 
-    /// The document's heading outline as flat `"{level}\t{node}\t{text}"` rows (in
-    /// document order) — what the left Outline panel renders and navigates from. A
+    // ---- Folding (ADR-049, `docs/157`) ---------------------------------
+    //
+    // ONLYOFFICE has no folding at all — zero `collaps` hits across their
+    // 232-file Word engine, `CDocumentOutline` exposes no Collapse or Expand,
+    // and `w15:collapsed` is discarded structurally. So Word is the standard
+    // here and these four calls are the engine side of it.
+    //
+    // A fold is a VIEW, like `layout_view` and the review view: it issues no
+    // `Operation`, writes nothing into the document, and advances the view epoch
+    // rather than the document revision — so nothing replaying the revision
+    // chain sees a fold as an edit.
+
+    /// Fold or unfold the heading `node`, returning the new fold state as JSON.
+    ///
+    /// `node` must be a heading (a paragraph carrying `w:outlineLvl` or a
+    /// `Title`/`Heading N` style); anything else is refused by name rather than
+    /// silently ignored, because a host that asked to fold a body paragraph has a
+    /// defect and a no-op would hide it.
+    ///
+    /// Complexity: one full re-layout, which is `O(document)`. A fold is a
+    /// **gesture**, not an interaction — a host must run it the way it runs a
+    /// view change, and it is deliberately not on the keystroke path (`docs/107`
+    /// §4). Typing while folded stays `O(edit)`: the fold set is a generation
+    /// input to the galley cache, not a cache bypass.
+    #[wasm_bindgen(js_name = setFold)]
+    pub fn set_fold(&mut self, node: &str, collapsed: bool) -> Result<String, JsValue> {
+        self.set_fold_inner(node, collapsed).map_err(to_js)
+    }
+
+    /// Fold every heading in the document, returning the new fold state as JSON.
+    ///
+    /// Word's "Collapse All". It is `foldToLevel(1)` — see there for why the
+    /// three commands are one mechanism. `O(document)`, and a gesture.
+    #[wasm_bindgen(js_name = foldAll)]
+    pub fn fold_all(&mut self) -> Result<String, JsValue> {
+        self.fold_to_level_inner(1).map_err(to_js)
+    }
+
+    /// Unfold everything, returning the new fold state as JSON.
+    ///
+    /// `foldToLevel(0)` — "show every level".
+    #[wasm_bindgen(js_name = unfoldAll)]
+    pub fn unfold_all(&mut self) -> Result<String, JsValue> {
+        self.fold_to_level_inner(0).map_err(to_js)
+    }
+
+    /// Fold every heading at outline level `level` **or deeper**, so only levels
+    /// `1..level` stay expanded — Word's "Show Level N" on the outline-level
+    /// picker.
+    ///
+    /// `level` is 1-based, as `documentOutline`'s is. `0` means "show every
+    /// level", which folds nothing and is exactly `unfoldAll`; `1` folds every
+    /// heading in the document and is exactly `foldAll`. So the three commands
+    /// are ONE mechanism with three entry points rather than three
+    /// implementations that can disagree. Levels above 9 clamp, because Word's
+    /// outline has nine.
+    #[wasm_bindgen(js_name = foldToLevel)]
+    pub fn fold_to_level(&mut self, level: u8) -> Result<String, JsValue> {
+        self.fold_to_level_inner(level).map_err(to_js)
+    }
+
+    /// Replace the whole fold set at once, from a JSON array of node ids,
+    /// returning the new fold state as JSON.
+    ///
+    /// The restore half of [`fold_state`](Self::fold_state): a host that has to
+    /// expand a document for a moment — printing and export are the ones that
+    /// must (`print.mjs`, `AGENTS.md`'s no-silent-data-loss rule) — reads the
+    /// set, unfolds, does its work, and hands the same array back here.
+    ///
+    /// It exists rather than leaving the host to loop over
+    /// [`set_fold`](Self::set_fold) because that loop costs ONE re-layout per
+    /// heading: a reader who collapsed two hundred headings would pay two
+    /// hundred `O(document)` passes to get them back, which is the
+    /// lookup-in-a-loop shape `docs/116` names, one level up. This is one pass.
+    ///
+    /// Ids that are not headings **any more**, or not in the document at all,
+    /// are skipped rather than refused: the only caller is restoring a set this
+    /// engine itself produced, and a refusal would land inside its `finally`
+    /// and strand the reader on an expanded document. What was actually set
+    /// comes back in the returned state, so a skip is observable rather than
+    /// silent. A malformed payload IS refused — that is a host bug, not a
+    /// document change.
+    ///
+    /// Complexity: one document walk to resolve the heading set, then one
+    /// re-layout. `O(document)`, once, for a gesture — not per id.
+    ///
+    /// # Errors
+    ///
+    /// The payload is not a JSON array of strings, or folding is unavailable
+    /// (a windowed body — [`fold_state`](Self::fold_state)'s `withheldReason`
+    /// says so).
+    #[wasm_bindgen(js_name = setFoldSet)]
+    pub fn set_fold_set(&mut self, nodes_json: &str) -> Result<String, JsValue> {
+        self.set_fold_set_inner(nodes_json).map_err(to_js)
+    }
+
+    /// The current fold state as JSON — `{ "folded": ["<node>", ...],
+    /// "available": bool, "withheldReason": "<why not>" }`.
+    ///
+    /// A host renders its own control state from this rather than from a shadow
+    /// copy that can drift out of step with the engine, which is the same rule
+    /// `layoutView()` follows. `withheldReason` is the empty string when folding
+    /// is available, and a sentence when it is not — so a control can be
+    /// disabled *with a reason* and never be a dead control.
+    #[wasm_bindgen(js_name = foldState)]
+    #[must_use]
+    pub fn fold_state(&self) -> String {
+        let reason = self.fold_refusal().unwrap_or_default();
+        let folded: Vec<String> = self.folds.iter().map(|id| id.to_string()).collect();
+        serde_json::to_string(&serde_json::json!({
+            "folded": folded,
+            "available": reason.is_empty(),
+            "withheldReason": reason,
+        }))
+        .unwrap_or_else(|_| {
+            "{\"folded\":[],\"available\":false,\"withheldReason\":\"\"}".to_string()
+        })
+    }
+
+    /// Why folding is unavailable, or `None` when it is available.
+    ///
+    /// One refusal today, and it is the same one the show-changes preview makes:
+    /// a **windowed** body is measured in chunks the host scrolls through, and a
+    /// fold would invalidate that measure tier and re-measure the document. The
+    /// resume seam already carries the suppression integer
+    /// (`MeasureResume::suppress_above_level`), so this is a deliberate hold
+    /// rather than a missing mechanism (`109` FOLD-003).
+    fn fold_refusal(&self) -> Option<String> {
+        self.layout
+            .is_windowed()
+            .then(|| windowed_not_available("Folding a heading"))
+    }
+
+    /// See [`WasmDocument::set_fold`]. A plain `Result<_, String>` so the guards
+    /// run under `cargo test` on native targets.
+    fn set_fold_inner(&mut self, node: &str, collapsed: bool) -> Result<String, String> {
+        if let Some(reason) = self.fold_refusal() {
+            return Err(reason);
+        }
+        let id = NodeId::from_str(node).map_err(|_| format!("not a node id: {node}"))?;
+        // The node must really be a heading, and the check uses the SAME rule the
+        // flow filter uses to derive the hidden range — one walk, carrying the
+        // paragraph, never a lookup-by-id inside a loop (`docs/116`).
+        if collapsed && !self.is_heading(id) {
+            return Err(format!(
+                "only a heading can be folded, and {node} is not one"
+            ));
+        }
+        let changed = if collapsed {
+            self.folds.insert(id)
+        } else {
+            self.folds.remove(id)
+        };
+        if !changed {
+            return Ok(self.fold_state());
+        }
+        self.relayout_for_fold();
+        Ok(self.fold_state())
+    }
+
+    /// See [`WasmDocument::set_fold_set`]. A plain `Result<_, String>` so the
+    /// guards run under `cargo test` on native targets.
+    fn set_fold_set_inner(&mut self, nodes_json: &str) -> Result<String, String> {
+        if let Some(reason) = self.fold_refusal() {
+            return Err(reason);
+        }
+        let nodes: Vec<String> = serde_json::from_str(nodes_json)
+            .map_err(|error| format!("fold set must be a JSON array of node ids: {error}"))?;
+        // ONE walk, collecting every heading, and the requested set is then
+        // intersected with it. Asking `is_heading` per id would walk the
+        // document once per id — the lookup-by-id-inside-a-loop shape `SKILL.md`
+        // §8 forbids, and the exact defect that made `documentOutline`
+        // quadratic.
+        let wanted: BTreeSet<NodeId> = nodes.iter().filter_map(|id| id.parse().ok()).collect();
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut folds = FoldSet::new();
+        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            if wanted.contains(&paragraph.id)
+                && self
+                    .heading_level_of(paragraph.properties.get(), &cascade)
+                    .is_some()
+            {
+                folds.insert(paragraph.id);
+            }
+        });
+        if folds == self.folds {
+            return Ok(self.fold_state());
+        }
+        self.folds = folds;
+        self.relayout_for_fold();
+        Ok(self.fold_state())
+    }
+
+    /// See [`WasmDocument::fold_to_level`].
+    fn fold_to_level_inner(&mut self, level: u8) -> Result<String, String> {
+        if let Some(reason) = self.fold_refusal() {
+            return Err(reason);
+        }
+        let level = level.min(10);
+        // ONE walk over the document, collecting the headings at `level` or
+        // deeper. The shape this avoids is the one that made the outline panel
+        // quadratic: resolving each heading's level by id after collecting ids.
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut wanted = FoldSet::new();
+        if level > 0 {
+            visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+                if let Some(found) = self.heading_level_of(paragraph.properties.get(), &cascade)
+                    && found >= level
+                {
+                    wanted.insert(paragraph.id);
+                }
+            });
+        }
+        if wanted == self.folds {
+            return Ok(self.fold_state());
+        }
+        self.folds = wanted;
+        self.relayout_for_fold();
+        Ok(self.fold_state())
+    }
+
+    /// Whether `node` is a heading, by the one heading-level rule.
+    ///
+    /// `O(document)` — one walk, and it is a gesture's cost, not a keystroke's.
+    fn is_heading(&self, node: NodeId) -> bool {
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut found = false;
+        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            if paragraph.id == node
+                && self
+                    .heading_level_of(paragraph.properties.get(), &cascade)
+                    .is_some()
+            {
+                found = true;
+            }
+        });
+        found
+    }
+
+    /// Rebuilds the body layout under the current fold set.
+    ///
+    /// WHOLE, not resumed, and the galley cache is dropped first — for the same
+    /// reason `set_layout_view` drops it: the retained galley describes a body
+    /// with different blocks in it, and offering it as a resume baseline would
+    /// splice pages laid out from content that is no longer there. The fold set
+    /// is also a generation input to the cache, so this is belt and braces and
+    /// says so.
+    ///
+    /// A re-layout is a **view** change: the view epoch moves and `log.head()`
+    /// — the DOCUMENT revision — does not (`docs/147` §3.3).
+    fn relayout_for_fold(&mut self) {
+        self.galley_cache = GalleyCache::new();
+        self.layout = BodyLayout::Whole(paginate_document_folded(
+            &self.document,
+            &self.shaper,
+            ReviewView::Editing,
+            self.layout_view,
+            &self.folds,
+        ));
+        if self.markup_layout.is_some() {
+            self.markup_layout = Some(paginate_document_folded(
+                &self.document,
+                &self.shaper,
+                ReviewView::Markup,
+                self.layout_view,
+                &self.folds,
+            ));
+        }
+        self.revision += 1;
+    }
+
+    /// The document's heading outline as flat
+    /// `"{level}\t{node}\t{collapsed}\t{text}"` rows (in document order) — what
+    /// the left Outline panel renders, navigates from, and now FOLDS from. A
     /// paragraph is a heading if it carries an `outlineLvl` or a Title/Heading N
-    /// style; `level` is 1-based (1 = top). Empty-text headings are skipped.
+    /// style; `level` is 1-based (1 = top); `collapsed` is `1` when this viewer
+    /// has that heading folded and `0` otherwise. Empty-text headings are
+    /// skipped.
+    ///
+    /// The text is last and carries no tab (any tab in it becomes a space), so a
+    /// row parses unambiguously however long the heading is.
     #[wasm_bindgen(js_name = documentOutline)]
     #[must_use]
     pub fn document_outline(&self) -> Vec<String> {
@@ -12686,8 +12978,20 @@ impl WasmDocument {
             let text = node_plain_text(&paragraph.inlines);
             let trimmed = text.trim();
             if !trimmed.is_empty() {
+                // The COLLAPSED column, third, ahead of the text — which stays
+                // last and is tab-free by the `replace` below, so the row parses
+                // unambiguously however long the heading is.
+                //
+                // A fourth column rather than a second engine call: two calls can
+                // disagree with each other, and the panel that drives the fold
+                // needs the level, the node and the state in ONE row to build a
+                // `treeitem` from. It reports the LIVE fold state, which at open
+                // IS the document's saved `w15:collapsed` default because
+                // `saved_folds` seeds the set from it — one source of truth
+                // instead of two tiers the panel has to reconcile.
+                let collapsed = u8::from(self.folds.contains(paragraph.id));
                 rows.push(format!(
-                    "{level}\t{}\t{}",
+                    "{level}\t{}\t{collapsed}\t{}",
                     paragraph.id,
                     trimmed.replace('\t', " ")
                 ));
@@ -12709,34 +13013,14 @@ impl WasmDocument {
     /// paragraph is a walk of every block surface — inside the per-paragraph
     /// loops of the outline and the accessibility mirror that made both
     /// quadratic in document size (`docs/116`).
+    ///
+    /// **One rule, and it is the engine's.** This used to be implemented here;
+    /// it now delegates to `casual_doc_layout::fold::heading_level`, because the
+    /// fold FILTER has to answer the same question and the panel's idea of what
+    /// can be folded cannot be allowed to disagree with layout's idea of what a
+    /// fold hides — a disagreement would hide the wrong range.
     fn heading_level_of(&self, direct: &ParagraphProperties, cascade: &StyleCascade) -> Option<u8> {
-        if let Some(level) = cascade
-            .resolve_paragraph(direct)
-            .outline_level
-            .filter(|l| *l <= 8)
-        {
-            return Some(level + 1);
-        }
-        let defs = self.document.definitions();
-        let mut style_id = direct.style_ref;
-        for _ in 0..24 {
-            let Some(style) = style_id.and_then(|id| defs.styles.get(&id)) else {
-                break;
-            };
-            if let Some(level) = style
-                .paragraph
-                .as_ref()
-                .and_then(|p| p.outline_level)
-                .filter(|l| *l <= 8)
-            {
-                return Some(level + 1);
-            }
-            if let Some(level) = heading_level_from_name(style.name.as_deref()) {
-                return Some(level);
-            }
-            style_id = style.based_on;
-        }
-        None
+        casual_doc_layout::fold::heading_level(direct, self.document.definitions(), cascade)
     }
 
     /// The document's structure as a **read-only** JSON array of
@@ -12769,7 +13053,21 @@ impl WasmDocument {
         // definition map instead would be a linear scan inside the walk (HF-184).
         let notes = NoteAnchorLengths::of(&self.document);
         let mut out = Vec::new();
-        self.collect_a11y_blocks(self.document.body(), &cascade, &notes, &mut out);
+        // Folded content is filtered here too: a fold must mean the same thing to
+        // the whole-document projection as to the windowed one, or a host that
+        // called the older entry point would read out what the canvas hides.
+        let mut suppress = None;
+        for block in self.document.body() {
+            if casual_doc_layout::fold::is_visible(
+                &mut suppress,
+                block,
+                &self.folds,
+                self.document.definitions(),
+                &cascade,
+            ) {
+                self.collect_a11y_blocks(std::slice::from_ref(block), &cascade, &notes, &mut out);
+            }
+        }
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -12793,6 +13091,7 @@ impl WasmDocument {
         // O(notes), once for the window — see `accessibility_tree`.
         let notes = NoteAnchorLengths::of(&self.document);
         let mut out = Vec::new();
+        let mut owners = Vec::new();
         let mut seen = 0_usize;
         let start = start as usize;
         let limit = start.saturating_add(count as usize);
@@ -12804,11 +13103,18 @@ impl WasmDocument {
             limit,
             &mut seen,
             &mut out,
+            &mut owners,
         );
         serde_json::to_string(&serde_json::json!({
             "total": seen,
             "start": start.min(seen),
             "blocks": out,
+            // Additive, and a PARALLEL array rather than a field on each node:
+            // `A11yBlockJson` is an internally-tagged enum whose exact shape is
+            // asserted in several places, and widening every variant to carry an
+            // id would change all of them for a fact that belongs to the block
+            // rather than to the node. `nodes[i]` owns `blocks[i]`.
+            "nodes": owners,
         }))
         .unwrap_or_else(|_| "{\"total\":0,\"start\":0,\"blocks\":[]}".to_string())
     }
@@ -12843,12 +13149,57 @@ impl WasmDocument {
             .unwrap_or(-1)
     }
 
+    /// The **node id** of the top-level body block containing `node`, or `""`
+    /// when it is not in the body.
+    ///
+    /// [`Self::block_index_of`]'s answer as an identity rather than a position,
+    /// and that difference is the point: an index is invalidated by anything that
+    /// filters the list it indexes into, and since ADR-049 the accessibility
+    /// projection omits the blocks inside a collapsed heading's range. The
+    /// projection reports the owning block of every node it emits, so a host that
+    /// has to find "the caret's table" among them matches an id instead of doing
+    /// arithmetic that a fold — or a paragraph projecting more than one node —
+    /// silently breaks.
+    ///
+    /// `O(document)`, the same walk `block_index_of` makes, and for the same
+    /// reason: it is asked once per mirror rebuild, not once per node.
+    #[wasm_bindgen(js_name = blockNodeOf)]
+    #[must_use]
+    pub fn block_node_of(&self, node: &str) -> String {
+        let Ok(id) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        self.document
+            .body()
+            .iter()
+            .find(|block| block_holds(block, id))
+            .map(|block| block_node_id(block).to_string())
+            .unwrap_or_default()
+    }
+
     /// [`Self::accessibility_tree_window`]'s walk: counts every block so `total`
     /// is the document's real size, and projects only those inside the window.
     // Eight arguments because `NoteAnchorLengths` is PASSED rather than looked
     // up: that is the whole point of the index (build once, query O(1)), and the
     // alternative to the parameter is the linear scan per reference it replaced.
     #[allow(clippy::too_many_arguments)]
+    /// `owners[i]` is the top-level body block that produced `out[i]`, so a host
+    /// can tell which projected node belongs to which block without index
+    /// arithmetic over a filtered list.
+    ///
+    /// **The fold filter runs here, over the same [`FoldSet`] layout uses**
+    /// (ADR-049). A folded range is invisible to everyone who can see the canvas,
+    /// and a mirror that still read it out would make the fold a lie to one class
+    /// of reader — the one class that cannot check. It is filtered in the ENGINE
+    /// and not in the host because the engine is where the fold set and the node
+    /// ids both are: `A11yBlockJson` carries `kind`/`level`/`text` and no id, so
+    /// nothing in the chrome could tell which projected heading was collapsed,
+    /// and matching by level-plus-text would be guesswork. `owners` is the
+    /// additive half of closing that: the ids the projection never carried.
+    ///
+    /// A hidden block still counts towards `seen`, so `total` stays the
+    /// document's block count and the window a host asks for means the same thing
+    /// folded or not.
     fn collect_a11y_window(
         &self,
         blocks: &[BlockNode],
@@ -12858,12 +13209,28 @@ impl WasmDocument {
         limit: usize,
         seen: &mut usize,
         out: &mut Vec<A11yBlockJson>,
+        owners: &mut Vec<String>,
     ) {
+        let mut suppress = None;
         for block in blocks {
             let index = *seen;
             *seen += 1;
+            let visible = casual_doc_layout::fold::is_visible(
+                &mut suppress,
+                block,
+                &self.folds,
+                self.document.definitions(),
+                cascade,
+            );
+            if !visible {
+                continue;
+            }
             if index >= start && index < limit {
                 self.collect_a11y_blocks(std::slice::from_ref(block), cascade, notes, out);
+                // One paragraph can produce several nodes (its text plus a node
+                // per drawing it holds), so the owner is stamped by RESIZE to the
+                // projection's new length rather than pushed once per block.
+                owners.resize(out.len(), block_node_id(block).to_string());
             }
         }
     }
@@ -13665,11 +14032,12 @@ impl WasmDocument {
             return Err(windowed_not_available("The show-changes preview"));
         }
         self.markup_layout = on.then(|| {
-            paginate_document_in(
+            paginate_document_folded(
                 &self.document,
                 &self.shaper,
                 ReviewView::Markup,
                 self.layout_view,
+                &self.folds,
             )
         });
         Ok(())
@@ -13780,18 +14148,20 @@ impl WasmDocument {
         // every page, so offering it as a resume baseline would splice pages laid
         // out to rules that no longer apply.
         self.galley_cache = GalleyCache::new();
-        self.layout = BodyLayout::Whole(paginate_document_in(
+        self.layout = BodyLayout::Whole(paginate_document_folded(
             &self.document,
             &self.shaper,
             ReviewView::Editing,
             self.layout_view,
+            &self.folds,
         ));
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_in(
+            self.markup_layout = Some(paginate_document_folded(
                 &self.document,
                 &self.shaper,
                 ReviewView::Markup,
                 self.layout_view,
+                &self.folds,
             ));
         }
         // A re-layout is a view change, not a document change: bump the view epoch
@@ -13896,20 +14266,22 @@ impl WasmDocument {
             self.layout.remeasure(&self.document, &self.shaper);
             return;
         }
-        self.layout = BodyLayout::Whole(paginate_document_in(
+        self.layout = BodyLayout::Whole(paginate_document_folded(
             &self.document,
             &self.shaper,
             ReviewView::Editing,
             self.layout_view,
+            &self.folds,
         ));
         // A new face re-shapes the markup view as much as the editing one, and
         // the markup view is what is on screen while it exists.
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_in(
+            self.markup_layout = Some(paginate_document_folded(
                 &self.document,
                 &self.shaper,
                 ReviewView::Markup,
                 self.layout_view,
+                &self.folds,
             ));
         }
     }
@@ -14651,7 +15023,7 @@ impl WasmDocument {
         // edit rather than to the document (`docs/107` B1, `109` HF-182). With a
         // damage set that is not complete this still produces the identical
         // layout, by re-deriving and re-hashing every paragraph.
-        let update = paginate_document_after_edit_in(
+        let update = paginate_document_after_edit_folded(
             &self.document,
             &self.shaper,
             &mut self.galley_cache,
@@ -14659,6 +15031,7 @@ impl WasmDocument {
             ReviewView::Editing,
             previous,
             self.layout_view,
+            &self.folds,
         );
         // Dirty pages — and the page count the host compares against — must be
         // measured on the layout the RENDERER reads. While "show changes" is on
@@ -14678,7 +15051,7 @@ impl WasmDocument {
                 // per keystroke against the editing path's 2.5 ms on a 28-page
                 // document — a dropped frame from layout alone, paid by
                 // exactly the users the review features are for.
-                let markup = paginate_document_after_edit_in(
+                let markup = paginate_document_after_edit_folded(
                     &self.document,
                     &self.shaper,
                     &mut self.galley_cache,
@@ -14686,6 +15059,7 @@ impl WasmDocument {
                     ReviewView::Markup,
                     Some(previous),
                     self.layout_view,
+                    &self.folds,
                 );
                 let dirty = pages_to_repaint(&markup);
                 self.markup_layout = Some(markup.layout);
@@ -23146,21 +23520,14 @@ fn union_rect(a: Rect, b: Rect) -> Rect {
     )
 }
 
-/// The heading level (1-based; 1 = top) implied by a style `name` — `Title` or
-/// `Heading N` (case- and whitespace-insensitive), else `None`.
-fn heading_level_from_name(name: Option<&str>) -> Option<u8> {
-    let compact: String = name?
-        .to_lowercase()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    if compact == "title" {
-        return Some(1);
+/// The stable identity of a top-level block, whatever kind it is.
+fn block_node_id(block: &BlockNode) -> NodeId {
+    match block {
+        BlockNode::Paragraph(paragraph) => paragraph.id,
+        BlockNode::Table(table) => table.id,
+        BlockNode::Sdt(sdt) => sdt.id,
+        BlockNode::AltChunk(chunk) => chunk.id,
     }
-    compact
-        .strip_prefix("heading")
-        .and_then(|n| n.parse::<u8>().ok())
-        .filter(|n| (1..=9).contains(n))
 }
 
 /// Whether `block` (recursively, through nested tables / content controls) holds the
@@ -25824,6 +26191,34 @@ fn open_document_bounded(
     edit_ids.reserve_through(document.highest_counter_in(IdSpace::new(edit_ids.namespace())));
     let revision_ids = RevisionIdAllocator::from_document(&document);
 
+    // `w15:collapsed` is the document's SAVED default (ADR-049's cross-session
+    // tier), so a file Word saved with a heading folded opens folded. Seeded
+    // here, once, from a cheap pass over the top-level blocks that reads one
+    // `Option<bool>` per paragraph and resolves no style cascade.
+    //
+    // A windowed body gets an empty set: its measure tier is built in chunks a
+    // host scrolls through, and invalidating that on a fold would re-measure the
+    // document (`109` FOLD-003). The facade refuses a toggle there with a reason.
+    let folds = if layout.is_windowed() {
+        FoldSet::new()
+    } else {
+        saved_folds(&document)
+    };
+    // Re-paginate only when the document really carries a folded heading, which
+    // is rare: the open above already paid for the unfolded layout, and paying
+    // twice for every document to spare one is the wrong trade.
+    let layout = if folds.is_empty() {
+        layout
+    } else {
+        BodyLayout::Whole(paginate_document_folded(
+            &document,
+            &shaper,
+            ReviewView::Editing,
+            LayoutView::Paged,
+            &folds,
+        ))
+    };
+
     Ok(WasmDocument {
         edit_context: EditContext::Body,
         document,
@@ -25857,8 +26252,37 @@ fn open_document_bounded(
         active_author: None,
         paragraph_tracking: None,
         marks: FormattingMarks::default(),
+        folds,
         layout_view: LayoutView::Paged,
     })
+}
+
+/// The headings a document was SAVED with collapsed (`w15:collapsed`), as a
+/// [`FoldSet`].
+///
+/// Top-level body paragraphs only, and deliberately: the flag sits on a heading
+/// and the fold range is derived from the outline, so a `w15:collapsed` inside a
+/// table cell describes a fold whose range is that cell's own sequence — which
+/// the flow filter honours when a viewer folds it, and which is not seeded here
+/// because the document default for nested content is a question `157` does not
+/// answer and guessing it would be the overstatement rule's problem.
+///
+/// Complexity: `O(top-level blocks)`, reading one `Option<bool>` each. No style
+/// cascade, no shaping, no allocation per block.
+fn saved_folds(document: &Document) -> FoldSet {
+    document
+        .body()
+        .iter()
+        .filter_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => paragraph
+                .properties
+                .get()
+                .collapsed
+                .unwrap_or(false)
+                .then_some(paragraph.id),
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(serde::Serialize)]
@@ -34238,6 +34662,7 @@ mod tests {
             active_author: None,
             paragraph_tracking: None,
             marks: FormattingMarks::default(),
+            folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
         };
         let node = paragraph.to_string();
@@ -34686,6 +35111,7 @@ mod tests {
             active_author: None,
             paragraph_tracking: None,
             marks: FormattingMarks::default(),
+            folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
         };
         let node = paragraph.to_string();
@@ -34707,7 +35133,12 @@ mod tests {
         assert_eq!(
             d.document_outline()
                 .first()
-                .and_then(|row| row.splitn(3, '\t').nth(2)),
+                // `splitn`, not `split`: the TEXT field is last and a heading's
+                // text can itself contain a tab, so the limit is what keeps the
+                // field whole. (Clippy flags `splitn` only where the limit is
+                // unreachable, which is why the sibling rows above take
+                // `split`.)
+                .and_then(|row| row.splitn(4, '\t').nth(3)),
             Some("final heading")
         );
     }
@@ -34989,6 +35420,7 @@ mod tests {
             active_author: None,
             paragraph_tracking: None,
             marks: FormattingMarks::default(),
+            folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
         };
 
@@ -38848,6 +39280,7 @@ mod tests {
             active_author: None,
             paragraph_tracking: None,
             marks: FormattingMarks::default(),
+            folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
         }
     }
@@ -39939,6 +40372,495 @@ mod tests {
         assert_eq!(d.paragraph_border_edges(&node), 0b1110);
     }
 
+    // ---- Folding (ADR-049) ------------------------------------------------
+
+    /// A synthetic report: `H1 "Alpha"`, `fill` prose paragraphs, `H1 "Omega"`,
+    /// one paragraph — long enough that folding `Alpha` must drop whole pages.
+    ///
+    /// Built directly rather than imported, because no fixture in the repository
+    /// is both multi-page AND carries `w:outlineLvl` headings.
+    ///
+    /// This comment used to blame "the Markdown and HTML importers", and that was
+    /// wrong: **there are no such importers.** Both adapters are
+    /// `can_import: false` (`casual-doc-io/src/markdown.rs`, `html.rs`) and both
+    /// READ `outline_level` on the way out, so nothing is owed there. Re-measured
+    /// 2026-10-04: the importer that really drops a heading's identity is **RTF**
+    /// — `outline_level`, `style_id` and `style_name` are each zero hits across
+    /// `crates/casual-doc-rtf` and `casual-doc-io/src/rtf.rs` — so an imported
+    /// `.rtf` has an empty `documentOutline()` and nothing to fold. That is `109`
+    /// FOLD-005.
+    fn folded_report(fill: usize) -> WasmDocument {
+        use casual_doc_model::v1::Definitions;
+
+        const LINE: &str = "The quick brown fox jumps over the lazy dog and keeps running. ";
+        let mut next = 100_u64;
+        let mut id = || {
+            next += 1;
+            NodeId::from_parts(0x_f0_1d, next).expect("non-zero")
+        };
+        let paragraph = |id: NodeId, run_id: NodeId, level: Option<u8>, text: &str| {
+            BlockNode::Paragraph(Paragraph {
+                id,
+                properties: ParagraphProperties {
+                    outline_level: level.map(|level| level - 1),
+                    ..ParagraphProperties::default()
+                }
+                .into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: run_id,
+                    properties: RunProperties::default().into(),
+                    text: text.to_owned(),
+                })],
+            })
+        };
+        let mut body = Vec::new();
+        let alpha = id();
+        body.push(paragraph(alpha, id(), Some(1), "Alpha"));
+        for _ in 0..fill {
+            let node = id();
+            body.push(paragraph(node, id(), None, &LINE.repeat(3)));
+        }
+        let omega = id();
+        body.push(paragraph(omega, id(), Some(1), "Omega"));
+        let tail = id();
+        body.push(paragraph(tail, id(), None, "after the second heading"));
+
+        let document = Document::new(
+            NodeId::from_parts(0x_f0_1d, 1).expect("non-zero"),
+            body,
+            Definitions::default(),
+        )
+        .expect("a well-formed synthetic report");
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        let default_config = document_page_config(&document);
+        let revision_ids = RevisionIdAllocator::from_document(&document);
+        WasmDocument {
+            editing_a_form_field: false,
+            capabilities: Capabilities::local(),
+            edit_context: EditContext::Body,
+            document,
+            layout: BodyLayout::Whole(layout),
+            markup_layout: None,
+            shaper,
+            resources: DocumentResources::default(),
+            format_state: FormatState::synthetic(),
+            default_config,
+            edit_ids: IdGenerator::new(0x5e),
+            log: RevisionLog::default(),
+            next_transaction: 0,
+            typing_history: None,
+            revision_ids,
+            revision: 0,
+            galley_cache: GalleyCache::new(),
+            bullet_list: None,
+            numbered_list: None,
+            checklist_unchecked: None,
+            checklist_checked: None,
+            active_author: None,
+            paragraph_tracking: None,
+            marks: FormattingMarks::default(),
+            folds: FoldSet::new(),
+            layout_view: LayoutView::Paged,
+            session: None,
+        }
+    }
+
+    /// The fixture whose `w:pPr` carries `w15:collapsed` — the first `.docx` in
+    /// the repository to carry one, added by the branch that accepted ADR-049.
+    const COLLAPSED_DOCX: &[u8] =
+        include_bytes!("../../../fixtures/generated/collapsed-headings.docx");
+
+    /// A document saved with a heading collapsed opens **folded**, and the
+    /// outline says which heading it is.
+    ///
+    /// `w15:collapsed` is the cross-session tier: Word writes it, we parse,
+    /// model, export and now HONOUR it. ONLYOFFICE discard it structurally —
+    /// no `Collapsed` in their `CParaPr` constructor, nothing for it in the
+    /// x2t↔sdkjs property enum, and an unallocated record reaches
+    /// `Serialize2.js`'s `default: ReadUnknown` and is dropped — so a file folded
+    /// in Word loses the state the moment it is edited there (`docs/157`).
+    ///
+    /// Mutation that reddens it: make `saved_folds` return `FoldSet::new()`. The
+    /// collapsed column is then `0` for every row of a document that says
+    /// otherwise.
+    #[test]
+    fn a_document_saved_collapsed_opens_folded() {
+        let d = open_document(COLLAPSED_DOCX).expect("open the w15:collapsed fixture");
+        let state: serde_json::Value =
+            serde_json::from_str(&d.fold_state()).expect("fold state json");
+        let folded = state["folded"].as_array().expect("folded array");
+        assert!(
+            !folded.is_empty(),
+            "the fixture's `w15:collapsed` heading must seed the fold set: {state}",
+        );
+        assert_eq!(state["available"], true);
+        assert_eq!(state["withheldReason"], "");
+        // And the panel can see it, from the outline's own row rather than from a
+        // second call that could disagree with it.
+        let collapsed_rows = d
+            .document_outline()
+            .iter()
+            .filter(|row| row.split('\t').nth(2) == Some("1"))
+            .count();
+        assert_eq!(
+            collapsed_rows,
+            folded.len(),
+            "every folded heading is marked collapsed in the outline, and only those",
+        );
+    }
+
+    /// Folding a heading through the facade drops pages and reports the state;
+    /// unfolding brings them back.
+    ///
+    /// Mutation that reddens it: have `relayout_for_fold` paginate with
+    /// `&FoldSet::new()` instead of `&self.folds` — the page count then never
+    /// moves, which is the "the state is tracked and nothing happens" failure
+    /// this whole lane exists to end.
+    #[test]
+    fn folding_through_the_facade_drops_pages_and_unfolding_restores_them() {
+        let mut d = folded_report(40);
+        let before = d.page_count();
+        assert!(
+            before >= 3,
+            "the fixture must be long enough for pages to be lost: {before}",
+        );
+        let node = first_heading_node(&d);
+
+        let state = d.set_fold_inner(&node, true).expect("fold the heading");
+        let state: serde_json::Value = serde_json::from_str(&state).expect("json");
+        assert_eq!(
+            state["folded"].as_array().map(Vec::len),
+            Some(1),
+            "exactly the heading that was folded: {state}",
+        );
+        let folded_pages = d.page_count();
+        assert!(
+            folded_pages < before,
+            "folding the title must drop pages: {folded_pages} folded against {before}",
+        );
+        // The outline row for that heading now says so.
+        assert!(
+            d.document_outline().iter().any(|row| {
+                let parts: Vec<&str> = row.splitn(4, '\t').collect();
+                parts.get(1) == Some(&node.as_str()) && parts.get(2) == Some(&"1")
+            }),
+            "the outline reports the live fold state",
+        );
+
+        d.fold_to_level_inner(0).expect("unfold");
+        assert_eq!(
+            d.page_count(),
+            before,
+            "unfolding restores exactly the layout the document opened with",
+        );
+    }
+
+    /// A fold is a VIEW: it moves the view epoch and leaves the document
+    /// revision alone, so nothing replaying the revision chain sees a fold as an
+    /// edit (`docs/147` §3.3).
+    ///
+    /// Mutation that reddens it: advance `log.head()` in `relayout_for_fold` (or
+    /// route the fold through `apply_action`). The document revision then moves
+    /// for a change that wrote nothing.
+    #[test]
+    fn a_fold_is_a_view_and_not_an_edit() {
+        let mut d = folded_report(6);
+        let revision_before = d.revision;
+        let document_revision_before = d.log.head();
+        let node = first_heading_node(&d);
+        d.set_fold_inner(&node, true).expect("fold");
+        assert!(
+            d.revision > revision_before,
+            "the VIEW epoch moves, so the host re-rasters",
+        );
+        assert_eq!(
+            d.log.head(),
+            document_revision_before,
+            "the DOCUMENT revision does not: a fold writes nothing",
+        );
+    }
+
+    /// Only a heading can be folded, and a non-heading is refused **by name**
+    /// rather than silently ignored.
+    ///
+    /// Mutation that reddens it: drop the `is_heading` check in
+    /// `set_fold_inner`. The call then succeeds on a body paragraph and the host
+    /// has no way to learn its request was meaningless.
+    #[test]
+    fn only_a_heading_can_be_folded() {
+        let mut d = folded_report(3);
+        let headings: Vec<String> = d
+            .document_outline()
+            .iter()
+            .filter_map(|row| row.split('\t').nth(1).map(str::to_owned))
+            .collect();
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .find(|id| !headings.contains(id))
+            .expect("a non-heading paragraph");
+        // The inner `Result<_, String>` so the message is readable on native
+        // targets; the `#[wasm_bindgen]` wrapper throws the same text.
+        let error = d.set_fold_inner(&body, true).expect_err("must refuse");
+        assert!(
+            error.contains("only a heading can be folded"),
+            "the refusal says what is wrong: {error}",
+        );
+        assert!(
+            d.set_fold_inner("not-a-node-id", true)
+                .expect_err("must refuse")
+                .contains("not a node id"),
+            "and so does a malformed id",
+        );
+    }
+
+    /// `foldToLevel` is one mechanism with three entry points: level 0 is
+    /// `unfoldAll`, level 9 is `foldAll`, and a level in between folds everything
+    /// deeper than it.
+    ///
+    /// Mutation that reddens it: compare `found > level` instead of
+    /// `found >= level` in `fold_to_level_inner`. "Show level 1" then leaves the
+    /// level-1 headings expanded, which is what level 2 means — the off-by-one
+    /// that silently turns every level of the picker into the next one.
+    #[test]
+    fn fold_to_level_is_one_mechanism_with_three_entry_points() {
+        let mut d = open_document(COLLAPSED_DOCX).expect("open the heading fixture");
+        let total_headings = d.document_outline().len();
+        assert_eq!(
+            total_headings,
+            4,
+            "the fixture's four headings: {:?}",
+            d.document_outline(),
+        );
+
+        // The fixture's levels are 1, 2, 1, 1.
+        let one: serde_json::Value =
+            serde_json::from_str(&d.fold_to_level_inner(1).expect("level 1")).expect("json");
+        assert_eq!(
+            one["folded"].as_array().map(Vec::len),
+            Some(total_headings),
+            "`Show level 1` folds every heading — which is foldAll",
+        );
+
+        let two: serde_json::Value =
+            serde_json::from_str(&d.fold_to_level_inner(2).expect("level 2")).expect("json");
+        assert_eq!(
+            two["folded"].as_array().map(Vec::len),
+            Some(1),
+            "`Show level 2` folds only the one level-2 heading, leaving the three \
+             level-1 headings expanded: {two}",
+        );
+
+        let none: serde_json::Value =
+            serde_json::from_str(&d.fold_to_level_inner(0).expect("unfold all")).expect("json");
+        assert_eq!(
+            none["folded"].as_array().map(Vec::len),
+            Some(0),
+            "`show every level` folds nothing — which is unfoldAll",
+        );
+    }
+
+    /// A folded range is **not readable by a screen reader** while it is
+    /// invisible to everyone else, and the projection now carries the node ids
+    /// that made the filter expressible at all.
+    ///
+    /// A mirror that still read out folded content would make the fold a lie to
+    /// exactly the reader who cannot check it. It is filtered in the ENGINE
+    /// because that is where the fold set and the node ids both are:
+    /// `A11yBlockJson` carries `kind`/`level`/`text` and no id, so nothing in the
+    /// chrome could tell which projected heading was collapsed, and matching by
+    /// level-plus-text is guesswork.
+    ///
+    /// Mutation that reddens it: drop the `is_visible` guard from
+    /// `collect_a11y_window`. The hidden paragraphs reappear in the projection
+    /// while the canvas still hides them.
+    #[test]
+    fn the_accessibility_mirror_is_filtered_by_the_same_fold_set() {
+        let mut d = folded_report(6);
+        let unfolded: serde_json::Value =
+            serde_json::from_str(&d.accessibility_tree_window(0, 600)).expect("json");
+        let unfolded_blocks = unfolded["blocks"].as_array().expect("blocks").len();
+        let nodes = unfolded["nodes"].as_array().expect("nodes");
+        assert_eq!(
+            nodes.len(),
+            unfolded_blocks,
+            "every projected node names the top-level block that produced it",
+        );
+        let total = unfolded["total"].as_u64().expect("total");
+
+        let node = first_heading_node(&d);
+        d.set_fold_inner(&node, true).expect("fold");
+        let folded: serde_json::Value =
+            serde_json::from_str(&d.accessibility_tree_window(0, 600)).expect("json");
+        let folded_blocks = folded["blocks"].as_array().expect("blocks").len();
+        assert!(
+            folded_blocks < unfolded_blocks,
+            "the folded range must leave the mirror: {folded_blocks} folded against \
+             {unfolded_blocks} unfolded",
+        );
+        assert_eq!(
+            folded["total"].as_u64(),
+            Some(total),
+            "`total` stays the DOCUMENT's block count, so a window a host asks \
+             for means the same thing folded or not",
+        );
+        assert_eq!(
+            folded["nodes"].as_array().map(Vec::len),
+            Some(folded_blocks),
+            "and the parallel id array stays in step with the filtered blocks",
+        );
+        // The heading the reader folded is still there — it is the affordance.
+        assert!(
+            folded["nodes"]
+                .as_array()
+                .expect("nodes")
+                .iter()
+                .any(|id| id.as_str() == Some(node.as_str())),
+            "the collapsed heading itself stays readable",
+        );
+    }
+
+    /// `setFoldSet` restores an arbitrary fold set in ONE re-layout, which is
+    /// what lets print expand the document and put the reader's folds back.
+    ///
+    /// The guarantee under test is the one `print.mjs`'s `withPagedLayout`
+    /// depends on: the state that comes out of `foldState()` can be handed back
+    /// and produces the SAME layout, for the same cost whatever its size. Without
+    /// it the host's only restore is a `setFold` per heading, and each of those is
+    /// its own `O(document)` re-layout — so a reader who had collapsed two
+    /// hundred headings would pay two hundred full passes after the print dialog
+    /// closed, with no progress and nothing to cancel.
+    ///
+    /// Guarded by DOUBLING rather than by a clock (`SKILL.md` §8): the view epoch
+    /// (`self.revision`) advances once per re-layout, so restoring two folds and
+    /// restoring four must each move it by exactly one.
+    ///
+    /// Mutations that redden it:
+    ///   * restore with `for (id) { self.folds.insert(id); self.relayout_for_fold(); }`
+    ///     — the epoch then moves twice for two folds and four times for four,
+    ///     which is the per-heading re-layout this exists to prevent;
+    ///   * drop the `heading_level_of` test inside the walk — the unknown and
+    ///     non-heading ids are then accepted into the set and the returned state
+    ///     claims folds the layout cannot honour;
+    ///   * `Ok(self.fold_state())` on a parse failure instead of `Err` — a host
+    ///     typo then silently clears every fold.
+    #[test]
+    fn set_fold_set_restores_a_whole_fold_set_in_one_relayout() {
+        let mut d = open_document(COLLAPSED_DOCX).expect("open the heading fixture");
+        d.fold_to_level_inner(0).expect("start from unfolded");
+        let opening_pages = d.page_count();
+        let headings: Vec<String> = d
+            .document_outline()
+            .iter()
+            .filter_map(|row| row.split('\t').nth(1).map(str::to_owned))
+            .collect();
+        assert!(
+            headings.len() >= 2,
+            "the fixture must carry at least two headings: {headings:?}",
+        );
+
+        // Fold two headings the slow way, and remember what that layout was.
+        for node in headings.iter().take(2) {
+            d.set_fold_inner(node, true).expect("fold one at a time");
+        }
+        let pages_folded_individually = d.page_count();
+        let state_individually: serde_json::Value =
+            serde_json::from_str(&d.fold_state()).expect("json");
+
+        // Back to nothing folded, then restore the SAME set in one call.
+        d.fold_to_level_inner(0).expect("unfold");
+        assert_eq!(
+            d.page_count(),
+            opening_pages,
+            "the fixture reopens as it opened"
+        );
+        let before = d.revision;
+        let wanted = serde_json::to_string(&headings[..2]).expect("payload");
+        let restored: serde_json::Value = serde_json::from_str(
+            &d.set_fold_set_inner(&wanted)
+                .expect("restore the whole set"),
+        )
+        .expect("json");
+
+        assert_eq!(
+            restored["folded"], state_individually["folded"],
+            "the restored set must be the set that was read out, member for member",
+        );
+        assert_eq!(
+            d.page_count(),
+            pages_folded_individually,
+            "and it must produce the same LAYOUT, not merely the same bookkeeping",
+        );
+        assert_eq!(
+            d.revision - before,
+            1,
+            "one re-layout for the whole set: {} for {} folds",
+            d.revision - before,
+            2,
+        );
+
+        // Doubling: twice the folds, still one pass.
+        d.fold_to_level_inner(0).expect("unfold");
+        let before = d.revision;
+        let all = serde_json::to_string(&headings).expect("payload");
+        d.set_fold_set_inner(&all).expect("restore every heading");
+        assert_eq!(
+            d.revision - before,
+            1,
+            "{} headings must still cost one re-layout, not one each",
+            headings.len(),
+        );
+
+        // An id that is not a heading, and one that is not in the document, are
+        // skipped — and the returned state SAYS which ids were actually set, so a
+        // skip is observable rather than silent.
+        d.fold_to_level_inner(0).expect("unfold");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .find(|id| !headings.contains(id))
+            .expect("a non-heading paragraph");
+        let mixed = serde_json::to_string(&[
+            headings[0].clone(),
+            body,
+            NodeId::from_parts(0x_dead, 7)
+                .expect("non-zero")
+                .to_string(),
+            "not-a-node-id".to_owned(),
+        ])
+        .expect("payload");
+        let partial: serde_json::Value =
+            serde_json::from_str(&d.set_fold_set_inner(&mixed).expect("accepted")).expect("json");
+        assert_eq!(
+            partial["folded"].as_array().map(Vec::len),
+            Some(1),
+            "only the real heading is folded, and the state reports exactly that: {partial}",
+        );
+
+        // A malformed payload IS refused: that is a host bug, and silently
+        // clearing the reader's folds for it would be the worst of both.
+        let error = d
+            .set_fold_set_inner("{\"folded\": []}")
+            .expect_err("an object is not an array of ids");
+        assert!(
+            error.contains("JSON array of node ids"),
+            "the refusal says what was wrong: {error}",
+        );
+    }
+
+    /// The first heading node id in the document.
+    fn first_heading_node(d: &WasmDocument) -> String {
+        d.document_outline()
+            .first()
+            .and_then(|row| row.split('\t').nth(1).map(str::to_owned))
+            .expect("the corpus document has a heading")
+    }
+
     /// Tab stops: add (sorted, with alignment), move, cycle-by-replace, remove, and
     /// clear — reflected by `paragraphTabs` and undoable.
     #[test]
@@ -40211,17 +41133,26 @@ mod tests {
         // The corpus's "Rich Document" is a Heading 1 → a level-1 entry exists.
         assert!(
             outline.iter().any(|row| {
-                let mut it = row.splitn(3, '\t');
-                it.next() == Some("1") && it.nth(1).is_some_and(|t| t.contains("Rich Document"))
+                let mut it = row.splitn(4, '\t');
+                it.next() == Some("1") && it.nth(2).is_some_and(|t| t.contains("Rich Document"))
             }),
             "outline has the Heading 1 title: {outline:?}"
         );
-        // Every row is well-formed: numeric level, a node id, non-empty text.
+        // Every row is well-formed: numeric level, a node id, a 0/1 collapsed
+        // flag, non-empty text (ADR-049 added the third column).
         for row in &outline {
-            let parts: Vec<&str> = row.splitn(3, '\t').collect();
-            assert_eq!(parts.len(), 3, "row has level\\tnode\\ttext: {row:?}");
+            let parts: Vec<&str> = row.splitn(4, '\t').collect();
+            assert_eq!(
+                parts.len(),
+                4,
+                "row has level\\tnode\\tcollapsed\\ttext: {row:?}"
+            );
             assert!(parts[0].parse::<u8>().is_ok(), "numeric level: {row:?}");
-            assert!(!parts[2].trim().is_empty(), "non-empty text: {row:?}");
+            assert!(
+                parts[2] == "0" || parts[2] == "1",
+                "collapsed is 0 or 1: {row:?}"
+            );
+            assert!(!parts[3].trim().is_empty(), "non-empty text: {row:?}");
         }
     }
 
@@ -41022,6 +41953,7 @@ mod tests {
             active_author: None,
             paragraph_tracking: None,
             marks: FormattingMarks::default(),
+            folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
         };
         (handle, source_id, target_id)
