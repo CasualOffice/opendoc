@@ -124,11 +124,20 @@ pub struct SlideMaster {
 /// (`p14:sectionLst`). None of them are forward-incompatible with this envelope;
 /// each is additive.
 ///
-/// The `p:txStyles` tiers and `p:defaultTextStyle` **are** modelled now
-/// ([`SlideMaster::text_styles`], [`Presentation::default_text_style`]), so every
-/// tier of the text cascade is carried. What is not built is the RESOLVER that
-/// folds them — a run with no stated size still has no resolved size, and
-/// `casual-pres-layout` still draws no glyphs.
+/// The `p:txStyles` tiers and `p:defaultTextStyle` **are** modelled
+/// ([`SlideMaster::text_styles`], [`Presentation::default_text_style`]),
+/// [`Presentation::text_cascade`] folds the whole chain, and `casual-pres-layout`
+/// shapes the result — a slide paints glyphs.
+///
+/// Three limits of the cascade remain, stated here because a reader of this type
+/// needs them: a theme colour is **indistinguishable from an unstated one** by the
+/// time it reaches this model, because `StyleColor` has no scheme-slot variant and
+/// the importer resolves `a:schemeClr` to `None`; `TextBodyProperties` fields are
+/// plain values with DrawingML's defaults filled in at import, so `a:bodyPr` cannot
+/// inherit — "stated no `@anchor`" and "stated `anchor="t"`" are one model; and
+/// [`Presentation::text_cascade`] matches a placeholder slot on the raw
+/// `(kind, idx)` pair, so a slide's `ctrTitle` misses a master's `title` tier even
+/// though [`PlaceholderKind::is_title`] folds the two everywhere else.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Presentation {

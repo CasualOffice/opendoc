@@ -43,15 +43,19 @@
 //! `degraded`, which is the honest reading of today's pipeline rather than a
 //! pessimistic one — see `loss.rs`.
 //!
-//! **It does not render text.** `casual-pres-layout` consumes a validated
-//! [`Presentation`](casual_pres_model::Presentation) and turns its shapes into a
-//! display list, so a deck imported here can be laid out. Every TIER of the
-//! placeholder text cascade now arrives — the shape's `a:lstStyle`, the
-//! placeholder's on the layout and the master, the master's `p:txStyles` and the
-//! presentation's `p:defaultTextStyle` — but the RESOLVER that folds them into one
-//! effective property set per paragraph is not built, so a run with no stated size
-//! still has no resolved size and nothing draws it (`SKILL` §9.4: modelled is not
-//! shipped).
+//! **It does not resolve the theme.** Every TIER of the placeholder text cascade
+//! arrives — the shape's `a:lstStyle`, the placeholder's on the layout and the
+//! master, the master's `p:txStyles` and the presentation's `p:defaultTextStyle` —
+//! `Presentation::text_cascade` folds them, and `casual-pres-layout` shapes the
+//! result into glyphs. What this reader does not do is read `ppt/theme/theme1.xml`
+//! or `p:clrMap`, so an `a:schemeClr` resolves to nothing and a `+mj-lt` typeface
+//! passes through as the token it is. Both are reported.
+//!
+//! One consequence is worth stating here rather than leaving to be found, because
+//! it is a property of this reader and not of the layer above: `StyleColor` has no
+//! scheme-slot variant, so a theme colour resolved to `None` is **indistinguishable
+//! from a colour the file never stated** by the time the model reaches layout. Only
+//! this crate can report it, and it does.
 //!
 //! # Where the security boundary is
 //!

@@ -7,11 +7,11 @@
 //!
 //! A run on a real slide usually states almost nothing. PowerPoint writes
 //! `<a:rPr lang="en-US"/>` and leaves the size, the typeface, the colour, the
-//! bullet and the indent to be inherited — so until these two tiers are modelled,
-//! **a slide's text has no font size at all**, and nothing can shape it. That is
-//! why `casual-pres-layout` draws shapes and no glyphs: not because text layout is
-//! hard on a slide (it is not; nothing flows), but because the properties are not
-//! resolvable yet.
+//! bullet and the indent to be inherited — so until these two tiers were modelled,
+//! **a slide's text had no font size at all** and nothing could shape it. Not
+//! because text layout is hard on a slide (it is not; nothing flows), but because
+//! the properties were not resolvable. They are now, and `casual-pres-layout`
+//! shapes them.
 //!
 //! # The chain, most specific first
 //!
