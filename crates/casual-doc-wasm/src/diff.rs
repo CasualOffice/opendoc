@@ -48,12 +48,33 @@
 //! preview. Everything after that is O(b log b) in blocks and is interruptible at
 //! every slice. See `casual_doc_diff` for the per-phase complexity.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use casual_doc_diff::{DiffJob, DiffSides, MediaDigests, Progress};
+// Applying a comparison as tracked changes (ADR-061): the sidecar read back, and
+// the one walk that resolves a change's path against a document this session
+// holds. Separate `use` lines, in sorted position, per the parallel-lane import
+// rule.
+use casual_doc_diff::projection::{block_at_path, block_text};
+use casual_doc_diff::record::{DIFF_SCHEMA, DiffChange, DiffFamily, DiffKind, Story, VersionDiff};
+use casual_doc_edit::ParagraphIndex;
+use casual_doc_edit::Pos;
+use casual_doc_edit::refused;
 use casual_doc_io::{DetectionRequest, FormatSelection, builtin_registry_with_limits};
-use casual_doc_model::v1::{BlockNode, Document};
+use casual_doc_layout::flow::append_node_plain_text;
+use casual_doc_model::NodeId;
+use casual_doc_model::v1::{
+    BlockNode, Document, InlineNode, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind,
+    RevisionKind, Run, RunProperties,
+};
 use wasm_bindgen::prelude::*;
 
-use crate::{to_js, viewer_limits, viewer_text_limits};
+use crate::{
+    EditResult, HistoryKind, NoteAnchorLengths, WasmDocument, collect_paragraph_revisions_all,
+    collect_review_format_ids_all, collect_review_revision_ids_all, inline_anchor_len,
+    insert_review_revision, to_js, update_review_operation_across,
+    validate_authored_revision_author, viewer_limits, viewer_text_limits, wrap_review_deletion,
+};
 
 /// The default slice size a host that has no measurement yet can pass.
 ///
@@ -374,6 +395,551 @@ fn count_blocks(blocks: &[BlockNode]) -> u32 {
         }
     }
     total
+}
+
+// =============================================================================
+// Applying a comparison to the open document as tracked changes (ADR-061).
+// =============================================================================
+
+/// How much removed text a change record can carry verbatim: `casual-doc-diff`'s
+/// own excerpt bound, read from that crate rather than repeated here.
+const VERBATIM_TEXT_BYTES: usize = casual_doc_diff::job::EXCERPT_BYTES;
+
+/// One paragraph-local edit a comparison asks for, already translated into the
+/// **review anchor** offsets the review primitives take.
+#[derive(Clone, Debug)]
+struct ComparisonEdit {
+    /// The paragraph in THIS document, resolved from the change's right-hand
+    /// path (the only coordinate that survives the comparison's re-import).
+    node: NodeId,
+    /// Review-anchor range of text this document has and the compared one did
+    /// not. `start == end` for a pure deletion, which adds no text here.
+    start: u32,
+    /// End of that range.
+    end: u32,
+    /// What to mark `start..end` as, or `None` when nothing here is new.
+    marked: Option<RevisionKind>,
+    /// Text the compared document had and this one does not, to record as a
+    /// struck-through deletion at `start`. **Verbatim or absent** — never an
+    /// excerpt (see `verbatim_removed_text`).
+    removed: Option<String>,
+}
+
+/// Records one thing a comparison asked for that tracked changes cannot say,
+/// and returns `None` so the caller can `return` it.
+fn unapplied(loss: &mut BTreeSet<&'static str>, key: &'static str) -> Option<ComparisonEdit> {
+    loss.insert(key);
+    None
+}
+
+/// The loss key for a change family that has no inline revision form at all.
+///
+/// `RevisionKind` is `Insertion`/`Deletion`/`MoveFrom`/`MoveTo` and nothing
+/// else, so a formatting, style, section, definition, resource, comment or
+/// metadata difference cannot be *expressed* as a tracked change, however
+/// faithfully it was detected. Each is named rather than folded into one key,
+/// because "the page setup differs" and "a style was redefined" are different
+/// sentences for the reader.
+const fn family_loss_key(family: DiffFamily) -> &'static str {
+    match family {
+        DiffFamily::Block => "block",
+        DiffFamily::Text => "text",
+        DiffFamily::Formatting => "formatting",
+        DiffFamily::Style => "style",
+        DiffFamily::Table => "table",
+        DiffFamily::Object => "object",
+        DiffFamily::Section => "section",
+        DiffFamily::Definition => "definition",
+        DiffFamily::Resource => "resource",
+        DiffFamily::Comment => "comment",
+        DiffFamily::Review => "review",
+        DiffFamily::Metadata => "metadata",
+    }
+}
+
+/// The plain-text length of one inline in the projection `casual-doc-diff`
+/// records its offsets in.
+///
+/// Measured by **calling the projection itself** rather than by a parallel match
+/// over `InlineNode`, which is the mistake `inline_anchor_len`'s own comment
+/// records being made twice already: two functions that compute a length from
+/// the same tree drift, and the symptom is a revision placed a few bytes short.
+/// O(the inline).
+fn inline_plain_len(inline: &InlineNode) -> u32 {
+    let mut text = String::new();
+    append_node_plain_text(
+        std::slice::from_ref(inline),
+        ReviewProjection::FinalWithMarkup,
+        &mut text,
+    );
+    u32::try_from(text.len()).unwrap_or(u32::MAX)
+}
+
+/// Translates a byte offset in a paragraph's **projected plain text** — the
+/// space a `DiffAnchor` records — into the **review anchor** offset the review
+/// primitives and the caret use.
+///
+/// The two spaces are not the same, which `DiffAnchor`'s own documentation used
+/// to claim: a tab contributes one byte to projected text and none to the anchor
+/// space, while a note reference, an equation and a labelled embedded object
+/// contribute to the anchor space and nothing to projected text. Applying a
+/// diff offset directly would therefore place a revision correctly in a
+/// paragraph of plain runs and silently misplace it in a paragraph with a tab —
+/// which is most tabular-looking documents.
+///
+/// Returns `None` when the offset falls *inside* an inline whose two lengths
+/// disagree, because there is no honest answer there; the caller reports the
+/// change as unapplied rather than guessing. O(the paragraph's inlines).
+fn plain_offset_to_anchor_offset(
+    notes: &NoteAnchorLengths,
+    inlines: &[InlineNode],
+    target: u32,
+) -> Option<u32> {
+    let mut plain = 0_u32;
+    let mut anchor = 0_u32;
+    for inline in inlines {
+        if plain == target {
+            return Some(anchor);
+        }
+        let plain_len = inline_plain_len(inline);
+        let anchor_len = inline_anchor_len(notes, inline);
+        if target < plain.saturating_add(plain_len) {
+            let inner = target - plain;
+            return match inline {
+                // A run and a symbol occupy the same bytes in both spaces, so an
+                // interior offset maps straight through.
+                InlineNode::Run(_) | InlineNode::Symbol(_) if plain_len == anchor_len => {
+                    Some(anchor.saturating_add(inner))
+                }
+                // A transparent wrapper's children are in both spaces too, each
+                // by its own rule, so the walk recurses rather than assuming.
+                InlineNode::Hyperlink(link) => {
+                    plain_offset_to_anchor_offset(notes, &link.inlines, inner)
+                        .map(|within| anchor.saturating_add(within))
+                }
+                InlineNode::Sdt(sdt) => plain_offset_to_anchor_offset(notes, &sdt.inlines, inner)
+                    .map(|within| anchor.saturating_add(within)),
+                InlineNode::Revision(revision)
+                    if revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                {
+                    plain_offset_to_anchor_offset(notes, &revision.inlines, inner)
+                        .map(|within| anchor.saturating_add(within))
+                }
+                // A field's anchor length is its own cached-result rule, which is
+                // not the plain text of its children; an offset inside one has no
+                // translation this function can prove, so it is reported.
+                _ => None,
+            };
+        }
+        plain = plain.saturating_add(plain_len);
+        anchor = anchor.saturating_add(anchor_len);
+    }
+    (plain == target).then_some(anchor)
+}
+
+/// The removed text of a change, **only when the record carries it verbatim**.
+///
+/// This is the one place in applying a comparison where getting it wrong invents
+/// text in the reader's document. `DiffChange::left_text` is
+/// `record::excerpt(…, EXCERPT_BYTES)`: at most 160 bytes of the removed text
+/// with `…` appended when it was cut. A tracked deletion carries the removed
+/// text in its own runs, so writing an excerpt into one would record a deletion
+/// of text the compared document never contained — and Reject would then put
+/// that invented text into the document.
+///
+/// So the excerpt is used only when it provably is not one: its byte length
+/// equals the left anchor's span **and** that span is within the excerpt bound.
+/// The length test alone is not enough, and that is not theoretical — a removal
+/// of exactly 163 bytes cut at byte 160 produces an excerpt of 160 bytes plus
+/// the 3 bytes of `…`, whose length equals the span while its last three bytes
+/// are invented. The bound closes that collision, because a verbatim excerpt is
+/// never longer than the bound.
+fn verbatim_removed_text(change: &DiffChange) -> Option<String> {
+    let text = change.left_text.as_ref()?;
+    let left = change.left.as_ref()?;
+    let span = usize::try_from(left.end.saturating_sub(left.start)).unwrap_or(usize::MAX);
+    (text.len() == span && span <= VERBATIM_TEXT_BYTES).then(|| text.clone())
+}
+
+/// Turns one change into the edit it asks for, or reports why it cannot be one.
+///
+/// Every `None` has recorded a key first: a comparison that quietly applied
+/// three of its five changes and reported "done" is the silent loss `AGENTS.md`
+/// forbids.
+fn classify_change(
+    document: &Document,
+    notes: &NoteAnchorLengths,
+    change: &DiffChange,
+    loss: &mut BTreeSet<&'static str>,
+) -> Option<ComparisonEdit> {
+    // What this document's own text can be marked as. `UpdateReviewState`
+    // replaces the inlines of paragraphs that EXIST, so every expressible change
+    // is one whose content is present here: an insertion, a move's destination,
+    // or a deletion recorded inside a surviving paragraph.
+    let marked = match (change.family, change.kind) {
+        (DiffFamily::Text, DiffKind::Insertion) | (DiffFamily::Block, DiffKind::Insertion) => {
+            Some(RevisionKind::Insertion)
+        }
+        (DiffFamily::Block, DiffKind::MoveTo) => Some(RevisionKind::MoveTo),
+        (DiffFamily::Text, DiffKind::Deletion) => None,
+        // A whole block the compared document has and this one does not has
+        // nowhere to be marked: the operation edits a paragraph's inlines and
+        // cannot add a paragraph. Reported, not approximated by marking a
+        // neighbour.
+        (DiffFamily::Block, DiffKind::Deletion) => return unapplied(loss, "blockDeletion"),
+        // The far half of a move pair is in the compared document only, for the
+        // same reason. `trackedMove` is the key an edit that cannot carry a move
+        // already uses.
+        (_, DiffKind::MoveFrom) => return unapplied(loss, "trackedMove"),
+        (family, _) => return unapplied(loss, family_loss_key(family)),
+    };
+
+    let Some(right) = change.right.as_ref() else {
+        return unapplied(loss, "unresolvedAnchor");
+    };
+    // Body only, deliberately. The comparison's right-hand side is a re-export
+    // of this document, so a body path maps back by identity; a header, footer,
+    // note or comment story is paired by semantic position or by ordinal, which
+    // depends on the export writing the same section structure back, and this
+    // lane has not measured that. An unmeasured mapping would place a revision
+    // in the wrong header rather than refuse to, so the story is reported.
+    if right.story != Story::Body {
+        return unapplied(loss, "otherStory");
+    }
+    let Some(block) = block_at_path(document, &right.story, &right.path) else {
+        return unapplied(loss, "unresolvedAnchor");
+    };
+    let BlockNode::Paragraph(paragraph) = block else {
+        return unapplied(loss, "nonParagraphBlock");
+    };
+    let plain = block_text(block).unwrap_or_default();
+
+    // A whole-block insertion's anchor is `0..0` — the change *is* the block —
+    // so its extent is the block's own text, read from this document rather than
+    // from the record's excerpt of it.
+    let (plain_start, plain_end) = if change.family == DiffFamily::Block {
+        (0, u32::try_from(plain.len()).unwrap_or(u32::MAX))
+    } else {
+        (right.start, right.end)
+    };
+    if plain_start > plain_end || plain_end as usize > plain.len() {
+        return unapplied(loss, "unresolvedAnchor");
+    }
+    let Some(start) = plain_offset_to_anchor_offset(notes, &paragraph.inlines, plain_start) else {
+        return unapplied(loss, "offsetSpace");
+    };
+    let end = if plain_end == plain_start {
+        start
+    } else {
+        match plain_offset_to_anchor_offset(notes, &paragraph.inlines, plain_end) {
+            Some(end) => end,
+            None => return unapplied(loss, "offsetSpace"),
+        }
+    };
+
+    let removed = verbatim_removed_text(change);
+    if removed.is_none() && change.left_text.is_some() {
+        // The record carries the removed text only as an excerpt, so the
+        // deletion half of this change is reported rather than invented. The
+        // insertion half below is unaffected: it marks text this document
+        // already holds.
+        loss.insert("truncatedText");
+    }
+    let marked = match marked {
+        Some(kind) if end > start => Some(kind),
+        // The range this document was supposed to have gained occupies no
+        // anchor offsets — a tab or a break alone, say — so there is nothing to
+        // wrap. Nothing is invented and the change is reported.
+        Some(_) => {
+            loss.insert("insertionNotText");
+            None
+        }
+        None => None,
+    };
+    if marked.is_none() && removed.is_none() {
+        return None;
+    }
+    Some(ComparisonEdit {
+        node: paragraph.id,
+        start,
+        end,
+        marked,
+        removed,
+    })
+}
+
+#[wasm_bindgen]
+impl WasmDocument {
+    /// Applies a comparison sidecar to this document as tracked changes
+    /// (**ADR-061**).
+    ///
+    /// `sidecar` is `VersionDiff`'s JSON (`casual-doc-diff` `DIFF_SCHEMA` 1)
+    /// produced by comparing `left` = the other document against `right` = THIS
+    /// document's own exported bytes — [`begin_version_diff`]'s orientation,
+    /// which is review's. Each `DiffChange` becomes an `InlineNode::Revision`
+    /// authored to `author`/`date`, and the lot is applied as **one**
+    /// `Operation::UpdateReviewState` under `HistoryKind::Review`: a single undo
+    /// step, after which every existing review surface reads the comparison with
+    /// no further change — `listRevisions`, the author-coloured underline and
+    /// strikethrough on the canvas, `setShowChanges`, `decideRevision` and
+    /// `decideAllRevisions`, next/previous, and `w:ins`/`w:del` on export. The
+    /// open document *becomes* the merged document, so "save the result as a new
+    /// version" is an ordinary save.
+    ///
+    /// Refuses, rather than silently merging, when this document already carries
+    /// tracked changes: one `reviewType` cannot hold both "a person suggested
+    /// this" and "a comparison computed this" without the two deciding each
+    /// other. ONLYOFFICE resolves it by accepting every existing change first;
+    /// destroying a reviewer's suggestions to run a comparison is the loss
+    /// `docs/158` §2.4 puts first, so this refuses with its own sentence.
+    ///
+    /// What a tracked change cannot say is **reported** through
+    /// `EditResult::pasteLoss` — a whole block the other document has and this
+    /// one does not, a move's far half, a
+    /// formatting/style/section/definition/resource/comment/metadata difference
+    /// (our four `RevisionKind`s have no form for them), a story outside the
+    /// body, removed text the record carries only as an excerpt, and a path that
+    /// no longer resolves. The field's name reads oddly for a comparison and is
+    /// used anyway: its own contract is that the next path to degrade something
+    /// must not invent a second channel.
+    ///
+    /// Complexity: **O(changes + the paragraphs they touch)**, plus the one
+    /// paragraph index the review operation builds. Not O(document) per change.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the sidecar is unreadable or carries another schema, when the
+    /// author name is missing or too long, and when this document already
+    /// carries tracked changes.
+    #[wasm_bindgen(js_name = applyDiffAsRevisions)]
+    pub fn apply_diff_as_revisions(
+        &mut self,
+        sidecar: &str,
+        author: &str,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_diff_as_revisions_inner(sidecar, author, date)
+            .map_err(to_js)
+    }
+}
+
+impl WasmDocument {
+    /// `apply_diff_as_revisions` without the `JsValue`, so native tests exercise
+    /// the path the boundary does.
+    pub(crate) fn apply_diff_as_revisions_inner(
+        &mut self,
+        sidecar: &str,
+        author: &str,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
+        let diff: VersionDiff = serde_json::from_str(sidecar).map_err(|error| {
+            casual_doc_edit::refusal::marked(
+                "compare.sidecar-unreadable",
+                &format!("This comparison could not be read ({error})."),
+            )
+        })?;
+        // A host that does not recognise the schema must refuse rather than
+        // render a partial diff (`record::DIFF_SCHEMA`); applying one is the same
+        // rule with teeth, because a field that moved between schemas would mark
+        // the wrong text.
+        if diff.schema != DIFF_SCHEMA {
+            return Err(casual_doc_edit::refusal::marked(
+                "compare.schema-unsupported",
+                &format!(
+                    "This comparison was made by a different version of the editor (format {}; this one reads {DIFF_SCHEMA}).",
+                    diff.schema
+                ),
+            ));
+        }
+        validate_authored_revision_author(Some(author))?;
+        // The same three collections `decideAllRevisions` uses to decide that a
+        // document has NO tracked changes, so the refusal and Accept All cannot
+        // disagree about what carries one.
+        let mut existing = Vec::new();
+        collect_review_revision_ids_all(&self.document, &mut existing);
+        let mut existing_formats = Vec::new();
+        collect_review_format_ids_all(&self.document, &mut existing_formats);
+        let existing_paragraphs = collect_paragraph_revisions_all(&self.document);
+        if !existing.is_empty() || !existing_formats.is_empty() || !existing_paragraphs.is_empty() {
+            return Err(refused!(
+                "compare.document-has-revisions",
+                "This document already has tracked changes. Accept or reject them first — \
+                 a comparison records its own tracked changes, and merging the two would \
+                 decide someone else's suggestions for them."
+            )
+            .to_string());
+        }
+
+        let notes = NoteAnchorLengths::of(&self.document);
+        let mut loss: BTreeSet<&'static str> = BTreeSet::new();
+        // The comparison itself stopped short of being exhaustive, so reporting
+        // it as applied without saying so would overstate the result.
+        if !diff.complete {
+            loss.insert("incompleteComparison");
+        }
+        let mut edits: Vec<ComparisonEdit> = Vec::new();
+        for change in &diff.changes {
+            if let Some(edit) = classify_change(&self.document, &notes, change, &mut loss) {
+                edits.push(edit);
+            }
+        }
+        let caret = edits.first().map_or_else(
+            || Pos::new(self.document.id(), 0),
+            |edit| Pos::new(edit.node, edit.start),
+        );
+
+        // Grouped by paragraph, and applied within one in DESCENDING offset
+        // order: a recorded deletion inserts the removed text as new inlines, so
+        // working from the end means no later edit's offsets have moved by the
+        // time it is applied.
+        let mut by_node: BTreeMap<NodeId, Vec<ComparisonEdit>> = BTreeMap::new();
+        for edit in edits {
+            by_node.entry(edit.node).or_default().push(edit);
+        }
+        // ONE index for every paragraph the comparison touches, not one scan per
+        // paragraph. `review_paragraph_body` — what every `suggest*` method uses
+        // — resolves its one id with `find_paragraph_any`, which walks every
+        // surface; that is right for a keystroke and quadratic here, where a
+        // comparison can touch hundreds of paragraphs (`104` HF-111, `116`). The
+        // index is built, read, and dropped before the mutation starts, because
+        // it borrows the document the edits are about to change.
+        let mut planned: Vec<(Vec<ComparisonEdit>, Vec<BlockNode>)> = Vec::new();
+        {
+            let by_id = ParagraphIndex::build(&self.document);
+            for (node, mut group) in by_node {
+                let Some(paragraph) = by_id.paragraph(node) else {
+                    // The path resolved to this paragraph a moment ago, so this
+                    // is unreachable rather than tolerated — but reported, not
+                    // unwrapped.
+                    loss.insert("unresolvedAnchor");
+                    continue;
+                };
+                group.sort_by(|a, b| b.start.cmp(&a.start));
+                planned.push((group, vec![BlockNode::Paragraph(paragraph.clone())]));
+            }
+        }
+        let mut bodies: Vec<Vec<BlockNode>> = Vec::new();
+        for (group, mut body) in planned {
+            for edit in group {
+                self.apply_comparison_edit(&notes, &mut body, &edit, author, &date, &mut loss)?;
+            }
+            bodies.push(body);
+        }
+
+        // ONE operation for the whole comparison, so accepting it, rejecting it
+        // and undoing it are each a single act.
+        let operation = match update_review_operation_across(&self.document, &bodies, None) {
+            Ok(operation) => operation,
+            // Nothing in the comparison could be expressed. The document is
+            // reported UNCHANGED rather than routed through an empty edit, which
+            // would bump the revision and enable Save for a comparison that
+            // changed nothing — and `loss` says why.
+            Err(_) => {
+                return Ok(EditResult {
+                    node: caret.node.to_string(),
+                    offset: caret.offset,
+                    revision: self.revision,
+                    page_count: self.page_count(),
+                    dirty: Vec::new(),
+                    paste_loss: loss.into_iter().map(str::to_owned).collect(),
+                });
+            }
+        };
+        let mut result = self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)?;
+        result.paste_loss = loss.into_iter().map(str::to_owned).collect();
+        Ok(result)
+    }
+
+    /// One change's share of the review body: the insertion wrapper, then the
+    /// recorded deletion before it.
+    ///
+    /// The two are written in that order so the inline sequence ends up
+    /// `[deletion][insertion]`, which is exactly `RevisionGroupKind::Replacement`
+    /// — one deletion followed by one insertion, contiguous, same author and
+    /// date — and so decides as one card.
+    fn apply_comparison_edit(
+        &mut self,
+        notes: &NoteAnchorLengths,
+        body: &mut Vec<BlockNode>,
+        edit: &ComparisonEdit,
+        author: &str,
+        date: &Option<String>,
+        loss: &mut BTreeSet<&'static str>,
+    ) -> Result<(), String> {
+        let group = match (edit.marked, edit.removed.as_ref()) {
+            (Some(_), Some(_)) => Some(RevisionGroup {
+                id: self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| "id space exhausted".to_owned())?,
+                kind: RevisionGroupKind::Replacement,
+            }),
+            _ => None,
+        };
+        if let Some(kind) = edit.marked {
+            let revision = Revision {
+                id: self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| "id space exhausted".to_owned())?,
+                kind,
+                author: Some(author.to_owned()),
+                date: date.clone(),
+                revision_id: Some(self.revision_ids.allocate()?),
+                editor_group: group,
+                inlines: Vec::new(),
+            };
+            // Misnamed by history: it wraps a range in whatever revision it is
+            // given, which is how a comparison's INSERTION is marked with it.
+            if !wrap_review_deletion(
+                notes,
+                body,
+                edit.node,
+                edit.start,
+                edit.end,
+                revision,
+                &mut self.edit_ids,
+            ) {
+                loss.insert("notParagraphText");
+                return Ok(());
+            }
+        }
+        if let Some(text) = edit.removed.clone() {
+            let run = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| "id space exhausted".to_owned())?;
+            let revision = Revision {
+                id: self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| "id space exhausted".to_owned())?,
+                kind: RevisionKind::Deletion,
+                author: Some(author.to_owned()),
+                date: date.clone(),
+                revision_id: Some(self.revision_ids.allocate()?),
+                editor_group: group,
+                inlines: vec![InlineNode::Run(Run {
+                    id: run,
+                    properties: RunProperties::default().into(),
+                    text,
+                })],
+            };
+            if !insert_review_revision(
+                notes,
+                body,
+                edit.node,
+                edit.start,
+                revision,
+                &mut self.edit_ids,
+            ) {
+                loss.insert("notParagraphText");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
