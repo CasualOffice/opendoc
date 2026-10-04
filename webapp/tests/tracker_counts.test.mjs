@@ -343,13 +343,26 @@ test("docs/109: every summary cell is what the rows actually say", () => {
 
   // The prose headline is a published number too, and it is the one a reader
   // quotes without opening the table.
-  const prose = text.match(
-    /\*\*(\d+) rows in the one queue: (\d+) Hotfix, (\d+) Audit, (\d+) Roadmap\.\*\*/,
-  );
+  // Global, and exactly one. A second headline is how `main` published two
+  // contradicting row counts while this guard stayed green: the match was
+  // unanchored and non-global, so it read the first and never saw the stale
+  // copy a rebase had left underneath it.
+  const headlines = [
+    ...text.matchAll(
+      /\*\*(\d+) rows in the one queue: (\d+) Hotfix, (\d+) Audit, (\d+) Roadmap\.\*\*/g,
+    ),
+  ];
   assert.ok(
-    prose,
+    headlines.length > 0,
     "docs/109 must state '**N rows in the one queue: A Hotfix, B Audit, C Roadmap.**'",
   );
+  assert.equal(
+    headlines.length,
+    1,
+    `docs/109 must carry exactly ONE summary headline; found ${headlines.length}: ` +
+      headlines.map((h) => h[0]).join(" / "),
+  );
+  const prose = headlines[0];
   assert.equal(Number(prose[1]), total.Rows, "docs/109 headline total");
   LANES.forEach((name, i) => {
     assert.equal(

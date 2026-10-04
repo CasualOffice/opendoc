@@ -204,7 +204,6 @@ L = more than a week. Both are carried across verbatim; neither was rescaled.
 ## Summary
 
 **202 rows in the one queue: 107 Hotfix, 76 Audit, 19 Roadmap.**
-**201 rows in the one queue: 106 Hotfix, 76 Audit, 19 Roadmap.**
 
 Derived from the rows below by `webapp/tests/tracker_counts.test.mjs`. Do not edit these
 cells by hand — re-derive them. (`104`'s summary drifted for exactly as long as nothing
@@ -639,6 +638,7 @@ about this table.
 
 | Id | What it was | Status as the row stated it |
 | --- | --- | --- |
+| HF-262 | `docs/109`'s summary headline was published twice, with two different row counts (`**202 rows…**` above `**201 rows…**`), and the guard read only the first | Fixed — `tracker_counts.test.mjs` matched the headline with `text.match(/…/)`, **not global**, so it checked the first, found it correct, and never saw the stale copy a rebase had left underneath. The figure a reader quotes without opening the table was the one unguarded published number here. Now `matchAll`, asserting exactly one headline and naming both on failure; mutation: re-adding the second line reddens it with `2 !== 1`. The sibling invariants were re-verified rather than assumed — `no id is queued twice` already covers all three lanes — so this was the class's one hole, not the first of many. |
 | HF-208 | Shift+Enter's undo silently failed: `RemoveInlineObject` could not find a `Break`, so the soft line break stayed in the document | Fixed (#649) — found by the break lane while building on the same op pair, not reported by a user |
 | HF-168 | Every shape in a group but the first is unreachable — Tab from a group child leaves the group | Fixed (#574) |
 | HF-169 | Text inside a grouped shape never reaches assistive technology — the accessibility mirror walks a group for PICTURES only | Fixed (#585) |
