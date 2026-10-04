@@ -196,7 +196,14 @@ pub enum Affinity {
 }
 
 /// A UTF-8 byte boundary inside a paragraph node, with its boundary behaviour.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// Serialisable because a position is what a typed caret carries over the wire: the opaque
+/// awareness payload doc 152 §2b shipped becomes a *shape* without a protocol change, and the
+/// shape is this type rather than a second one. The caret type is in this crate's awareness
+/// module, which this file deliberately does not name — see the module's own
+/// `presence_is_never_written_to_the_revision_log`, which is why the dependency only ever
+/// points inwards.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Position {
     /// Paragraph node.
     pub node: NodeId,

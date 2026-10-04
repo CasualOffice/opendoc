@@ -1017,26 +1017,47 @@ fn the_keystroke_path_runs_no_transform() {
     // chunk and a relay's ordered log, and a single-user edit encodes nothing at all. If the
     // client's own durable log (`112`) ever reuses it, that is the change that has to argue
     // here, which is the point of the list.
-    const COLLABORATION: [&str; 4] = ["protocol.rs", "wire.rs", "session.rs", "codec.rs"];
+    //
+    // `presence.rs` joined the list on the same argument rather than as an exemption: a
+    // `Roster` exists only when somebody else is in the room, a single-user session never
+    // constructs one, and a typed caret is encoded in the one frame the wire and the journal
+    // already use rather than in a fourth framing of its own. What the membership gives up —
+    // the check that presence does not reach `session::` — is taken back in a tighter place,
+    // by `presence::tests::presence_is_never_written_to_the_revision_log`, which scans that
+    // module's own production half in **both** directions.
+    const COLLABORATION: [&str; 5] = [
+        "protocol.rs",
+        "wire.rs",
+        "session.rs",
+        "codec.rs",
+        "presence.rs",
+    ];
 
     let engine = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
     for (name, text) in sources(&engine) {
+        // A test is not a keystroke path. That was asserted by file NAME — a module whose
+        // tests live inline rather than in a `*_tests.rs` sibling was charged for its own
+        // fixtures, which is a circumstance and not the guarantee. Splitting at the test
+        // attribute asserts the thing itself, and is the technique
+        // `presence_is_never_written_to_the_revision_log` already uses.
+        let production = text
+            .split_once("\n#[cfg(test)]\n")
+            .map_or(text.as_str(), |(before, _)| before);
         if !MAY_TRANSFORM.contains(&name.as_str()) {
             for entry in ENTRY_POINTS {
-                if text.contains(entry) {
+                if production.contains(entry) {
                     offenders.push(format!("{name} reaches `{entry}`"));
                 }
             }
         }
         // The other half of the same rule: a file on the keystroke path must not reach the
         // module that does transform, or the keystroke path acquires one a call deeper.
-        // Test files are excluded because a test is not a keystroke path — and because THIS
-        // file has to name the forbidden strings in order to forbid them, which is the
+        // THIS file has to name the forbidden strings in order to forbid them, which is the
         // shape of self-reference every source-scanning guard hits sooner or later.
         if !COLLABORATION.contains(&name.as_str()) && !name.ends_with("_tests.rs") {
             for collab in ["session::", "codec::", "ClientSession", "ServerSession"] {
-                if text.contains(collab) {
+                if production.contains(collab) {
                     offenders.push(format!("{name} reaches `{collab}`"));
                 }
             }
@@ -1048,11 +1069,29 @@ fn the_keystroke_path_runs_no_transform() {
          Single-user editing must contact nothing and run no transform."
     );
 
-    // The guard is only worth having if it can see the thing it forbids.
-    let planted = "let _ = transform::transform(a, b, side);\n".replace("\r\n", "\n");
+    // The guard is only worth having if it can see the things it forbids — both halves of it,
+    // and in the production half of a file whose tests are inline, which is the case that
+    // charged `presence.rs` for its own fixtures before this was split.
+    let planted = "let _ = transform::transform(a, b, side);\nlet _ = codec::encode_frame(&x);\n\
+                   #[cfg(test)]\nmod tests { let _ = BlockIndex::of(&doc); }\n"
+        .replace("\r\n", "\n");
+    let planted_production = planted
+        .split_once("\n#[cfg(test)]\n")
+        .map_or(planted.as_str(), |(before, _)| before);
     assert!(
-        ENTRY_POINTS.iter().any(|entry| planted.contains(entry)),
-        "the scan cannot see a call it is supposed to forbid"
+        ENTRY_POINTS
+            .iter()
+            .any(|entry| planted_production.contains(entry)),
+        "the scan cannot see a transform call it is supposed to forbid"
+    );
+    assert!(
+        planted_production.contains("codec::"),
+        "the scan cannot see a collaboration reference it is supposed to forbid"
+    );
+    assert!(
+        !planted_production.contains("BlockIndex::of("),
+        "the production split is not taking effect: a call inside a `#[cfg(test)]` module is \
+         still being charged to the keystroke path"
     );
 }
 
