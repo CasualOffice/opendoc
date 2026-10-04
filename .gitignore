@@ -28,3 +28,21 @@ node_modules
 /fixtures/corpus/SDS_ANTI-T..._ZH.docx
 /fixtures/corpus/Sample Document.docx
 /fixtures/corpus/demo.docx
+
+# Provisioned (NOT committed) document font faces.
+#
+# `webapp/assets/fonts/script/` holds two kinds of file. The 20 faces beside
+# them ARE committed and must stay tracked — the 14 small script faces and the
+# 6 named Latin variable faces every editor load fetches. These four are 51.8 MB
+# together — three CJK regions and the colour-emoji face — and are fetched into
+# a deployment's own origin by `webapp/tools/provision-script-fonts.mjs`.
+#
+# They are listed by exact name rather than by a glob so the committed faces in
+# the same directory cannot be swept out by accident, and so a `git add -A` run
+# in a provisioned worktree cannot add 59 MB of fonts that nobody notices in a
+# diff. `webapp/tests/web_fonts.test.mjs` asserts this list and the manifest
+# agree, so adding a mirrored face without ignoring it fails the build.
+/webapp/assets/fonts/script/NotoSansCJKjp-Regular.otf
+/webapp/assets/fonts/script/NotoSansCJKkr-Regular.otf
+/webapp/assets/fonts/script/NotoSansCJKsc-Regular.otf
+/webapp/assets/fonts/script/Noto-COLRv1.ttf

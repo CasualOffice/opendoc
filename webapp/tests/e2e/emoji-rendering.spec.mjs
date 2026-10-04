@@ -14,17 +14,27 @@
 // pass if the fetch/register path never asked for the bucket.
 import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 
-// The asset is `googlefonts/noto-emoji@<sha>/fonts/Noto-COLRv1.ttf`.
+// The asset is `Noto-COLRv1.ttf`.
 //
-// Match the REPOSITORY, not the filename. This matcher has now been left behind
-// by a filename twice: it was /notoemoji/i against the monochrome Google Fonts
-// path, then /NotoColorEmoji/i against the CBDT build, and each time the spec
-// recorded zero requests while the editor fetched the font correctly all along.
-// `googlefonts/noto-emoji` is where the colour emoji face comes from and where
-// nothing else does — the named faces are google/fonts and the script fallbacks
-// are notofonts — so it identifies the thing under test without pinning which
-// build of it we ship.
-const EMOJI_FONT = /googlefonts\/noto-emoji@/i;
+// Matched by FILENAME, which is the one thing both legitimate sources agree on.
+//
+// This matcher used to be `/googlefonts\/noto-emoji@/i` — the upstream
+// REPOSITORY — on the reasoning that a repository outlives a filename. `109`
+// HF-176 made that a coin toss: the colour-emoji face is served from our own
+// origin on a deployment that has provisioned it and from the pinned upstream
+// mirror on one that has not, so a matcher naming either source alone passes or
+// fails on whether the machine running it happens to hold a 4.99 MB file.
+// Pinning the origin instead of the repository would have been the same mistake
+// with the sides swapped. The filename is true in both states, and this spec is
+// about whether the face is ASKED FOR at all, not about where from —
+// `cjk-fonts.spec.mjs` is where the origin itself is held.
+//
+// This matcher has now been left behind by a filename twice (`/notoemoji/i`
+// against the monochrome Google Fonts path, then `/NotoColorEmoji/i` against
+// the CBDT build), each time recording zero requests while the editor fetched
+// the font correctly all along — so if the ship build ever changes, change this
+// with it.
+const EMOJI_FONT = /Noto-COLRv1\.ttf(?:[?#]|$)/i;
 
 test("a document containing emoji provisions the emoji face", async ({ page, consoleErrors }) => {
   const fontRequests = [];
@@ -52,7 +62,12 @@ test("a document containing emoji provisions the emoji face", async ({ page, con
   await expect(page.locator("#a11yDocument")).toContainText("\u{1F600}");
 
   await expect.poll(() => fontRequests.length, { timeout: 15_000 }).toBeGreaterThan(0);
-  expect(fontRequests[0]).toMatch(/@[0-9a-f]{40}\//); // commit-pinned, immutable
+  // One of the two legitimate sources, and nowhere else. Which one depends on
+  // whether this deployment declared the face provisioned; both are verified
+  // against the manifest's SHA-256 before the bytes reach the engine.
+  expect(fontRequests[0]).toMatch(
+    /\/assets\/fonts\/script\/Noto-COLRv1\.ttf|cdn\.jsdelivr\.net\/gh\/googlefonts\/noto-emoji@[0-9a-f]{40}\//,
+  );
 
   expect(consoleErrors).toEqual([]);
 });
