@@ -11,13 +11,18 @@ use casual_doc_edit::{Mint, Operation, Pos};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_transaction::protocol::CHUNK_BUDGET_BYTES;
 use casual_doc_transaction::protocol::{
-    Base, ClientId, ClientMessage, Identity, Join, Outcome, PROTOCOL_VERSION, Revision, Seq,
-    ServerMessage, Submission,
+    Base, ClientId, ClientMessage, Identity, Join, Outcome, PROTOCOL_VERSION, Refusal, Resume,
+    ResumeKey, Revision, Seq, ServerMessage, Submission,
 };
 use casual_doc_transaction::session::{DEFAULT_RETAINED_REVISIONS, ServerSession};
 use casual_doc_transaction::wire::WireOperation;
 
+use casual_doc_transaction::codec::encode_frame;
+use std::fs::OpenOptions;
+use std::io::Write as _;
+
 use super::{Journal, JournalError};
+use crate::Room;
 
 /// A scratch path unique to this test binary and this name, cleaned up by the caller.
 fn scratch(name: &str) -> std::path::PathBuf {
@@ -33,7 +38,7 @@ fn scratch(name: &str) -> std::path::PathBuf {
 }
 
 fn joined(session: &mut ServerSession, who: &str) -> ClientId {
-    let answer = session.join(
+    let (answer, _) = session.join(
         &ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION,
             identity: Identity::new(who).expect("an identity"),
@@ -316,29 +321,404 @@ fn compaction_leaves_one_checkpoint_and_nothing_to_replay() {
 }
 
 #[test]
-fn the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold() {
-    // A guard on the ARITHMETIC, because the bytes cannot be guarded: the condition is a 1.2 GB
-    // checkpoint, and a test that allocated one would be a test nobody runs.
+fn every_journal_record_fits_the_codec_s_own_frame_bound() {
+    // The guard that REPLACES
+    // `the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold`, and it asserts the
+    // opposite thing on purpose.
     //
-    // The defect this exists for was real and was found by reading the two constants against each
-    // other rather than by any test. A checkpoint embeds the relay's whole retained history —
-    // `DEFAULT_RETAINED_REVISIONS` entries of up to `CHUNK_BUDGET_BYTES` — and the codec's wire
-    // bound is 30 MB, so reading the journal with the wire bound meant a busy relay writing a
-    // checkpoint it could never read back: `compact` succeeds, the next `open` refuses its own
-    // file, and the order is gone.
-    let worst_checkpoint = DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES;
+    // That guard pinned a derived constant: `MAX_JOURNAL_FRAME_BYTES` had to be at least
+    // `DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES` — about 1.2 GB — because a checkpoint
+    // embedded the relay's whole retained history in ONE frame. It was correct arithmetic about
+    // the wrong shape, and its own doc comment said so. Writing the history as one frame per
+    // entry removes the need for a journal-specific bound at all, so the guarantee to hold now
+    // is "every record this journal writes fits the bound a socket already enforces".
+    //
+    // Measured on bytes rather than on arithmetic, which the old shape could not be: a room with
+    // a small `retain` is driven past it, so the checkpoint really does carry a full retained
+    // window, and every frame in the file is read back and sized.
+    let path = scratch("frame-bound");
+    let mut session = ServerSession::new(4);
+    let client = joined(&mut session, "ada");
+    let mut journal = Journal::create(&path, &session).expect("a fresh journal");
+    let mut base = Revision::new(0);
+    for seq in 1..=8 {
+        let offered = chunk(client, seq, Base::Revision(base), "text");
+        let Outcome::Ordered { revision } = session.commit(&offered) else {
+            panic!("chunk {seq} must order");
+        };
+        journal.append(&offered, revision).expect("append");
+        base = revision;
+    }
+    journal.compact(&session).expect("a checkpoint");
+    drop(journal);
+
+    let bytes = std::fs::read(&path).expect("the journal");
+    let mut at = 0_usize;
+    let mut frames = 0_usize;
+    let mut widest = 0_usize;
+    while at < bytes.len() {
+        let length = casual_doc_transaction::codec::frame_len(&bytes[at..]).expect("a frame");
+        widest = widest.max(length);
+        frames += 1;
+        at += length;
+    }
     assert!(
-        super::MAX_JOURNAL_FRAME_BYTES >= worst_checkpoint,
-        "the journal's frame bound ({}) is below the largest checkpoint the relay can hold ({}), \
-         so a busy relay would write a file it cannot read back",
-        super::MAX_JOURNAL_FRAME_BYTES,
-        worst_checkpoint
+        frames >= 2,
+        "only {frames} frame(s) in the file, so a full retained window was not written as \
+         separate frames and this guard is measuring nothing"
     );
-    // And the wire bound must stay where it is: raising it to cover a checkpoint would let a
-    // hostile socket buffer what only a local file is allowed to.
     assert!(
-        casual_doc_transaction::codec::MAX_FRAME_BYTES < worst_checkpoint,
-        "the wire bound has been raised to cover a checkpoint, which is the wrong fix: a socket \
-         is not a file"
+        widest <= casual_doc_transaction::codec::MAX_FRAME_BYTES,
+        "the widest journal frame is {widest} bytes, above the codec's own MAX_FRAME_BYTES \
+         ({}) — so this journal needs a special bound again",
+        casual_doc_transaction::codec::MAX_FRAME_BYTES
     );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// The record of why the deleted constant is not coming back: the wire bound must stay **below** a
+/// full retained history, or "a socket is not a file" has quietly stopped being true and raising
+/// the codec's own bound would look like a fix.
+///
+/// A `const` item rather than an `assert!` in a test body, because both sides are constants —
+/// clippy's `assertions_on_constants` is right that a runtime assertion over two `const`s is the
+/// wrong instrument, and a compile-time one fails the *build* rather than one test.
+const _: () = assert!(
+    casual_doc_transaction::codec::MAX_FRAME_BYTES
+        < DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES,
+    "the wire bound now covers a whole retained history, which is the wrong fix: a socket is not \
+     a file"
+);
+
+#[test]
+fn the_steady_state_write_is_one_frame_per_chunk() {
+    // `107` §4 B5: snapshots are periodic, never per-operation, and the steady-state write is
+    // one appended frame. Asserted as GROWTH rather than as a file size, because the guarantee
+    // is that appending is O(the chunk) and not O(the history) — a journal that rewrote its
+    // state on every append would satisfy any absolute size check on a short run.
+    let path = scratch("steady-state");
+    let mut session = ServerSession::default();
+    let client = joined(&mut session, "ada");
+    let mut journal = Journal::create(&path, &session).expect("a fresh journal");
+
+    let mut base = Revision::new(0);
+    let mut growth = Vec::new();
+    for seq in 1..=6 {
+        let before = std::fs::metadata(&path).expect("stat").len();
+        let offered = chunk(client, seq, Base::Revision(base), "text");
+        let Outcome::Ordered { revision } = session.commit(&offered) else {
+            panic!("chunk {seq} must order");
+        };
+        journal.append(&offered, revision).expect("append");
+        base = revision;
+        growth.push(std::fs::metadata(&path).expect("stat").len() - before);
+    }
+    let first = growth[0];
+    assert!(
+        growth.iter().all(|&step| step == first),
+        "appending identical chunks grew the file by {growth:?} bytes — a step that changes with \
+         the history length means the write is O(history), not O(chunk)"
+    );
+    assert!(
+        first > 0 && first < CHUNK_BUDGET_BYTES as u64,
+        "one appended chunk grew the file by {first} bytes, which is not one chunk-sized frame"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The admission record — ADR-058, amended. Each of these CREATES the condition rather than
+// relying on a room that happens to be in it: the participants join AFTER the opening
+// checkpoint, so their admission is in the appended tail and nowhere else, which is the only
+// arrangement a crash can lose.
+// ---------------------------------------------------------------------------------------------
+
+/// A room, a journal, and two participants admitted *after* the opening checkpoint.
+///
+/// Returns the path, so a caller can reopen it as a second process would.
+fn room_with_two_admitted_after_the_checkpoint(
+    name: &str,
+) -> (std::path::PathBuf, ClientId, ClientId) {
+    let path = scratch(name);
+    let mut room = Room::create(&path).expect("a new room");
+    let ada = welcomed(&mut room, "ada", None);
+    let grace = welcomed(&mut room, "grace", None);
+    let offered = chunk(ada, 1, Base::Revision(Revision::new(0)), "a");
+    let Outcome::Ordered { .. } = room.commit(&offered).expect("the journal accepts") else {
+        panic!("ada's chunk must order");
+    };
+    drop(room);
+    (path, ada, grace)
+}
+
+/// Joins `who` through a [`Room`] — so the admission goes through the journal — and returns the
+/// participant number.
+fn welcomed(room: &mut Room, who: &str, resume: Option<Resume>) -> ClientId {
+    let answer = room
+        .join(
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new(who).expect("an identity"),
+                grant: None,
+                resume,
+            }),
+            Capabilities::owner(),
+        )
+        .expect("the admission is journalled");
+    match answer {
+        ServerMessage::Welcome { client, .. } | ServerMessage::Resumed { client, .. } => client,
+        other => panic!("expected an admission, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_participant_number_is_never_handed_out_twice_across_a_crash() {
+    // THE defect this record exists for, and it was measured before it was guarded rather than
+    // deduced. With `join` not journalled, recovery restored `next_client` from the last
+    // checkpoint while the dedupe table was rebuilt by replaying chunks — so the counter went
+    // backwards past entries that already existed. The probe printed:
+    //
+    //   BEFORE  ada=ClientId(0) grace=ClientId(1) head=Revision(1)
+    //   AFTER   head=Revision(1) replayed=1 has_assigned(ada)=false has_assigned(grace)=false
+    //   SUBMIT  the holder of number 0, seq 1 -> Duplicate { revision: Revision(1) }
+    //
+    // The last line is the harm: a NEW participant handed number 0 has its first chunk answered
+    // `Duplicate` and silently dropped, because ada's `(client, seq)` entry is still there. It is
+    // the same harm ADR-060's forged-submission fix closed, reachable through a crash instead of
+    // a forgery — and because a participant number IS an `IdSpace` (ADR-051), two live replicas
+    // would also be minting colliding `NodeId`s.
+    let (path, ada, grace) = room_with_two_admitted_after_the_checkpoint("number-reuse");
+
+    let (mut room, recovered) = Room::open(&path).expect("recovery");
+    assert_eq!(
+        recovered.readmitted, 2,
+        "both admissions must be replayed, or this guard is testing a room that never admitted \
+         anybody after its checkpoint"
+    );
+
+    // Somebody new joins after the restart. Their number must be above both of the old ones.
+    let fresh = welcomed(&mut room, "hopper", None);
+    assert!(
+        fresh != ada && fresh != grace,
+        "the restart handed out {fresh:?} again, which ada or grace already holds — so the new \
+         participant inherits a dedupe entry and a minting space that are not theirs"
+    );
+
+    // And the harm itself, asserted rather than inferred: the newcomer's own first chunk is
+    // ordered and not swallowed as a duplicate of somebody else's work.
+    let theirs = chunk(fresh, 1, Base::Revision(room.session().head()), "n");
+    assert!(
+        matches!(
+            room.commit(&theirs).expect("the journal accepts"),
+            Outcome::Ordered { .. }
+        ),
+        "the newcomer's first chunk was not ordered, so it inherited somebody else's dedupe entry"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_client_whose_work_was_acknowledged_can_still_resume_after_a_crash() {
+    // The second half of the same defect, and the handover's description of it was WRONG in a way
+    // worth recording: it said such a client "is told `TooFarBehind`". Measured, it is told
+    // `Welcome`, which is worse. `TooFarBehind` is announced loss — `ODC-7006` exists for exactly
+    // that — while a `Welcome` plus a snapshot discards the unacknowledged work that `152` §5.5
+    // says a resume exists to preserve, and says nothing at all. Silent loss.
+    let path = scratch("resume-after-crash");
+    let key = ResumeKey::new("ada-key").expect("a key");
+    let mut room = Room::create(&path).expect("a new room");
+    let ada = welcomed(
+        &mut room,
+        "ada",
+        Some(Resume {
+            key: key.clone(),
+            revision: Revision::new(0),
+        }),
+    );
+    let offered = chunk(ada, 1, Base::Revision(Revision::new(0)), "a");
+    let Outcome::Ordered { revision } = room.commit(&offered).expect("the journal accepts") else {
+        panic!("ada's chunk must order");
+    };
+    drop(room);
+
+    let (mut room, _) = Room::open(&path).expect("recovery");
+    let answer = room
+        .join(
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("ada").expect("an identity"),
+                grant: None,
+                resume: Some(Resume { key, revision }),
+            }),
+            Capabilities::owner(),
+        )
+        .expect("the admission is journalled");
+    match answer {
+        ServerMessage::Resumed { client, .. } => assert_eq!(
+            client, ada,
+            "a resume must hand back the SAME participant number, or the dedupe table no longer \
+             recognises this client's chunks"
+        ),
+        other => panic!(
+            "ada's resume key survived the crash but she was not resumed: {other:?}. A `Welcome` \
+             here replaces her document and discards the unacknowledged work a resume exists to \
+             preserve, with no `TooFarBehind` and no announcement — silent loss."
+        ),
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_chunk_from_a_participant_this_room_never_admitted_is_refused() {
+    // ADR-060 wanted this check in `commit` and could not have it, because a membership table
+    // was not durable and recovery refused the relay's own file. The `Admitted` record is what
+    // made it possible, so the check is back where it belongs — in the state machine, where a
+    // third-party relay driving `ServerSession` gets it without knowing to ask.
+    let path = scratch("never-admitted");
+    let mut room = Room::create(&path).expect("a new room");
+    let nobody = ClientId::new(7);
+    let offered = chunk(nobody, 1, Base::Revision(Revision::new(0)), "x");
+    assert_eq!(
+        room.commit(&offered).expect("the journal is not touched"),
+        Outcome::Refused {
+            reason: Refusal::NotAuthorised
+        },
+        "a chunk naming a participant number nobody was ever handed was ordered"
+    );
+    // And it is refused BEFORE the dedupe table is consulted, so an unadmitted sender cannot
+    // learn where somebody else's work landed by probing seq numbers.
+    let ada = welcomed(&mut room, "ada", None);
+    let theirs = chunk(ada, 4, Base::Revision(Revision::new(0)), "a");
+    let Outcome::Ordered { revision } = room.commit(&theirs).expect("the journal accepts") else {
+        panic!("ada's chunk must order");
+    };
+    let probe = chunk(ada, 4, Base::Revision(Revision::new(0)), "a");
+    assert_eq!(
+        room.commit(&probe).expect("no journal write"),
+        Outcome::Duplicate { revision },
+        "ada's own resend must still be recognised — the membership check must not break dedupe"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_admission_is_durable_before_the_room_says_who_you_are() {
+    // The join half of `Room::commit`'s contract. A participant that has been handed a number
+    // must not be able to outlive the record of it, so the journal write happens before the
+    // `Welcome` is returned — read here by a second `Room::open` while the first is still alive,
+    // which is how a second process would see it.
+    //
+    // What this does NOT prove, said plainly: the `fsync`. A second open in the same process
+    // reads the page cache, so removing `sync_data` leaves this green. Durability against power
+    // loss is not observable from one process, so that line is reviewed rather than tested.
+    let path = scratch("admission-durable");
+    let mut room = Room::create(&path).expect("a new room");
+    let ada = welcomed(&mut room, "ada", None);
+
+    let (_, recovered) = Room::open(&path).expect("the record is already there");
+    assert_eq!(
+        recovered.readmitted, 1,
+        "ada's admission was not in the file at the moment she was told her number"
+    );
+    assert_eq!(
+        recovered.session.granted_for(ada),
+        Some(Capabilities::owner()),
+        "the admission was recorded without the terms it was granted on"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_retained_entry_that_follows_no_checkpoint_is_refused() {
+    // A `Retained` frame is only meaningful immediately after the checkpoint it belongs to.
+    // Attaching an orphan to an earlier checkpoint would rebuild the WRONG retained window — a
+    // relay that then answers `history_since` from it tells a resuming client it is caught up
+    // when it is not. So it is refused, with its own error rather than a reused "corrupt frame":
+    // the bytes parsed perfectly and telling an operator otherwise sends them looking at a disk.
+    let path = scratch("orphan-entry");
+    let mut session = ServerSession::default();
+    let client = joined(&mut session, "ada");
+    let mut journal = Journal::create(&path, &session).expect("a fresh journal");
+    let offered = chunk(client, 1, Base::Revision(Revision::new(0)), "a");
+    let Outcome::Ordered { revision } = session.commit(&offered) else {
+        panic!("it must order");
+    };
+    journal.append(&offered, revision).expect("append");
+    drop(journal);
+
+    // Append a `Retained` frame after an `Ordered` one — the shape `compact` never writes.
+    let entry = session
+        .history_since(Revision::new(0))
+        .expect("a retained window")
+        .next()
+        .expect("one entry")
+        .clone();
+    let mut file = OpenOptions::new().append(true).open(&path).expect("reopen");
+    file.write_all(&encode_frame(&super::Record::Retained(entry)))
+        .expect("write");
+    file.sync_data().expect("sync");
+
+    match Journal::open(&path) {
+        Err(JournalError::OrphanEntry { at }) => assert!(
+            at > 0,
+            "the error must name where the misplaced frame was, or an operator cannot act on it"
+        ),
+        other => panic!("an orphan retained entry was accepted: {other:?}"),
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_checkpoint_round_trips_its_whole_retained_window_as_separate_frames() {
+    // The shape change, asserted as a guarantee: splitting the history out of the checkpoint
+    // frame must not lose any of it. A `restored` session that dropped entries would answer
+    // `history_since` with a shorter window and send a resuming client a snapshot it did not
+    // need — or, worse, say `Some` and hand back fewer operations than the client is missing.
+    let path = scratch("checkpoint-round-trip");
+    let mut session = ServerSession::new(8);
+    let client = joined(&mut session, "ada");
+    let mut journal = Journal::create(&path, &session).expect("a fresh journal");
+    let mut base = Revision::new(0);
+    for seq in 1..=5 {
+        let offered = chunk(client, seq, Base::Revision(base), "text");
+        let Outcome::Ordered { revision } = session.commit(&offered) else {
+            panic!("chunk {seq} must order");
+        };
+        journal.append(&offered, revision).expect("append");
+        base = revision;
+    }
+    journal.compact(&session).expect("a checkpoint");
+    drop(journal);
+
+    let (_, recovered) = Journal::open(&path).expect("recovery");
+    assert_eq!(
+        recovered.replayed, 0,
+        "after compaction there is nothing to replay — that is what compaction IS"
+    );
+    assert_eq!(
+        recovered.session.head(),
+        session.head(),
+        "the order moved across the checkpoint"
+    );
+    let before: Vec<_> = session
+        .history_since(Revision::new(0))
+        .expect("a window")
+        .cloned()
+        .collect();
+    let after: Vec<_> = recovered
+        .session
+        .history_since(Revision::new(0))
+        .expect("a window after recovery")
+        .cloned()
+        .collect();
+    assert_eq!(
+        after, before,
+        "the retained window did not survive being written as one frame per entry"
+    );
+    assert_eq!(
+        before.len(),
+        5,
+        "the window must be populated, or this proves nothing"
+    );
+    let _ = std::fs::remove_file(&path);
 }

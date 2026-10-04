@@ -56,15 +56,18 @@ fn a_chunk_is_durable_before_the_room_says_it_is_ordered() {
     // been bitten by.
     let path = scratch("durable-before-answer");
     let mut room = Room::create(&path).expect("a new room");
-    let ServerMessage::Welcome { client, .. } = room.join(
-        &ClientMessage::Join(Join {
-            protocol: PROTOCOL_VERSION,
-            identity: Identity::new("ada").expect("an identity"),
-            grant: None,
-            resume: None,
-        }),
-        Capabilities::owner(),
-    ) else {
+    let ServerMessage::Welcome { client, .. } = room
+        .join(
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("ada").expect("an identity"),
+                grant: None,
+                resume: None,
+            }),
+            Capabilities::owner(),
+        )
+        .expect("the admission is journalled")
+    else {
         panic!("expected a welcome");
     };
 

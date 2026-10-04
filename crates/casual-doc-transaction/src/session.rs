@@ -959,6 +959,84 @@ pub struct Ordered {
     pub operations: Vec<WireOperation>,
 }
 
+/// Everything an accepted join changed in a [`ServerSession`] — the durable half of an
+/// admission.
+///
+/// [`ServerSession::join`] hands one back and [`ServerSession::readmit`] replays it, which is
+/// the whole of what makes a join survive a crash. It is a **returned value and not a setter**
+/// for the same reason `granted` is a required argument: there must be no way to admit a
+/// participant without being handed the record of it, or a caller that forgets to journal one
+/// is a caller whose room silently loses participant numbers. ADR-058, ADR-060.
+///
+/// # Why this is not simply the `Join` message
+///
+/// A `Join` is what a client *asked for*; this is what the order *decided*. The participant
+/// number is assigned here and appears in no message a client sent, and the capabilities are
+/// what the boundary got out of a verified grant rather than anything on the wire. Journalling
+/// the request would record the question and not the answer — and recovery replays answers.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Admission {
+    client: ClientId,
+    capabilities: Capabilities,
+    resume: Option<(ResumeKey, Identity)>,
+}
+
+impl Admission {
+    /// The participant number the order assigned.
+    #[must_use]
+    pub const fn client(&self) -> ClientId {
+        self.client
+    }
+
+    /// What the boundary's verified grant carried.
+    ///
+    /// **Evidence, not authority.** [`ServerSession::readmit`] deliberately does not install
+    /// this as the live grant: a grant is re-verified on *every* join (`143` §10), so a
+    /// capability restored from a file would resurrect a right the room had revoked. It is here
+    /// because a journal that records *that* a participant was admitted without recording *on
+    /// what terms* cannot answer the only question an operator has after an incident — and the
+    /// relay reads it back through [`ServerSession::granted_for`], which is overwritten by the
+    /// next join.
+    #[must_use]
+    pub const fn capabilities(&self) -> Capabilities {
+        self.capabilities
+    }
+
+    /// The resume key this join offered, and the identity it was issued to.
+    #[must_use]
+    pub const fn resume(&self) -> Option<&(ResumeKey, Identity)> {
+        self.resume.as_ref()
+    }
+}
+
+/// A [`ServerSession`] with its retained history left out.
+///
+/// This exists so a durable checkpoint can write the history as **one bounded frame per entry**
+/// rather than embedding all of it in a single frame. ADR-058's first journal embedded it, which
+/// made a checkpoint frame as large as
+/// [`DEFAULT_RETAINED_REVISIONS`] × [`CHUNK_BUDGET_BYTES`] — about 1.2 GB at the limit, against
+/// a 30 MB wire bound — and forced the journal to carry a special derived frame bound of its
+/// own. Splitting the state from the entries removes the special case instead of enlarging it.
+///
+/// # What is still unbounded here, stated rather than claimed away
+///
+/// `accepted`, `resumes` and `granted` hold one small entry per participant **ever admitted**,
+/// and nothing prunes a departed one. That is a slow leak and it is pre-existing; what changed
+/// is that it is now the *only* term in a checkpoint's size, so the frame is
+/// participant-table-sized rather than history-sized. At roughly 100 bytes an entry the codec's
+/// own 30 MB bound is reached at some 300,000 lifetime participants, and reaching it is a loud
+/// refusal rather than silence. Pruning is `152` §10.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SessionState {
+    revision: Revision,
+    oldest: Revision,
+    accepted: BTreeMap<ClientId, (Seq, Revision)>,
+    resumes: BTreeMap<ResumeKey, (ClientId, Identity)>,
+    granted: BTreeMap<ClientId, Capabilities>,
+    next_client: u64,
+    retain: usize,
+}
+
 /// The relay's state machine: the order, the dedupe table, and the retained tail.
 ///
 /// **It holds no document and runs no transform.** That is ADR-047, and it is the whole
@@ -973,6 +1051,12 @@ pub struct ServerSession {
     history: VecDeque<Ordered>,
     accepted: BTreeMap<ClientId, (Seq, Revision)>,
     resumes: BTreeMap<ResumeKey, (ClientId, Identity)>,
+    /// What each **admitted** participant may do, from the grant its boundary verified.
+    ///
+    /// Durable, and the membership half of it is what [`ServerSession::commit`] checks. Every
+    /// accepted join **overwrites** the entry, so a narrowed or revoked grant takes effect on
+    /// the reconnect rather than being outlived by what a file remembers.
+    granted: BTreeMap<ClientId, Capabilities>,
     next_client: u64,
     retain: usize,
 }
@@ -1001,8 +1085,56 @@ impl ServerSession {
             history: VecDeque::new(),
             accepted: BTreeMap::new(),
             resumes: BTreeMap::new(),
+            granted: BTreeMap::new(),
             next_client: 0,
             retain: retain.max(1),
+        }
+    }
+
+    /// This session split into the part a checkpoint writes as one frame and the entries it
+    /// writes as one frame each.
+    ///
+    /// The pair is deliberately not a single serializable value: the whole point is that the
+    /// entries are written **separately**, so handing a caller one object it could encode in one
+    /// frame would restore the defect this exists to remove. See [`SessionState`].
+    #[must_use]
+    pub fn checkpoint(&self) -> (SessionState, impl ExactSizeIterator<Item = &Ordered>) {
+        (
+            SessionState {
+                revision: self.revision,
+                oldest: self.oldest,
+                accepted: self.accepted.clone(),
+                resumes: self.resumes.clone(),
+                granted: self.granted.clone(),
+                next_client: self.next_client,
+                retain: self.retain,
+            },
+            self.history.iter(),
+        )
+    }
+
+    /// Rebuilds a session from a checkpointed state and its retained entries, in order.
+    ///
+    /// The inverse of [`ServerSession::checkpoint`]. `retained` is trusted to be the entries
+    /// that state was taken with — a journal reads them from frames that follow the state's own
+    /// frame — and the count is clamped to `retain` so a file claiming more entries than the
+    /// session would keep cannot make this replica retain more than its bound. That is the
+    /// `21`-style explicit-bound rule applied to a path whose input is a file.
+    #[must_use]
+    pub fn restored(state: SessionState, retained: impl IntoIterator<Item = Ordered>) -> Self {
+        let mut history: VecDeque<Ordered> = retained.into_iter().collect();
+        while history.len() > state.retain {
+            history.pop_front();
+        }
+        Self {
+            revision: state.revision,
+            oldest: state.oldest,
+            history,
+            accepted: state.accepted,
+            resumes: state.resumes,
+            granted: state.granted,
+            next_client: state.next_client,
+            retain: state.retain,
         }
     }
 
@@ -1063,7 +1195,24 @@ impl ServerSession {
     ///
     /// A resume adopts the capabilities presented **now**, not the ones the previous connection
     /// held, so reconnecting cannot undo a revocation (`143` §10).
-    pub fn join(&mut self, message: &ClientMessage, granted: Capabilities) -> ServerMessage {
+    ///
+    /// # Why this returns an [`Admission`] and not just an answer — ADR-058
+    ///
+    /// A join mutates durable state: it assigns a participant number, remembers a resume key,
+    /// and records a grant. None of that was journalled, and the consequences were **measured
+    /// rather than argued about** (see [`ServerSession::commit`]). So the second half of the
+    /// return value is the record of what changed, and a caller that can make it durable must
+    /// be *handed* it rather than having to remember to ask — the same compile-error discipline
+    /// that makes `granted` a required argument.
+    ///
+    /// `None` exactly when nothing was admitted: a version mismatch, a malformed message, or a
+    /// resume refused as [`Refusal::TooFarBehind`]. A refused join changed nothing, so there is
+    /// nothing to record — which is the same reason the journal has no "refused" record.
+    pub fn join(
+        &mut self,
+        message: &ClientMessage,
+        granted: Capabilities,
+    ) -> (ServerMessage, Option<Admission>) {
         let ClientMessage::Join(Join {
             protocol,
             identity,
@@ -1074,17 +1223,23 @@ impl ServerSession {
             resume,
         }) = message
         else {
-            return ServerMessage::Stopped {
-                reason: Refusal::Malformed,
-            };
+            return (
+                ServerMessage::Stopped {
+                    reason: Refusal::Malformed,
+                },
+                None,
+            );
         };
         if *protocol != PROTOCOL_VERSION {
-            return ServerMessage::Stopped {
-                reason: Refusal::ProtocolVersion {
-                    server: PROTOCOL_VERSION,
-                    client: *protocol,
+            return (
+                ServerMessage::Stopped {
+                    reason: Refusal::ProtocolVersion {
+                        server: PROTOCOL_VERSION,
+                        client: *protocol,
+                    },
                 },
-            };
+                None,
+            );
         }
         if let Some(Resume { key, revision }) = resume {
             let recognised = self
@@ -1093,56 +1248,129 @@ impl ServerSession {
                 .filter(|(_, issued)| issued == identity)
                 .map(|(client, _)| *client);
             if let Some(client) = recognised {
-                if let Some(entries) = self.history_since(*revision) {
-                    let missed = entries
+                // Collected into its own binding so the immutable borrow of the history ends
+                // before `admit` takes a mutable one.
+                let missed: Option<Vec<Arrival>> = self.history_since(*revision).map(|entries| {
+                    entries
                         .map(|entry| Arrival {
                             revision: entry.revision,
                             client: entry.client,
                             operations: entry.operations.clone(),
                         })
-                        .collect();
-                    return ServerMessage::Resumed {
-                        protocol: PROTOCOL_VERSION,
-                        client,
-                        revision: self.revision,
-                        missed,
-                        capabilities: granted,
-                    };
+                        .collect()
+                });
+                if let Some(missed) = missed {
+                    // A resumed join re-records the admission, because the grant is re-verified
+                    // and may have been narrowed since. Writing the old one back is exactly the
+                    // revocation hole `143` §10 names.
+                    let admission = self.admit(client, granted, Some((key.clone(), identity)));
+                    return (
+                        ServerMessage::Resumed {
+                            protocol: PROTOCOL_VERSION,
+                            client,
+                            revision: self.revision,
+                            missed,
+                            capabilities: granted,
+                        },
+                        Some(admission),
+                    );
                 }
-                return ServerMessage::Refused {
-                    seq: None,
-                    reason: Refusal::TooFarBehind {
-                        oldest: self.oldest,
-                        current: self.revision,
+                return (
+                    ServerMessage::Refused {
+                        seq: None,
+                        reason: Refusal::TooFarBehind {
+                            oldest: self.oldest,
+                            current: self.revision,
+                        },
                     },
-                };
+                    None,
+                );
             }
         }
         let client = ClientId::new(self.next_client);
         self.next_client = self.next_client.saturating_add(1);
-        if let Some(Resume { key, .. }) = resume {
-            self.resumes.insert(key.clone(), (client, identity.clone()));
-        }
-        ServerMessage::Welcome {
-            protocol: PROTOCOL_VERSION,
+        let admission = self.admit(
             client,
-            revision: self.revision,
-            capabilities: granted,
+            granted,
+            resume
+                .as_ref()
+                .map(|Resume { key, .. }| (key.clone(), identity)),
+        );
+        (
+            ServerMessage::Welcome {
+                protocol: PROTOCOL_VERSION,
+                client,
+                revision: self.revision,
+                capabilities: granted,
+            },
+            Some(admission),
+        )
+    }
+
+    /// Records an admission in this session and returns the record of it.
+    ///
+    /// The one place a join's durable effects are written, so [`ServerSession::join`] and
+    /// [`ServerSession::readmit`] cannot drift apart about what an admission *is*.
+    fn admit(
+        &mut self,
+        client: ClientId,
+        capabilities: Capabilities,
+        resume: Option<(ResumeKey, &Identity)>,
+    ) -> Admission {
+        let resume = resume.map(|(key, identity)| (key, identity.clone()));
+        let admission = Admission {
+            client,
+            capabilities,
+            resume,
+        };
+        self.apply_admission(&admission);
+        admission
+    }
+
+    /// Replays an [`Admission`] a journal recorded — ADR-058's durable join.
+    ///
+    /// Idempotent, so a record that is also inside a checkpoint costs nothing to replay twice.
+    ///
+    /// # What this deliberately does not restore
+    ///
+    /// Nothing, as it happens — but the reason is worth stating, because the obvious design is
+    /// different. The capability **is** written back, and that looks like the revocation hole
+    /// `143` §10 warns about. It is not, and the argument is narrow: the only connection that
+    /// may submit as this participant is one whose own join has just overwritten this entry
+    /// with a freshly verified grant, because the relay refuses a submission that does not name
+    /// the connection it arrived on. A replayed capability is therefore unreachable as
+    /// authority — it is readable only as the operator-facing record of what *was* granted —
+    /// and `a_narrowed_grant_on_rejoin_beats_the_one_the_journal_remembers` is the guard.
+    pub fn readmit(&mut self, admission: &Admission) {
+        self.apply_admission(admission);
+    }
+
+    /// The durable effects of one admission.
+    fn apply_admission(&mut self, admission: &Admission) {
+        // `next_client` is a FLOOR and not a counter bump: replaying admissions out of order,
+        // or replaying one already inside the checkpoint, must never hand a number out twice.
+        // A number re-issued is a dedupe entry inherited and an `IdSpace` shared (ADR-051), so
+        // this one line is what stops a crash minting colliding `NodeId`s.
+        self.next_client = self
+            .next_client
+            .max(admission.client.get().saturating_add(1));
+        self.granted
+            .insert(admission.client, admission.capabilities);
+        if let Some((key, identity)) = &admission.resume {
+            self.resumes
+                .insert(key.clone(), (admission.client, identity.clone()));
         }
     }
 
-    /// Whether this session ever handed out `client` as a participant number.
+    /// What `client` was admitted with, or `None` if this session never admitted it.
     ///
-    /// **Derived from `next_client`, not from a table.** Numbers are handed out from zero
-    /// upwards and never reused, so "assigned" is an inequality — which matters for more than
-    /// tidiness: it is a pure function of checkpointed state, so
-    /// [`commit`](ServerSession::commit) stays replayable and ADR-058's "recovery verifies rather
-    /// than trusts" keeps working. A capability *table* here would have made `commit` depend on
-    /// a `join` that is deliberately not journalled, and recovery would have refused the relay's
-    /// own file — which it did, once, before this was moved.
+    /// The relay's capability check reads this rather than keeping a second table of its own:
+    /// one table, durable, and overwritten by every accepted join. A connection-lifetime copy
+    /// beside it would be two mechanisms for one rule, and the two would disagree after a
+    /// restart.
     #[must_use]
-    pub const fn has_assigned(&self, client: ClientId) -> bool {
-        client.get() < self.next_client
+    pub fn granted_for(&self, client: ClientId) -> Option<Capabilities> {
+        self.granted.get(&client).copied()
     }
 
     /// Orders one submission, or says why it cannot be.
@@ -1154,37 +1382,48 @@ impl ServerSession {
     /// [`Base::Chained`] is resolved from the same table the dedupe uses, and a `Chained`
     /// chunk from a client with nothing accepted is **refused rather than guessed at**.
     ///
-    /// # Why no access check happens here, written down because the obvious place is here
+    /// # The admission check, and why it took two increments to get here
     ///
-    /// A chunk naming a participant number this session never handed out *should* be refused,
-    /// and before ADR-060 nothing refused it anywhere: `commit` keyed everything on the dedupe
-    /// table and the base, so a `Base::Revision(head)` submission could name **any**
-    /// [`ClientId`]. That attributed the work to somebody else and, worse, wrote *their*
-    /// `(client, seq)` entry — so that participant's own next chunk at that seq came back
-    /// [`Outcome::Duplicate`] and was dropped. It is exactly the harm [`ResumeKey`]'s doc comment
-    /// describes for a stolen resume key, reachable without one.
+    /// A chunk naming a participant number this session never admitted is refused with
+    /// [`Refusal::NotAuthorised`], and **this is the first line of the function** — before the
+    /// dedupe table is even read.
     ///
-    /// **It cannot be refused here, and the reason is ADR-058's replay.** Recovery hands a logged
-    /// submission back to this function and checks the answer, so `commit` may only depend on
-    /// state the journal records. [`ServerSession::join`] is deliberately *not* journalled — so
-    /// `next_client`, `resumes`, and any grant table are all advanced after the last checkpoint
-    /// and gone on restart. A check here against any of them refuses the relay's own file:
-    /// measured, not reasoned about — `a_chunk_is_durable_before_the_room_says_it_is_ordered`
-    /// failed with `DecisionDiffers { logged: 1, replayed: None }` the moment one was added.
+    /// Before ADR-060 nothing refused it anywhere: `commit` keyed everything on the dedupe table
+    /// and the base, so a `Base::Revision(head)` submission could name **any** [`ClientId`].
+    /// That attributed the work to somebody else and, worse, wrote *their* `(client, seq)`
+    /// entry — so that participant's own next chunk at that seq came back
+    /// [`Outcome::Duplicate`] and was dropped. It is exactly the harm [`ResumeKey`]'s doc
+    /// comment describes for a stolen resume key, reachable without one.
     ///
-    /// So the check lives at the boundary, which is also where it can be *exact*:
+    /// **ADR-060 could not put the check here, and the reason was measured rather than
+    /// reasoned about.** Recovery hands a logged submission back to this function and checks the
+    /// answer, so `commit` may only depend on state the journal records. `join` was not
+    /// journalled, so `next_client`, `resumes` and the grant table were all advanced after the
+    /// last checkpoint and gone on restart — and a check against any of them refused the relay's
+    /// own file: `a_chunk_is_durable_before_the_room_says_it_is_ordered` failed with
+    /// `DecisionDiffers { logged: 1, replayed: None }` the moment one was added. So the check sat
+    /// at the boundary, against a `has_assigned` inequality derived from `next_client`.
+    ///
+    /// **ADR-058's [`Admission`] record is what made it durable, so the check came back here.**
+    /// An admission is journalled before its join is answered, exactly as a chunk is journalled
+    /// before its acknowledgement, so `granted` is state the journal records and recovery
+    /// replays it ahead of every chunk that depends on it. `has_assigned` is gone: membership is
+    /// now **exact** rather than a range, and it is inside the state machine, so a third-party
+    /// relay driving [`ServerSession`] directly gets it without having to know to ask.
+    ///
+    /// What stays at the boundary is the one check no pure state machine can make:
     /// `opendoc_relay::Relay::handle` refuses a submission whose `client` is not the one its own
-    /// socket joined as — a connection, which no pure state machine has — and refuses an
-    /// operation outside the participant's capabilities. [`ServerSession::has_assigned`] is the
-    /// query it uses for the weaker range check, and it is a query rather than a rule here for
-    /// exactly the reason above.
-    ///
-    /// **The underlying gap is recorded rather than papered over.** That a join is not durable
-    /// also means the *resume table* does not survive a crash, so a client whose work was
-    /// acknowledged cannot resume after one and is told `TooFarBehind` instead. That is a
-    /// pre-existing hole, found by this work and belonging with the journal's record set rather
-    /// than with this function.
+    /// socket joined as. A connection is not a thing this type has.
     pub fn commit(&mut self, submission: &Submission) -> Outcome {
+        // Membership first, and deliberately before the dedupe read: a client that was never
+        // admitted must not be able to *probe* the dedupe table either, and answering
+        // `Duplicate` to an unadmitted chunk would tell its sender where somebody else's work
+        // landed.
+        if !self.granted.contains_key(&submission.client) {
+            return Outcome::Refused {
+                reason: Refusal::NotAuthorised,
+            };
+        }
         let previous = self.accepted.get(&submission.client).copied();
         if let Some((seq, revision)) = previous
             && submission.seq <= seq

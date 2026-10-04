@@ -49,25 +49,47 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use casual_doc_transaction::codec::{
-    CodecError, decode_frame_within, encode_frame, frame_len_within,
-};
-use casual_doc_transaction::protocol::{CHUNK_BUDGET_BYTES, Outcome, Revision, Submission};
-use casual_doc_transaction::session::{DEFAULT_RETAINED_REVISIONS, ServerSession};
+use casual_doc_transaction::codec::{CodecError, decode_frame, encode_frame, frame_len};
+use casual_doc_transaction::protocol::{Outcome, Revision, Submission};
+use casual_doc_transaction::session::{Admission, Ordered, ServerSession, SessionState};
 use serde::{Deserialize, Serialize};
 
 /// One durable record.
 ///
-/// Two variants and not three: there is no "refused" record, because a refusal changed nothing
-/// and a log of non-events is a log nobody can replay cheaply.
+/// **Every variant is bounded by one chunk's worth of bytes**, which is the property that lets
+/// this journal read with the codec's own frame bound and no special case of its own. The first
+/// version of this file had a `Checkpoint(Box<ServerSession>)` that *embedded the retained
+/// history* — up to `DEFAULT_RETAINED_REVISIONS × CHUNK_BUDGET_BYTES`, about 1.2 GB against a
+/// 30 MB wire bound — and carried a derived `MAX_JOURNAL_FRAME_BYTES` to be able to read back
+/// what it wrote. Splitting the history into one [`Record::Retained`] per entry removed the
+/// special bound rather than enlarging it (ADR-058, amended).
+///
+/// **There is still no "refused" record**, because a refusal changed nothing and a log of
+/// non-events is a log nobody can replay cheaply.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 enum Record {
-    /// The relay's whole state at a point in the order. Written by [`Journal::compact`] and by
+    /// The relay's state **without** its retained history, which the following
+    /// [`Record::Retained`] frames carry. Written by [`Journal::compact`] and by
     /// [`Journal::create`].
     ///
-    /// Boxed because it is much larger than the other variant, and an enum is as big as its
-    /// widest arm — so without this every appended chunk would carry the checkpoint's footprint.
-    Checkpoint(Box<ServerSession>),
+    /// Still boxed: it is the widest arm, and an enum is as big as its widest, so without this
+    /// every appended chunk would carry the participant tables' footprint.
+    Checkpoint(Box<SessionState>),
+    /// One retained history entry, belonging to the checkpoint that immediately precedes it.
+    ///
+    /// Only ever written straight after a `Checkpoint`, and a `Retained` anywhere else is
+    /// [`JournalError::Corrupt`] — an orphan entry has no state to attach to, and guessing which
+    /// checkpoint it belonged to is how a relay rebuilds the wrong retained window.
+    Retained(Ordered),
+    /// A participant was admitted, and on what terms.
+    ///
+    /// Written **before the join is answered**, for the same reason an ordered chunk is written
+    /// before its acknowledgement: a client that has been handed a participant number must not
+    /// be able to outlive the record of it. Before this record existed, a crash rolled
+    /// `next_client` back to the last checkpoint while the dedupe table was rebuilt by replay,
+    /// so a reconnecting participant could be handed a number that already had a dedupe entry
+    /// — measured, see [`Journal::append_admission`].
+    Admitted(Admission),
     /// A chunk that was ordered, and **the decision that was taken about it**.
     Ordered {
         /// What the client offered, verbatim.
@@ -89,6 +111,15 @@ pub enum JournalError {
         at: u64,
         /// What the codec said.
         cause: CodecError,
+    },
+    /// A `Record::Retained` frame appeared somewhere other than directly after a checkpoint.
+    ///
+    /// Its own variant rather than a reused [`JournalError::Corrupt`], because the frame decoded
+    /// perfectly — what is damaged is the file's *structure*, and telling an operator "a corrupt
+    /// frame" about bytes that parsed would send them looking at the wrong thing.
+    OrphanEntry {
+        /// How many bytes into the file the misplaced frame began.
+        at: u64,
     },
     /// The file holds no checkpoint, so there is no state to replay onto.
     ///
@@ -117,6 +148,10 @@ impl core::fmt::Display for JournalError {
                     "a corrupt frame at byte {at} of the journal: {cause}"
                 )
             }
+            Self::OrphanEntry { at } => write!(
+                formatter,
+                "a retained-history entry at byte {at} of the journal follows no checkpoint"
+            ),
             Self::NoCheckpoint => write!(formatter, "the journal holds no checkpoint"),
             Self::DecisionDiffers { logged, replayed } => write!(
                 formatter,
@@ -149,6 +184,12 @@ pub struct Recovered {
     pub session: ServerSession,
     /// How many logged chunks were replayed onto the checkpoint.
     pub replayed: usize,
+    /// How many logged admissions were replayed onto the checkpoint.
+    ///
+    /// Reported separately from `replayed` because the two answer different operator questions:
+    /// one says how much ordering work the restart had to redo, the other how many participants
+    /// had joined since the last checkpoint and therefore kept their participant numbers.
+    pub readmitted: usize,
     /// How many bytes of a partial final frame were discarded — a crash between appends.
     ///
     /// Non-zero is **normal**, and worth reporting rather than hiding: it is the only evidence
@@ -174,31 +215,21 @@ pub struct Journal {
 /// happens more often than the history it rewrites turns over.
 pub const CHECKPOINT_EVERY: usize = 1024;
 
-/// The largest frame this journal will read, in bytes.
+/// This journal reads with the codec's own
+/// [`MAX_FRAME_BYTES`](casual_doc_transaction::codec::MAX_FRAME_BYTES) and has no bound of its
+/// own — which is the point of `Record`'s shape.
 ///
-/// **This is not the codec's wire bound, and the difference is a found defect rather than a
-/// preference.** A checkpoint carries the relay's *whole retained history*, which is
-/// [`DEFAULT_RETAINED_REVISIONS`] entries of up to [`CHUNK_BUDGET_BYTES`] each — about 1.2 GB at
-/// the limit. The codec's `MAX_FRAME_BYTES` is 30 MB, because it is a backstop against a hostile
-/// *socket*. Reading the journal with the socket's bound would have meant a busy relay writing a
-/// checkpoint it could never read back: `compact` would succeed and the next `open` would refuse
-/// its own file. Nothing had noticed, because no test writes a 30 MB checkpoint — which is why
-/// `the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold` guards the **arithmetic**
-/// rather than the bytes.
+/// It used to need one. `MAX_JOURNAL_FRAME_BYTES` was
+/// `DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES + 16 MB` — about 1.2 GB — because a
+/// checkpoint embedded the relay's whole retained history, and reading the journal with the
+/// socket's 30 MB bound would have meant a busy relay writing a checkpoint it could never read
+/// back: `compact` would succeed and the next `open` would refuse its own file. The special
+/// bound was the right *stopgap* and the wrong *shape*, and its own doc comment said so.
 ///
-/// A local file is a different threat model from a socket: it is written by this process and is as
-/// trustworthy as the disk. Raising the codec's own constant instead would have let a peer buffer
-/// what only a file is allowed to.
-///
-/// **The underlying shape is still wrong and is recorded rather than hidden.** A frame this large
-/// exists only because a checkpoint *embeds* the history. Writing the history as one bounded frame
-/// per entry — which is what every other record here already is — would make every frame
-/// chunk-sized and remove the special bound entirely. That needs `ServerSession` to be
-/// reconstructible from its state plus a replay of its retained entries, which is an API it does
-/// not have yet, so it is the next increment rather than this one.
-pub const MAX_JOURNAL_FRAME_BYTES: usize =
-    DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES + 16 * 1024 * 1024;
-
+/// Writing the history as one bounded frame per entry — which every other record here already
+/// was — makes every frame chunk-sized, so the special case is **deleted rather than
+/// documented**. A local file is still a different threat model from a socket; the difference no
+/// longer needs expressing as a larger number.
 impl Journal {
     /// Creates a journal for a **new** room, writing the opening checkpoint.
     ///
@@ -215,10 +246,7 @@ impl Journal {
             .write(true)
             .create_new(true)
             .open(&path)?;
-        file.write_all(&encode_frame(&Record::Checkpoint(Box::new(
-            session.clone(),
-        ))))?;
-        file.sync_data()?;
+        write_checkpoint(&mut file, session)?;
         Ok(Self {
             path,
             file,
@@ -239,26 +267,60 @@ impl Journal {
         File::open(&path)?.read_to_end(&mut bytes)?;
         let (records, discarded_tail_bytes) = Self::scan(&bytes)?;
 
-        let mut session = None;
-        let mut pending: Vec<(Submission, Revision)> = Vec::new();
-        for record in records {
+        // Rebuilt in file order. `Retained` frames belong to the checkpoint they follow, so a
+        // checkpoint discards both the entries and the pending records before it: they are
+        // already inside it.
+        let mut state: Option<SessionState> = None;
+        let mut retained: Vec<Ordered> = Vec::new();
+        let mut pending: Vec<Replay> = Vec::new();
+        let mut at = 0_u64;
+        for (record, offset) in records {
+            at = offset;
             match record {
-                Record::Checkpoint(state) => {
-                    // A later checkpoint supersedes everything before it, including chunks
-                    // logged before it — they are already inside it.
-                    session = Some(*state);
+                Record::Checkpoint(checkpointed) => {
+                    state = Some(*checkpointed);
+                    retained.clear();
                     pending.clear();
                 }
+                // An orphan entry has no state to attach to, and attaching it to an earlier
+                // checkpoint would rebuild the wrong retained window — so it is corruption
+                // rather than something to place as best as possible.
+                Record::Retained(_) if state.is_none() || !pending.is_empty() => {
+                    return Err(JournalError::OrphanEntry { at });
+                }
+                Record::Retained(entry) => retained.push(entry),
+                Record::Admitted(admission) => pending.push(Replay::Admitted(admission)),
                 Record::Ordered {
                     submission,
                     revision,
-                } => pending.push((submission, revision)),
+                } => pending.push(Replay::Ordered {
+                    submission,
+                    revision,
+                }),
             }
         }
-        let mut session = session.ok_or(JournalError::NoCheckpoint)?;
+        let state = state.ok_or(JournalError::NoCheckpoint)?;
+        let mut session = ServerSession::restored(state, retained);
 
-        let replayed = pending.len();
-        for (submission, logged) in pending {
+        let total = pending.len();
+        let mut readmitted = 0_usize;
+        for record in pending {
+            let (submission, logged) = match record {
+                // Replayed in file order and **ahead of every chunk that depends on it**, which
+                // is what makes `commit`'s membership check survive a restart. A join is
+                // journalled before it is answered, so an admission always precedes that
+                // participant's first chunk in the file.
+                Replay::Admitted(admission) => {
+                    session.readmit(&admission);
+                    readmitted += 1;
+                    continue;
+                }
+                Replay::Ordered {
+                    submission,
+                    revision,
+                } => (submission, revision),
+            };
+            let _ = at;
             // The verification, not a convenience: the decision is re-taken and compared.
             match session.commit(&submission) {
                 Outcome::Ordered { revision } if revision == logged => {}
@@ -291,14 +353,46 @@ impl Journal {
             Self {
                 path,
                 file,
-                since_checkpoint: replayed,
+                since_checkpoint: total,
             },
             Recovered {
                 session,
-                replayed,
+                replayed: total - readmitted,
+                readmitted,
                 discarded_tail_bytes,
             },
         ))
+    }
+
+    /// Records that `admission` was granted, durably, **before the join is answered**.
+    ///
+    /// The join half of the same contract [`Journal::append`] holds for a chunk, and it exists
+    /// because the absence of it was a live defect on `main`. Measured, with
+    /// `probe_what_a_crash_actually_does_to_an_admission` before it was a guard: two
+    /// participants joined after a checkpoint, one chunk was ordered and journalled, the process
+    /// died. On recovery the order was intact at `Revision(1)` — and
+    ///
+    /// - `has_assigned` answered **false** for both participants, so the relay's own boundary
+    ///   check refused chunks from a participant the order had already acknowledged;
+    /// - a resume presenting a **known** key answered `Welcome`, not `Resumed`, so the
+    ///   unacknowledged work that `152` §5.5 exists to preserve was discarded **with no
+    ///   `TooFarBehind` and no announcement at all** — silent loss, which is worse than the
+    ///   announced loss the handover expected;
+    /// - and participant number 0 was handed out again, so the next holder's first chunk at
+    ///   `Seq(1)` came back `Duplicate { revision: Revision(1) }` and vanished. That is the
+    ///   same harm ADR-060's forged-submission fix closed, reachable through a crash instead of
+    ///   through a forgery — and because a participant number *is* an `IdSpace` (ADR-051), two
+    ///   live replicas would also have been minting colliding `NodeId`s.
+    ///
+    /// # Errors
+    ///
+    /// [`JournalError::Io`]. A caller that cannot journal must **not** admit.
+    pub fn append_admission(&mut self, admission: &Admission) -> Result<(), JournalError> {
+        self.file
+            .write_all(&encode_frame(&Record::Admitted(admission.clone())))?;
+        self.file.sync_data()?;
+        self.since_checkpoint = self.since_checkpoint.saturating_add(1);
+        Ok(())
     }
 
     /// Records that `submission` was ordered at `revision`, durably.
@@ -351,10 +445,7 @@ impl Journal {
                 .create(true)
                 .truncate(true)
                 .open(&staging)?;
-            fresh.write_all(&encode_frame(&Record::Checkpoint(Box::new(
-                session.clone(),
-            ))))?;
-            fresh.sync_data()?;
+            write_checkpoint(&mut fresh, session)?;
         }
         std::fs::rename(&staging, &self.path)?;
         self.file = OpenOptions::new().append(true).open(&self.path)?;
@@ -362,13 +453,21 @@ impl Journal {
         Ok(())
     }
 
-    /// Every complete record in `bytes`, plus the size of a partial final frame.
-    fn scan(bytes: &[u8]) -> Result<(Vec<Record>, usize), JournalError> {
+    /// Every complete record in `bytes` with the offset it began at, plus the size of a partial
+    /// final frame.
+    ///
+    /// The offsets are carried because an out-of-place `Retained` record is corruption and the
+    /// error names where it was — "a corrupt frame at byte N" is the only form of that message
+    /// an operator can act on.
+    fn scan(bytes: &[u8]) -> Result<(Vec<(Record, u64)>, usize), JournalError> {
         let mut records = Vec::new();
         let mut at = 0_usize;
         while at < bytes.len() {
             let rest = &bytes[at..];
-            let length = match frame_len_within(rest, MAX_JOURNAL_FRAME_BYTES) {
+            // The codec's own bound, with no journal-specific widening: every `Record` variant
+            // is now one chunk wide at most, which is what deleting `MAX_JOURNAL_FRAME_BYTES`
+            // rests on.
+            let length = match frame_len(rest) {
                 Ok(length) => length,
                 // The expected shape of a crash between appends: the file ends mid-frame.
                 // Everything before it is intact and is kept.
@@ -382,8 +481,8 @@ impl Journal {
                     });
                 }
             };
-            match decode_frame_within::<Record>(&rest[..length], MAX_JOURNAL_FRAME_BYTES) {
-                Ok(record) => records.push(record),
+            match decode_frame::<Record>(&rest[..length]) {
+                Ok(record) => records.push((record, at as u64)),
                 Err(cause) => {
                     return Err(JournalError::Corrupt {
                         at: at as u64,
@@ -395,6 +494,35 @@ impl Journal {
         }
         Ok((records, 0))
     }
+}
+
+/// What one pending record asks recovery to do, in file order.
+///
+/// A plain enum rather than two vectors, because the **order between** an admission and a chunk
+/// is the whole point: `commit` refuses a chunk from a participant it has not readmitted, so
+/// sorting the two kinds apart would make recovery depend on an ordering the file already has.
+enum Replay {
+    Admitted(Admission),
+    Ordered {
+        submission: Submission,
+        revision: Revision,
+    },
+}
+
+/// Writes one checkpoint: the state as one frame, then **one bounded frame per retained entry**.
+///
+/// The ordering is the format: [`Journal::open`] attaches `Retained` frames to the checkpoint
+/// they follow, so the state must be written first and nothing may be interleaved. Both writes
+/// are followed by a single `sync_data`, because a checkpoint is only useful whole — a partially
+/// synced one is a torn tail, which recovery already discards.
+fn write_checkpoint(file: &mut File, session: &ServerSession) -> Result<(), JournalError> {
+    let (state, retained) = session.checkpoint();
+    file.write_all(&encode_frame(&Record::Checkpoint(Box::new(state))))?;
+    for entry in retained {
+        file.write_all(&encode_frame(&Record::Retained(entry.clone())))?;
+    }
+    file.sync_data()?;
+    Ok(())
 }
 
 #[cfg(test)]
