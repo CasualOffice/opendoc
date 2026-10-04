@@ -34,9 +34,14 @@ use casual_doc_layout::display::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_layout::display::ShapeTransform;
+// Own `use` line (anti-conflict): the path-gradient focus and the stop type the
+// banded decomposition samples between.
+use casual_doc_layout::display::{GradientFocus, GradientStop as DisplayGradientStop};
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::{Point, Rect};
+// Own `use` line (anti-conflict): which contour family a path gradient follows.
+use casual_doc_model::v1::GradientPath;
 use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
@@ -1886,25 +1891,47 @@ fn render_shape(
 
     // Fill (solid or gradient), then stroke (dashable), then arrowheads.
     if let Some(fill) = fill {
-        let mut paint = Paint::default();
-        match fill {
-            Fill::Solid(color) => {
-                paint.set_color_rgba8(color.r, color.g, color.b, color.a);
-            }
-            Fill::Gradient(gradient) => {
-                if let Some(bounds) = bounds
-                    && let Some(shader) = gradient_shader(gradient, bounds)
-                {
-                    paint.shader = shader;
-                } else if let Some(first) = fill_fallback_color(fill) {
-                    paint.set_color_rgba8(first.0, first.1, first.2, first.3);
+        // A rectangular or shape-following path gradient has no tiny-skia shader, so
+        // it is decomposed into contour bands instead of being flattened to its first
+        // stop. Tried BEFORE the single-paint path below, because the decomposition
+        // replaces that fill rather than sitting behind it — the same shape the
+        // picture fill takes one level up.
+        let banded = match fill {
+            Fill::Gradient(gradient) => match (gradient.kind, bounds) {
+                (
+                    GradientKind::Path {
+                        path: family,
+                        focus,
+                    },
+                    Some(bounds),
+                ) if !matches!(family, GradientPath::Circle) => paint_banded_path_gradient(
+                    surface, &path, bounds, gradient, family, focus, clip, transform,
+                ),
+                _ => false,
+            },
+            Fill::Solid(_) => false,
+        };
+        if !banded {
+            let mut paint = Paint::default();
+            match fill {
+                Fill::Solid(color) => {
+                    paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+                }
+                Fill::Gradient(gradient) => {
+                    if let Some(bounds) = bounds
+                        && let Some(shader) = gradient_shader(gradient, bounds)
+                    {
+                        paint.shader = shader;
+                    } else if let Some(first) = fill_fallback_color(fill) {
+                        paint.set_color_rgba8(first.0, first.1, first.2, first.3);
+                    }
                 }
             }
+            paint.anti_alias = true;
+            surface
+                .pixmap
+                .fill_path(&path, &paint, FillRule::Winding, transform, clip);
         }
-        paint.anti_alias = true;
-        surface
-            .pixmap
-            .fill_path(&path, &paint, FillRule::Winding, transform, clip);
     }
 
     if let Some(stroke) = stroke {
@@ -2002,6 +2029,12 @@ fn fill_fallback_color(fill: &Fill) -> Option<(u8, u8, u8, u8)> {
 /// gradient's endpoints are the box center projected along the sweep angle to the
 /// box extent; a radial gradient is centered on the box. Returns `None` (the
 /// caller falls back to the first stop) if the stops or box are degenerate.
+///
+/// A `path="rect"` or `path="shape"` path gradient also returns `None`, because
+/// tiny-skia has a linear and a radial shader and nothing else. Those two are painted
+/// by `paint_banded_path_gradient`, which the caller reaches FIRST — so this
+/// function's `None` for them is never the flat-colour fallback, and the
+/// `GradientKind::Path` arm below is only entered for `path="circle"`.
 fn gradient_shader(gradient: &Gradient, bounds: SkRect) -> Option<Shader<'static>> {
     let stops: Vec<SkGradientStop> = gradient
         .stops
@@ -2042,7 +2075,264 @@ fn gradient_shader(gradient: &Gradient, bounds: SkRect) -> Option<Shader<'static
                 Transform::identity(),
             )
         }
+        // `a:path path="circle"` — the one path-gradient family tiny-skia has a real
+        // shader for. Unlike `GradientKind::Radial` above it is centred on
+        // `a:fillToRect`, not on the shape, which is the whole point of the
+        // construct: an off-centre focus is how a highlight is authored.
+        //
+        // The radius reaches the FARTHEST CORNER of the bounding box rather than the
+        // nearer edge midpoint, because the last stop is reached where the contour
+        // has left the box entirely, and the box is not covered until its corners.
+        // That is already what the PDF backend's radial shading does, so the two now
+        // agree where they used to differ by the aspect ratio.
+        //
+        // OPEN QUESTION, recorded rather than guessed at: the contours here are
+        // CIRCLES, which is what `path="circle"` literally names and what the
+        // concentric collapse already drew. A renderer that instead fitted an ellipse
+        // to the bounding box would reach the last stop at all four edge midpoints
+        // rather than only at the corners, and no Word- or PowerPoint-authored
+        // reference file in this repository settles which of the two a producer
+        // expects. The focus is the part that was definitely wrong — it was dropped
+        // entirely — so it is the part this fixes; the aspect question is left alone
+        // rather than changed on a hunch.
+        GradientKind::Path { path, focus } => {
+            if !matches!(path, GradientPath::Circle) {
+                return None;
+            }
+            let (fx, fy) = focus_center(bounds, focus);
+            let radius = [
+                (bounds.left(), bounds.top()),
+                (bounds.right(), bounds.top()),
+                (bounds.left(), bounds.bottom()),
+                (bounds.right(), bounds.bottom()),
+            ]
+            .into_iter()
+            .map(|(x, y)| ((x - fx).powi(2) + (y - fy).powi(2)).sqrt())
+            .fold(0.5f32, f32::max);
+            RadialGradient::new(
+                SkPoint::from_xy(fx, fy),
+                SkPoint::from_xy(fx, fy),
+                radius,
+                stops,
+                SpreadMode::Pad,
+                Transform::identity(),
+            )
+        }
     }
+}
+
+/// The centre of a path gradient's focus rectangle (`a:path/a:fillToRect`) in device
+/// pixels, given the shape's bounding box.
+///
+/// Each [`GradientFocus`] edge is an inset from its own edge of `bounds`, so an inset
+/// pair can cross — `l="50000" r="50000"` is the common authored focus *point* at the
+/// centre, and a pair summing past 100% inverts. The midpoint is well defined either
+/// way, which is why the centre is taken rather than an ordered rectangle.
+fn focus_center(bounds: SkRect, focus: GradientFocus) -> (f32, f32) {
+    (
+        bounds.left() + (focus.left + 1.0 - focus.right) / 2.0 * bounds.width(),
+        bounds.top() + (focus.top + 1.0 - focus.bottom) / 2.0 * bounds.height(),
+    )
+}
+
+/// The most contour bands a decomposed path gradient is split into.
+///
+/// One band per device pixel of the shape's longer side, capped here. 128 bands over
+/// a two-stop ramp steps each channel by at most two 8-bit levels, which is below the
+/// banding threshold on a gradient large enough to need the cap; below the cap the
+/// decomposition is exact to the pixel. The cap exists because the cost is
+/// O(bands x shape area) — see `paint_banded_path_gradient`.
+const MAX_PATH_GRADIENT_BANDS: u32 = 128;
+
+/// Paints a `path="rect"` or `path="shape"` path gradient by decomposing it into
+/// nested contour bands, clipped to the shape's own outline.
+///
+/// # What is drawn, and how it differs from the construct
+///
+/// A path gradient's stops run from a focus rectangle (`a:path/a:fillToRect`) outward
+/// to the shape's bounding box along contours whose family `a:path@path` names.
+/// tiny-skia has `LinearGradient` and `RadialGradient` and nothing else, so neither
+/// of these two families is a shader it can build:
+///
+/// - **`path="rect"` is drawn exactly in family.** The contours ARE nested
+///   rectangles interpolated from the focus rectangle to the bounding box, so the
+///   only divergence from the construct is quantisation into at most
+///   [`MAX_PATH_GRADIENT_BANDS`] steps.
+/// - **`path="shape"` is an approximation, and this is the one to know about.** The
+///   true contours are inward offsets of the shape's own outline. This draws the
+///   outline *uniformly scaled* about the focus centre instead. The two agree on the
+///   outermost contour (the outline itself), on the innermost (the focus point), and
+///   on the family — a star's gradient radiates in points, a chevron's follows the
+///   chevron. They disagree on contour SPACING wherever the outline's distance from
+///   the focus is uneven: a long thin shape's gradient progresses faster along its
+///   short axis than a true inward offset would.
+///
+/// # Why this beats both alternatives
+///
+/// `docs/119` §6 "Rejected" weighed exactly this trade for unsupported geometry and
+/// kept an inexact render over an empty one, on the grounds that silently erasing
+/// what the file says is a larger visible change than drawing it imprecisely, and is
+/// not what Word does either. The same reasoning applies with more force here,
+/// because both alternatives are worse than they look:
+///
+/// - **Painting nothing** leaves an unfilled shape where the file says there is a
+///   coloured one, and the picture-fill path in this engine already declined that.
+/// - **Painting a flat colour** — the first stop, which is what the degenerate
+///   fallback does — looks *deliberate*. That is the exact failure `a:pattFill` is
+///   modeled-and-reported rather than approximated to avoid; `themed_fill` in
+///   `casual-doc-layout` states it as "a gradient flattened to one colour… looks
+///   deliberate, and a shape that is visibly unfilled at least prompts the question".
+///   A path gradient painted as a banded path gradient is visibly a gradient of the
+///   right family, in the right colours, radiating from the right place; nobody reads
+///   it as a different construct, which is what makes it inexact rather than wrong.
+///
+/// Reporting instead of painting was the other option the `a:pattFill` precedent
+/// offers, and it is declined here for a reason specific to this construct: a hatch
+/// substituted by a solid is a *different kind of fill*, while a quantised contour
+/// gradient is the same kind drawn coarsely. The loss report is narrowed to the
+/// `a:gradFill` attributes that genuinely still do not paint — `@flip`,
+/// `@rotWithShape="0"` and `a:lin@scaled` — rather than dropped.
+///
+/// Returns `false` when nothing was painted (fewer than two stops, a degenerate
+/// outline, or no room for a clip mask) and the caller should take its ordinary path.
+///
+/// Complexity: O(bands x shape area) pixel writes, with bands bounded by
+/// [`MAX_PATH_GRADIENT_BANDS`], plus one page-sized alpha mask — the same mask a
+/// `PushClipPath` already allocates for a picture-filled shape.
+#[allow(clippy::too_many_arguments)] // one decomposition; every input is used
+fn paint_banded_path_gradient(
+    surface: &mut Surface,
+    outline: &tiny_skia::Path,
+    bounds: SkRect,
+    gradient: &Gradient,
+    family: GradientPath,
+    focus: GradientFocus,
+    clip: Option<&Mask>,
+    transform: Transform,
+) -> bool {
+    // One stop is a flat colour, which the caller paints more cheaply than this can.
+    if gradient.stops.len() < 2 {
+        return false;
+    }
+    // The bands are rectangles and scaled outlines; the shape's own outline is what
+    // confines them, so it becomes the clip. Transforming the outline first (rather
+    // than handing `transform` to the mask) keeps the mask in the same device space
+    // the bands are filled in, so a rotated shape's bands stay inside it.
+    let Some(device) = outline.clone().transform(transform) else {
+        return false;
+    };
+    let Some(mask) = build_clip_mask_from_path(&surface.pixmap, &device, clip) else {
+        return false;
+    };
+    let (fcx, fcy) = focus_center(bounds, focus);
+    let left = bounds.left() + focus.left * bounds.width();
+    let top = bounds.top() + focus.top * bounds.height();
+    let right = bounds.right() - focus.right * bounds.width();
+    let bottom = bounds.bottom() - focus.bottom * bounds.height();
+    // An inset pair may cross (`l="50000" r="50000"` is a point, and a pair summing
+    // past 100% inverts); order them so an interpolated band is never inside out.
+    let (left, right) = (left.min(right), left.max(right));
+    let (top, bottom) = (top.min(bottom), top.max(bottom));
+    let bands = bounds
+        .width()
+        .max(bounds.height())
+        .ceil()
+        .clamp(2.0, MAX_PATH_GRADIENT_BANDS as f32) as u32;
+    // Outside in, so each band overpaints the one around it: adjacent bands then
+    // abut with no seam to leave a hairline at, and the anti-aliased edge of a band
+    // blends into its own near-neighbour colour rather than into the page.
+    for step in 0..=bands {
+        let t = 1.0 - step as f32 / bands as f32;
+        let color = sample_gradient(&gradient.stops, t);
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+        paint.anti_alias = true;
+        match family {
+            GradientPath::Shape => {
+                if t <= f32::EPSILON {
+                    // A zero scale is not a path; the band around it already covers
+                    // the sub-pixel remainder.
+                    continue;
+                }
+                let scaled = Transform::from_translate(fcx, fcy)
+                    .pre_concat(Transform::from_scale(t, t))
+                    .pre_concat(Transform::from_translate(-fcx, -fcy));
+                surface.pixmap.fill_path(
+                    outline,
+                    &paint,
+                    FillRule::Winding,
+                    transform.pre_concat(scaled),
+                    Some(&mask),
+                );
+            }
+            // `path="circle"` never arrives here — `gradient_shader` builds it a real
+            // radial shader — but a nested-rectangle decomposition is the nearer
+            // answer than a flat colour if a future caller routes it this way.
+            GradientPath::Rect | GradientPath::Circle => {
+                let Some(rect) = SkRect::from_ltrb(
+                    left + (bounds.left() - left) * t,
+                    top + (bounds.top() - top) * t,
+                    right + (bounds.right() - right) * t,
+                    bottom + (bounds.bottom() - bottom) * t,
+                ) else {
+                    continue;
+                };
+                let mut builder = PathBuilder::new();
+                builder.push_rect(rect);
+                if let Some(band) = builder.finish() {
+                    surface.pixmap.fill_path(
+                        &band,
+                        &paint,
+                        FillRule::Winding,
+                        transform,
+                        Some(&mask),
+                    );
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The gradient's colour at `t` in `0.0..=1.0`, linearly interpolated between the
+/// two stops that bracket it (and clamped to the end stops outside their range),
+/// which is the same `SpreadMode::Pad` ramp a tiny-skia shader would produce.
+///
+/// Straight-alpha interpolation, matching the display list's own colour model; the
+/// stops are taken in position order, which is the order `a:gsLst` states them in and
+/// the order the importer preserves.
+fn sample_gradient(stops: &[DisplayGradientStop], t: f32) -> DisplayColor {
+    let first = stops.first().expect("caller guarantees two stops");
+    let last = stops.last().expect("caller guarantees two stops");
+    if t <= first.position {
+        return first.color;
+    }
+    if t >= last.position {
+        return last.color;
+    }
+    for pair in stops.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if t >= a.position && t <= b.position {
+            let span = b.position - a.position;
+            let f = if span <= f32::EPSILON {
+                0.0
+            } else {
+                (t - a.position) / span
+            };
+            let lerp = |x: u8, y: u8| {
+                (f32::from(x) + (f32::from(y) - f32::from(x)) * f)
+                    .round()
+                    .clamp(0.0, 255.0) as u8
+            };
+            return DisplayColor {
+                r: lerp(a.color.r, b.color.r),
+                g: lerp(a.color.g, b.color.g),
+                b: lerp(a.color.b, b.color.b),
+                a: lerp(a.color.a, b.color.a),
+            };
+        }
+    }
+    last.color
 }
 
 /// The dash on/off array (device pixels) for a preset dash style at `width`, or
@@ -3679,6 +3969,294 @@ mod tests {
         let edge = pixel_at(&surface, 60, 30, 2);
         assert!(center[0] > 150, "the radial center is red (got {center:?})");
         assert!(edge[2] > 150, "the radial edge is blue (got {edge:?})");
+    }
+
+    // --- Path gradients (`a:gradFill/a:path`) ----------------------------------
+    //
+    // Pixel assertions are on the COLOUR channels, never on alpha: the page surface
+    // starts opaque white, so alpha is 255 at every pixel and an alpha assertion
+    // passes for a pixel nothing painted.
+
+    /// Builds a two-stop red -> blue path gradient of `family` with `focus`.
+    fn path_gradient(family: GradientPath, focus: GradientFocus) -> DisplayFill {
+        DisplayFill::Gradient(Gradient {
+            stops: vec![
+                GradientStop {
+                    position: 0.0,
+                    color: ShapeColor::rgb(255, 0, 0),
+                },
+                GradientStop {
+                    position: 1.0,
+                    color: ShapeColor::rgb(0, 0, 255),
+                },
+            ],
+            kind: GradientKind::Path {
+                path: family,
+                focus,
+            },
+        })
+    }
+
+    /// A 120x20 rect filled with `fill`, on a 120x20 surface at 1 twip = 1 px.
+    fn wide_bar(fill: DisplayFill) -> Surface {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(120), Twip(20))),
+            },
+            fill: Some(fill),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        shape_surface(&list, 120, 20)
+    }
+
+    /// `a:path path="rect"` paints RECTANGULAR contours, not circular ones.
+    ///
+    /// This is the half of `docs/156` §6 row 0.3 that said "radial gradients collapse
+    /// to concentric": every path gradient became one `GradientKind::Radial`, so a
+    /// rectangular one painted as circles.
+    ///
+    /// The discriminator is a wide, short box. For a rectangular gradient the
+    /// progression is governed by whichever axis saturates FIRST, so a pixel at the
+    /// vertical mid-edge (horizontally centred, one pixel in from the bottom) is
+    /// almost at the last stop. For a circular one the radius is governed by the LONG
+    /// axis, so the same pixel is barely off the first stop. The two answers are at
+    /// opposite ends of the ramp, which is what makes this a pixel test for the
+    /// FAMILY rather than for "a gradient happened".
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_rect_path_gradient_paints_rectangular_contours_not_circular_ones() {
+        let rect = wide_bar(path_gradient(GradientPath::Rect, GradientFocus::CENTER));
+        let near_long_edge = pixel_at(&rect, 120, 60, 18);
+        assert!(
+            near_long_edge[2] > 150 && near_long_edge[0] < 110,
+            "a rectangular contour reaches the last stop at the long edge \
+             (got {near_long_edge:?})"
+        );
+        let focus = pixel_at(&rect, 120, 60, 10);
+        assert!(
+            focus[0] > 200 && focus[2] < 60,
+            "the focus is the first stop (got {focus:?})"
+        );
+
+        // The control: the same box, the same focus, the OTHER family. If this
+        // painted the same pixels, the assertion above would pass for any path
+        // gradient at all — which is exactly what the collapse did.
+        let circle = wide_bar(path_gradient(GradientPath::Circle, GradientFocus::CENTER));
+        let circular = pixel_at(&circle, 120, 60, 18);
+        assert!(
+            circular[0] > 180 && circular[2] < 90,
+            "a circular contour is still near the first stop there (got {circular:?})"
+        );
+    }
+
+    /// A path gradient radiates from `a:fillToRect`, not from the shape's centre.
+    ///
+    /// An off-centre focus is how a highlight is authored, and it was dropped
+    /// entirely: `GradientKind::Radial` had nowhere to put it, so every path gradient
+    /// was centred on the box.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_path_gradient_radiates_from_its_authored_focus() {
+        // A 60x60 box with the focus point one sixth in from the left edge: x = 10,
+        // y = 30. `l` and `r` cross (0.1667 + 0.8333 = 1.0), which is how a focus
+        // POINT is stated; the centre is still well defined.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(60), Twip(60))),
+            },
+            fill: Some(path_gradient(
+                GradientPath::Circle,
+                GradientFocus {
+                    left: 1.0 / 6.0,
+                    top: 0.5,
+                    right: 1.0 - 1.0 / 6.0,
+                    bottom: 0.5,
+                },
+            )),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 60, 60);
+        let at_focus = pixel_at(&surface, 60, 10, 30);
+        assert!(
+            at_focus[0] > 200 && at_focus[2] < 60,
+            "the first stop sits at the authored focus, not at the box centre \
+             (got {at_focus:?})"
+        );
+        // 40 px away, against a corner-reaching radius of ~58: well down the ramp.
+        let away = pixel_at(&surface, 60, 50, 30);
+        assert!(
+            away[2] > 150 && away[0] < 110,
+            "the ramp runs outward from the focus (got {away:?})"
+        );
+    }
+
+    /// A triangular path whose apex is at the top of a 60x60 box.
+    ///
+    /// Used by the two guards below because a non-rectangular outline is the only way
+    /// to tell a rectangular contour from a shape-following one, and the only way to
+    /// show that a band never paints outside the shape.
+    fn triangle_bar(fill: DisplayFill) -> Surface {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(Twip(30), Twip(0)),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(Twip(58), Twip(58)),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(Twip(2), Twip(58)),
+                    },
+                ],
+                closed: true,
+            },
+            fill: Some(fill),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        shape_surface(&list, 60, 60)
+    }
+
+    /// `path="shape"` follows the shape's OUTLINE; `path="rect"` does not.
+    ///
+    /// On a triangle, the point (18,30) is 12 px left of the focus and only ~2.5 px
+    /// inside the outline, so a shape-following contour has nearly completed there
+    /// while a rectangular one — which measures against the bounding box's 28 px
+    /// half-width — is still near the middle of the ramp. Both are clipped to the same
+    /// triangle, so the only difference is the contour family.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_shape_path_gradient_follows_the_outline_and_a_rect_one_does_not() {
+        let shaped = triangle_bar(path_gradient(GradientPath::Shape, GradientFocus::CENTER));
+        let near_outline = pixel_at(&shaped, 60, 18, 30);
+        assert!(
+            near_outline[2] > 160 && near_outline[0] < 100,
+            "a shape-following contour is nearly complete just inside the outline \
+             (got {near_outline:?})"
+        );
+
+        let boxed = triangle_bar(path_gradient(GradientPath::Rect, GradientFocus::CENTER));
+        let same_point = pixel_at(&boxed, 60, 18, 30);
+        assert!(
+            same_point[0] > 110,
+            "a rectangular contour measures against the bounding box, so the same \
+             pixel is still near the first stop (got {same_point:?})"
+        );
+    }
+
+    /// A band never paints outside the shape it fills.
+    ///
+    /// The contours of a `path="rect"` gradient are rectangles, and a rectangle around
+    /// a triangle's focus covers area the triangle does not. Without the outline clip
+    /// the gradient would paint a square where the file says there is a triangle,
+    /// which is a far more visible defect than any inexactness in the ramp.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_banded_path_gradient_stays_inside_the_shapes_outline() {
+        let surface = triangle_bar(path_gradient(GradientPath::Rect, GradientFocus::CENTER));
+        // Inside the bounding box, outside the triangle: at y = 10 the triangle spans
+        // only x in [25,35].
+        let outside = pixel_at(&surface, 60, 6, 10);
+        assert!(
+            outside[0] > 240 && outside[1] > 240 && outside[2] > 240,
+            "no band escapes the outline (got {outside:?})"
+        );
+        // The control: the interior IS painted, so this cannot pass by painting
+        // nothing at all.
+        let inside = pixel_at(&surface, 60, 30, 50);
+        assert!(
+            inside[0] < 240 || inside[1] < 240 || inside[2] < 240,
+            "the triangle's interior is filled (got {inside:?})"
+        );
+    }
+
+    /// A banded path gradient rides the shape's rotation exactly once.
+    ///
+    /// The bands are built in the shape's own device space and filled WITH the
+    /// transform, while the clip mask is built from the already-transformed outline.
+    /// Handing the transform to the mask instead would apply it twice and the bands
+    /// would be clipped to a shape that is not where the shape is — a trap this
+    /// composition is easy to get wrong in a way no single-pixel "is it painted"
+    /// assertion would notice.
+    ///
+    /// The same 40x8 bar and 90-degree rotation the solid-fill guard above uses, so
+    /// the two are directly comparable.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_banded_path_gradient_rides_the_shapes_rotation() {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(30), Twip(10)), Size::new(Twip(40), Twip(8))),
+            },
+            fill: Some(path_gradient(GradientPath::Rect, GradientFocus::CENTER)),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: Some(ShapeTransform {
+                rotation: 90 * 60_000,
+                flip_h: false,
+                flip_v: false,
+                center: Point::new(Twip(50), Twip(14)),
+            }),
+        });
+        let surface = shape_surface(&list, 100, 60);
+        // The ramp runs along the bar's own long axis, which the rotation has turned
+        // vertical. (50,16) is 2 px from the centre in the bar's frame and (50,30) is
+        // 16 px from it, against a 20 px half-length — so the near pixel is close to
+        // the first stop and the far one close to the last. Both lie inside the
+        // ROTATED footprint only, so an unrotated band could not reach either.
+        let near_focus = pixel_at(&surface, 100, 50, 16);
+        assert!(
+            near_focus[0] > 180 && near_focus[2] < 90,
+            "the gradient's near end follows the rotation (got {near_focus:?})"
+        );
+        let far_end = pixel_at(&surface, 100, 50, 30);
+        assert!(
+            far_end[2] > 180 && far_end[0] < 90,
+            "and its far end does too, along the rotated axis (got {far_end:?})"
+        );
+        // Inside the UNROTATED footprint and outside the rotated one: untouched page.
+        let was_unrotated = pixel_at(&surface, 100, 32, 14);
+        assert!(
+            was_unrotated[0] > 240 && was_unrotated[1] > 240 && was_unrotated[2] > 240,
+            "no band paints where the shape no longer is (got {was_unrotated:?})"
+        );
+    }
+
+    /// A path gradient is a GRADIENT, not the first stop painted flat.
+    ///
+    /// The flat first-stop fallback is what a `GradientKind` with no shader gets, and
+    /// it is the outcome `docs/119` §6 "Rejected" calls worse than an inexact render:
+    /// one colour across the shape looks deliberate. This counts distinct red levels
+    /// along a scanline, so a flat fill — or a two-band quantisation — fails it.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_banded_path_gradient_is_not_a_flat_colour() {
+        let surface = wide_bar(path_gradient(GradientPath::Rect, GradientFocus::CENTER));
+        let mut levels: Vec<u8> = (0..120)
+            .map(|x| pixel_at(&surface, 120, x, 10)[0])
+            .collect();
+        levels.sort_unstable();
+        levels.dedup();
+        assert!(
+            levels.len() > 16,
+            "the ramp is smooth, not a flat colour or a handful of steps \
+             ({} distinct red levels)",
+            levels.len()
+        );
     }
 
     #[test]

@@ -2054,6 +2054,101 @@ mod semantic_tests {
         let m2 = reopen(&written);
         assert_eq!(m1, m2, "shape gradient geometry survives write -> reopen");
     }
+    /// The gradient loss report names what is still unpainted, and NOTHING else.
+    ///
+    /// This is the half of `docs/119` §7 guard 2 that matters: a guard that only
+    /// checks the now-supported case lets the unsupported case fall silent, and a
+    /// report that fires for geometry which DOES paint is false in the direction
+    /// `105` EV-007 calls out — understating support is as wrong as overstating it.
+    ///
+    /// `a:path@path` and `a:fillToRect` now reach the display list and paint, so a
+    /// gradient carrying only those must not be reported. `a:gradFill@flip`,
+    /// `@rotWithShape="0"` and `a:lin@scaled` still do not paint, so each must be.
+    /// Every case round-trips its geometry either way, which is what makes the absent
+    /// report a statement about PAINTING rather than about retention — and the
+    /// retained-but-silent case is asserted in the same loop, so the two cannot be
+    /// confused.
+    #[test]
+    fn only_the_gradient_geometry_that_still_cannot_paint_is_reported() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        let stops = r#"<a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst>"#;
+        // (label, `a:gradFill` attributes, children after `a:gsLst`, must report)
+        let cases: [(&str, &str, &str, bool); 5] = [
+            (
+                "a painted rectangular path gradient",
+                "",
+                r#"<a:path path="rect"><a:fillToRect l="25000" t="25000" r="25000" b="25000"/></a:path>"#,
+                false,
+            ),
+            (
+                "the two no-op attribute values",
+                r#" flip="none" rotWithShape="1""#,
+                r#"<a:path path="shape"/>"#,
+                false,
+            ),
+            (
+                "a mirrored ramp (`@flip`)",
+                r#" flip="x""#,
+                r#"<a:path path="rect"/>"#,
+                true,
+            ),
+            (
+                "a gradient pinned against the shape's rotation",
+                r#" rotWithShape="0""#,
+                r#"<a:path path="circle"/>"#,
+                true,
+            ),
+            (
+                "a sweep angle scaled into the box (`a:lin@scaled`)",
+                "",
+                r#"<a:lin ang="2700000" scaled="1"/>"#,
+                true,
+            ),
+        ];
+
+        for (label, attrs, geometry, must_report) in cases {
+            let document_xml = format!(
+                r#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="S"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill{attrs}>{stops}{geometry}</a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+            );
+            let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+            let (model, report) = reopen_with_report(&pack(document_xml.as_bytes(), document_rels));
+
+            // Retention first: the report below is about painting, not about what
+            // survives, and that distinction is the whole point of narrowing it.
+            let BlockNode::Paragraph(paragraph) = &model.body()[0] else {
+                panic!("{label}: expected a paragraph");
+            };
+            let InlineNode::Group(group) = &paragraph.inlines[0] else {
+                panic!("{label}: expected a group");
+            };
+            let GroupChild::Shape(shape) = &group.children[0] else {
+                panic!("{label}: expected a shape");
+            };
+            assert!(
+                model
+                    .definitions()
+                    .shape_fill_detail
+                    .get(&shape.id)
+                    .and_then(|detail| detail.gradient)
+                    .is_some(),
+                "{label}: the a:gradFill geometry is retained whatever the report says"
+            );
+
+            let reported = reported(&report, "shape/gradFill").is_some();
+            assert_eq!(
+                reported,
+                must_report,
+                "{label}: reported={reported}, expected {must_report}. Report: {:?}",
+                report
+                    .entries
+                    .iter()
+                    .map(|entry| (entry.feature.clone(), entry.location.attribute.clone()))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
     #[test]
     fn inline_picture_border_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, InlineNode, Rgba, ShapeStroke};

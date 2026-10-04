@@ -16,7 +16,11 @@ use crate::display::{
 };
 // Own line (anti-conflict): the inline picture's paint transform.
 use crate::display::ShapeTransform;
-use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
+use crate::page::{
+    AnchorContent, AnchorFill, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders,
+};
+// Own line (anti-conflict): the path-gradient focus the display list carries.
+use crate::display::GradientFocus;
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::{LayerBlend, LayerShadow};
 // Own line (anti-conflict): the chart lane's path and dash primitives.
@@ -411,12 +415,13 @@ fn rgba(c: [u8; 4]) -> Color {
     }
 }
 
-/// Translates a resolved model fill (`a:solidFill`/`a:gradFill`) into the display
-/// [`Fill`]. Gradient stop positions (per-100000) become `0.0..=1.0`; a linear
-/// angle (60000ths of a degree) becomes degrees clockwise from +x.
-fn fill_to_display(fill: &casual_doc_model::v1::Fill) -> Fill {
-    use casual_doc_model::v1::{Fill as ModelFill, GradientKind as ModelGradientKind};
-    match fill {
+/// Translates a resolved anchor fill (`a:solidFill`/`a:gradFill`, plus the
+/// `a:gradFill` geometry carried beside it) into the display [`Fill`]. Gradient stop
+/// positions (per-100000) become `0.0..=1.0`; a linear angle (60000ths of a degree)
+/// becomes degrees clockwise from +x.
+fn fill_to_display(fill: &AnchorFill) -> Fill {
+    use casual_doc_model::v1::Fill as ModelFill;
+    match &fill.fill {
         ModelFill::Solid(color) => Fill::Solid(rgba([color.r, color.g, color.b, color.a])),
         ModelFill::Gradient { stops, kind } => Fill::Gradient(Gradient {
             stops: stops
@@ -426,13 +431,46 @@ fn fill_to_display(fill: &casual_doc_model::v1::Fill) -> Fill {
                     color: rgba([stop.color.r, stop.color.g, stop.color.b, stop.color.a]),
                 })
                 .collect(),
-            kind: match kind {
-                ModelGradientKind::Linear { angle } => GradientKind::Linear {
-                    angle_deg: *angle as f32 / 60_000.0,
-                },
-                ModelGradientKind::Radial => GradientKind::Radial,
-            },
+            kind: gradient_kind_to_display(*kind, fill.gradient.as_ref()),
         }),
+    }
+}
+
+/// Which display gradient geometry a model `a:gradFill` paints through.
+///
+/// `GradientKind::Radial` is one value for three different DrawingML constructs —
+/// `a:path path="circle"`, `="rect"` and `="shape"` — so the authored token has to
+/// come from `GradientDetail`, the side table the importer files it in. Without this
+/// the display list cannot tell a rectangular path gradient from a concentric one,
+/// which is the second half of `docs/156` §6 row 0.3.
+///
+/// A `Radial` with no retained token keeps today's concentric paint: that is a
+/// gradient whose `a:path` carried no `@path` attribute at all, or one the ODF
+/// importer built, and inventing a family for it would be a guess.
+fn gradient_kind_to_display(
+    kind: casual_doc_model::v1::GradientKind,
+    detail: Option<&casual_doc_model::v1::GradientDetail>,
+) -> GradientKind {
+    use casual_doc_model::v1::GradientKind as ModelGradientKind;
+    match kind {
+        ModelGradientKind::Linear { angle } => GradientKind::Linear {
+            angle_deg: angle as f32 / 60_000.0,
+        },
+        ModelGradientKind::Radial => match detail.and_then(|detail| detail.path) {
+            Some(path) => GradientKind::Path {
+                path,
+                focus: detail.and_then(|detail| detail.fill_to_rect).map_or(
+                    GradientFocus::CENTER,
+                    |rect| GradientFocus {
+                        left: rect.left as f32 / 100_000.0,
+                        top: rect.top as f32 / 100_000.0,
+                        right: rect.right as f32 / 100_000.0,
+                        bottom: rect.bottom as f32 / 100_000.0,
+                    },
+                ),
+            },
+            None => GradientKind::Radial,
+        },
     }
 }
 
@@ -3043,7 +3081,7 @@ mod tests {
         );
         let anchor = anchor_at(
             AnchorContent::Rectangle {
-                fill: Some(ModelFill::Gradient {
+                fill: Some(AnchorFill::plain(ModelFill::Gradient {
                     stops: vec![
                         ModelGradientStop {
                             position: 0,
@@ -3065,7 +3103,7 @@ mod tests {
                         },
                     ],
                     kind: ModelGradientKind::Linear { angle: 5_400_000 },
-                }),
+                })),
                 stroke: Some(AnchorStroke {
                     color: [0, 0, 0, 255],
                     width: Twip(30),
