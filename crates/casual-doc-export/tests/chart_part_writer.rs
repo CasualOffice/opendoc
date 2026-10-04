@@ -1160,3 +1160,341 @@ fn zip_package(parts: &[(&str, &[u8])]) -> Vec<u8> {
     }
     writer.finish().expect("the zip finishes").into_inner()
 }
+
+/// The `r:id` the DRAWING carries resolves, through OPC, to the generated part.
+///
+/// # Why this exists beside the round-trip guards
+///
+/// Every guard above that reads the projection back proves the chain works
+/// *through the importer*, and the importer is one implementation of the
+/// resolution. This walks it the way a consumer does and asserts each link
+/// separately, because HF-256 was a break in exactly one link — the last one —
+/// and a single reader that happens to tolerate a difference would hide it:
+///
+/// 1. `word/document.xml` carries a `c:chart` with an `r:id`.
+/// 2. `word/_rels/document.xml.rels` declares a relationship with that `Id`,
+///    and the package resolves its `Target` to a part name.
+/// 3. That part is readable and is the chart part the model named.
+/// 4. `[Content_Types].xml` declares it as a chart part rather than letting it
+///    fall through the `.xml` default to `application/xml`.
+///
+/// The link numbers are in the failure messages so a break says which one.
+#[test]
+fn the_drawings_relationship_id_resolves_through_opc_to_the_generated_chart_part() {
+    let document = document_with(projection(
+        id(3),
+        ChartGroupKind::Bar {
+            direction: BarDirection::Column,
+            grouping: BarGrouping::Clustered,
+            gap_width: 150,
+            overlap: -27,
+        },
+    ));
+    let written = write_document(&document, &BTreeMap::new()).expect("the document writes");
+    let mut package =
+        DocxPackage::open(&written, PackageLimits::default()).expect("the package opens");
+
+    // Link 1: the body's own reference, read out of the written XML rather than
+    // assumed from the model.
+    let body = package
+        .read_part("word/document.xml")
+        .expect("the main document part reads");
+    let referenced = chart_reference_ids(&body);
+    assert_eq!(
+        referenced.len(),
+        1,
+        "link 1: the body must carry exactly one `c:chart r:id`, got {referenced:?}"
+    );
+    let rel_id = &referenced[0];
+
+    // Link 2: OPC resolution of that id, by the package reader's own rules.
+    let resolved = package
+        .main_document_relationships()
+        .iter()
+        .find(|rel| &rel.id == rel_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "link 2: the body references {rel_id}, which `document.xml.rels` does not \
+                 declare — a dangling relationship is exactly what HF-256 was"
+            )
+        })
+        .clone();
+    assert_eq!(
+        resolved.relationship_type, CHART_REL_TYPE,
+        "link 2: the relationship must be a chart relationship"
+    );
+    let part_name = resolved
+        .resolved_part
+        .clone()
+        .expect("link 2: the chart relationship's target must resolve inside the package");
+    assert_eq!(
+        part_name, CHART_PART,
+        "link 2: the relationship must resolve to the part name the model named, so the \
+         part this export wrote and the part the body points at cannot disagree"
+    );
+
+    // Link 3: the part is there and is a chart space.
+    let part = package
+        .read_part(&part_name)
+        .unwrap_or_else(|_| panic!("link 3: {part_name} must be in the package"));
+    assert!(
+        String::from_utf8_lossy(&part).starts_with("<c:chartSpace"),
+        "link 3: the resolved part must be a chart space"
+    );
+
+    // Link 4: the content type, resolved through the package's own override
+    // handling rather than by grepping `[Content_Types].xml`.
+    assert_eq!(
+        package.content_type(&part_name),
+        Some(CHART_CT),
+        "link 4: without the Override the part falls through the `.xml` Default to \
+         application/xml and Word refuses the package"
+    );
+
+    // A chart with no workbook behind it needs no `_rels` of its own, and the
+    // package reader agrees rather than erroring: OPC requires no relationship
+    // for a chart part, and an empty one would be a part that says nothing.
+    // `the_chart_parts_own_rels_is_written_only_when_the_workbook_is_there`
+    // covers the case where there IS one.
+    assert!(
+        package
+            .part_relationships(&part_name)
+            .expect("a chart part with no rels companion resolves to no relationships")
+            .is_empty(),
+        "a minted chart names nothing of its own, so its rels part is absent by design"
+    );
+}
+
+/// Every `r:id` the body's `c:chart` elements carry, in document order.
+///
+/// Reads the written XML rather than the model: the question is what the FILE
+/// says, and a helper that consulted the model could not tell the two apart.
+fn chart_reference_ids(body: &[u8]) -> Vec<String> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut reader = Reader::from_reader(body);
+    let mut buffer = Vec::new();
+    let mut ids = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .expect("the written body is well-formed XML");
+        match &event {
+            Event::Eof => break,
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"chart" =>
+            {
+                for attribute in element.attributes() {
+                    let attribute = attribute.expect("a well-formed attribute");
+                    if attribute.key.as_ref() == b"r:id" {
+                        ids.push(
+                            String::from_utf8(attribute.value.to_vec()).expect("an ASCII r:id"),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    ids
+}
+
+/// A chart whose part the package will NOT contain leaves no reference to it —
+/// neither a relationship nor a `c:chart r:id` (`109` HF-256, the second half).
+///
+/// # The half that was still broken, measured
+///
+/// `a_partial_projection_is_not_regenerated_and_the_refusal_is_reported` asserts
+/// that no part is written and that the refusal is reported, and it passed —
+/// while the package was still corrupt. The relationship was emitted
+/// unconditionally from the node's own `EmbeddedPart` and the body still carried
+/// the `c:chart r:id`, so the saved file advertised a chart part that was not
+/// there: the exact failure HF-256 names, in a narrower population, and the
+/// export reported a clean save of a file Word reports as unreadable.
+///
+/// What a correct save does instead was already settled for pictures by
+/// `available_media` (FID-R-06): drop the body reference with the part and name
+/// the loss. The chart is gone either way; the choice is between a corrupt
+/// package that hides that and a valid one that reports it.
+///
+/// Both routes to the state are driven, because a fix that only looked at
+/// coverage would leave the other:
+///
+/// * a `Partial` projection — the coverage gate refuses to regenerate it;
+/// * a chart object with no projection at all — an imported chart whose part the
+///   reader declined, exported without retention, so there is nothing to
+///   generate from.
+#[test]
+fn a_chart_part_the_package_will_not_contain_leaves_no_reference_behind() {
+    let bar = ChartGroupKind::Bar {
+        direction: BarDirection::Column,
+        grouping: BarGrouping::Clustered,
+        gap_width: 150,
+        overlap: -27,
+    };
+    let mut partial = projection(id(3), bar);
+    partial.coverage = ChartCoverage::Partial;
+    assert!(
+        !partial.coverage.permits_regeneration(),
+        "the coverage gate under test must actually refuse"
+    );
+    // The second route: the same chart object, with no entry in
+    // `Definitions::charts` at all.
+    let unprojected = Document::new(
+        id(1),
+        vec![BlockNode::Paragraph(Paragraph {
+            id: id(2),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::EmbeddedObject(Box::new(chart_object(id(3))))],
+        })],
+        Definitions::default(),
+    )
+    .expect("a chart object with no projection is a valid document");
+    assert!(
+        unprojected.definitions().charts.is_empty(),
+        "the second route is a chart OBJECT with no projection behind it"
+    );
+
+    for (case, document) in [
+        ("a partial projection", document_with(partial)),
+        ("an unprojected chart object", unprojected),
+    ] {
+        let export =
+            export_document(&document, &BTreeMap::new()).expect("the document still writes");
+        let mut package =
+            DocxPackage::open(&export.bytes, PackageLimits::default()).expect("the package opens");
+
+        assert!(
+            package.read_part(CHART_PART).is_err(),
+            "{case}: no part can be written, and this case is only interesting because of that"
+        );
+        // The relationship. `main_document_relationships` is the package's own
+        // resolution, so this is a reader's view and not a substring search.
+        assert!(
+            !package
+                .main_document_relationships()
+                .iter()
+                .any(|rel| rel.relationship_type == CHART_REL_TYPE),
+            "{case}: a relationship whose target is not in the package is the corruption \
+             HF-256 is about"
+        );
+        // The body reference.
+        assert_eq!(
+            chart_reference_ids(
+                &package
+                    .read_part("word/document.xml")
+                    .expect("the main document part reads")
+            ),
+            Vec::<String>::new(),
+            "{case}: the body must not carry a `c:chart r:id` whose relationship was dropped"
+        );
+        // And the loss is named rather than silent, which is the other half of
+        // the same requirement (`AGENTS.md`: no silent data loss).
+        let ids: Vec<&str> = export
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            ids.contains(&"docx.export.embedded_object.missing_part"),
+            "{case}: dropping the object must be reported: {ids:?}"
+        );
+        // The reopened document agrees: the object is gone, not half-written. A
+        // package whose chart reference survived while its part did not would
+        // reopen with an object pointing at nothing.
+        let import = reopen(&export.bytes);
+        assert!(
+            !import.document.body().iter().any(|block| matches!(
+                block,
+                BlockNode::Paragraph(paragraph)
+                    if paragraph
+                        .inlines
+                        .iter()
+                        .any(|inline| matches!(inline, InlineNode::EmbeddedObject(_)))
+            )),
+            "{case}: the reopened document must hold no embedded object at all"
+        );
+    }
+}
+
+/// An ORPHAN projection — one whose anchor was removed — writes no part and
+/// leaves a package that reopens (`109` HF-257, the export consequence).
+///
+/// HF-257 made `Document::validate` tolerate a projection whose anchor is gone,
+/// on the argument that a projection is a derived read index and a stale index
+/// is not corruption. That argument is only sound if nothing downstream acts on
+/// the orphan, so this is the half of it that lives in the exporter: the chart
+/// part writer keys off the objects it finds in the BODY, never off
+/// `Definitions::charts`, so an orphan contributes no part, no relationship and
+/// no content-type override.
+///
+/// The failure this catches is the obvious implementation of the writer —
+/// iterate the projection table — which would write `word/charts/chart7.xml`
+/// with nothing in the document referencing it, growing the file on every save
+/// after a deletion.
+#[test]
+fn an_orphan_projection_writes_no_part_and_the_package_still_reopens() {
+    let mut document = document_with(projection(
+        id(3),
+        ChartGroupKind::Bar {
+            direction: BarDirection::Column,
+            grouping: BarGrouping::Clustered,
+            gap_width: 150,
+            overlap: -27,
+        },
+    ));
+    // A second paragraph, so removing the chart's does not empty the body — an
+    // empty body is a different refusal (`EmptyDocumentBody`) and would mask the
+    // one under test. It did exactly that on the first run of this guard.
+    document.body_mut().push(BlockNode::Paragraph(Paragraph {
+        id: id(9),
+        properties: ParagraphProperties::default().into(),
+        inlines: Vec::new(),
+    }));
+    // The positional removal HF-257 is about: the paragraph holding the chart
+    // goes, and nothing names the object, so the sidecar entry stays behind.
+    document
+        .body_mut()
+        .retain(|block| !matches!(block, BlockNode::Paragraph(paragraph) if paragraph.id == id(2)));
+    assert_eq!(
+        document.definitions().charts.len(),
+        1,
+        "the orphan is the state under test: if the removal evicted it this proves nothing"
+    );
+    document
+        .validate()
+        .expect("HF-257: an orphan projection must not invalidate the document");
+
+    let export =
+        export_document(&document, &BTreeMap::new()).expect("a document with an orphan writes");
+    let mut package =
+        DocxPackage::open(&export.bytes, PackageLimits::default()).expect("the package opens");
+    assert!(
+        package.read_part(CHART_PART).is_err(),
+        "an orphan projection must not produce a part nothing references"
+    );
+    // Not `None`: `content_type` falls back to the `.xml` extension Default for
+    // any name, present or not, so the assertable claim is that no chart
+    // OVERRIDE was declared for a part that is not there.
+    assert_ne!(
+        package.content_type(CHART_PART),
+        Some(CHART_CT),
+        "nor a content-type override for a part that is not there"
+    );
+    assert!(
+        !package
+            .main_document_relationships()
+            .iter()
+            .any(|rel| rel.relationship_type == CHART_REL_TYPE),
+        "nor a chart relationship"
+    );
+    let import = reopen(&export.bytes);
+    assert!(
+        import.document.definitions().charts.is_empty(),
+        "the orphan does not survive a save: it is a stale read index, and reopening \
+         rebuilds the index from the parts that are actually there"
+    );
+}

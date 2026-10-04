@@ -81,7 +81,7 @@ use crate::ExportError;
 use crate::report::{Disposition, DocxExport, Reporter};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding imports here do not collide in one list.
-use crate::chart::{GeneratedChartPart, generate_chart_parts, was_generated};
+use crate::chart::{GeneratedChartPart, generate_chart_parts};
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -475,6 +475,25 @@ struct Ctx<'a> {
     /// bytes are missing is left out of the body instead of pointing at a
     /// relationship for an empty part (FID-R-06).
     media: &'a DefinitionMap<MediaId, MediaReference>,
+    /// The embedded-object (chart / SmartArt / OLE) part names the written
+    /// package will actually contain, when this surface's relationships are
+    /// gated on that — `Some` for `word/document.xml` and `None` everywhere
+    /// else.
+    ///
+    /// Same mechanism as `media` one level up, and for the same reason: an
+    /// object whose part the package will not carry is left out of the body
+    /// instead of pointing at a relationship for a part that is not there
+    /// (FID-R-06 for pictures, `109` HF-256 for charts).
+    ///
+    /// `None` is **not** "everything is available" — it is "this surface does
+    /// not emit embedded-object relationships at all". `collect_embedded_rels`
+    /// walks the BODY only, so a chart in a header already writes a `c:chart
+    /// r:id` that `header{n}.xml.rels` never declares, available part or not.
+    /// Gating on availability cannot fix that; it needs the relationship walk to
+    /// become per-part, which is a different defect with a different population,
+    /// and carrying `None` here is what keeps it visible instead of looking
+    /// handled.
+    embedded_parts: Option<&'a BTreeSet<String>>,
     rels: RelBuilder,
     tokens: IdTokens,
 }
@@ -596,18 +615,18 @@ pub fn export_package(
     // verbatim ids so the body reference and the relationship agree. Collected
     // before the body is written so their ids are reserved against hyperlink
     // minting; the referenced part BYTES come from the side-table (P1F-2).
-    let embedded_rels = collect_embedded_rels(document);
     // The chart parts this export must GENERATE: a chart the editor minted has
     // no retained bytes, so before HF-256 its relationship was emitted beside no
-    // part at all. Computed before the report below so a generated part is not
-    // also reported as missing.
+    // part at all. Computed before the availability set below, because a
+    // generated part is one the package WILL contain.
     let generated_charts = generate_chart_parts(document, retained_parts, &mut reporter)?;
-    report_embedded_object_parts(
-        &embedded_rels,
-        retained_parts,
-        &generated_charts,
-        &mut reporter,
-    );
+    // Which embedded-object parts the package will actually carry. Everything
+    // downstream — the body reference, the `document.xml.rels` entry, the loss
+    // report — derives from this one set, so the three cannot disagree. They
+    // used to: the relationship and the `c:chart r:id` were emitted
+    // unconditionally and the part was simply absent (`109` HF-256).
+    let available_embedded = available_embedded_parts(retained_parts, &generated_charts);
+    let embedded_rels = collect_embedded_rels(document, &available_embedded, &mut reporter);
     // Media relationships are emitted with their verbatim ids so the model
     // round-trips; reserve them (and the embedded-object ids) so hyperlink/part
     // rids do not collide.
@@ -618,7 +637,8 @@ pub fn export_package(
     for (id, _, _, _) in &embedded_rels {
         reserved_rel_ids.insert(id.clone());
     }
-    let (document_xml, rels) = document_xml(document, &available_media, reserved_rel_ids)?;
+    let (document_xml, rels) =
+        document_xml(document, &available_media, &available_embedded, reserved_rel_ids)?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
     // and a document relationship; they appear only when the model has the
@@ -1115,41 +1135,38 @@ fn available_media(
     available
 }
 
-/// Reports an embedded-object (chart / SmartArt / OLE / `altChunk`) part that the
-/// body references but the package does not contain.
+/// The embedded-object (chart / SmartArt / OLE) part names the written package
+/// will actually contain: every part carried through from the opaque side table,
+/// plus every chart part this export generated from a projection (`109`
+/// HF-256).
 ///
-/// The bytes of such a part come only from the opaque side-table, so a semantic
-/// export without retention emits the relationship and the body reference while
-/// the part itself is absent. That is a live relationship pointing at nothing —
-/// worse than the zero-byte media part FID-R-06 is about — and it is *reported*
-/// here rather than repaired, because repairing it means deciding what the body
-/// should say instead of the object, which is FID-R-08's open scope question. The
-/// finding at least makes the state visible to a caller that must warn a user.
+/// This is the embedded-object twin of [`available_media`], and it exists for
+/// the same reason. The body reference, the `document.xml.rels` entry and the
+/// loss report all derive from this one set, so the three cannot contradict each
+/// other. They used to: the relationship and the `c:chart r:id` were written
+/// unconditionally while the part itself could simply be absent.
 ///
-/// A CHART is the one family that can now be repaired instead of reported, so
-/// `generated_charts` is consulted: a part this export wrote from a projection
-/// (HF-256) is not missing, and naming it here would be a report describing a
-/// loss that did not happen.
-fn report_embedded_object_parts(
-    embedded_rels: &[EmbeddedRelEntry],
+/// # Complexity
+///
+/// O(retained parts + generated charts), built once per export. A set rather
+/// than a pair of slices precisely so the per-object question is one probe and
+/// not a scan of both — `SKILL` §8's no-lookup-in-a-loop rule, which is the
+/// shape the `retained_parts.parts.iter().any(..)`-per-relationship test it
+/// replaces had.
+fn available_embedded_parts(
     retained_parts: &RetainedParts,
     generated_charts: &[GeneratedChartPart],
-    reporter: &mut Reporter,
-) {
-    for (_, _, _, part_name) in embedded_rels {
-        if !retained_parts
-            .parts
-            .iter()
-            .any(|part| &part.part_name == part_name)
-            && !was_generated(generated_charts, part_name)
-        {
-            reporter.record_part(
-                "docx.export.embedded_object.missing_part",
-                part_name,
-                Disposition::OmittedNotRetained,
-            );
-        }
-    }
+) -> BTreeSet<String> {
+    retained_parts
+        .parts
+        .iter()
+        .map(|part| part.part_name.clone())
+        .chain(
+            generated_charts
+                .iter()
+                .map(|generated| generated.part_name.clone()),
+        )
+        .collect()
 }
 
 /// The package's parts, in emission order, holding the ZIP-level invariant that
@@ -1803,6 +1820,9 @@ fn notes_xml(
     let mut ctx = Ctx {
         defs,
         media: available_media,
+        // See `Ctx::embedded_parts`: this surface emits no embedded-object
+        // relationships, so there is no availability set to gate on.
+        embedded_parts: None,
         rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs, available_media),
     };
@@ -1849,6 +1869,9 @@ fn comments_xml(
     let mut ctx = Ctx {
         defs,
         media: available_media,
+        // See `Ctx::embedded_parts`: this surface emits no embedded-object
+        // relationships, so there is no availability set to gate on.
+        embedded_parts: None,
         rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs, available_media),
     };
@@ -2033,6 +2056,9 @@ fn header_footer_xml(
     let mut ctx = Ctx {
         defs,
         media: available_media,
+        // See `Ctx::embedded_parts`: this surface emits no embedded-object
+        // relationships, so there is no availability set to gate on.
+        embedded_parts: None,
         rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs, available_media),
     };
@@ -3686,6 +3712,7 @@ fn level_suffix_token(suffix: LevelSuffix) -> &'static str {
 fn document_xml(
     document: &Document,
     available_media: &DefinitionMap<MediaId, MediaReference>,
+    available_embedded: &BTreeSet<String>,
     media_rel_ids: BTreeSet<String>,
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
@@ -3733,6 +3760,7 @@ fn document_xml(
     let mut ctx = Ctx {
         defs: document.definitions(),
         media: available_media,
+        embedded_parts: Some(available_embedded),
         rels: RelBuilder::new(media_rel_ids),
         tokens: IdTokens::new(document.definitions(), available_media),
     };
@@ -5521,7 +5549,6 @@ fn write_drop_cap_frame(
 /// not the relationship's view of it.
 type EmbeddedRelEntry = (String, String, String, String);
 
-/// Collects every embedded-object part relationship in document order, deduped
 /// Every media entry a block list actually references.
 ///
 /// An `/image` relationship belongs in the `_rels` of the part that USES the
@@ -5642,14 +5669,61 @@ fn part_media(
         .collect()
 }
 
-/// by relationship id (the first occurrence wins). Walked before the body is
-/// written so the ids can be reserved against hyperlink minting.
-fn collect_embedded_rels(document: &Document) -> Vec<EmbeddedRelEntry> {
+/// Every embedded-object part relationship the body references, in document
+/// order, deduped by relationship id (the first occurrence wins), and **limited
+/// to parts the written package will contain**.
+///
+/// Walked before the body is written so the ids can be reserved against
+/// hyperlink minting.
+///
+/// # The filter is the fix, not a tidy-up (`109` HF-256)
+///
+/// An embedded part's bytes come from the opaque side table or — for a chart —
+/// from this export's own generator. When neither supplies them, emitting the
+/// relationship anyway produces a live `Relationship` whose `Target` names
+/// nothing, which Word reports as an unreadable file. This used to be *reported*
+/// and left in place, on the argument that repairing it means deciding what the
+/// body should say instead of the object. But that decision was already made,
+/// for pictures, by `available_media`: the body reference goes too, and the loss
+/// is named. A valid package that reports the loss beats a corrupt one that
+/// hides it, and the object is gone either way.
+///
+/// So each dropped part is recorded under
+/// `docx.export.embedded_object.missing_part` — the same id as before, charged
+/// to the same part — and [`write_embedded_object`] drops the matching body
+/// reference through [`Ctx::embedded_parts`].
+///
+/// A diagram names four parts and a partial set is not a diagram, so an object
+/// whose parts are only partly available keeps the relationships it CAN resolve
+/// (naming a part that is really there is not a dangling reference) while the
+/// body drops the object as a whole. Unreferenced relationships to parts that
+/// exist are valid OPC; a relationship to a part that does not exist is not.
+///
+/// # Complexity
+///
+/// O(body) for the walk, plus one set probe per part — not a scan of the
+/// retained table per relationship, which is what it replaces.
+fn collect_embedded_rels(
+    document: &Document,
+    available: &BTreeSet<String>,
+    reporter: &mut Reporter,
+) -> Vec<EmbeddedRelEntry> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for block in document.body() {
         collect_block_embedded_rels(block, &mut out, &mut seen);
     }
+    out.retain(|(_, _, _, part_name)| {
+        if available.contains(part_name) {
+            return true;
+        }
+        reporter.record_part(
+            "docx.export.embedded_object.missing_part",
+            part_name,
+            Disposition::OmittedNotRetained,
+        );
+        false
+    });
     out
 }
 
@@ -7476,11 +7550,36 @@ fn wrap_side_str(side: WrapSide) -> &'static str {
 /// whose `a:graphicData` carries a `c:chart`/`dgm:relIds` reference; an OLE object
 /// is a `w:object` with the (optional) preview shape and the `o:OLEObject`. Every
 /// `r:id` is the part's verbatim relationship id (emitted in `document.xml.rels`).
+///
+/// # Nothing is written for an object whose parts the package will not carry
+///
+/// The twin of the `ctx.media.get(..)` guard an inline drawing takes: an object
+/// is written only when every part it names is one
+/// [`available_embedded_parts`] found, so the body never carries an `r:id` whose
+/// relationship [`collect_embedded_rels`] dropped. Writing the reference anyway
+/// was `109` HF-256's second half — a chart the editor minted whose projection
+/// could not be regenerated still produced a `c:chart r:id` and a relationship
+/// pointing at no part, which is a corrupt package, while the export reported a
+/// clean save.
+///
+/// An object's parts are *all* required rather than just `object.part`: a
+/// diagram names its data, layout, quick-style and colour parts together, and
+/// three of four is not a diagram. The loss is already reported by
+/// `collect_embedded_rels`, charged to the part that is missing.
+///
+/// Complexity: O(parts the object names), one set probe each.
 fn write_embedded_object(
     w: &mut Writer<Cursor<Vec<u8>>>,
     object: &EmbeddedObject,
     ctx: &Ctx,
 ) -> Result<(), ExportError> {
+    if let Some(available) = ctx.embedded_parts
+        && !std::iter::once(&object.part)
+            .chain(object.extra_parts.iter())
+            .all(|part| available.contains(&part.part_name))
+    {
+        return Ok(());
+    }
     match &object.kind {
         EmbeddedKind::Chart => write_graphic_object(w, &object.extent, CHART_URI, |w| {
             let mut chart = start("c:chart");

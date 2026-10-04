@@ -171,17 +171,6 @@ pub(crate) fn generate_chart_parts(
     Ok(generated)
 }
 
-/// Whether `part_name` is a chart part this export generated.
-///
-/// Used by the caller's missing-part reporting so a generated chart is not also
-/// reported as absent — a report that names a loss which did not happen is the
-/// same noise as one that names none of them.
-///
-/// Complexity: O(generated charts), which is at most the document's chart count.
-pub(crate) fn was_generated(generated: &[GeneratedChartPart], part_name: &str) -> bool {
-    generated.iter().any(|part| part.part_name == part_name)
-}
-
 /// The `_rels` companion name for a part, e.g. `word/charts/chart1.xml` ->
 /// `word/charts/_rels/chart1.xml.rels`.
 fn rels_part_name(part_name: &str) -> String {
