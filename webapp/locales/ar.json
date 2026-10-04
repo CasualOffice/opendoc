@@ -1309,6 +1309,7 @@
   "shapes.triangle": "مثلث متساوي الساقين",
   "shapes.upArrow": "سهم لأعلى",
   "shortcutsDialog.close.title": "إغلاق",
+  "shortcutsDialog.closeButton": "إغلاق",
   "shortcutsDialog.closeKeyboardShortcuts.label": "إغلاق اختصارات لوحة المفاتيح",
   "shortcutsDialog.everyCommandHasOne": "كل أمر له اختصار، إضافة إلى حركة المؤشر — مكتوبة بحسب لوحة المفاتيح التي تستخدمها.",
   "shortcutsDialog.keyboardShortcuts": "اختصارات لوحة المفاتيح",

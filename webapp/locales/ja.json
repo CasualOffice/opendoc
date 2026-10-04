@@ -1304,6 +1304,7 @@
   "shapes.triangle": "二等辺三角形",
   "shapes.upArrow": "上矢印",
   "shortcutsDialog.close.title": "閉じる",
+  "shortcutsDialog.closeButton": "閉じる",
   "shortcutsDialog.closeKeyboardShortcuts.label": "キーボード ショートカットを閉じる",
   "shortcutsDialog.everyCommandHasOne": "ショートカットのあるすべてのコマンドとカーソル移動を、お使いのキーボードの表記で示します。",
   "shortcutsDialog.keyboardShortcuts": "キーボード ショートカット",

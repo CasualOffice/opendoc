@@ -12326,7 +12326,7 @@ function toggleShortcutsReference(open) {
     shortcutsModal.close();
   }
 }
-shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
+for (const b of shortcutsDialog?.querySelectorAll("[data-shortcuts-dismiss]") ?? []) b.addEventListener("click", () => toggleShortcutsReference(false));
 
 // ---- About -----------------------------------------------------------------
 const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);

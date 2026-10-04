@@ -1305,6 +1305,7 @@
   "shapes.triangle": "İkizkenar üçgen",
   "shapes.upArrow": "Yukarı ok",
   "shortcutsDialog.close.title": "Kapat",
+  "shortcutsDialog.closeButton": "Kapat",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Klavye kısayollarını kapat",
   "shortcutsDialog.everyCommandHasOne": "Kısayolu olan her komut ve imleç hareketi — kullandığınız klavyeye göre yazılmıştır.",
   "shortcutsDialog.keyboardShortcuts": "Klavye kısayolları",

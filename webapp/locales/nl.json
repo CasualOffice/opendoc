@@ -1305,6 +1305,7 @@
   "shapes.triangle": "Gelijkbenige driehoek",
   "shapes.upArrow": "Pijl omhoog",
   "shortcutsDialog.close.title": "Sluiten",
+  "shortcutsDialog.closeButton": "Sluiten",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Sneltoetsen sluiten",
   "shortcutsDialog.everyCommandHasOne": "Elke opdracht die er een heeft, plus cursorbeweging — geschreven voor het toetsenbord dat u gebruikt.",
   "shortcutsDialog.keyboardShortcuts": "Sneltoetsen",

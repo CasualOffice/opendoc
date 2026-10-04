@@ -1304,6 +1304,7 @@
   "shapes.triangle": "이등변 삼각형",
   "shapes.upArrow": "위쪽 화살표",
   "shortcutsDialog.close.title": "닫기",
+  "shortcutsDialog.closeButton": "닫기",
   "shortcutsDialog.closeKeyboardShortcuts.label": "키보드 단축키 닫기",
   "shortcutsDialog.everyCommandHasOne": "단축키가 있는 모든 명령과 캐럿 이동을, 사용 중인 키보드 표기로 보여 줍니다.",
   "shortcutsDialog.keyboardShortcuts": "바로 가기 키",

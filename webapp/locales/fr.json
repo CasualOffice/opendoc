@@ -1306,6 +1306,7 @@
   "shapes.triangle": "Triangle isocèle",
   "shapes.upArrow": "Flèche haut",
   "shortcutsDialog.close.title": "Fermer",
+  "shortcutsDialog.closeButton": "Fermer",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Fermer les raccourcis clavier",
   "shortcutsDialog.everyCommandHasOne": "Toutes les commandes qui en ont un, plus le déplacement du curseur — écrits pour le clavier que vous utilisez.",
   "shortcutsDialog.keyboardShortcuts": "Raccourcis clavier",

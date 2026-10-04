@@ -1304,6 +1304,7 @@
   "shapes.triangle": "等腰三角形",
   "shapes.upArrow": "上箭头",
   "shortcutsDialog.close.title": "关闭",
+  "shortcutsDialog.closeButton": "关闭",
   "shortcutsDialog.closeKeyboardShortcuts.label": "关闭键盘快捷键",
   "shortcutsDialog.everyCommandHasOne": "所有带快捷键的命令，以及光标移动——按你正在使用的键盘书写。",
   "shortcutsDialog.keyboardShortcuts": "键盘快捷键",

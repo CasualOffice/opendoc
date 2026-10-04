@@ -1304,6 +1304,7 @@
   "shapes.triangle": "Segitiga sama kaki",
   "shapes.upArrow": "Panah atas",
   "shortcutsDialog.close.title": "Tutup",
+  "shortcutsDialog.closeButton": "Tutup",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Tutup pintasan keyboard",
   "shortcutsDialog.everyCommandHasOne": "Setiap perintah yang memilikinya, ditambah gerakan kursor — ditulis sesuai keyboard yang Anda gunakan.",
   "shortcutsDialog.keyboardShortcuts": "Pintasan keyboard",

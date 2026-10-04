@@ -1307,6 +1307,7 @@
   "shapes.triangle": "Рівнобедрений трикутник",
   "shapes.upArrow": "Стрілка вгору",
   "shortcutsDialog.close.title": "Закрити",
+  "shortcutsDialog.closeButton": "Закрити",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Закрити клавіатурні скорочення",
   "shortcutsDialog.everyCommandHasOne": "Усі команди, які їх мають, і переміщення курсора — у позначеннях вашої клавіатури.",
   "shortcutsDialog.keyboardShortcuts": "Сполучення клавіш",

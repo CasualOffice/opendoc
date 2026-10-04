@@ -1305,6 +1305,7 @@
   "shapes.triangle": "Gleichschenkliges Dreieck",
   "shapes.upArrow": "Pfeil nach oben",
   "shortcutsDialog.close.title": "Schließen",
+  "shortcutsDialog.closeButton": "Schließen",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Tastenkombinationen schließen",
   "shortcutsDialog.everyCommandHasOne": "Jeder Befehl, der eine hat, plus Cursorbewegung – geschrieben für die Tastatur, die Sie verwenden.",
   "shortcutsDialog.keyboardShortcuts": "Tastenkombinationen",
