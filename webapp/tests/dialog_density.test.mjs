@@ -59,7 +59,7 @@ function rule(selector) {
 // as long as they liked while the guard reported the family clean (HF-233 D8).
 // A guard whose subject is a list is a guard that only covers what somebody
 // remembered to add to it.
-const SCALE_FAMILY = /^--(?:dlg-|dialog-width-|pnl-)/;
+const SCALE_FAMILY = /^--(?:dlg-|dialog-width-|pnl-|file-page-)/;
 
 test("every token in the dialog and panel scale is actually used, not merely declared", () => {
   const declared = [...new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]))];
