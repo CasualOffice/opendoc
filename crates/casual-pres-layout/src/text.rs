@@ -553,19 +553,22 @@ fn flow_paragraph(
             casual_doc_layout::model::ModelPos::new(paragraph.id, end),
         );
         let layout = shaper.shape_paragraph(&styled, constraints, range);
-        for mut line in layout.lines {
-            // A glyph run's origin is its baseline position measured from the
-            // PARAGRAPH's content top, not from its own line's top (that is what
-            // `compose_paragraph_into` reads), so stacking a second segment under
-            // the first means shifting its baselines by everything above them. A
-            // segment's lines carry runs and nothing else, so the runs are the
-            // whole of the rebase here.
-            for run in &mut line.runs {
-                run.origin.y = run.origin.y + stacked;
-            }
-            stacked = stacked + line.height;
-            lines.push(line);
-        }
+        // A glyph run's origin is its baseline measured from the PARAGRAPH's
+        // content top, not from its own line's top (that is what
+        // `compose_paragraph_into` reads), so stacking a second segment under the
+        // first means shifting its baselines by the height of every segment above
+        // it — and by nothing else. The shaper has already spaced this segment's
+        // own lines apart from each other.
+        //
+        // That distinction is the whole reason this is a call rather than a loop.
+        // The loop that used to be here advanced the cursor by `line.height` once
+        // per line *inside* the segment, so a segment's second line was shifted by
+        // both the shaper's offset and this crate's copy of it and painted a whole
+        // line box too low, over the paragraph below (`docs/109` HF-265). A
+        // segment that held one line — which is every segment of a paragraph
+        // written as `text <a:br/> text` — was unaffected, so the guards passed.
+        // `stack_lines` takes the batch and advances the cursor once, after it.
+        casual_doc_layout::text::stack_lines(&mut lines, layout.lines, &mut stacked);
     }
 
     BlockFragment::Paragraph {

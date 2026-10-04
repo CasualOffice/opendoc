@@ -1185,6 +1185,163 @@ fn a_hard_break_stacks_the_next_line_under_the_first() {
     );
 }
 
+/// Every line of a paragraph sits exactly one line box below the one above it —
+/// the lines the SHAPER wrapped as much as the ones an `a:br` opened.
+///
+/// # Why this is asserted on geometry and why the fixture looks like this
+///
+/// A paragraph's lines are shaped in `a:br`-delimited batches and each batch is
+/// rebased under the ones above it. The rebase used to advance its cursor once per
+/// line *within* a batch, on top of the offset the shaper had already applied, so
+/// a wrapped line painted at `2 × Σ heights` and the paragraph's text ran off the
+/// bottom of its own box and over whatever followed it. The first line of each
+/// batch was still correct.
+///
+/// That is exactly the shape of defect the existing guards could not see:
+/// [`a_hard_break_stacks_the_next_line_under_the_first`] holds for a paragraph
+/// whose every batch is one line, and every other guard here asserts that text
+/// *painted*, which it did — in the wrong place. So this one asserts the advance
+/// itself, over a paragraph built to make every case present at once:
+///
+/// * the first batch WRAPS to three lines, so an intra-batch advance is measured
+///   rather than inferred — one wrapped line is enough to be wrong and three
+///   distinguish "off by one line" from "doubling";
+/// * its first line carries TWO runs of different weight and different size, so a
+///   mixed-property line cannot be the case that is left uncovered, and so the
+///   line box is the largest run's rather than the first's;
+/// * a hard break opens a second batch which ALSO wraps, so the cross-batch base
+///   and the intra-batch advance are both exercised, and a fix that merely moved
+///   the error from one to the other fails here.
+///
+/// The invariant is stated in the shaper's own terms — a line's baseline is the
+/// heights above it plus its own ascent — rather than as a baseline-to-baseline
+/// delta, because the two batches are shaped at different sizes and consecutive
+/// baselines of differing ascent are legitimately not one `height` apart.
+#[test]
+fn every_wrapped_line_of_a_paragraph_advances_by_exactly_its_own_line_box() {
+    // Long enough to wrap three times in the 10-inch fixture box at 18pt, and
+    // prose rather than a repeated word so the shaper has real break opportunities.
+    const FIRST: &str = " to grab the audience's attention right from the start, because \
+         a line that wraps is the only line that can prove the advance is applied \
+         once rather than twice over, and three of them tell a doubling apart from \
+         an off-by-one line box.";
+    const SECOND: &str = "Highlight whatever is new, unusual or surprising about it, at \
+         enough length that this stretch after the hard break also wraps onto a \
+         second line of its own.";
+
+    let canvas = lay_out_slide(
+        &text_deck(
+            ListStyle::default(),
+            ListStyle::default(),
+            TextBody {
+                body_properties: TextBodyProperties::default(),
+                list_style: ListStyle::default(),
+                paragraphs: vec![paragraph(
+                    id(41),
+                    None,
+                    vec![
+                        // Bold and LARGER, so the first line's box is this run's
+                        // and a height recomputed from the wrong run would show.
+                        run(
+                            id(42),
+                            "Choose one approach",
+                            Some(TextCharacterProperties {
+                                size_hundredths_point: Some(2_400),
+                                bold: Some(true),
+                                ..TextCharacterProperties::default()
+                            }),
+                        ),
+                        run(
+                            id(43),
+                            FIRST,
+                            Some(TextCharacterProperties {
+                                size_hundredths_point: Some(1_800),
+                                ..TextCharacterProperties::default()
+                            }),
+                        ),
+                        TextRun::LineBreak(TextLineBreak {
+                            id: id(44),
+                            properties: None,
+                        }),
+                        run(
+                            id(45),
+                            SECOND,
+                            Some(TextCharacterProperties {
+                                size_hundredths_point: Some(1_400),
+                                ..TextCharacterProperties::default()
+                            }),
+                        ),
+                    ],
+                )],
+            },
+        ),
+        0,
+        &shaper(),
+    )
+    .expect("slide 0");
+
+    let block = &blocks_of(only_text_anchor(&canvas))[0];
+    let lines = lines_of(block);
+    // The fixture is only a fixture if it actually wraps. Three from the first
+    // batch, two from the second.
+    assert!(
+        lines.len() >= 5,
+        "the fixture must wrap in both batches to cover the case: got {} lines {:?}",
+        lines.len(),
+        lines
+            .iter()
+            .map(|line| (line.height.raw(), line.ascent.raw()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        lines[0].runs.len(),
+        2,
+        "the first line must carry both runs, or the mixed-property case is not covered: {:?}",
+        lines[0]
+    );
+
+    // The advance itself: line k's baseline is the heights of lines 0..k plus its
+    // own ascent, for EVERY line and every run on it.
+    let mut top = 0_i32;
+    for (index, line) in lines.iter().enumerate() {
+        let expected = top + line.ascent.raw();
+        for (which, glyph_run) in line.runs.iter().enumerate() {
+            assert_eq!(
+                glyph_run.origin.y.raw(),
+                expected,
+                "line {index} run {which}: a line's baseline is the {top} twips of line \
+                 boxes above it plus its own {} twip ascent, so it must be at {expected}, \
+                 not {}. Every line box: {:?}",
+                line.ascent.raw(),
+                glyph_run.origin.y.raw(),
+                lines
+                    .iter()
+                    .map(|line| (line.height.raw(), line.ascent.raw()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        top += line.height.raw();
+    }
+
+    // And the consequence that made this visible: the paragraph's ink stays inside
+    // the box its own reported height claims. The fragment's height is what the
+    // next paragraph stacks under, so a baseline past it IS the collision.
+    let deepest = lines
+        .iter()
+        .flat_map(|line| line.runs.iter().map(|run| run.origin.y.raw()))
+        .max()
+        .expect("the fixture shapes glyphs");
+    let height = match block {
+        BlockFragment::Paragraph { lines, .. } => lines.height().raw(),
+        other => panic!("not a paragraph: {other:?}"),
+    };
+    assert!(
+        deepest < height,
+        "the last baseline ({deepest}) must sit inside the {height} twips the \
+         paragraph charges the flow, or the paragraph below it is painted over"
+    );
+}
+
 /// `a:lnSpc` as a percentage changes the line advance.
 ///
 /// Differential on two decks that differ only in `a:lnSpc`, because the single-

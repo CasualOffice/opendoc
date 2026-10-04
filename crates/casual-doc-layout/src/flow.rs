@@ -83,6 +83,9 @@ use crate::text::{
 };
 // Own line (anti-conflict): the inline picture's `a:xfrm` carrier.
 use crate::text::InlineTransform;
+// Own line (anti-conflict): the one batch-stacking primitive, shared with the
+// slide path so the two cannot derive a line advance differently.
+use crate::text::stack_lines;
 // Own line (anti-conflict): the recorded advance of each resolved tab.
 use crate::text::TabExtent;
 // Own line (anti-conflict): the EMU boundary converter, per `156` §6 row 0.6.
@@ -5725,18 +5728,6 @@ fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
         tab_extents: Vec::new(),
         charts: Vec::new(),
     }
-}
-
-/// Appends `lines` below the ones already in `out`, shifting each line's runs,
-/// images, text boxes, and rules down by `cursor_y` (into paragraph-absolute y) and
-/// advancing `cursor_y` past them.
-fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
-    let base = *cursor_y;
-    for line in &mut lines {
-        line.translate_contents_y(base);
-    }
-    *cursor_y = lines.iter().fold(base, |cursor, line| cursor + line.height);
-    out.extend(lines);
 }
 
 // --- Inline math -----------------------------------------------------------
