@@ -2575,6 +2575,7 @@ mod tests {
                 position: vp,
             },
             wrap: WrapMode::None,
+            wrap_text: None,
             wrap_distances: Default::default(),
             wrap_polygon: None,
             behind_doc: false,

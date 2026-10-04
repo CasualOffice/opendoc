@@ -8770,6 +8770,7 @@ mod tests {
                 position: VerticalPosition::Offset(0),
             },
             wrap: WrapMode::Square,
+            wrap_text: None,
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
@@ -8859,6 +8860,7 @@ mod tests {
                     position: VerticalPosition::Offset(0),
                 },
                 wrap: WrapMode::Square,
+                wrap_text: None,
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: false,
@@ -8979,6 +8981,7 @@ mod tests {
                     position: VerticalPosition::Offset(0),
                 },
                 wrap: WrapMode::Square,
+                wrap_text: None,
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: false,
@@ -15290,6 +15293,7 @@ mod tests {
                 position: VerticalPosition::Offset(0),
             },
             wrap: WrapMode::Square,
+            wrap_text: None,
             wrap_distances: WrapDistances {
                 start_emu: 180 * 635,
                 ..WrapDistances::default()

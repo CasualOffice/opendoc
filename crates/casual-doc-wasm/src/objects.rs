@@ -513,6 +513,7 @@ fn default_float_anchor() -> DrawingAnchor {
             position: VerticalPosition::Offset(0),
         },
         wrap: WrapMode::Square,
+        wrap_text: None,
         wrap_distances: WrapDistances::default(),
         behind_doc: false,
         wrap_polygon: None,

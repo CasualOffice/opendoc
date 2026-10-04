@@ -11164,6 +11164,12 @@ fn build_inlines(
                             },
                         },
                         wrap: draft.wrap,
+                        // ODF carries the wrap side in `style:wrap`
+                        // (`left`/`right`/`biggest`), which
+                        // `resolve_graphic_wrap` already reports as
+                        // `odf.style.graphic-wrap-side`; mapping it onto
+                        // `wrap_text` belongs to the ODF lane.
+                        wrap_text: None,
                         wrap_distances: WrapDistances {
                             top_emu: draft.wrap_top_emu,
                             bottom_emu: draft.wrap_bottom_emu,
@@ -11214,6 +11220,12 @@ fn build_inlines(
                             position: VerticalPosition::Offset(draft.vertical_offset_emu),
                         },
                         wrap: draft.wrap,
+                        // ODF carries the wrap side in `style:wrap`
+                        // (`left`/`right`/`biggest`), which
+                        // `resolve_graphic_wrap` already reports as
+                        // `odf.style.graphic-wrap-side`; mapping it onto
+                        // `wrap_text` belongs to the ODF lane.
+                        wrap_text: None,
                         wrap_distances: WrapDistances::default(),
                         wrap_polygon: None,
                         behind_doc: draft.behind_doc,
@@ -11293,6 +11305,12 @@ fn build_inlines(
                             position: VerticalPosition::Offset(min_y),
                         },
                         wrap: draft.wrap,
+                        // ODF carries the wrap side in `style:wrap`
+                        // (`left`/`right`/`biggest`), which
+                        // `resolve_graphic_wrap` already reports as
+                        // `odf.style.graphic-wrap-side`; mapping it onto
+                        // `wrap_text` belongs to the ODF lane.
+                        wrap_text: None,
                         wrap_distances: WrapDistances::default(),
                         wrap_polygon: None,
                         behind_doc: draft.behind_doc,

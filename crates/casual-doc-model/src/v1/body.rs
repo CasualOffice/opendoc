@@ -437,6 +437,27 @@ pub enum WrapMode {
     None,
 }
 
+/// Which side(s) of a wrapped float the text flows down
+/// (`wp:wrapSquare`/`wp:wrapTight`/`wp:wrapThrough@wrapText`, `ST_WrapText`).
+///
+/// This is not an alignment: it selects which of the two side channels beside the
+/// float remain available to the flow. A float sitting mid-measure with
+/// [`Self::Left`] leaves the whole channel to its right empty, however wide that
+/// channel is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WrapSide {
+    /// Text flows down both channels beside the float (`bothSides`).
+    BothSides,
+    /// Text flows only down the channel to the float's left (`left`); the channel
+    /// to its right stays empty.
+    Left,
+    /// Text flows only down the channel to the float's right (`right`).
+    Right,
+    /// Text flows only down whichever of the two channels is wider (`largest`).
+    Largest,
+}
+
 /// The horizontal component of an anchor: the reference edge and the placement
 /// against it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -492,6 +513,22 @@ pub struct DrawingAnchor {
     pub vertical: AnchorVertical,
     /// How text flows around the drawing (`wp:wrap*`).
     pub wrap: WrapMode,
+    /// Which side(s) the text flows down past the float
+    /// (`wp:wrapSquare`/`wp:wrapTight`/`wp:wrapThrough@wrapText`).
+    ///
+    /// `None` is "the producer omitted the attribute". Word's default for an
+    /// absent `@wrapText` is `bothSides`, and that is what
+    /// [`DrawingAnchor::wrap_side`] resolves `None` to, so a consumer never has to
+    /// re-derive the default. The model keeps the distinction rather than
+    /// normalizing on import because writing `wrapText="bothSides"` into a package
+    /// whose source carried no attribute is a fidelity loss that looks like
+    /// fidelity: the saved file stops being the file that was opened.
+    ///
+    /// Only the three side-wrap elements carry `@wrapText` in the schema, so this
+    /// is meaningless for [`WrapMode::None`] and [`WrapMode::TopAndBottom`] and is
+    /// not written for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_text: Option<WrapSide>,
     /// Text-exclusion distances around the object.
     #[serde(default, skip_serializing_if = "WrapDistances::is_zero")]
     pub wrap_distances: WrapDistances,
@@ -507,6 +544,24 @@ pub struct DrawingAnchor {
     /// i.e. its z-order relative to the flow. Only meaningful for
     /// [`WrapMode::None`].
     pub behind_doc: bool,
+}
+
+impl DrawingAnchor {
+    /// The side(s) text may flow down past this float, with Word's absent-attribute
+    /// default applied: an omitted `@wrapText` resolves to
+    /// [`WrapSide::BothSides`].
+    ///
+    /// Read this rather than [`DrawingAnchor::wrap_text`] when deciding geometry —
+    /// the raw field exists to round-trip the absence, not to be interpreted. The
+    /// answer is only meaningful for [`WrapMode::Square`], [`WrapMode::Tight`] and
+    /// [`WrapMode::Through`]; for the other two wrap modes there are no side
+    /// channels for it to describe.
+    ///
+    /// O(1).
+    #[must_use]
+    pub fn wrap_side(&self) -> WrapSide {
+        self.wrap_text.unwrap_or(WrapSide::BothSides)
+    }
 }
 
 /// An anchored (floating) drawing: an embedded picture placed at an absolute

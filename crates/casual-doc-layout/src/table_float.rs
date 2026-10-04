@@ -374,6 +374,7 @@ fn table_float_anchor(position: &TableFloatPosition) -> DrawingAnchor {
         // `w:tblpPr` has no wrap-mode attribute: a positioned table always wraps
         // text around its rectangle.
         wrap: WrapMode::Square,
+        wrap_text: None,
         wrap_distances: WrapDistances {
             top_emu: twips_to_emu(position.top_from_text_twips.unwrap_or(0)),
             bottom_emu: twips_to_emu(position.bottom_from_text_twips.unwrap_or(0)),

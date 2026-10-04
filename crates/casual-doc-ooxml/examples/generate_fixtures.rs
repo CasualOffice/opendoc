@@ -12,6 +12,7 @@ const CELL_HIT_ROUTING_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="
 const CELL_HIT_ROUTING_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/cell-logo.png"/></Relationships>"#;
 const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 const NOTE_REFERENCES_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rIdEndnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
+const WRAP_TEXT_SIDES_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdWrapSide" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/wrap-side.png"/></Relationships>"#;
 const VISUAL_CONTAINMENT_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdVisualFloat" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/visual-float.png"/></Relationships>"#;
 const PAGINATION_FIDELITY_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#;
 const PAGINATION_FIDELITY_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#;
@@ -121,6 +122,70 @@ const CHART_WORKBOOK: &[u8] = b"PK\x03\x04opendoc-fixture-opaque-workbook";
 /// Note the namespace: it is `w15:collapsed`, **not** the bare `w:collapsed` this
 /// project's own earlier notes guessed.
 const COLLAPSED_HEADINGS_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w15"><w:body><w:p><w:pPr><w:outlineLvl w:val="0"/><w15:collapsed w:val="1"/></w:pPr><w:r><w:t>Folded heading, explicit on</w:t></w:r></w:p><w:p><w:r><w:t>Body under the folded heading.</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="1"/><w15:collapsed/></w:pPr><w:r><w:t>Folded subheading, implied on</w:t></w:r></w:p><w:p><w:r><w:t>Body under the implied-on subheading.</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="0"/><w15:collapsed w:val="0"/></w:pPr><w:r><w:t>Unfolded heading, explicit off</w:t></w:r></w:p><w:p><w:r><w:t>Body under the explicitly unfolded heading.</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Heading with no collapsed state</w:t></w:r></w:p><w:p><w:r><w:t>Body under the heading that says nothing.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>"#;
+/// `wrap-text-sides.docx` — the only fixture in the repository that carries a
+/// non-default `w:wrap@wrapText`, the attribute that says which side(s) of a
+/// float the text may flow down.
+///
+/// # Why it exists
+///
+/// `ST_WrapText` has four values — `bothSides`, `left`, `right`, `largest` — and
+/// on a square/tight/through wrap it selects which of the two side channels
+/// beside the float remain available to the flow. Before this fixture **no
+/// `.docx` in `fixtures/` carried a non-default value**: a scan of all 35
+/// readable packages — 36 existed, the thirty-sixth being
+/// `malformed-truncated.docx`, which is deliberately not a zip — over every XML
+/// part, found exactly one `wrapText` anywhere, the `bothSides` in
+/// `visual-containment.docx`. So nothing in the suite could tell
+/// a reader that honours the attribute from one that ignores it, and nothing
+/// could tell a writer that round-trips it from the one we actually had, which
+/// hard-coded `bothSides` onto every side wrap it emitted.
+///
+/// # What it discriminates
+///
+/// Six floats, each a different state of the same axis, so a reader that
+/// collapses it cannot pass:
+///
+/// 1. `wrapSquare wrapText="bothSides"` — the default, stated explicitly.
+/// 2. `wrapSquare wrapText="left"` — text only in the channel left of the float.
+/// 3. `wrapSquare wrapText="right"` — the mirror, which a reader that confuses
+///    the attribute with an alignment will swap.
+/// 4. `wrapTight wrapText="largest"` — on a *second* element name, so a reader
+///    that only looks at `wrapSquare` loses it, and with the value whose meaning
+///    cannot be reached by comparing midpoints.
+/// 5. `wrapSquare` with **no** `@wrapText` — absent, which Word reads as
+///    `bothSides` but which is a different document from case 1. A writer that
+///    materializes the default here produces a package the author never wrote;
+///    `absent_wrap_text_is_not_written_back` is the guard that refuses it.
+/// 6. `wrapTopAndBottom` — an element the schema gives no `@wrapText`, because
+///    it leaves no side channels. A reader that hunts the attribute by name
+///    anywhere under the anchor would invent a side here.
+/// 7. `wrapSquare wrapText="right"` on an anchored DrawingML **text box**
+///    (`wps:wsp` + `wps:txbx`), not a picture.
+/// 8. `wrapSquare wrapText="left"` on an anchored **group** (`wpg:wgp`).
+///
+/// 7 and 8 exist because the writer reaches `write_wrap` from three different
+/// anchor paths — a picture, a text box, and a group through
+/// `write_wrap_after_extent` — and only one of them ran against a side wrap
+/// before. The owner's report is about dragging *shapes and text boxes*
+/// specifically, so leaving the text-box writer path unexercised would be the
+/// "modelled but not covered" shape this repository keeps paying for. The same
+/// three paths are also how the attribute reaches a float that is not a picture
+/// at all, which is most of what a user drags.
+///
+/// Floats 2, 3 and 4 sit a full inch in from the column edge rather than flush
+/// to a margin. That is the geometry the attribute exists for and the geometry
+/// the old midpoint guess got wrong: with no `@wrapText` to read, layout
+/// compared the float's midpoint to the paragraph's and flipped which channel it
+/// kept on a one-twip crossing, so text jumped sideways as the shape was
+/// dragged past the column centre.
+///
+/// Note the namespace: `@wrapText` is **unqualified**, on a `wp:`-prefixed
+/// element. It is not `w:wrapText` and not `wp:wrapText`; this project has
+/// guessed an attribute namespace wrong before (`w15:collapsed` was noted as
+/// `w:collapsed`), and a local-name parser cannot tell two same-named attributes
+/// in different namespaces apart. This fixture is what pins the spelling to a
+/// package instead of to a comment.
+const WRAP_TEXT_SIDES_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="1" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:align>left</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Both sides"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="wrap-side.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdWrapSide"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text beside the float that says bothSides explicitly.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="2" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapSquare wrapText="left"/><wp:docPr id="2" name="Left only"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="2" name="wrap-side.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdWrapSide"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text that may use only the channel to the left of this mid-measure float.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="3" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapSquare wrapText="right"/><wp:docPr id="3" name="Right only"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="3" name="wrap-side.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdWrapSide"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text that may use only the channel to the right of this mid-measure float.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="4" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapTight wrapText="largest"/><wp:docPr id="4" name="Largest only"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="4" name="wrap-side.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdWrapSide"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text that may use whichever channel beside this tight-wrapped float is wider.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="5" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:align>left</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapSquare/><wp:docPr id="5" name="No wrapText at all"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="5" name="wrap-side.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdWrapSide"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text beside the float whose author wrote no wrapText attribute at all.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="6" simplePos="0" distT="0" distB="0" distL="0" distR="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapTopAndBottom/><wp:docPr id="6" name="No side channels"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="6" name="wrap-side.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdWrapSide"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text pushed above and below a float that has no side channels to select.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="7" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapSquare wrapText="right"/><wp:docPr id="7" name="Right-only text box"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="7" name="Text Box 7"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>A text box, not a picture, whose author chose the right channel.</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text beside the right-only text box.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="8" simplePos="0" distT="0" distB="0" distL="91440" distR="91440"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapSquare wrapText="left"/><wp:docPr id="8" name="Left-only group"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="914400"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="9" name="Rectangle 9"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>Text beside the left-only group.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567"/></w:sectPr></w:body></w:document>"#;
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
 const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -205,6 +270,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         output.join("collapsed-headings.docx"),
         package(&entries_with_document(COLLAPSED_HEADINGS_DOCUMENT))?,
+    )?;
+
+    fs::write(
+        output.join("wrap-text-sides.docx"),
+        package(&wrap_text_sides_entries())?,
     )?;
 
     let mut unknown_safe = minimal_entries();
@@ -506,6 +576,40 @@ fn chart_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
         (
             "word/embeddings/Microsoft_Excel_Worksheet1.xlsx".to_owned(),
             CHART_WORKBOOK.to_vec(),
+            CompressionMethod::Stored,
+        ),
+    ]
+}
+
+/// `wrap-text-sides.docx`: six anchored pictures that between them cover every
+/// `ST_WrapText` value, the absent attribute, and a wrap element the schema gives
+/// no `@wrapText`. One PNG is shared by all six — the picture is scaffolding; the
+/// anchor is the subject.
+fn wrap_text_sides_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            WRAP_TEXT_SIDES_DOCUMENT.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            VISUAL_CONTAINMENT_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            WRAP_TEXT_SIDES_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/media/wrap-side.png".to_owned(),
+            VISUAL_FLOAT_PNG.to_vec(),
             CompressionMethod::Stored,
         ),
     ]

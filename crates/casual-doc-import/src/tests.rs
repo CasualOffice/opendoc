@@ -2991,6 +2991,170 @@ fn anchored_drawing_with_align_and_default_z_order() {
     assert!(drawing.descr.is_none(), "no descr declared");
 }
 
+/// Every `ST_WrapText` value, plus the absence, read onto the right float.
+///
+/// Five floats in one document rather than five documents, because the defect this
+/// attribute fixes is about which of several floats on a page keeps which channel,
+/// and a one-float-per-test shape cannot show a value landing on the wrong anchor.
+///
+/// The absent case is the load-bearing one. `None` must stay `None` all the way
+/// through the model: the exporter keys on it to decide whether to write the
+/// attribute at all, so an importer that normalized it to `Some(BothSides)` here
+/// would make the writer invent markup the author never wrote — and nothing
+/// downstream could tell the difference any more.
+#[test]
+fn anchored_wrap_text_reads_every_side_and_the_absence() {
+    use casual_doc_model::v1::{WrapMode, WrapSide};
+
+    // `bothSides`, `left`, `right`, `largest` (on a second element name), and a
+    // `wrapSquare` with no `@wrapText` at all.
+    let sides = [
+        Some("bothSides"),
+        Some("left"),
+        Some("right"),
+        Some("largest"),
+        None,
+    ];
+    let mut paragraphs = String::new();
+    for (index, side) in sides.iter().enumerate() {
+        let element = match (index, side) {
+            // `largest` rides on `wrapTight`, so an importer that reads the
+            // attribute only off `wrapSquare` fails here rather than passing on a
+            // fixture that never asked the question.
+            (3, Some(value)) => format!(r#"<wp:wrapTight wrapText="{value}"/>"#),
+            (_, Some(value)) => format!(r#"<wp:wrapSquare wrapText="{value}"/>"#),
+            (_, None) => "<wp:wrapSquare/>".to_owned(),
+        };
+        paragraphs.push_str(&format!(
+            r#"<w:p><w:r><w:drawing><wp:anchor simplePos="0"><wp:positionH relativeFrom="column"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/>{element}<wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#
+        ));
+    }
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>{paragraphs}</w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let read: Vec<(WrapMode, Option<WrapSide>, WrapSide)> = (0..sides.len())
+        .map(|index| {
+            let InlineNode::AnchoredDrawing(drawing) = &paragraph(&import, index).inlines[0] else {
+                panic!("paragraph {index} must hold an anchored drawing");
+            };
+            (
+                drawing.anchor.wrap,
+                drawing.anchor.wrap_text,
+                drawing.anchor.wrap_side(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        read,
+        vec![
+            (
+                WrapMode::Square,
+                Some(WrapSide::BothSides),
+                WrapSide::BothSides
+            ),
+            (WrapMode::Square, Some(WrapSide::Left), WrapSide::Left),
+            (WrapMode::Square, Some(WrapSide::Right), WrapSide::Right),
+            (WrapMode::Tight, Some(WrapSide::Largest), WrapSide::Largest),
+            // Absent in the model, resolved to Word's default by the accessor — the
+            // two halves of the one guarantee, asserted together so a change that
+            // collapses them cannot pass.
+            (WrapMode::Square, None, WrapSide::BothSides),
+        ],
+        "the five floats' `(wrap, wrap_text, wrap_side())` triples, in document order"
+    );
+}
+
+/// A `@wrapText` value outside `ST_WrapText` is REPORTED, not guessed at.
+///
+/// Substituting a side would be the worst available outcome: it moves text into a
+/// channel the author did not choose and nothing says so. The disposition matches
+/// `wp:anchor@distT`'s out-of-range values — the element is imported, so it is
+/// `Degraded` with the attribute named, not a dropped element.
+///
+/// `wrapTopAndBottom` carries the same bogus attribute in the same document, and
+/// must produce NO finding: the schema gives that element no `@wrapText`, so there
+/// is nothing there to lose, and a reader that hunts the attribute by name wherever
+/// it appears would both invent a side and raise a false loss.
+#[test]
+fn an_unmappable_wrap_text_is_reported_and_only_where_the_schema_puts_it() {
+    use casual_doc_model::v1::WrapSide;
+
+    let float = |wrap: &str| {
+        format!(
+            r#"<w:p><w:r><w:drawing><wp:anchor simplePos="0"><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/>{wrap}<wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#
+        )
+    };
+    let body = format!(
+        "{}{}",
+        float(r#"<wp:wrapSquare wrapText="bothsides"/>"#),
+        float(r#"<wp:wrapTopAndBottom wrapText="left"/>"#)
+    );
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>{body}</w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::AnchoredDrawing(square) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an anchored drawing");
+    };
+    assert_eq!(
+        square.anchor.wrap_text, None,
+        "an unmappable value must leave the field absent rather than pick a side; \
+         `bothsides` is not `bothSides` and `ST_WrapText` is case-sensitive"
+    );
+    assert_eq!(
+        square.anchor.wrap_side(),
+        WrapSide::BothSides,
+        "and the accessor still answers Word's absent-attribute default"
+    );
+
+    let reported: Vec<(&str, Option<&str>, Option<&str>)> = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.location.attribute.as_deref() == Some("wrapText"))
+        .map(|entry| {
+            (
+                entry.feature.as_str(),
+                entry.location.element.as_deref(),
+                entry.location.attribute.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reported,
+        vec![("wrapSquare/@wrapText", Some("wrapSquare"), Some("wrapText"))],
+        "exactly one finding, charged to the side-wrap element that carried the \
+         unmappable value — and none for the `wrapTopAndBottom`, which has no \
+         `@wrapText` to lose"
+    );
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "wrapSquare/@wrapText")
+        .expect("the unmappable wrapText is reported");
+    assert_eq!(
+        entry.model_outcome(),
+        ModelOutcome::Degraded,
+        "the anchor IS modeled; only this attribute's value was not carried"
+    );
+
+    let InlineNode::AnchoredDrawing(top_bottom) = &paragraph(&import, 1).inlines[0] else {
+        panic!("expected an anchored drawing");
+    };
+    assert_eq!(
+        top_bottom.anchor.wrap_text, None,
+        "a `wrapTopAndBottom` has no side channels, so no side may be read onto it \
+         even when a malformed producer writes the attribute there"
+    );
+}
+
 #[test]
 fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
     use casual_doc_model::v1::{GroupChild, ShapeGeometry};
