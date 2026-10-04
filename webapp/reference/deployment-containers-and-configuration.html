@@ -283,6 +283,7 @@
         <pre><code>docker compose up --build editor</code></pre>
         </div>
         <p class="doc-body"><code>docker compose up</code> with no service starts <strong>only</strong> the editor — one container, and the only one outside a profile (§1a). The relay sits behind a profile precisely so that it cannot be started by accident.</p>
+        <p class="doc-body"><strong>Both images were built and run from the commit that reshaped this file</strong>, because a Dockerfile nobody has built is not a deliverable and the first version of these two shipped unverified. What was observed, on arm64: <code>docker build</code> of both; <code>docker compose up</code> with no profile starting <strong>one</strong> container, reported <code>(healthy)</code>; <code>/editor.html</code> answered <code>200</code> <code>text/html</code>, 298,587 bytes, <code>/healthz</code> <code>200</code>, and <code>/pkg/casual_doc_wasm_bg.wasm</code> <code>200</code> <strong><code>application/wasm</code></strong>, 24,995,252 bytes — the content type §3.3's location block exists to pin, proven in the built image rather than in the config file. The relay half: <code>docker compose run --rm relay create …</code> printing <code>created a room at …</code> and <strong>failing on a second run</strong> with <code>journal i/o: File exists (os error 17)</code>; the room up and <code>(healthy)</code>, logging <code>replayed 0 ordered chunks</code> then <code>relaying … on 0.0.0.0:7070</code>, and accepting a TCP connection on the published port; <code>docker compose run --rm relay inspect …</code> on the stopped room printing exactly the two lines §6.3 publishes; <code>docker run opendoc/relay:dev</code> with no arguments printing the usage line, and <code>serve</code> without a role exiting <strong>2</strong>. The editor's build also ran <code>webapp/build.sh</code> end to end inside the image, so every generator's <code>--check</code> passed against this commit's committed artefacts.</p>
         <h3 class="doc-h3" id="3-2-what-is-in-the-image-and-what-is-not">3.2 What is in the image, and what is not</h3>
         <p class="doc-body">The build is three stages — <code>node</code>, <code>build</code>, <code>runtime</code> — and the last one is <code>nginx:1.29-alpine</code>. There is <strong>no Rust, no cargo, no Node, no Python and no source</strong> in the runtime image: the toolchain exists in the earlier stages and nothing is copied forward but the staged site. (<code>webapp/tests/deployment_contract.test.mjs</code> counts the stages, because the first draft of this paragraph said four.)</p>
         <p class="doc-body">The builder runs <code>webapp/build.sh</code> unmodified. That matters for a reason beyond convenience: the script ends with five generators run in <code>--check</code> mode — the embedding guide, the white-label artefacts, the static pages, the published reference pages and the crawler manifests — so <strong>the image cannot be built from a checkout whose generated files have drifted from their sources.</strong> The same gate CI runs is enforced as a side effect of building the thing.</p>
@@ -299,7 +300,7 @@
         </ol>
         <p class="doc-body">Neither is wired into these images, because choosing for an operator would be choosing between a 2 MB download and a CDN dependency on their behalf. <code>109</code> HF-176 (no CJK or Arabic or Indic face is bundled) and HF-132 (the font-provisioning decision) are the rows this sits behind.</p>
         <h3 class="doc-h3" id="3-5-why-the-relay-is-not-in-this-image-the-decision-with-its-cost-measured">3.5 Why the relay is not in this image — the decision, with its cost measured</h3>
-        <p class="doc-body">The question was asked directly: should the editor and the relay be <strong>one image</strong>, since a single <code>docker run</code> is what a deployer expects? The answer is <strong>no, and here is the arithmetic rather than a preference.</strong> All figures are <code>docker image inspect … .Size</code> and <code>ls -l</code> on this machine, arm64, from the images this document's own files build.</p>
+        <p class="doc-body">The question was asked directly: should the editor and the relay be <strong>one image</strong>, since a single <code>docker run</code> is what a deployer expects? The answer is <strong>no, and here is the arithmetic rather than a preference.</strong> Every figure below is a reading taken on one arm64 machine — <code>docker image inspect --format '{{.Size}}'</code> for the images, which were <strong>built from the files in this commit</strong>, and <code>ls -l</code> for the binary, copied out of the image it ships in.</p>
         <div class="doc-table-scroll">
         <table class="doc-table">
         <thead>
@@ -312,17 +313,17 @@
         <tbody>
         <tr>
         <td><code>opendoc/editor:dev</code></td>
-        <td>141,728,057</td>
+        <td>141,739,417</td>
         <td>the single-user default today</td>
         </tr>
         <tr>
         <td><code>opendoc/relay:dev</code></td>
-        <td>143,592,278</td>
+        <td>144,059,613</td>
         <td>the optional second deployment</td>
         </tr>
         <tr>
         <td><code>opendoc-relay</code>, the binary</td>
-        <td>5,378,792</td>
+        <td>5,706,472</td>
         <td>stripped by <code>[profile.release]</code>, inside that image</td>
         </tr>
         <tr>
@@ -340,8 +341,8 @@
         </div>
         <p class="doc-body"><strong>The binary cannot simply be copied into the editor image.</strong> <code>file</code> reports it as an <code>ELF 64-bit LSB pie executable, ARM aarch64, dynamically linked, interpreter /lib/ld-linux-aarch64.so.1</code>, needing <code>GLIBC_2.28</code>/<code>2.33</code>; the editor's runtime is Alpine, which is musl and has no such loader. So a combined image is one of two concrete changes, and both cost something:</p>
         <ol class="doc-list">
-        <li><strong>Move the editor's runtime to Debian</strong> so the existing binary runs beside nginx: 141,728,057 − 91,758,413 + 255,159,672 + 5,378,792 ≈ <strong>310,508,108 bytes</strong>, against 141,728,057 today. <strong>+119% on the image every single-user deployment pulls</strong>, to carry a server that deployment never starts.</li>
-        <li><strong>Build the relay for musl</strong> so it fits the Alpine runtime. The marginal content cost is then about the binary itself — <strong>≈ +3.8%</strong> on 141,728,057, taking the measured glibc size as the estimate; the musl figure is <strong>not measured here</strong>, and a musl build also adds a target and a linker to the builder stage.</li>
+        <li><strong>Move the editor's runtime to Debian</strong> so the existing binary runs beside nginx: 141,739,417 − 91,758,413 + 255,159,672 + 5,706,472 ≈ <strong>310,847,148 bytes</strong>, against 141,739,417 today. <strong>+119% on the image every single-user deployment pulls</strong>, to carry a server that deployment never starts.</li>
+        <li><strong>Build the relay for musl</strong> so it fits the Alpine runtime. The marginal content cost is then about the binary itself — <strong>≈ +4%</strong> on 141,739,417, taking the measured glibc size as the estimate; the musl figure is <strong>not measured here</strong>, and a musl build also adds a target and a linker to the builder stage.</li>
         </ol>
         <p class="doc-body">Option 2 is cheap enough that <strong>size is not the reason</strong>. The reasons are these:</p>
         <ul class="doc-list">

@@ -139,6 +139,22 @@ docker compose up --build editor
 only one outside a profile (§1a). The relay sits behind a profile precisely so that it
 cannot be started by accident.
 
+**Both images were built and run from the commit that reshaped this file**, because a
+Dockerfile nobody has built is not a deliverable and the first version of these two shipped
+unverified. What was observed, on arm64: `docker build` of both; `docker compose up` with no
+profile starting **one** container, reported `(healthy)`; `/editor.html` answered `200`
+`text/html`, 298,587 bytes, `/healthz` `200`, and `/pkg/casual_doc_wasm_bg.wasm` `200`
+**`application/wasm`**, 24,995,252 bytes — the content type §3.3's location block exists to
+pin, proven in the built image rather than in the config file. The relay half:
+`docker compose run --rm relay create …` printing `created a room at …` and **failing on a
+second run** with `journal i/o: File exists (os error 17)`; the room up and `(healthy)`,
+logging `replayed 0 ordered chunks` then `relaying … on 0.0.0.0:7070`, and accepting a TCP
+connection on the published port; `docker compose run --rm relay inspect …` on the stopped
+room printing exactly the two lines §6.3 publishes; `docker run opendoc/relay:dev` with no
+arguments printing the usage line, and `serve` without a role exiting **2**. The editor's
+build also ran `webapp/build.sh` end to end inside the image, so every generator's
+`--check` passed against this commit's committed artefacts.
+
 ### 3.2 What is in the image, and what is not
 
 The build is three stages — `node`, `build`, `runtime` — and the last one is
@@ -206,14 +222,16 @@ this sits behind.
 
 The question was asked directly: should the editor and the relay be **one image**, since a
 single `docker run` is what a deployer expects? The answer is **no, and here is the
-arithmetic rather than a preference.** All figures are `docker image inspect … .Size` and
-`ls -l` on this machine, arm64, from the images this document's own files build.
+arithmetic rather than a preference.** Every figure below is a reading taken on one arm64
+machine — `docker image inspect --format '{{.Size}}'` for the images, which were **built
+from the files in this commit**, and `ls -l` for the binary, copied out of the image it
+ships in.
 
 | Measured | Bytes | |
 | --- | --- | --- |
-| `opendoc/editor:dev` | 141,728,057 | the single-user default today |
-| `opendoc/relay:dev` | 143,592,278 | the optional second deployment |
-| `opendoc-relay`, the binary | 5,378,792 | stripped by `[profile.release]`, inside that image |
+| `opendoc/editor:dev` | 141,739,417 | the single-user default today |
+| `opendoc/relay:dev` | 144,059,613 | the optional second deployment |
+| `opendoc-relay`, the binary | 5,706,472 | stripped by `[profile.release]`, inside that image |
 | `nginx:1.29-alpine` | 91,758,413 | the editor's runtime base |
 | `nginx:1.29` (bookworm) | 255,159,672 | the nearest Debian base a glibc binary can run on |
 
@@ -224,11 +242,11 @@ which is musl and has no such loader. So a combined image is one of two concrete
 and both cost something:
 
 1. **Move the editor's runtime to Debian** so the existing binary runs beside nginx:
-   141,728,057 − 91,758,413 + 255,159,672 + 5,378,792 ≈ **310,508,108 bytes**, against
-   141,728,057 today. **+119% on the image every single-user deployment pulls**, to carry a
+   141,739,417 − 91,758,413 + 255,159,672 + 5,706,472 ≈ **310,847,148 bytes**, against
+   141,739,417 today. **+119% on the image every single-user deployment pulls**, to carry a
    server that deployment never starts.
 2. **Build the relay for musl** so it fits the Alpine runtime. The marginal content cost
-   is then about the binary itself — **≈ +3.8%** on 141,728,057, taking the measured glibc
+   is then about the binary itself — **≈ +4%** on 141,739,417, taking the measured glibc
    size as the estimate; the musl figure is **not measured here**, and a musl build also
    adds a target and a linker to the builder stage.
 
