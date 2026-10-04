@@ -283,11 +283,13 @@ dependencies = [
 name = "casual-pres-import"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-loss",
  "casual-doc-model",
  "casual-doc-ooxml",
  "casual-doc-package",
  "casual-pres-model",
  "quick-xml",
+ "zip",
 ]
 
 [[package]]
