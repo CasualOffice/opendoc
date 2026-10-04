@@ -6,7 +6,7 @@
 // said the roster "should grow to the rest as they are done", and a roster that
 // has to be grown by hand in a second file does not grow. Keyboard shortcuts
 // was overflowing its own box by 260px at 1280x720 and was not on the short
-// list, so nothing was red (HF-233 D3).
+// list, so nothing was red (HF-265 D3).
 //
 // So the list is here, once, and every guard that asks a question OF EVERY
 // DIALOG imports it:

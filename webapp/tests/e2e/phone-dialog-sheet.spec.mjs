@@ -1,4 +1,4 @@
-// On a phone, every dialog is a full-width bottom sheet (HF-233 D5).
+// On a phone, every dialog is a full-width bottom sheet (HF-265 D5).
 //
 // `body.phone-mode .dialog-overlay` is `place-items: end stretch` and
 // `body.phone-mode .dialog-card` is `width: 100%` — a considered Material 3

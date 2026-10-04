@@ -335,7 +335,7 @@
      `e2e/panel-alignment.spec.mjs` measures the result. */
   --pnl-pad-x: var(--space-4);
   --pnl-pad-y: var(--space-2);
-  /* The File page's reading measure (HF-233 D4). The pane is 960px wide at
+  /* The File page's reading measure (HF-265 D4). The pane is 960px wide at
      1280 and 1600px at 1920 — it is a two-column backstage, not a card — and
      the content inside it was capped at a flat 760px while the HEADING over
      that content was not capped at all. Measured: the heading ran 152px past
@@ -1230,7 +1230,7 @@ input {
  * margin either side of a 1280px laptop, and collapses to two columns and then
  * one on narrower viewports with no breakpoint enumerated — the same mechanism,
  * one number changed. */
-/* `--dialog-width-xwide`, not a fourth raw pixel value (HF-233 D8). 960 was
+/* `--dialog-width-xwide`, not a fourth raw pixel value (HF-265 D8). 960 was
  * already the widest card in the product while `--dialog-width-wide` sat
  * declared and unused — so the scale had a dead rung and this dialog had an
  * unnamed one. Same number, stated in the scale. */
@@ -1449,7 +1449,7 @@ body.modal-open {
  * fields it was written for; it is not right for a cell count, so this dialog
  * states its own. The card then falls to what the ACTION ROW needs, which is
  * the widest thing left in it. */
-/* `body:not(.phone-mode)` is load-bearing, not decoration (HF-233 D5).
+/* `body:not(.phone-mode)` is load-bearing, not decoration (HF-265 D5).
  * `#splitCellDialog .dialog-card` is specificity (1,1,0) and the phone bottom
  * sheet is `body.phone-mode .dialog-card` at (0,2,0), so an ID written here
  * outranked the rung no matter where it was declared — measured on a 390px
@@ -1675,7 +1675,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
  * and `.shortcuts-group` below now wraps its label column rather than
  * overflowing if a translation or a substituted font eats that slack. */
 /* 80ch was the wrong UNIT for this card, and that is why it overflowed
- * (HF-233 D3). Measured at 1280x720 before this change: 80ch resolved to about
+ * (HF-265 D3). Measured at 1280x720 before this change: 80ch resolved to about
  * 560px, which left the body 516px of inner width — and `.shortcuts-body`'s
  * multicol track is `clamp(15rem, 22vw, 17rem)`, i.e. 272px at this viewport,
  * so only ONE column fitted. One column of the whole keymap is 872px of
@@ -1845,7 +1845,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   row-gap: 6px;
   /* One step down from `--space-5`. Eleven groups paid that margin eleven
      times — 220px of the body's height, which is most of the 83px this dialog
-     was over its own box by after the track was corrected (HF-233 D3). At
+     was over its own box by after the track was corrected (HF-265 D3). At
      `--space-4` the uppercase group heading still separates the groups (it is
      the only thing that ever did) and the measured content comes down to 490px
      in a 560px box, which leaves the margin the Linux runner's substituted
@@ -2239,7 +2239,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
      already names, and `header-menu.spec.mjs` asserts this card stays under it.
      It does not bind (the width above caps at 756), so nothing renders
      differently — but the token is now read where the prose already relied on
-     it, which is the point of a scale (HF-233 D8). */
+     it, which is the point of a scale (HF-265 D8). */
   max-inline-size: min(100%, var(--dialog-width-wide));
 }
 
@@ -3112,7 +3112,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two lines of heading. No padding and no `height: auto` of its own any more:
  * `.panel-head` is `min-height` plus `var(--pnl-pad-*)`, so a head that needs
- * to grow simply grows and keeps the shell's inset (HF-233 D2). */
+ * to grow simply grows and keeps the shell's inset (HF-265 D2). */
 .glyph-panel .panel-head {
   min-height: 58px;
   align-items: flex-start;
@@ -5622,7 +5622,7 @@ body.is-format-painting .page-wrap * {
    keep their `aria-label`, which is what `editor-narrow-chrome.spec.mjs` asserts
    for the phone rung, so nothing becomes unreachable or unnameable.
 
-   THE WIDTH CONDITION IS THE FIX (HF-233 D6). This rule carried none: its own
+   THE WIDTH CONDITION IS THE FIX (HF-265 D6). This rule carried none: its own
    comment justifies itself "at 860px", and it was matching at EVERY width, so
    opening Comments on a 1920x1080 screen with 1113px of spare room silently
    took the four rail captions away — measured, the rail went 78px -> 64px and
@@ -6017,7 +6017,7 @@ body.is-format-painting .page-wrap * {
   top: 8px;
   z-index: 6;
   margin: 8px 0 6px;
-  /* The PADDING convention, not the geometry one (HF-233). This column is
+  /* The PADDING convention, not the geometry one (HF-265). This column is
      absolutely positioned and rides the document scroll so each card stays
      pinned to its anchor — that is the model, and it is deliberately outside
      the `.panel-head`/`.panel-body` shell. What it shares with the shell is the
@@ -6329,7 +6329,7 @@ body.is-format-painting .page-wrap * {
   color: var(--ink);
 }
 
-/* The body takes the SAME inset as the head. That is the whole of HF-233 D2:
+/* The body takes the SAME inset as the head. That is the whole of HF-265 D2:
  * a head at 14px over a body at 6px is a panel whose title does not sit over
  * its content, and it was true of all nine panels.
  *
@@ -6378,7 +6378,7 @@ body.is-format-painting .page-wrap * {
 }
 
 /* The 30px `--accent-soft` tile that used to lead this heading is GONE, and
- * that is a deliberate visual change rather than a side effect (HF-233 D1).
+ * that is a deliberate visual change rather than a side effect (HF-265 D1).
  *
  * Measured at 1280x720: it put the panel's title text at x=1004 inside a body
  * whose intro started at 967, its fieldset legends at 986 and its labels at
@@ -9435,7 +9435,7 @@ body:not(.doc-loaded) .drop-title {
   }
 
   /* The narrow rung is stated in the TOKENS, not re-stated on the three
-     chrome bands (HF-233 D7). `.dialog-head`, `.dialog-body` and `.dialog-foot`
+     chrome bands (HF-265 D7). `.dialog-head`, `.dialog-body` and `.dialog-foot`
      each carried `padding: 16px` here, which put every dialog below 620px back
      on hardcoded pixels — and `dialog_density.test.mjs`'s token guard could not
      see it, because its `rule()` helper anchored on `(^|\n)` plus the bare

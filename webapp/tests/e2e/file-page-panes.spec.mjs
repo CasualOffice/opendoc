@@ -132,7 +132,7 @@ test("every pane starts at the same left edge — one measure, not four", async 
   expect(consoleErrors).toEqual([]);
 });
 
-// ...and ENDS at the same right edge (HF-233 D4). The left edge was already
+// ...and ENDS at the same right edge (HF-265 D4). The left edge was already
 // guarded above; the measure was not.
 //
 // The pane is a backstage column, so it is as wide as the window leaves it —
