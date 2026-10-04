@@ -474,6 +474,7 @@ pre
 preedit
 premultiplied
 preprocessing
+pres
 prev
 quantised
 quiesce

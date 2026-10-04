@@ -1,0 +1,415 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! The presentation envelope, its three part kinds, and strict validation.
+
+use std::collections::BTreeSet;
+
+use casual_doc_model::v1::{Definitions, Fill, visit_definition_node_ids};
+use casual_doc_model::{ModelError, NodeId};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    LayoutKind, PlaceholderKind, PresentationError, ShapeTree, SlideId, SlideLayoutId,
+    SlideMasterId, SlideSize,
+};
+
+/// The schema version stamped on a presentation.
+///
+/// Version 1 from the start, not 0: the document model's v0 exists only because a
+/// pre-typed schema shipped before v1 did, and there is no such history to carry
+/// here.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// A slide (`p:sld`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Slide {
+    /// Stable identity.
+    pub id: SlideId,
+    /// The layout this slide inherits through (`p:sld` -> `slideLayout`
+    /// relationship). Required: a slide with no layout has nothing to resolve a
+    /// placeholder against, and PowerPoint always writes one.
+    pub layout: SlideLayoutId,
+    /// The shapes on the slide (`p:cSld/p:spTree`).
+    pub shapes: ShapeTree,
+    /// The author-visible slide name (`p:cSld@name`), when the file carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Whether the slide is skipped during a show (`p:sld@show="0"`).
+    ///
+    /// Retained rather than dropped: a hidden slide is still in the deck, still
+    /// edited, and still exported. Named `hidden` rather than mirroring the
+    /// attribute's `show` polarity so the default is `false` and an absent
+    /// attribute needs no special case.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub hidden: bool,
+    /// The slide background (`p:cSld/p:bg`), overriding the layout's. `None` means
+    /// "inherit", which is the overwhelmingly common case and must stay
+    /// distinguishable from an explicit white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Fill>,
+}
+
+/// A slide layout (`p:sldLayout`): the middle tier of the inheritance cascade.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SlideLayout {
+    /// Stable identity.
+    pub id: SlideLayoutId,
+    /// The master this layout inherits through.
+    pub master: SlideMasterId,
+    /// What the layout is for (`p:sldLayout@type`).
+    #[serde(default)]
+    pub kind: LayoutKind,
+    /// The layout's own shapes and placeholder slots (`p:cSld/p:spTree`).
+    pub shapes: ShapeTree,
+    /// The layout's name as the gallery shows it (`p:cSld@name`), e.g. "Title and
+    /// Content".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The layout background, overriding the master's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Fill>,
+}
+
+/// A slide master (`p:sldMaster`): the root of the inheritance cascade.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SlideMaster {
+    /// Stable identity.
+    pub id: SlideMasterId,
+    /// The master's own shapes and placeholder slots (`p:cSld/p:spTree`).
+    pub shapes: ShapeTree,
+    /// The master's name (`p:cSld@name`), when the file carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The master background, the last fallback in the cascade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Fill>,
+}
+
+/// A normalized presentation.
+///
+/// # Why a separate envelope rather than a `Document` profile
+///
+/// `casual_doc_model::v1::Document` is `body: Vec<BlockNode>` plus `Definitions`: a
+/// linear flow paginated onto a page size that varies per section. A presentation is
+/// an ordered set of fixed-size surfaces, each positioning shapes absolutely and
+/// inheriting through two further tiers. Nothing about the flow is reused, so
+/// expressing a deck as a `Document` would mean a body that is never flowed, a
+/// section that never breaks, and a pagination pass that must be skipped — three
+/// invariants weakened in the type every DOCX caller depends on, for no gain.
+/// ADR-055 settles this: a second document class is **additive**, and
+/// `v1::Document` is not modified.
+///
+/// What *is* shared is everything below the document class: node identity, the
+/// `Definitions` tables, and the whole DrawingML vocabulary. That sharing is by
+/// direct reuse of those types, not by a common supertype.
+///
+/// # What this does not yet model
+///
+/// Stated rather than left ambiguous (`SKILL` §8): notes slides and handout masters,
+/// `a:txBody` slide text (the interim carrier is the document model's `BlockNode`
+/// inside a text box), the `p:txStyles` master text-style tiers, transitions
+/// (`p:transition`), animation (`p:timing`), and slide sections (`p14:sectionLst`).
+/// None of them are forward-incompatible with this envelope; each is additive.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Presentation {
+    schema_version: u32,
+    presentation_id: NodeId,
+    slide_size: SlideSize,
+    masters: Vec<SlideMaster>,
+    layouts: Vec<SlideLayout>,
+    slides: Vec<Slide>,
+    definitions: Definitions,
+}
+
+impl Presentation {
+    /// Builds and validates a presentation from constructed parts.
+    ///
+    /// `slides` is in **presentation order** — the order `p:sldIdLst` gives, which
+    /// is the order the deck is shown in. Reordering a deck is a move within this
+    /// vector and nothing else; there is no separate ordering key to keep in step.
+    ///
+    /// # Complexity
+    ///
+    /// O(presentation), because it validates. Call it at open, at save and at
+    /// export — never per keystroke (`docs/107` §4).
+    pub fn new(
+        presentation_id: NodeId,
+        slide_size: SlideSize,
+        masters: Vec<SlideMaster>,
+        layouts: Vec<SlideLayout>,
+        slides: Vec<Slide>,
+        definitions: Definitions,
+    ) -> Result<Self, PresentationError> {
+        let presentation = Self {
+            schema_version: SCHEMA_VERSION,
+            presentation_id,
+            slide_size,
+            masters,
+            layouts,
+            slides,
+            definitions,
+        };
+        presentation.validate()?;
+        Ok(presentation)
+    }
+
+    /// The schema version (always [`SCHEMA_VERSION`] for a valid presentation).
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// The presentation's own id.
+    #[must_use]
+    pub const fn id(&self) -> NodeId {
+        self.presentation_id
+    }
+
+    /// The surface every slide is laid out on.
+    #[must_use]
+    pub const fn slide_size(&self) -> SlideSize {
+        self.slide_size
+    }
+
+    /// The slides, in presentation order.
+    #[must_use]
+    pub fn slides(&self) -> &[Slide] {
+        &self.slides
+    }
+
+    /// The slides for in-place editing. Callers preserve the invariants, which are
+    /// re-checked on save and export — the same contract as
+    /// `v1::Document::body_mut`.
+    #[must_use]
+    pub fn slides_mut(&mut self) -> &mut Vec<Slide> {
+        &mut self.slides
+    }
+
+    /// The layouts.
+    #[must_use]
+    pub fn layouts(&self) -> &[SlideLayout] {
+        &self.layouts
+    }
+
+    /// The masters.
+    #[must_use]
+    pub fn masters(&self) -> &[SlideMaster] {
+        &self.masters
+    }
+
+    /// The shared definition tables (theme, media, fonts).
+    #[must_use]
+    pub const fn definitions(&self) -> &Definitions {
+        &self.definitions
+    }
+
+    /// Mutable access to the definition tables, for registering infrastructure an
+    /// edit references (a newly embedded image's media entry, say).
+    #[must_use]
+    pub fn definitions_mut(&mut self) -> &mut Definitions {
+        &mut self.definitions
+    }
+
+    /// The layout a slide inherits through.
+    ///
+    /// # Complexity
+    ///
+    /// O(layouts) — a linear scan, bounded by the deck's layout count (a dozen in a
+    /// normal deck, since layouts are shared across slides) and NOT by the slide
+    /// count. Never call it inside a loop over slides without hoisting; see
+    /// [`Presentation::resolve_layout_indices`], which does one pass instead of one
+    /// scan per slide.
+    #[must_use]
+    pub fn layout_of(&self, slide: &Slide) -> Option<&SlideLayout> {
+        self.layouts.iter().find(|layout| layout.id == slide.layout)
+    }
+
+    /// The master a layout inherits through.
+    ///
+    /// # Complexity
+    ///
+    /// O(masters), which is one or two in almost every real deck.
+    #[must_use]
+    pub fn master_of(&self, layout: &SlideLayout) -> Option<&SlideMaster> {
+        self.masters
+            .iter()
+            .find(|master| master.id == layout.master)
+    }
+
+    /// Every slide's layout index, resolved in **one** pass over the layouts.
+    ///
+    /// # Why this exists
+    ///
+    /// [`Presentation::layout_of`] is a linear scan that looks like an accessor at
+    /// the call site, and calling it once per slide is O(slides x layouts) — the
+    /// exact shape that shipped an O(n^2) on the document outline path
+    /// (`SKILL` §8). Anything that walks the whole deck resolves layouts through
+    /// this instead.
+    ///
+    /// # Complexity
+    ///
+    /// O(slides + layouts).
+    #[must_use]
+    pub fn resolve_layout_indices(&self) -> Vec<Option<usize>> {
+        let index: std::collections::BTreeMap<SlideLayoutId, usize> = self
+            .layouts
+            .iter()
+            .enumerate()
+            .map(|(position, layout)| (layout.id, position))
+            .collect();
+        self.slides
+            .iter()
+            .map(|slide| index.get(&slide.layout).copied())
+            .collect()
+    }
+
+    /// The shape filling `slot` for `slide`, honouring the cascade: the slide's own
+    /// shape if it has one, else the layout's, else the master's.
+    ///
+    /// This is the lookup that makes a deck render at all — a title shape on a real
+    /// slide usually carries only its text, and takes its position, size and font
+    /// from the tier above.
+    ///
+    /// # Complexity
+    ///
+    /// O(layouts + masters + shapes-per-tree). The scans are over the layout and
+    /// master lists, not the deck, so this is independent of slide count.
+    #[must_use]
+    pub fn resolve_slot<'a>(
+        &'a self,
+        slide: &'a Slide,
+        kind: PlaceholderKind,
+        index: u32,
+    ) -> Option<&'a crate::SlideNode> {
+        if let Some(node) = slide.shapes.slot(kind, index) {
+            return Some(node);
+        }
+        let layout = self.layout_of(slide)?;
+        if let Some(node) = layout.shapes.slot(kind, index) {
+            return Some(node);
+        }
+        self.master_of(layout)?.shapes.slot(kind, index)
+    }
+
+    /// Visits every node id in the presentation, in a deterministic order.
+    ///
+    /// Shares the document model's definition and drawing traversals rather than
+    /// repeating them, so the two document classes cannot disagree about what a
+    /// node id is.
+    ///
+    /// # Complexity
+    ///
+    /// O(presentation). Not for a keystroke.
+    pub fn visit_node_ids(
+        &self,
+        visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+    ) -> Result<(), ModelError> {
+        visit(self.presentation_id)?;
+        visit_definition_node_ids(&self.definitions, visit)?;
+        for master in &self.masters {
+            visit(master.id.node_id())?;
+            master.shapes.visit_node_ids(visit)?;
+        }
+        for layout in &self.layouts {
+            visit(layout.id.node_id())?;
+            layout.shapes.visit_node_ids(visit)?;
+        }
+        for slide in &self.slides {
+            visit(slide.id.node_id())?;
+            slide.shapes.visit_node_ids(visit)?;
+        }
+        Ok(())
+    }
+
+    /// Every node id the presentation carries.
+    ///
+    /// # Complexity
+    ///
+    /// O(presentation): the same walk [`Presentation::validate`] makes.
+    #[must_use]
+    pub fn node_ids(&self) -> BTreeSet<NodeId> {
+        let mut ids = BTreeSet::new();
+        // The closure never returns `Err`, so the walk is total and the `unwrap_or`
+        // is unreachable rather than a swallowed failure.
+        let () = self
+            .visit_node_ids(&mut |id| {
+                ids.insert(id);
+                Ok(())
+            })
+            .unwrap_or(());
+        ids
+    }
+
+    /// Checks every presentation invariant.
+    ///
+    /// # Complexity
+    ///
+    /// O(presentation): one id walk plus one pass per part. Not for a keystroke.
+    pub fn validate(&self) -> Result<(), PresentationError> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err(PresentationError::UnsupportedSchemaVersion(
+                self.schema_version,
+            ));
+        }
+        if self.slides.is_empty() {
+            return Err(PresentationError::EmptyPresentation);
+        }
+        self.slide_size.validate()?;
+        self.validate_unique_ids()?;
+        self.validate_references()?;
+        for master in &self.masters {
+            master.shapes.validate(&self.definitions)?;
+        }
+        for layout in &self.layouts {
+            layout.shapes.validate(&self.definitions)?;
+        }
+        for slide in &self.slides {
+            slide.shapes.validate(&self.definitions)?;
+        }
+        Ok(())
+    }
+
+    /// Refuses a node id that appears twice anywhere in the presentation.
+    fn validate_unique_ids(&self) -> Result<(), PresentationError> {
+        let mut seen = BTreeSet::new();
+        self.visit_node_ids(&mut |id| {
+            if seen.insert(id) {
+                Ok(())
+            } else {
+                Err(ModelError::DuplicateNodeId(id))
+            }
+        })
+        .map_err(|error| match error {
+            ModelError::DuplicateNodeId(id) => PresentationError::DuplicateNodeId(id),
+            other => PresentationError::Model(other),
+        })
+    }
+
+    /// Refuses a slide whose layout, or a layout whose master, does not resolve.
+    ///
+    /// # Complexity
+    ///
+    /// O(slides + layouts + masters), via two id sets rather than a scan per
+    /// reference.
+    fn validate_references(&self) -> Result<(), PresentationError> {
+        let layouts: BTreeSet<SlideLayoutId> =
+            self.layouts.iter().map(|layout| layout.id).collect();
+        let masters: BTreeSet<SlideMasterId> =
+            self.masters.iter().map(|master| master.id).collect();
+        for layout in &self.layouts {
+            if !masters.contains(&layout.master) {
+                return Err(PresentationError::DanglingMasterRef(layout.id));
+            }
+        }
+        for slide in &self.slides {
+            if !layouts.contains(&slide.layout) {
+                return Err(PresentationError::DanglingLayoutRef(slide.id));
+            }
+        }
+        Ok(())
+    }
+}

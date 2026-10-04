@@ -206,6 +206,7 @@ Details: [what is still missing](docs/99-REMAINING-WORK-AUDIT.md) ·
 | `casual-doc-layout` | Geometry, text shaping (`parley`), style cascade, block/flow galley, pagination, and the backend-neutral display list |
 | `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
 | `casual-doc-wasm` | WebAssembly bridge: the document session, edit operations, and page raster the in-browser editor drives |
+| `casual-pres-model` | Normalized presentation values: slides, layouts, masters, placeholder slots, and the slide surface |
 
 Supporting tooling lives outside `crates/`: `tools/opendoc-benchmark`
 (reproducible workloads and baselines), `tools/opendoc-fidelity` (LibreOffice

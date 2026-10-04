@@ -621,67 +621,7 @@ impl Document {
         visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
     ) -> Result<(), ModelError> {
         visit(self.document_id)?;
-        for (id, _) in self.definitions.styles.iter() {
-            visit(id.node_id())?;
-        }
-        for (id, _) in self.definitions.abstract_numbering.iter() {
-            visit(id.node_id())?;
-        }
-        for (id, _) in self.definitions.numbering.iter() {
-            visit(id.node_id())?;
-        }
-        for section in &self.definitions.sections {
-            visit(section.id.node_id())?;
-        }
-        for (id, _) in self.definitions.media.iter() {
-            visit(id.node_id())?;
-        }
-        for (id, note) in self.definitions.footnotes.iter() {
-            visit(id.node_id())?;
-            for block in &note.blocks {
-                record_block_ids(block, visit)?;
-            }
-        }
-        for (id, note) in self.definitions.endnotes.iter() {
-            visit(id.node_id())?;
-            for block in &note.blocks {
-                record_block_ids(block, visit)?;
-            }
-        }
-        for (id, header_footer) in self
-            .definitions
-            .headers
-            .iter()
-            .chain(self.definitions.footers.iter())
-        {
-            visit(id.node_id())?;
-            for block in &header_footer.blocks {
-                record_block_ids(block, visit)?;
-            }
-        }
-        for (id, comment) in self.definitions.comments.iter() {
-            visit(id.node_id())?;
-            for block in &comment.blocks {
-                record_block_ids(block, visit)?;
-            }
-        }
-        for (id, _) in self.definitions.bookmarks.iter() {
-            visit(id.node_id())?;
-        }
-        // Field ranges were absent from this walk until the identity partition needed it:
-        // a `FieldRangeId` is a `NodeId` the editor mints, so leaving it out both hid a
-        // duplicate from `validate` and would have let a reopened snapshot's generator
-        // reissue one. Enumerating families, not successes (`SKILL` §9.3).
-        for (id, _) in self.definitions.field_ranges.iter() {
-            visit(id.node_id())?;
-        }
-        // A `ChartId` is a `NodeId` the importer mints, so it belongs to this walk
-        // for both of its readings: leaving it out would hide a duplicate from
-        // `validate` and let a reopened snapshot's generator reissue one.
-        // Enumerating families, not successes (`SKILL` §9.3).
-        for (id, _) in self.definitions.charts.iter() {
-            visit(id.node_id())?;
-        }
+        visit_definition_node_ids(&self.definitions, visit)?;
         for block in &self.body {
             record_block_ids(block, visit)?;
         }
@@ -2280,6 +2220,86 @@ fn accumulate_inline_limits(
     Ok(())
 }
 
+/// Visits every node id the definition tables carry, their block content included.
+///
+/// # Why this is public, and why it was extracted
+///
+/// It was the first fifty lines of `Document::visit_node_ids` (private, so named as
+/// plain text rather than linked). A second document
+/// class (ADR-055) needs the same enumeration over the same `Definitions`, and the
+/// one thing that must not happen is two copies of it: this list has already been
+/// wrong twice by omission — field ranges and chart ids were each missing, which
+/// both hid a duplicate from validation and let a reopened snapshot's generator
+/// reissue an id. One list, enumerating families rather than successes
+/// (`SKILL` §9.3), is the only version of this that stays correct.
+///
+/// # Complexity
+///
+/// O(definitions): one visit per node, including the block content of notes,
+/// headers, footers and comments. Not for a keystroke.
+pub fn visit_definition_node_ids(
+    definitions: &Definitions,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
+    for (id, _) in definitions.styles.iter() {
+        visit(id.node_id())?;
+    }
+    for (id, _) in definitions.abstract_numbering.iter() {
+        visit(id.node_id())?;
+    }
+    for (id, _) in definitions.numbering.iter() {
+        visit(id.node_id())?;
+    }
+    for section in &definitions.sections {
+        visit(section.id.node_id())?;
+    }
+    for (id, _) in definitions.media.iter() {
+        visit(id.node_id())?;
+    }
+    for (id, note) in definitions.footnotes.iter() {
+        visit(id.node_id())?;
+        for block in &note.blocks {
+            record_block_ids(block, visit)?;
+        }
+    }
+    for (id, note) in definitions.endnotes.iter() {
+        visit(id.node_id())?;
+        for block in &note.blocks {
+            record_block_ids(block, visit)?;
+        }
+    }
+    for (id, header_footer) in definitions.headers.iter().chain(definitions.footers.iter()) {
+        visit(id.node_id())?;
+        for block in &header_footer.blocks {
+            record_block_ids(block, visit)?;
+        }
+    }
+    for (id, comment) in definitions.comments.iter() {
+        visit(id.node_id())?;
+        for block in &comment.blocks {
+            record_block_ids(block, visit)?;
+        }
+    }
+    for (id, _) in definitions.bookmarks.iter() {
+        visit(id.node_id())?;
+    }
+    // Field ranges were absent from this walk until the identity partition needed it:
+    // a `FieldRangeId` is a `NodeId` the editor mints, so leaving it out both hid a
+    // duplicate from `validate` and would have let a reopened snapshot's generator
+    // reissue one. Enumerating families, not successes (`SKILL` §9.3).
+    for (id, _) in definitions.field_ranges.iter() {
+        visit(id.node_id())?;
+    }
+    // A `ChartId` is a `NodeId` the importer mints, so it belongs to this walk
+    // for both of its readings: leaving it out would hide a duplicate from
+    // `validate` and let a reopened snapshot's generator reissue one.
+    // Enumerating families, not successes (`SKILL` §9.3).
+    for (id, _) in definitions.charts.iter() {
+        visit(id.node_id())?;
+    }
+    Ok(())
+}
+
 /// Records a block's ids, recursing through table rows, cells, and nested blocks.
 fn record_block_ids(
     block: &BlockNode,
@@ -2367,22 +2387,76 @@ fn record_group_ids(
     visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
 ) -> Result<(), ModelError> {
     for child in &group.children {
-        match child {
-            GroupChild::Picture(picture) => visit(picture.id)?,
-            GroupChild::TextBox(text_box) => {
-                visit(text_box.id)?;
-                for block in &text_box.blocks {
-                    record_block_ids(block, visit)?;
-                }
+        record_group_child_ids(child, visit)?;
+    }
+    Ok(())
+}
+
+/// Records one group child's own id and its descendants' ids.
+///
+/// Factored out of [`record_group_ids`] so there is **one** traversal of a
+/// DrawingML child rather than one per document class: a slide's shape tree is the
+/// same `GroupChild` vocabulary rooted differently, and it reaches this through
+/// [`visit_group_child_node_ids`]. Two copies of this walk would diverge the first
+/// time a child kind gained nested content.
+fn record_group_child_ids(
+    child: &GroupChild,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
+    match child {
+        GroupChild::Picture(picture) => visit(picture.id)?,
+        GroupChild::TextBox(text_box) => {
+            visit(text_box.id)?;
+            for block in &text_box.blocks {
+                record_block_ids(block, visit)?;
             }
-            GroupChild::Shape(shape) => visit(shape.id)?,
-            GroupChild::Group(nested) => {
-                visit(nested.id)?;
-                record_group_ids(nested, visit)?;
-            }
+        }
+        GroupChild::Shape(shape) => visit(shape.id)?,
+        GroupChild::Group(nested) => {
+            visit(nested.id)?;
+            record_group_ids(nested, visit)?;
         }
     }
     Ok(())
+}
+
+/// Visits every node id carried by one block and its descendants, in document
+/// order, stopping at the first error the visitor returns.
+///
+/// # Why this is public
+///
+/// The duplicate-id rule is a property of the **id space**, not of the document
+/// class that happens to own a node, and `NodeId` is shared. A second document
+/// class (ADR-055) therefore needs this exact walk, and a second copy of it would
+/// be wrong the first time a block kind gained nested content — which is how a
+/// construct becomes invisible to validation while every test stays green.
+/// Published in place rather than extracted into a new crate, per ADR-055.
+///
+/// # Complexity
+///
+/// O(block): one visit per node in the subtree. Not for a keystroke.
+pub fn visit_block_node_ids(
+    block: &BlockNode,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
+    record_block_ids(block, visit)
+}
+
+/// Visits one DrawingML group child's own id and its descendants' ids.
+///
+/// The companion to [`visit_block_node_ids`] for drawing content, and public for
+/// the same reason: a slide's shape tree is a list of these children rooted in a
+/// `p:spTree` instead of a `wpg:wgp`, so it must share this traversal rather than
+/// reimplement it.
+///
+/// # Complexity
+///
+/// O(child): one visit per node in the subtree.
+pub fn visit_group_child_node_ids(
+    child: &GroupChild,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
+    record_group_child_ids(child, visit)
 }
 
 /// Accounts a group's block/scalar content (its text boxes' blocks, recursively
