@@ -115,6 +115,7 @@
 pub mod align;
 pub mod compare;
 pub mod hash;
+pub mod identity;
 pub mod inline;
 pub mod job;
 pub mod projection;
@@ -124,6 +125,7 @@ pub mod record;
 mod tests;
 
 pub use compare::MediaDigests;
+pub use identity::{CONTENT_IDENTITY_SCHEMA, content_digest, content_digest_hex};
 pub use job::{DiffJob, DiffSides, Progress};
 pub use record::{
     Confidence, DIFF_SCHEMA, DiffAnchor, DiffChange, DiffFamily, DiffFinding, DiffKind,

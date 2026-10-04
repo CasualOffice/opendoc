@@ -33,6 +33,7 @@ import {
   historyUnavailableReason,
   retentionSummary,
   versionKindLabel,
+  versionRowDeltas,
   versionRowText,
 } from "../src/version_policy.mjs";
 
@@ -299,4 +300,40 @@ test("an absent state object is unavailable, not available", () => {
   // an empty string that reads as "everything is fine".
   assert.ok(historyUnavailableReason(undefined).length > 12);
   assert.ok(historyUnavailableReason({}).length > 12);
+});
+
+test("a twin is named by CONTENT, so two byte layouts of one document still read as twins", () => {
+  // THE FAMILY, NOT THE CASE. `skipIfUnchanged` now compares the document rather
+  // than the source bytes, and this label had the same defect: keyed on
+  // `checkpointId`, it could not see two rows holding one document in two byte
+  // layouts — which the `KEEP_UNCHANGED` reasons (Name this version, an explicit
+  // manual capture) can still legitimately write.
+  //
+  // THE CONDITION IS CREATED: different `checkpointId`s, one `contentId`. A
+  // byte-keyed implementation reports no twin here, which is the assertion.
+  const deltas = versionRowDeltas([
+    { versionId: "ver-2", createdAt: 2000, contentId: "cid1-aaaa", checkpointId: "sha256-two" },
+    { versionId: "ver-1", createdAt: 1000, contentId: "cid1-aaaa", checkpointId: "sha256-one", name: "first" },
+  ]);
+  assert.equal(
+    deltas.get("ver-2").sameAs,
+    "first",
+    "the later row names the earlier one holding the same document",
+  );
+  assert.equal(deltas.get("ver-1").sameAs, "", "and the earlier row is nobody's twin");
+
+  // NON-VACUITY: two different documents are not twins however the rows are
+  // shaped, so this is not a function that says "twin" to everything.
+  const distinct = versionRowDeltas([
+    { versionId: "ver-2", createdAt: 2000, contentId: "cid1-bbbb", checkpointId: "sha256-two" },
+    { versionId: "ver-1", createdAt: 1000, contentId: "cid1-aaaa", checkpointId: "sha256-one", name: "first" },
+  ]);
+  assert.equal(distinct.get("ver-2").sameAs, "");
+
+  // And the byte fallback still works for rows written before the digest existed.
+  const legacy = versionRowDeltas([
+    { versionId: "ver-2", createdAt: 2000, checkpointId: "sha256-one" },
+    { versionId: "ver-1", createdAt: 1000, checkpointId: "sha256-one", name: "first" },
+  ]);
+  assert.equal(legacy.get("ver-2").sameAs, "first");
 });
