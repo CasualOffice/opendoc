@@ -148,3 +148,132 @@ loosening the comparison: physical `w:left`/`w:right` edges are written as logic
 are written as their canonical `dark1`/`light1`/`dark2`/`light2`. Both are pre-existing and
 documented — the first in `160`'s own spelling class, the second on
 `casual_doc_import::properties::theme_color_ref`.
+
+## 2. `wrap_sides` ignored its argument, and the guard that could not see it
+
+`casual-doc-layout::wrap_side::wrap_sides` took a `&DrawingAnchor` and returned
+`WrapSides::BothSides` unconditionally, so `DrawingAnchor::wrap_text` was discarded at
+layout for **every** float in every document — including the DrawingML path where #738 and
+#739 had already landed import, export and the model field. The fix is one `From` impl and
+a one-line body, and the three previously-unreachable `WrapSides` variants lost their
+`dead_code` allow because they are constructed now.
+
+The arithmetic that consumes the value needed no change. That is the part worth recording:
+
+> `wrap_side.rs`'s own `authored_sides_override_the_geometry` hands `band_exclusion` a
+> `WrapSides` directly and asserts it is honoured. It passes whether or not the engine ever
+> supplies one.
+
+A guard on the exact code path that was broken, which could not fail — `SKILL` §4's case,
+in a module whose docs are otherwise unusually careful. The replacement asks the question at
+the altitude where the invariant lives: lay the **same** mid-column float out twice, once
+with `wrapText` absent and once with `right`, and assert the text keeps opposite gaps. The
+float sits three fifths across the measure so the leading gap is the wider one; `bothSides`
+keeps it, and an authored `right` therefore asks for the gap geometry would not have chosen.
+Under the stub both cases read identically, which is what makes the two distinguishable.
+
+**Still approximate, and still documented rather than hidden:** `bothSides` is resolved as
+`largest`. Our line geometry is one measure with a leading and a trailing inset
+(`text::InlineFloatSpec`), so a hole in the middle of a line is not representable and text
+in the narrower gap is lost. Making it exact needs segmented lines — the same primitive a
+real `wp:wrapPolygon` needs (`109` FID-L-12).
+
+## 3. `pic:cNvPr@descr` — the verdict `160` gave it does not hold
+
+`160` §3.2 graded this "Real. **Picture alt text** — an accessibility loss", two of
+nineteen documents. Checked before changing anything, which is what the queue asked for, and
+the grade is wrong.
+
+The importer has two `cNvPr` arms. The first captures `@descr` for an open **group child**
+shape. The second — a top-level picture or lone shape — carried a comment saying its
+`@descr` "is taken from `wp:docPr` above it", i.e. the same field read from a different
+element, deliberately. The question is therefore not whether the attribute is read but
+whether `wp:docPr@descr` is reliably there.
+
+Measured per `w:drawing` over the nineteen documents:
+
+| Shape | Drawings |
+| --- | ---: |
+| Total drawings | 64 |
+| `wp:docPr@descr` only | 12 |
+| Both `wp:docPr@descr` and a non-empty `pic:cNvPr@descr` | 5 |
+| …of which the two values are **identical** | 5 |
+| …of which the two values **disagree** | 0 |
+| `pic:cNvPr@descr` alone, no `wp:docPr@descr` | **0** |
+
+So no alt text was lost: it arrived through the element the importer already read, and the
+remaining three of the eight `pic:cNvPr@descr` attributes in the corpus are `descr=""`,
+which is an absent alt text rather than a lost one (the same false-loss class the `wp:docPr`
+arm already fixed).
+
+What landed anyway is a **fallback**, not a model change and not a second source: the
+picture-level `@descr` is taken only when the drawing-level one gave nothing. A producer
+that writes only `pic:cNvPr@descr` is schema-valid, we had no reader for that shape, and the
+whole cost is one condition. `wp:docPr` precedes `pic:nvPicPr` in both `CT_Inline` and
+`CT_Anchor`, so the preferred source has always been read by the time the fallback runs —
+which makes "only when nothing was captured" an ordering-safe test rather than a race. One
+`capture_drawing_descr` now serves both elements, because two copies of the length and
+emptiness rules are two places for them to diverge.
+
+Three guards, each driven red by its own mutation: the fallback (`left: None` against
+`Some("A picture-level logo")` with the arm disabled), the precedence of `wp:docPr` over the
+duplicate (`left: Some("The picture-level duplicate")` with the captured-already test
+disabled), and the no-false-loss rule for `descr=""`. The precedence guard pins an ordering
+**nothing in the corpus exercises**, because the two values always agree there — which is
+exactly when a precedence inverts without anybody noticing.
+
+## 4. The two booleans: one modelled, one reported, and why they differ
+
+`160` §3.2 listed `w:style@w:customStyle` (4 of 19) and `w:hyperlink@w:history` (6 of 19) as
+"a boolean each; model or report". They do not get the same answer, and the reason is
+structural rather than a preference.
+
+Re-measured here, both higher than `160` recorded:
+
+| Attribute | Occurrences | Documents | Values seen |
+| --- | ---: | ---: | --- |
+| `w:style@w:customStyle` | 274 of 1,923 `w:style` | 12 of 19 | `"1"` only |
+| `w:hyperlink@w:history` | 54 of 74 `w:hyperlink` | 6 of 19 | `"1"` only |
+
+**`@w:customStyle` is modelled** as `Style::custom_style`. Reporting 274 occurrences of a
+construct this common is the report-noise class HF-174 is about, and the flag is not
+cosmetic: it is how a consumer separates the author's style from a built-in whose id
+collides, and how Word decides which styles a template re-attach may replace. Dropping it
+changes what a later edit in Word does to the document.
+
+**`@w:history` is reported.** Adding a field to `v1::Hyperlink` breaks every struct literal
+of it — Rust has no source-compatible way to add one (`SKILL` §5a) — and there are 37 across
+`casual-doc-edit`, `casual-doc-transaction` and `casual-doc-wasm`, three crates other lanes
+own. So the silence is closed and the model half waits for a lane that owns those files.
+This does not reintroduce report noise: `Reporter::report_attribute` keys a finding by
+`(feature, kind)` and counts occurrences, so 54 occurrences are **one** entry reading
+`hyperlink/@history`.
+
+It is reported on **presence** rather than on a non-default value, which is a deliberate
+over-report with its reason recorded: the `ST_OnOff` default for the attribute is not
+verified from the specification here, every value measured is `"1"`, and the writer emits
+the attribute in neither case — so one of the two values is genuinely lost whichever way the
+default goes, and over-reporting by one feature entry is the cheaper error.
+
+### 4.1 Two things the guard caught that review would not have
+
+- **`is_true` is for an element, not an attribute.** `custom_style:
+  is_true(attribute_value(element, b"customStyle"))` marked **every built-in style as the
+  author's**, because `is_true(None)` is `true`: it is the CT_OnOff *element* helper, where
+  the element's presence is the assertion. An absent attribute asserts nothing. The reader
+  now goes through one `on_off_attr`, which `style_default_attr` was already doing by hand,
+  and the guard failed on arrival with `{"Author Voice": true, "heading 1": true}`.
+- **A guard keyed on `w:styleId` tests the id allocator, not the flag.** The exporter derives
+  `w:styleId` from the model's internal id, so the written token is a number and never the
+  source's string; the first draft failed with
+  `left: [("18446744073709551618", Some("1")), …]`. The round-trip guard is keyed on the
+  style's `w:name`, which survives. This is the "pinned to the circumstance rather than the
+  guarantee" shape.
+
+### 4.2 The open remainder
+
+`casual-doc-wasm`'s create-style-from-selection path mints a `Style` with
+`custom_style: false`. A style the user just authored **is** custom, so that value is wrong —
+the `Default::default()` reflex `SKILL` §5a warns about, met in a crate this lane must not
+touch. Recorded as the open half of `109` FID-R-11 rather than fixed from outside the lane
+that owns the file. It is one line.

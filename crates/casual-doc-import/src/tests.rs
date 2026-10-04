@@ -10912,3 +10912,89 @@ fn a_malformed_chart_part_does_not_fail_the_package_import() {
         "and so must the bytes"
     );
 }
+
+/// A drawing whose alt text lives ONLY on `pic:cNvPr@descr` keeps it.
+///
+/// `160` §3.2 ranked `pic:cNvPr@descr` as a real accessibility loss in two
+/// of nineteen documents, and the measurement behind this test says that
+/// verdict does not hold: of the owner's 64 drawings, five carry a non-empty
+/// `pic:cNvPr@descr` and **all five carry an identical `wp:docPr@descr`**, which
+/// the importer was already reading. No drawing in that corpus carries the
+/// picture-level one alone, and none has the two disagreeing. So nothing was
+/// being lost there; the alt text arrived through the other element. `docs/161`
+/// §3 carries the correction.
+///
+/// The fallback exists anyway, and this is the shape no corpus document has: a
+/// `wp:docPr` with no `@descr` at all and the alt text on the picture. That is
+/// schema-valid, we had no reader for it, and the whole cost is one condition.
+#[test]
+fn picture_level_alt_text_is_read_when_the_drawing_level_one_is_absent() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="2" name="Pic" descr="A picture-level logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(
+        drawing.descr.as_deref(),
+        Some("A picture-level logo"),
+        "the only alt text in the drawing is on `pic:cNvPr`, so that is the alt text"
+    );
+}
+
+/// `wp:docPr@descr` wins when both elements carry one, and the precedence is
+/// stated rather than incidental.
+///
+/// `wp:docPr` is the element Word's own alt-text dialog reads and writes, so it
+/// is the author's current answer; `pic:cNvPr@descr` is a lower-precedence
+/// duplicate. The two agree in every corpus document that has both, so this
+/// pins an ordering nothing real exercises — which is exactly when a precedence
+/// silently inverts.
+#[test]
+fn drawing_level_alt_text_outranks_the_picture_level_duplicate() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr="The drawing-level answer"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="2" name="Pic" descr="The picture-level duplicate"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(
+        drawing.descr.as_deref(),
+        Some("The drawing-level answer"),
+        "`wp:docPr@descr` is what Word's alt-text UI writes, so it outranks the \
+         picture-level duplicate"
+    );
+}
+
+/// An empty `pic:cNvPr@descr` is still an ABSENT alt text, not a lost one — the
+/// fallback must not reintroduce the false-loss class the `wp:docPr` arm fixed.
+///
+/// Three of the eight `pic:cNvPr@descr` attributes in the owner's corpus are
+/// `descr=""`, so this is the common shape and not a hypothetical.
+#[test]
+fn an_empty_picture_level_alt_text_reports_nothing() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="2" name="Pic" descr=""/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.descr, None, "an empty alt text is no alt text");
+    assert!(
+        !features(&import).contains(&"drawing"),
+        "nothing was lost, so nothing should be reported: {:?}",
+        features(&import),
+    );
+}

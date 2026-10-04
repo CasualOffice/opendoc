@@ -12474,6 +12474,7 @@ impl WasmDocument {
             table_row: None,
             table_cell: None,
             conditional: Vec::new(),
+            custom_style: false,
         };
         // One atomic action: create the style, then point every selected paragraph
         // at it. Undo (inverses applied in reverse) first restores the paragraphs'
@@ -28519,6 +28520,7 @@ mod tests {
                 table_row: None,
                 table_cell: None,
                 conditional: Vec::new(),
+                custom_style: false,
             },
         );
         doc.set_paragraph_style(&node, 0, &node, len, "Pleading caption")
@@ -32939,6 +32941,7 @@ mod tests {
                 table_row: None,
                 table_cell: None,
                 conditional: Vec::new(),
+                custom_style: false,
             },
         );
         Document::new(
@@ -35521,6 +35524,7 @@ mod tests {
                 table_row: None,
                 table_cell: None,
                 conditional: Vec::new(),
+                custom_style: false,
             },
         );
         let document = Document::new(

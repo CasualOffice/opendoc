@@ -127,6 +127,7 @@ struct RawStyle {
     style_id: String,
     kind: Option<StyleKind>,
     is_default: bool,
+    custom_style: bool,
     name: Option<String>,
     aliases: Option<String>,
     based_on: Option<String>,
@@ -233,6 +234,7 @@ pub(crate) fn parse(
             Style {
                 kind,
                 is_default: style.is_default,
+                custom_style: style.custom_style,
                 name: style.name,
                 aliases: style.aliases,
                 based_on,
@@ -553,6 +555,18 @@ fn empty_style(element: &BytesStart<'_>) -> RawStyle {
             .as_deref()
             .and_then(style_kind_from),
         is_default: style_default_attr(element),
+        // `@w:customStyle` — the author's style rather than an application
+        // built-in.
+        //
+        // Through [`on_off_attr`], NOT through `is_true` directly: `is_true` is
+        // the CT_OnOff ELEMENT helper, where the element's presence is the
+        // assertion and so `None` means on. An absent ATTRIBUTE asserts nothing
+        // and must be `false`. Writing `is_true(attribute_value(..))` here
+        // marked every built-in style as the author's, and the guard
+        // `a_custom_style_is_marked_custom_in_the_model_and_a_builtin_is_not`
+        // caught it on arrival, which is the one reason that mistake is worth
+        // recording instead of just fixing.
+        custom_style: on_off_attr(element, b"customStyle"),
         name: None,
         aliases: None,
         based_on: None,
@@ -575,7 +589,18 @@ fn empty_style(element: &BytesStart<'_>) -> RawStyle {
 }
 
 fn style_default_attr(element: &BytesStart<'_>) -> bool {
-    attribute_value(element, b"default")
+    on_off_attr(element, b"default")
+}
+
+/// One `ST_OnOff` **attribute** of `element`: absent is `false`, and a present
+/// value is read with the usual `0`/`false`/`off` spellings.
+///
+/// Distinct from [`is_true`], which is for a CT_OnOff ELEMENT, where presence is
+/// itself the assertion and so an absent `@w:val` means on. Handing an absent
+/// attribute to `is_true` therefore reads as `true`, which is how
+/// `@w:customStyle` briefly marked every built-in style as the author's.
+fn on_off_attr(element: &BytesStart<'_>, name: &[u8]) -> bool {
+    attribute_value(element, name)
         .as_deref()
         .map(|value| is_true(Some(value)))
         .unwrap_or(false)
