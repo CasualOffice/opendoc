@@ -308,6 +308,7 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.dropCap", "mutate"),
   exact("insert.image", "mutate"),
   exact("insert.shape", "mutate"),
+  exact("insert.chart", "mutate"),
   exact("insert.textbox", "mutate"),
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
