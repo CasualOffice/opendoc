@@ -124,13 +124,86 @@ SCOWL (Spell Checker Oriented Word Lists)
   webapp/dict/LICENSE.SCOWL.txt
 
 --------------------------------------------------------------------------------
-4. Fonts fetched at runtime, which this repository does not redistribute
+4. Document fonts self-hosted and served from this origin
 --------------------------------------------------------------------------------
 
-The browser editor can load additional faces over the network at runtime --
-Google Fonts, Noto and Noto CJK families, pinned by commit and fetched from a CDN
-by `webapp/src/web_fonts.mjs`. Those files are not committed here and are not
-redistributed by this repository, so they carry no attribution above; they are
-distributed by their own publishers under their own licences, and each arrives
-with the licence records in its own `name` table. A host that would rather serve
-them itself supplies them through the font-registry seam instead.
+These faces lay out DOCUMENT text, not the chrome. They are not embedded in the
+engine: `webapp/src/web_fonts.mjs` fetches them from this repository's own origin
+at runtime and registers them through the font-registry seam. They are committed
+here, so this repository redistributes them. Each is redistributed unmodified,
+and the licence claim is verified from the file's own `name` table (IDs 13/14).
+Provenance, byte counts and SHA-256 digests are in
+`webapp/assets/fonts/script/README.md`.
+
+Roboto (variable, OFL build)
+  webapp/assets/fonts/script/Roboto-Variable.ttf, Roboto-Italic-Variable.ttf
+  Copyright 2011 The Roboto Project Authors
+  (https://github.com/googlefonts/roboto-classic)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-Roboto.txt
+  NOTE: this is the OFL-licensed Roboto that Google Fonts now publishes. The
+  Roboto embedded in the layout engine (section 1) is the older Apache-2.0
+  build and a different file; the two licences must not be conflated.
+
+Noto Sans
+  webapp/assets/fonts/script/NotoSans-Variable.ttf, NotoSans-Italic-Variable.ttf
+  Copyright 2022 The Noto Project Authors
+  (https://github.com/notofonts/latin-greek-cyrillic)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-NotoSans.txt
+
+Noto Serif
+  webapp/assets/fonts/script/NotoSerif-Variable.ttf, NotoSerif-Italic-Variable.ttf
+  Copyright 2022 The Noto Project Authors
+  (https://github.com/notofonts/latin-greek-cyrillic)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-NotoSerif.txt
+
+Noto Sans script families -- Arabic, Devanagari, Bengali, Gurmukhi, Gujarati,
+Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Hebrew, Thai, Symbols 2
+  webapp/assets/fonts/script/NotoSans{Arabic,Devanagari,Bengali,Gurmukhi,
+  Gujarati,Oriya,Tamil,Telugu,Kannada,Malayalam,Sinhala,Hebrew,Thai,
+  Symbols2}-Regular.ttf
+  Copyright 2022 The Noto Project Authors (https://github.com/notofonts/)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-Noto.txt
+
+--------------------------------------------------------------------------------
+5. Test-only font fixtures
+--------------------------------------------------------------------------------
+
+Font data that exists only so a test can create a condition. Not served to any
+reader and not embedded in the engine. See `fixtures/fonts/README.md`, which
+records the exact subsetting command, so the derivation is reproducible.
+
+Noto Sans CJK SC (19-codepoint test subset)
+  fixtures/fonts/NotoSansCJK-TestSubset.otf
+  (c) 2014-2021 Adobe (http://www.adobe.com/) -- the copyright record carried in
+  the font's own `name` table (ID 0). Published by The Noto Project
+  (https://github.com/notofonts/noto-cjk); Noto is a trademark of Google Inc.
+  SIL Open Font License, Version 1.1
+  fixtures/fonts/OFL-1.1-NotoSansCJK.txt
+  MODIFIED: subset to 19 code points with `fontTools.subset`, which the OFL
+  permits. This face declares NO Reserved Font Name -- the upstream OFL text
+  states none -- so the RFN restriction on renaming a modified font does not
+  apply. The file is still named `NotoSansCJK-TestSubset` so that nothing in
+  the tree can mistake a 19-glyph test fixture for the 16.4 MB upstream face.
+  It is never served to a reader.
+
+--------------------------------------------------------------------------------
+6. Fonts fetched at runtime, which this repository does not redistribute
+--------------------------------------------------------------------------------
+
+Four faces are too large to commit -- the three Noto Sans CJK region faces
+(~16.4 MB each) and the COLRv1 Noto Color Emoji face (4.99 MB), 51.8 MB
+together. `webapp/src/web_fonts.mjs` serves them from this origin when a
+deployment has provisioned them with `webapp/tools/provision-script-fonts.mjs`,
+and otherwise falls back to a commit-pinned upstream mirror. Either way the
+bytes are verified against a SHA-256 in the manifest before they are used.
+
+Because they are not committed, they carry no attribution above: they are
+distributed by their own publishers, under the SIL Open Font License 1.1, and
+each arrives with the licence records in its own `name` table. A deployment that
+provisions them IS redistributing them and should ship the OFL text alongside;
+`webapp/assets/fonts/script/OFL-1.1-Noto.txt` is that text. A host that would
+rather supply its own faces does so through the same font-registry seam.

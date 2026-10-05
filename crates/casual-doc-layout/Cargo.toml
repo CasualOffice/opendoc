@@ -52,6 +52,11 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+# Integration tests read a resolved face's own `cmap` to prove a code point was
+# covered rather than name-matched (`tests/cjk_coverage.rs`). Integration tests
+# do not inherit `[dependencies]`, so the same already-present version is
+# declared here; no new crate enters the tree.
+skrifa = { version = "0.43", default-features = false }
 
 [lints]
 workspace = true
