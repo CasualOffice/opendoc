@@ -41,7 +41,7 @@ fontique = { version = "0.11", default-features = false, features = ["std"] }
 # Parse-only OpenType reader (fontations) for glyph-coverage checks in the font
 # resolver. No system/`fontconfig` access — WASM-clean. Already in the tree via
 # `parley`/`fontique`, so no new version is introduced.
-skrifa = { version = "0.43", default-features = false }
+skrifa = { version = "0.44", default-features = false }
 serde.workspace = true
 # Grapheme-cluster segmentation for coverage reporting: an emoji ZWJ sequence,
 # an emoji-presentation sequence and a regional-indicator pair are each ONE
@@ -56,7 +56,7 @@ serde_json.workspace = true
 # covered rather than name-matched (`tests/cjk_coverage.rs`). Integration tests
 # do not inherit `[dependencies]`, so the same already-present version is
 # declared here; no new crate enters the tree.
-skrifa = { version = "0.43", default-features = false }
+skrifa = { version = "0.44", default-features = false }
 
 [lints]
 workspace = true
