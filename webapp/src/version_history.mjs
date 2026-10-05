@@ -635,6 +635,36 @@ function fnv1aHex(bytes) {
 }
 
 /**
+ * Whether a stored version row holds the same DOCUMENT as the capture in hand.
+ *
+ * TWO IDENTITIES, AND THE CONTENT ONE DECIDES. `checkpointId` is a SHA-256 of
+ * the **source-format bytes**, and bytes are not what "the same document" means:
+ * the import row holds the original file verbatim, `source_unchanged` is
+ * `revision == 0` — a monotonic watermark — so after any edit at all, even one
+ * that is immediately undone, the exact export mode is permanently unavailable
+ * and every later checkpoint is a re-export with a different byte layout. One
+ * unchanged document, two hashes, and a version row with nothing in it. That is
+ * the defect the owner reported three times.
+ *
+ * `contentId` is the engine's `contentDigest()` — a fold of the semantic
+ * projection the Compare pipeline aligns on plus the definition values it
+ * compares (`casual_doc_diff::identity`), so two documents that say the same
+ * thing share it however they were serialized, and it is the SAME notion of
+ * sameness Compare uses rather than a second one that could drift.
+ *
+ * The byte hash is still consulted, as a fallback, for exactly two cases: a row
+ * written before this field existed, and a host whose engine could not supply a
+ * digest. Byte-identical artifacts ARE the same document, so keeping it loses
+ * nothing — it is a weaker test kept for the rows that have nothing stronger.
+ *
+ * O(1): two string comparisons, inside the transaction that already read the row.
+ */
+export function isSameDocument(row, candidate) {
+  if (candidate?.contentId && row?.contentId === candidate.contentId) return true;
+  return Boolean(row?.checkpointId) && row.checkpointId === candidate?.checkpointId;
+}
+
+/**
  * The checkpoint's content hash, which is also its storage key.
  *
  * O(bytes), and deliberately `crypto.subtle.digest`: the digest of a 2.4 MB
@@ -855,12 +885,15 @@ export async function openHistoryStore({
      * The autosave path's own contribution is `VersionCapturePolicy`, which
      * touches none of this.
      *
-     * `skipIfUnchanged` reports `UNCHANGED` and writes nothing when the artifact
-     * is byte-identical to ANY version already in this lineage — not only to the
-     * head — and corrects the head onto the row that holds those bytes. The
-     * caller decides, per reason, and the default is OFF, so the restore path,
-     * which calls this without the flag, keeps its pre-restore capture
-     * unconditionally (`KEEP_UNCHANGED`).
+     * `skipIfUnchanged` reports `UNCHANGED` and writes nothing when the capture
+     * holds the same DOCUMENT as ANY version already in this lineage — not only
+     * as the head — and corrects the head onto the row that holds it. Sameness is
+     * `isSameDocument`: the engine's content digest (`contentId`) first, the
+     * artifact's byte hash only as the fallback for a row that carries no digest.
+     * Dedupe used to be on bytes alone, which is why a save after an edit and its
+     * undo kept a version with nothing in it. The caller decides, per reason, and
+     * the default is OFF, so the restore path, which calls this without the flag,
+     * keeps its pre-restore capture unconditionally (`KEEP_UNCHANGED`).
      *
      * Quota is handled and never guessed at: one extra eligible version is
      * released and the write retried once, and if it still fails the caller gets
@@ -883,6 +916,7 @@ export async function openHistoryStore({
       protectedIds = null,
       expectedHead = undefined,
       skipIfUnchanged = false,
+      contentId = "",
     }) {
       if (!bytes || bytes.length === 0) return result(HISTORY_STATUS.MISSING_CHECKPOINT);
       const named = sanitiseVersionName(name);
@@ -909,9 +943,10 @@ export async function openHistoryStore({
 
         const existing = await readLineageVersions(metas, lineageId);
         // NOTHING NEW TO KEEP (`docs/139` §18 q3 as the owner reversed it on
-        // 2026-09-28). Checkpoints are content-addressed, so "already in this
-        // timeline" is the hash this call already computed against the hashes the
-        // rows already store — one string comparison per row, inside the
+        // 2026-09-28). "Already in this timeline" is `isSameDocument` — the
+        // CONTENT identity the engine computed for this capture against the ones
+        // the rows already store, with the byte hash as the fallback for a row
+        // that has no digest. One or two string comparisons per row, inside the
         // transaction that is already reading them, so nothing is hashed, read or
         // walked twice. Here rather than in `shouldCapture` because that one is
         // the editing path's whole contribution and may not touch bytes or
@@ -929,7 +964,7 @@ export async function openHistoryStore({
         // §10 forbids a silent no-op.
         //
         // THE WHOLE LINEAGE, not just the head. A duplicate is a duplicate
-        // wherever it already sits: two rows with one content hash are two rows
+        // wherever it already sits: two rows holding one document are two rows
         // a reader cannot tell apart and cannot choose between, and the head is
         // only one of the places the twin can be. Measured in Chromium on
         // 2026-10-04 — open a document, edit it, save, then reload the same file:
@@ -939,6 +974,12 @@ export async function openHistoryStore({
         // The third row is byte-identical to the first and was written because
         // the comparison only looked at the head, which was `saved` at the time.
         // Every reload after a save added one, forever.
+        //
+        // And that same recorded line is the OTHER half of the defect, which the
+        // byte comparison cannot see: `saved` was captured after an edit that
+        // cancelled itself out, so it holds the same document as `import` and a
+        // different hash. `contentId` is what tells them apart — see
+        // `isSameDocument`.
         //
         // AND THE HEAD MOVES TO THE TWIN. The head is defined one screen down as
         // "the only version that still describes the document" — `deleteVersion`
@@ -953,7 +994,7 @@ export async function openHistoryStore({
         // prepared restore notices through `expectedHead` and refuses, which is
         // the behaviour it already has for any other head movement.
         if (skipIfUnchanged) {
-          const twins = existing.filter((row) => row.checkpointId === checkpointId);
+          const twins = existing.filter((row) => isSameDocument(row, { checkpointId, contentId }));
           if (twins.length > 0) {
             const atHead = twins.find((row) => row.versionId === lineage.headVersionId);
             // The head when the head is one of them (nothing to correct),
@@ -1010,6 +1051,11 @@ export async function openHistoryStore({
           versionId: newVersionId(),
           lineageId,
           checkpointId,
+          // The identity a later capture is actually compared against. Stored
+          // beside the byte hash rather than instead of it: the byte hash is also
+          // the checkpoint's storage key, and two rows may legitimately share one
+          // artifact (Save, then Name this version).
+          contentId,
           parentVersionId: lineage.headVersionId ?? null,
           createdAt: now,
           kind,
@@ -1306,6 +1352,11 @@ export async function openHistoryStore({
         versionId: newVersionId(),
         lineageId: operation.lineageId,
         checkpointId: operation.targetCheckpointId,
+        // Carried from the row being restored, not recomputed: this version
+        // points at that version's artifact, so it holds that document by
+        // definition. Recomputing would need a parse of bytes this transaction is
+        // only moving a pointer to.
+        contentId: source?.contentId ?? "",
         parentVersionId: lineage.headVersionId ?? null,
         restoredFromVersionId: operation.targetVersionId,
         createdAt: now,

@@ -34,7 +34,7 @@
 // rather than over either printer.
 
 import { t } from "./i18n.mjs";
-import { foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
+import { chevronPlacement, foldCommands, hasChildren, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
 
 /**
  * Wires folding.
@@ -61,7 +61,14 @@ import { foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs
  *   setStatus: (message: string, kind?: string) => void,
  *   getPages?: () => Array<{overlay?: HTMLElement}>,
  *   scaleOf?: (page: any) => ({sx: number, sy: number}),
+ *   surfaceSlackPx?: () => number,
  * }} deps
+ *
+ * `surfaceSlackPx` answers "how much paintable surface is there left of the
+ * page box" and defaults to `0`, which is the paged answer: beyond a sheet lies
+ * the desk, and a button on the desk is a button on nothing. In reflow it is
+ * positive, because the surface there is the same surface the text is on — see
+ * `chevronPlacement`, and the reflow surface in `style.css`.
  */
 /** How far into the page margin the in-body chevron sits, in CSS pixels.
  *  Matches `.fold-body-chevron`'s 18px width plus a 2px gap. */
@@ -74,6 +81,8 @@ export function createFoldChrome({
   setStatus,
   getPages = () => [],
   scaleOf = () => ({ sx: 1, sy: 1 }),
+  outlineOpen = () => true,
+  surfaceSlackPx = () => 0,
 }) {
   /** The last state the ENGINE reported, re-read after every call rather than
    *  mutated here. One state, and it is not this module's. */
@@ -122,8 +131,16 @@ export function createFoldChrome({
   const caretHeading = () => {
     const node = caretNode();
     if (!node) return null;
-    const row = rows.find((candidate) => candidate.node === node);
-    return row ? { node: row.node, collapsed: row.collapsed } : null;
+    const index = rows.findIndex((candidate) => candidate.node === node);
+    if (index < 0) return null;
+    const row = rows[index];
+    // `hasChildren` is the tree's OWN rule, reused rather than restated: a row
+    // is collapsible when the row after it is deeper. The outline panel already
+    // uses it to decide which rows get a disclosure and which get an inert
+    // spacer, and the in-body chevron has to agree with it — a chevron on a
+    // heading with nothing under it is a disclosure for nothing, and clicking
+    // it folds nothing away.
+    return { node: row.node, collapsed: row.collapsed, hasChildren: hasChildren(rows, index) };
   };
 
   /**
@@ -301,6 +318,47 @@ export function createFoldChrome({
       }
       if (!anchor) return;
       const { host, rect } = anchor;
+      // The chevron lives in the MARGIN beside the heading, which is where Word
+      // puts it. When there is nowhere to paint it, it is not painted.
+      //
+      // The left edge is ALWAYS `rect.x - CHEVRON_GUTTER`; the only question is
+      // whether that is somewhere. This replaces a clamp, and the clamp was a
+      // defect dressed as a fix: reflow pulls the text to a 16px inset, so an
+      // 18px chevron offset by 20px lands at -4px, and clamping it to 0 put a
+      // slice of an absolutely-positioned BUTTON on top of the heading's first
+      // glyph, where it captures the tap that should place the caret. A control
+      // that steals a click from the text is worse than no control.
+      //
+      // WHAT CHANGED, and why the answer in reflow is now different without the
+      // clamp coming back: -4px used to mean "outside the window", because the
+      // tile filled it and beyond the tile was desk. The reflow surface is now
+      // one colour edge to edge (`style.css` `--paper-surface`),
+      // so -4px is four pixels into a margin made of the same surface the text
+      // is on — a place a disclosure may legitimately be. `surfaceSlackPx()`
+      // says how much of it there is, and it is 0 in every paged view and at the
+      // phone rung, where the old refusal therefore still holds exactly.
+      //
+      // The chevron is only shown while the outline panel is OPEN, and that is
+      // the honest rule rather than a convenience. Its fold state is read from
+      // the rows the last `sync` saw, and `sync` runs when the panel renders —
+      // so with the panel shut the chevron is a control whose state nobody is
+      // refreshing (FOLD-006). An affordance that may be showing yesterday's
+      // answer is worse than no affordance, and the reader loses nothing:
+      // folding is on the outline tree, View ▸ Show and the palette. That rule
+      // is what the other half of this round pays for: reflow now OPENS the
+      // outline, so in reflow the condition is met rather than fought
+      // (`reflow_chrome.mjs`'s `adoptPanels`). Together those two were a
+      // capability that existed and could not be reached from the document in
+      // the view where folding matters most — `SKILL.md` §9.4 reached by two
+      // individually-correct local decisions.
+      const place =
+        outlineOpen() && heading.hasChildren
+          ? chevronPlacement(rect, CHEVRON_GUTTER, surfaceSlackPx())
+          : { show: false, left: 0 };
+      if (!place.show) {
+        host.querySelector(".fold-body-chevron")?.remove();
+        return;
+      }
       let chevron = host.querySelector(".fold-body-chevron");
       if (!chevron) {
         chevron = document.createElement("button");
@@ -311,9 +369,23 @@ export function createFoldChrome({
         glyph.className = "ms";
         glyph.setAttribute("aria-hidden", "true");
         chevron.append(glyph);
+        // The chevron must not take the caret: the reader is pointing at a
+        // disclosure, not clicking into the heading. BOTH events, and the
+        // `pointerdown` is the one that matters — `preventDefault` on
+        // `mousedown` suppresses the browser's own focus/selection side effects
+        // and does nothing at all about the editor's handler, which is bound to
+        // `pointerdown` on `#pages`. So every press on the chevron also ran a
+        // hit test and moved the caret, and the `click` that followed asked
+        // `caretHeading()` about wherever the caret had just landed: the
+        // disclosure did nothing, silently, in EVERY view. No test covered it
+        // (`grep fold-body-chevron tests/e2e` was 0 hits), which is how a
+        // control that had just been made clickable stayed inert.
+        chevron.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+          event.preventDefault();
+        });
         chevron.addEventListener("mousedown", (event) => {
-          // The chevron must not take the caret: the reader is pointing at a
-          // disclosure, not clicking into the heading.
+          event.stopPropagation();
           event.preventDefault();
         });
         chevron.addEventListener("click", (event) => {
@@ -328,16 +400,7 @@ export function createFoldChrome({
       chevron.setAttribute("aria-label", label);
       chevron.dataset.node = heading.node;
       chevron.querySelector(".ms").textContent = heading.collapsed ? "chevron_right" : "expand_more";
-      // The chevron sits in the page margin beside the heading, which is what
-      // Word does. But the margin is not always wide enough to hold it: at the
-      // phone rung reflow pulls the text to a 16px inset, and an 18px chevron
-      // offset by GUTTER then painted at -4px — outside the window, which
-      // `phone-no-horizontal-scroll` measures and refuses. So the offset is
-      // explicit arithmetic that CLAMPS rather than a negative margin that
-      // cannot. Where the margin has room this is the same position it always
-      // was; where it does not, the chevron tucks against the edge instead of
-      // hanging off it.
-      chevron.style.left = `${Math.max(0, rect.x - CHEVRON_GUTTER)}px`;
+      chevron.style.left = `${place.left}px`;
       chevron.style.top = `${rect.y}px`;
       chevron.style.height = `${rect.height}px`;
     },

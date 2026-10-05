@@ -16,12 +16,12 @@
 // the router stamped, so a passing cursor cannot be the right shape reached for
 // the wrong reason.
 import {
-  test,
+  MOD,
   expect,
   gotoEditor,
-  stableBox,
   setReviewMode,
-  MOD,
+  stableBox,
+  test,
 } from "./fixtures.mjs";
 
 const FORM = "../fixtures/generated/form-checkbox.docx";

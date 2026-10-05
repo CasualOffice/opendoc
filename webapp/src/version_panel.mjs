@@ -206,6 +206,24 @@ function iconSpan(name, className = "") {
  *        opens restored bytes through the ordinary open path.
  * @param {() => object|null} deps.snapshot the same fidelity-complete export the
  *        autosave path takes, or null when the document cannot be exported.
+ *        `{bytes, formatId, mode, findings, contentId}`.
+ *
+ *        `contentId` is the engine's `contentDigest()` — the document's CONTENT
+ *        identity, folded from the semantic projection the Compare pipeline
+ *        aligns on, so two documents that say the same thing share it however
+ *        they were serialized. It is what decides whether a capture has anything
+ *        new in it, and it rides on the artifact rather than arriving through a
+ *        dep of its own for one reason: the bytes and the identity that judges
+ *        them must describe the SAME moment, and two separate calls leave a
+ *        window in which the document can move between them.
+ *
+ *        It is O(document) and is taken only where a whole export is already
+ *        being taken — a debounced draft write, a save, an open. The editing
+ *        path never pays it: its whole contribution is `shouldCapture`, which is
+ *        O(1) in document size (`docs/107` §4). An artifact that carries no
+ *        `contentId` falls the store back to comparing source BYTES, which is
+ *        the comparison that let a save after an edit and its undo keep a version
+ *        with nothing in it — so that is a fallback, not an alternative.
  * @param {() => object} deps.documentInfo `{name, docKey, revision, engine, actor, hasDocument}`.
  * @param {() => object} deps.settings the live settings object.
  * @param {() => boolean} deps.hostAllows whether this page may keep local data at all.
@@ -1136,6 +1154,7 @@ export function createVersionHistory({
       current: current
         ? {
             bytes: current.bytes,
+            contentId: current.contentId ?? "",
             formatId: current.formatId,
             exportMode: current.mode,
             findings: current.findings,
@@ -1705,6 +1724,12 @@ export function createVersionHistory({
     const result = await ready.captureVersion({
       lineageId,
       bytes: taken.bytes,
+      // The identity the suppression below actually compares — the engine's
+      // content digest, taken with the bytes it describes. `""` when the host
+      // supplied no digest, which falls the store back to the byte comparison
+      // rather than losing the version: over-keeping is recoverable, dropping is
+      // not.
+      contentId: taken.contentId ?? "",
       formatId: taken.formatId,
       exportMode: taken.mode,
       findings: taken.findings,

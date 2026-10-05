@@ -4,17 +4,7 @@
 // footnote and a header — but not a text box and not a shape. It could SELECT,
 // move, resize, edit and delete both; it just had no way to create one. A
 // document that did not already contain a drawing could never gain one.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  mirrorBlocks,
-  expectTypedIntoOneBlock,
-  stableBox,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, expectTypedIntoOneBlock, gotoEditor, mirrorBlocks, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 async function open(page) {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -162,7 +152,7 @@ test("an inserted group-child shape routes root commands and subject formatting"
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
     });
   const nw = page.locator('.overlay .object-handle[data-handle="0"]').first();
-  const nwBox = await nw.boundingBox();
+  const nwBox = await stableBox(nw);
   await page.mouse.move(nwBox.x + nwBox.width / 2, nwBox.y + nwBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(nwBox.x - 50, nwBox.y - 30, { steps: 6 });
@@ -279,7 +269,7 @@ test("dragging on the page draws the picked shape AT THE DRAGGED SIZE", async ({
   // The DOCUMENT holds a rounded rectangle of the size that was dragged — not
   // the 2"x1" `insertShape` authors. Asked of the engine's own placed rect, in
   // screen pixels, so this cannot pass by agreeing with itself.
-  const outline = await page.locator(".overlay .object-outline").first().boundingBox();
+  const outline = await stableBox(page.locator(".overlay .object-outline").first());
   const wantedW = box.width * 0.5;
   const wantedH = box.height * 0.3;
   expect(Math.abs(outline.width - wantedW)).toBeLessThan(wantedW * 0.12);

@@ -118,7 +118,7 @@ test("drag-selecting past the right edge scrolls horizontally", async ({
   });
   expect(overflowing, "the page is not wider than the window; nothing to scroll").toBe(true);
 
-  const view = await page.locator("#viewport").boundingBox();
+  const view = await stableBox(page.locator("#viewport"));
   await page.mouse.move(view.x + 40, view.y + view.height * 0.4);
   await page.mouse.down();
   // Hold the pointer inside the auto-scroll edge band and let frames run.

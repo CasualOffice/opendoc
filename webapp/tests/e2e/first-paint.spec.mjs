@@ -1,18 +1,25 @@
 // The document must paint before the named web fonts arrive.
 //
-// `provisionFonts` fetches six variable faces — ~9.5 MB from a CDN — and the
-// open path used to `await` it before the first `renderAll()`. So nothing was on
-// screen until every byte of that had landed, on top of the engine's own ~9 MB
-// download: seconds of blank editor before a single glyph appeared, and a total
-// stall if the CDN was slow or blocked. The bundled faces are metric-compatible
+// `provisionFonts` fetches six variable faces — ~9.3 MB — and the open path used
+// to `await` it before the first `renderAll()`. So nothing was on screen until
+// every byte of that had landed, on top of the engine's own ~9 MB download:
+// seconds of blank editor before a single glyph appeared, and a total stall if
+// the fonts were slow or blocked. The bundled faces are metric-compatible
 // substitutes, so painting from them first is a correct layout, not a throwaway
 // approximation, and the upgrade re-renders when the real faces register.
 //
-// These tests hold the font CDN open (never resolving, then failing) so "the
-// fonts have not arrived" is a controlled state rather than a race.
+// These tests hold the font requests open (never resolving, then failing) so
+// "the fonts have not arrived" is a controlled state rather than a race.
 import { test, expect } from "./fixtures.mjs";
 
-const FONT_CDN = "**/cdn.jsdelivr.net/**";
+// The named faces are served from OUR OWN ORIGIN now, not a CDN (`109` HF-176),
+// so this intercepts the origin's own font directory. Routing
+// `cdn.jsdelivr.net` here stopped intercepting anything the moment those faces
+// were committed: every request would have succeeded, `fontsReady` would have
+// been `"true"` immediately, and the assertion below that the upgrade has NOT
+// happened yet would have failed — loudly, which is the only reason this did not
+// become a spec that silently tested nothing.
+const FONT_CDN = "**/assets/fonts/script/*";
 
 test("the document renders while the named web fonts are still in flight", async ({ page }) => {
   // Hold every font request open for the life of the test: nothing resolves, so

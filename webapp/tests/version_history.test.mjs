@@ -495,6 +495,105 @@ test("unchanged means identical to anything in the lineage, and the head follows
   store.close();
 });
 
+test("a save whose DOCUMENT is unchanged writes nothing, even when its bytes are not", async () => {
+  // THE DEFECT THE OWNER REPORTED THREE TIMES, at the store level.
+  //
+  // Two checkpoints of one unchanged document do not share a byte hash, and they
+  // never can: the import row holds the original file verbatim, `source_unchanged`
+  // is `revision == 0` — a monotonic watermark — so after any edit at all, even an
+  // edit immediately undone, the exact export mode is permanently unavailable and
+  // every later checkpoint is a re-export with a different layout. The store's own
+  // recorded output named the two hashes: `import cp=fb07bd2d | saved cp=28c11967`.
+  //
+  // THE CONDITION IS CREATED, which is the only way this test can mean anything:
+  // the second capture's bytes are DIFFERENT (so the byte comparison cannot
+  // suppress it) while its `contentId` is the SAME (so the content comparison
+  // must). A store that still compared bytes writes a second row here.
+  const indexedDB = fakeIndexedDB();
+  const store = await openHistoryStore({ indexedDB, name: "opendoc-drafts", subtle: null });
+  const { lineageId } = await store.openLineage({ docKey: "k1", name: "a.docx", now: NOW });
+  const SAME_DOCUMENT = "cid1-0123456789abcdef0123456789abcdef";
+  const OTHER_DOCUMENT = "cid1-fedcba9876543210fedcba9876543210";
+
+  const imported = await store.captureVersion({
+    lineageId,
+    bytes: new Uint8Array(1024).fill(1),
+    contentId: SAME_DOCUMENT,
+    formatId: "docx",
+    exportMode: "exact_if_unchanged",
+    revision: 0,
+    now: NOW,
+    retention: policy(),
+    kind: VERSION_KIND.IMPORT,
+    skipIfUnchanged: true,
+  });
+  assert.equal(imported.status, HISTORY_STATUS.RECORDED);
+
+  const resaved = await store.captureVersion({
+    lineageId,
+    // A re-export: same document, different bytes. This is the whole point.
+    bytes: new Uint8Array(1024).fill(2),
+    contentId: SAME_DOCUMENT,
+    formatId: "docx",
+    exportMode: "preserve_when_safe",
+    revision: 2,
+    now: NOW + 60_000,
+    retention: policy(),
+    kind: VERSION_KIND.SAVED,
+    skipIfUnchanged: true,
+  });
+  assert.equal(
+    resaved.status,
+    HISTORY_STATUS.UNCHANGED,
+    "the document did not change, so no version was kept",
+  );
+  assert.equal((await store.listVersions(lineageId)).length, 1, "one row, not two");
+  assert.equal(
+    resaved.version?.versionId,
+    imported.version.versionId,
+    "and it says which version the document already matches",
+  );
+  assert.equal(await store.head(lineageId), imported.version.versionId, "the head did not move");
+
+  // NON-VACUITY, both ways round. A store that suppressed on content alone, or
+  // that suppressed everything, passes everything above.
+  const changed = await store.captureVersion({
+    lineageId,
+    bytes: new Uint8Array(1024).fill(3),
+    contentId: OTHER_DOCUMENT,
+    formatId: "docx",
+    revision: 3,
+    now: NOW + 120_000,
+    retention: policy(),
+    kind: VERSION_KIND.SAVED,
+    skipIfUnchanged: true,
+  });
+  assert.equal(changed.status, HISTORY_STATUS.RECORDED, "a real change is still kept");
+  assert.equal((await store.listVersions(lineageId)).length, 2);
+
+  // And the byte test survives as the fallback for a row that has no digest — a
+  // row written before the field existed, or a host whose engine cannot supply
+  // one. Byte-identical artifacts ARE the same document, so this loses nothing.
+  const legacy = await store.captureVersion({
+    lineageId,
+    bytes: new Uint8Array(1024).fill(3),
+    contentId: "",
+    formatId: "docx",
+    revision: 4,
+    now: NOW + 180_000,
+    retention: policy(),
+    kind: VERSION_KIND.SAVED,
+    skipIfUnchanged: true,
+  });
+  assert.equal(
+    legacy.status,
+    HISTORY_STATUS.UNCHANGED,
+    "no digest on either side falls back to the byte hash rather than keeping noise",
+  );
+  assert.equal((await store.listVersions(lineageId)).length, 2);
+  store.close();
+});
+
 test("the capture decision is O(1) in the number of stored versions", async () => {
   // The claim under test: autosave does not become O(versions). Measured as
   // STORE REQUESTS, not as milliseconds — a timing threshold cannot tell a slow

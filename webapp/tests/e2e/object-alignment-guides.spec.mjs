@@ -7,7 +7,7 @@
 //
 // Each test CREATES its condition: it drags the image somewhere off-centre
 // first, so a pass cannot come from an image that happened to start aligned.
-import { expect, gotoEditor, sizeReadoutPattern, test } from "./fixtures.mjs";
+import { expect, gotoEditor, sizeReadoutPattern, stableBox, test } from "./fixtures.mjs";
 
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
@@ -26,7 +26,7 @@ async function gotoFloat(page) {
 
 async function selectAt(page, pos) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * pos.fx, y: box.height * pos.fy } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
@@ -190,7 +190,7 @@ test("dragging an edge grip snaps that edge to the page margin", async ({
 
   // Drag the east grip (kind 3) to just short of the right margin.
   const grip = page.locator('.overlay .object-handle[data-handle="3"]');
-  const gb = await grip.boundingBox();
+  const gb = await stableBox(grip);
   await dragTo(
     page,
     { x: gb.x + gb.width / 2, y: gb.y + gb.height / 2 },
@@ -263,7 +263,7 @@ test("a crop drag says what size it is keeping", async ({ page, consoleErrors })
 
   // Pull the east grip inward and watch the kept width fall.
   const grip = page.locator('.overlay .object-crop-handle[data-handle="3"]');
-  const gb = await grip.boundingBox();
+  const gb = await stableBox(grip);
   await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2);
   await page.mouse.down();
   await page.mouse.move(gb.x - 30, gb.y + gb.height / 2, { steps: 8 });

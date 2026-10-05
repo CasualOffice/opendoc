@@ -3,13 +3,13 @@
 // SetExtent op on release (one undo step), with a live preview during the drag
 // and fail-closed gating in Suggesting/Viewing mode. Move + wrap are floating-
 // object ops (deferred with anchored-float selection); resize is the inline op.
-import { test, expect, gotoEditor, MOD } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
 async function selectImage(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * IMAGE_POS.fx, y: box.height * IMAGE_POS.fy } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
@@ -32,7 +32,7 @@ async function outlineBox(page) {
 
 async function dragHandle(page, handleIndex, dx, dy, { shift = false } = {}) {
   const handle = page.locator(`.overlay .object-handle[data-handle="${handleIndex}"]`).first();
-  const b = await handle.boundingBox();
+  const b = await stableBox(handle);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   if (shift) await page.keyboard.down("Shift");
@@ -187,14 +187,14 @@ test("the north grip works too, and the preview pins the south edge while it dra
   const before = await outlineBox(page);
 
   const handle = page.locator('.overlay .object-handle[data-handle="1"]').first();
-  const b = await handle.boundingBox();
+  const b = await stableBox(handle);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2 - 70, { steps: 6 });
   // Mid-drag: the preview grew UPWARDS, keeping its bottom edge where it was —
   // that is what Word and ONLYOFFICE draw, and it is the half we deliberately
   // do not commit.
-  const preview = await page.locator(".object-resize-preview").boundingBox();
+  const preview = await stableBox(page.locator(".object-resize-preview"));
   expect(preview.y).toBeLessThan(before.y - 10);
   expect(Math.abs(preview.y + preview.height - (before.y + before.height))).toBeLessThanOrEqual(3);
   await page.mouse.up();
@@ -218,12 +218,12 @@ test("Ctrl resizes about the centre instead of pinning the opposite edge", async
   const before = await outlineBox(page);
 
   const handle = page.locator('.overlay .object-handle[data-handle="3"]').first();
-  const b = await handle.boundingBox();
+  const b = await stableBox(handle);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.keyboard.down("Control");
   await page.mouse.move(b.x + b.width / 2 + 60, b.y + b.height / 2, { steps: 6 });
-  const preview = await page.locator(".object-resize-preview").boundingBox();
+  const preview = await stableBox(page.locator(".object-resize-preview"));
   await page.keyboard.up("Control");
   await page.mouse.up();
   await page.waitForTimeout(150);
@@ -252,7 +252,7 @@ test("Shift on a SHAPE corner constrains it, the same direction it does everywhe
   await page.locator("#insertShapeBtn").click();
   await page.locator('#shapeGalleryMenu [data-shape-geometry="rect"]').click();
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * 0.35, y: box.height * 0.35 } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "shape");
   const before = await outlineSize(page);
@@ -286,7 +286,7 @@ test("pointer cancellation discards the resize preview without creating history"
   const before = await outlineSize(page);
   const undoLabel = await page.locator("#undoBtn").getAttribute("aria-label");
   const se = page.locator('.overlay .object-handle[data-handle="4"]').first();
-  const box = await se.boundingBox();
+  const box = await stableBox(se);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   await page.mouse.move(cx, cy);

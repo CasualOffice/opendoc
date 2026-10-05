@@ -177,8 +177,10 @@ instead of reddening on the fix.
 - **Password-protected round-trips to password-less — CONFIRMED, and measured at one
   document of nineteen.** Import reads `w:documentProtection@w:edit`, `@w:enforcement`,
   `@w:formatting` and `w:writeProtection@w:recommended`, and silently discards the whole
-  `AG_Password` group. Nothing is reported, because a finding is raised only when
-  `apply_setting` returns `false` and these return `true`. `word/settings.xml` is a
+  `AG_Password` group. Nothing *was* reported, because a finding is raised only when
+  `apply_setting` returns `false` and these return `true` — fixed since: the parser now
+  reports every password attribute on either protection element by name (§7 item 5).
+  `word/settings.xml` is a
   *consumed* part, so the opaque side-table does not byte-preserve it either: the loss is
   semantic-mode-only, and `Retention` mode still keeps the original bytes. The protection
   therefore survives as a restriction that lifts in Word **with no password**. Already
@@ -217,8 +219,16 @@ In the order the measurement supports, each with its document frequency out of n
    each; model or report.
 4. **`pic:cNvPr@descr`** (2/19) — alt text already round-trips on `wp:docPr`; find why the
    picture-level one does not.
-5. **`w:documentProtection` crypto group** (1/19) — report at minimum, so a security
-   property stops vanishing in silence.
+5. **`w:documentProtection` crypto group** (1/19) — **DONE, as reporting.** Every
+   password attribute the importer meets on `w:documentProtection` *or*
+   `w:writeProtection` now raises a named `Degraded` attribute finding, so the security
+   property stops vanishing in silence. Two corrections to this document's own
+   enumeration: the group is **sixteen** attributes, not the seven the table at §3 lists —
+   `AG_TransitionalPassword`'s `w:algorithmName`, `w:hashValue`, `w:saltValue` and
+   `w:spinCount` are the ISO verifier form Office writes *instead* of the legacy group,
+   and they appeared nowhere in this tree — and `w:writeProtection` carries both groups
+   too and was losing them the same way. Verifying or re-emitting the hash remains
+   ADR-052's open decision and is deliberately not done.
 6. **`v:wrap@side`** — parse it into `VmlWrap` and carry it to `wrap_text`, matching what
    #739 did for the DrawingML side.
 7. **Arm the attribute axis as a gate**, now that the reductions that make it signal rather

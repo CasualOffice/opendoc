@@ -156,7 +156,7 @@ test("no rule reads a token the stylesheet never defines", () => {
 // `--primary-ink` on `--primary-bg`, and `--accent-text` on `--surface`. All
 // three pass today; the mutation proving they can fail is in the PR.
 import { TEXT_ROLES, UI_ROLES, PAIRED_ROLES, auditPalette } from "../src/contrast.mjs";
-import { readPalettes } from "../tools/palette_source.mjs";
+import { THEME_BLOCKS, readPalettes } from "../tools/palette_source.mjs";
 
 test("every colour role clears its WCAG floor in all three palettes", () => {
   const { themes } = readPalettes(css);
@@ -232,4 +232,88 @@ test("the app shell refuses to rubber-band, and every chrome scroller contains i
     chained.push(name);
   }
   assert.deepEqual(chained, [], "these chrome scrollers chain their overscroll to the document");
+});
+
+// ---- The reflow surface, and the ink that is drawn on it ---------------------
+// Reflow stopped being a page on a desk and became one surface (`docs/151`
+// §6.2, corrected).
+// The engineering risk in that change is NOT the colour, it is the coupling. The
+// paper comment at the top of the stylesheet exists because anything painted
+// onto or over the raster has a FIXED contrast partner: `--paper-ink`,
+// `--paper-insert`, `--paper-delete`, `--paper-spelling`, `--paper-grammar` and
+// the fold chevron are all calibrated against white, and a dark-theme marker on
+// white paper measured ~2:1. A reflow surface that followed the theme would
+// reintroduce exactly that failure, through a token nothing in `contrast.mjs`
+// measures — the `--paper-*` layer is deliberately outside the role tables.
+//
+// These guard the coupling rather than the pixel: the surface is a member of the
+// paper layer, it resolves to the same value as the paper it abuts, and no theme
+// block may move it without the ink rule that would make that safe.
+
+test("the reflow surface is the PAPER's colour, declared in the paper layer", () => {
+  const independent = declaredTokens(ruleBody(paletteRegion, /:root\s*\{/));
+  assert.equal(
+    independent.get("--paper-surface"),
+    "var(--paper)",
+    "--paper-surface must be the paper's own value, not a copy of it: the engine " +
+      "fills a tile's raster with the document background and the CSS surface " +
+      "beside it has to be the same colour or every tile edge is a seam",
+  );
+  assert.ok(independent.has("--paper"), "the paper layer should still be here");
+
+  for (const { name, selector } of THEME_BLOCKS) {
+    const themed = declaredTokens(ruleBody(paletteRegion, selector));
+    for (const token of ["--paper", "--paper-surface", "--paper-ink"]) {
+      assert.equal(
+        themed.has(token),
+        false,
+        `${name} redefines ${token}. The paper layer is theme-INVARIANT because ` +
+          "the markers painted on it are calibrated against white; moving it needs " +
+          "an ink rule first (ONLYOFFICE's darkModeCorrectColor2 is the prior " +
+          "art), not a token edit",
+      );
+    }
+  }
+});
+
+test("reflow actually paints that surface, edge to edge, and the paged view does not", () => {
+  const source = stripComments(css);
+  assert.match(
+    ruleBody(source, /#viewport\.is-reflow\s*\{/),
+    /background:\s*var\(--paper-surface\)/,
+    "#viewport.is-reflow must paint the surface — without it the scroller keeps " +
+      "--bg and the capped column is a page silhouette",
+  );
+  // The tile sits on it in the same colour, so a virtualized tile with no raster
+  // yet is indistinguishable from the surface rather than a flash of paper.
+  assert.match(
+    ruleBody(source, /#viewport\.is-reflow \.page-wrap\s*\{/),
+    /background:\s*var\(--paper-surface\)/,
+  );
+  // And the paged view is untouched: `.viewport` still carries the app desk.
+  assert.match(ruleBody(source, /\n\.viewport\s*\{/), /background:\s*var\(--bg\)/);
+});
+
+test("the document scrollbar's thumb is readable on the surface it runs over", () => {
+  // The first thing the uniform surface broke, and the same defect one surface
+  // out: `--scrollbar-thumb` is a CHROME token, so in dark theme it is a
+  // near-white translucent thumb — invisible over a white track.
+  const independent = declaredTokens(ruleBody(paletteRegion, /:root\s*\{/));
+  const light = declaredTokens(ruleBody(paletteRegion, /:root,\s*\n:root\[data-theme="light"\]/));
+  assert.equal(
+    independent.get("--paper-scrollbar-thumb"),
+    light.get("--scrollbar-thumb"),
+    "the paper thumb has drifted from the light theme's; both run over a " +
+      "near-white ground and there is one right answer for it",
+  );
+  assert.equal(
+    independent.get("--paper-scrollbar-thumb-hover"),
+    light.get("--scrollbar-thumb-hover"),
+  );
+  assert.match(
+    ruleBody(stripComments(css), /#viewport\.is-reflow\s*\{/),
+    /scrollbar-color:\s*var\(--paper-scrollbar-thumb\)/,
+    "the reflow scroller must take the paper thumb, or dark theme loses its " +
+      "scrollbar over the white surface",
+  );
 });

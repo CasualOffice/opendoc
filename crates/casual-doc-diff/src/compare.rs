@@ -610,7 +610,7 @@ fn compare_field<T: PartialEq + Serialize>(
 }
 
 /// Styles by `kind/name`, falling back to an ordinal for an unnamed style.
-fn style_index(document: &Document) -> BTreeMap<String, &casual_doc_model::v1::Style> {
+pub(crate) fn style_index(document: &Document) -> BTreeMap<String, &casual_doc_model::v1::Style> {
     document
         .definitions()
         .styles
@@ -624,7 +624,9 @@ fn style_index(document: &Document) -> BTreeMap<String, &casual_doc_model::v1::S
 }
 
 /// Media references by package part name.
-fn media_index(document: &Document) -> BTreeMap<&str, &casual_doc_model::v1::MediaReference> {
+pub(crate) fn media_index(
+    document: &Document,
+) -> BTreeMap<&str, &casual_doc_model::v1::MediaReference> {
     document
         .definitions()
         .media

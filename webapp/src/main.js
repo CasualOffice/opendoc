@@ -68,11 +68,10 @@ import { createNamePrompt } from "./name_dialog.mjs";
 import { createVersionHistory } from "./version_panel.mjs";
 import { CAPTURE_REASON } from "./version_history.mjs";
 import {
-  MAX_SCROLL_PX,
-  PAGE_GAP_PX,
   PAGE_WINDOW_OVERSCAN_PX,
   buildPageBand,
   docToScroll,
+  pageBandPitch,
   pageClientRect,
   pageRangeAt,
   scrollToDoc,
@@ -145,6 +144,15 @@ import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
+import { openRoom, resumeKey } from "./collab_transport.mjs";
+import { createAccessChrome } from "./access_chrome.mjs";
+import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
+import { insertChartAtCaret } from "./chart_insert.mjs";
+import { collabCommands } from "./collab_chrome.mjs";
+import { groupsToOverflow } from "./ribbon_overflow.mjs";
+import { smallestContaining } from "./review_anchor.mjs";
+import { scrollTargetFor } from "./scroll_into_view.mjs";
+import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
@@ -396,6 +404,7 @@ const lineNumbersBtn = document.getElementById("lineNumbersBtn");
 const watermarkBtn = document.getElementById("watermarkBtn");
 const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertShapeBtn = document.getElementById("insertShapeBtn");
+const insertChartBtn = document.getElementById("insertChartBtn");
 const layoutSendBackwardBtn = document.getElementById("layoutSendBackwardBtn");
 const layoutGroupBtn = document.getElementById("layoutGroupBtn");
 const layoutUngroupBtn = document.getElementById("layoutUngroupBtn");
@@ -953,25 +962,14 @@ function updateRibbonOverflow() {
   // Reserve room for the ⋯ button. Clipboard, Editing, and Mode are persistent
   // anchors; relocate the other groups from right to left until the inline set
   // fits. Mode can fall back to the footer at very small widths.
-  const reserve = 44;
-  let inlineWidth = total;
-  const moved = [];
-  for (let i = groups.length - 1; i >= 0 && inlineWidth > avail - reserve; i--) {
-    const group = groups[i];
-    if (group.hasAttribute("data-ribbon-pinned")) continue;
-    moved.push(group);
-    inlineWidth -= widths.get(group);
-  }
-  // If a future pinned composition cannot fit at an extremely small width,
-  // preserve Clipboard and move the remaining pinned group as the last resort.
-  if (inlineWidth > avail - reserve) {
-    for (let i = groups.length - 1; i >= 0 && inlineWidth > avail - reserve; i--) {
-      const group = groups[i];
-      if (moved.includes(group) || group.dataset.group === "clipboard") continue;
-      moved.push(group);
-      inlineWidth -= widths.get(group);
-    }
-  }
+  const moved = groupsToOverflow({
+    groups,
+    widthOf: (group) => widths.get(group),
+    avail,
+    reserve: 44,
+    isPinned: (group) => group.hasAttribute("data-ribbon-pinned"),
+    isLastResort: (group) => group.dataset.group === "clipboard",
+  });
   for (const group of groups) if (moved.includes(group)) ribbonOverflowMenu.appendChild(group);
   ribbonOverflowBtn.hidden = false;
 }
@@ -1749,14 +1747,8 @@ function renderReviewMarginItems() {
   // Mutually exclusive with the outline panel (see toggleOutline): whenever the
   // review sidebar is shown the outline closes, so the canvas is only ever
   // inset from one side at a time.
-  if (show && outlinePanel && !outlinePanel.hidden) {
-    outlinePanel.hidden = true;
-    railOutline.setAttribute("aria-pressed", "false");
-  }
-  if (show && pagesPanel && !pagesPanel.hidden) {
-    pagesPanel.hidden = true;
-    railPages.setAttribute("aria-pressed", "false");
-  }
+  if (show) closeFlankingPanel(outlinePanel, railOutline);
+  if (show) closeFlankingPanel(pagesPanel, railPages);
   // Reserve the comment column's width in the page stack only while the column
   // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
   // sits past the comments (never between the canvas and the comments).
@@ -2484,6 +2476,10 @@ function backingDpr() {
 
 /** The currently open document handle (or null). Kept so a zoom change re-renders. */
 let doc = null;
+/** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
+let collab = null;
+/** Arrivals paint one at a time: two must not interleave two `renderAll()`s. */
+let arrivalPaint = Promise.resolve();
 /** Measures the rest of a document that opened on a prefix (`docs/116` §7). */
 let backgroundMeasure = null;
 /** Monotonic token so a slow render from a previous file/zoom is discarded. */
@@ -3059,6 +3055,15 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     applyActiveAuthorToDocument();
     // The room's grant into the engine that ENFORCES it, per DOCUMENT because a new document is a new minting base.
     const grantProblem = SESSION.adopt(doc) || SESSION.problemMessage();
+    // The shared session, per DOCUMENT and for the same reason the grant is: a
+    // new document is a new minting base for the NodeIds an op names.
+    collab?.stop();
+    collab = openRoom(doc, hostConfig().room, globalThis.WebSocket, {
+      identity: settings.authorName.trim() || "You",
+      resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
+      onOutcome: (o) => { const said = accessChrome.received(o); if (said) setStatus(said); if (o.documentChanged) arrivalPaint = arrivalPaint.then(() => paintArrival(o)); },
+      onState: (s) => setStatus(t(s.key), s.name === "connected" ? "" : "warn"),
+    });
     // Word/Docs: an open document always has an insertion point, so Insert ▸
     // Picture / Symbol / Emoji / Field / Table are live the instant it loads
     // instead of demanding a click first. Seeded from the engine's own
@@ -3633,9 +3638,7 @@ async function renderAll() {
 
   if (token !== renderToken) return;
   pages = nextPages;
-  // `gap: 0` in reflow: the 22px pitch is the desk between two SHEETS, and a tile
-  // is cut mid-paragraph, so the same gap there is a band across a sentence.
-  pageBandModel = buildPageBand(sizes, cssPerTwip, { gap: reflowing ? 0 : PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
+  pageBandModel = buildPageBand(sizes, cssPerTwip, pageBandPitch(reflowing));
   // Publish the sheet's rendered width so the stylesheet can size the review
   // gutter against the space that is ACTUALLY spare. CSS cannot know this —
   // it depends on paper size and zoom — and a gutter reserved from space that
@@ -3910,13 +3913,7 @@ function syncActiveReviewCommentToCaret(anchor) {
   // contains the caret, so caret-driven expansion works for suggestions too
   // (REVIEW-GAP-019). The smallest containing range wins when several stack.
   if (!anchor?.node) return;
-  const offset = Number(anchor.offset) || 0;
-  let best = null;
-  for (const entry of reviewAnchorIndex) {
-    if (entry.node !== anchor.node) continue;
-    if (offset < entry.start || offset > entry.end) continue;
-    if (!best || entry.end - entry.start < best.end - best.start) best = entry;
-  }
+  const best = smallestContaining(reviewAnchorIndex, anchor.node, Number(anchor.offset) || 0);
   if (!best || best.itemId === activeReviewItemId) return;
   activeReviewItemId = best.itemId;
   reviewSidebarPreference = true;
@@ -7547,12 +7544,14 @@ window.addEventListener("resize", () => hideContextMenu());
 
 // The engine seam for reflow is one setter; everything the shell owes it, and
 // why each number is that number, is `reflow_chrome.mjs` (`docs/151` §6).
+// `openOutline` is a request the view makes and this file arbitrates.
 const reflowView = createReflowChrome({
   button: document.getElementById("viewReflowBtn"),
   viewport: viewportEl,
   getDoc: () => doc,
   unavailableReason: () => readOnlyReason,
   onChanged: () => renderAll(),
+  openOutline: () => void (outlinePanel.hidden && reviewSidebar.hidden && toggleOutline()),
   setStatus,
 });
 
@@ -7563,6 +7562,8 @@ const foldView = createFoldChrome({
   getDoc: () => doc,
   caretNode: () => selection?.focus?.node ?? "",
   getPages: () => pages,
+  outlineOpen: () => !outlinePanel.hidden,
+  surfaceSlackPx: reflowView.surfaceSlackPx,
   scaleOf,
   onChanged: () => renderAll().then(() => scheduleChromeRefresh({ stats: true, outline: true })),
   setStatus,
@@ -7664,6 +7665,7 @@ const INSERT_SURFACE = [
   // galleries), so wiring `activate` here too would open it on mousedown and
   // immediately close it again.
   { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
+  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
   { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
   { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
@@ -7945,6 +7947,12 @@ const REVIEW_SURFACE = [
   // Protect button is a state too — so a document that arrives protected shows the
   // button pressed before anyone opens anything.
   { command: "review.restrictEditing", buttons: () => [document.getElementById("reviewProtectBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", pressed: () => documentProtection.isActive(), run: () => documentProtection.open() },
+  // Manage access. `requires: "doc"` because there is nothing to manage access TO
+  // without one; whether the button is PRESENT at all is `accessChrome.reflect`'s
+  // answer and not this table's, because absence is a permission decision and
+  // this table only knows about enablement. Same group as Restrict Editing, which
+  // is Word's own grouping of the two authority questions.
+  { command: "review.manageAccess", buttons: () => [document.getElementById("reviewManageAccessBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => accessChrome.open() },
 ];
 
 function insertCommandEnabled(commandId, context = {}) {
@@ -8022,29 +8030,16 @@ function selectionModelRect() {
  * document state. */
 function scrollOverlayIntoView(marker, block = "nearest") {
   if (!marker) return;
-  const markerRect = marker.getBoundingClientRect();
-  const viewportRect = viewportEl.getBoundingClientRect();
-  const current = viewportEl.scrollTop;
-  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  // A pixel of scroll is not a pixel of content once the document is
-  // compressed onto a bounded scroll range: it is `scale` of them (see
-  // `page_scroll.mjs`). A delta measured on screen therefore has to be divided
-  // by that before it becomes a scroll position, or every "scroll this into
-  // view" overshoots by the compression factor — which, above 2, oscillates
-  // instead of converging.
-  const perScrollPx = pageBandModel?.scale > 1 ? pageBandModel.scale : 1;
-  let delta = 0;
-  if (block === "center") {
-    delta = markerRect.top + markerRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
-  } else if (markerRect.top < viewportRect.top) {
-    delta = markerRect.top - viewportRect.top - SCROLL_INTO_VIEW_MARGIN;
-  } else if (markerRect.bottom > viewportRect.bottom) {
-    delta = markerRect.bottom - viewportRect.bottom + SCROLL_INTO_VIEW_MARGIN;
-  } else {
-    return;
-  }
-  const target = current + delta / perScrollPx;
-  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
+  const target = scrollTargetFor({
+    marker: marker.getBoundingClientRect(),
+    viewport: viewportEl.getBoundingClientRect(),
+    current: viewportEl.scrollTop,
+    max: Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight),
+    scale: pageBandModel?.scale ?? 1,
+    block,
+    margin: SCROLL_INTO_VIEW_MARGIN,
+  });
+  if (target !== null) viewportEl.scrollTo({ top: target, behavior: "auto" });
 }
 
 /** Scroll the caret in the editor viewport. Navigation callers can request a
@@ -8281,6 +8276,15 @@ function adoptEditPosition(node, offset) {
     // let the caller repaint. Better a missing caret than a dead editor.
   }
   return at;
+}
+
+/** Repaints what a remote arrival changed. The engine already applied it through
+ *  `ClientSession::receive`; this only paints. The caret is NOT mapped (`107` P-4). */
+async function paintArrival({ dirty = [], pageCount, viewRevision }) {
+  noteDocumentEdited(viewRevision);
+  if (pageCount !== pages.length) await renderAll();
+  else { for (const i of dirty) repaintPage(i); drawSelection(); }
+  scheduleChromeRefresh({ stats: true, outline: true });
 }
 
 async function applyEditResult(res, { keepView = false } = {}) {
@@ -8980,6 +8984,10 @@ for (const entry of INSERT_SURFACE) {
   // states and the ROOM's grant — in `ribbon_surface.mjs` beside the Layout and
   // References one, with the rationale that used to sit here.
   reflectReviewSurface(REVIEW_SURFACE, { hasDoc: !!doc, hasRange: !!range, hasComment: !!activeReviewCommentId, refusalFor: (c) => SESSION.refusalFor(c), authoredTitle: (b) => authoredTitle(b, EDITOR_KEYBOARD_PLATFORM) });
+  // AFTER the review sweep, because it decides whether Manage access is on screen
+  // at all and that outranks whether the sweep enabled it. O(1) — every input is a
+  // field read, so it costs nothing on the per-interaction path (`107` §4 B1).
+  accessChrome.reflect();
   // The ¶ control owns both of its halves and its popover's five checkmarks, so
   // it reflects itself rather than being swept here: its state is the ENGINE's
   // `any`, not a local flag, and nothing else on the band knows how to read it.
@@ -10515,6 +10523,24 @@ const measurement = createMeasurementUnits({
     });
   },
 });
+/** "Who may do what", in one handle — `access_chrome.mjs`, which composes the
+ *  rights dialog and the persistent access indicator over the same four
+ *  authorities. One call here rather than two modules wired separately, because a
+ *  permission resolved at two call sites is a permission two call sites can
+ *  disagree about. Constructed after `documentProtection` because it reads that
+ *  module's state, which is the DOCUMENT's own authority. */
+const accessChrome = createAccessChrome({
+  getDoc: () => doc,
+  getTransport: () => collab,
+  getGrant: () => SESSION.grant,
+  getProtection: () => documentProtection.state(),
+  getCapabilities: () => HOST_CAPS,
+  getReadOnlyReason: () => readOnlyReason,
+  registerModal,
+  fallbackFocus: () => pagesEl,
+  setStatus,
+  t: (key, values) => t(key, values),
+});
 const documentProtection = createDocumentProtection({
   getDoc: () => doc,
   runEdit,
@@ -10681,56 +10707,15 @@ tablePropertiesPanel.addEventListener("change", (event) => {
   commitTableProperties();
 });
 
+/** The form's live fields, named once so the patch builder is a pure function of
+ *  its bag rather than of this file's eighteen consts. */
+const TABLE_PROPERTIES_FORM = { width: tableWidth, indent: tableIndent, columnWidth: tableColumnWidth, rowHeight: tableRowHeight, rowHeightRule: tableRowHeightRule, cellMargin: tableCellMargin, cellSpacing: tableCellSpacing, fixedLayout: tableFixedLayout, headerRow: tableHeaderRow, caption: tableCaption, description: tableDescription };
+/** Validation and the CHANGED-only diff live in `table_properties_patch.mjs`,
+ *  where a test can reach them — `main.js` has no exports, so the diff that
+ *  decides whether eleven untouched properties are re-asserted was unreachable
+ *  from node. */
 function tablePropertiesPatch() {
-  const inputs = [
-    tableWidth,
-    tableIndent,
-    tableColumnWidth,
-    tableRowHeight,
-    tableCellMargin,
-    tableCellSpacing,
-  ].filter((input) => !input.disabled);
-  for (const input of inputs) {
-    input.setCustomValidity("");
-    if (!input.checkValidity()) {
-      input.reportValidity();
-      input.focus();
-      return null;
-    }
-  }
-  if (tableRowHeightRule.value !== "auto" && tableRowHeight.value.trim() === "") {
-    tableRowHeight.setCustomValidity("Enter a row height or choose Auto.");
-    tableRowHeight.reportValidity();
-    tableRowHeight.focus();
-    return null;
-  }
-
-  const next = {
-    alignment: tableAlignGroup.value() ?? "left",
-    tableWidthTwips: optionalInchesToTwips(tableWidth.value),
-    tableIndentTwips: signedInchesToTwips(tableIndent.value),
-    fixedLayout: tableFixedLayout.checked,
-    headerRow: tableHeaderRow.checked,
-    columnWidthTwips: optionalInchesToTwips(tableColumnWidth.value),
-    rowHeightTwips:
-      tableRowHeightRule.value === "auto" ? -1 : optionalInchesToTwips(tableRowHeight.value),
-    rowHeightRule: tableRowHeightRule.value,
-    cellMarginTwips: optionalInchesToTwips(tableCellMargin.value),
-    cellSpacingTwips: optionalInchesToTwips(tableCellSpacing.value),
-    caption: tableCaption.value,
-    description: tableDescription.value,
-  };
-  const patch = {};
-  for (const [key, value] of Object.entries(next)) {
-    if (key === "columnWidthTwips" && tableColumnWidth.disabled) continue;
-    if (value !== tablePropertiesCurrent[key]) patch[key] = value;
-  }
-  // The bridge requires the value and rule together whenever row height changes.
-  if ("rowHeightTwips" in patch || "rowHeightRule" in patch) {
-    patch.rowHeightTwips = next.rowHeightTwips;
-    patch.rowHeightRule = next.rowHeightRule;
-  }
-  return patch;
+  return tablePatch(TABLE_PROPERTIES_FORM, { alignment: tableAlignGroup.value() ?? "left", current: tablePropertiesCurrent, inchesToTwips: optionalInchesToTwips, signedInchesToTwips, rowHeightRequired: "Enter a row height or choose Auto." });
 }
 
 function commitTableProperties() {
@@ -10930,18 +10915,36 @@ function navigateToNode(node) {
   scrollCaretIntoView("center");
 }
 
+/** Re-anchors everything positioned against PAGE geometry. Every flanking panel
+ *  changes the canvas WIDTH, which re-centres the sheet, and the review markers
+ *  and fold chevron are positioned against where the sheet WAS. `toggleReview`
+ *  re-rendered the markers and `toggleOutline` did not, so opening and closing
+ *  the outline left comment icons inside the page instead of beside it. */
+function reanchorPageOverlays() {
+  scheduleReviewMarginRender();
+  if (doc) drawSelection();
+}
+
+/** Closes one flanking panel AND the rail tile that owns it — one control, so
+ *  one statement of the rule. Three sites spelled this out (the review gutter,
+ *  `toggleOutline`, the Pages navigator's `onExclusive`) and a panel closed
+ *  without its tile leaves a rail button pressed over a panel that is gone. */
+function closeFlankingPanel(panel, rail) {
+  if (!panel || panel.hidden) return;
+  panel.hidden = true;
+  rail?.setAttribute("aria-pressed", "false");
+}
+
 function toggleOutline() {
   outlinePanel.hidden = !outlinePanel.hidden;
   // Outline (left) and the review sidebar (right) are mutually exclusive so the
   // canvas is never squeezed from both sides at once. Opening the outline closes
   // the review sidebar; the reverse is enforced in renderReviewMarginItems.
   if (!outlinePanel.hidden && !reviewSidebar.hidden) toggleReview(false);
-  if (!outlinePanel.hidden && !pagesPanel.hidden) {
-    pagesPanel.hidden = true;
-    railPages.setAttribute("aria-pressed", "false");
-  }
+  if (!outlinePanel.hidden) closeFlankingPanel(pagesPanel, railPages);
   railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   buildOutline();
+  reanchorPageOverlays();
 }
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
@@ -10965,9 +10968,9 @@ const pagesPanelView = createPagesPanel({
   pageInView,
   bandTop: () => bandTopInScroller,
   onExclusive: () => {
-    outlinePanel.hidden = true;
-    railOutline.setAttribute("aria-pressed", "false");
+    closeFlankingPanel(outlinePanel, railOutline);
     if (!reviewSidebar.hidden) toggleReview(false);
+    reanchorPageOverlays();
   },
   onJumped: () => {
     updatePageWindow();
@@ -11450,7 +11453,7 @@ function toggleReview(open) {
     activeReviewCommentId = null;
     reviewComposerState = null;
   }
-  scheduleReviewMarginRender();
+  reanchorPageOverlays();
   // Focus management (REVIEW-GAP-023): closing the sidebar returns focus to the
   // rail toggle that owns it, so keyboard/AT users are not stranded.
   if (!show) railReview?.focus?.({ preventScroll: true });
@@ -11776,6 +11779,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => dropCapDialog.open() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
     { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
+    { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!selection, disabledReason: t("paragraph.caretRequired"), run: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
     { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
     { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: insertCommandEnabled("insert.symbol"), run: () => openSymbolPicker() },
     { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: insertCommandEnabled("insert.emoji"), run: () => openEmojiPicker() },
@@ -11813,6 +11817,7 @@ function editorCommands(context = { surface: "palette" }) {
     // Fold at the caret, Collapse/Expand All and the level rungs, generated from
     // the module's one table so no two surfaces can offer different sets.
     ...foldView.commands(),
+    ...collabCommands({ transport: () => collab, t }),
     // The ¶ toggle and its five switches, the measurement-unit preference, and
     // Restrict Editing. Each module generates its own rows from its own table, so
     // the palette, the menu and the control cannot offer different sets — and
@@ -11820,6 +11825,7 @@ function editorCommands(context = { surface: "palette" }) {
     ...formattingMarks.commands(),
     ...measurement.commands(),
     ...documentProtection.commands(),
+    ...accessChrome.commands(),
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     // Ribbon density (docs/104 HF-094). The choice was already real and already
@@ -13218,13 +13224,6 @@ function captureFindScope() {
 // Same node compares offsets with no WASM call; otherwise selectionEdge(...false)
 // returns whichever endpoint is earlier, and since the two nodes differ the
 // returned node uniquely identifies which one that is.
-function findPosLE(aNode, aOff, bNode, bOff) {
-  if (aNode === bNode) return aOff <= bOff;
-  const edge = doc.selectionEdge(aNode, aOff, bNode, bOff, false);
-  const aIsEarlier = edge.node === aNode;
-  edge.free();
-  return aIsEarlier;
-}
 
 // A find match spans a single paragraph, so match.startNode === match.endNode.
 // Accept iff [match.startOffset .. match.endOffset] on that node lies within the
@@ -13235,21 +13234,7 @@ function findPosLE(aNode, aOff, bNode, bOff) {
 function matchInFindSelection(match) {
   if (!findSelection.checked) return true;
   if (!findScope) return false;
-  const { startNode, startOffset, endNode, endOffset } = findScope;
-  const node = match.startNode;
-  if (node === startNode) {
-    if (match.startOffset < startOffset) return false;
-    // Single-node scope (startNode === endNode) also caps the upper bound.
-    return node === endNode ? match.endOffset <= endOffset : true;
-  }
-  if (node === endNode) {
-    return match.endOffset <= endOffset;
-  }
-  // Interior node: in scope iff scopeStart <= match and match <= scopeEnd.
-  return (
-    findPosLE(startNode, startOffset, node, match.startOffset) &&
-    findPosLE(node, match.endOffset, endNode, endOffset)
-  );
+  return matchWithinScope(match, findScope, positionComparator(doc));
 }
 
 /** Scans every match in document order, starting from the top, up to
@@ -15221,10 +15206,10 @@ function adoptDraftDocument(name, bytes) {
 /**
  * Takes the snapshot, in the document's own format.
  *
- * The mode ladder is `exportDocumentAs`'s, plus `semantic` as the last resort,
- * so a draft and a save can never be produced by different ladders. There is
- * deliberately no cross-format fallback: normalized JSON would succeed where
- * DOCX failed and would drop every image while doing it.
+ * The mode ladder is `exportDocumentAs`'s plus `semantic` as the last resort, so
+ * a draft and a save can never come from different ladders; there is deliberately
+ * no cross-format fallback, because normalized JSON would succeed where DOCX
+ * failed and drop every image. `contentId` rides along — see `version_panel.mjs`.
  */
 function takeDraftSnapshot() {
   const formatId = draftFormatFor(currentSourceFormat);
@@ -15240,7 +15225,7 @@ function takeDraftSnapshot() {
         findings = 0; // a report we cannot parse must not lose us the draft
       }
       artifact.free();
-      return { bytes, formatId, mode, findings };
+      return { bytes, formatId, mode, findings, contentId: doc.contentDigest() };
     } catch (err) {
       lastError = err;
     }

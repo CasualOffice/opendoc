@@ -5,14 +5,7 @@
 // delete, formatting, and replacement cannot give it deterministic semantics.
 // Doc 58 therefore clips a drag at the starting surface instead of silently
 // switching context midway through the gesture.
-import {
-  test,
-  expect,
-  gotoEditor,
-  stableBox,
-  mirrorBlocks,
-  expectTypedIntoOneBlock,
-} from "./fixtures.mjs";
+import { expect, expectTypedIntoOneBlock, gotoEditor, mirrorBlocks, stableBox, test } from "./fixtures.mjs";
 
 const TEXTBOX = "../fixtures/generated/inline-text-box.docx";
 
@@ -85,7 +78,7 @@ test("a text-box-to-body drag stays in the text-box story", async ({
   await selectObject(page, box);
   const outline = page.locator(".overlay .object-outline");
   await expect(outline).toBeVisible();
-  const rect = await outline.boundingBox();
+  const rect = await stableBox(outline);
   expect(rect).not.toBeNull();
 
   const start = {

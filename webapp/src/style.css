@@ -120,6 +120,43 @@
      opening a menu. Blue on white paper, in the paper layer for the same
      reason as its neighbours. */
   --paper-grammar: #1a73e8;
+  /* THE REFLOW SURFACE (docs/151 §6.2, corrected). In reflow there
+     is no page and therefore no desk: one background fills the writing surface
+     edge to edge and the measure is simply where the text is. Google renames
+     the control for exactly this reason — in Pages it is *Page color*, in
+     Pageless it is *Background color*, because there is one region rather than
+     two (support.google.com/docs/answer/10296604, first-party).
+
+     IT IS A MEMBER OF THE PAPER LAYER, NOT OF THE CHROME PALETTE, and that is
+     the load-bearing part rather than an implementation detail. The engine
+     fills a tile's raster with the document's own `w:background` — white by
+     default (`Surface::with_background`, `casual-doc-render`) — so the surface
+     the CSS paints has to be the same colour as the bitmap laid on top of it or
+     a seam appears at every tile edge. And everything painted ONTO that raster
+     (the caret, the IME preedit, the review markers, the fold chevron, the four
+     `--paper-*` marks above) is calibrated against white for the reason the
+     comment above gives. Declaring this as `var(--paper)` means the surface
+     cannot drift away from the ink that is drawn on it: carry one and the other
+     comes with it. `tests/style_tokens.test.mjs` asserts the two resolve equal.
+
+     So a reader on a dark theme gets a WHITE reflow surface, deliberately —
+     the chrome is themed, the document is not. A dark reading
+     surface is a real want and a separate piece of work, because it needs an
+     ink rule for author colours before it can be safe; ONLYOFFICE's HSL
+     lightness flip (`darkModeCorrectColor2`) is the prior art to study. Do not
+     redefine this token in a theme block without that rule. */
+  --paper-surface: var(--paper);
+  /* The document scroller's thumb, for when that scroller's track IS the paper
+     surface. This is the first thing the uniform surface broke and it is the
+     same defect the paper comment above was written about, one surface out:
+     `--scrollbar-thumb` is a CHROME token, so in dark theme it is
+     `rgba(232, 234, 237, 0.28)` — a near-white translucent thumb, which over a
+     white track is a scrollbar you cannot see. Same figures as the LIGHT
+     theme's, because the ground is the same near-white; held to that by
+     `tests/style_tokens.test.mjs` rather than by indirection, so the chrome
+     palette is not made to depend on the paper layer to say it. */
+  --paper-scrollbar-thumb: rgba(74, 78, 85, 0.3);
+  --paper-scrollbar-thumb-hover: rgba(74, 78, 85, 0.52);
 
   /* ---- Stacking ladder ------------------------------------------------------
      One ordered list for every body-level floating surface, so "what paints
@@ -5241,6 +5278,24 @@ body.compact-mode {
 }
 
 /* Icon toggle buttons */
+/* **`.fmt` has to answer `[hidden]`, because its own `display` outranks the user
+   agent's.** `[hidden] { display: none }` is a UA rule, so any author `display` on
+   the same element beats it — which means every `.fmt` button in this product that
+   ships `hidden` was painted anyway.
+   This was not theoretical and it was already known once: `.ribbon-overflow-btn`
+   carries its own `[hidden]` rule further down, and the only reason it needs one is
+   this. That rule is now redundant and is left where it is rather than removed in a
+   change about something else; what is new here is that the NEXT `.fmt` button to
+   ship `hidden` does not have to rediscover it. `session-rights.spec.mjs` is the
+   guard — Manage access is absent, not greyed, for a participant whose grant
+   withholds it, and a button the stylesheet painted anyway is that requirement
+   silently broken.
+   Before `.fmt` rather than after, so the cascade order is obvious at the point the
+   `display` is set. */
+.fmt[hidden] {
+  display: none;
+}
+
 .fmt {
   display: inline-flex;
   align-items: center;
@@ -5722,6 +5777,101 @@ body.is-format-painting .page-wrap * {
 }
 .draft-status[hidden] { display: none; }
 .draft-status[data-draft-state="unavailable"] { color: var(--danger); font-weight: 600; }
+
+/* The reader's own access, in the status bar — `access_badge.mjs`.
+   Existing tokens only: `--muted` for the whole thing and `--ink` for the level,
+   which is the same two-weight treatment `.draft-status` and `.stat-pages`
+   already use for "label plus value". No new token, no new colour (`SKILL` §11:
+   the token set is deliberate; propose visual changes, do not make them).
+   It is `inline-flex` with a glyph because the footer's other indicators are
+   words only, and a reader scanning for "what am I allowed to do" needs one
+   fixed thing to find. The glyph is `aria-hidden`; the sentence is on the
+   container's `title`/`aria-label`. */
+.access-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  white-space: nowrap;
+  /* **It shrinks rather than pushes**, and this is the line that matters: at
+     320px the footer squeezed this box to 28px against a 68px content width, and
+     a box that will not shrink turns that into a SIDEWAYS SCROLL of the whole
+     chrome — which `phone-no-horizontal-scroll.spec.mjs` caught, by name, on the
+     first run. The no-horizontal-scroll rule is the one the ribbon budget turns
+     on too (`SKILL` §11): what breaks first is never an overflow menu, it is a
+     scrollbar. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.access-badge .ms {
+  font-size: 15px;
+  /* The glyph is the one part that may not shrink — a half-drawn icon is worse
+     than none — so it is excluded from the squeeze and the text absorbs it. */
+  flex: 0 0 auto;
+}
+
+.access-badge-level {
+  color: var(--ink);
+  /* Truncates rather than overflowing. The whole statement is on the container's
+     `title`/`aria-label`, so a clipped label costs a sighted reader the end of a
+     word and costs a screen reader nothing. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* The SOURCE is the half that goes first when the footer is tight, and it may:
+   the level is the answer and the source is the attribution, so losing the
+   attribution costs the reader the second question and not the first. The whole
+   statement stays on the container's `title`, so nothing is lost outright. */
+@media (max-width: 900px) {
+  .access-badge-source {
+    display: none;
+  }
+}
+
+/* At phone width the glyph goes too, and the level keeps every pixel there is.
+   A 15px icon plus its gap is a fifth of what this box gets at 320px, and the
+   WORD is the thing a reader needs — "Read only" clipped to "Read on…" still
+   answers the question, and a lock glyph on its own does not say whether it
+   means read-only, comments-only or suggest-only. */
+@media (max-width: 620px) {
+  .access-badge .ms {
+    display: none;
+  }
+}
+
+/* Manage access: one row per participant, a name and a role picker.
+   The rows are generated (`session_rights.mjs`), so unlike every other dialog
+   body in this file the layout is here rather than in the markup. Built from
+   `.settings-section`'s own spacing so it sits in the same rhythm as the
+   authored sections around it. */
+.rights-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rights-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rights-who {
+  color: var(--ink);
+  font-size: var(--fs-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rights-role {
+  flex: 0 0 auto;
+}
 
 /* One scroll owner (Google Docs model): the comment column is an
    absolutely-positioned layer INSIDE `.viewport`'s scroll context, not a
@@ -6285,7 +6435,7 @@ body.is-format-painting .page-wrap * {
 /* The in-body chevron at the caret's heading — Word's affordance, which
    ONLYOFFICE does not have at all. Positioned by the chrome against the caret
    rectangle, so it needs an absolute box in the page's own coordinate space. */
-.fold-body-chevron {
+.overlay .fold-body-chevron {
   position: absolute;
   display: inline-flex;
   align-items: center;
@@ -6306,9 +6456,14 @@ body.is-format-painting .page-wrap * {
      and must not follow the theme. */
   color: var(--paper-ink);
   cursor: pointer;
+  /* The overlay is `pointer-events: none` so a click reaches the page canvas
+     and places the caret. A CONTROL in that overlay has to opt back in, the way
+     `.review-revision-marker` below does — without this the chevron paints,
+     shows a pointer cursor, and cannot be clicked at all. */
+  pointer-events: auto;
 }
 
-.fold-body-chevron .ms {
+.overlay .fold-body-chevron .ms {
   font-size: 16px;
   line-height: 1;
 }
@@ -6318,7 +6473,7 @@ body.is-format-painting .page-wrap * {
    A 10% wash of the paper's own ink instead — no new token and no new hue, so
    `docs/63`'s palette is untouched — and the glyph keeps its full-contrast
    colour rather than trading contrast for emphasis. */
-.fold-body-chevron:hover {
+.overlay .fold-body-chevron:hover {
   background: color-mix(in srgb, var(--paper-ink) 10%, var(--paper));
 }
 
@@ -7008,7 +7163,8 @@ body.is-format-painting .page-wrap * {
   line-height: 0;
 }
 
-/* REFLOW (docs/151 §6.2, ADR-046): a tile is not a sheet.
+/* REFLOW (docs/151 §6.2, corrected here; ADR-046): there is no
+   page, so there is no desk either.
    -------------------------------------------------------------------------
    In reflow the engine cuts the galley into fixed-height tiles at LINE
    boundaries, so a tile edge falls wherever 11in of column happens to end —
@@ -7022,10 +7178,59 @@ body.is-format-painting .page-wrap * {
                    positions have to be computable for tiles that are not in the
                    DOM (see the note below).
 
-   What is left is one continuous column of paper-coloured raster, which is what
-   the reader should see. The class is written by `reflow_chrome.mjs`. */
+   THAT WAS NOT ENOUGH, AND THE OLD COMMENT HERE SAID SO WITHOUT NOTICING. It
+   claimed that what is left is "one continuous column of paper-coloured raster,
+   which is what the reader should see". It is an accurate description of what
+   those three lines produce and an inaccurate description of a pageless view:
+   a white rectangle inside a differently-coloured field is a page whichever
+   two properties you file off it. Measured before this rule existed, at a
+   1440px window in Reading: a 500px `--paper` column centred in 940px of
+   `--bg`, which our own `reflow.spec.mjs` asserted as "real desk on each side".
+   ONLYOFFICE's reader keeps that same page-on-desk structure (#fff page,
+   #EEEEEE/#666666 canvas, 20mm gaps, borders) — so the view was built against
+   the wrong reference on its most visible axis.
+
+   So the desk goes too. `--paper-surface` fills the scroller edge to edge and
+   the tiles sit on it in their own colour, which is the same colour; the
+   measure is then where the TEXT is rather than where the paper is, and a tile
+   boundary has nothing to draw itself against. Two consequences worth stating
+   because they are the point rather than side effects:
+
+     * a seam between two tiles becomes unpaintable, not merely unpainted —
+       surface and raster are one value by construction (see `--paper-surface`);
+     * the space beside the measure is surface, not desk, so it is somewhere an
+       affordance may legitimately live. `fold_chrome.mjs`'s disclosure chevron
+       is the first thing to use that, and it is why the chevron is reachable in
+       reflow at all.
+
+   The class is written by `reflow_chrome.mjs`. */
+#viewport.is-reflow {
+  background: var(--paper-surface);
+  /* The thumb follows the track it runs on, not the theme — see
+     `--paper-scrollbar-thumb`. Firefox's property here, WebKit's below. */
+  scrollbar-color: var(--paper-scrollbar-thumb) transparent;
+}
+
+#viewport.is-reflow::-webkit-scrollbar-thumb {
+  background: var(--paper-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+#viewport.is-reflow::-webkit-scrollbar-thumb:hover {
+  background: var(--paper-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
 #viewport.is-reflow .page-wrap {
+  background: var(--paper-surface);
   box-shadow: none;
+  border-radius: 0;
+}
+
+/* The raster canvas itself. A 3px radius clipped the corner pixels of a tile
+   that has no corner — invisible against a desk of the same colour, and still a
+   page affordance asserted in the one place a pixel test would look. */
+#viewport.is-reflow .page {
   border-radius: 0;
 }
 

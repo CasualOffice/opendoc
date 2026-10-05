@@ -11,13 +11,7 @@
 // `105` UX-019 (the whole editor at 390px: the Home tab collapsing to a single
 // `⋯` menu, no way to type on a touch device) is a separate, larger row and is
 // NOT addressed here. This spec deliberately says nothing about the ribbon.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 const WIDE = { width: 1440, height: 900 };
 const TABLET = { width: 860, height: 900 };
@@ -249,7 +243,7 @@ for (const [name, size] of [
     ).toBeGreaterThanOrEqual(Math.min(hits.pageHeight, readingRoom) - 1);
 
     // The comment is still readable, in the sheet, on screen.
-    const cardBox = await card(page).boundingBox();
+    const cardBox = await stableBox(card(page));
     expect(cardBox, "the comment card must be laid out").not.toBeNull();
     expect(cardBox.y).toBeGreaterThanOrEqual(box.top - 1);
     expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(box.windowHeight + 1);

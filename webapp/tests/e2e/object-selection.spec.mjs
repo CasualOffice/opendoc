@@ -2,7 +2,7 @@
 // drawing selects it as an OBJECT (distinct from a text caret), the engine draws
 // its outline + engine-declared resize handles, and the interaction grammar's
 // Escape two-step returns to a text caret.
-import { test, expect, gotoEditor, MOD } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 // The rich producer fixture places an inline image near the top of page 1;
 // this fraction of the first page's box lands on it (found empirically, stable
@@ -11,14 +11,14 @@ const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
 async function clickImage(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * IMAGE_POS.fx, y: box.height * IMAGE_POS.fy } });
 }
 
 async function clickBodyText(page) {
   // A point well below the image, in ordinary body prose.
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * 0.2, y: box.height * 0.55 } });
 }
 

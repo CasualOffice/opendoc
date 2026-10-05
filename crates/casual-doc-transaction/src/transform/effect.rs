@@ -16,10 +16,14 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::AbstractNumberingId;
 use casual_doc_model::v1::MediaId;
 use casual_doc_model::v1::NumberingInstanceId;
+// The declared inline container set (`docs/109` HF-212) and the group children it hands
+// out. Separate `use` lines, per the parallel-lane rule above.
+use casual_doc_model::v1::GroupChild;
 use casual_doc_model::v1::{
     BlockNode, BookmarkId, FieldRangeId, HeaderFooterId, InlineNode, NoteId, NoteKind, SectionId,
     StyleId, Table,
 };
+use casual_doc_model::v1::{InlineDescent, inline_descent};
 
 use super::{Change, Container, MALFORMED_CHANGE, block_id};
 
@@ -562,60 +566,61 @@ pub(super) fn collect_table(table: &Table, out: &mut Vec<NodeId>) {
 
 /// Collects `inline`'s id and the ids of every inline or block nested inside it.
 ///
-/// DrawingML group internals are deliberately not descended into: a shape removed with its
-/// containing paragraph is not enumerated, which costs a tombstone *report* and never
-/// costs convergence (see [`removed_by`]).
+/// Descent is the one declared container set ([`inline_descent`]), which is how this walk
+/// stopped being a five-of-six. It used to list `Group` among the leaves — an explicit
+/// arm, so no compiler and no wildcard guard could see it — and the consequence was a
+/// tombstone gap exactly where the content is richest: a shape, a picture, or a whole text
+/// box's paragraphs removed with the paragraph that anchored their group were not
+/// enumerated, so a concurrent operation naming one of those nodes was *refused* instead of
+/// being tombstoned. The old comment called that "a tombstone report" and judged it free;
+/// it is not free to the author of the losing edit, who sees a refusal rather than their
+/// change being absorbed. `docs/109` HF-212 — the class is walks that decide the container
+/// set for themselves, and an explicit wrong arm is the quiet half of it.
+///
+/// **O(nodes in this subtree)** — bounded by the concurrent operation's own payload, never
+/// by the document, which is the bound [`removed_by`] states.
 pub(super) fn collect_inline(inline: &InlineNode, out: &mut Vec<NodeId>) {
     out.push(inline.id());
-    match inline {
-        InlineNode::Hyperlink(node) => {
-            for child in &node.inlines {
+    match inline_descent(inline) {
+        InlineDescent::Inlines(children) => {
+            for child in children {
                 collect_inline(child, out);
             }
         }
-        InlineNode::Field(node) => {
-            for child in &node.inlines {
-                collect_inline(child, out);
-            }
-        }
-        InlineNode::Revision(node) => {
-            for child in &node.inlines {
-                collect_inline(child, out);
-            }
-        }
-        InlineNode::Sdt(node) => {
-            for child in &node.inlines {
-                collect_inline(child, out);
-            }
-        }
-        InlineNode::TextBox(node) => {
-            for block in &node.blocks {
+        InlineDescent::Blocks(blocks) => {
+            for block in blocks {
                 collect_block(block, out);
             }
         }
-        InlineNode::Run(_)
-        | InlineNode::Tab(_)
-        | InlineNode::Break(_)
-        | InlineNode::Drawing(_)
-        | InlineNode::AnchoredDrawing(_)
-        | InlineNode::EmbeddedObject(_)
-        | InlineNode::Group(_)
-        | InlineNode::NoteReference(_)
-        | InlineNode::NoteNumberMark(_)
-        | InlineNode::CommentReference(_)
-        | InlineNode::CommentRangeStart(_)
-        | InlineNode::CommentRangeEnd(_)
-        | InlineNode::BookmarkStart(_)
-        | InlineNode::BookmarkEnd(_)
-        | InlineNode::FieldRangeStart(_)
-        | InlineNode::FieldRangeEnd(_)
-        | InlineNode::MoveRangeStart(_)
-        | InlineNode::MoveRangeEnd(_)
-        | InlineNode::Math(_)
-        | InlineNode::Symbol(_)
-        | InlineNode::HorizontalRule(_)
-        | InlineNode::NoBreakHyphen(_)
-        | InlineNode::SoftHyphen(_)
-        | InlineNode::PositionalTab(_) => {}
+        InlineDescent::Group(children) => collect_group(children, out),
+        InlineDescent::Leaf => {}
+    }
+}
+
+/// Collects a DrawingML group's children's ids, and the block stories its text boxes own.
+///
+/// The group's OWN id is pushed by the caller ([`collect_inline`] via `inline.id()`, or the
+/// parent group for a nested one), so it is not pushed again here. The match over
+/// `GroupChild` is exhaustive and has no wildcard: the compiler already makes a fifth child
+/// kind a build error, which is the guarantee the inline axis needs
+/// [`inline_descent`](casual_doc_model::v1::inline_descent) for.
+///
+/// **O(children in the subtree)**.
+fn collect_group(children: &[GroupChild], out: &mut Vec<NodeId>) {
+    for child in children {
+        match child {
+            GroupChild::Picture(picture) => out.push(picture.id),
+            GroupChild::Shape(shape) => out.push(shape.id),
+            GroupChild::TextBox(text_box) => {
+                out.push(text_box.id);
+                for block in &text_box.blocks {
+                    collect_block(block, out);
+                }
+            }
+            GroupChild::Group(nested) => {
+                out.push(nested.id);
+                collect_group(&nested.children, out);
+            }
+        }
     }
 }

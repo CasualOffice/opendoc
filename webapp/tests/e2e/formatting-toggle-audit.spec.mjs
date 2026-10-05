@@ -5,14 +5,7 @@
 // underline". A selection in the body round-trips, so the defect is somewhere
 // else in the space: the caret (armed formatting), or a surface other than the
 // body. This drives every combination instead of guessing which one.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 const MARKS = [
   ["bold", "b"],
@@ -35,7 +28,7 @@ async function intoHeader(page) {
   let box = null;
   await expect
     .poll(async () => {
-      box = await canvas.boundingBox();
+      box = await stableBox(canvas);
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);
@@ -52,7 +45,7 @@ async function intoFooter(page) {
   let box = null;
   await expect
     .poll(async () => {
-      box = await page.locator(".page-wrap .page").first().boundingBox();
+      box = await stableBox(page.locator(".page-wrap .page").first());
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);

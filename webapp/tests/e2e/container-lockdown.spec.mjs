@@ -19,7 +19,7 @@
 // right-click menu, because selecting text to copy it and right-clicking for Copy
 // and Search are reading affordances. What it loses is the EDITING affordances —
 // object handles, object properties, a table's structure commands.
-import { test, expect, MOD } from "./fixtures.mjs";
+import { MOD, expect, stableBox, test } from "./fixtures.mjs";
 
 // The float fixture puts one floating image near the top-left of page 1, which is
 // the thing the owner clicked.
@@ -42,7 +42,7 @@ async function open(page, mode) {
  *  right-click the same place. */
 async function clickTheImage(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   const at = { x: box.width * IMAGE_AT.fx, y: box.height * IMAGE_AT.fy };
   await canvas.click({ position: at });
   return { canvas, at };

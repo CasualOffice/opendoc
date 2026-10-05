@@ -639,6 +639,36 @@ export function collabTransport(options) {
     flush() {
       pump();
     },
+    /** Sends one frame the ENGINE built that is not a document chunk.
+     *
+     *  `collabNextChunk` is a poll over the edit log and produces submissions
+     *  only, so a request about the SESSION — the one there is today is
+     *  `collabSetAccessFrame` — has no path through it. This is that path, and it
+     *  is deliberately not a general "send": the bytes must come from the engine,
+     *  which is the whole of ADR-063's division (nothing in `webapp/src` composes
+     *  a frame).
+     *
+     *  It takes CUSTODY on the same terms as a chunk, which is the only reason
+     *  this is not three lines at the call site: a frame handed over while the
+     *  socket is away is queued and sent on the next connection rather than
+     *  silently dropped — the loss ADR-063's addendum records for the chunk path.
+     *  Unlike a chunk it is **not** resubmitted by the engine if it is lost, so
+     *  the queue is the only copy there is.
+     *
+     *  `false` when there is no session to send it to at all, so a caller can say
+     *  so rather than reporting a success nothing happened after.
+     *
+     *  Complexity: O(1) plus the drain.
+     *
+     *  @param {Uint8Array|null|undefined} bytes a frame from the engine
+     *  @returns {boolean} whether it was taken
+     */
+    request(bytes) {
+      if (phase === "stopped" || !bytes || bytes.length === 0) return false;
+      queue.push(bytes);
+      drain();
+      return true;
+    },
     /** The reader-facing state, pulled. O(1). */
     state,
   });

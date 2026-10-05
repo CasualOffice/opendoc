@@ -3,7 +3,7 @@
 // zoom control with Fit modes, and grow/shrink + change-case. These extend the
 // existing toolbar coverage (they do not replace the reflection/tri-state suites
 // in ribbon-home / history-formatting / paragraph-format-reflection).
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 // Selects `count` characters forward from the current caret.
 async function selectForward(page, count) {
@@ -126,13 +126,13 @@ test("Q4: zoom accepts a typed percentage, a Fit mode, and rejects garbage", asy
 
   const zoom = page.locator("#zoom");
   const pageCanvas = page.locator(".page-wrap .page").first();
-  const baseWidth = (await pageCanvas.boundingBox()).width;
+  const baseWidth = (await stableBox(pageCanvas)).width;
 
   // Typed percentage applies and re-renders larger.
   await zoom.fill("150%");
   await zoom.press("Enter");
   await expect(zoom).toHaveValue("150%");
-  await expect.poll(async () => (await pageCanvas.boundingBox()).width).toBeGreaterThan(baseWidth * 1.3);
+  await expect.poll(async () => (await stableBox(pageCanvas)).width).toBeGreaterThan(baseWidth * 1.3);
 
   // Fit width via the presets menu.
   await page.locator("#zoomMenuBtn").click();

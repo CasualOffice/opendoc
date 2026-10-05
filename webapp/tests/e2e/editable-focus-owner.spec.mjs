@@ -12,14 +12,7 @@
 // future spell-check possible. Each one was verified to FAIL against the
 // pre-fix code (see the commit message for the mutations used) — a guard that
 // cannot go red is not a guard (docs/105 CQ-003).
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 /** What actually holds focus once the user is editing, and whether it is a
  *  thing a browser will accept text into. */
@@ -85,7 +78,7 @@ test("the focus owner rides the caret, so IME candidates anchor where the user i
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
-  const pageBox = await page.locator(".page-wrap .page").first().boundingBox();
+  const pageBox = await stableBox(page.locator(".page-wrap .page").first());
   const atStart = await focusOwner(page);
 
   // An IME candidate window and the iOS autocorrect bar anchor to the focused

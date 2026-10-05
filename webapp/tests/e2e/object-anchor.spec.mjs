@@ -2,7 +2,7 @@
 // (anchored) objects are now selectable, movable (SetAnchor), wrappable
 // (SetWrap), and resizable (SetExtent). The `?fixture=float` document holds one
 // top-level floating image; the shipped sample docs contain none.
-import { test, expect, gotoEditor, MOD } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 // The floating image sits near the top-left of page 1 in the float fixture.
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
@@ -21,7 +21,7 @@ async function gotoFloat(page) {
 
 async function selectFloat(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * FLOAT_POS.fx, y: box.height * FLOAT_POS.fy } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
@@ -140,7 +140,7 @@ test("all floating handles preserve their opposite edge and undo position plus s
     const handle = page
       .locator(`.overlay .object-handle[data-handle="${gesture.handle}"]`)
       .first();
-    const b = await handle.boundingBox();
+    const b = await stableBox(handle);
     const cx = b.x + b.width / 2;
     const cy = b.y + b.height / 2;
     await page.mouse.move(cx, cy);
@@ -183,7 +183,7 @@ test("a handle crossing its opposite edge clamps to the deterministic minimum", 
   await selectFloat(page);
   const before = await outlineBox(page);
   const west = page.locator('.overlay .object-handle[data-handle="7"]').first();
-  const b = await west.boundingBox();
+  const b = await stableBox(west);
   const cx = b.x + b.width / 2;
   const cy = b.y + b.height / 2;
   await page.mouse.move(cx, cy);

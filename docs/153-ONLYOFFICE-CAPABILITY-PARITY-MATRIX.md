@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 176 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 179 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -142,8 +142,8 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | Parity | 179 | both products ship it, and both anchors resolve |
 | Ours, ungated | 26 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 64 | we ship part of it; the row says what is missing |
-| Gap | 100 | their standalone browser session ships it and we do not |
+| Partial | 65 | we ship part of it; the row says what is missing |
+| Gap | 99 | their standalone browser session ships it and we do not |
 | Theirs, gated | 16 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -159,7 +159,6 @@ least two surfaces (`SKILL` §10).
 <!-- @generated parity-gaps -->
 | Rank | Capability | Id | Theirs | Note |
 | --- | --- | --- | --- | --- |
-| 1 | Insert a chart | `object.insert-chart` | `btnInsertChart` | We have no chart authoring of any kind. |
 | 2 | Align selected objects to each other | `object.align-objects` | `mniAlignObjects` | Their Align dropdown offers the six alignments plus an align-to-each-other mode; we have no align command at all. |
 | 2 | Edit a chart's data | `object.chart-edit-data` | `btnEditData` | Their Edit data opens an embedded spreadsheet editor over the chart's cached data. |
 | 2 | Chart elements — title, legend, labels, gridlines | `object.chart-elements` | `btnChartElements` | Their Chart tab drives title, legend position, data labels and both axes. |
@@ -470,7 +469,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Free rotation, by handle or by angle | Parity | `webapp/src/object_rotate_drag.mjs` · `createObjectRotateDrag` | `ApiDrawing.SetRotation` | Rotation grip with Shift snapping, plus a typed angle field in the properties panel; both go through the same engine call. |
 | Group objects | Parity | `layout.arrange.group` | `btnImgGroup` | Ctrl or Cmd click builds the multi-object selection, and the engine answers whether the set can be grouped and why not. |
 | Freehand ink and drawing tools | Neither | none (`tools.draw` undeclared) | none (searched `Common.Views.Draw (txtPen, txtHighlighter, txtEraser) exists in apps/common/main/lib/view/Draw.js, but grep for Common.Views.Draw and lib/view/Draw across apps/ resolves only into apps/pdfeditor; the document editor's Toolbar.js has no Draw tab and its btnDraw control comes from PdfSignDialog.js`) | The pen, highlighter and eraser belong to their PDF editor, not to the document editor. Neither product inks in a document. |
-| Insert a chart | Gap | none (`insert.chart` undeclared) | `btnInsertChart` | We have no chart authoring of any kind. |
+| Insert a chart | Partial | `insert.chart` — missing: a chart type gallery, and any editing of the chart's data, title, series or legend | `btnInsertChart` | Insert ▸ Chart and the command palette both create Word's own default, a clustered column chart, and the engine writes a real `word/charts/chartN.xml` part for the six typed families. What is missing is every choice AFTER the insert: there is no type picker, and nothing edits the data — their btnInsertChart opens straight into a data grid. The row was graded as a flat gap until `insert.chart` landed; the guard caught the UNDERSTATEMENT, which is the half of §9 rule 6 that is easy to forget. |
 | Insert a picture from a file | Parity | `insert.image` | `asc_docs_api.AddImage` | Both take a local file. Ours also accepts a pasted or dropped image through the same insertImageFromBlob path. |
 | Insert a picture from host storage | Gap | none (`insert.imageFromStorage` undeclared) | `DE.Views.Toolbar.mniFromStorage` | Their From Storage row appears only when the integrator answers the insert-image request, so it is an integration point rather than a licence gate. docs/149 grades the same thing as editorConfig.fileChoiceUrl. |
 | Insert a picture from a URL | Gap | none (`insert.imageFromUrl` undeclared) | `asc_docs_api.AddImageUrlAction` | They ship a URL dialog beside the file picker; we have only the file, clipboard and drop routes. |

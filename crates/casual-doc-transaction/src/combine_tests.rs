@@ -496,6 +496,7 @@ fn offline_combine_agrees_with_the_live_session_path() {
             client: ClientId::new(0),
             revision: Revision::new(0),
             capabilities: Capabilities::owner(),
+            participants: Vec::new(),
         },
         &mut ada_log,
     )
@@ -525,6 +526,7 @@ fn offline_combine_agrees_with_the_live_session_path() {
             client: ClientId::new(1),
             revision: Revision::new(0),
             capabilities: Capabilities::owner(),
+            participants: Vec::new(),
         },
         &mut grace_log,
     )

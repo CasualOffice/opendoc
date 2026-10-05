@@ -10,14 +10,14 @@
 // the user would see. Nothing is asserted from internal state that a broken build
 // could still satisfy.
 import {
-  test,
+  MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
   stableBox,
-  MOD,
+  test,
 } from "./fixtures.mjs";
 
 const SAMPLE = "sample.docx"; // header + footer, header is right-aligned

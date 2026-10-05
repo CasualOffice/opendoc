@@ -4,7 +4,7 @@
 // status always read a hardcoded "1 match" regardless of the real count, and
 // there was no "Replace all" or toolbar entry point. This locks the fixed
 // behavior: real match counting, Replace all, and the new ribbon button.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 test("the ribbon Find button opens the panel", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
@@ -101,7 +101,7 @@ test("previous and next scroll the canvas to the selected match", async ({
   expect(initialStatus).toMatch(/^[12] of 2$/);
 
   const firstScroll = await page.locator("#viewport").evaluate((el) => el.scrollTop);
-  const panelTop = (await page.locator("#findPanel").boundingBox()).y;
+  const panelTop = (await stableBox(page.locator("#findPanel"))).y;
   await page.locator("#findNext").click();
   await expect(page.locator("#findStatus")).not.toHaveText(initialStatus);
   const nextState = await page.evaluate(() => {

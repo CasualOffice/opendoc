@@ -308,6 +308,7 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.dropCap", "mutate"),
   exact("insert.image", "mutate"),
   exact("insert.shape", "mutate"),
+  exact("insert.chart", "mutate"),
   exact("insert.textbox", "mutate"),
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
@@ -460,6 +461,22 @@ export const COMMAND_CONTRACT = Object.freeze([
   // trap ADR-059 removed in the engine, and the one a `requires` that read the
   // document's own state would have rebuilt here.
   exact("review.restrictEditing", "edit"),
+  // Manage access — change what the OTHER people in a shared session may do.
+  //
+  // `null`, and not `"edit"`, which is the one surprising entry in this block.
+  // `requires` says what a host must grant for the command to be reachable, and
+  // this command touches no document at all: it changes the ROOM. A host that
+  // embeds a read-only viewer in a shared session still wants its owner able to
+  // demote somebody — withholding `edit` must not withhold that — and the
+  // capability that actually gates it is the PARTICIPANT's `manageAccess`, which
+  // is a different authority with a different source and is enforced by
+  // `session_access.mjs`'s own table and by the relay. Declaring `edit` here
+  // would be a second, wrong gate on the same command.
+  //
+  // `collab.reconnect` is the precedent and the shape is identical: a session
+  // command, `requires: null`, gated by the session's own state rather than by a
+  // container capability.
+  exact("review.manageAccess", null),
 
   // ---- style --------------------------------------------------------------
   // Both write to the document's style table, so both are mutations. Declared
@@ -507,6 +524,14 @@ export const COMMAND_CONTRACT = Object.freeze([
   // the editor offers that this file does not name is invisible to a host, which
   // is the one audience it has.
   exact("view.reflow", null),
+  // Reconnecting a shared session requires NOTHING of the host, and that is the
+  // interesting part rather than an omission. It mutates no document — it opens a
+  // socket the reader already had — so a host that granted no mutation capability
+  // can still offer it, and a host that granted editing but whose session dropped
+  // needs it most. The grant that matters arrives on the wire in the `Welcome`
+  // and only ever NARROWS what this host already allowed, so reconnecting cannot
+  // widen a reader's reach (ADR-063).
+  exact("collab.reconnect", null),
   // Folding — the heading at the caret, Collapse/Expand All, and the nine level
   // rungs (ADR-049, `109` FOLD-001). EXACT rows and not a family, by this file's
   // own addressing rule: a family is for a roster generated from the document,

@@ -515,14 +515,34 @@ test("how much English the reference pages put on the site, measured and publish
   // movement is in one file (`deployment-containers-and-configuration.html`, 494
   // against 395) and it is ARTICLE BODY in a published design document, which is
   // the region this figure deliberately does not route.
+  //
+  // 2601 -> 2606 with `ODC-7011`'s row in `20-ERROR-CODE-REGISTRY.md` (the rights
+  // change a shared session can refuse). MEASURED from the regenerated page, read
+  // off this assertion's own failure output rather than added up: five, and the
+  // whole movement is in `error-code-registry.html` (140 against 135), which is
+  // the row's table cells. `ODC-7010`'s row moved it by exactly as much, which is
+  // a coincidence worth not relying on — the figure is measured each time for
+  // precisely that reason.
+  //
+  // 2606 -> 2663 with `109` HF-243 in `35-DISPOSITION-TAXONOMY.md`. MEASURED from
+  // the regenerated page, read off this assertion's own failure output rather than
+  // added up: fifty-seven, and the whole movement is in
+  // `disposition-taxonomy.html` (410 against 353). That document had recorded the
+  // attribute axis of the loss-coverage gate as deliberately deferred, with the
+  // 2026-09-30 measurement behind the decision; the axis is armed now, by a
+  // different mechanism, so the section says what shipped instead of the opposite
+  // of it. Fifty-seven strings is what it costs to replace a published claim that
+  // has become false — the failure mode §9 exists to stop — plus three rows in the
+  // no-op table for the conditional arms that replaced three unconditional
+  // silences.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2601,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2601). That ` +
+    2663,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2663). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

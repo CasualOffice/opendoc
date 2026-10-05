@@ -3110,6 +3110,161 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     assert!(!features(&import).contains(&"adjustLineHeightInTable"));
 }
 
+/// `w:enforcement` has three states, and an **absent** one means ENFORCED.
+///
+/// MS-OI29500 Part 1 §17.15.1.29: "The standard states that if the `enforcement`
+/// attribute is omitted, then protection settings are ignored by application. —
+/// Word enforces protection when this attribute is missing." Word writes
+/// essentially every protected document in existence, so its reading is the
+/// compatible one, and the two readings differ in the unsafe direction: reading
+/// absent as off opened a document Word treats as read-only fully editable here,
+/// with no banner and no finding.
+///
+/// All three states are asserted in one test because the defect was not "absent
+/// is misread" on its own — it was that absent and `="0"` were being collapsed
+/// into one case. `="0"` is a state Word writes deliberately (an author set a
+/// restriction up and then switched it off) and `casual-doc-edit`'s
+/// `protection.rs` depends on it staying false, so a guard that only pinned the
+/// absent case could be satisfied by breaking the explicit one.
+#[test]
+fn an_absent_w_enforcement_means_enforced_and_an_explicit_zero_still_means_off() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+    let protection = |attributes: &str| {
+        let settings = format!(
+            r#"<w:settings xmlns:w="urn:w">
+                <w:documentProtection w:edit="readOnly" {attributes}/>
+            </w:settings>"#
+        );
+        import_with_settings(document, settings.as_bytes())
+            .document
+            .definitions()
+            .settings
+            .document_protection
+            .expect("the element is present, so the model carries a restriction")
+    };
+
+    // Absent: enforced.
+    assert!(
+        protection("").enforcement,
+        "an absent w:enforcement must be ENFORCED (MS-OI29500 §17.15.1.29); \
+         reading it as off opens a Word-protected document fully editable"
+    );
+    // Explicitly off: not enforced. Word writes this when an author set a
+    // restriction up and then stopped it.
+    for off in [
+        "w:enforcement=\"0\"",
+        "w:enforcement=\"false\"",
+        "w:enforcement=\"off\"",
+    ] {
+        assert!(
+            !protection(off).enforcement,
+            "{off} must stay NOT enforced - the explicit-zero case was already right"
+        );
+    }
+    // Explicitly on: enforced.
+    for on in [
+        "w:enforcement=\"1\"",
+        "w:enforcement=\"true\"",
+        "w:enforcement=\"on\"",
+    ] {
+        assert!(protection(on).enforcement, "{on} must be enforced");
+    }
+    // The level itself is unaffected by any of this.
+    assert_eq!(protection("").edit, DocumentProtectionEdit::ReadOnly);
+}
+
+/// The password groups on the two protection elements are REPORTED, not dropped
+/// in silence.
+///
+/// `apply_setting` returns *handled* for `w:documentProtection` and
+/// `w:writeProtection`, which marked the whole element consumed and put its
+/// unread attributes beyond the reach of the only reporter in the function — so
+/// the sixteen `AG_Password`/`AG_TransitionalPassword` attributes were dropped
+/// with **no finding at all**, and `word/settings.xml` is a consumed part with no
+/// byte floor behind it. A password-protected document saved password-less while
+/// the restriction survived.
+///
+/// The four Office-2010 ISO-verifier attributes are asserted by name because
+/// ADR-052 and `docs/160` §7 item 5 each enumerate only the legacy group, and a
+/// modern Word file's password material may be entirely in those four.
+///
+/// This guard asserts the FINDING, not the parse: nothing here reads a hash into
+/// the model, and nothing should until ADR-052's open decision is made.
+#[test]
+fn the_protection_password_groups_are_reported_rather_than_dropped_in_silence() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+    // Synthetic values. `w:hash=""` is present-but-empty on purpose: an attribute
+    // whose value says nothing is not a loss (`docs/160` §3), and a false finding
+    // is the failure HF-174 put 621 of in front of the owner.
+    let settings = br#"<w:settings xmlns:w="urn:w">
+        <w:writeProtection w:recommended="1" w:algorithmName="SHA-512"
+            w:hashValue="Zm9v" w:saltValue="YmFy" w:spinCount="100000"/>
+        <w:documentProtection w:edit="readOnly" w:enforcement="1"
+            w:cryptProviderType="rsaAES" w:cryptAlgorithmClass="hash"
+            w:cryptAlgorithmType="typeAny" w:cryptAlgorithmSid="14"
+            w:cryptSpinCount="100000" w:cryptProvider="Microsoft Enhanced RSA and AES"
+            w:algIdExt="00000000" w:algIdExtSource="com.microsoft.office"
+            w:cryptProviderTypeExt="00000000" w:cryptProviderTypeExtSource="com.microsoft.office"
+            w:hash="" w:salt="Y29yZ2U="
+            w:algorithmName="SHA-512" w:hashValue="Z3JhdWx0" w:saltValue="Z2FycGx5"
+            w:spinCount="100000"/>
+    </w:settings>"#;
+    let import = import_with_settings(document, settings);
+    let reported = features(&import);
+    for attribute in [
+        "algIdExt",
+        "algIdExtSource",
+        "algorithmName",
+        "cryptAlgorithmClass",
+        "cryptAlgorithmSid",
+        "cryptAlgorithmType",
+        "cryptProvider",
+        "cryptProviderType",
+        "cryptProviderTypeExt",
+        "cryptProviderTypeExtSource",
+        "cryptSpinCount",
+        "hashValue",
+        "salt",
+        "saltValue",
+        "spinCount",
+    ] {
+        let feature = format!("documentProtection/@{attribute}");
+        assert!(
+            reported.contains(&feature.as_str()),
+            "{feature} must reach the compatibility report; it held {reported:?}"
+        );
+    }
+    // The same two groups live on `w:writeProtection` (`CT_WriteProtection`), and
+    // the same handler consumed them, so the family is covered rather than the
+    // one reported case.
+    for attribute in ["algorithmName", "hashValue", "saltValue", "spinCount"] {
+        let feature = format!("writeProtection/@{attribute}");
+        assert!(
+            reported.contains(&feature.as_str()),
+            "{feature} must reach the compatibility report; it held {reported:?}"
+        );
+    }
+    // Empty is not a loss, and the three POLICY attributes are modeled, so none
+    // of them may appear - otherwise this is a finding generator rather than a
+    // loss report.
+    for not_a_finding in [
+        "documentProtection/@hash",
+        "documentProtection/@edit",
+        "documentProtection/@enforcement",
+        "documentProtection/@formatting",
+        "writeProtection/@recommended",
+        "documentProtection",
+        "writeProtection",
+    ] {
+        assert!(
+            !reported.contains(&not_a_finding),
+            "{not_a_finding} is not a loss and must not be reported; it held {reported:?}"
+        );
+    }
+}
+
 #[test]
 fn dangling_numbering_reference_is_reported_not_emitted() {
     let numbering = br#"<w:numbering xmlns:w="urn:w"/>"#;
@@ -10404,19 +10559,32 @@ fn the_corpus_reports_exactly_these_findings() {
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
             2,
         ),
-        // 2 before FID-P-03's coverage guard, then 4. The two new ones are REAL
-        // losses that were silent: `a:graphicFrameLocks noChangeAspect="1"` and
-        // `a:picLocks noChangeAspect="1" noChangeArrowheads="1"` — restrictions the
-        // document asked for and this engine does not honour. They were in `body`'s
-        // unconditional drawing-scaffolding list, so a lock that locked something
-        // was dropped with exactly as little noise as one that locked nothing; they
-        // are in the no-op class's CONDITIONAL half now, beside `a:spLocks`, which
-        // had always had the rule they were missing. This is the count moving
-        // because the importer's honesty moved, which is what the test is for.
+        // 2 before FID-P-03's coverage guard, then 4. The two then-new ones are
+        // REAL losses that were silent: `a:graphicFrameLocks noChangeAspect="1"`
+        // and `a:picLocks noChangeAspect="1" noChangeArrowheads="1"` —
+        // restrictions the document asked for and this engine does not honour.
+        // They were in `body`'s unconditional drawing-scaffolding list, so a lock
+        // that locked something was dropped with exactly as little noise as one
+        // that locked nothing; they are in the no-op class's CONDITIONAL half now,
+        // beside `a:spLocks`, which had always had the rule they were missing.
+        // This is the count moving because the importer's honesty moved, which is
+        // what the test is for.
+        //
+        // 4, then 6 with HF-243's attribute gate. The two new ones are the same
+        // shape again, one axis along: `wp:docPr@name` and `pic:cNvPr@name`, a
+        // drawing object's name — the handle an author renames a shape by in
+        // Word's Selection Pane, and what a screen reader announces beside the alt
+        // text. The model holds `descr` and has no field for a name, so the value
+        // was dropped, and it was dropped in SILENCE because `is_drawing_scaffolding`
+        // excused the element while the parser consumed only `@descr` out of it.
+        // §12 admits two outcomes for data the model cannot carry — preserved or
+        // reported — and not a third. Two features rather than one because they are
+        // two locations, as `w14:paraId` is already reported on `w:p` and `w:tr`
+        // separately; they collapse when the model carries a name.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            4,
+            6,
         ),
         (
             "real-producer-table-list",

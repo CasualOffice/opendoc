@@ -1,6 +1,7 @@
 ABI
 ADR
 ADRs
+AES
 AGPL
 API
 APIs
@@ -16,6 +17,7 @@ Autofit
 Autosave
 BMP
 BOM
+BSD
 Backend
 BiDi
 Bidi
@@ -43,6 +45,7 @@ Claude
 Clippy
 Cmd
 Collabora
+Commenter
 Ctrl
 DAI
 DOCX
@@ -88,6 +91,7 @@ Hunspell
 ICU
 IEC
 IME
+IRM
 ISO
 IndexedDB
 Indic
@@ -118,8 +122,10 @@ MIT
 MSRV
 MVP
 MediaReference
+Merkle
 MiB
 Microsoft
+Myers
 NUL
 NUMPAGES
 Namespace
@@ -128,7 +134,9 @@ Noto
 OCR
 ODF
 ODT
+OFFCRYPTO
 OFL
+OFORM
 OLE
 OMML
 ONLYOFFICE
@@ -153,6 +161,7 @@ PNG
 PNGs
 POS
 PPTX
+PRD
 PRs
 PTS
 PUA
@@ -161,6 +170,7 @@ Pageless
 Plass
 PowerPoint
 Pre
+Prev
 ProseMirror
 README
 RFC
@@ -188,6 +198,7 @@ SVG
 SaaS
 Sdt
 ShareDB
+SharePoint
 SharedArrayBuffer
 Skia
 SmartArt
@@ -201,7 +212,9 @@ Tesseract
 TrueType
 Twip
 UAX
+UNSOURCED
 URI
+URIs
 URL
 URLs
 USENIX
@@ -225,6 +238,7 @@ WMF
 WOPI
 WYSIWYG
 WebAssembly
+WebCrypto
 WebGPU
 WebKit
 WebSocket
@@ -232,6 +246,7 @@ WordArt
 WordprocessingML
 XML
 XMP
+XOR
 XObjects
 Yjs
 accessor
@@ -275,6 +290,7 @@ bbox
 bidi
 bijection
 bindgen
+bitmask
 blit
 blits
 blitted
@@ -294,6 +310,8 @@ checkable
 checkboxes
 checkmark
 checksums
+ciphertext
+cjk
 clippy
 cmap
 codebase
@@ -303,17 +321,21 @@ codepoint
 col
 com
 combobox
+commenter
 compat
 composable
 config
+conformant
 contenteditable
 contextualSpacing
+crypto
 cryptographic
 customXml
 customizable
 debounce
 debounced
 decodable
+decrypt
 dedupe
 deduplication
 del
@@ -328,6 +350,7 @@ diff
 diffable
 diffed
 differentiator
+diffing
 diffs
 discoverability
 discoverable
@@ -343,6 +366,7 @@ draggable
 drawingml
 dropdown
 dropdowns
+dxa
 editability
 editorConfig
 embeddability
@@ -350,6 +374,7 @@ embeddable
 embeddings
 enablement
 encodings
+endian
 endnote
 endnotes
 enum
@@ -419,12 +444,14 @@ lookups
 lossy
 macOS
 margined
+matcher
 max
 memoised
 memoized
 meta
 metafile
 metafiles
+microsoft
 microtask
 midrange
 min
@@ -440,6 +467,7 @@ namespace
 namespaces
 natively
 nav
+newline
 newtype
 nginx
 nonmodal
@@ -465,6 +493,7 @@ paginators
 para
 parsers
 passthrough
+passwordless
 pdf
 perf
 pilcrow
@@ -472,6 +501,8 @@ pointercancel
 pointerdown
 pointermove
 polyline
+populatable
+postMessage
 pre
 preedit
 premultiplied
@@ -503,6 +534,7 @@ recurse
 recurses
 recursing
 redistributable
+redline
 reflow
 reflowed
 reflows
@@ -554,6 +586,7 @@ subcommand
 submenu
 subpath
 subpaths
+subsequence
 subsetter
 subsetting
 substitutable
@@ -585,8 +618,10 @@ uncached
 unclipped
 uncontended
 undecodable
+undetailed
 undoable
 undos
+unexpressible
 ungated
 unicode
 unlink
@@ -615,9 +650,11 @@ val
 validator
 var
 vendored
+verifier
 vertAlign
 viewport
 virtualised
+virtualize
 virtualized
 vml
 wasm

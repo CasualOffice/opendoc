@@ -266,6 +266,8 @@ pub fn combine(
             client: ours.client,
             revision: Revision::new(0),
             capabilities: Capabilities::owner(),
+            // No room, so no membership. Empty is the fact rather than a placeholder.
+            participants: Vec::new(),
         },
         &mut log,
     )

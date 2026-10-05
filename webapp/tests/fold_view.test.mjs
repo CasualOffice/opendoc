@@ -19,19 +19,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EN_STRINGS } from "../src/en_strings.mjs";
-import {
-  FOLD_LEVELS,
-  FOLD_MAX_LEVEL,
-  foldCommands,
-  hasChildren,
-  pageCountCaveat,
-  parentIndex,
-  parseOutlineRow,
-  parseOutlineRows,
-  siblingPositions,
-  treeKeyAction,
-  visibleOutlineRows,
-} from "../src/fold_view.mjs";
+import { FOLD_LEVELS, FOLD_MAX_LEVEL, chevronPlacement, foldCommands, hasChildren, pageCountCaveat, parentIndex, parseOutlineRow, parseOutlineRows, siblingPositions, treeKeyAction, visibleOutlineRows } from "../src/fold_view.mjs";
 
 /** An engine outline row. */
 const row = (level, node, collapsed, text) => `${level}\t${node}\t${collapsed ? "1" : "0"}\t${text}`;
@@ -371,4 +359,86 @@ test("while anything is folded the editor says the page count is not the printed
   const many = pageCountCaveat(4, t);
   assert.match(many, /^4 headings are collapsed/);
   assert.match(many, /always include collapsed content/);
+});
+
+// The rule a clamp got wrong. The chevron is an absolutely-positioned button, so
+// one pixel over the text captures the tap that should place the caret.
+test("the chevron never covers the text: shown only when the margin holds it whole", () => {
+  const WIDTH = 18;
+  const GUTTER = 20;
+  // Desktop: a real page margin, so it is shown and sits entirely left of the text.
+  const wide = chevronPlacement({ x: 96 }, GUTTER);
+  assert.equal(wide.show, true);
+  assert.ok(
+    wide.left + WIDTH <= 96,
+    `shown at left ${wide.left} with width ${WIDTH} would reach ${wide.left + WIDTH}, ` +
+      "which is over a text edge at 96",
+  );
+
+  // Phone reflow: a 16px inset is narrower than the chevron needs, so withheld.
+  assert.deepEqual(chevronPlacement({ x: 16 }, GUTTER), { show: false, left: 0 });
+
+  // The boundary is exact: a margin of exactly the gutter still fits.
+  assert.deepEqual(chevronPlacement({ x: 20 }, GUTTER), { show: true, left: 0 });
+  assert.equal(chevronPlacement({ x: 19 }, GUTTER).show, false);
+});
+
+test("whenever it is shown, it is left of the text — at every margin, not just two", () => {
+  const GUTTER = 20;
+  for (let x = 0; x <= 200; x += 1) {
+    const p = chevronPlacement({ x }, GUTTER);
+    if (!p.show) continue;
+    assert.ok(p.left >= 0, `x=${x}: left ${p.left} is outside the window`);
+    assert.ok(p.left + 18 <= x, `x=${x}: the chevron reaches ${p.left + 18}, over the text`);
+  }
+});
+
+// Surface beside the measure is somewhere to paint. Two
+// individually-correct rules used to compose into an unreachable capability: the
+// chevron needs more margin than a reflow tile's 16px gutter, and it is only
+// shown while the outline panel is open — so the view where folding matters most
+// had no in-body disclosure at all. The premise behind the first rule was that
+// beyond the page box lies the DESK; in reflow the surface is one colour edge to
+// edge, so beyond the tile is the same surface the text is on.
+test("in reflow the chevron borrows the surface beside the measure, and only ever leftwards", () => {
+  const GUTTER = 20;
+  const WIDTH = 18;
+  const REFLOW_INSET = 16; // REFLOW_GUTTER_PX — the tile's whole left margin.
+
+  // On paper, unchanged, and this is the precondition rather than a decoration:
+  // with no surface to borrow the refusal must still be a refusal, which is what
+  // keeps the clamp defect closed where it was real (a phone, a 390px tile).
+  assert.deepEqual(chevronPlacement({ x: REFLOW_INSET }, GUTTER, 0), { show: false, left: 0 });
+
+  // In reflow at a desktop width there are hundreds of px of surface each side.
+  const onSurface = chevronPlacement({ x: REFLOW_INSET }, GUTTER, 470);
+  assert.equal(onSurface.show, true, "a reflow heading still has no disclosure");
+  assert.equal(onSurface.left, REFLOW_INSET - GUTTER, "the left edge is not the gutter rule");
+  assert.ok(
+    onSurface.left + WIDTH <= REFLOW_INSET,
+    `reaches ${onSurface.left + WIDTH}, over text that starts at ${REFLOW_INSET}`,
+  );
+
+  // THE GUARANTEE, not the two cases above: a wider surface NEVER moves the
+  // chevron rightwards. It can only turn a refusal into the placement the gutter
+  // rule already implied, so no amount of surface can put a button on a glyph.
+  for (let x = 0; x <= 200; x += 1) {
+    for (const overhang of [0, 1, 4, 16, 40, 470, 9_999]) {
+      const p = chevronPlacement({ x }, GUTTER, overhang);
+      if (!p.show) continue;
+      assert.equal(p.left, x - GUTTER, `x=${x} overhang=${overhang}: left moved`);
+      assert.ok(p.left + WIDTH <= x, `x=${x} overhang=${overhang}: over the text`);
+      assert.ok(p.left >= -overhang, `x=${x} overhang=${overhang}: past the surface`);
+    }
+  }
+
+  // A junk or negative overhang cannot widen the reach — a host reporting -100
+  // must get the paged answer, not a chevron 120px into nowhere.
+  for (const bad of [-100, Number.NaN, undefined, null, "lots"]) {
+    assert.equal(
+      chevronPlacement({ x: REFLOW_INSET }, GUTTER, bad).show,
+      false,
+      `overhang ${String(bad)} was treated as surface`,
+    );
+  }
 });

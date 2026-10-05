@@ -69,6 +69,7 @@ use std::error::Error;
 use std::fmt;
 
 use casual_doc_edit::access::Capabilities;
+use casual_doc_edit::access::{AccessChangeRefusal, refuse_access_change};
 use casual_doc_edit::{EditError, Mint};
 
 use crate::protocol::{
@@ -250,6 +251,10 @@ impl ClientSession {
             client,
             revision,
             capabilities,
+            // The room's membership, read by the chrome through the facade rather than by this
+            // session: it governs a rights SURFACE and nothing a client session does with the
+            // order. Named rather than globbed so a future field cannot slip past unread.
+            participants: _,
         } = *message
         else {
             return Err(SessionError::OutOfOrder);
@@ -299,6 +304,8 @@ impl ClientSession {
             revision,
             ref missed,
             capabilities,
+            // See `ClientSession::joined`.
+            participants: _,
         } = *message
         else {
             return Err(SessionError::OutOfOrder);
@@ -1033,6 +1040,17 @@ pub struct SessionState {
     accepted: BTreeMap<ClientId, (Seq, Revision)>,
     resumes: BTreeMap<ResumeKey, (ClientId, Identity)>,
     granted: BTreeMap<ClientId, Capabilities>,
+    /// Defaulted so a checkpoint written before this field existed still decodes.
+    ///
+    /// The journal carries no format version, so the alternative was refusing to open an
+    /// existing room — which would withhold acknowledged work from its readers to protect a
+    /// table that only gates an administrative request. What an old checkpoint costs is named
+    /// rather than papered over: a participant known only from such a checkpoint has **no
+    /// ceiling**, so [`ServerSession::set_access`] refuses to change them with
+    /// `NotAParticipant` until their next join records one. That is the fail-closed direction
+    /// and it is self-healing on the next reconnect.
+    #[serde(default)]
+    ceiling: BTreeMap<ClientId, Capabilities>,
     next_client: u64,
     retain: usize,
 }
@@ -1051,12 +1069,30 @@ pub struct ServerSession {
     history: VecDeque<Ordered>,
     accepted: BTreeMap<ClientId, (Seq, Revision)>,
     resumes: BTreeMap<ResumeKey, (ClientId, Identity)>,
-    /// What each **admitted** participant may do, from the grant its boundary verified.
+    /// What each **admitted** participant may do **now**.
     ///
     /// Durable, and the membership half of it is what [`ServerSession::commit`] checks. Every
     /// accepted join **overwrites** the entry, so a narrowed or revoked grant takes effect on
     /// the reconnect rather than being outlived by what a file remembers.
+    ///
+    /// Since 2026-10-04 this is the **effective** set rather than only the verified one:
+    /// [`ServerSession::set_access`] writes it too, which is how a rights change takes effect
+    /// without a second table for the relay's capability check to read. What the grant carried
+    /// is kept beside it in `ceiling`.
     granted: BTreeMap<ClientId, Capabilities>,
+    /// What each admitted participant's own **host-verified grant** carried: the most a rights
+    /// change may ever give them.
+    ///
+    /// Written only by an admission, never by [`ServerSession::set_access`], which is the whole
+    /// of the invariant that a room cannot widen anybody past what the host allowed. Two tables
+    /// rather than one because a single table cannot answer both questions: narrowing somebody
+    /// to a viewer and then restoring them needs the original, and overwriting it with the
+    /// narrowed value would make every demotion permanent and every promotion a ratchet.
+    ///
+    /// `#[serde(default)]` on [`SessionState`]'s copy — see the note there for what an old
+    /// checkpoint costs.
+    #[serde(default)]
+    ceiling: BTreeMap<ClientId, Capabilities>,
     next_client: u64,
     retain: usize,
 }
@@ -1086,6 +1122,7 @@ impl ServerSession {
             accepted: BTreeMap::new(),
             resumes: BTreeMap::new(),
             granted: BTreeMap::new(),
+            ceiling: BTreeMap::new(),
             next_client: 0,
             retain: retain.max(1),
         }
@@ -1106,6 +1143,7 @@ impl ServerSession {
                 accepted: self.accepted.clone(),
                 resumes: self.resumes.clone(),
                 granted: self.granted.clone(),
+                ceiling: self.ceiling.clone(),
                 next_client: self.next_client,
                 retain: self.retain,
             },
@@ -1133,6 +1171,7 @@ impl ServerSession {
             accepted: state.accepted,
             resumes: state.resumes,
             granted: state.granted,
+            ceiling: state.ceiling,
             next_client: state.next_client,
             retain: state.retain,
         }
@@ -1271,6 +1310,11 @@ impl ServerSession {
                             revision: self.revision,
                             missed,
                             capabilities: granted,
+                            // Empty here, and filled by whatever owns the connections — see
+                            // `ServerMessage::Welcome::participants`. This type holds an entry
+                            // for every participant it has ever admitted and has no way to tell
+                            // which of them are still here.
+                            participants: Vec::new(),
                         },
                         Some(admission),
                     );
@@ -1302,6 +1346,8 @@ impl ServerSession {
                 client,
                 revision: self.revision,
                 capabilities: granted,
+                // See `ServerMessage::Resumed`'s own empty list, just above.
+                participants: Vec::new(),
             },
             Some(admission),
         )
@@ -1356,6 +1402,11 @@ impl ServerSession {
             .max(admission.client.get().saturating_add(1));
         self.granted
             .insert(admission.client, admission.capabilities);
+        // The ceiling and the effective set are written together **by an admission and only by
+        // an admission**, which is what makes a reconnect re-read the host's answer rather than
+        // inherit a room-local one. `set_access` writes `granted` alone.
+        self.ceiling
+            .insert(admission.client, admission.capabilities);
         if let Some((key, identity)) = &admission.resume {
             self.resumes
                 .insert(key.clone(), (admission.client, identity.clone()));
@@ -1371,6 +1422,83 @@ impl ServerSession {
     #[must_use]
     pub fn granted_for(&self, client: ClientId) -> Option<Capabilities> {
         self.granted.get(&client).copied()
+    }
+
+    /// The most `client`'s own host-signed grant allows, or `None` if this session never
+    /// admitted it — or admitted it before the ceiling table existed (see [`SessionState`]).
+    ///
+    /// The bound every rights change is judged against, and the one value in this type that an
+    /// in-room request can never move.
+    #[must_use]
+    pub fn ceiling_for(&self, client: ClientId) -> Option<Capabilities> {
+        self.ceiling.get(&client).copied()
+    }
+
+    /// Changes what `target` may do, at `actor`'s request — `ClientMessage::SetAccess`.
+    ///
+    /// # Why the decision is here and not at the boundary
+    ///
+    /// The same argument [`ServerSession::commit`]'s own doc comment makes about its membership
+    /// check, and it took that check two increments to arrive for a reason worth not repeating:
+    /// a rule the state machine cannot apply is a rule every relay has to be told to apply. Both
+    /// values this needs — the actor's effective capabilities and the target's ceiling — live in
+    /// this type and nowhere else, so a third-party relay driving [`ServerSession`] directly gets
+    /// the rule without having to know to ask for it.
+    ///
+    /// The *rule itself* is `casual_doc_edit::access::refuse_access_change`, which is pure and
+    /// holds no state; this function is the lookup around it. One rule, two callers, and the
+    /// relay's extra check is about something this type cannot see — which connection the request
+    /// arrived on.
+    ///
+    /// # What is deliberately not journalled
+    ///
+    /// This change. A grant is re-verified on every join and [`ServerSession::join`] overwrites
+    /// `granted` with what came back, so a rights change already ends at the target's next
+    /// reconnect; journalling it would make a *crash* the one reconnect it survived, which is the
+    /// two behaviours of one rule that diverge. `ClientMessage::SetAccess`'s own doc comment
+    /// states the lifetime, and a durable change of what the host issues is made at the host.
+    ///
+    /// # Errors
+    ///
+    /// The `AccessChangeRefusal` for the line that refused. Nothing is written on any error path:
+    /// a refused request changed nothing, which is the same reason a refused join records no
+    /// admission.
+    ///
+    /// # Complexity
+    ///
+    /// Two `BTreeMap` lookups and one insert — O(log participants). No document, no history, no
+    /// walk.
+    pub fn set_access(
+        &mut self,
+        actor: ClientId,
+        target: ClientId,
+        requested: Capabilities,
+    ) -> Result<Capabilities, AccessChangeRefusal> {
+        // The actor's own membership answers as `NotPermitted` rather than `NotAParticipant`,
+        // deliberately: a sender this session never admitted has no business learning whether
+        // the *target* exists, and the ordering inside `refuse_access_change` makes the same
+        // point about the capability check for the same reason.
+        let actor_capabilities = self
+            .granted
+            .get(&actor)
+            .copied()
+            .ok_or(AccessChangeRefusal::NotPermitted)?;
+        if !actor_capabilities.may_manage_access() {
+            return Err(AccessChangeRefusal::NotPermitted);
+        }
+        // Checked before the target is read, so the self case cannot be used to probe membership
+        // either, and because the answer does not depend on the target's grant at all.
+        if actor == target {
+            return Err(AccessChangeRefusal::OwnAccessUnchangeable);
+        }
+        let ceiling = self
+            .ceiling
+            .get(&target)
+            .copied()
+            .ok_or(AccessChangeRefusal::NotAParticipant)?;
+        refuse_access_change(actor_capabilities, false, ceiling, requested)?;
+        self.granted.insert(target, requested);
+        Ok(requested)
     }
 
     /// Orders one submission, or says why it cannot be.

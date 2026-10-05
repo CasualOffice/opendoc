@@ -73,8 +73,8 @@ use casual_doc_edit::access::Capabilities;
 use casual_doc_edit::refusal::marked;
 use casual_doc_transaction::codec::{CodecError, decode_frame, encode_frame};
 use casual_doc_transaction::protocol::{
-    ClientMessage, Identity, Join, PROTOCOL_VERSION, Refusal, Resume, ResumeKey, Revision,
-    ServerMessage,
+    ClientId, ClientMessage, Identity, Join, Member, PROTOCOL_VERSION, Refusal, Resume, ResumeKey,
+    Revision, ServerMessage,
 };
 use casual_doc_transaction::session::ClientSession;
 use wasm_bindgen::prelude::*;
@@ -121,9 +121,18 @@ struct Outcome {
     retryable: bool,
     /// Whether receiving this ended the session.
     terminal: bool,
-    /// Whose presence or departure this is, on an `awareness` or a `departed`.
+    /// Whose presence, departure or access change this is.
     #[serde(skip_serializing_if = "Option::is_none")]
     about: Option<u64>,
+    /// The room's other participants, on a `welcome` or a `resumed`, and **empty for a
+    /// participant the relay did not judge able to act on it**.
+    ///
+    /// The list a rights surface is built from. Empty is therefore a real answer and not a
+    /// missing one — it is what a viewer gets, and what anybody gets in a room of one — which is
+    /// why the surface decides what to offer from this rather than from a reader's own role
+    /// alone.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    members: Vec<Membership>,
     /// Whether the document changed, so the host re-rasters.
     document_changed: bool,
     /// The host-visible view epoch, after any re-pagination this caused.
@@ -133,6 +142,26 @@ struct Outcome {
     dirty: Vec<u32>,
     /// The page count after this message.
     page_count: u32,
+}
+
+/// One participant of the room, as the chrome's rights surface reads them.
+///
+/// The names rather than the `Capabilities` value, because the chrome's whole vocabulary is the
+/// name list — `session_access.mjs` holds the same six strings and `participantCapabilities`
+/// reports them — and handing the chrome a second encoding of one fact is how the two drift.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Membership {
+    /// Their participant number, which is what a `SetAccess` names.
+    participant: u64,
+    /// What they may do now.
+    capabilities: Vec<String>,
+    /// The most a rights change may give them: their own host-signed grant.
+    ///
+    /// Carried so the surface can offer exactly the roles that will be accepted. A surface that
+    /// offered one the relay refuses is the dead control at a distance — it looks live, and the
+    /// refusal arrives from the network.
+    ceiling: Vec<String>,
 }
 
 impl Outcome {
@@ -249,6 +278,40 @@ impl WasmDocument {
         Some(encode_frame(&ClientMessage::Submit(submission)))
     }
 
+    /// A `SetAccess` frame: change what **another** participant may do.
+    ///
+    /// `target` is the participant number a `welcome`'s or `resumed`'s membership list reported,
+    /// and `granted` the capability names they should hold. There is deliberately **no actor
+    /// argument**: the message has no field for one, and the relay attaches the participant
+    /// number of the connection the frame arrived on — so claiming to be somebody else is
+    /// unexpressible rather than merely rejected (`152` §2b).
+    ///
+    /// # What this does NOT do
+    ///
+    /// Check anything. Building a frame is not a decision, and pretending otherwise here would
+    /// put a second implementation of the ceiling rule in the one place that cannot hold it: this
+    /// replica knows the ceiling only because a relay told it. The decision is
+    /// `ServerSession::set_access`, over `casual_doc_edit::access::refuse_access_change`, and a
+    /// request outside the ceiling comes back `ODC-7011`. What the chrome's surface does with the
+    /// ceiling is offer the roles that will be accepted, which is a courtesy and not a boundary.
+    ///
+    /// # Errors
+    ///
+    /// A capability name this build does not know, and a non-integral or negative participant
+    /// number — both refused rather than coerced, for the reason `collab_join_frame` gives about
+    /// a guessed position.
+    ///
+    /// O(the names).
+    #[wasm_bindgen(js_name = collabSetAccessFrame)]
+    pub fn collab_set_access_frame(
+        &self,
+        target: f64,
+        granted: Vec<String>,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.collab_set_access_frame_inner(target, &granted)
+            .map_err(to_js)
+    }
+
     /// A `Leave` frame: departing deliberately rather than by disconnecting.
     ///
     /// Worth sending even though a disconnect is detected anyway, because the two reach the
@@ -339,6 +402,32 @@ impl WasmDocument {
         })))
     }
 
+    /// See [`WasmDocument::collab_set_access_frame`]. Plain `Result<_, String>` so the guards run
+    /// under `cargo test` on native targets.
+    fn collab_set_access_frame_inner(
+        &self,
+        target: f64,
+        granted: &[String],
+    ) -> Result<Vec<u8>, String> {
+        if !target.is_finite() || target < 0.0 || target.fract() != 0.0 {
+            return Err(marked(
+                "session.participant-unusable",
+                "That is not a participant of this shared document.",
+            ));
+        }
+        #[expect(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            reason = "guarded non-negative, finite and integral immediately above"
+        )]
+        let target = ClientId::new(target as u64);
+        let capabilities = Self::capabilities_from_names(granted)?;
+        Ok(encode_frame(&ClientMessage::SetAccess {
+            target,
+            capabilities,
+        }))
+    }
+
     /// See [`WasmDocument::collab_receive_frame`].
     fn collab_receive_frame_inner(&mut self, frame: &[u8]) -> Result<String, String> {
         let message: ServerMessage = decode_frame(frame).map_err(|error| malformed(&error))?;
@@ -353,6 +442,7 @@ impl WasmDocument {
                 client,
                 revision,
                 capabilities,
+                participants,
                 ..
             } => {
                 let session = ClientSession::joined(&self.document, message, &mut self.log)
@@ -368,6 +458,7 @@ impl WasmDocument {
                 let mut outcome = Outcome::of("welcome");
                 outcome.participant = Some(client.get());
                 outcome.capabilities = Some(self.participant_capabilities());
+                outcome.members = membership(participants);
                 outcome.revision = revision.get();
                 outcome.view_revision = self.revision;
                 outcome.page_count = self.page_count();
@@ -378,6 +469,7 @@ impl WasmDocument {
                 revision,
                 missed,
                 capabilities,
+                participants,
                 ..
             } => {
                 let Some(session) = self.session.as_mut() else {
@@ -414,6 +506,7 @@ impl WasmDocument {
                 let mut outcome = Outcome::of("resumed");
                 outcome.participant = Some(client.get());
                 outcome.capabilities = Some(self.participant_capabilities());
+                outcome.members = membership(participants);
                 outcome.revision = revision.get();
                 outcome.missed = Some(missed.len());
                 outcome.replayed = Some(replayed);
@@ -496,6 +589,41 @@ impl WasmDocument {
             ServerMessage::Awareness { client, .. } => {
                 let mut outcome = Outcome::of("awareness");
                 outcome.about = Some(client.get());
+                outcome.view_revision = self.revision;
+                Ok(outcome)
+            }
+            ServerMessage::AccessChanged {
+                client,
+                capabilities,
+            } => {
+                // Applied to this replica only when it is **about** this replica, and through
+                // `apply_room_access`, which is bounded by the host's ceiling and may move the
+                // effective set either way inside it. The old `adopt` path could only narrow, so
+                // a participant an owner had restored would have kept a disabled chrome and a
+                // reason that was no longer true — see `apply_room_access`'s own note.
+                //
+                // A change about somebody ELSE touches nothing here. It is reported so the
+                // chrome's rights surface stays live, and the engine has no opinion about what
+                // another participant may do: the relay holds that and judges their submissions.
+                let mine = self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.client() == *client);
+                if mine {
+                    self.apply_room_access_internal(&capability_names(*capabilities))?;
+                }
+                let mut outcome = Outcome::of("accessChanged");
+                outcome.about = Some(client.get());
+                // The names this replica now holds when the change was its own, and the names
+                // the relay announced when it was somebody else's. Both answer "what may that
+                // participant do", which is the only question the field has; sending the
+                // relay's word verbatim for ourselves would report a capability the intersection
+                // may have just dropped.
+                outcome.capabilities = Some(if mine {
+                    self.participant_capabilities()
+                } else {
+                    capability_names(*capabilities)
+                });
                 outcome.view_revision = self.revision;
                 Ok(outcome)
             }
@@ -589,6 +717,20 @@ fn malformed_state(what: &str) -> String {
     )
 }
 
+/// The room's membership as the chrome reads it, from the wire's own [`Member`] values.
+///
+/// O(the members).
+fn membership(members: &[Member]) -> Vec<Membership> {
+    members
+        .iter()
+        .map(|member| Membership {
+            participant: member.client.get(),
+            capabilities: capability_names(member.capabilities),
+            ceiling: capability_names(member.ceiling),
+        })
+        .collect()
+}
+
 /// The capability names `adopt_participant_capabilities` accepts, from a [`Capabilities`].
 ///
 /// The inverse of the facade's own match, and in the same order the getter reports, so a host
@@ -601,6 +743,9 @@ fn capability_names(granted: Capabilities) -> Vec<String> {
     }
     if granted.may_edit() {
         names.push("edit".to_owned());
+    }
+    if granted.may_manage_access() {
+        names.push("manageAccess".to_owned());
     }
     if granted.may_manage_protection() {
         names.push("manageProtection".to_owned());

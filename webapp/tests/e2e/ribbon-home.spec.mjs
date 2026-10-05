@@ -1,12 +1,4 @@
-import {
-  test,
-  expect,
-  definedParagraphStyles,
-  gotoEditor,
-  clickIntoFirstPage,
-  reflectedParagraphStyle,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, definedParagraphStyles, expect, gotoEditor, reflectedParagraphStyle, stableBox, test } from "./fixtures.mjs";
 
 // docs/64 — the Home ribbon mirrors template.png: a single no-wrap band of
 // labeled groups. Two hard rules this suite guards:
@@ -45,8 +37,8 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
 
   // Undo/Redo occupy distinct rows; Clipboard and Editing expose their authored
   // icons rather than appearing as text-only/empty commands.
-  const undoBox = await page.locator("#undoBtn").boundingBox();
-  const redoBox = await page.locator("#redoBtn").boundingBox();
+  const undoBox = await stableBox(page.locator("#undoBtn"));
+  const redoBox = await stableBox(page.locator("#redoBtn"));
   expect(redoBox.y).toBeGreaterThan(undoBox.y);
   await expect(page.locator("#pasteBtn .ms")).toHaveText("content_paste");
   await expect(page.locator("#copyBtn .ms")).toHaveText("content_copy");

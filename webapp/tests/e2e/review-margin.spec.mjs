@@ -1,12 +1,4 @@
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  setReviewMode,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test } from "./fixtures.mjs";
 
 const TRACKED_MOVE_DOCX = "UEsDBBQAAAAIABwY/1ydxYoq8gAAALkBAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH2QzU7DMBCE73kKy1eUOHBACCXpgZ8jcCgPsLI3iVV7bXnd0r49TgtFQpSjNfPNrKdb7b0TO0xsA/XyummlQNLBWJp6+b5+ru+k4AxkwAXCXh6Q5WqouvUhIosCE/dyzjneK8V6Rg/chIhUlDEkD7k806Qi6A1MqG7a9lbpQBkp13nJkEMlRPeII2xdFk/7opxuSehYioeTd6nrJcTorIZcdLUj86uo/ippCnn08GwjXxWDVJdKFvFyxw/6WiZK1qB4g5RfwBej+gjJKBP01he4+T/pj2vDOFqNZ35JiyloZC7be9ecFQ+Wvn/RqePwQ/UJUEsDBAoAAAAAABwY/1wAAAAAAAAAAAAAAAAGAAAAX3JlbHMvUEsDBBQAAAAIABwY/1xAoFMJsgAAAC8BAAALAAAAX3JlbHMvLnJlbHONz7sOgjAUBuCdp2jOLgUHYwyFxZiwGnyApj2URnpJWy+8vR0cxDg4ntt38jfd08zkjiFqZxnUZQUErXBSW8XgMpw2eyAxcSv57CwyWDBC1xbNGWee8k2ctI8kIzYymFLyB0qjmNDwWDqPNk9GFwxPuQyKei6uXCHdVtWOhk8D2oKQFUt6ySD0sgYyLB7/4d04aoFHJ24Gbfrx5WsjyzwoTAweLkgq3+0ys0BzSrqK2RYvUEsDBAoAAAAAABwY/1wAAAAAAAAAAAAAAAAFAAAAd29yZC9QSwMEFAAAAAgAHBj/XNCh0AF8AQAAzAMAABEAAAB3b3JkL2RvY3VtZW50LnhtbLVTPU/DMBDd+ysi7yGpKVBFTRADbEiIhoXNxNckUuyz7GtD+fU4aWhaaAeEkDzc8328u+fz4vZdNcEGrKtRp2x6EbMAdIGy1mXKXvKHcM4CR0JL0aCGlG3BsdtssmgTicVagabAV9AuaVNWEZkkilxRgRLuAg1o71uhVYI8tGXUopXGYgHOeQLVRDyOryMlas2ySRD4qm8ot53ZA7OzelvhBh4sqmehS1iSsBS0SS1T5jtuEy2Ub66LCS1samhDI2rbecSaKrQpu5Oig1KQD+Qxvw7jm/Bymsdx0p9XFp1gGzimv6v0VagvZbNOLGhyeKfMQoOFT5SLaLzsbLsnj0b2c+Pfa7kffui6SzNnhcvxh2z8v2TLcWC4/Kto3+Q6I1SOp4cdReKnRXJQ0JM9SDbl8sOn+E2ecj7r96ry9tV8Fh9NacpHYb2T0Hj3bBdp67KiEb4hEaoRN7A68FYgJHhVbngPV4h0AMs19fDoccduO7T7Jv0SDd8wm3wCUEsBAh4DFAAAAAgAHBj/XJ3FiiryAAAAuQEAABMAAAAAAAAAAQAAAKSBAAAAAFtDb250ZW50X1R5cGVzXS54bWxQSwECHgMKAAAAAAAcGP9cAAAAAAAAAAAAAAAABgAAAAAAAAAAABAA7UEjAQAAX3JlbHMvUEsBAh4DFAAAAAgAHBj/XECgUwmyAAAALwEAAAsAAAAAAAAAAQAAAKSBRwEAAF9yZWxzLy5yZWxzUEsBAh4DCgAAAAAAHBj/XAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAQAO1BIgIAAHdvcmQvUEsBAh4DFAAAAAgAHBj/XNCh0AF8AQAAzAMAABEAAAAAAAAAAQAAAKSBRQIAAHdvcmQvZG9jdW1lbnQueG1sUEsFBgAAAAAFAAUAIAEAAPADAAAAAA==";
 
@@ -411,7 +403,7 @@ test("clicking inside a commented range places the caret at the click position",
   // canvas and is the real click target, exactly like a genuine user click
   // on commented text. The fix relies on that pointerdown bubbling up to the
   // page's own hit-testing, which `page.mouse.click` exercises faithfully.
-  const canvasBox = await page.locator(".page-wrap .page").first().boundingBox();
+  const canvasBox = await stableBox(page.locator(".page-wrap .page").first());
   const clickPosition = await page.evaluate(({ left, top, height }) => ({
     x: Math.round(Number.parseFloat(left)) + 1,
     y: Math.round(Number.parseFloat(top)) + Math.max(2, Math.round(Number.parseFloat(height) / 2)),

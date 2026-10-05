@@ -18,6 +18,7 @@ import {
   PAGE_GAP_PX,
   buildPageBand,
   docToScroll,
+  pageBandPitch,
   pageClientRect,
   pageIndexAtDocY,
   pageRangeAt,
@@ -173,4 +174,36 @@ test("a document shorter than the viewport does not move when scrolled", () => {
   const { docY, offset } = scrollToDoc(b, 5_000, 120);
   assert.equal(docY, 0);
   assert.equal(offset, 0);
+});
+
+// ---- The pitch between two page boxes is a property of the VIEW --------------
+// It used to be a ternary at the one call site in `main.js`, where no `node` test
+// could reach it. The claim is not "0 is smaller":
+// a reflow tile is a rasterisation unit cut mid-paragraph at a line boundary, so
+// any pitch at all paints a band through the middle of a sentence.
+
+test("the pitch between page boxes is the desk on paper and nothing in reflow", () => {
+  assert.deepEqual(pageBandPitch(false), { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
+  assert.deepEqual(pageBandPitch(true), { gap: 0, maxScroll: MAX_SCROLL_PX });
+
+  // And it composes, which is the half a constant comparison cannot see: the
+  // band positions sheets from the pitch, so a reflow tile must ABUT the one
+  // above it and a paper sheet must not.
+  const sizes = [LETTER, LETTER, LETTER];
+  const reflowed = buildPageBand(sizes, CSS_PER_TWIP, pageBandPitch(true));
+  const paper = buildPageBand(sizes, CSS_PER_TWIP, pageBandPitch(false));
+  for (let i = 1; i < sizes.length; i += 1) {
+    assert.equal(
+      reflowed.tops[i] - reflowed.tops[i - 1],
+      reflowed.heights[i - 1],
+      `tile ${i} does not abut tile ${i - 1}: there is a seam between them`,
+    );
+    assert.equal(
+      paper.tops[i] - paper.tops[i - 1],
+      paper.heights[i - 1] + PAGE_GAP_PX,
+      `sheet ${i} lost the desk above it`,
+    );
+  }
+  // The scroll bound is NOT a view choice and must survive either answer.
+  assert.equal(pageBandPitch(true).maxScroll, pageBandPitch(false).maxScroll);
 });

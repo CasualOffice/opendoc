@@ -27,7 +27,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 const LINE = "examplefile.com - Sample Files\r\n"; // 32 bytes, the owner's own line
 const BLOCKS = 40_000;
@@ -77,7 +77,7 @@ const OPERATIONS = [
     // must never be the thing that stalls the frame loop.
     budget: 300,
     async run(page) {
-      const box = await page.locator(".page-wrap").first().boundingBox();
+      const box = await stableBox(page.locator(".page-wrap").first());
       for (let i = 0; i < 40; i += 1) {
         await page.mouse.move(box.x + 40 + i * 12, box.y + 40 + i * 9);
       }

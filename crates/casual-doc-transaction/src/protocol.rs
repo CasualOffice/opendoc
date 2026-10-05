@@ -68,6 +68,23 @@ use crate::wire::WireOperation;
 ///   matching on the enum, not `serde`'s tag resolution, so it buys source compatibility in
 ///   this workspace and nothing at all on the wire.
 ///
+/// - **5** — a participant's access can be **changed inside a live room**, which is the owner's
+///   decision that "in case of co-editing we need a full rights-changing dialog for owner and
+///   editor". [`ClientMessage::SetAccess`] and [`ServerMessage::AccessChanged`] are **new enum
+///   variants**, so this is the same hard break versions 3 and 4 were and not a new argument: a
+///   version-4 peer meeting the `AccessChanged` tag does not deserialize the frame at all and
+///   would report `ODC-7007` — "the message could not be read" — for a rights change that was
+///   perfectly well formed, which is the wrong cause rather than a missing one.
+///
+///   [`Refusal::AccessChangeRefused`] is a new [`Refusal`] variant in the same release, which
+///   version 4's own note already identified as a hard break on its own: `Refusal` travels
+///   *inside* [`ServerMessage::Refused`] and `Stopped`, derives a plain `Deserialize` with no
+///   `#[serde(other)]`, so an older peer fails to decode the whole frame.
+///
+///   The `participants` field added to [`ServerMessage::Welcome`] and
+///   [`ServerMessage::Resumed`] is, by itself, only an added optional field and would not have
+///   earned a bump; it rides this one.
+///
 /// **Not bumped for the host-signed grant** (ADR-060), and the reasoning is the rule above
 /// applied rather than waived. [`Join::grant`] and the `capabilities` field on
 /// [`ServerMessage::Welcome`] / [`ServerMessage::Resumed`] are *added optional fields*: a
@@ -78,7 +95,7 @@ use crate::wire::WireOperation;
 /// The case for bumping anyway is that a grantless client is refused from a room that requires
 /// one; that refusal is `ODC-7003` with a reason, which is the opposite of the **silent**
 /// disagreement version 2 existed for. A loud refusal is not a protocol break.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
 ///
@@ -374,8 +391,61 @@ pub enum ClientMessage {
     /// Not ordered against edits, never acknowledged, never retried: a presence update that is
     /// lost is corrected by the next one, and a stale one is ignored by its clock.
     Presence(PresenceUpdate),
+    /// Change what **another** participant may do, for as long as they stay connected.
+    ///
+    /// # Why a capability set travels in this direction at all
+    ///
+    /// [`Capabilities`]'s own module header says it "never travels from a client", because a
+    /// capability a client can assert is a capability a client can forge. That rule is about a
+    /// sender's claim to its **own** rights, and it is not weakened here: nothing on this message
+    /// says anything about the sender. The sender is not even named — the relay attaches the
+    /// participant number from the connection the frame arrived on, exactly as
+    /// [`ClientMessage::Presence`] has no identity field, so claiming to be somebody else is
+    /// unexpressible rather than merely rejected.
+    ///
+    /// What travels is a **request** about a third party, and it is checked against two values the
+    /// sender cannot influence: the sender's own verified `manage_access`, and the target's own
+    /// verified grant. `casual_doc_edit::access::refuse_access_change` is that check and
+    /// [`crate::session::ServerSession::set_access`] is where it runs.
+    ///
+    /// # What a change does and does not outlive
+    ///
+    /// The target's **connection**. A grant is re-verified on every join (`143` §10) and
+    /// [`crate::session::ServerSession::join`] overwrites the participant's entry with what came
+    /// back, so a reconnect re-reads the host's answer rather than inheriting a room-local one.
+    /// That is the same direction the resume rule already fails in, and deliberately: this message
+    /// redistributes rights the host has issued, and a *durable* change of what the host issues is
+    /// made at the host.
+    SetAccess {
+        /// Whose access to change. **Never the sender's own** — see
+        /// `AccessChangeRefusal::OwnAccessUnchangeable`.
+        target: ClientId,
+        /// What they should be able to do, which must fit inside both the target's host-verified
+        /// ceiling and the sender's own capabilities.
+        capabilities: Capabilities,
+    },
     /// Leaving deliberately rather than by disconnecting.
     Leave,
+}
+
+/// One participant of a room and the two capability sets that describe them.
+///
+/// Carried on [`ServerMessage::Welcome`] and [`ServerMessage::Resumed`], and **only to a
+/// participant who may change access**: a rights surface that cannot see the room is a surface
+/// that offers roles to nobody, and one that showed every reader what the host allows for everyone
+/// else would be publishing the room's policy to people with no use for it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Member {
+    /// The participant number.
+    pub client: ClientId,
+    /// What they may do **now**, which a rights change may already have narrowed.
+    pub capabilities: Capabilities,
+    /// What their own host-signed grant carried: the most a rights change may give them.
+    ///
+    /// Sent so a rights surface can offer exactly the roles that will be accepted. Offering one
+    /// the relay would refuse is the "never a dead control" rule broken at a distance — the
+    /// control looks live, and the refusal arrives from the network.
+    pub ceiling: Capabilities,
 }
 
 /// Somebody's ordered operations, to be applied locally.
@@ -413,6 +483,15 @@ pub enum ServerMessage {
         /// above its level.
         #[serde(default)]
         capabilities: Capabilities,
+        /// The room's other participants, **empty unless this one may change access**.
+        ///
+        /// Filled by the relay rather than by [`crate::session::ServerSession`], and that is where
+        /// the knowledge is rather than a convenience: occupancy is a property of the open
+        /// connections, and the order's state machine has no notion of a connection at all (it
+        /// holds an entry for every participant it has *ever* admitted). So the session emits an
+        /// empty list and the relay, which owns the sockets, fills it.
+        #[serde(default)]
+        participants: Vec<Member>,
     },
     /// A recognised reconnect, sent **instead of** [`ServerMessage::Welcome`].
     ///
@@ -436,6 +515,10 @@ pub enum ServerMessage {
         /// make reconnecting a way to undo a revocation.
         #[serde(default)]
         capabilities: Capabilities,
+        /// The room's other participants, on the same terms as
+        /// [`ServerMessage::Welcome`]'s — re-derived now, not restored.
+        #[serde(default)]
+        participants: Vec<Member>,
     },
     /// Cumulative acknowledgement: every seq up to and including `through` is ordered.
     ///
@@ -470,6 +553,22 @@ pub enum ServerMessage {
         client: ClientId,
         /// Where they are looking.
         update: PresenceUpdate,
+    },
+    /// Somebody's access changed, with the capabilities that are now in force.
+    ///
+    /// Fanned out to **everybody**, the actor and the target included, and each of the three reads
+    /// it for a different reason: the target narrows its own chrome, a rights surface keeps its
+    /// list live, and the actor learns that the change took — which is why the actor is answered
+    /// with this and not with a bare acknowledgement, the way an ordered chunk is.
+    ///
+    /// A participant's role in a shared document is not a secret, so this is not filtered the way
+    /// [`Member`] is. The **ceiling** is deliberately not on this message: that is the room's
+    /// policy, and it is only ever sent to somebody who may act on it.
+    AccessChanged {
+        /// Whose access changed.
+        client: ClientId,
+        /// What they may do now.
+        capabilities: Capabilities,
     },
     /// A participant is gone: forget its presence.
     ///
@@ -552,6 +651,21 @@ pub enum Refusal {
         /// ceiling the client guessed is a ceiling it can report wrongly.
         limit: usize,
     },
+    /// A [`ClientMessage::SetAccess`] was refused.
+    ///
+    /// **Deliberately undetailed**, carrying none of
+    /// `casual_doc_edit::access::AccessChangeRefusal`'s five distinctions, and for that enum's own
+    /// reason: what an attacker would be enumerating here is a *ceiling*, one request at a time.
+    /// It is the same choice `opendoc_relay::GrantRefusal` already makes, and it costs a reader
+    /// nothing because every one of the five is unreachable from an honest chrome — a participant
+    /// who may not manage access is not offered the surface, the surface omits the reader's own
+    /// row, and it offers no role outside the ceiling the relay told it about.
+    ///
+    /// **Not terminal and not retryable.** Not terminal because the session is otherwise fine and
+    /// dropping a co-editing connection over a refused administrative request would cost the
+    /// reader their unsent work. Not retryable because nothing about resending it would change the
+    /// answer — which is exactly the distinction [`Refusal::is_retryable`] exists to carry.
+    AccessChangeRefused,
 }
 
 impl Refusal {
@@ -572,6 +686,7 @@ impl Refusal {
             Self::IdCollision => "ODC-7008",
             Self::StaleBase { .. } => "ODC-7009",
             Self::RoomFull { .. } => "ODC-7010",
+            Self::AccessChangeRefused => "ODC-7011",
         }
     }
 

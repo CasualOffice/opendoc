@@ -12,7 +12,7 @@
 //
 // The widths below bracket that band deliberately. 1280 was fine before the fix
 // and must stay fine; 1100 and 980 are inside it.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 async function enterSuggesting(page) {
   await clickIntoFirstPage(page);
@@ -51,7 +51,7 @@ for (const width of [1280, 1100, 980]) {
     expect(await overflow(page)).toEqual([]);
     // The column is useless if it is technically on-screen but too narrow to
     // read, so the floor is asserted rather than left to the clamp.
-    const sidebar = await page.locator(".review-sidebar").boundingBox();
+    const sidebar = await stableBox(page.locator(".review-sidebar"));
     expect(sidebar.width).toBeGreaterThanOrEqual(240);
 
     expect(consoleErrors).toEqual([]);
@@ -73,7 +73,7 @@ test("the layout recovers when the window is made smaller", async ({ page, conso
     await page.waitForFunction((w) => window.innerWidth === w, width);
     await expect(page.locator("#pages")).toBeVisible();
     // Playwright's boundingBox is {x, y, width, height} — there is no `right`.
-    const box = await page.locator("#pages").boundingBox();
+    const box = await stableBox(page.locator("#pages"));
     expect(box.x + box.width, `#pages after resizing to ${width}px`).toBeLessThanOrEqual(width + 1);
     expect(await overflow(page), `after resizing to ${width}px`).toEqual([]);
   }

@@ -62,7 +62,9 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == corpus/real-producer-rich.docx [Semantic]
-  report: 4 entries
+  report: 6 entries
+    cNvPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
     formProt x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=None
     graphicFrameLocks x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("graphicFrameLocks") loc.attribute=None ledger=None
     picLocks x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("picLocks") loc.attribute=None ledger=None
@@ -71,7 +73,9 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == corpus/real-producer-rich.docx [Retention]
-  report: 4 entries
+  report: 6 entries
+    cNvPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
     formProt x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("formProt") loc.attribute=None ledger=Some(0)
     graphicFrameLocks x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("graphicFrameLocks") loc.attribute=None ledger=Some(0)
     picLocks x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("picLocks") loc.attribute=None ledger=Some(0)
@@ -133,19 +137,24 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/cell-hit-routing.docx [Semantic]
-  report: 0 entries
+  report: 2 entries
+    cNvPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/cell-hit-routing.docx [Retention]
-  report: 0 entries
+  report: 2 entries
+    cNvPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=5532 retains=true
   validate: Ok(())
 
 == generated/chart.docx [Semantic]
-  report: 4 entries
+  report: 5 entries
     chart.trendline x1 DegradedPreserved model=Degraded retention=Preserved part=Some("word/charts/chart1.xml") content_type=None loc.part=Some("word/charts/chart1.xml") loc.element=Some("trendline") loc.attribute=None ledger=Some(0)
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
     word/charts/colors1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/colors1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartColorStyle+xml") loc.part=Some("word/charts/colors1.xml") loc.element=None loc.attribute=None ledger=Some(1)
     word/charts/style1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/style1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartStyle+xml") loc.part=Some("word/charts/style1.xml") loc.element=None loc.attribute=None ledger=Some(2)
     word/embeddings/Microsoft_Excel_Worksheet1.xlsx x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") content_type=Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") loc.part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") loc.element=None loc.attribute=None ledger=Some(3)
@@ -157,8 +166,9 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/chart.docx [Retention]
-  report: 4 entries
+  report: 5 entries
     chart.trendline x1 DegradedPreserved model=Degraded retention=Preserved part=Some("word/charts/chart1.xml") content_type=None loc.part=Some("word/charts/chart1.xml") loc.element=Some("trendline") loc.attribute=None ledger=Some(1)
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
     word/charts/colors1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/colors1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartColorStyle+xml") loc.part=Some("word/charts/colors1.xml") loc.element=None loc.attribute=None ledger=Some(2)
     word/charts/style1.xml x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/charts/style1.xml") content_type=Some("application/vnd.openxmlformats-officedocument.drawingml.chartStyle+xml") loc.part=Some("word/charts/style1.xml") loc.element=None loc.attribute=None ledger=Some(3)
     word/embeddings/Microsoft_Excel_Worksheet1.xlsx x1 OmittedPreserved model=Omitted retention=Preserved part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") content_type=Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") loc.part=Some("word/embeddings/Microsoft_Excel_Worksheet1.xlsx") loc.element=None loc.attribute=None ledger=Some(4)
@@ -182,14 +192,16 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/custom-geometry.docx [Semantic]
-  report: 1 entries
+  report: 2 entries
     custGeom x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("custGeom") loc.attribute=None ledger=None
+    docPr/@name x4 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/custom-geometry.docx [Retention]
-  report: 1 entries
+  report: 2 entries
     custGeom x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("custGeom") loc.attribute=None ledger=Some(0)
+    docPr/@name x4 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=5897 retains=true
   validate: Ok(())
@@ -223,13 +235,15 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/floating-text-box.docx [Semantic]
-  report: 1 entries
+  report: 2 entries
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
     drawing x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/floating-text-box.docx [Retention]
-  report: 1 entries
+  report: 2 entries
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
     drawing x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=2419 retains=true
@@ -258,12 +272,14 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/grouped-text-boxes.docx [Semantic]
-  report: 0 entries
+  report: 1 entries
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/grouped-text-boxes.docx [Retention]
-  report: 0 entries
+  report: 1 entries
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=2894 retains=true
   validate: Ok(())
@@ -329,12 +345,16 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/nested-group.docx [Semantic]
-  report: 0 entries
+  report: 2 entries
+    cNvPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/nested-group.docx [Retention]
-  report: 0 entries
+  report: 2 entries
+    cNvPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=3444 retains=true
   validate: Ok(())
@@ -368,25 +388,31 @@ watermark-class-feature: docx.watermark
   package refused: DOCX package part name is unsafe
 
 == generated/picture-hyperlink.docx [Semantic]
-  report: 1 entries
+  report: 3 entries
+    cNvPr/@name x5 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x4 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
     drawing x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/picture-hyperlink.docx [Retention]
-  report: 1 entries
+  report: 3 entries
+    cNvPr/@name x5 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x4 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
     drawing x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=6466 retains=true
   validate: Ok(())
 
 == generated/shapes.docx [Semantic]
-  report: 0 entries
+  report: 1 entries
+    docPr/@name x2 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/shapes.docx [Retention]
-  report: 0 entries
+  report: 1 entries
+    docPr/@name x2 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=3940 retains=true
   validate: Ok(())
@@ -403,7 +429,9 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/themed-shape.docx [Semantic]
-  report: 8 entries
+  report: 10 entries
+    cNvPr/@name x4 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x4 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
     fmtScheme/effectStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("effectStyleLst") loc.attribute=Some("effect-not-rendered") ledger=None
     fmtScheme/fillStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("fillStyleLst") loc.attribute=Some("pattern") ledger=None
     fmtScheme/lnStyleLst x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("lnStyleLst") loc.attribute=Some("unmodeled") ledger=None
@@ -416,7 +444,9 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/themed-shape.docx [Retention]
-  report: 8 entries
+  report: 10 entries
+    cNvPr/@name x4 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x4 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
     fmtScheme/effectStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("effectStyleLst") loc.attribute=Some("effect-not-rendered") ledger=Some(0)
     fmtScheme/fillStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("fillStyleLst") loc.attribute=Some("pattern") ledger=Some(0)
     fmtScheme/lnStyleLst x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("lnStyleLst") loc.attribute=Some("unmodeled") ledger=Some(0)
@@ -445,12 +475,16 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/visual-containment.docx [Semantic]
-  report: 0 entries
+  report: 2 entries
+    cNvPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x1 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/visual-containment.docx [Retention]
-  report: 0 entries
+  report: 2 entries
+    cNvPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x1 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=8980 retains=true
   validate: Ok(())
@@ -477,13 +511,17 @@ watermark-class-feature: docx.watermark
   validate: Ok(())
 
 == generated/wrap-text-sides.docx [Semantic]
-  report: 1 entries
+  report: 3 entries
+    cNvPr/@name x8 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=None
+    docPr/@name x8 DegradedNotRetained model=Degraded retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=None
     drawing x1 OmittedNotRetained model=Omitted retention=NotRetained part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=None
   ledger: 0 records, snapshot=None
   validate: Ok(())
 
 == generated/wrap-text-sides.docx [Retention]
-  report: 1 entries
+  report: 3 entries
+    cNvPr/@name x8 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("cNvPr") loc.attribute=Some("name") ledger=Some(0)
+    docPr/@name x8 DegradedPreserved model=Degraded retention=Preserved part=None content_type=None loc.part=None loc.element=Some("docPr") loc.attribute=Some("name") ledger=Some(0)
     drawing x1 OmittedPreserved model=Omitted retention=Preserved part=None content_type=None loc.part=None loc.element=Some("drawing") loc.attribute=None ledger=Some(0)
   ledger: 1 records, snapshot=Some(0)
     #0 SourceSnapshot covers=None bytes=9829 retains=true

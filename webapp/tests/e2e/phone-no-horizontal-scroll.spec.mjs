@@ -32,7 +32,7 @@
 // two tests with it, and `#viewport` is now swept by the general assertion below
 // like every other element. `tests/e2e/reflow.spec.mjs` holds the positive
 // claim; this file holds the property that no longer has a hole in it.
-import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow, openCommandPalette } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, menuCommandRow, openCommandPalette, stableBox, test } from "./fixtures.mjs";
 
 /** Two real phones. 390 is an iPhone 14/15 and a Pixel 7 in portrait; 320 is
  *  the narrowest viewport still shipping (iPhone SE 1st gen) and is where a
@@ -217,12 +217,12 @@ for (const phone of PHONES) {
     // where that shows. Window coordinates, not page coordinates — at this
     // width the sheet is wider than the screen (see the exemption at the foot
     // of this file), so its own right edge is somewhere nobody can click.
-    const box = await page.locator(".page-wrap .page").first().boundingBox();
+    const box = await stableBox(page.locator(".page-wrap .page").first());
     const x = Math.min(phone.width - 8, box.x + box.width - 8);
     await page.mouse.click(x, box.y + box.height * 0.2, { button: "right" });
     await expect(page.locator(".editor-context-menu")).toBeVisible();
 
-    const menu = await page.locator(".editor-context-menu").boundingBox();
+    const menu = await stableBox(page.locator(".editor-context-menu"));
     expect(menu.x, "the context menu starts inside the window").toBeGreaterThanOrEqual(-1);
     expect(menu.x + menu.width, "the context menu ends inside the window").toBeLessThanOrEqual(phone.width + 1);
 
@@ -255,7 +255,7 @@ test("the phone chrome replaces the desktop chrome rather than shrinking it", as
   const count = await buttons.count();
   expect(count).toBeGreaterThan(4);
   for (let i = 0; i < count; i += 1) {
-    const b = await buttons.nth(i).boundingBox();
+    const b = await stableBox(buttons.nth(i));
     expect(b.x + b.width, `menu ${i} is on screen`).toBeLessThanOrEqual(390 + 1);
     // WCAG 2.5.8 Target Size (Minimum), Level AA — and the coarse-pointer block
     // in style.css explicitly defers this row, so this is the assertion that
@@ -264,7 +264,7 @@ test("the phone chrome replaces the desktop chrome rather than shrinking it", as
   }
 
   // The command surface moved to the bottom, where all three references put it.
-  const toolbar = await page.locator("#compactToolbar").boundingBox();
+  const toolbar = await stableBox(page.locator("#compactToolbar"));
   expect(await page.locator("#compactToolbar").evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
   expect(toolbar.y, "the toolbar is in the bottom half of the screen").toBeGreaterThan(844 / 2);
 
@@ -301,8 +301,8 @@ test("the status toast does not land on the docked command bar", async ({ page, 
     toast.hidden = false;
   });
 
-  const toast = await page.locator(".toast").boundingBox();
-  const bar = await page.locator("#compactToolbar").boundingBox();
+  const toast = await stableBox(page.locator(".toast"));
+  const bar = await stableBox(page.locator("#compactToolbar"));
   expect(toast, "the toast is on screen to be measured").not.toBeNull();
   expect(
     toast.y + toast.height,

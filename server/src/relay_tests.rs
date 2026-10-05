@@ -1285,3 +1285,443 @@ fn an_eviction_that_cannot_be_announced_finds_the_next_dead_socket_behind_it() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+// ---------------------------------------------------------------------------------------
+// Changing a participant's access from inside the room — `ClientMessage::SetAccess`.
+//
+// The rule lives in `casual_doc_edit::access::refuse_access_change` and the lookup in
+// `ServerSession::set_access`; both have their own guards. These cover the two things only
+// this layer can hold — WHICH connection asked, and who hears the answer — and the one the
+// chrome must never be trusted for: a crafted frame from a participant who may not send one.
+// ---------------------------------------------------------------------------------------
+
+/// A verifier that hands out a different grant per token, so one room can hold two roles.
+///
+/// `Access::Open` cannot express this — it admits everybody with one value — and a rights-change
+/// guard run in a room where everybody is an owner would be testing nothing (`SKILL` §4).
+#[derive(Debug)]
+struct PerToken {
+    grants: Vec<(Vec<u8>, Capabilities)>,
+}
+
+impl crate::GrantVerifier for PerToken {
+    fn verify(&self, token: &GrantToken) -> Result<Capabilities, crate::GrantRefusal> {
+        self.grants
+            .iter()
+            .find(|(bytes, _)| bytes.as_slice() == token.as_bytes())
+            .map(|(_, grants)| *grants)
+            .ok_or(crate::GrantRefusal::Invalid)
+    }
+}
+
+/// A token for `who`, matching [`PerToken`]'s own encoding.
+fn token_for(who: &str) -> GrantToken {
+    GrantToken::new(who.as_bytes().to_vec()).expect("a token")
+}
+
+/// A room whose participants each present a token naming the grant they are to be given.
+fn with_roles(
+    name: &str,
+    roles: &[(&str, Capabilities)],
+) -> (std::path::PathBuf, Relay<Sink>, Vec<ClientId>) {
+    let path = scratch(name);
+    let verifier = PerToken {
+        grants: roles
+            .iter()
+            .map(|(who, grants)| ((*who).as_bytes().to_vec(), *grants))
+            .collect(),
+    };
+    let mut relay = Relay::new(
+        Room::create(&path).expect("a new room"),
+        Access::Granted(Box::new(verifier)),
+    );
+    let mut clients = Vec::new();
+    for (who, _) in roles {
+        let (_, joined) = join_with(&mut relay, who, Some(token_for(who)));
+        clients.push(joined.expect("the join assigned an identity"));
+    }
+    (path, relay, clients)
+}
+
+/// The `SetAccess` frame a crafted client would send.
+fn set_access(target: ClientId, capabilities: Capabilities) -> ClientMessage {
+    ClientMessage::SetAccess {
+        target,
+        capabilities,
+    }
+}
+
+#[test]
+fn an_owner_s_rights_change_reaches_everybody_and_the_actor_is_told_what_took() {
+    let (path, mut relay, clients) = with_roles(
+        "rights-fanout",
+        &[
+            ("ada", Capabilities::owner()),
+            ("grace", Capabilities::editor()),
+            ("mary", Capabilities::editor()),
+        ],
+    );
+    let (ada, grace, mary) = (clients[0], clients[1], clients[2]);
+
+    let handled = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &set_access(grace, Capabilities::commenter()),
+        )
+        .expect("the request is handled");
+    assert!(handled.evicted.is_empty());
+    // The ACTOR is answered with the change itself rather than a bare acknowledgement, because
+    // what they need to know is not only that it took but what took.
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::AccessChanged {
+            client: grace,
+            capabilities: Capabilities::commenter()
+        }),
+    );
+    // The target hears it, so its own chrome can narrow...
+    assert!(
+        received(&mut relay, grace).iter().any(|message| matches!(
+            message,
+            ServerMessage::AccessChanged { client, capabilities }
+                if *client == grace && *capabilities == Capabilities::commenter()
+        )),
+        "the demoted participant was never told"
+    );
+    // ...and so does the bystander, so a rights surface open on their screen stays live.
+    assert!(
+        received(&mut relay, mary)
+            .iter()
+            .any(|message| matches!(message, ServerMessage::AccessChanged { .. })),
+        "a bystander's rights surface would go stale"
+    );
+    // And the relay's own table is what a later submission is judged against.
+    assert_eq!(
+        relay.room().session().granted_for(grace),
+        Some(Capabilities::commenter())
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_viewer_s_crafted_rights_change_is_refused_at_the_relay() {
+    // THE PROOF THAT THE CHROME IS NOT THE BOUNDARY. The chrome never offers this participant the
+    // surface at all — they hold no `manage_access` — so the only way this frame exists is a
+    // client somebody wrote. It arrives on a real, admitted connection, naming a real target,
+    // asking for something inside that target's own ceiling, and it is refused anyway.
+    let (path, mut relay, clients) = with_roles(
+        "rights-crafted",
+        &[
+            ("ada", Capabilities::viewer()),
+            ("grace", Capabilities::editor()),
+        ],
+    );
+    let (ada, grace) = (clients[0], clients[1]);
+
+    let handled = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &set_access(grace, Capabilities::viewer()),
+        )
+        .expect("the request is handled");
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::Refused {
+            seq: None,
+            reason: Refusal::AccessChangeRefused
+        }),
+    );
+    assert_eq!(
+        relay.room().session().granted_for(grace),
+        Some(Capabilities::editor()),
+        "a viewer's crafted frame changed somebody's access"
+    );
+    // Nobody was told about a change that did not happen.
+    assert!(
+        !received(&mut relay, grace)
+            .iter()
+            .any(|message| matches!(message, ServerMessage::AccessChanged { .. })),
+        "a refused request was fanned out"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_crafted_request_above_the_host_s_ceiling_is_refused_at_the_relay_too() {
+    // The same crafted frame from an actor who IS authorised, asking for a capability the host
+    // never granted the target. An honest chrome cannot produce it — the membership list it was
+    // given carries each target's ceiling — so this is the engine holding the line behind it.
+    let (path, mut relay, clients) = with_roles(
+        "rights-ceiling",
+        &[
+            ("ada", Capabilities::owner()),
+            ("grace", Capabilities::commenter()),
+        ],
+    );
+    let (ada, grace) = (clients[0], clients[1]);
+
+    let handled = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &set_access(grace, Capabilities::editor()),
+        )
+        .expect("the request is handled");
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::Refused {
+            seq: None,
+            reason: Refusal::AccessChangeRefused
+        }),
+    );
+    assert_eq!(
+        relay.room().session().granted_for(grace),
+        Some(Capabilities::commenter())
+    );
+    // ...and the same owner narrowing the same participant inside that ceiling is accepted, so
+    // the guard is about the bound and not about the relay refusing everything.
+    let allowed = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &set_access(grace, Capabilities::viewer()),
+        )
+        .expect("the request is handled");
+    assert!(matches!(
+        allowed.answer,
+        Some(ServerMessage::AccessChanged { .. })
+    ));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_rights_change_may_only_be_sent_by_the_connection_it_arrived_on() {
+    // `SetAccess` has no actor field at all — `152` §2b's discipline — so the only way to claim
+    // somebody else's authority is to send before joining, and that is this guard. `None` means
+    // nothing has joined on this connection yet, and the answer is the same undetailed refusal as
+    // everything else: before a `Join` there is nobody to tell anything.
+    let (path, mut relay, clients) = with_roles(
+        "rights-unjoined",
+        &[
+            ("ada", Capabilities::owner()),
+            ("grace", Capabilities::editor()),
+        ],
+    );
+    let grace = clients[1];
+
+    let handled = relay
+        .handle(None, &mut None, &set_access(grace, Capabilities::viewer()))
+        .expect("the request is handled");
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::Refused {
+            seq: None,
+            reason: Refusal::AccessChangeRefused
+        }),
+    );
+    assert_eq!(
+        relay.room().session().granted_for(grace),
+        Some(Capabilities::editor())
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_narrowed_participant_s_next_chunk_is_refused_without_their_client_being_asked() {
+    // The change has to MEAN something, and what it means is the relay's capability check. A
+    // rights change that only moved a table and never reached the write gate would be a feature
+    // that announces itself and does nothing — which is the shape §9 rule 4 keeps catching.
+    let (path, mut relay, clients) = with_roles(
+        "rights-enforced",
+        &[
+            ("ada", Capabilities::owner()),
+            ("grace", Capabilities::editor()),
+        ],
+    );
+    let (ada, grace) = (clients[0], clients[1]);
+
+    // Before: an editor's ordinary chunk is ordered.
+    let before = relay
+        .handle(
+            Some(grace),
+            &mut None,
+            &ClientMessage::Submit(chunk(grace, 1, Base::Revision(Revision::new(0)))),
+        )
+        .expect("the chunk is handled");
+    assert!(
+        matches!(before.answer, Some(ServerMessage::Ack { .. })),
+        "the precondition failed: an editor's chunk was not ordered: {:?}",
+        before.answer
+    );
+
+    relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &set_access(grace, Capabilities::viewer()),
+        )
+        .expect("the rights change is handled");
+
+    // After: the same participant, the same connection, the next chunk — refused.
+    let after = relay
+        .handle(
+            Some(grace),
+            &mut None,
+            &ClientMessage::Submit(chunk(grace, 2, Base::Chained)),
+        )
+        .expect("the chunk is handled");
+    assert_eq!(
+        after.answer,
+        Some(ServerMessage::Refused {
+            seq: Some(Seq::new(2)),
+            reason: Refusal::ReadOnlyAccess
+        }),
+        "a demoted participant kept writing"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_room_s_membership_goes_only_to_a_participant_who_may_change_it() {
+    // The membership list carries each participant's CEILING, which is the room's policy for
+    // somebody else. A reader with no use for it has no business holding it, and a reader who
+    // needs it cannot offer a role without it — so the filter is a real rule and not tidiness.
+    //
+    // The joins are explicit rather than through `with_roles`, because what is under test is the
+    // list handed to a JOINER and that list is of who was already here.
+    let path = scratch("rights-membership");
+    let verifier = PerToken {
+        grants: vec![
+            (b"ada".to_vec(), Capabilities::owner()),
+            (b"grace".to_vec(), Capabilities::commenter()),
+            (b"mary".to_vec(), Capabilities::owner()),
+            (b"nick".to_vec(), Capabilities::viewer()),
+        ],
+    };
+    let mut relay = Relay::new(
+        Room::create(&path).expect("a new room"),
+        Access::Granted(Box::new(verifier)),
+    );
+    let (_, ada) = join_with(&mut relay, "ada", Some(token_for("ada")));
+    let (_, grace) = join_with(&mut relay, "grace", Some(token_for("grace")));
+    let ada = ada.expect("ada joined");
+    let grace = grace.expect("grace joined");
+
+    // An owner joins and is handed the room, with each participant's own ceiling.
+    let (answer, _) = join_with(&mut relay, "mary", Some(token_for("mary")));
+    let ServerMessage::Welcome { participants, .. } = answer else {
+        panic!("expected a welcome, got {answer:?}");
+    };
+    let mut seen: Vec<_> = participants
+        .iter()
+        .map(|member| (member.client, member.capabilities, member.ceiling))
+        .collect();
+    seen.sort_by_key(|(client, _, _)| *client);
+    assert_eq!(
+        seen,
+        vec![
+            (ada, Capabilities::owner(), Capabilities::owner()),
+            (grace, Capabilities::commenter(), Capabilities::commenter()),
+        ],
+        "an owner was not told who is in the room, or was told the wrong ceilings"
+    );
+
+    // A viewer joins the same room and is handed nothing, so a page that tried to build a rights
+    // surface from this has nothing to build one out of.
+    let (answer, _) = join_with(&mut relay, "nick", Some(token_for("nick")));
+    let ServerMessage::Welcome { participants, .. } = answer else {
+        panic!("expected a welcome, got {answer:?}");
+    };
+    assert!(
+        participants.is_empty(),
+        "a viewer was handed the room's policy for everybody else: {participants:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_resuming_participant_is_not_in_its_own_membership_list() {
+    // A rights surface may not offer the reader their own row — a participant cannot change their
+    // own access — so a row for it is one the surface has to drop, and a list whose consumer
+    // filters it is a list that was built wrong.
+    //
+    // **A FIRST join is the wrong condition to test this with**, and that is the whole reason this
+    // guard is shaped the way it is. `Relay::handle` takes the writer AFTER it builds the answer,
+    // so on a first join the joiner is not in the participant set yet and the list excludes it
+    // whether anything filters or not — a guard written that way passed with the filter deleted,
+    // which is exactly the green-but-wrong shape `SKILL` §4 is about.
+    //
+    // A RESUME is the condition: `Participants::joined` REPLACES a writer for an id that is
+    // already there, so a reconnect whose predecessor has not yet been reaped is in the set at
+    // the moment its own answer is built.
+    let path = scratch("rights-membership-self");
+    let verifier = PerToken {
+        grants: vec![
+            (b"ada".to_vec(), Capabilities::owner()),
+            (b"grace".to_vec(), Capabilities::owner()),
+        ],
+    };
+    let mut relay = Relay::new(
+        Room::create(&path).expect("a new room"),
+        Access::Granted(Box::new(verifier)),
+    );
+    let (_, ada) = join_with(&mut relay, "ada", Some(token_for("ada")));
+    let ada = ada.expect("ada joined");
+
+    let key = ResumeKey::new("grace-tab").expect("a key");
+    let mut writer = Some(Sink::default());
+    let first = relay
+        .handle(
+            None,
+            &mut writer,
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("grace").expect("an identity"),
+                grant: Some(token_for("grace")),
+                resume: Some(Resume {
+                    key: key.clone(),
+                    revision: Revision::new(0),
+                }),
+            }),
+        )
+        .expect("the join is handled");
+    let grace = first.joined_as.expect("grace joined");
+
+    // The same tab reconnects without the old connection having been reaped, so `grace` is in the
+    // participant set while its own `Resumed` is being built.
+    let mut writer = Some(Sink::default());
+    let again = relay
+        .handle(
+            None,
+            &mut writer,
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("grace").expect("an identity"),
+                grant: Some(token_for("grace")),
+                resume: Some(Resume {
+                    key,
+                    revision: Revision::new(0),
+                }),
+            }),
+        )
+        .expect("the resume is handled");
+    let answer = again.answer.expect("a join is always answered");
+    let ServerMessage::Resumed {
+        client,
+        participants,
+        ..
+    } = answer
+    else {
+        panic!("expected a resume, got {answer:?}");
+    };
+    assert_eq!(client, grace, "a resume is the same participant");
+    let listed: Vec<_> = participants.iter().map(|member| member.client).collect();
+    assert_eq!(
+        listed,
+        vec![ada],
+        "the resuming participant's own row is in the list it was handed"
+    );
+    let _ = std::fs::remove_file(&path);
+}

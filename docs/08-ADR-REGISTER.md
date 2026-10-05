@@ -2476,6 +2476,35 @@ costed against a fallback that does not exist.
   password-less one — the protection survives and becomes liftable in Word with no password,
   silently. Retention mode keeps the original part bytes, so the loss is semantic-mode only.
   That is `AGENTS.md`'s no-silent-data-loss rule, and it belongs to the import/export lane.
+- **Update (2026-10-04): that loss is now reported, and the group is larger than this ADR
+  said.** `casual-doc-import`'s settings parser raises a named `Degraded` attribute finding
+  per password attribute it sees — `documentProtection/@hashValue`, `writeProtection/@salt`
+  and so on — through the same `report_attribute` seam `numbering.rs` uses, so the loss
+  reaches the host's compatibility report instead of vanishing. Two corrections to the
+  paragraph above: the group is **sixteen** attributes, not five — `AG_Password`'s twelve
+  (`w:hash`, `w:salt`, `w:cryptProviderType`, `w:cryptAlgorithmClass`,
+  `w:cryptAlgorithmType`, `w:cryptAlgorithmSid`, `w:cryptSpinCount`, `w:cryptProvider`,
+  `w:algIdExt`, `w:algIdExtSource`, `w:cryptProviderTypeExt`,
+  `w:cryptProviderTypeExtSource`) plus `AG_TransitionalPassword`'s four
+  (`w:algorithmName`, `w:hashValue`, `w:saltValue`, `w:spinCount`), which is the ISO
+  verifier form Office writes *instead* of the legacy one when `UseIsoPasswordVerifier` is
+  set, so a modern Word file's password material may be entirely in attributes this
+  register did not name. And the loss is not confined to `w:documentProtection`:
+  `CT_WriteProtection` carries both groups too and lost them the same way. The decision
+  **not** to verify or re-emit password material stands, untouched and still open; what
+  changed is only that it stopped being silent. `docs/160` §7 item 5 asked for exactly
+  this, as "report at minimum".
+- **A second document-safety defect in the same element, found with it and fixed with it:
+  `w:enforcement` has three states and was read as two.** MS-OI29500 Part 1 §17.15.1.29:
+  "Word enforces protection when this attribute is missing." The importer treated an
+  **absent** attribute as off, so a document Word opens read-only opened here fully
+  editable; the exporter **omitted** the attribute when the restriction was off, so a
+  restriction an author deliberately switched off was written in the one form Word then
+  enforces. One reading silently loosened incoming documents and the other silently
+  tightened outgoing ones. Import now resolves absent to **enforced** and export always
+  writes the attribute explicitly, `"0"` included. The `w:enforcement="0"` handling this
+  module already had was right and is unchanged — that is the state Word writes when an
+  author sets a restriction up and then stops it, and `protection.rs` depends on it.
 - **Also not built here:** there is no operation that *sets* protection, so a reader cannot
   restrict or unrestrict editing from the product at all — protection can only arrive from a
   file. Closing that means a new definitions operation (ADR-030 I2), which is a decision and

@@ -16,7 +16,7 @@
 // "PORTRAIT FOOTER", then two LANDSCAPE pages whose section owns its own default
 // header, its own first-page header and its own footer, with 2" vertical margins
 // against the portrait section's 1".
-import { test, expect, MOD, documentPageCount, pageSheet } from "./fixtures.mjs";
+import { MOD, documentPageCount, expect, pageSheet, stableBox, test } from "./fixtures.mjs";
 
 const LANDSCAPE_PAGE = 4; // 0-based: page 5, the first page of the landscape section
 const PORTRAIT_PAGE = 0;
@@ -110,7 +110,7 @@ test("the header band belongs to its own section: named, and drawn in that secti
 
   // Enter the header from page 1, the ordinary gesture.
   const portrait = page.locator(".page-wrap .page").first();
-  const box = await portrait.boundingBox();
+  const box = await stableBox(portrait);
   await portrait.dblclick({ position: { x: box.width * 0.5, y: box.height * 0.04 } });
   await expect(page.locator("#pages")).toHaveAttribute("data-running-edit", "header");
 

@@ -262,6 +262,12 @@ struct ExtraPart {
     /// `document.xml.rels` left a header's `r:embed` pointing at a relationship
     /// its own part never declared.
     own_media: Vec<MediaRel>,
+    /// The embedded-object (chart / diagram / OLE / alt-chunk) relationships this
+    /// part declares. Same reason as [`own_media`](Self::own_media) one kind
+    /// along: a chart in a header resolves its `c:chart r:id` through
+    /// `word/_rels/header1.xml.rels`, so emitting only the body's left the header
+    /// pointing at nothing (`109` HF-256).
+    own_embedded: Vec<EmbeddedRelEntry>,
 }
 
 impl ExtraPart {
@@ -281,11 +287,17 @@ impl ExtraPart {
             rel_id: None,
             own_rels: Vec::new(),
             own_media: Vec::new(),
+            own_embedded: Vec::new(),
         }
     }
 
     fn with_own_media(mut self, own_media: Vec<MediaRel>) -> Self {
         self.own_media = own_media;
+        self
+    }
+
+    fn with_own_embedded(mut self, own_embedded: Vec<EmbeddedRelEntry>) -> Self {
+        self.own_embedded = own_embedded;
         self
     }
 
@@ -308,6 +320,37 @@ type MediaRel = (String, String);
 
 /// A part's XML, its own external relationships, and the images it declares.
 type PartWithRels = (Vec<u8>, Vec<RelEntry>, Vec<MediaRel>);
+
+/// What a non-body part needs in order to reference an embedded object safely:
+/// the set of embedded parts the package will carry, and the relationships this
+/// part declares for itself (`109` HF-256).
+///
+/// The two travel together because they have to agree — the body reference is
+/// gated on `available` and the relationship is written from `own`, and a surface
+/// that had one without the other is exactly how a header came to carry a
+/// `c:chart r:id` with no relationship behind it.
+struct SurfaceEmbedded<'a> {
+    /// Every embedded part the written package will contain (retained +
+    /// generated), for [`Ctx::embedded_parts`].
+    available: &'a BTreeSet<String>,
+    /// The embedded relationships this part declares, already filtered to
+    /// `available` by [`collect_embedded_rels`].
+    own: &'a [EmbeddedRelEntry],
+}
+
+impl SurfaceEmbedded<'_> {
+    /// The relationship ids this part writes VERBATIM — its images and its
+    /// embedded objects — so a hyperlink minted inside the part cannot be handed
+    /// one of them. That collision is not hypothetical: it is how a header's
+    /// `r:embed` came to resolve to a hyperlink.
+    fn reserved(&self, own_media: &[MediaRel]) -> BTreeSet<String> {
+        own_media
+            .iter()
+            .map(|(id, _)| id.clone())
+            .chain(self.own.iter().map(|(id, _, _, _)| id.clone()))
+            .collect()
+    }
+}
 
 /// Accumulates the `word/_rels/document.xml.rels` entries the body needs while
 /// it is written. Today that is one external-target relationship per distinct
@@ -484,23 +527,25 @@ struct Ctx<'a> {
     /// relationship for an empty part (FID-R-06).
     media: &'a DefinitionMap<MediaId, MediaReference>,
     /// The embedded-object (chart / SmartArt / OLE) part names the written
-    /// package will actually contain, when this surface's relationships are
-    /// gated on that — `Some` for `word/document.xml` and `None` everywhere
-    /// else.
+    /// package will actually contain.
     ///
     /// Same mechanism as `media` one level up, and for the same reason: an
     /// object whose part the package will not carry is left out of the body
     /// instead of pointing at a relationship for a part that is not there
     /// (FID-R-06 for pictures, `109` HF-256 for charts).
     ///
-    /// `None` is **not** "everything is available" — it is "this surface does
-    /// not emit embedded-object relationships at all". `collect_embedded_rels`
-    /// walks the BODY only, so a chart in a header already writes a `c:chart
-    /// r:id` that `header{n}.xml.rels` never declares, available part or not.
-    /// Gating on availability cannot fix that; it needs the relationship walk to
-    /// become per-part, which is a different defect with a different population,
-    /// and carrying `None` here is what keeps it visible instead of looking
-    /// handled.
+    /// `Some` on every surface that writes block content — the body, a
+    /// header/footer, a notes part, the comments part — because each of them
+    /// now runs `collect_embedded_rels` over its OWN blocks and emits the result
+    /// into its own `_rels`. It used to be `None` outside the body, on the
+    /// argument that those surfaces emitted no embedded-object relationships at
+    /// all; that was true, and it was the defect, not a design — a header
+    /// holding a chart wrote a `c:chart r:id` that `header{n}.xml.rels` never
+    /// declared, which is the unreadable-content shape HF-256 is about.
+    ///
+    /// `None` remains available for a surface that writes no block content, and
+    /// still means "this surface emits no embedded-object relationships" rather
+    /// than "everything is available".
     embedded_parts: Option<&'a BTreeSet<String>>,
     rels: RelBuilder,
     tokens: IdTokens,
@@ -634,7 +679,8 @@ pub fn export_package(
     // used to: the relationship and the `c:chart r:id` were emitted
     // unconditionally and the part was simply absent (`109` HF-256).
     let available_embedded = available_embedded_parts(retained_parts, &generated_charts);
-    let embedded_rels = collect_embedded_rels(document, &available_embedded, &mut reporter);
+    let embedded_rels =
+        collect_embedded_rels([document.body()], &available_embedded, &mut reporter);
     // Media relationships are emitted with their verbatim ids so the model
     // round-trips; reserve them (and the embedded-object ids) so hyperlink/part
     // rids do not collide.
@@ -725,12 +771,24 @@ pub fn export_package(
         ));
     }
     if !definitions.footnotes.is_empty() {
+        let own_embedded = collect_embedded_rels(
+            definitions
+                .footnotes
+                .iter()
+                .map(|(_, note)| note.blocks.as_slice()),
+            &available_embedded,
+            &mut reporter,
+        );
         let (bytes, own_rels, own_media) = notes_xml(
             "w:footnotes",
             "w:footnote",
             &definitions.footnotes,
             definitions,
             &available_media,
+            &SurfaceEmbedded {
+                available: &available_embedded,
+                own: &own_embedded,
+            },
         )?;
         extras.push(
             ExtraPart::new(
@@ -741,16 +799,29 @@ pub fn export_package(
                 bytes,
             )
             .with_own_rels(own_rels)
-            .with_own_media(own_media),
+            .with_own_media(own_media)
+            .with_own_embedded(own_embedded),
         );
     }
     if !definitions.endnotes.is_empty() {
+        let own_embedded = collect_embedded_rels(
+            definitions
+                .endnotes
+                .iter()
+                .map(|(_, note)| note.blocks.as_slice()),
+            &available_embedded,
+            &mut reporter,
+        );
         let (bytes, own_rels, own_media) = notes_xml(
             "w:endnotes",
             "w:endnote",
             &definitions.endnotes,
             definitions,
             &available_media,
+            &SurfaceEmbedded {
+                available: &available_embedded,
+                own: &own_embedded,
+            },
         )?;
         extras.push(
             ExtraPart::new(
@@ -761,12 +832,28 @@ pub fn export_package(
                 bytes,
             )
             .with_own_rels(own_rels)
-            .with_own_media(own_media),
+            .with_own_media(own_media)
+            .with_own_embedded(own_embedded),
         );
     }
     if !definitions.comments.is_empty() {
-        let (bytes, own_rels, own_media) =
-            comments_xml(&definitions.comments, definitions, &available_media)?;
+        let own_embedded = collect_embedded_rels(
+            definitions
+                .comments
+                .iter()
+                .map(|(_, comment)| comment.blocks.as_slice()),
+            &available_embedded,
+            &mut reporter,
+        );
+        let (bytes, own_rels, own_media) = comments_xml(
+            &definitions.comments,
+            definitions,
+            &available_media,
+            &SurfaceEmbedded {
+                available: &available_embedded,
+                own: &own_embedded,
+            },
+        )?;
         extras.push(
             ExtraPart::new(
                 "word/comments.xml",
@@ -776,7 +863,8 @@ pub fn export_package(
                 bytes,
             )
             .with_own_rels(own_rels)
-            .with_own_media(own_media),
+            .with_own_media(own_media)
+            .with_own_embedded(own_embedded),
         );
         // Comment companion parts (P1F-10), each emitted only when it carries
         // data so a package without threading/identity stays byte-identical.
@@ -905,12 +993,21 @@ pub fn export_package(
                 &available_media,
             )
         });
+        let own_embedded = collect_embedded_rels(
+            [header.blocks.as_slice()],
+            &available_embedded,
+            &mut reporter,
+        );
         let (bytes, own_rels, own_media) = header_footer_xml(
             "w:hdr",
             &header.blocks,
             definitions,
             &available_media,
             shape.as_ref(),
+            &SurfaceEmbedded {
+                available: &available_embedded,
+                own: &own_embedded,
+            },
         )?;
         extras.push(
             ExtraPart::new(
@@ -922,7 +1019,8 @@ pub fn export_package(
             )
             .with_rel_id(hf_rel_id(*id))
             .with_own_rels(own_rels)
-            .with_own_media(own_media),
+            .with_own_media(own_media)
+            .with_own_embedded(own_embedded),
         );
         header_parts = index + 1;
     }
@@ -953,8 +1051,20 @@ pub fn export_package(
             // than panicking keeps the part and its reference absent together.
             continue;
         };
-        let (bytes, own_rels, own_media) =
-            header_footer_xml("w:hdr", &[], definitions, &available_media, Some(&shape))?;
+        // A synthesized watermark header has no blocks at all, so it references
+        // no embedded object: an empty `own` is the whole truth here, not an
+        // omission.
+        let (bytes, own_rels, own_media) = header_footer_xml(
+            "w:hdr",
+            &[],
+            definitions,
+            &available_media,
+            Some(&shape),
+            &SurfaceEmbedded {
+                available: &available_embedded,
+                own: &[],
+            },
+        )?;
         extras.push(
             ExtraPart::new(
                 &part_name,
@@ -974,8 +1084,22 @@ pub fn export_package(
         .filter(|(id, _)| referenced_footers.contains(id))
         .enumerate()
     {
-        let (bytes, own_rels, own_media) =
-            header_footer_xml("w:ftr", &footer.blocks, definitions, &available_media, None)?;
+        let own_embedded = collect_embedded_rels(
+            [footer.blocks.as_slice()],
+            &available_embedded,
+            &mut reporter,
+        );
+        let (bytes, own_rels, own_media) = header_footer_xml(
+            "w:ftr",
+            &footer.blocks,
+            definitions,
+            &available_media,
+            None,
+            &SurfaceEmbedded {
+                available: &available_embedded,
+                own: &own_embedded,
+            },
+        )?;
         extras.push(
             ExtraPart::new(
                 &format!("word/footer{}.xml", index + 1),
@@ -986,7 +1110,8 @@ pub fn export_package(
             )
             .with_rel_id(hf_rel_id(*id))
             .with_own_rels(own_rels)
-            .with_own_media(own_media),
+            .with_own_media(own_media)
+            .with_own_embedded(own_embedded),
         );
     }
 
@@ -1034,10 +1159,13 @@ pub fn export_package(
         parts.push(docprop.part_name.to_owned(), docprop.bytes.clone());
     }
     for extra in extras {
-        if !extra.own_rels.is_empty() || !extra.own_media.is_empty() {
+        if !extra.own_rels.is_empty()
+            || !extra.own_media.is_empty()
+            || !extra.own_embedded.is_empty()
+        {
             parts.push(
                 rels_part_name(&extra.part_name),
-                part_rels_xml(&extra.own_rels, &extra.own_media)?,
+                part_rels_xml(&extra.own_rels, &extra.own_media, &extra.own_embedded)?,
             );
         }
         parts.push(extra.part_name, extra.bytes);
@@ -1781,9 +1909,25 @@ fn rels_part_name(part_name: &str) -> String {
     }
 }
 
-/// Emits a part-own relationships file carrying external hyperlink targets (used
-/// by a note/comment part whose content contains a hyperlink).
-fn part_rels_xml(entries: &[RelEntry], media: &[(String, String)]) -> Result<Vec<u8>, ExportError> {
+/// Emits a part-own relationships file: the images the part uses, the embedded
+/// objects it references, and its external hyperlink targets.
+///
+/// `embedded` carries each entry's own relationship TYPE, because a part may
+/// reference a chart, a diagram, an OLE package and an alt chunk and they are
+/// four different types — unlike `media`, which is always `/image`.
+///
+/// # The target is relative to the part's own folder, and that is why it matches
+///
+/// An embedded target is `media_target(part_name)`, which strips the leading
+/// `word/`. Every part that calls this lives directly in `word/`, so its `_rels`
+/// companion is `word/_rels/<part>.rels` and resolves relative targets against
+/// `word/` — the same base `word/_rels/document.xml.rels` resolves against. A
+/// part somewhere else would need its own base and must not be routed here.
+fn part_rels_xml(
+    entries: &[RelEntry],
+    media: &[(String, String)],
+    embedded: &[EmbeddedRelEntry],
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
@@ -1795,6 +1939,16 @@ fn part_rels_xml(entries: &[RelEntry], media: &[(String, String)]) -> Result<Vec
         let mut rel = start("Relationship");
         rel.push_attribute(("Id", id.as_str()));
         rel.push_attribute(("Type", IMAGE_REL_TYPE));
+        rel.push_attribute(("Target", target.as_str()));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
+    // The embedded objects this part references, declared by the part that
+    // references them (`109` HF-256). The part name is carried alongside the
+    // target for the loss report and is not written here.
+    for (id, rel_type, target, _part_name) in embedded {
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", rel_type.as_str()));
         rel.push_attribute(("Target", target.as_str()));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
@@ -1820,6 +1974,7 @@ fn notes_xml(
     notes: &DefinitionMap<NoteId, Note>,
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
+    surface: &SurfaceEmbedded<'_>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images these notes use, declared by this part and reserved so a
@@ -1832,14 +1987,11 @@ fn notes_xml(
             }
         }
     }
-    let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
         media: available_media,
-        // See `Ctx::embedded_parts`: this surface emits no embedded-object
-        // relationships, so there is no availability set to gate on.
-        embedded_parts: None,
-        rels: RelBuilder::new(reserved),
+        embedded_parts: Some(surface.available),
+        rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
     };
     let mut r = start(root);
@@ -1871,6 +2023,7 @@ fn comments_xml(
     comments: &DefinitionMap<CommentId, Comment>,
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
+    surface: &SurfaceEmbedded<'_>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     let mut own_media: Vec<MediaRel> = Vec::new();
@@ -1881,14 +2034,11 @@ fn comments_xml(
             }
         }
     }
-    let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
         media: available_media,
-        // See `Ctx::embedded_parts`: this surface emits no embedded-object
-        // relationships, so there is no availability set to gate on.
-        embedded_parts: None,
-        rels: RelBuilder::new(reserved),
+        embedded_parts: Some(surface.available),
+        rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
     };
     let mut r = start("w:comments");
@@ -2055,6 +2205,7 @@ fn header_footer_xml(
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
     watermark: Option<&WatermarkShape<'_>>,
+    surface: &SurfaceEmbedded<'_>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images this part uses, reserved so a hyperlink minted inside the part
@@ -2068,14 +2219,11 @@ fn header_footer_xml(
     {
         own_media.push((rel_id, target));
     }
-    let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
         media: available_media,
-        // See `Ctx::embedded_parts`: this surface emits no embedded-object
-        // relationships, so there is no availability set to gate on.
-        embedded_parts: None,
-        rels: RelBuilder::new(reserved),
+        embedded_parts: Some(surface.available),
+        rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
     };
     let mut r = start(root);
@@ -3405,9 +3553,19 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
     if let Some(protection) = &settings.document_protection {
         let mut el = start("w:documentProtection");
         el.push_attribute(("w:edit", protection_edit_token(protection.edit)));
-        if protection.enforcement {
-            el.push_attribute(("w:enforcement", "1"));
-        }
+        // `w:enforcement` is written ALWAYS, and explicitly, including as `"0"`.
+        // Omitting it is not the neutral choice it looks like: MS-OI29500 Part 1
+        // §17.15.1.29 records that "Word enforces protection when this attribute
+        // is missing", so writing a restriction the author deliberately switched
+        // OFF without the attribute hands Word a document it then ENFORCES. That
+        // silently tightens someone else's document, which is a document-safety
+        // defect. Writing both states leaves nothing for a reader to infer, and
+        // it is what Word itself does. The import half is `settings.rs`'s
+        // `enforcement`, which reads the same three states.
+        el.push_attribute((
+            "w:enforcement",
+            if protection.enforcement { "1" } else { "0" },
+        ));
         if protection.formatting {
             el.push_attribute(("w:formatting", "1"));
         }
@@ -5753,19 +5911,32 @@ fn part_media(
 /// body drops the object as a whole. Unreferenced relationships to parts that
 /// exist are valid OPC; a relationship to a part that does not exist is not.
 ///
+/// # One walk per PART, not one walk per document (`109` HF-256, HF-196)
+///
+/// `block_lists` is the content of a single package part: the body for
+/// `word/document.xml`, one note's blocks per note for `word/footnotes.xml`, and
+/// so on. A relationship resolves inside the part that carries the reference, so
+/// a header holding a chart needs the entry in `word/_rels/header1.xml.rels` —
+/// this walking the body alone left `word/header1.xml` carrying a `c:chart r:id`
+/// that no relationship part declared, which is the same unreadable-content
+/// shape HF-256 was, on a surface the fix had not reached. Each caller passes its
+/// own part's blocks and emits the result into its own `_rels`.
+///
 /// # Complexity
 ///
-/// O(body) for the walk, plus one set probe per part — not a scan of the
-/// retained table per relationship, which is what it replaces.
-fn collect_embedded_rels(
-    document: &Document,
+/// O(the blocks walked) plus one set probe per part — not a scan of the retained
+/// table per relationship, which is what it replaces.
+fn collect_embedded_rels<'a>(
+    block_lists: impl IntoIterator<Item = &'a [BlockNode]>,
     available: &BTreeSet<String>,
     reporter: &mut Reporter,
 ) -> Vec<EmbeddedRelEntry> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
-    for block in document.body() {
-        collect_block_embedded_rels(block, &mut out, &mut seen);
+    for blocks in block_lists {
+        for block in blocks {
+            collect_block_embedded_rels(block, &mut out, &mut seen);
+        }
     }
     out.retain(|(_, _, _, part_name)| {
         if available.contains(part_name) {
@@ -5849,7 +6020,38 @@ fn collect_inline_embedded_rels(
                 collect_block_embedded_rels(block, out, seen);
             }
         }
+        // A grouped shape's text box is a block container like any other, and a
+        // chart or OLE object inside one writes its `c:chart`/`o:OLEObject r:id`
+        // through `write_group_text_box`. Not descending here left that `r:id`
+        // undeclared — `109` HF-196, the same dangling relationship as HF-256
+        // one container deeper. `collect_group_media` has always descended; this
+        // walk is the one that did not.
+        InlineNode::Group(group) => collect_group_embedded_rels(group, out, seen),
         _ => {}
+    }
+}
+
+/// [`collect_inline_embedded_rels`] for a DrawingML group's children.
+///
+/// Complexity: O(the group subtree). `MAX_GROUP_DEPTH` bounds the recursion.
+fn collect_group_embedded_rels(
+    group: &WordprocessingGroup,
+    out: &mut Vec<EmbeddedRelEntry>,
+    seen: &mut BTreeSet<String>,
+) {
+    for child in &group.children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    collect_block_embedded_rels(block, out, seen);
+                }
+            }
+            GroupChild::Group(nested) => collect_group_embedded_rels(nested, out, seen),
+            // A grouped picture's relationship is a `/image` one, emitted from
+            // the media table (`collect_group_media`), and a preset shape names
+            // no part at all.
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
     }
 }
 

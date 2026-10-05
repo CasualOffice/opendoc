@@ -100,14 +100,11 @@ use crate::protection::{is_comment_only, is_review_only, is_tracked_only};
 ///
 /// # What is deliberately not here
 ///
-/// `143` §10 also lists `history.read`, `history.restore` and `share.admin`. None of them is
-/// here, and — unlike `review`, which is now a field — that is a **decision** rather than a
-/// deferral, because none of the three has anything in the closed operation set to check:
+/// `143` §10 also lists `history.read`, `history.restore` and `share.admin`. The first two are
+/// not here, and — unlike `review` and `share.admin`, which are both fields now — that is a
+/// **decision** rather than a deferral, because neither has anything in the closed operation set
+/// to check:
 ///
-/// - **`share.admin`** changes a room's grants, and `143` §10 says in the same line that it is
-///   *host-side only*. A room's policy is an [`Access`](../../casual_doc_relay/access/enum.Access.html)
-///   value handed to the relay at construction and no message changes it, so there is no
-///   operation and no wire frame for a capability bit to gate. A bit here would gate nothing.
 /// - **`history.read`** is a read. Admission to a room *is* the view right — see above — and
 ///   version listing and diffing (`140`) are reads of storage rather than operations, so the
 ///   check belongs where the storage call is, not in a vocabulary about mutations.
@@ -117,6 +114,16 @@ use crate::protection::{is_comment_only, is_review_only, is_tracked_only};
 ///   boundary at all — the same reason `Capabilities` never travels from a client. So a restore
 ///   is exactly `edit`, deliberately, and a host that wants it narrower enforces that at the
 ///   surface that reads the version.
+///
+/// **`share.admin` was in that list until 2026-10-04 and is now
+/// [`manage_access`](Capabilities::may_manage_access).** Its note read: "A room's policy is an
+/// `Access` value handed to the relay at construction and no message changes it, so there is no
+/// operation and no wire frame for a capability bit to gate. A bit here would gate nothing."
+/// Every clause of that was true when it was written, and one of them is the thing that changed:
+/// there is a wire frame now. What survives from the note is the half that was never about the
+/// frame — issuing a grant to a *person* is still host-side only, and this capability
+/// redistributes rights the host has already issued rather than minting any.
+/// [`refuse_access_change`] is where that line is held.
 ///
 /// **`review` was here until 2026-10-04 and is now a field.** The note said no exact rule could
 /// separate a reviewer from an editor, because `protection::is_tracked_only` is a *negative*
@@ -139,6 +146,8 @@ pub struct Capabilities {
     edit: bool,
     #[serde(default)]
     manage_protection: bool,
+    #[serde(default)]
+    manage_access: bool,
 }
 
 impl Capabilities {
@@ -151,6 +160,7 @@ impl Capabilities {
             review: false,
             edit: false,
             manage_protection: false,
+            manage_access: false,
         }
     }
 
@@ -186,17 +196,32 @@ impl Capabilities {
         Self::commenter().with_review()
     }
 
-    /// Read, comment, suggest, review, and change content directly.
+    /// Read, comment, suggest, review, change content directly, and change what the room's
+    /// **other** participants may do.
     ///
     /// `review` is included because an editor can already produce any state a reviewer can, so
     /// withholding the bit would make the bit a lie rather than a restriction.
+    ///
+    /// **`manage_access` is included, and that is the owner's decision recorded verbatim:** "In
+    /// case of co-editing we need a full rights-changing dialog for **owner and editor** — not
+    /// viewer." A preset that withheld it would make the dialog a dead control for exactly half
+    /// the people it was specified for.
+    ///
+    /// It is a narrower power than it reads as, and the narrowing is structural rather than a
+    /// matter of trust: [`refuse_access_change`] bounds every change by the **target's own
+    /// host-verified ceiling**, so an editor can only ever move a participant within the rights
+    /// the host already issued to *that* participant. Promoting a viewer whose grant says viewer
+    /// is refused, and so is granting anybody a capability the editor does not hold itself.
     ///
     /// **Not** permission to change the document's protection: that is
     /// [`Capabilities::with_manage_protection`], and the split is the whole point of this
     /// module — see [`crate::protection::exempt_from_protection`].
     #[must_use]
     pub const fn editor() -> Self {
-        Self::suggester().with_review().with_edit()
+        Self::suggester()
+            .with_review()
+            .with_edit()
+            .with_manage_access()
     }
 
     /// Everything, including imposing and lifting `w:documentProtection`.
@@ -254,6 +279,13 @@ impl Capabilities {
         self
     }
 
+    /// The same capabilities plus changing **other participants'** access within the room.
+    #[must_use]
+    pub const fn with_manage_access(mut self) -> Self {
+        self.manage_access = true;
+        self
+    }
+
     /// The capabilities held by **both**, which is how a host narrows a role.
     ///
     /// `143` §10: "Role presets are convenience. The wire carries explicit capabilities so a
@@ -268,6 +300,7 @@ impl Capabilities {
             review: self.review && other.review,
             edit: self.edit && other.edit,
             manage_protection: self.manage_protection && other.manage_protection,
+            manage_access: self.manage_access && other.manage_access,
         }
     }
 
@@ -301,13 +334,56 @@ impl Capabilities {
         self.manage_protection
     }
 
+    /// Whether this participant may change **other participants'** access in the room.
+    ///
+    /// `143` §10's `share.admin`, which this module's own notes recorded as deliberately absent
+    /// because "a room's policy is an `Access` value handed to the relay at construction and no
+    /// message changes it, so there is no operation and no wire frame for a capability bit to
+    /// gate. A bit here would gate nothing." **That is now false, and the sentence it rested on
+    /// is the thing that changed rather than the argument being wrong**: there *is* a message
+    /// now (`casual_doc_transaction::protocol::ClientMessage::SetAccess`), it changes a
+    /// participant's live grant inside one room, and [`refuse_access_change`] is the check that
+    /// gates it.
+    ///
+    /// What has **not** changed is the other half of `143` §10's sentence: the room's *policy* —
+    /// which grant a given person gets when they present a token — is still host-side only. This
+    /// capability authorises redistributing rights the host has already issued, never minting
+    /// one the host did not; [`refuse_access_change`] enforces that as the ceiling rule.
+    #[must_use]
+    pub const fn may_manage_access(self) -> bool {
+        self.manage_access
+    }
+
     /// Whether this participant may change the document **at all**.
     ///
     /// The one line a relay that holds no document can hold against a modified client, and the
     /// reason `Refusal::ReadOnlyAccess` exists as a single code rather than one per class.
+    ///
+    /// **`manage_access` is deliberately not a term here**, and the distinction is the one this
+    /// module is built on rather than an oversight. Every other capability names something that
+    /// ends up in the file: `manage_protection` writes `w:documentProtection`, which travels with
+    /// the document. Changing what somebody else may do changes the *room*, leaves the bytes
+    /// untouched, and has no [`Operation`] at all. Including it would make a participant who may
+    /// only redistribute rights pass the relay's write gate, which is the one line this function
+    /// exists to hold.
     #[must_use]
     pub const fn may_write(self) -> bool {
         self.comment || self.suggest || self.review || self.edit || self.manage_protection
+    }
+
+    /// Whether this and `other` are the same capability set.
+    ///
+    /// `const` because [`refuse_access_change`] is, and `PartialEq::eq` is not usable in a
+    /// `const fn`. Deliberately private: the derived `PartialEq` is the one callers use, and two
+    /// public equalities on one type is an invitation for them to drift.
+    #[must_use]
+    const fn eq_to(self, other: Self) -> bool {
+        self.comment == other.comment
+            && self.suggest == other.suggest
+            && self.review == other.review
+            && self.edit == other.edit
+            && self.manage_protection == other.manage_protection
+            && self.manage_access == other.manage_access
     }
 
     /// Whether this and `other` share at least one capability.
@@ -318,6 +394,7 @@ impl Capabilities {
             || (self.review && other.review)
             || (self.edit && other.edit)
             || (self.manage_protection && other.manage_protection)
+            || (self.manage_access && other.manage_access)
     }
 }
 
@@ -378,6 +455,149 @@ impl AccessRefusal {
     }
 }
 
+/// Why a participant's attempt to change **somebody else's** access was refused.
+///
+/// A separate vocabulary from [`AccessRefusal`], deliberately, and the split is the same one the
+/// module header draws between the two authorities. `AccessRefusal` answers "may this gesture
+/// touch the document"; this answers "may this participant change the room". Folding the variants
+/// below into `AccessRefusal` would have given that enum arms [`refuse_if_not_permitted`] can
+/// never return, which is the kind of value that gets read as evidence of a check nothing
+/// performs.
+///
+/// Each carries a `session.*` routing code, the same family and for the same reason: the cause is
+/// who the reader is, not what the file asks.
+///
+/// # What a client is told, and why it is less than this
+///
+/// On the wire all of them become one undetailed refusal (`ODC-7011`), exactly as
+/// `opendoc_relay::GrantRefusal` collapses its three variants into `NotAuthorised`. The argument
+/// is that enum's, unchanged: detail that helps an operator diagnose also helps an attacker
+/// enumerate — and here it is specifically a *ceiling* an attacker would be enumerating, one
+/// request at a time.
+///
+/// **That costs the reader nothing, and the reason it costs nothing is worth stating**, because
+/// normally collapsing a refusal does cost something. Every variant here is unreachable from an
+/// honest chrome: a participant without [`Capabilities::may_manage_access`] is not offered the
+/// surface at all, the surface does not list the reader's own row, and it offers no role outside
+/// the ceiling the relay told it about. So a reader never meets one of these, and the only sender
+/// who can is one who wrote their own client. The distinction survives where it is useful — the
+/// relay returns this value and an operator's log can carry it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum AccessChangeRefusal {
+    /// This participant may not change what other people may do.
+    NotPermitted,
+    /// A participant may not change their **own** access.
+    ///
+    /// Not a railing around a hole — the ceiling rule already stops self-escalation, since a
+    /// participant's ceiling is their own verified grant. It is the rule Google Docs and Word both
+    /// hold, for the reason that the one change nobody can undo for you is the one that took your
+    /// ability to make changes: a room with a single owner must not be able to lock itself out
+    /// with one click. Handing the last owner's role on is a *host* action, which is the half of
+    /// `143` §10's `share.admin` that stays host-side.
+    OwnAccessUnchangeable,
+    /// The request named a capability the target's own host-signed grant does not carry.
+    AboveCeiling,
+    /// The request named a capability the **actor** does not hold.
+    ///
+    /// Separate from [`AccessChangeRefusal::AboveCeiling`] because the two are different
+    /// escalations: one hands somebody a right the host never issued them, the other hands it to
+    /// somebody by a route the actor could not take themselves. A room where an editor may appoint
+    /// an owner is a room in which owner is not a privilege.
+    AboveActor,
+    /// The request named somebody the room has not admitted.
+    NotAParticipant,
+}
+
+impl AccessChangeRefusal {
+    /// The refusal as the reader sees it, carrying its stable routing code.
+    ///
+    /// See [`crate::refusal`] for the contract this string satisfies.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::NotPermitted => crate::refused!(
+                "session.no-access-change",
+                "You are not allowed to change what other people may do with this document."
+            ),
+            Self::OwnAccessUnchangeable => crate::refused!(
+                "session.own-access-unchangeable",
+                "You cannot change your own access to this document."
+            ),
+            Self::AboveCeiling => crate::refused!(
+                "session.above-grant-ceiling",
+                "That is more than this person was given access to do."
+            ),
+            Self::AboveActor => crate::refused!(
+                "session.above-own-access",
+                "You cannot give somebody access you do not have yourself."
+            ),
+            Self::NotAParticipant => crate::refused!(
+                "session.not-a-participant",
+                "That person is not in this shared document."
+            ),
+        }
+    }
+}
+
+/// Refuses a change of **somebody else's** access that this participant may not make.
+///
+/// The whole rule, in one pure function, so the state machine that owns the participant table and
+/// the relay that owns the connection apply the *same* rule rather than each holding half of it.
+/// Nothing here reads a document, a clock or a key; everything it judges is passed in.
+///
+/// # The lines it holds, in the order they are checked
+///
+/// 1. **The actor holds [`Capabilities::may_manage_access`].** Checked first, because the later
+///    answers describe a target, and an unauthorised actor must not be able to use them to *probe*
+///    one — the same ordering `ServerSession::commit` uses when it puts membership ahead of the
+///    dedupe read.
+/// 2. **The actor is not the target.** See [`AccessChangeRefusal::OwnAccessUnchangeable`].
+/// 3. **The request fits inside both ceilings** — the target's host-verified grant, and the
+///    actor's own capabilities. `requested.narrowed_to(bound) == requested` is the test, which is
+///    intersection used as a subset predicate rather than a second mechanism for one.
+///
+/// # Why this refuses rather than clamping
+///
+/// Intersection is how a grant composes everywhere else here — `narrowed_to` in the engine,
+/// `adopt_participant_capabilities` at the facade, `narrowedToWire` in the chrome — and all three
+/// *clamp* silently, because all three are applying a grant somebody else already decided. This is
+/// not that: it is an administrative request with a reader waiting to see its result, and a surface
+/// that reports success after applying something the actor did not ask for is a surface that lies.
+/// So the answer is a refusal, and the refusal is the **only** mechanism: refusing *and* clamping
+/// would be two implementations of one rule, which is the pair that diverges.
+///
+/// # Errors
+///
+/// The [`AccessChangeRefusal`] for the line that refused, naming what the actor may do rather than
+/// what they asked for.
+///
+/// # Complexity
+///
+/// O(1). No document, no walk, no allocation.
+pub const fn refuse_access_change(
+    actor: Capabilities,
+    actor_is_target: bool,
+    target_ceiling: Capabilities,
+    requested: Capabilities,
+) -> Result<(), AccessChangeRefusal> {
+    if !actor.may_manage_access() {
+        return Err(AccessChangeRefusal::NotPermitted);
+    }
+    if actor_is_target {
+        return Err(AccessChangeRefusal::OwnAccessUnchangeable);
+    }
+    // Subset, expressed as the intersection this module already uses for narrowing: `requested`
+    // fits inside `bound` exactly when intersecting the two changes nothing.
+    if !requested.narrowed_to(target_ceiling).eq_to(requested) {
+        return Err(AccessChangeRefusal::AboveCeiling);
+    }
+    if !requested.narrowed_to(actor).eq_to(requested) {
+        return Err(AccessChangeRefusal::AboveActor);
+    }
+    Ok(())
+}
+
 /// Any **one** of these capabilities admits `op`, judged without looking at a document.
 ///
 /// This is the relay's whole vocabulary (ADR-047: it holds no document), and it is a
@@ -403,7 +623,19 @@ pub const fn admitted_by(op: &Operation) -> Capabilities {
         // operation (ADR-052), and without a document they cannot be told apart. So the
         // weakest capability that could legitimately have sent it admits it here, and the
         // document-aware pass decides which it actually was.
-        Operation::UpdateReviewState { .. } => Capabilities::editor(),
+        //
+        // **The four content classes are named rather than spelt `Capabilities::editor()`, and
+        // the day that mattered is the day `manage_access` joined that preset.** This value is
+        // read by `intersects`, so ANY capability in it admits the operation — and with
+        // `editor()` here, a participant holding `manage_access` and nothing else would have
+        // been admitted to send a review change. A preset is a role somebody is given; this is
+        // the set of capabilities an operation can legitimately have come from, and the two are
+        // not the same list however often they coincide.
+        Operation::UpdateReviewState { .. } => Capabilities::viewer()
+            .with_comment()
+            .with_suggest()
+            .with_review()
+            .with_edit(),
         _ => Capabilities::viewer().with_edit(),
     }
 }

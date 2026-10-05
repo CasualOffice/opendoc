@@ -4,7 +4,7 @@
 // up (setObjectWrap / openAltTextDialog / enterCropMode / deleteSelectedObject).
 // The `?fixture=float` document holds one top-level floating image, selected as
 // in object-edit.spec.mjs.
-import { test, expect, setReviewMode } from "./fixtures.mjs";
+import { expect, setReviewMode, stableBox, test } from "./fixtures.mjs";
 
 // The floating image sits near the top-left of page 1 in the float fixture.
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
@@ -24,7 +24,7 @@ async function gotoFloat(page) {
 // Resolves the client point at the image inside page 1.
 async function imagePoint(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   return { x: box.x + box.width * FLOAT_POS.fx, y: box.y + box.height * FLOAT_POS.fy };
 }
 

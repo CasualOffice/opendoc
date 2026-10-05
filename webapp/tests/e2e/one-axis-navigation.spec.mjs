@@ -19,7 +19,7 @@
 // the two tests named for command-surface parity assert frozen `toContain`
 // lists and cannot detect an omission. This one derives both sides from the
 // running application, so it can.
-import { test, expect, gotoEditor, clickIntoFirstPage, openAppMenu, MOD } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, openAppMenu, stableBox, test } from "./fixtures.mjs";
 
 /** The bar's names, in bar order. Declared once: three tests walk them, and a
  *  menu added to one list and not the others is a menu nothing sweeps. */
@@ -125,7 +125,7 @@ test("File is a PAGE in the ribbon chrome and a DROPDOWN in the compact chrome",
   await expect(filePage).toBeVisible();
   await expect(page.locator("body")).toHaveClass(/file-page-open/);
   // It covers the work area rather than sitting in the band's 70-odd pixels.
-  const box = await filePage.boundingBox();
+  const box = await stableBox(filePage);
   const viewport = page.viewportSize();
   expect(box.height, "a File PAGE fills the work area").toBeGreaterThan(viewport.height / 2);
   expect(box.width).toBeGreaterThan(viewport.width - 4);
@@ -145,7 +145,7 @@ test("File is a PAGE in the ribbon chrome and a DROPDOWN in the compact chrome",
   await openAppMenu(page, "file");
   const popover = page.locator("#appMenuPopover");
   await expect(popover).toBeVisible();
-  const menuBox = await popover.boundingBox();
+  const menuBox = await stableBox(popover);
   expect(menuBox.width, "a dropdown is anchored, not full-width").toBeLessThan(
     viewport.width / 2,
   );
@@ -308,6 +308,19 @@ const PALETTE_ONLY = new Map([
   // because Tab means "insert a tab" in a paragraph and "next cell" in a table —
   // declaring it as this command's global chord would be a false claim on a
   // user-facing surface.
+  // Recorded, with the tradeoff stated rather than hidden. `collab.reconnect`
+  // is the reader's way back after a shared session stops, and it has no menu
+  // row because the Review menu has no band it belongs in — proofing, comments,
+  // tracking, changes, allChanges, compare and protect are all about a
+  // document's content, not its session. A new band means a new `menuGroup.*`
+  // key in nineteen catalogues for one row, which is the same trade the fold
+  // level rungs refused below.
+  //
+  // It is NOT invisible: the connection state is on the status line in all three
+  // of its states, and the row itself is enabled only in `stopped` and otherwise
+  // carries the sentence saying which fact applies. If a session band is ever
+  // minted for presence or a participant list, this row belongs in it.
+  ["collab.reconnect", "no Review band fits a session action; the status line carries the state"],
   ["object.selectNext", "by design: the Tab key IS the affordance"],
   ["object.selectPrevious", "by design: Shift+Tab IS the affordance"],
   // By design. The ten rungs of the fold-level picker (`show every level`, then

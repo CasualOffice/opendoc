@@ -1294,9 +1294,55 @@ pub(crate) fn test_mints(count: usize) -> Vec<casual_doc_edit::Mint> {
 mod tests {
     use casual_doc_edit::{Pos, Range as EditRange};
     use casual_doc_model::IdGenerator;
+    use casual_doc_model::container_audit::{Audit, SourceFile};
     use casual_doc_model::v1::{BlockNode, Definitions, Paragraph, ParagraphProperties};
 
     use super::*;
+
+    /// Every module of this crate, for the container-set audit (`docs/109` HF-212).
+    ///
+    /// This crate reads an inline subtree to say what a committed change *removed*
+    /// (`transform::effect::removed_by`), and that answer is what decides whether a
+    /// concurrent operation is tombstoned or refused. A container it does not enter is a
+    /// node it does not know is gone — so the rule belongs here as much as in the editing
+    /// crate, and `collect_inline` was a five-of-six when this was armed.
+    fn container_audit() -> Audit<'static> {
+        Audit::new(vec![
+            SourceFile::new("lib.rs", include_str!("lib.rs")),
+            SourceFile::new("codec.rs", include_str!("codec.rs")),
+            SourceFile::new("combine.rs", include_str!("combine.rs")),
+            SourceFile::new("intent.rs", include_str!("intent.rs")),
+            SourceFile::new("presence.rs", include_str!("presence.rs")),
+            SourceFile::new("protocol.rs", include_str!("protocol.rs")),
+            SourceFile::new("session.rs", include_str!("session.rs")),
+            SourceFile::new("transform.rs", include_str!("transform.rs")),
+            SourceFile::new(
+                "transform/classify.rs",
+                include_str!("transform/classify.rs"),
+            ),
+            SourceFile::new("transform/effect.rs", include_str!("transform/effect.rs")),
+            SourceFile::new("v0.rs", include_str!("v0.rs")),
+            SourceFile::new("wire.rs", include_str!("wire.rs")),
+        ])
+        // Three at the time of writing: the position index's inline half in
+        // `transform.rs`, and the removal footprint's inline collector and group half in
+        // `transform/effect.rs`. A scan that reads fewer has stopped reading the source
+        // it was handed.
+        .expecting_at_least(3)
+    }
+
+    /// Every module of this crate is in the container-set scan.
+    #[test]
+    fn the_container_set_scan_covers_every_module() {
+        container_audit().assert_covers_declared_modules();
+    }
+
+    /// The rule, on this crate: a walk over `InlineNode` either consults the declared
+    /// container set or says in one line why it does not (`docs/109` HF-212).
+    #[test]
+    fn every_inline_walk_consults_the_container_set_or_says_why_not() {
+        container_audit().run().assert_clean();
+    }
 
     /// `Transaction::new` with a fresh identity space per operation, which is what the
     /// author's generator gives it in production.
