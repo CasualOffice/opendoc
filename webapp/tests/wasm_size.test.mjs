@@ -92,8 +92,8 @@ test("the editor's engine download stays inside its budget", () => {
   const total = statSync(WASM).size;
   assert.ok(
     total <= MAX_TOTAL_BYTES,
-    `the engine module is ${total.toLocaleString()} B, over the ` +
-      `${MAX_TOTAL_BYTES.toLocaleString()} B budget. Either a size setting was ` +
+    `the engine module is ${total.toLocaleString("en-US")} B, over the ` +
+      `${MAX_TOTAL_BYTES.toLocaleString("en-US")} B budget. Either a size setting was ` +
       `dropped (see the CARGO_PROFILE_RELEASE_OPT_LEVEL block in webapp/build.sh ` +
       `and the wasm-opt flags in crates/casual-doc-wasm/Cargo.toml), or the engine ` +
       `legitimately grew — in which case measure what grew and decide, do not just ` +
@@ -106,13 +106,13 @@ test("the code the browser must compile stays inside its budget", () => {
   const code = sections(readFileSync(WASM))[10] ?? 0;
   assert.ok(
     code >= MIN_CODE_BYTES,
-    `the code section is only ${code.toLocaleString()} B — that is not this ` +
+    `the code section is only ${code.toLocaleString("en-US")} B — that is not this ` +
       `engine. ${STALE}`,
   );
   assert.ok(
     code <= MAX_CODE_BYTES,
-    `the code section is ${code.toLocaleString()} B, over the ` +
-      `${MAX_CODE_BYTES.toLocaleString()} B budget. At opt-level 3 it measures ` +
+    `the code section is ${code.toLocaleString("en-US")} B, over the ` +
+      `${MAX_CODE_BYTES.toLocaleString("en-US")} B budget. At opt-level 3 it measures ` +
       `12,376,042 B, so first check that webapp/build.sh still exports ` +
       `CARGO_PROFILE_RELEASE_OPT_LEVEL=z.`,
   );
