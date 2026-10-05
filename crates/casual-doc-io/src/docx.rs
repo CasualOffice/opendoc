@@ -154,7 +154,7 @@ impl FormatImporter for DocxAdapter {
         // refusing once and being retried.
         config.recover = true;
         let imported = import_package(&mut package, config)
-            .map_err(|error| AdapterError::new(format!("semantic import: {error}")))?;
+            .map_err(|error| AdapterError::new(error.summary()))?;
 
         let mut resources = DocumentResources::default();
         // A media part the package cannot hand back was previously dropped by an

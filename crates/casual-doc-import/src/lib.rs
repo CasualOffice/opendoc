@@ -187,13 +187,6 @@ fn repair_part(bytes: &mut Vec<u8>, role: PartRole, repairs: &mut Vec<Repair>) {
     *bytes = repaired;
 }
 
-/// [`repair_part`] for a part that may be absent.
-fn repair_optional(bytes: Option<&mut Vec<u8>>, role: PartRole, repairs: &mut Vec<Repair>) {
-    if let Some(bytes) = bytes {
-        repair_part(bytes, role, repairs);
-    }
-}
-
 /// Reads one package part, or records it missing and yields `None` when
 /// recovering.
 ///
@@ -401,17 +394,17 @@ pub fn import_package(
             EMPTY_MAIN_DOCUMENT.to_vec()
         }
     };
-    let mut styles_bytes = match styles_part {
+    let styles_bytes = match styles_part {
         Some(part) => recover_read(package, &part, PartRole::Styles, recover, &mut repairs)?,
         None => None,
     };
-    let mut numbering_bytes = match numbering_part {
+    let numbering_bytes = match numbering_part {
         Some(part) => recover_read(package, &part, PartRole::Numbering, recover, &mut repairs)?,
         None => None,
     };
     // The font table plus its own relationships (embedded `.odttf` fonts resolve
     // through `fontTable.xml.rels`, not the document's).
-    let (mut font_table_bytes, font_table_rels) = match font_table_part {
+    let (font_table_bytes, font_table_rels) = match font_table_part {
         Some(part) => match recover_read(
             package,
             &part,
@@ -449,11 +442,11 @@ pub fn import_package(
     for part in font_table_rels.values() {
         consumed.insert(part.clone());
     }
-    let mut theme_bytes = match theme_part {
+    let theme_bytes = match theme_part {
         Some(part) => recover_read(package, &part, PartRole::Theme, recover, &mut repairs)?,
         None => None,
     };
-    let mut settings_bytes = match settings_part {
+    let settings_bytes = match settings_part {
         Some(part) => recover_read(package, &part, PartRole::Settings, recover, &mut repairs)?,
         None => None,
     };
@@ -719,12 +712,21 @@ pub fn import_package(
     ) {
         Ok(import) => import,
         Err(error) if recover && is_damage(&error) => {
+            // Byte-repair the parts that hold **content**, and only those. A
+            // damaged content part's surviving text is worth recovering: it is
+            // the document, and what the damage took is reported.
+            //
+            // The five definition parts (styles, numbering, theme, settings, the
+            // font table) are deliberately NOT repaired, and are dropped whole by
+            // `recover_part` instead. A definition table is not content, it is a
+            // function applied to content, and half of one is worse than none: a
+            // `w:style` truncated through its property list still resolves, and
+            // then silently applies the wrong formatting to text that looks
+            // right. Dropping it yields a statement a reader can act on — "the
+            // style definitions are damaged, so text is shown with default
+            // formatting" — where a partial table yields a document that is
+            // subtly wrong and says only that a tag was left open.
             repair_part(&mut document_bytes, PartRole::MainDocument, &mut repairs);
-            repair_optional(styles_bytes.as_mut(), PartRole::Styles, &mut repairs);
-            repair_optional(numbering_bytes.as_mut(), PartRole::Numbering, &mut repairs);
-            repair_optional(font_table_bytes.as_mut(), PartRole::FontTable, &mut repairs);
-            repair_optional(theme_bytes.as_mut(), PartRole::Theme, &mut repairs);
-            repair_optional(settings_bytes.as_mut(), PartRole::Settings, &mut repairs);
             if let Some(part) = footnotes.as_mut() {
                 repair_part(&mut part.xml, PartRole::Footnotes, &mut repairs);
             }
