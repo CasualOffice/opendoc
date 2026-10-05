@@ -157,6 +157,7 @@ import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a dif
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
+import { CHARACTER, autoScrollDelta, createGranularityCache, granularEnds, granularityForClickCount, paragraphEnds } from "./drag_selection.mjs";
 import {
   reviewCardSignature,
   reviewCommentIsReplyTo,
@@ -2634,9 +2635,17 @@ function positionEditorTextInput(focus = selection?.focus) {
   editorTextInputEl.style.height = `${Math.max(1, h * sy)}px`;
 }
 
+/** The engine questions a word/paragraph-granular drag asks, memoised for the
+ *  life of one gesture because both engine lookups are O(document) today. */
+const dragGranularity = createGranularityCache(() => doc);
+/** Whether the gesture that just ended selected by dragging — `dblclick` and the
+ *  triple-click `click` fire AFTER pointer-up and must not overwrite it. */
+let lastGestureDragged = false;
+
 function resetPointerGesture() {
   pointerGesture = null;
   dragging = false;
+  dragGranularity.reset();
   if (selectionAutoScrollFrame) cancelAnimationFrame(selectionAutoScrollFrame);
   selectionAutoScrollFrame = 0;
 }
@@ -6024,6 +6033,14 @@ function onPointerDown(page, event) {
     lastClientY: event.clientY,
     moved: false,
     shift: event.shiftKey,
+    // Double-click-and-drag extends by WORD, triple-click-and-drag by PARAGRAPH
+    // (Word, Docs, ONLYOFFICE); the press's click count decides and it holds for
+    // the gesture. Applied in `updateDragSelection`, so a press that never drags
+    // is answered by the `dblclick`/triple-click handlers exactly as before.
+    granularity: granularityForClickCount(event.detail),
+    // The RAW press position: a granular drag recomputes BOTH ends from the raw
+    // pair every move rather than re-snapping its own anchor.
+    rawAnchor: anchor,
     // A drag cannot construct a range across WordprocessingML stories. Retain
     // the surface that owned pointer-down so pointer-move can clip at its edge
     // instead of reusing click-away behavior and silently entering the body.
@@ -6142,7 +6159,11 @@ function updateDragSelection(event) {
   // turns into a drag it is no longer a confirming click.
   if (tableRange.dragTo(pointerGesture.cellAnchor, focus.node, pointerGesture)) return syncSelectionToCellRange();
   tableRange.clear();
-  selection = { anchor: selection.anchor, focus };
+  // A Shift+drag continues the selection the press extended, so its anchor is the
+  // one already on screen rather than the press position.
+  const anchor = (pointerGesture.shift ? null : pointerGesture.rawAnchor) ?? selection.anchor;
+  const granularity = pointerGesture.granularity ?? CHARACTER;
+  selection = granularEnds({ anchor, focus, granularity }, dragGranularity);
   drawSelection();
 }
 
@@ -6159,39 +6180,15 @@ function syncSelectionToCellRange() {
   drawSelection();
 }
 
-const AUTO_SCROLL_EDGE_PX = 56;
-const AUTO_SCROLL_MAX_PX = 24;
-
 function startSelectionAutoScroll() {
   if (selectionAutoScrollFrame) return;
   const tick = () => {
     selectionAutoScrollFrame = 0;
     if (!dragging || !pointerGesture) return;
 
-    const rect = viewportEl.getBoundingClientRect();
-    const y = pointerGesture.lastClientY;
-    let dy = 0;
-    if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX);
-      dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
-      dy = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    }
-
-    // The same rule on the other axis. Only `dy` existed, so at any zoom where
-    // the sheet is wider than the window a drag-selection simply stopped at the
-    // window edge and the end of the line was unreachable by mouse.
-    const x = pointerGesture.lastClientX;
-    let dx = 0;
-    if (x < rect.left + AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (rect.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX);
-      dx = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    } else if (x > rect.right - AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (x - (rect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
-      dx = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    }
-
+    // Both axes from one rule (`drag_selection.mjs`, which records why).
+    const r = viewportEl.getBoundingClientRect();
+    const { dx, dy } = autoScrollDelta(r, pointerGesture.lastClientX, pointerGesture.lastClientY);
     if (dy !== 0 || dx !== 0) {
       const beforeTop = viewportEl.scrollTop;
       const beforeLeft = viewportEl.scrollLeft;
@@ -6216,6 +6213,7 @@ function onPointerUp(event) {
   if (tableChrome.finishDrag(event)) return;
   if (tableGutter.finishDrag(event)) return;
   const gesture = pointerGesture;
+  lastGestureDragged = !!gesture?.moved; // before the reset, and before `dblclick`
   resetPointerGesture();
   // Format painter: this pointer gesture landed on the document, so consume it as
   // the paint target (a drag's range, or the word under a bare click) instead of
@@ -6516,20 +6514,22 @@ pagesEl.addEventListener("dblclick", (e) => {
     void editRunningContent(bandAtPoint, page);
     return;
   }
+  // A double-click that DRAGGED has already selected word by word to wherever the
+  // pointer finished. `dblclick` fires on the second pointer-up — AFTER that drag —
+  // so re-selecting the word under it is what made a drag select exactly one word.
+  if (lastGestureDragged) return;
   touchSelection.selectWord(page, e); // the SAME routine the long press uses
 });
-// Triple-click selects the paragraph (the click's `detail` is the click count).
+// Triple-click selects the paragraph (the click's `detail` is the click count);
+// a triple-click that DRAGGED has already selected by paragraph, to the end of
+// the drag, so this must not pull it back to one paragraph.
 pagesEl.addEventListener("click", (e) => {
-  if (e.detail !== 3) return;
+  if (e.detail !== 3 || lastGestureDragged) return;
   const page = pageFromEvent(e);
-  if (!page) return;
-  const a = anchorAt(page, e);
+  const a = page && anchorAt(page, e);
   if (!a) return;
   focusEditorSurface();
-  selection = {
-    anchor: { node: a.node, offset: 0 },
-    focus: { node: a.node, offset: doc.paragraphLength(a.node) },
-  };
+  selection = paragraphEnds(a.node, dragGranularity);
   drawSelection();
 });
 window.addEventListener("pointerup", onPointerUp);
