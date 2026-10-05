@@ -9962,19 +9962,32 @@ fn the_corpus_reports_exactly_these_findings() {
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
             2,
         ),
-        // 2 before FID-P-03's coverage guard, then 4. The two new ones are REAL
-        // losses that were silent: `a:graphicFrameLocks noChangeAspect="1"` and
-        // `a:picLocks noChangeAspect="1" noChangeArrowheads="1"` — restrictions the
-        // document asked for and this engine does not honour. They were in `body`'s
-        // unconditional drawing-scaffolding list, so a lock that locked something
-        // was dropped with exactly as little noise as one that locked nothing; they
-        // are in the no-op class's CONDITIONAL half now, beside `a:spLocks`, which
-        // had always had the rule they were missing. This is the count moving
-        // because the importer's honesty moved, which is what the test is for.
+        // 2 before FID-P-03's coverage guard, then 4. The two then-new ones are
+        // REAL losses that were silent: `a:graphicFrameLocks noChangeAspect="1"`
+        // and `a:picLocks noChangeAspect="1" noChangeArrowheads="1"` —
+        // restrictions the document asked for and this engine does not honour.
+        // They were in `body`'s unconditional drawing-scaffolding list, so a lock
+        // that locked something was dropped with exactly as little noise as one
+        // that locked nothing; they are in the no-op class's CONDITIONAL half now,
+        // beside `a:spLocks`, which had always had the rule they were missing.
+        // This is the count moving because the importer's honesty moved, which is
+        // what the test is for.
+        //
+        // 4, then 6 with HF-243's attribute gate. The two new ones are the same
+        // shape again, one axis along: `wp:docPr@name` and `pic:cNvPr@name`, a
+        // drawing object's name — the handle an author renames a shape by in
+        // Word's Selection Pane, and what a screen reader announces beside the alt
+        // text. The model holds `descr` and has no field for a name, so the value
+        // was dropped, and it was dropped in SILENCE because `is_drawing_scaffolding`
+        // excused the element while the parser consumed only `@descr` out of it.
+        // §12 admits two outcomes for data the model cannot carry — preserved or
+        // reported — and not a third. Two features rather than one because they are
+        // two locations, as `w14:paraId` is already reported on `w:p` and `w:tr`
+        // separately; they collapse when the model carries a name.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            4,
+            6,
         ),
         (
             "real-producer-table-list",

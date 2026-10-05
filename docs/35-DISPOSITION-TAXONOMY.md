@@ -156,6 +156,9 @@ on the value, so does the arm. The class is `mapped` + `not-applicable`
 | `w:tl2br`, `w:tr2bl` | `val` is `nil`/`none`/absent | "There is no diagonal here", written as part of a complete border set. A drawn diagonal is unmodeled geometry and is reported through its container. |
 | `mc:Fallback` | a `mc:Choice` was selected | The alternative to a branch that was read *in full*; ECMA-376 Part 3 requires the branches to describe the same content. A skipped `mc:Choice` is the opposite case and stays reported. |
 | A `separator`/`continuationSeparator` note, and the `w:footnote`/`w:endnote` reference to it in `w:footnotePr`/`w:endnotePr` | the note holds no text, drawing, object, field or table | Word's stock rule above the notes, which this engine's layout draws for itself. Word also lets a user *replace* that rule, and a separator note holding content of its own is reported. |
+| `a:off` on a **lone** picture (no shape or group builder to route to) | `x` and `y` both zero | The identity translation, and what Word writes on every inline picture: the image sits in the frame the drawing's own anchor and extent already place. A real translation moves the image off that frame and is reported. Unconditionally silent in `body::is_drawing_scaffolding` until HF-243's attribute gate measured it. |
+| `a:ext` on a **lone** picture | `cx`/`cy` equal the drawing's `wp:extent` | Word writes the same numbers into both, and the model sizes the picture from `wp:extent`. A disagreement is a frame size this engine will not use, and is reported. Also unconditionally silent until HF-243. |
+| `a:prstGeom` on a **lone** picture | `prst="rect"` | The rectangular frame the drawing's placement already describes, and the only preset Word writes on a picture. Any other preset is a shape-cropped image (an ellipse, a star, a callout) that this engine draws square, and is reported. Also unconditionally silent until HF-243. |
 
 Four members of the sweep's list were checked and are **not** in the class,
 recorded here so the decision is not re-litigated from the tag name:
@@ -276,44 +279,112 @@ Two consequences are load-bearing:
   not in a parser's private "consumed silently" list, because the gate can only see
   the former. Three names moved for that reason and all three turned out to be
   unconditionally silent when they should have been conditional (the
-  `wp:effectExtent` and lock rows above).
+  `wp:effectExtent` and lock rows above). The attribute gate below found three
+  more in the same list — `a:off`, `a:ext` and `a:prstGeom` on a lone picture —
+  which says the list's real defect is its unconditionality rather than any one
+  name in it: **six of its members have now been found silencing something a
+  reader would want named.** A name added to it is a claim that every form of that
+  element is meaningless, and that claim has been wrong six times.
 - **A whole-subtree loss reported on its outermost element covers its
   descendants**, which this document already permits. The gate implements it by
   ancestry rather than by listing the descendants: a bézier `a:cubicBezTo` is
   accounted for by the one `custGeom` finding that says the geometry left the
   modeled subset.
 
-### The attribute axis of the gate is deliberately deferred
+### The attribute axis is armed — by a different mechanism (`109` HF-243)
 
-The same diff run over attribute names rather than element names yields **52
-names** across the fixture corpus, falling to **19** once attributes whose element
-is itself reported (subsumed) or absent from the output (already gated) are
-removed. **Those two figures are a one-off measurement taken 2026-09-30 against the
-fixture corpus of that day, not a generated artifact**, because the axis they
-describe is not gated — nothing recomputes them, so they will go stale as the corpus
-and the writer move, and the working contract's evidence rule (§9 rule 1 — a published
-number is generated from a committed artifact, or it is not published) means they must
-not be requoted as current.
-They are recorded to give the next lane a starting point and a method, and whoever
-arms the axis re-measures first. Arming it was not done here, and the reason is
-measured rather than budgetary: the remaining 19 are dominated by **spelling equivalence, not loss** —
-`w:keepNext w:val="true"` against the bare `<w:keepNext/>` that means the same
-thing, `w:tab w:leader="none"` against an omitted default, `w:ind w:left` against
-the logical `w:start`, `wp:docPr w:descr=""` (an empty alt text), and
-`mc:Ignorable`, which this document already places outside the taxonomy. A
-name-level attribute gate would therefore mostly assert *the writer's spelling
-conventions*, and each exception's justification would be a claim about a schema
-default that has to be checked one at a time against ECMA-376. Gating it on the
-evidence available today would produce a table of eleven weakly-justified rows,
-which is the failure mode the staleness rule exists to prevent.
+Added 2026-10-05. Until then this section recorded the axis as deliberately
+deferred, and the reason it gave was sound about the design it was describing: the
+element gate's own mechanism, run over attribute *names*, diffing the source's
+names against the written package's. Measured once in 2026-09-30, that yielded 52
+names falling to 19, and the residue was dominated by **spelling equivalence, not
+loss** — `w:keepNext w:val="true"` against the bare `<w:keepNext/>` that means the
+same thing, `w:tab w:leader="none"` against an omitted default, `w:ind w:left`
+against the logical `w:start`, `wp:docPr w:descr=""`, and `mc:Ignorable`, which
+this document already places outside the taxonomy. Each exception would have been
+a hand-checked claim about an ECMA-376 implicit default, and the gate would mostly
+have asserted the writer's spelling conventions.
 
-One item from that list is recorded here because it is a real question and not a
-spelling one: the writer emits `<w:u/>` for single underline on the theory that
+HF-242 then showed what the hole costs. `wp:wrapSquare@wrapText` was not modelled,
+so every float wrapped on both sides whatever the author asked for, and **no
+finding said so**: the element `wp:wrapSquare` was in the output, so the element
+gate was satisfied, and the attribute was simply gone. Nothing said HF-242 was the
+last one.
+
+The gate is `crates/casual-doc-import/tests/attribute_loss_coverage.rs`, and it
+asks a question the deferral's objection does not reach, because it never looks at
+the writer's output at all:
+
+> **Substitute another value the corpus itself authored for this
+> `element/@attribute`. Does anything about the import change?**
+
+If the model, the compatibility report, the preservation ledger and the
+retained-part side-table are all exactly what they were, the attribute as written
+reached nothing and was named by nothing. The whole spelling axis disappears with
+the output comparison, and no exception has to claim anything about a schema
+default. The pattern is **metamorphic testing** in its standard use: perturb a
+declared input, require an observable change, to prove the input is consumed.
+
+Four properties are load-bearing:
+
+- **The alternative value comes from the corpus, never from invention.** An
+  enumerated attribute's vocabulary is not derivable from one of its tokens, an
+  invented token is usually invalid, and a parser that falls back to the schema
+  default on invalid input is indistinguishable from one that never read the
+  attribute. A draft that invented values accused `w:u@w:val`, `w:tab@w:leader`
+  and `w:headerReference@w:type` — all three plainly read — of silent loss.
+- **A pair the corpus authors with only ONE value is out of scope, and the gate
+  says so rather than guessing.** One value carries no difference to lose.
+  Deleting it instead does not help: `w:u w:val="single"` deleted changes nothing
+  *because `single` is the state the model already holds*, which is this
+  document's no-op rule and not a loss. The gate's reach is therefore the count of
+  pairs with two or more authored values, and the test **derives and publishes
+  that count on every run** rather than carrying it as prose — the measurement
+  this section used to quote is exactly the kind §9 rule 1 forbids publishing.
+- **A finding subsumes an attribute only in the right direction.** A finding on an
+  element with no attribute in its location covers that element's attributes; an
+  *attribute* finding covers only its own. Counting the looser version let one row
+  blanket a whole element — when `wp:docPr@name` started reporting it silently
+  excused `wp:docPr@id`.
+- **There is no baseline and no ratchet.** Arming a derived gate over an existing
+  importer usually needs a list of losses it starts out knowing about. Measured,
+  the residue was seven pairs, all one family, and all seven were closable in
+  `casual-doc-import`, so the list would have shipped empty — and an empty
+  baseline with a regeneration switch is an escape hatch a future regression can
+  be written into. If a later lane finds a loss it genuinely cannot close, the
+  ratchet is the right thing to add then, in its own list: an exception row claims
+  nothing was lost, and parking an unfixed loss behind that claim launders it.
+
+The seven were one family, and it was the family this document had already been
+caught by three times. `body::is_drawing_scaffolding` silences a name
+**unconditionally**, and `a:off`, `a:ext` and `a:prstGeom` on a *lone* picture —
+one with no shape or group builder for `pic:spPr`'s transform to route to — were
+in it, so a translated image, a mis-sized frame and an ellipse-cropped picture
+were dropped exactly as quietly as the identity transform Word writes on every
+picture. They have conditional arms now, in the table above, beside
+`wp:effectExtent` and the locks that FID-P-03 moved for the same reason. The other
+two were `wp:docPr@name` and `pic:cNvPr@name`, the object name in Word's Selection
+Pane: the model holds `descr` and has no field for a name, so §12 leaves two
+outcomes and not three, and they are reported as located attribute findings until
+the model carries one.
+
+What the gate **excuses**, each with its reason in the `EXCEPTIONS` table and each
+required to still fire (the `--report-unused-disable-directives` rule the element
+gate already carries): `mc:Ignorable` on any part root, the two stock note types
+`w:footnote@w:type`/`w:endnote@w:type`, the drawing-object ids
+`wp:docPr@id`/`pic:cNvPr@id`, `property@pid`, `vt:vector@size`/`@baseType`,
+`a:graphicData@uri`, and two whose value the document itself declares inert —
+`w:tblW@w:w` under `@w:type="auto"`, and `w:style@w:styleId` in a document whose
+only style is the default and which references none by id.
+
+One item from the old list is recorded here because it is a real question and not
+a spelling one: the writer emits `<w:u/>` for single underline on the theory that
 `single` is `w:u@w:val`'s implicit default. `CT_Underline/@w:val` is optional with
 **no** schema default, so whether a consumer reads a bare `w:u` as single or as
 none is a compatibility question this document cannot settle. The round trip is
 self-consistent (the importer reads a bare `w:u` as single too), so no test sees
-it; it is written down rather than left in a diff.
+it — and the attribute gate cannot see it either, because the corpus authors only
+`single`. It is written down rather than left in a diff.
 
 ### Corpus gap, recorded rather than worked around
 
