@@ -24,10 +24,24 @@ permissions:
   pages: write
   id-token: write
 
-# One deploy at a time; a newer push supersedes an in-flight run.
+# One deploy at a time — but NEVER cancel the run for `main`.
+#
+# `cancel-in-progress: true` was unconditional, so at this repository's merge
+# cadence every merge killed the previous deploy before it finished and `main`
+# collected a row of `cancelled` runs. `ci.yml` already fixed exactly this for
+# itself and wrote down why: "`cancelled` reads as 'not a failure' at a glance,
+# so a red `browser-smoke` sat on `main` unnoticed while three separate people
+# and agents each independently re-derived whether it was theirs." That reasoning
+# applies verbatim here, and this file was the half that still did it — a
+# cancelled Pages run on `main` is indistinguishable at a glance from a failed
+# deploy, and it was read as one.
+#
+# A branch still supersedes its own in-flight deploy: there the newest push is
+# the only one whose answer anyone wants. The expression is deliberately the same
+# shape as `ci.yml`'s so the two cannot drift.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
