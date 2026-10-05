@@ -5,6 +5,14 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+// The build guard that holds every crate in this workspace to the inline container
+// set `v1::inline_descent` declares (`docs/109` HF-212). Public, and in this crate,
+// because the rule and the declaration have to ship together: a declaration nothing
+// enforces is a comment, and the defect HF-212 names is each walk deciding the set
+// for itself inside a `_ =>` arm. See the module header for why one scanner here
+// beats one copy per consumer.
+pub mod container_audit;
+
 mod body;
 mod document;
 mod error;

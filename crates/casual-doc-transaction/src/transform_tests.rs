@@ -35,6 +35,12 @@ use casual_doc_model::v1::{
     RunProperties, Table, TableCell, TableCellProperties, TableProperties, TableRow,
     TableRowProperties,
 };
+// The shape-group fixture (`docs/109` HF-212's removal-footprint guard). A separate `use`
+// line, per the parallel-lane rule in this crate's other modules.
+use casual_doc_model::v1::{
+    Extent, GroupChild, GroupShape, GroupTextBox, GroupTransform, PointEmu, ShapeGeometry,
+    TextBoxBodyProperties, WordprocessingGroup,
+};
 use casual_doc_model::{IdGenerator, NodeId};
 
 use crate::{BlockAnchor, Coalesce, Intent, RevisionLog, Transaction, TransactionId};
@@ -809,6 +815,128 @@ fn an_anchor_nested_inside_removed_content_is_also_a_tombstone() {
         transform(&write, Change::new(&delete, &inverse), Side::Later),
         Ok(Rebase::Tombstoned(_))
     ));
+}
+
+#[test]
+fn an_anchor_inside_a_removed_shape_group_is_also_a_tombstone() {
+    // `docs/109` HF-212. The removal footprint used to list `Group` among the inline
+    // LEAVES — an explicit arm, so neither the compiler nor the wildcard guard could see
+    // it — and the consequence lands on the other author: an operation naming a node inside
+    // a removed group was not tombstoned, so it reached `apply` against a node that no
+    // longer exists and came back a refusal. A tombstone says "your edit was absorbed by a
+    // delete"; a refusal says "your edit was wrong". Same convergence, different sentence
+    // to the person who typed it.
+    let mut ids = IdGenerator::new(7);
+    let document_id = ids.next_id().expect("id");
+    let extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let origin = PointEmu { x_emu: 0, y_emu: 0 };
+    let shape = ids.next_id().expect("id");
+    let text_box = ids.next_id().expect("id");
+    let boxed = ids.next_id().expect("id");
+    let boxed_run = ids.next_id().expect("id");
+    let group = ids.next_id().expect("id");
+    let holder = ids.next_id().expect("id");
+    let BlockNode::Paragraph(mut anchor) = fresh_paragraph(&mut ids, "anchor") else {
+        unreachable!("fresh_paragraph builds a paragraph");
+    };
+    anchor.id = holder;
+    anchor
+        .inlines
+        .push(InlineNode::Group(Box::new(WordprocessingGroup {
+            id: group,
+            anchor: None,
+            relative_height: None,
+            extent,
+            transform: GroupTransform {
+                offset: origin,
+                extent,
+                child_offset: origin,
+                child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            hyperlink: None,
+            children: vec![
+                GroupChild::Shape(GroupShape {
+                    id: shape,
+                    offset: origin,
+                    extent,
+                    geometry: ShapeGeometry::Rectangle,
+                    preset: None,
+                    adjustments: Vec::new(),
+                    path: None,
+                    fill: None,
+                    stroke: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                    hyperlink: None,
+                }),
+                GroupChild::TextBox(GroupTextBox {
+                    id: text_box,
+                    offset: origin,
+                    extent,
+                    geometry: ShapeGeometry::Rectangle,
+                    preset: None,
+                    adjustments: Vec::new(),
+                    blocks: vec![paragraph(boxed, boxed_run, "inside the group")],
+                    fill: None,
+                    border: None,
+                    body_properties: TextBoxBodyProperties::default(),
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                    hyperlink: None,
+                }),
+            ],
+        })));
+    let body = vec![
+        fresh_paragraph(&mut ids, "first"),
+        BlockNode::Paragraph(anchor),
+    ];
+    let mut document = Document::new(document_id, body, Definitions::default()).expect("document");
+
+    let delete = Operation::DeleteBlocks {
+        container: None,
+        index: 1,
+        count: 1,
+    };
+    let inverse = apply_one(&mut document, &mut replica_ids(), &delete).expect("applies");
+    let removed = super::removed_by(Change::new(&delete, &inverse));
+    for (name, node) in [
+        ("the group itself", group),
+        ("a shape in the group", shape),
+        ("a text box in the group", text_box),
+        ("a paragraph in that text box", text_box),
+        ("a paragraph in that text box", boxed),
+        ("a run in that paragraph", boxed_run),
+    ] {
+        assert!(
+            removed.holds(node),
+            "{name} went with the paragraph that anchored it, so the removal footprint \
+             has to enumerate it — it is what decides tombstone or refusal"
+        );
+    }
+
+    // And the consequence, stated as the behaviour rather than as the mechanism: a
+    // concurrent write to the paragraph inside the group is absorbed, not refused.
+    let write = Operation::SetParagraphProperties {
+        node: boxed,
+        properties: Box::new(ParagraphProperties::default()),
+    };
+    assert_eq!(
+        transform(&write, Change::new(&delete, &inverse), Side::Later),
+        Ok(Rebase::Tombstoned(Tombstone {
+            operation: "SetParagraphProperties",
+            against: "DeleteBlocks",
+        })),
+        "an edit inside a group that a concurrent delete removed must be reported as \
+         absorbed, not passed through to fail at `apply`"
+    );
 }
 
 #[test]
