@@ -38,3 +38,37 @@ export function scrollTargetFor({ marker, viewport, current, max, scale, block, 
   const perScrollPx = scale > 1 ? scale : 1;
   return Math.max(0, Math.min(max, current + delta / perScrollPx));
 }
+
+/**
+ * The same three-way decision for the MODEL path, in document space.
+ *
+ * `scrollTargetFor` above answers for an overlay marker, from screen rects. Its
+ * twin answers for a rectangle the ENGINE reported — a find match twenty
+ * thousand pages away, a comment anchor, a caret after a jump — none of which
+ * has an overlay element until its page is materialized, and whose page is not
+ * materialized until something scrolls there.
+ *
+ * Here rather than in `main.js` so the two copies of one rule sit beside each
+ * other: they are the same "is it above, below, or already in view" question in
+ * two coordinate systems, and a rule stated twice in two files is a rule that
+ * drifts. The caller still owns the band arithmetic and the `scrollTo`, which is
+ * the half that needs a DOM.
+ *
+ * O(1).
+ *
+ * @param {object} o
+ * @param {number} o.top            the rect's top, in document space
+ * @param {number} o.bottom         the rect's bottom, in document space
+ * @param {number} o.docY           the document-space offset currently on screen
+ * @param {number} o.viewportHeight
+ * @param {"nearest"|"center"} o.block
+ * @param {number} o.margin         breathing room when nudging an edge into view
+ * @returns {number|null} the document-space offset to show, or `null` when the
+ *   rect is already in view and nothing should move.
+ */
+export function docScrollTargetFor({ top, bottom, docY, viewportHeight, block, margin }) {
+  if (block === "center") return top + (bottom - top) / 2 - viewportHeight / 2;
+  if (top < docY) return top - margin;
+  if (bottom > docY + viewportHeight) return bottom - viewportHeight + margin;
+  return null;
+}

@@ -14,7 +14,7 @@
 // into the state it was written to fix.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -352,12 +352,30 @@ test("the grant is handed to the engine, identity before capabilities", () => {
   // intends to share (`152` §4.2).
   const calls = [];
   const doc = {
-    adoptParticipantIdentity: (n) => calls.push(["identity", n]),
+    // The fake REFUSES a Number, exactly as the real binding does. The Rust
+    // signature is `adopt_participant_identity(&mut self, participant: u64)` and
+    // wasm-bindgen maps `u64` to BigInt — the generated typings say it outright
+    // (`webapp/pkg/casual_doc_wasm.d.ts`:
+    // `adoptParticipantIdentity(participant: bigint): void`).
+    //
+    // THIS IS THE POINT OF THE TEST NOW. The previous fake accepted anything and
+    // pinned `["identity", 7]`, so it was green for as long as it existed while
+    // every real call threw `TypeError: Cannot convert 7 to a BigInt` — measured
+    // in Chromium against a real opened document. Because the identity call is
+    // first, the capabilities call never ran either, so the engine kept every
+    // capability it had and the reader was told "This session's permissions could
+    // not be read, so the document is open read-only" on every shared document.
+    // A fake that accepts more than the real binding does is not a test of the
+    // call; it is a test of itself (`SKILL` §4).
+    adoptParticipantIdentity: (n) => {
+      if (typeof n !== "bigint") throw new TypeError(`Cannot convert ${n} to a BigInt`);
+      calls.push(["identity", n]);
+    },
     adoptParticipantCapabilities: (names) => calls.push(["capabilities", [...names]]),
   };
   assert.equal(sessionAccess({ granted: "comment,edit", participant: "7" }, keys).adopt(doc), "");
   assert.deepEqual(calls, [
-    ["identity", 7],
+    ["identity", 7n],
     ["capabilities", ["comment", "edit"]],
   ]);
 
@@ -537,4 +555,69 @@ test("the connection-lost code is routed by the chrome and minted by nothing els
   }
   // The scan can see what it looks for.
   assert.ok(`a ${CONNECTION_LOST} b`.includes(CONNECTION_LOST));
+});
+
+test("every engine method that takes a BigInt is handed one", () => {
+  // The family, not the instance. `u64` in Rust is `bigint` in the generated
+  // typings, and a JavaScript Number handed to one of those bindings throws
+  // `TypeError: Cannot convert N to a BigInt` — which `SESSION.adopt` caught and
+  // reported as an unreadable grant, so the editor told every reader of a shared
+  // document that it was open read-only while the chrome went on offering every
+  // control the grant named.
+  //
+  // Derived from the TYPINGS rather than from a list kept here, for the same
+  // reason the capability vocabulary above is derived from the facade's own match
+  // arms: a method that starts taking a `u64` has to fail the build rather than
+  // wait to be noticed. `webapp/pkg` is not committed, so a checkout that has
+  // never run `./build.sh` has nothing to read — and that is a FAILURE, not a
+  // skip, because a guard that quietly answers "fine" when it cannot see
+  // anything is the shape this whole file exists to prevent.
+  let typings = "";
+  try {
+    typings = readFileSync(join(WEBAPP, "pkg", "casual_doc_wasm.d.ts"), "utf8");
+  } catch {
+    assert.fail(
+      "webapp/pkg/casual_doc_wasm.d.ts is missing — run webapp/build.sh; this guard " +
+        "reads the generated typings and cannot be answered without them",
+    );
+  }
+  const bigintMethods = [
+    ...new Set(
+      [...typings.matchAll(/^ {2,}([a-zA-Z_][a-zA-Z0-9_]*)\(([^)]*)\)/gm)]
+        .filter((match) => /\bbigint\b/.test(match[2]))
+        .map((match) => match[1]),
+    ),
+  ];
+  assert.ok(
+    bigintMethods.includes("adoptParticipantIdentity"),
+    "the scan found no BigInt-taking method named adoptParticipantIdentity (found " +
+      JSON.stringify(bigintMethods) +
+      "); the typings' shape has changed and this guard is no longer reading them",
+  );
+
+  const modules = readdirSync(join(WEBAPP, "src"))
+    .filter((name) => name.endsWith(".mjs") || name.endsWith(".js"))
+    .map((name) => [name, readFileSync(join(WEBAPP, "src", name), "utf8")]);
+  const offenders = [];
+  for (const method of bigintMethods) {
+    for (const entry of modules) {
+      // `.method(` and whatever it is handed. Deliberately crude, and noisy in
+      // the SAFE direction: an argument this cannot read as a BigInt is reported
+      // rather than waved through.
+      const pattern = new RegExp("\\." + method + "\\(\\s*([^)]*)\\)", "g");
+      for (const call of entry[1].matchAll(pattern)) {
+        const argument = call[1].trim();
+        if (argument === "") continue; // a call that takes nothing takes no BigInt
+        if (/^BigInt\(/.test(argument) || /^\d+n$/.test(argument)) continue;
+        offenders.push(entry[0] + ": ." + method + "(" + argument + ")");
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these call sites hand a Number to a binding that takes a BigInt, so every one of " +
+      "them throws at runtime and whatever catches the throw reports something else:\n" +
+      offenders.join("\n"),
+  );
 });

@@ -643,7 +643,19 @@ export function sessionAccess(inputs, translate) {
     adopt(doc) {
       if (!grant.shared || !doc) return "";
       try {
-        if (grant.participant !== null) doc.adoptParticipantIdentity(grant.participant);
+        // A BigInt, because the engine's parameter is a Rust `u64` and
+        // wasm-bindgen maps that to BigInt — the generated typings say it
+        // outright (`pkg/casual_doc_wasm.d.ts`:
+        // `adoptParticipantIdentity(participant: bigint): void`). Handed a
+        // Number it threw `TypeError: Cannot convert 1 to a BigInt` on EVERY
+        // shared document, the `catch` below turned that into
+        // `GRANT_UNREADABLE`, and because this call comes first the
+        // capabilities call never ran either — so the engine kept every
+        // capability while the reader was told the document was open read-only.
+        // `session_access.test.mjs` now drives a fake that refuses a Number the
+        // way the real binding does; the old fake accepted anything and pinned
+        // the wrong value.
+        if (grant.participant !== null) doc.adoptParticipantIdentity(BigInt(grant.participant));
         doc.adoptParticipantCapabilities([...grant.names]);
         return "";
       } catch {

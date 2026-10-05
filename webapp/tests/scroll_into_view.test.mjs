@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scrollTargetFor } from "../src/scroll_into_view.mjs";
+import { docScrollTargetFor, scrollTargetFor } from "../src/scroll_into_view.mjs";
 
 const viewport = { top: 100, bottom: 500, height: 400 };
 const base = { viewport, current: 1000, max: 5000, scale: 1, block: "nearest", margin: 10 };
@@ -51,4 +51,35 @@ test("the target is clamped into the scroller's real range at both ends", () => 
   assert.equal(scrollTargetFor({ ...base, marker: up }), 0, "never negative");
   const down = { top: 90000, bottom: 90040, height: 40 };
   assert.equal(scrollTargetFor({ ...base, marker: down }), 5000, "never past max");
+});
+
+// ---- The MODEL path's twin --------------------------------------------------
+
+test("the model path's three-way decision, in document space", () => {
+  // The same "above, below, or already in view" question in a second coordinate
+  // system, which is why it was worth moving next to the first: a rule stated
+  // twice in two files is a rule that drifts. It answers for a rectangle the
+  // ENGINE reported — a find match twenty thousand pages away, a comment anchor,
+  // a caret after a jump — none of which has an overlay element to measure.
+  const doc = { docY: 1000, viewportHeight: 800, block: "nearest", margin: 8 };
+
+  // Fully inside: `null`, so the caller knows not to scroll at all rather than
+  // scrolling to where the reader already is.
+  assert.equal(docScrollTargetFor({ ...doc, top: 1200, bottom: 1240 }), null);
+
+  // Above: the top edge arrives with the margin outside it.
+  assert.equal(docScrollTargetFor({ ...doc, top: 500, bottom: 540 }), 492);
+
+  // Below: the BOTTOM edge is what has to arrive, so the offset is derived from
+  // it and the viewport height. Deriving it from the top instead would pull the
+  // rect to the top of the screen and move the reader much further than asked —
+  // 1900 rather than 1148 here.
+  assert.equal(docScrollTargetFor({ ...doc, top: 1900, bottom: 1940 }), 1148);
+
+  // Centre is a request, not a nudge: it moves even for a rect already in view.
+  assert.equal(docScrollTargetFor({ ...doc, top: 1200, bottom: 1240, block: "center" }), 820);
+
+  // A rect taller than the viewport, centred, resolves BELOW its own top: the
+  // reader sees its middle, which is the only thing "centre" can mean.
+  assert.equal(docScrollTargetFor({ ...doc, top: 1000, bottom: 3000, block: "center" }), 1600);
 });
