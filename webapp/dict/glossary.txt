@@ -617,7 +617,6 @@ undetailed
 undoable
 undos
 unexpressible
-unfindable
 ungated
 unicode
 unlink
