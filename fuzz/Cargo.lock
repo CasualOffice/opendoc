@@ -15,6 +15,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "casual-doc-import"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+ "casual-doc-ooxml",
+ "quick-xml",
+]
+
+[[package]]
 name = "casual-doc-model"
 version = "0.0.1"
 dependencies = [
@@ -183,6 +192,7 @@ dependencies = [
 name = "opendoc-fuzz"
 version = "0.0.0"
 dependencies = [
+ "casual-doc-import",
  "casual-doc-odf",
  "casual-doc-ooxml",
  "casual-doc-package",

@@ -6,7 +6,7 @@ use std::fmt;
 
 use casual_doc_model::v1::Document;
 
-use crate::{CompatibilityReport, FormatId};
+use crate::{CompatibilityReport, FormatId, RecoveryReport};
 
 /// A concrete format plus its source or emitted profile version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +121,12 @@ pub struct ImportArtifact {
     pub source: SourceEnvelope,
     /// Import compatibility findings.
     pub report: CompatibilityReport,
+    /// What a best-effort open had to repair in damaged source.
+    ///
+    /// Empty for every well-formed source. A host shows its notice exactly when
+    /// this is non-empty — see [`crate::RecoveryReport`] for why that is a
+    /// separate report from [`ImportArtifact::report`].
+    pub recovery: RecoveryReport,
     /// Detected source format/profile.
     pub format: FormatProfile,
 }

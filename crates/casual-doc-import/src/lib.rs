@@ -48,6 +48,7 @@ mod noop;
 mod numbering;
 mod opaque;
 mod properties;
+mod recovery;
 mod report;
 mod retain;
 mod settings;
@@ -56,6 +57,7 @@ mod tables;
 mod theme;
 mod vml;
 mod watermark;
+mod xml_repair;
 
 pub use config::{ImportConfig, ImportMode};
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
@@ -63,6 +65,10 @@ pub use coverage::{MeaningfulMarkup, meaningful_markup};
 pub use error::ImportError;
 pub use opaque::{
     RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
+};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use recovery::{
+    MAX_DETAIL_BYTES, MAX_REPAIRS, PartRole, RecoveryReport, Repair, RepairKind, Severity,
 };
 pub use report::{
     CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
@@ -109,6 +115,125 @@ fn decode_xml_reference(
         .into_owned())
 }
 
+/// A minimal well-formed main document, used as the last rung of the recovery
+/// ladder.
+///
+/// When nothing at all can be read from a damaged main document, this is what is
+/// imported in its place, so the open still produces a document with the file's
+/// properties, styles and headers around it. An empty document plus a report
+/// saying the text could not be read is a worse document than the original and a
+/// far better answer than an error dialog: the reader can see what the file still
+/// holds, and is told plainly not to save over it.
+const EMPTY_MAIN_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#;
+
+/// Resolves a definition part's parse outcome, substituting `fallback` and
+/// recording a repair when recovering.
+///
+/// `Err` still propagates on the strict path, and still propagates when the
+/// failure is a resource bound rather than damage: a limit is a refusal on
+/// purpose, and recovering past one would turn a defence into a suggestion.
+fn recover_part<T>(
+    outcome: Result<T, ImportError>,
+    reporter: &mut Reporter,
+    role: PartRole,
+    fallback: impl FnOnce() -> T,
+) -> Result<T, ImportError> {
+    match outcome {
+        Ok(value) => Ok(value),
+        Err(error) if reporter.may_recover() && is_damage(&error) => {
+            reporter.repair(Repair::in_role(RepairKind::PartUnparsable, role));
+            Ok(fallback())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether an import failure describes **damaged input** rather than a bound this
+/// engine refuses to cross or an internal invariant it must not violate.
+///
+/// Only damage is recoverable, and the distinction is the whole safety property
+/// of the recovering path:
+///
+/// - `MalformedXml` and `Package` are facts about the bytes a producer wrote.
+///   They are what recovery exists for.
+/// - `LimitExceeded` is a resource bound, and `InvalidConfig` is the host's own
+///   configuration. Recovering past either would make a defence advisory —
+///   a 4 GB expansion is still refused, and still says why.
+/// - `Model` and `Disposition` are internal invariants of this engine
+///   (`35-DISPOSITION-TAXONOMY.md` requires an illegal disposition to fail the
+///   import rather than be reported). A recovery that swallowed one would hide a
+///   defect here behind a sentence blaming the file.
+const fn is_damage(error: &ImportError) -> bool {
+    match error {
+        ImportError::MalformedXml | ImportError::Package(_) => true,
+        ImportError::InvalidConfig
+        | ImportError::LimitExceeded { .. }
+        | ImportError::Model(_)
+        | ImportError::Disposition(_) => false,
+    }
+}
+
+/// Repairs one part's bytes in place, stamping every repair with the role so the
+/// report can say *which* part of the document was damaged.
+fn repair_part(bytes: &mut Vec<u8>, role: PartRole, repairs: &mut Vec<Repair>) {
+    let Some((repaired, found)) = xml_repair::repair(bytes) else {
+        return;
+    };
+    repairs.extend(found.into_iter().map(|repair| Repair {
+        role: Some(role),
+        ..repair
+    }));
+    *bytes = repaired;
+}
+
+/// Reads one package part, or records it missing and yields `None` when
+/// recovering.
+///
+/// A relationship pointing at a part the package does not contain is the single
+/// most common shape of real-world damage short of a broken ZIP: a producer wrote
+/// the relationship and then failed to write the part, or a repair tool dropped
+/// it. Every part reached this way is optional by construction — the importer
+/// already handles `None` for each of them, because a document need not have
+/// styles, a theme, footnotes or a header — so there was never a reason for an
+/// absent one to refuse the document, only an absent branch.
+fn recover_read(
+    package: &mut DocxPackage<'_>,
+    part: &str,
+    role: PartRole,
+    recover: bool,
+    repairs: &mut Vec<Repair>,
+) -> Result<Option<Vec<u8>>, ImportError> {
+    match package.read_part(part) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if recover => {
+            let _ = error;
+            repairs.push(Repair::in_part(RepairKind::PartMissing, role, part));
+            Ok(None)
+        }
+        Err(error) => Err(ImportError::Package(error)),
+    }
+}
+
+/// Resolves one extra part and its own relationships, or records it missing and
+/// yields `None` when recovering.
+fn recover_sources(
+    package: &mut DocxPackage<'_>,
+    part: &str,
+    role: PartRole,
+    recover: bool,
+    repairs: &mut Vec<Repair>,
+) -> Result<Option<PartSources>, ImportError> {
+    match resolve_part_sources(package, part) {
+        Ok(sources) => Ok(Some(sources)),
+        Err(error) if recover && is_damage(&error) => {
+            repairs.push(Repair::in_part(RepairKind::PartMissing, role, part));
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// The result of importing a main document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Import {
@@ -123,6 +248,15 @@ pub struct Import {
     /// resolves, and an import whose claims did not resolve fails rather than
     /// reporting.
     pub ledger: PreservationLedger,
+    /// What a best-effort open had to repair to produce this document, in words
+    /// a reader shares ([`ImportConfig::recover`]).
+    ///
+    /// Empty whenever the source was well-formed, and **always** empty when
+    /// `recover` is off — a strict import that succeeds repaired nothing, and a
+    /// strict import that fails returns [`ImportError`] rather than a document.
+    /// A non-empty report is the one fact a reader must see before saving over
+    /// the original file.
+    pub recovery: RecoveryReport,
     /// Source retained for round-trip; `Some` only in `Retention` mode.
     pub retained_source: Option<RetainedSource>,
     /// Opaque part side-table (P1F-2): admitted parts the semantic model does
@@ -150,6 +284,11 @@ pub fn import_package(
     package: &mut DocxPackage<'_>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
+    // Repairs this driver records itself, as distinct from the ones the parsers
+    // record through the reporter. Both end up in one `RecoveryReport`.
+    let recover = config.recover;
+    let mut repairs: Vec<Repair> = Vec::new();
+
     let main_part = package.main_document_part().to_owned();
     let related_part = |suffix: &str| {
         package
@@ -211,34 +350,88 @@ pub fn import_package(
     for source in &media_sources {
         consumed.insert(source.part_name.clone());
     }
+    // An image relationship whose target is not in the package. The model keeps
+    // the reference (no bytes are decoded at import), so nothing here fails and
+    // nothing here used to be said — the drawing simply came out as a frame with
+    // no picture in it. `casual-doc-io` reports the part when it tries to read
+    // the bytes, which covers the product path but not a caller that imports
+    // without resources, so the recovery report names it where it is first
+    // observable.
+    if recover {
+        let admitted: std::collections::BTreeSet<&str> = package
+            .entries()
+            .iter()
+            .map(|entry| entry.part_name.as_str())
+            .collect();
+        for source in &media_sources {
+            if !admitted.contains(source.part_name.as_str()) {
+                repairs.push(Repair::in_part(
+                    RepairKind::PartMissing,
+                    PartRole::Media,
+                    &source.part_name,
+                ));
+            }
+        }
+    }
 
-    let document_bytes = package
-        .read_part(&main_part)
-        .map_err(ImportError::Package)?;
+    let mut document_bytes = match recover_read(
+        package,
+        &main_part,
+        PartRole::MainDocument,
+        recover,
+        &mut repairs,
+    )? {
+        Some(bytes) => bytes,
+        None => {
+            // The main document itself is unreadable. Everything else in the
+            // package still is, so the open continues around an empty body
+            // rather than refusing: the reader gets the properties, the styles
+            // and the headers, and a sentence saying the text is gone.
+            repairs.push(Repair::in_role(
+                RepairKind::BodyUnreadable,
+                PartRole::MainDocument,
+            ));
+            EMPTY_MAIN_DOCUMENT.to_vec()
+        }
+    };
     let styles_bytes = match styles_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        Some(part) => recover_read(package, &part, PartRole::Styles, recover, &mut repairs)?,
         None => None,
     };
     let numbering_bytes = match numbering_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        Some(part) => recover_read(package, &part, PartRole::Numbering, recover, &mut repairs)?,
         None => None,
     };
     // The font table plus its own relationships (embedded `.odttf` fonts resolve
     // through `fontTable.xml.rels`, not the document's).
     let (font_table_bytes, font_table_rels) = match font_table_part {
         Some(part) => {
-            let bytes = package.read_part(&part).map_err(ImportError::Package)?;
-            let relationships = package
-                .part_relationships(&part)
-                .map_err(ImportError::Package)?;
-            let font_rels: std::collections::BTreeMap<String, String> = relationships
-                .iter()
-                .filter(|relationship| relationship.relationship_type.ends_with("/font"))
-                .filter_map(|relationship| {
-                    Some((relationship.id.clone(), relationship.resolved_part.clone()?))
-                })
-                .collect();
-            (Some(bytes), font_rels)
+            match recover_read(package, &part, PartRole::FontTable, recover, &mut repairs)? {
+                None => (None, std::collections::BTreeMap::new()),
+                Some(bytes) => {
+                    let relationships = match package.part_relationships(&part) {
+                        Ok(relationships) => relationships,
+                        Err(error) if recover => {
+                            let _ = error;
+                            repairs.push(Repair::in_part(
+                                RepairKind::PartUnparsable,
+                                PartRole::FontTable,
+                                &part,
+                            ));
+                            Vec::new()
+                        }
+                        Err(error) => return Err(ImportError::Package(error)),
+                    };
+                    let font_rels: std::collections::BTreeMap<String, String> = relationships
+                        .iter()
+                        .filter(|relationship| relationship.relationship_type.ends_with("/font"))
+                        .filter_map(|relationship| {
+                            Some((relationship.id.clone(), relationship.resolved_part.clone()?))
+                        })
+                        .collect();
+                    (Some(bytes), font_rels)
+                }
+            }
         }
         None => (None, std::collections::BTreeMap::new()),
     };
@@ -246,26 +439,27 @@ pub fn import_package(
         consumed.insert(part.clone());
     }
     let theme_bytes = match theme_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        Some(part) => recover_read(package, &part, PartRole::Theme, recover, &mut repairs)?,
         None => None,
     };
     let settings_bytes = match settings_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        Some(part) => recover_read(package, &part, PartRole::Settings, recover, &mut repairs)?,
         None => None,
     };
     // Each extra part (notes, headers, footers) carries its own image and
     // external-hyperlink relationships, so images and links inside it are modeled.
-    let footnotes = match footnotes_part {
-        Some(part) => Some(resolve_part_sources(package, &part)?),
+    let mut footnotes = match footnotes_part {
+        Some(part) => recover_sources(package, &part, PartRole::Footnotes, recover, &mut repairs)?,
         None => None,
     };
-    let endnotes = match endnotes_part {
-        Some(part) => Some(resolve_part_sources(package, &part)?),
+    let mut endnotes = match endnotes_part {
+        Some(part) => recover_sources(package, &part, PartRole::Endnotes, recover, &mut repairs)?,
         None => None,
     };
-    let comments = match comments_part {
+    let mut comments = match comments_part {
         Some(part) => {
-            let mut sources = resolve_part_sources(package, &part)?;
+            let sources =
+                recover_sources(package, &part, PartRole::Comments, recover, &mut repairs)?;
             // Comment companion parts (P1F-10): reply threading
             // (`commentsExtended.xml`), durable ids (`commentsIds.xml`), and
             // collaborator identity (`people.xml`). They hang off the main-
@@ -288,28 +482,35 @@ pub fn import_package(
             {
                 consumed.insert(companion.clone());
             }
-            if let Some(companion) = extended_part {
-                sources.comments_extended = Some(
-                    package
-                        .read_part(&companion)
-                        .map_err(ImportError::Package)?,
-                );
+            let mut sources = sources;
+            if let (Some(sources), Some(companion)) = (sources.as_mut(), extended_part) {
+                sources.comments_extended = recover_read(
+                    package,
+                    &companion,
+                    PartRole::Comments,
+                    recover,
+                    &mut repairs,
+                )?;
             }
-            if let Some(companion) = ids_part {
-                sources.comments_ids = Some(
-                    package
-                        .read_part(&companion)
-                        .map_err(ImportError::Package)?,
-                );
+            if let (Some(sources), Some(companion)) = (sources.as_mut(), ids_part) {
+                sources.comments_ids = recover_read(
+                    package,
+                    &companion,
+                    PartRole::Comments,
+                    recover,
+                    &mut repairs,
+                )?;
             }
-            if let Some(companion) = people_part {
-                sources.people = Some(
-                    package
-                        .read_part(&companion)
-                        .map_err(ImportError::Package)?,
-                );
+            if let (Some(sources), Some(companion)) = (sources.as_mut(), people_part) {
+                sources.people = recover_read(
+                    package,
+                    &companion,
+                    PartRole::Comments,
+                    recover,
+                    &mut repairs,
+                )?;
             }
-            Some(sources)
+            sources
         }
         None => None,
     };
@@ -334,12 +535,20 @@ pub fn import_package(
     let mut header_parts = Vec::new();
     for (relationship_id, part) in header_refs {
         consumed.insert(part.clone());
-        header_parts.push((relationship_id, resolve_part_sources(package, &part)?));
+        if let Some(sources) =
+            recover_sources(package, &part, PartRole::Header, recover, &mut repairs)?
+        {
+            header_parts.push((relationship_id, sources));
+        }
     }
     let mut footer_parts = Vec::new();
     for (relationship_id, part) in footer_refs {
         consumed.insert(part.clone());
-        footer_parts.push((relationship_id, resolve_part_sources(package, &part)?));
+        if let Some(sources) =
+            recover_sources(package, &part, PartRole::Footer, recover, &mut repairs)?
+        {
+            footer_parts.push((relationship_id, sources));
+        }
     }
     // Images referenced from inside the extra parts (notes, headers, footers,
     // comments) are consumed transitively while those parts are parsed.
@@ -412,29 +621,86 @@ pub fn import_package(
         if chart_part_sources.contains_key(&part_name) {
             continue;
         }
-        let bytes = package
-            .read_part(&part_name)
-            .map_err(ImportError::Package)?;
-        let rels = package
-            .part_relationships(&part_name)
-            .map_err(ImportError::Package)?
-            .iter()
-            .filter(|relationship| !relationship.id.is_empty())
-            .filter_map(|relationship| {
-                let part = relationship.resolved_part.clone()?;
-                Some((
-                    relationship.id.clone(),
-                    EmbeddedRel {
-                        relationship_type: relationship.relationship_type.clone(),
-                        part_name: part,
-                    },
-                ))
-            })
-            .collect();
+        let Some(bytes) =
+            recover_read(package, &part_name, PartRole::Chart, recover, &mut repairs)?
+        else {
+            continue;
+        };
+        let rels = match package.part_relationships(&part_name) {
+            Ok(relationships) => relationships,
+            Err(error) if recover => {
+                let _ = error;
+                repairs.push(Repair::in_part(
+                    RepairKind::PartUnparsable,
+                    PartRole::Chart,
+                    &part_name,
+                ));
+                Vec::new()
+            }
+            Err(error) => return Err(ImportError::Package(error)),
+        }
+        .iter()
+        .filter(|relationship| !relationship.id.is_empty())
+        .filter_map(|relationship| {
+            let part = relationship.resolved_part.clone()?;
+            Some((
+                relationship.id.clone(),
+                EmbeddedRel {
+                    relationship_type: relationship.relationship_type.clone(),
+                    part_name: part,
+                },
+            ))
+        })
+        .collect();
         chart_part_sources.insert(part_name, crate::chart::ChartPartSource { bytes, rels });
     }
 
-    let mut import = import_with_sources(
+    // Two shapes of damage no parse error can report, because the parse they
+    // produce SUCCEEDS: a main part whose root is not `w:document`, and a
+    // `w:document` with no `w:body`. Both used to open as a one-block document
+    // with an empty report — a silent acceptance, which is the failure this whole
+    // path exists to prevent, because a reader who is told nothing saves over the
+    // original. Observed on the bytes rather than inside the parser, for the
+    // reason `xml_repair::main_document_shape` records.
+    if recover {
+        match xml_repair::main_document_shape(&document_bytes) {
+            xml_repair::MainDocumentShape::Wordprocessing => {}
+            xml_repair::MainDocumentShape::NoBody => repairs.push(Repair::in_role(
+                RepairKind::BodyMissing,
+                PartRole::MainDocument,
+            )),
+            xml_repair::MainDocumentShape::NotWordprocessing(root) => repairs.push(
+                Repair::in_role(RepairKind::NotWordprocessingMl, PartRole::MainDocument)
+                    .with_detail(&format!("its root element is <{root}>")),
+            ),
+            xml_repair::MainDocumentShape::Empty => repairs.push(Repair::in_role(
+                RepairKind::BodyUnreadable,
+                PartRole::MainDocument,
+            )),
+        }
+    }
+
+    // The recovery ladder.
+    //
+    // Rung 1 is the strict read, byte for byte what a non-recovering open does,
+    // and it runs first even when recovering. That ordering is the safety
+    // property of the whole feature: a healthy document takes exactly the path it
+    // took before this existed, repairs nothing, and reports nothing, so no
+    // amount of leniency below can change what a well-formed file imports to.
+    //
+    // Rung 2 repairs the content parts' bytes (`crate::xml_repair`) and reads
+    // everything tolerantly. The two halves do different work and both are
+    // needed: the byte repair recovers damage a stream reader cannot get past at
+    // all — a DTD, a mislabelled encoding, a stray end tag, a file cut off
+    // mid-element — while the tolerant read recovers the head of a part whose
+    // damage survives repair, and drops a definition part whole.
+    //
+    // Rung 3 reads an empty main document with the file's other parts around it,
+    // for the case where the main document yields nothing at all. An empty
+    // document carrying the file's properties, styles and headers, with a report
+    // saying the text could not be read, is the floor; below it there is nothing
+    // to show, and this engine never gets there with a package in hand.
+    let mut import = match import_with_sources(
         &document_bytes,
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
@@ -451,8 +717,94 @@ pub fn import_package(
         &hyperlink_rels,
         &embedded_index,
         &chart_part_sources,
-        config,
-    )?;
+        ImportConfig {
+            recover: false,
+            ..config
+        },
+    ) {
+        Ok(import) => import,
+        Err(error) if recover && is_damage(&error) => {
+            // Byte-repair the parts that hold **content**, and only those. A
+            // damaged content part's surviving text is worth recovering: it is
+            // the document, and what the damage took is reported.
+            //
+            // The five definition parts (styles, numbering, theme, settings, the
+            // font table) are deliberately NOT repaired, and are dropped whole by
+            // `recover_part` instead. A definition table is not content, it is a
+            // function applied to content, and half of one is worse than none: a
+            // `w:style` truncated through its property list still resolves, and
+            // then silently applies the wrong formatting to text that looks
+            // right. Dropping it yields a statement a reader can act on — "the
+            // style definitions are damaged, so text is shown with default
+            // formatting" — where a partial table yields a document that is
+            // subtly wrong and says only that a tag was left open.
+            repair_part(&mut document_bytes, PartRole::MainDocument, &mut repairs);
+            if let Some(part) = footnotes.as_mut() {
+                repair_part(&mut part.xml, PartRole::Footnotes, &mut repairs);
+            }
+            if let Some(part) = endnotes.as_mut() {
+                repair_part(&mut part.xml, PartRole::Endnotes, &mut repairs);
+            }
+            if let Some(part) = comments.as_mut() {
+                repair_part(&mut part.xml, PartRole::Comments, &mut repairs);
+            }
+            for (_, part) in &mut header_parts {
+                repair_part(&mut part.xml, PartRole::Header, &mut repairs);
+            }
+            for (_, part) in &mut footer_parts {
+                repair_part(&mut part.xml, PartRole::Footer, &mut repairs);
+            }
+            match import_with_sources(
+                &document_bytes,
+                styles_bytes.as_deref(),
+                numbering_bytes.as_deref(),
+                font_table_bytes.as_deref(),
+                &font_table_rels,
+                theme_bytes.as_deref(),
+                settings_bytes.as_deref(),
+                footnotes.as_ref(),
+                endnotes.as_ref(),
+                &header_parts,
+                &footer_parts,
+                comments.as_ref(),
+                &media_sources,
+                &hyperlink_rels,
+                &embedded_index,
+                &chart_part_sources,
+                config,
+            ) {
+                Ok(import) => import,
+                Err(inner) if is_damage(&inner) => {
+                    repairs.push(Repair::in_role(
+                        RepairKind::BodyUnreadable,
+                        PartRole::MainDocument,
+                    ));
+                    document_bytes = EMPTY_MAIN_DOCUMENT.to_vec();
+                    import_with_sources(
+                        &document_bytes,
+                        styles_bytes.as_deref(),
+                        numbering_bytes.as_deref(),
+                        font_table_bytes.as_deref(),
+                        &font_table_rels,
+                        theme_bytes.as_deref(),
+                        settings_bytes.as_deref(),
+                        footnotes.as_ref(),
+                        endnotes.as_ref(),
+                        &header_parts,
+                        &footer_parts,
+                        comments.as_ref(),
+                        &media_sources,
+                        &hyperlink_rels,
+                        &embedded_index,
+                        &chart_part_sources,
+                        config,
+                    )?
+                }
+                Err(inner) => return Err(inner),
+            }
+        }
+        Err(error) => return Err(error),
+    };
 
     // In Retention mode, retain every admitted part verbatim (the package-level
     // byte floor) so styles, media, and other parts can be reproduced too.
@@ -464,7 +816,16 @@ pub fn import_package(
             .collect();
         let mut total = 0_usize;
         for name in names {
-            let bytes = package.read_part(&name).map_err(ImportError::Package)?;
+            let Some(bytes) = recover_read(
+                package,
+                &name,
+                PartRole::RetainedPart,
+                recover,
+                &mut repairs,
+            )?
+            else {
+                continue;
+            };
             total = total.saturating_add(bytes.len());
             if total > config.max_text_bytes {
                 return Err(ImportError::LimitExceeded {
@@ -487,7 +848,7 @@ pub fn import_package(
     // relationship. Unmapped property fields fold into the compatibility report.
     // The discovered parts are recorded as consumed so the disposition pass below
     // does not report them as dropped (they are modeled and regenerated on write).
-    let (sources, docprop_parts) = discover_docprops(package)?;
+    let (sources, docprop_parts) = discover_docprops(package, recover, &mut repairs)?;
     for part in docprop_parts {
         consumed.insert(part);
     }
@@ -495,16 +856,28 @@ pub fn import_package(
         // The property parts are covered by the same byte floor as every other
         // part, so they share the main pass's retention scope rather than
         // re-deciding it.
-        let mut reporter = Reporter::new(match config.mode {
+        let retention = match config.mode {
             ImportMode::Retention => SourceRetention::Snapshot,
             ImportMode::Semantic => SourceRetention::Regenerated,
-        });
-        if let Some(properties) = metadata::parse(&sources, config, &mut reporter)? {
+        };
+        let mut reporter = if recover {
+            Reporter::recovering(retention)
+        } else {
+            Reporter::new(retention)
+        };
+        let parsed = recover_part(
+            metadata::parse(&sources, config, &mut reporter),
+            &mut reporter,
+            PartRole::DocumentProperties,
+            || None,
+        )?;
+        if let Some(properties) = parsed {
             import.document = import
                 .document
                 .with_properties(properties)
                 .map_err(ImportError::Model)?;
         }
+        repairs.extend(reporter.take_repairs());
         let docprops = reporter.into_report(&mut import.ledger);
         import.report.merge(docprops);
     }
@@ -557,6 +930,11 @@ pub fn import_package(
         .report
         .validate(&import.ledger)
         .map_err(ImportError::Disposition)?;
+    // The driver's own repairs join the ones the parsers recorded through the
+    // reporter, so one report describes the whole open.
+    import
+        .recovery
+        .absorb(RecoveryReport::from_repairs(repairs));
 
     Ok(import)
 }
@@ -683,9 +1061,18 @@ fn build_retained_parts(
     // no longer names the id, so they survive as orphaned bytes (Tier-3
     // re-linking is out of scope).
     let mut relationships = Vec::new();
-    let root_rels = package
-        .part_relationships("")
-        .map_err(ImportError::Package)?;
+    // A damaged `_rels/.rels` costs the side-table the relationships that keep
+    // preserved parts reachable on write. That is a real loss, reported by the
+    // whole-part dispositions below, and it is not a reason to refuse: the
+    // document's own text does not travel through this index.
+    let root_rels = match package.part_relationships("") {
+        Ok(relationships) => relationships,
+        Err(error) if config.recover => {
+            let _ = error;
+            Vec::new()
+        }
+        Err(error) => return Err(ImportError::Package(error)),
+    };
     collect_referencing_rels(
         &root_rels,
         opaque::RelationshipOwner::Root,
@@ -861,10 +1248,26 @@ fn is_alt_chunk_rel(relationship_type: &str) -> bool {
 /// mark them consumed).
 fn discover_docprops(
     package: &mut DocxPackage<'_>,
+    recover: bool,
+    repairs: &mut Vec<Repair>,
 ) -> Result<(metadata::DocPropsSources, Vec<String>), ImportError> {
-    let root_relationships = package
-        .part_relationships("")
-        .map_err(ImportError::Package)?;
+    // A damaged `_rels/.rels` is read a second time here, for the property
+    // parts. Recovering falls back to the well-known names below rather than
+    // refusing: the relationship index is plumbing, and losing it must not cost
+    // the document its title and author, let alone its text.
+    let root_relationships = match package.part_relationships("") {
+        Ok(relationships) => relationships,
+        Err(error) if recover => {
+            let _ = error;
+            repairs.push(Repair::in_part(
+                RepairKind::PartUnparsable,
+                PartRole::DocumentProperties,
+                "_rels/.rels",
+            ));
+            Vec::new()
+        }
+        Err(error) => return Err(ImportError::Package(error)),
+    };
     let admitted: std::collections::BTreeSet<String> = package
         .entries()
         .iter()
@@ -883,17 +1286,21 @@ fn discover_docprops(
     let custom_part = resolve("/custom-properties", "docProps/custom.xml");
     let mut consumed = Vec::new();
     let mut sources = metadata::DocPropsSources::default();
-    if let Some(part) = core_part {
-        sources.core = Some(package.read_part(&part).map_err(ImportError::Package)?);
-        consumed.push(part);
-    }
-    if let Some(part) = app_part {
-        sources.app = Some(package.read_part(&part).map_err(ImportError::Package)?);
-        consumed.push(part);
-    }
-    if let Some(part) = custom_part {
-        sources.custom = Some(package.read_part(&part).map_err(ImportError::Package)?);
-        consumed.push(part);
+    for (part, slot) in [
+        (core_part, &mut sources.core),
+        (app_part, &mut sources.app),
+        (custom_part, &mut sources.custom),
+    ] {
+        if let Some(part) = part {
+            *slot = recover_read(
+                package,
+                &part,
+                PartRole::DocumentProperties,
+                recover,
+                repairs,
+            )?;
+            consumed.push(part);
+        }
     }
     Ok((sources, consumed))
 }
@@ -1254,14 +1661,36 @@ pub(crate) fn import_with_sources(
     let document_id = ids
         .next_id()
         .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
-    let mut reporter = Reporter::new(source_retention);
+    let mut reporter = if config.recover {
+        Reporter::recovering(source_retention)
+    } else {
+        Reporter::new(source_retention)
+    };
 
+    // Each definition part below is **independent**: a damaged `styles.xml` costs
+    // the document its named styles, not its text. On the strict path a parse
+    // failure refuses the whole import, which is the one outcome that is wrong
+    // for every one of them — the body is readable, and the reader would rather
+    // see it in default formatting than see nothing. Recovering therefore drops
+    // the damaged part, names it, and carries on; the body parse below is the
+    // only input whose loss is not survivable this way, and it has its own ladder
+    // in `import_package`.
     let styles = match styles_xml {
-        Some(xml) => styles::parse(xml, &mut ids, &mut reporter, config)?,
+        Some(xml) => recover_part(
+            styles::parse(xml, &mut ids, &mut reporter, config),
+            &mut reporter,
+            PartRole::Styles,
+            Styles::default,
+        )?,
         None => Styles::default(),
     };
     let numbering = match numbering_xml {
-        Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config, &styles)?,
+        Some(xml) => recover_part(
+            numbering::parse(xml, &mut ids, &mut reporter, config, &styles),
+            &mut reporter,
+            PartRole::Numbering,
+            Numbering::default,
+        )?,
         None => Numbering::default(),
     };
     // Resolve style-level `w:numPr` now that both parts are parsed: a paragraph
@@ -1272,15 +1701,30 @@ pub(crate) fn import_with_sources(
     let mut styles = styles;
     styles.resolve_numbering(&numbering, &mut reporter);
     let font_table = match font_table_xml {
-        Some(xml) => font_table::parse(xml, font_table_rels, config, &mut reporter)?,
+        Some(xml) => recover_part(
+            font_table::parse(xml, font_table_rels, config, &mut reporter),
+            &mut reporter,
+            PartRole::FontTable,
+            Vec::new,
+        )?,
         None => Vec::new(),
     };
     let theme = match theme_xml {
-        Some(xml) => theme::parse(xml, &mut reporter, config)?,
+        Some(xml) => recover_part(
+            theme::parse(xml, &mut reporter, config),
+            &mut reporter,
+            PartRole::Theme,
+            theme::ParsedTheme::default,
+        )?,
         None => theme::ParsedTheme::default(),
     };
     let settings = match settings_xml {
-        Some(xml) => settings::parse(xml, &mut reporter, config)?,
+        Some(xml) => recover_part(
+            settings::parse(xml, &mut reporter, config),
+            &mut reporter,
+            PartRole::Settings,
+            DocumentSettings::default,
+        )?,
         None => DocumentSettings::default(),
     };
     // Media is built into one shared table BEFORE any body so drawings resolve
@@ -1442,6 +1886,10 @@ pub(crate) fn import_with_sources(
             .with_background(color)
             .map_err(ImportError::Model)?;
     }
+    // Taken before `into_report` consumes the reporter: the repairs this pass
+    // recorded are a separate report from its findings, for the reason
+    // `crate::recovery` states.
+    let recovery = RecoveryReport::from_repairs(reporter.take_repairs());
     let report = reporter.into_report(&mut ledger);
     // `35` requires an illegal disposition to fail the import rather than be
     // reported. The nine legal axis pairs are unrepresentable by construction, so
@@ -1452,6 +1900,7 @@ pub(crate) fn import_with_sources(
         document,
         report,
         ledger,
+        recovery,
         retained_source,
         // The XML-only path has no package, so no opaque parts to preserve;
         // `import_package` populates the side-table when a package is available.

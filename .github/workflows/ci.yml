@@ -151,6 +151,7 @@ jobs:
         run: |
           cargo +nightly-2026-07-20 fuzz build bounded_package
           cargo +nightly-2026-07-20 fuzz build docx_package
+          cargo +nightly-2026-07-20 fuzz build docx_recovering_import
           cargo +nightly-2026-07-20 fuzz build odt_package
           cargo +nightly-2026-07-20 fuzz build odt_content
           cargo +nightly-2026-07-20 fuzz build rtf_import

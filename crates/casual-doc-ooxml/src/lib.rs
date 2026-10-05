@@ -10,6 +10,7 @@ mod discovery;
 mod error;
 mod package;
 mod path;
+mod recover;
 mod relationships;
 
 #[cfg(test)]
@@ -18,4 +19,6 @@ mod tests;
 pub use casual_doc_package::{CancellationToken, PackageEntry, PackageLimits, PartCompression};
 pub use error::PackageError;
 pub use package::{DocxPackage, PartManifestEntry, SourcePackageSnapshot};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use recover::{PackageRepair, repair_archive};
 pub use relationships::{DocumentRelationship, TargetMode};
