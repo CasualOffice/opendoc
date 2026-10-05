@@ -44325,11 +44325,15 @@ mod tests {
         let node = node.to_string();
         let mut offset = 0_u32;
         let tick = |d: &mut WasmDocument, offset: &mut u32| {
-            casual_doc_edit::reset_block_visits();
+            // The honest total, not `casual_doc_edit::block_visits` alone: this
+            // crate's own walks charge `walked_block_visits`, and reading one half
+            // is how the guard below this one stayed green through a keystroke
+            // that walked the whole document.
+            reset_position_block_visits();
             d.type_text(&node, *offset, &node, *offset, "x".to_owned(), 7)
                 .expect("typing tick");
             *offset += 1;
-            casual_doc_edit::block_visits()
+            position_block_visits()
         };
 
         let first = tick(&mut d, &mut offset);
@@ -44357,6 +44361,33 @@ mod tests {
     /// the new choke point, which is `documentOutline`'s defect (`105` CQ) moved
     /// into the mutation path, and which a millisecond threshold could not tell
     /// from a slow constant.
+    ///
+    /// # It read the wrong meter, and that is measured
+    ///
+    /// This guard used to read `casual_doc_edit::block_visits` on its own, and
+    /// **this crate charged nothing to it** — so `paragraph_text`'s whole-surface
+    /// walk and `WasmDocument::order_endpoints`' whole-document ordering were both
+    /// free as far as this assertion could see. It now reads
+    /// [`position_block_visits`], the sum.
+    ///
+    /// **What that fixes, and what it does not.** Deleting the same-paragraph fast
+    /// path in `WasmDocument::order_endpoints` puts a full document walk back on
+    /// every printable keystroke. Measured with the probe, the honest total goes
+    /// from 400/800 blocks at n=400/800 to 800/1600 — the walk is now *visible*,
+    /// where `walked_block_visits` had read 0. But this guard's bound is a ratio
+    /// across n and 2n, and a linear walk keeps that ratio at 2, so it still
+    /// passes on that mutation (measured: `5 passed; 2 failed`, the two failures
+    /// being the equality guards below). **A ratio bound cannot hold an O(1)
+    /// property** — that is what
+    /// `a_keystroke_does_not_examine_the_document` is for, and why it asserts
+    /// equality rather than a ratio.
+    ///
+    /// What the rewire does buy is the bug class this test actually claims: a
+    /// *quadratic* walk inside this crate. A whole-document traversal placed
+    /// inside a loop over paragraphs measures 400/800 on the old half-meter —
+    /// ratio 2, green, completely blind — and 160,800/641,600 on the honest total,
+    /// ratio 3.99, which reddens this assertion. Same mutation, opposite verdict;
+    /// that is the blindness, stated as a number.
     #[test]
     fn a_keystroke_is_linear_in_document_length_after_the_transaction_migration() {
         let small_n = 400;
@@ -44365,10 +44396,10 @@ mod tests {
         let type_once = |d: &mut WasmDocument| {
             let (node, _len) = d.ordered_paragraphs()[0];
             let node = node.to_string();
-            casual_doc_edit::reset_block_visits();
+            reset_position_block_visits();
             d.type_text(&node, 0, &node, 0, "x".to_owned(), 11)
                 .expect("typing tick");
-            casual_doc_edit::block_visits()
+            position_block_visits()
         };
         let small = type_once(&mut small_doc);
         let large = type_once(&mut large_doc);
