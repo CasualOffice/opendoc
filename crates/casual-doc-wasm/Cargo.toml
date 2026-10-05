@@ -24,9 +24,16 @@ web-host-fonts = ["casual-doc-layout/external-web-fonts"]
 
 # Modern rustc emits bulk-memory / sign-ext / nontrapping-fptoint instructions by
 # default; `wasm-opt` must be told to accept them, or validation fails. These
-# flags keep the -O size pass working with the version wasm-pack ships.
+# flags keep the size pass working with the version wasm-pack ships.
+#
+# `-Oz`, not `-O`. Binaryen's bare `-O` is optimize-level 2 / shrink-level 1,
+# which is exactly `-Os` — measured here, `-O` and `-Os` produced byte-identical
+# 26,063,048 B modules. `-Oz` is shrink-level 2 and is the only one of the three
+# that is actually a size pass. On its own it is small (25,800,405 B, -1.0%);
+# paired with `webapp/build.sh`'s `opt-level = z` it takes the module from
+# 22,326,146 B to 20,903,695 B. Cheap, too: 27 s on the 27 MB pre-opt module.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ['-O', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
+wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
 
 [dependencies]
 casual-doc-diff.workspace = true

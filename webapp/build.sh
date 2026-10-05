@@ -29,6 +29,48 @@ repo="$(cd "$here/.." && pwd)"
 #      A bounded retry is the final safety net so any lost race self-heals.
 export CARGO_TARGET_DIR="$repo/target"
 
+# --- Size, for the browser only -------------------------------------------
+# `wasm-pack build` already builds the `release` profile (it prints "Finished
+# `release` profile [optimized]"), and the workspace profile sets
+# `codegen-units = 1`, `lto = "thin"`, `strip = "symbols"` — but no `opt-level`,
+# so it defaults to 3: optimise for SPEED. For a native binary that is right.
+# For a 26 MB WebAssembly module it is not: the browser must download AND
+# compile every byte of the code section before the editor is interactive, and
+# `opt-level = 3`'s inlining and loop unrolling buy throughput by emitting more
+# code.
+#
+# Measured on this tree (final post-`wasm-opt` artifact, `web-host-fonts` on):
+#
+#   rust opt-level 3, wasm-opt -O   26,063,048 B   code 12,376,042   baseline
+#   rust opt-level s, wasm-opt -Oz  22,130,417 B   code  8,492,515   -15.1%
+#   rust opt-level z, wasm-opt -Oz  20,903,695 B   code  7,232,706   -19.8%
+#
+# so the code section falls 41.6% and the whole module 19.8% (gzip 11,521,748 →
+# 10,228,609 B, -11.2%). The remaining 13.6 MB is the DATA section, which no
+# optimisation level touches — see the note at the end of this block.
+#
+# This is set HERE rather than in `[profile.release]` on purpose. The same
+# profile builds the native engine, the `opendoc-benchmark` smoke gate
+# (`cargo run -p opendoc-benchmark --release`, which asserts
+# `.buildProfile == "release"`) and the headless render tools, and those want
+# speed, not size. A `[profile.release] opt-level = "z"` would silently slow
+# every native consumer to shrink a browser download. `build.sh` is the single
+# entry point both CI jobs that produce `webapp/pkg` use (ci.yml browser-smoke
+# and pages.yml), so scoping the override to this script keeps the trade where
+# the trade applies. `CARGO_PROFILE_<name>_<key>` is cargo's documented
+# per-invocation profile override, so this needs no custom profile and no
+# wasm-pack version that supports `--profile`.
+#
+# Rejected after measuring, so nobody re-tries them:
+#   * `lto = "fat"`      — 20,893,675 B, 10,020 B (0.05%) smaller than thin, for
+#                          a build that went from 56 s to 7 m 32 s.
+#   * `panic = "abort"`  — 20,902,646 B, 1,049 B smaller. `wasm32-unknown-unknown`
+#                          already aborts; there are no unwind tables to drop.
+#                          (Nothing on the wasm path calls `catch_unwind`; the
+#                          only caller is the native `opendoc-render` tool, which
+#                          is why this must never become a profile-wide setting.)
+export CARGO_PROFILE_RELEASE_OPT_LEVEL=z
+
 case "$(uname -s)" in
   Darwin) wasm_pack_cache="$HOME/Library/Caches/.wasm-pack" ;;
   *)      wasm_pack_cache="${XDG_CACHE_HOME:-$HOME/.cache}/.wasm-pack" ;;
@@ -46,6 +88,25 @@ run_wasm_pack() {
   # embedded copy was ~2 MB every visitor downloaded and the engine then replaced.
   # The feature has existed since the font-provisioning work; this build simply
   # never asked for it.
+  #
+  # It only drops ROBOTO. Measured on the artifact this script produces, the
+  # module's 13.6 MB data section still carries 9,317,088 B of font faces that
+  # no `opt-level` can touch, because they are `include_bytes!` asset bytes in
+  # `casual-doc-layout/src/fonts.rs` with no `cfg` on them:
+  #
+  #   Liberation Sans/Serif/Mono (12 faces)  4,359,164 B
+  #   Carlito (4 faces)                      2,733,784 B
+  #   NotoEmoji-Variable                     1,982,596 B
+  #   Caladea (4 faces)                        241,544 B
+  #
+  # That is 36% of the whole download and the single largest item in it — larger
+  # than the entire code section after this script's size settings. Extending
+  # `web-host-fonts` to them is NOT a build-script change: each is a
+  # metric-compatible substitute the engine relies on offline (Carlito for
+  # Calibri, Liberation for Arial/Times/Courier, Noto Emoji so an emoji is never
+  # tofu), so dropping the bytes requires the host to register equivalents first
+  # — `webapp/src/web_fonts.mjs` currently fetches Roboto, Noto Sans and Noto
+  # Serif and none of these four families. Owner call, font-provisioning lane.
   wasm-pack build "$repo/crates/casual-doc-wasm" \
     --target web \
     --out-dir "$here/pkg" \
