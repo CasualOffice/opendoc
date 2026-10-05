@@ -193,6 +193,38 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
    *  same face. Cleared on failure so a genuine network error is retried. */
   const inFlight = new Set();
 
+  /**
+   * The engine, if it is still the same one `started` was taken from.
+   *
+   * EVERY engine call in this module happens after an `await` on the network,
+   * and the document can be replaced while those bytes are in flight — open a
+   * second `.docx` from the picker, or drop one onto the viewport, while the
+   * first is still fetching its faces. `main.js` FREES the old `WasmDocument`
+   * when it opens the next one, so a handle captured before the await is a freed
+   * pointer and `registerFonts` / `registerFallbackFont` on it throws
+   * `null pointer passed to rust`: a crash in the console, and a provisioning
+   * pass that stops halfway with its buckets still marked in flight.
+   *
+   * Measured: `caret-alignment.spec.mjs` opens a second document while the first
+   * is provisioning, and failed 5 of 5 with that error — against 5 of 5 passing
+   * on `origin/main`, where the provisioning read the module-global `doc` fresh
+   * at each use and so could only ever be wrong about WHICH document, never
+   * about whether it still existed.
+   *
+   * `main.js` already states this rule in its `.then` — "a newer document may
+   * have been opened while these bytes were in flight; its own provisioning owns
+   * the screen, so this one must not repaint it" — but that check runs AFTER
+   * this module has touched the engine. It belongs here, before the call.
+   *
+   * @returns the live engine, or `null` when this pass has been superseded and
+   *   must abandon: the newer document runs its own pass, so there is nothing to
+   *   salvage and nothing to report.
+   */
+  function stillCurrent(started) {
+    const now = engine();
+    return now && now === started ? now : null;
+  }
+
   /** The buckets this document needs. Derived from `missingCoverage()`, which is
    *  CUMULATIVE — `FontRegistry::note_missing` inserts into a set that is never
    *  cleared, and its doc comment says "so far". So it answers "what has ever
@@ -233,6 +265,11 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
       const settled = await Promise.allSettled(
         keys.map((key) => fetchBytes(SCRIPT_FALLBACK_FONTS[key].url)),
       );
+      // The document may have been replaced and FREED while those bytes were in
+      // flight. The fetched blobs stay in the byte cache deliberately: the newer
+      // document's own pass will want the same buckets and will find them there.
+      const live = stillCurrent(doc);
+      if (!live) return [];
       const failed = [];
       for (const [index, result] of settled.entries()) {
         const key = keys[index];
@@ -245,7 +282,7 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
         // Registers + re-paginates. WASM holds the authoritative copy after
         // this, so the JS blob is released rather than double-held for the
         // tab's life.
-        doc.registerFallbackFont(result.value, scripts);
+        live.registerFallbackFont(result.value, scripts);
         provisioned.add(key);
         releaseBytes(url);
       }
@@ -272,10 +309,17 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
       const named = await Promise.allSettled(
         NAMED_WEB_FONT_FACES.map((face) => fetchBytes(face.url)),
       );
+      // The document may have been replaced and FREED while those ~9 MB were in
+      // flight; the newer one runs its own pass, so this one abandons rather
+      // than registering into a handle that no longer exists. The fetched blobs
+      // stay in the byte cache deliberately: the newer pass wants the same
+      // faces and will find them there.
+      const live = stillCurrent(doc);
+      if (!live) return null;
       const blobs = named.filter((r) => r.status === "fulfilled").map((r) => r.value);
       if (blobs.length > 0) {
         const packed = packFontBytes(blobs);
-        doc.registerFonts(packed.bytes, packed.lengths);
+        live.registerFonts(packed.bytes, packed.lengths);
       }
       // The WASM shaper holds the authoritative copy now, so release the JS
       // byte cache (~9 MB) rather than double-holding it for the tab's life.

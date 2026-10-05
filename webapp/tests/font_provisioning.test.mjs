@@ -147,18 +147,47 @@ function harness(engine, fetcher) {
   const released = [];
   const progressLines = [];
   const logged = [];
+  // A BOX, not the value: every engine call in the module happens after an await
+  // on the network, and the host can replace the document while those bytes are
+  // in flight. A harness that could not swap the engine mid-flight could not
+  // express the one failure that crashes the tab (see
+  // `a document replaced mid-fetch…` below).
+  const held = { engine };
   return {
     released,
     progressLines,
     logged,
+    /** Stands in for `main.js` opening a second document: the old
+     *  `WasmDocument` is freed and a new one takes its place. */
+    replaceEngine(next) {
+      held.engine = next;
+    },
     provisioning: createFontProvisioning({
-      engine: () => engine,
+      engine: () => held.engine,
       fetchBytes: fetcher.fetchBytes,
       releaseBytes: (url) => released.push(url),
       progress: (text) => progressLines.push(text),
       log: (message) => logged.push(message),
     }),
   };
+}
+
+/** Frees `engine` the way `main.js` frees a `WasmDocument` it is replacing:
+ *  every method then throws wasm-bindgen's own error, so a pass that still
+ *  touches it fails here, by name, instead of in a browser six specs later.
+ *
+ *  Modelled this way round on purpose. After a second document opens, `engine()`
+ *  answers with the NEW document, which is alive — the handle that is dead is
+ *  the one the in-flight pass captured before its await. A fake that made
+ *  `engine()` itself throw would be testing something that cannot happen. */
+function freeEngine(engine) {
+  const die = () => {
+    throw new Error("null pointer passed to rust");
+  };
+  engine.missingCoverage = die;
+  engine.registerFonts = die;
+  engine.registerFallbackFont = die;
+  return engine;
 }
 
 test("the named faces go in as ONE batch and one repagination", async () => {
@@ -283,4 +312,78 @@ test("progress retires its own line when the pass is done", async () => {
     "",
     "a finished background pass must clear the line it took, or it reads as still working",
   );
+});
+
+// ---------------------------------------------------------------------------
+// The document can be replaced while the bytes are in flight
+// ---------------------------------------------------------------------------
+
+test("a document replaced mid-fetch is abandoned, not written to after it was freed", async () => {
+  // THE CRASH. `main.js` FREES the old `WasmDocument` when it opens the next one
+  // — drop a second .docx onto the viewport, or pick one from the file dialog
+  // while the first is still fetching its faces — so an engine handle captured
+  // before the network await is a freed pointer, and `registerFonts` on it
+  // throws `null pointer passed to rust`.
+  //
+  // Measured: `caret-alignment.spec.mjs`, which opens a second document while
+  // the first is provisioning, failed 5 of 5 with that error against 5 of 5
+  // passing on `origin/main` — where provisioning read the module-global `doc`
+  // fresh at each use and so could only ever be wrong about WHICH document,
+  // never about whether it still existed.
+  const first = fakeEngine([0x3042]); // kana: one fallback bucket to fetch
+  const fetcher = fakeFetcher({ hold: true });
+  const h = harness(first, fetcher);
+
+  const pass = h.provisioning.provisionOnOpen("first.docx");
+  // The fetches are latched open, so this is exactly the window a second open
+  // lands in: a NEW live document takes over, and the one this pass captured is
+  // freed. Every method on the freed one now throws, so touching it at all fails
+  // this test by name.
+  h.replaceEngine(fakeEngine());
+  freeEngine(first);
+  fetcher.release();
+  const loss = await pass;
+
+  assert.equal(
+    loss,
+    null,
+    "a superseded pass must report NO loss: the newer document runs its own, and a " +
+      "refusal about a document nobody is looking at is worse than silence",
+  );
+  assert.deepEqual(first.namedBatches, [], "the freed document was written to");
+  assert.deepEqual(first.fallbacks, [], "the freed document was written to");
+});
+
+test("an edit-time pass is abandoned the same way", async () => {
+  // The other entry point, and the one that runs most often — coverage is
+  // re-checked after every edit — so a document replaced during one of those is
+  // the same hazard with more chances to happen.
+  const first = fakeEngine([0x3042]); // kana: one fallback bucket to fetch
+  const fetcher = fakeFetcher({ hold: true });
+  const h = harness(first, fetcher);
+
+  const pass = h.provisioning.provisionForEdit("this edit");
+  h.replaceEngine(fakeEngine());
+  freeEngine(first);
+  fetcher.release();
+  const { fetched, report } = await pass;
+
+  assert.equal(fetched, false, "nothing registered, so there is nothing to re-render for");
+  assert.equal(report, null);
+  assert.deepEqual(first.fallbacks, []);
+});
+
+test("a document that is still the same one is written to as before", async () => {
+  // The precondition, and the reason the two guards above are not satisfied by
+  // simply never registering anything: the ordinary case must still work.
+  const engine = fakeEngine([0x3042]); // kana: one fallback bucket to fetch
+  const fetcher = fakeFetcher({ hold: true });
+  const h = harness(engine, fetcher);
+
+  const pass = h.provisioning.provisionForEdit("this edit");
+  fetcher.release();
+  const { fetched } = await pass;
+
+  assert.equal(fetched, true);
+  assert.equal(engine.fallbacks.length, 1, "the live document must still be registered into");
 });
