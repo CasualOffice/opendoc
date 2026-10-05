@@ -3123,7 +3123,16 @@
              below 620px, and a `display: none` subtree is not in the accessibility
              tree, so the editor went silent and inaudible at the same width. They
              now sit at body level, beside the toast, next to the closing script. -->
-        <span id="status" class="status">Loading engine…</span>
+        <!-- `data-status-progress="1"` says this placeholder is BACKGROUND
+             PROGRESS and not a reader's message, which is what lets the next
+             progress line replace it. `status_channel.mjs`'s `progress()` paints
+             only onto an empty line or onto one it wrote itself — so without
+             this declaration the pre-boot text, which exists before any script
+             runs and so cannot be stamped by one, blocked every open-path line
+             behind it and then sat on the footer forever. The attribute is the
+             honest fix rather than a special case in the channel: the markup
+             knows what kind of line it is. -->
+        <span id="status" class="status" data-status-progress="1">Loading engine…</span>
         <!-- data-status-priority drives the status bar's progressive
              disclosure (see "Status-bar progressive disclosure" in style.css):
              higher numbers are shed first as the window narrows, mirroring how

@@ -2895,7 +2895,7 @@ async function boot() {
     // takes the whole editor down: nothing after it runs, so the document never
     // opens at all.
     measurement.reflect();
-    setStatus("Ready — open a .docx, .odt, .rtf, .json, or .txt");
+    statusChannel.progress("Ready — open a .docx, .odt, .rtf, .json, or .txt");
     fileEl.disabled = false;
     if (openBtn) openBtn.disabled = false;
   } catch (err) {
@@ -3015,7 +3015,7 @@ async function newBlankDocument() {
 
 async function loadStartupDocument(url, name, onOpened, onRendered) {
   try {
-    setStatus("Loading the sample document…");
+    statusChannel.progress("Loading the sample document…"); // the REFUSAL below is not
     const response = await fetch(url);
     if (!response.ok) throw new Error(`sample request returned ${response.status}`);
     await openBytes(new Uint8Array(await response.arrayBuffer()), name, onOpened, onRendered);
@@ -3027,7 +3027,9 @@ async function loadStartupDocument(url, name, onOpened, onRendered) {
 
 async function openBytes(bytes, name, onOpened, onRendered) {
   try {
-    setStatus(`Opening ${name}…`);
+    // Progress, not a reader's message — one of the five open-path lines that
+    // retire each other (`tests/e2e/status-line-ownership.spec.mjs`).
+    statusChannel.progress(`Opening ${name}…`);
     // Parse BEFORE anything on screen is touched. Freeing the open document
     // first and parsing second meant any file the engine rejected — a corrupt
     // .docx, an unsupported .odt, the wrong file picked by mistake — destroyed
@@ -3553,14 +3555,9 @@ async function renderAll() {
   const sizes = [];
   const renderingStatus =
     `Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`;
-  // A BACKGROUND line, not the reader's: nobody asked to be told the renderer is
-  // working, and a re-render happens on a zoom, a reflow and the font upgrade.
-  // Through `setStatus` it took the live region, toasted at phone width, reported
-  // itself to an embedding host as editor status, and — the part a reader feels —
-  // wiped the confirmation or the refusal they had just earned. `progress`
-  // refuses to paint over a line the reader owns (`status_policy.mjs`
-  // `backgroundProgressMayPaint`), so the clear below still only ever reclaims a
-  // line this render actually wrote.
+  // BACKGROUND: through `setStatus` a re-render (zoom, reflow, font upgrade) wiped
+  // the confirmation or refusal the reader had just earned. `progress` will not
+  // paint over a line the reader owns, so the clear below still only reclaims ours.
   statusChannel.progress(renderingStatus);
 
   for (let i = 0; i < count; i++) {
@@ -16056,7 +16053,10 @@ const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
   attr: "data-chrome-mode",
   onSelect: (mode) => setChromeMode(mode),
 });
-setChromeMode(chromeMode, { persist: false });
+// Silently, for the reason the rotation below gives: nobody asked. This BOOT call
+// restores a remembered preference and was announcing "Ribbon toolbar" into the
+// status line and the live region on every load — a change that did not happen.
+setChromeMode(chromeMode, { persist: false, announce: false });
 // Silently: nobody asked to cross the rung, so a toast on every rotation would
 // be a notification about the window rather than about the document.
 phoneChrome.onPhoneChange(() => setChromeMode(chromeMode, { persist: false, announce: false }));

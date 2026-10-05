@@ -246,7 +246,127 @@ test("every caret-movement row in the reference is a chord the editor really han
       last,
       `${row.label} (standard, second key)`,
     );
+    // The SECOND pair of macOS keys, where a row advertises one. Driven here
+    // rather than taken on trust, because an advertised chord nothing answers is
+    // the two-tables-drift this table exists to prevent — and a row that grows a
+    // display string without growing its events is exactly how that returns.
+    if (!row.appleAlso) continue;
+    assert.equal(
+      navigationDirection({ ...blank, ...row.appleAlso[0] }, APPLE_PLATFORM),
+      first,
+      `${row.label} (Apple, second binding, first key)`,
+    );
+    assert.equal(
+      navigationDirection({ ...blank, ...row.appleAlso[1] }, APPLE_PLATFORM),
+      last,
+      `${row.label} (Apple, second binding, second key)`,
+    );
   }
+});
+
+test("every key the reference ADVERTISES on Apple is a key it really handles", () => {
+  // The other direction of the same rule, and the one a display-only edit
+  // escapes: count the key names in the `apple` string and require the row to
+  // declare an event for each. A row reading "⌘↑  ⌘↓  ⌥↑  ⌥↓" with only one pair
+  // of events is a row advertising two chords nothing has been asked about.
+  for (const row of NAVIGATION_SHORTCUTS) {
+    const advertised = row.apple.trim().split(/\s{2,}/).length;
+    const driven = 2 + (row.appleAlso ? row.appleAlso.length : 0);
+    assert.equal(
+      advertised,
+      driven,
+      `"${row.label}" advertises ${advertised} Apple keys and drives ${driven}`,
+    );
+  }
+});
+
+test("macOS's own Control caret keys move the caret instead of doing nothing", () => {
+  // NSResponder's standard key bindings, which every native macOS text surface
+  // has — and which Google Docs therefore has for free, while this editor paints
+  // its own caret and had six dead keys.
+  const cases = [
+    ["a", "lineStart"],
+    ["e", "lineEnd"],
+    ["b", "left"],
+    ["f", "right"],
+    ["p", "up"],
+    ["n", "down"],
+  ];
+  for (const [letter, direction] of cases) {
+    assert.equal(
+      navigationDirection(key(letter, { ctrlKey: true }), APPLE_PLATFORM),
+      direction,
+      `⌃${letter.toUpperCase()}`,
+    );
+    // Upper case, because Shift is how a selection is extended and the browser
+    // reports the shifted letter.
+    assert.equal(
+      navigationDirection(key(letter.toUpperCase(), { ctrlKey: true, shiftKey: true }), APPLE_PLATFORM),
+      direction,
+      `⌃⇧${letter.toUpperCase()}`,
+    );
+  }
+});
+
+test("the Control caret keys are macOS only and claim nothing else", () => {
+  // Not on Windows or Linux: Ctrl+A is Select All there, and Ctrl+B is Bold.
+  // Taking them would have replaced two working commands with a caret move.
+  for (const letter of ["a", "e", "b", "f", "p", "n"]) {
+    assert.equal(
+      navigationDirection(key(letter, { ctrlKey: true }), STANDARD_PLATFORM),
+      null,
+      `Ctrl+${letter.toUpperCase()} must stay a command on the standard keymap`,
+    );
+  }
+  // A letter with no Control is text, and a letter with Control AND Command or
+  // Option belongs to the chord table, not to caret movement.
+  assert.equal(navigationDirection(key("a"), APPLE_PLATFORM), null);
+  assert.equal(
+    navigationDirection(key("a", { ctrlKey: true, metaKey: true }), APPLE_PLATFORM),
+    null,
+  );
+  assert.equal(
+    navigationDirection(key("a", { ctrlKey: true, altKey: true }), APPLE_PLATFORM),
+    null,
+  );
+  // And a letter this editor has not claimed is still nothing, so ⌃K does not
+  // quietly become a movement: it is an EDIT and is deliberately unbound.
+  assert.equal(navigationDirection(key("k", { ctrlKey: true }), APPLE_PLATFORM), null);
+  assert.equal(navigationDirection(key("d", { ctrlKey: true }), APPLE_PLATFORM), null);
+});
+
+test("macOS Option+Up/Down moves by paragraph, and leaves ⌥⇧ to the table chords", () => {
+  // `moveToBeginningOfParagraph:` / `moveToEndOfParagraph:`. Dead before this:
+  // the arrow branch let Option through the modifier guard and then discarded it.
+  assert.equal(
+    navigationDirection(key("ArrowUp", { altKey: true }), APPLE_PLATFORM),
+    "paragraphUp",
+  );
+  assert.equal(
+    navigationDirection(key("ArrowDown", { altKey: true }), APPLE_PLATFORM),
+    "paragraphDown",
+  );
+  // Word for Mac's own pair keeps working beside it.
+  assert.equal(
+    navigationDirection(key("ArrowUp", { metaKey: true }), APPLE_PLATFORM),
+    "paragraphUp",
+  );
+  // A KNOWING difference from macOS, where ⌥⇧↑ extends to the paragraph start:
+  // `keymap.mjs` already claims ⌥⇧↑/↓ for `table.row.shrink`/`grow`, and
+  // stealing a shipped chord back to add an unshipped one is not a trade.
+  assert.equal(
+    navigationDirection(key("ArrowUp", { altKey: true, shiftKey: true }), APPLE_PLATFORM),
+    null,
+  );
+  assert.equal(
+    navigationDirection(key("ArrowDown", { altKey: true, shiftKey: true }), APPLE_PLATFORM),
+    null,
+  );
+  // Unchanged on the standard keymap, where Alt+Arrow is the browser's history.
+  assert.equal(
+    navigationDirection(key("ArrowUp", { altKey: true }), STANDARD_PLATFORM),
+    null,
+  );
 });
 
 test("the reference renders the platform's own modifier, not the other one's", () => {

@@ -24,6 +24,36 @@ function hasUnsupportedModifier(event, platform) {
     : event.metaKey || event.altKey;
 }
 
+/**
+ * macOS's own caret keys, which this editor has to bind because it paints its
+ * own caret.
+ *
+ * `⌃A`, `⌃E`, `⌃B`, `⌃F`, `⌃P` and `⌃N` are not an emacs affectation: they are
+ * NSResponder's standard key bindings (`moveToBeginningOfLine:`,
+ * `moveToEndOfLine:`, `moveBackward:`, `moveForward:`, `moveUp:`, `moveDown:`),
+ * so they work in every native macOS text surface, in Safari's and Chrome's own
+ * text fields, and — because a `contenteditable` IS a native text surface — in
+ * Google Docs. They did nothing here, because this editor owns the caret and the
+ * hidden input proxy never sees the keystroke as text. Six dead keys on one
+ * platform.
+ *
+ * Shift extends, matching Cocoa's `…AndModifySelection:` variants; the caller
+ * applies that, as it does for every other direction.
+ *
+ * DELIBERATELY NOT BOUND: `⌃D` (delete forward), `⌃K` (kill to end of line),
+ * `⌃H` (delete backward) and `⌃T` (transpose). Those are EDITS rather than
+ * movement, and `⌃K` without a kill ring that `⌃Y` can paste back would be half
+ * a feature wearing the name of a whole one.
+ */
+const APPLE_CONTROL_CARET = new Map([
+  ["a", "lineStart"],
+  ["e", "lineEnd"],
+  ["b", "left"],
+  ["f", "right"],
+  ["p", "up"],
+  ["n", "down"],
+]);
+
 /** Maps a physical keyboard event to an engine navigation intent.
  *
  * Shift is deliberately ignored here: the caller applies it as selection
@@ -32,6 +62,13 @@ function hasUnsupportedModifier(event, platform) {
  */
 export function navigationDirection(event, platform = keyboardPlatform()) {
   const apple = platform === APPLE_PLATFORM;
+  // Control plus a letter, on Apple only, and only with no other modifier: ⌃ is
+  // a distinct physical key there, so this cannot collide with the `⌘`-family
+  // chords, and `keymap.mjs` claims exactly one literal-Control chord (`⌃Space`,
+  // declared `STANDARD_PLATFORM`).
+  if (apple && event.ctrlKey && !event.metaKey && !event.altKey) {
+    return APPLE_CONTROL_CARET.get((event.key ?? "").toLowerCase()) ?? null;
+  }
   switch (event.key) {
     case "ArrowLeft":
       if (hasUnsupportedModifier(event, platform)) return null;
@@ -45,13 +82,26 @@ export function navigationDirection(event, platform = keyboardPlatform()) {
       if (apple && event.altKey) return "wordRight";
       if (!apple && event.ctrlKey) return "wordRight";
       return "right";
+    // ⌥↑ / ⌥↓ are macOS's `moveToBeginningOfParagraph:` /
+    // `moveToEndOfParagraph:` and were DEAD here: `hasUnsupportedModifier` let
+    // them through and then `|| event.altKey` threw them away, so a Mac user
+    // pressing the OS's own paragraph keys got nothing at all. Word for Mac's
+    // ⌘↑/⌘↓ keep working alongside them, which is what both platforms expect.
+    //
+    // The SHIFT variants are deliberately NOT taken, and this is a knowing
+    // difference from macOS (where ⌥⇧↑ extends to the paragraph start):
+    // `keymap.mjs:193-196` already claims ⌥⇧↑/↓ for `table.row.shrink`/`grow`,
+    // that claim was measured free when it was made, and silently stealing it
+    // back would break a shipped chord to add an unshipped one.
     case "ArrowUp":
-      if (hasUnsupportedModifier(event, platform) || event.altKey) return null;
+      if (hasUnsupportedModifier(event, platform)) return null;
+      if (event.altKey) return apple && !event.shiftKey ? "paragraphUp" : null;
       if ((apple && event.metaKey) || (!apple && event.ctrlKey))
         return "paragraphUp";
       return "up";
     case "ArrowDown":
-      if (hasUnsupportedModifier(event, platform) || event.altKey) return null;
+      if (hasUnsupportedModifier(event, platform)) return null;
+      if (event.altKey) return apple && !event.shiftKey ? "paragraphDown" : null;
       if ((apple && event.metaKey) || (!apple && event.ctrlKey))
         return "paragraphDown";
       return "down";
@@ -257,12 +307,19 @@ export function formatShortcut(shortcut, platform = keyboardPlatform()) {
 // per platform (Apple moves by word on Option, everyone else on Control), and
 // `keyboard.test.mjs` drives each row through `navigationDirection` so a row
 // that stops being true turns red instead of quietly lying in the dialog.
+// `appleAlso` is a SECOND pair of macOS keys for the same movement, and it is
+// declared here so that the guard drives it: everything this table advertises is
+// a chord `navigationDirection` really answers, which is the whole reason the
+// table exists (`109` UX-006/UX-007 is two tables that drifted). The second pair
+// is always macOS's own key binding for the movement, which a native text
+// surface — and therefore Google Docs — has for free and this editor had to
+// bind, because it paints its own caret.
 export const NAVIGATION_SHORTCUTS = [
-  { apple: "←  →", standard: "←  →", label: "Move by character", direction: ["left", "right"], event: { key: "ArrowLeft" }, second: { key: "ArrowRight" } },
+  { apple: "←  →  ⌃B  ⌃F", standard: "←  →", label: "Move by character", direction: ["left", "right"], event: { key: "ArrowLeft" }, second: { key: "ArrowRight" }, appleAlso: [{ key: "b", ctrlKey: true }, { key: "f", ctrlKey: true }] },
   { apple: "⌥←  ⌥→", standard: "Ctrl+←  Ctrl+→", label: "Move by word", direction: ["wordLeft", "wordRight"], event: { key: "ArrowLeft", altKey: true }, second: { key: "ArrowRight", altKey: true }, standardEvent: { key: "ArrowLeft", ctrlKey: true }, standardSecond: { key: "ArrowRight", ctrlKey: true } },
-  { apple: "↑  ↓", standard: "↑  ↓", label: "Move by line", direction: ["up", "down"], event: { key: "ArrowUp" }, second: { key: "ArrowDown" } },
-  { apple: "⌘↑  ⌘↓", standard: "Ctrl+↑  Ctrl+↓", label: "Move by paragraph", direction: ["paragraphUp", "paragraphDown"], event: { key: "ArrowUp", metaKey: true }, second: { key: "ArrowDown", metaKey: true }, standardEvent: { key: "ArrowUp", ctrlKey: true }, standardSecond: { key: "ArrowDown", ctrlKey: true } },
-  { apple: "⌘←  ⌘→", standard: "Home  End", label: "Start or end of line", direction: ["lineStart", "lineEnd"], event: { key: "ArrowLeft", metaKey: true }, second: { key: "ArrowRight", metaKey: true }, standardEvent: { key: "Home" }, standardSecond: { key: "End" } },
+  { apple: "↑  ↓  ⌃P  ⌃N", standard: "↑  ↓", label: "Move by line", direction: ["up", "down"], event: { key: "ArrowUp" }, second: { key: "ArrowDown" }, appleAlso: [{ key: "p", ctrlKey: true }, { key: "n", ctrlKey: true }] },
+  { apple: "⌘↑  ⌘↓  ⌥↑  ⌥↓", standard: "Ctrl+↑  Ctrl+↓", label: "Move by paragraph", direction: ["paragraphUp", "paragraphDown"], event: { key: "ArrowUp", metaKey: true }, second: { key: "ArrowDown", metaKey: true }, standardEvent: { key: "ArrowUp", ctrlKey: true }, standardSecond: { key: "ArrowDown", ctrlKey: true }, appleAlso: [{ key: "ArrowUp", altKey: true }, { key: "ArrowDown", altKey: true }] },
+  { apple: "⌘←  ⌘→  ⌃A  ⌃E", standard: "Home  End", label: "Start or end of line", direction: ["lineStart", "lineEnd"], event: { key: "ArrowLeft", metaKey: true }, second: { key: "ArrowRight", metaKey: true }, standardEvent: { key: "Home" }, standardSecond: { key: "End" }, appleAlso: [{ key: "a", ctrlKey: true }, { key: "e", ctrlKey: true }] },
   { apple: "⌘↖  ⌘↘", standard: "Ctrl+Home  Ctrl+End", label: "Start or end of document", direction: ["docStart", "docEnd"], event: { key: "Home", metaKey: true }, second: { key: "End", metaKey: true }, standardEvent: { key: "Home", ctrlKey: true }, standardSecond: { key: "End", ctrlKey: true } },
   { apple: "⇞  ⇟", standard: "PgUp  PgDn", label: "Move by screen", direction: ["pageUp", "pageDown"], event: { key: "PageUp" }, second: { key: "PageDown" } },
 ];
