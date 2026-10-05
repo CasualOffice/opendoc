@@ -1,0 +1,79 @@
+{
+  "$generated": "webapp/tools/build-chrome-census.mjs — do not edit by hand",
+  "$subject": "Controls a reader can operate, per chrome surface. `shown` excludes anything under a `hidden` ancestor. See the header of the generator for what this deliberately does not model.",
+  "markup": {
+    "persistent": {
+      "header": 1,
+      "appMenuBarCompactOnly": 8,
+      "ribbonTabsRibbonOnly": 8,
+      "rail": 5,
+      "statusBar": 8
+    },
+    "persistentRibbonChrome": 65,
+    "persistentCompactChrome": 22,
+    "ribbonPanels": {
+      "file": {
+        "landing": false,
+        "groups": 0,
+        "controls": 1,
+        "shownWhenOpen": 1
+      },
+      "home": {
+        "landing": true,
+        "groups": 6,
+        "controls": 43,
+        "shownWhenOpen": 43
+      },
+      "insert": {
+        "landing": false,
+        "groups": 8,
+        "controls": 20,
+        "shownWhenOpen": 20
+      },
+      "layout": {
+        "landing": false,
+        "groups": 3,
+        "controls": 17,
+        "shownWhenOpen": 17
+      },
+      "references": {
+        "landing": false,
+        "groups": 4,
+        "controls": 10,
+        "shownWhenOpen": 10
+      },
+      "review": {
+        "landing": false,
+        "groups": 6,
+        "controls": 19,
+        "shownWhenOpen": 19
+      },
+      "view": {
+        "landing": false,
+        "groups": 3,
+        "controls": 11,
+        "shownWhenOpen": 11
+      },
+      "table": {
+        "landing": false,
+        "groups": 7,
+        "controls": 19,
+        "shownWhenOpen": 19
+      }
+    },
+    "dialogCards": {
+      "count": 24,
+      "controls": 186
+    },
+    "sidePanels": {
+      "count": 8,
+      "controls": 55
+    }
+  },
+  "taxonomy": {
+    "applicationMenus": 8,
+    "applicationMenuRows": 164,
+    "fileSurfaceBands": 8,
+    "ribbonTabs": 8
+  }
+}

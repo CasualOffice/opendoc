@@ -205,6 +205,19 @@ node "$here/tools/build-embed-docs.mjs" --check
 # deployment cannot drift into unreadable text by editing `src/brand.css` by hand.
 node "$here/tools/build-brand.mjs" --check
 
+# The chrome census: how many controls a reader is shown, per surface, counted
+# out of `editor.html` itself. AFTER build-brand, because build-brand rewrites
+# two generated regions of `editor.html` and a census taken before it would
+# describe a file that is about to change.
+#
+# This is armed here for the reason `docs/167` exists: the owner's complaint is
+# cognitive burden, and until now every density figure in this repository was a
+# sentence somebody wrote once. `--check` fails the build when a band gains or
+# loses a control without the census being regenerated, so the numbers `docs/167`
+# publishes cannot go stale while the chrome moves under them (SKILL §9 rule 1).
+node "$here/tools/build-chrome-census.mjs"
+node "$here/tools/build-chrome-census.mjs" --check
+
 "$here/build-site.py"
 "$here/build-site.py" --check
 
