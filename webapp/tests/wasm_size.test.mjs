@@ -6,19 +6,28 @@
 // prints "Finished `release` profile [optimized]" — it was that the workspace
 // `[profile.release]` sets `codegen-units`, `lto` and `strip` but no
 // `opt-level`, so the browser module was built at the default 3: optimise for
-// SPEED, which buys throughput by emitting more code. `webapp/build.sh` now
-// overrides `opt-level` to `z` for the browser build only (not the profile, so
-// the native engine and the `opendoc-benchmark` gate keep opt-level 3), and
-// `crates/casual-doc-wasm/Cargo.toml` asks `wasm-opt` for `-Oz` instead of a
-// bare `-O` (which is `-Os`). Together: 26,063,048 B -> 20,906,038 B, with the
-// CODE section — the part the browser has to compile before the editor is
-// interactive — down 41.6% from 12,376,042 B to 7,234,513 B.
+// SPEED, which buys throughput by emitting more code. Three settings now change
+// that, and all three are for the browser build only:
 //
-// Nothing else in the repository would notice if either setting were dropped.
+//   * `webapp/build.sh` exports `CARGO_PROFILE_RELEASE_OPT_LEVEL=z`;
+//   * the root `Cargo.toml` pins the layout, shaping, rasterization, model and
+//     import crates back to `opt-level = 3`, so only the cold bulk is built for
+//     size — `z` on everything costs 2.5x on a page render, which the editor
+//     cannot pay (`docs/107` §4);
+//   * `crates/casual-doc-wasm/Cargo.toml` asks `wasm-opt` for `-Oz` rather than
+//     a bare `-O`, which in binaryen is `-Os`.
+//
+// Together: 26,070,655 B -> 24,297,780 B, with the CODE section — the part the
+// browser has to compile — down 14.4% from 12,376,042 B to 10,594,266 B, for no
+// measurable cost to a keystroke or a page render.
+//
+// Nothing else in the repository would notice if any of them were dropped.
 // `build.sh` would still succeed, every Rust test would still pass, and the
-// editor would quietly go back to shipping 5 MB more than it needs to. So this
-// is a budget on the artifact, not a check that a line of shell still reads a
-// certain way: it measures what `build.sh` actually produced.
+// editor would quietly go back to shipping 1.8 MB more than it needs to — on
+// every single load, because the module is too large for Chromium's per-entry
+// disk-cache limit and is never cached. So this is a budget on the artifact, not
+// a check that a line of shell still reads a certain way: it measures what
+// `build.sh` actually produced.
 //
 // Two budgets rather than one, because they fail differently:
 //
@@ -32,8 +41,9 @@
 // measured on one machine reddens `main` the first time a different `wasm-opt`
 // build or an unrelated engine change moves it by a kilobyte, and a guard that
 // fails for a reason that is not the defect gets edited rather than read. The
-// headroom is sized so that the regression this exists to catch — either size
-// setting reverted — is far outside it, and ordinary engine growth is not.
+// headroom is sized so that the regression this exists to catch — any of the
+// three settings reverted — is far outside it, and ordinary engine growth is
+// not.
 //
 // The floors are there so the budget cannot be met by a build that did not
 // happen. A missing, truncated or stubbed `pkg/` must fail loudly: "0 bytes is
@@ -48,10 +58,10 @@ import test from "node:test";
 
 const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta.url));
 
-/** What a visitor downloads for `editor.html`. Measured: 20,906,038 B. */
-const MAX_TOTAL_BYTES = 23_000_000;
-/** What the browser then compiles. Measured: 7,234,513 B. opt-level 3: 12,376,042 B. */
-const MAX_CODE_BYTES = 9_500_000;
+/** What a visitor downloads for `editor.html`. Measured: 24,297,780 B. */
+const MAX_TOTAL_BYTES = 25_300_000;
+/** What the browser then compiles. Measured: 10,594,266 B. opt-level 3: 12,376,042 B. */
+const MAX_CODE_BYTES = 11_500_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 
@@ -94,10 +104,10 @@ test("the editor's engine download stays inside its budget", () => {
     total <= MAX_TOTAL_BYTES,
     `the engine module is ${total.toLocaleString("en-US")} B, over the ` +
       `${MAX_TOTAL_BYTES.toLocaleString("en-US")} B budget. Either a size setting was ` +
-      `dropped (see the CARGO_PROFILE_RELEASE_OPT_LEVEL block in webapp/build.sh ` +
-      `and the wasm-opt flags in crates/casual-doc-wasm/Cargo.toml), or the engine ` +
-      `legitimately grew — in which case measure what grew and decide, do not just ` +
-      `raise the number.`,
+      `dropped (the CARGO_PROFILE_RELEASE_OPT_LEVEL block in webapp/build.sh, the ` +
+      `per-package opt-level overrides in the root Cargo.toml, the wasm-opt flags in ` +
+      `crates/casual-doc-wasm/Cargo.toml), or the engine legitimately grew — in which ` +
+      `case measure what grew and decide, do not just raise the number.`,
   );
 });
 

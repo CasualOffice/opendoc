@@ -39,15 +39,28 @@ export CARGO_TARGET_DIR="$repo/target"
 # `opt-level = 3`'s inlining and loop unrolling buy throughput by emitting more
 # code.
 #
+# This `z` is only half the setting. The other half is the per-package
+# `opt-level = 3` overrides in the root `Cargo.toml`, which keep the layout,
+# shaping, rasterization, model and import crates at 3 so only the cold bulk is
+# built for size — because `z` applied to EVERYTHING costs 2.5x on a page render
+# and 1.7x on a document open, which is not a trade this editor can make. The
+# measured table is in that `Cargo.toml` block; read the two together.
+#
 # Measured on this tree (final post-`wasm-opt` artifact, `web-host-fonts` on):
 #
-#   rust opt-level 3, wasm-opt -O   26,063,048 B   code 12,376,042   baseline
-#   rust opt-level s, wasm-opt -Oz  22,130,417 B   code  8,492,515   -15.1%
-#   rust opt-level z, wasm-opt -Oz  20,903,695 B   code  7,232,706   -19.8%
+#   rust opt-level 3, wasm-opt -O     26,070,655 B   code 12,376,042   baseline
+#   rust opt-level 3, wasm-opt -Oz    25,800,405 B                      -1.0%
+#   rust opt-level s, wasm-opt -Oz    22,130,417 B   code  8,492,515   -15.1%
+#   this build (z + the 3 overrides)  24,297,780 B   code 10,594,266    -6.8%
+#   rust opt-level z, wasm-opt -Oz    20,906,038 B   code  7,232,706   -19.8%
 #
-# so the code section falls 41.6% and the whole module 19.8% (gzip 11,521,748 →
-# 10,228,609 B, -11.2%). The remaining 13.6 MB is the DATA section, which no
-# optimisation level touches — see the note at the end of this block.
+# so the code section the browser must COMPILE falls 14.4% and the download
+# 1,772,875 B. Be careful quoting the compressed figure: gzip only falls
+# 11,521,748 -> 11,332,567 B (-1.6%), because what is left is the DATA section
+# and half of that is font bytes, which barely compress and which no
+# optimisation level touches at all — see the note at the end of this block.
+# If the module is served compressed, this setting is worth ~190 KB a load; if
+# it is served raw, 1.77 MB.
 #
 # This is set HERE rather than in `[profile.release]` on purpose. The same
 # profile builds the native engine, the `opendoc-benchmark` smoke gate
@@ -62,6 +75,9 @@ export CARGO_TARGET_DIR="$repo/target"
 # wasm-pack version that supports `--profile`.
 #
 # Rejected after measuring, so nobody re-tries them:
+#   * `opt-level = z` or `s` applied to EVERY crate — 20,906,038 B and
+#                          22,130,417 B, but 2.49x and 2.02x on a page render.
+#                          The whole reason the per-package overrides exist.
 #   * `lto = "fat"`      — 20,893,675 B, 10,020 B (0.05%) smaller than thin, for
 #                          a build that went from 56 s to 7 m 32 s.
 #   * `panic = "abort"`  — 20,902,646 B, 1,049 B smaller. `wasm32-unknown-unknown`
@@ -69,6 +85,13 @@ export CARGO_TARGET_DIR="$repo/target"
 #                          (Nothing on the wasm path calls `catch_unwind`; the
 #                          only caller is the native `opendoc-render` tool, which
 #                          is why this must never become a profile-wide setting.)
+#   * a dedicated `[profile.wasm-size]` with `--profile` — wasm-pack only reads
+#                          `[package.metadata.wasm-pack.profile.release]`'s
+#                          wasm-opt flags for its three named profiles, and CI
+#                          pins a different wasm-pack version (0.15.0) than is
+#                          installed here, so a custom profile could not be
+#                          verified locally against the version that deploys.
+#                          `CARGO_PROFILE_<name>_<key>` needs neither.
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=z
 
 case "$(uname -s)" in

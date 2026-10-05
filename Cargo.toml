@@ -76,3 +76,78 @@ strip = "symbols"
 
 [profile.dev]
 debug = 1
+
+# --- The crates that must keep opt-level 3 when the BROWSER build asks for size
+#
+# `webapp/build.sh` sets `CARGO_PROFILE_RELEASE_OPT_LEVEL=z` for the WebAssembly
+# build only, because the editor page waits on the module and `opt-level = 3`
+# buys throughput by emitting more code. Applied to everything, that is a bad
+# trade: measured in one browser session, round-robin over four engine builds so
+# machine conditions are shared, with `opt-level = z` everywhere a page render
+# costs 2.5x and a document open 1.7x. The owner's constraint is that editing
+# stays light (`docs/107` §4), so a module that is smaller and slower is not a
+# win.
+#
+# These overrides are the other half of that setting: the crates on the layout,
+# shaping, rasterization, model and import paths stay at opt-level 3, and only
+# the cold bulk — export, ODF, RTF, PDF, diff, the wasm façade's own glue, the
+# XML/ZIP/JSON plumbing — is built for size. Ratios against the all-3 baseline,
+# medians over three sessions of seven rounds:
+#
+#                                   bytes   open   render   keystroke
+#   opt-level 3 everywhere     26,070,655   1.00     1.00        1.00
+#   z + these overrides        24,297,780   1.16     1.03        0.96
+#   z everywhere               20,906,038   1.74     2.49        1.23
+#
+# so this configuration takes 1,772,875 B off the download (code section
+# -14.4%, 12,376,042 -> 10,594,266) for no measurable cost to a keystroke or a
+# page render. The further 3.4 MB that `z` everywhere would buy is NOT taken;
+# 2.5x on a page render is a felt regression and the decision is the owner's.
+#
+# **These overrides are no-ops for every native build.** `[profile.release]`
+# carries no `opt-level`, so a native release is already 3; setting 3 here
+# writes the value it already had. The native engine, `opendoc-render` and the
+# `opendoc-benchmark` smoke gate are unaffected — which is the point of putting
+# the `z` in `build.sh` rather than in the profile.
+#
+# A name here that matches no package in the graph is a silent no-op that cargo
+# warns about, so if one of these is renamed or dropped the build says so.
+# `webapp/tests/wasm_size.test.mjs` is what notices the effect going away.
+[profile.release.package.casual-doc-layout]
+opt-level = 3
+[profile.release.package.casual-doc-render]
+opt-level = 3
+[profile.release.package.casual-doc-model]
+opt-level = 3
+[profile.release.package.casual-doc-edit]
+opt-level = 3
+[profile.release.package.casual-doc-selection]
+opt-level = 3
+[profile.release.package.casual-doc-import]
+opt-level = 3
+[profile.release.package.casual-doc-io]
+opt-level = 3
+[profile.release.package.casual-doc-ooxml]
+opt-level = 3
+[profile.release.package.casual-doc-package]
+opt-level = 3
+[profile.release.package.casual-doc-transaction]
+opt-level = 3
+[profile.release.package.unicode-segmentation]
+opt-level = 3
+[profile.release.package.parley]
+opt-level = 3
+[profile.release.package.fontique]
+opt-level = 3
+[profile.release.package.skrifa]
+opt-level = 3
+[profile.release.package.harfrust]
+opt-level = 3
+[profile.release.package."tiny-skia"]
+opt-level = 3
+[profile.release.package.icu_properties]
+opt-level = 3
+[profile.release.package.icu_segmenter]
+opt-level = 3
+[profile.release.package.icu_normalizer]
+opt-level = 3
