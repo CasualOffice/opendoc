@@ -15386,7 +15386,11 @@ impl WasmDocument {
             }
             let a = Pos::new(s_node, start_offset);
             let b = Pos::new(e_node, end_offset);
-            return Ok(if start_offset <= end_offset { (a, b) } else { (b, a) });
+            return Ok(if start_offset <= end_offset {
+                (a, b)
+            } else {
+                (b, a)
+            });
         }
         let paras = self.ordered_paragraphs();
         let si = paras
@@ -16838,7 +16842,28 @@ impl WasmDocument {
 
     /// Plain text for a model range: slice the start/end nodes' shaped text at the
     /// byte offsets and join the paragraphs the range spans with `\n`.
+    ///
+    /// **O(1) in document size when the range is inside one paragraph** — which is
+    /// every Ctrl+C of a word, a line, or a drag that never left the paragraph it
+    /// started in — and **O(document) across paragraphs**, where the range's
+    /// extent is proportional to the document anyway and the ordering walk is what
+    /// answers "which paragraphs does this span". Stated rather than claimed away:
+    /// the cross-paragraph arm still materialises every paragraph on every surface
+    /// into a `String`, including the ones the range does not touch.
     fn copy_text_inner(&self, range: ModelRange) -> String {
+        if range.start.node == range.end.node {
+            let Some(paragraph) = self.document.paragraph(range.start.node) else {
+                return String::new();
+            };
+            note_shaped_paragraph();
+            let text = node_plain_text(&paragraph.inlines);
+            let (so, eo) = if range.start.offset <= range.end.offset {
+                (range.start.offset as usize, range.end.offset as usize)
+            } else {
+                (range.end.offset as usize, range.start.offset as usize)
+            };
+            return slice_bytes(&text, so, eo);
+        }
         // Text-bearing nodes in document order — the order hit-testing traverses.
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
         collect_block_text_all_surfaces(&self.document, &mut nodes);
@@ -44383,10 +44408,13 @@ mod tests {
     /// Every keystroke a reader can hold down, plus the two reads the host makes
     /// about the paragraph under the caret. A new per-keystroke entry point
     /// belongs in this list.
-    const KEYSTROKES: [(&str, Keystroke); 9] = [
-        ("Backspace — deleteBackward inside a paragraph", |d, node| {
-            d.delete_backward(node, 20).expect("backspace");
-        }),
+    const KEYSTROKES: [(&str, Keystroke); 10] = [
+        (
+            "Backspace — deleteBackward inside a paragraph",
+            |d, node| {
+                d.delete_backward(node, 20).expect("backspace");
+            },
+        ),
         ("Delete — deleteForward inside a paragraph", |d, node| {
             d.delete_forward(node, 20).expect("forward delete");
         }),
@@ -44394,12 +44422,16 @@ mod tests {
             d.delete_word_backward(node, 20).expect("word backspace");
         }),
         ("Ctrl+Delete — deleteWordForward", |d, node| {
-            d.delete_word_forward(node, 20).expect("word forward delete");
+            d.delete_word_forward(node, 20)
+                .expect("word forward delete");
         }),
-        ("a printable character — typeText at a caret", |d, node| {
-            d.type_text(node, 20, node, 20, "x".to_owned(), 7)
-                .expect("typing tick");
-        }),
+        (
+            "a printable character — typeText at a caret",
+            |d, node| {
+                d.type_text(node, 20, node, 20, "x".to_owned(), 7)
+                    .expect("typing tick");
+            },
+        ),
         (
             "a printable character typed over a selection in one paragraph",
             |d, node| {
@@ -44419,6 +44451,9 @@ mod tests {
         }),
         ("wordAt — double-click word select", |d, node| {
             assert!(!d.word_at(node, 20).is_empty(), "word at");
+        }),
+        ("copyText of a selection inside one paragraph", |d, node| {
+            assert!(!d.copy_text(node, 10, node, 20).is_empty(), "copy text");
         }),
     ];
 
