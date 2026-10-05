@@ -227,7 +227,7 @@ export function createGranularityCache(getDoc) {
   };
   const words = new Map(); // "anchor" | "focus" -> { node, bounds }
   const lengths = new Map(); // node -> paragraph length
-  let order = null; // { key, forward }
+  let order = null; // { a, b, forward } — the last paragraph pair asked about
   let calls = 0; // engine calls served, for the complexity guard
 
   return {
@@ -236,11 +236,10 @@ export function createGranularityCache(getDoc) {
       // involved at all, which is every word-granular drag inside one
       // paragraph.
       if (a.node === b.node) return a.offset <= b.offset;
-      const key = `${a.node} ${b.node}`;
-      if (order && order.key === key) return order.forward;
+      if (order && order.a === a.node && order.b === b.node) return order.forward;
       calls += 1;
       const forward = engine.forward(a, b);
-      order = { key, forward };
+      order = { a: a.node, b: b.node, forward };
       return forward;
     },
     wordBounds(node, offset, end = "focus") {
