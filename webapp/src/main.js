@@ -146,13 +146,13 @@ import { insertChartAtCaret } from "./chart_insert.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
-import { scrollTargetFor } from "./scroll_into_view.mjs";
+import { SCROLL_INTO_VIEW_MARGIN, docScrollTargetFor, scrollTargetFor } from "./scroll_into_view.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
-import { CHARACTER, autoScrollDelta, createClickChain, createGranularityCache, granularEnds, granularityForClickCount, paragraphEnds } from "./drag_selection.mjs";
+import { CHARACTER, autoScrollDelta, clientPointEvent, createClickChain, createGranularityCache, granularEnds, granularityForClickCount, paragraphEnds } from "./drag_selection.mjs";
 import {
   reviewCardSignature,
   reviewCommentIsReplyTo,
@@ -2642,11 +2642,15 @@ const clickChain = createClickChain();
 let lastGestureDragged = false;
 
 function resetPointerGesture() {
+  const deferred = pointerGesture !== null;
   pointerGesture = null;
   dragging = false;
   dragGranularity.reset();
   if (selectionAutoScrollFrame) cancelAnimationFrame(selectionAutoScrollFrame);
   selectionAutoScrollFrame = 0;
+  // The chrome the gesture deferred — a bare click defers it too, so this is not
+  // conditional on having moved. Every gesture ends here, `pointercancel` included.
+  if (deferred && doc) drawSelection();
 }
 
 function isInteractiveChromeTarget(target) {
@@ -2685,10 +2689,6 @@ function eventTargetsEditor(event) {
     // suite — behaves exactly as before.
     (!!editorTextInputEl && (event.target === editorTextInputEl || active === editorTextInputEl))
   );
-}
-
-function clientPointEvent(clientX, clientY) {
-  return { clientX, clientY };
 }
 
 let statusClearTimer = 0;
@@ -4043,6 +4043,11 @@ function paintOverlayLayer() {
 function drawSelection() {
   if (!doc) return;
   paintOverlayLayer();
+  // Mid-GESTURE the chrome below describes a selection still being made, so it
+  // settles once in `resetPointerGesture` as Word's and Docs' do — and that is
+  // what keeps a pointer-move O(1): `updateToolbar`'s `alignmentAt` walks the
+  // document (`SKILL` §8), three times a frame. `drag-chrome-cost` holds it.
+  if (dragging) return;
   foldView.syncBodyChevron(); // after the overlay repaint, which clears it
   updateObjectSelectionState();
   updateObjectContextBar();
@@ -7897,10 +7902,6 @@ function repaintPage(i) {
  *  materialized until something scrolls there. Model geometry plus the band's
  *  arithmetic answers "where is that, in scroll coordinates" without either.
  *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
-/** Breathing room between a revealed caret and the edge it was revealed past;
- *  flush lasts one frame and the next repaint puts it back outside. */
-const SCROLL_INTO_VIEW_MARGIN = 8;
-
 function scrollModelRectIntoView(flat, block = "nearest") {
   if (!pageBandModel || !flat || flat.length < 5) return false;
   const [pageNumber, , y, , h] = flat;
@@ -7911,12 +7912,11 @@ function scrollModelRectIntoView(flat, block = "nearest") {
   const bottom = top + Math.max(1, h * sy);
   const viewportHeight = viewportEl.clientHeight;
   const { docY } = scrollToDoc(pageBandModel, viewportHeight, viewportEl.scrollTop - bandTopInScroller);
-  let wanted = docY;
-  const margin = SCROLL_INTO_VIEW_MARGIN; // as the overlay path, in doc space
-  if (block === "center") wanted = top + (bottom - top) / 2 - viewportHeight / 2;
-  else if (top < docY) wanted = top - margin;
-  else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight + margin;
-  else return false;
+  // The same three-way decision as the overlay path, in document space.
+  const wanted = docScrollTargetFor({
+    top, bottom, docY, viewportHeight, block, margin: SCROLL_INTO_VIEW_MARGIN,
+  });
+  if (wanted === null) return false;
   const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, Math.max(0, wanted));
   const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
   viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });

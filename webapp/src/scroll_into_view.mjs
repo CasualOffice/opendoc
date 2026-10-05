@@ -10,6 +10,11 @@
  *  does not exist.
  */
 
+/** Breathing room between a revealed caret and the edge it was revealed past;
+ *  flush lasts one frame and the next repaint puts it back outside. Shared by
+ *  both paths below, because "how close is too close" is one answer. */
+export const SCROLL_INTO_VIEW_MARGIN = 8;
+
 /** The scroll top to move to, or `null` when the marker is already in view.
  *
  *  O(1).

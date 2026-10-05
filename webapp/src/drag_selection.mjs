@@ -87,6 +87,20 @@
 // is on the Backspace and Delete key paths too — and is reported separately;
 // when it becomes a direct lookup this cache gets cheaper and stays correct.
 
+/**
+ * A client point shaped like the event the hit-test takes.
+ *
+ * `anchorAt` and the drag update read `clientX`/`clientY` and nothing else, so a
+ * caller that has a POINT rather than an event — the auto-scroll tick replaying
+ * the pointer's last position, a touch handle, a keyboard-driven hit-test — can
+ * ask the same question without inventing a synthetic `PointerEvent`. Here
+ * rather than in `main.js` because the drag is its first caller and because a
+ * two-field object literal is not worth a line in the file under a ratchet.
+ */
+export function clientPointEvent(clientX, clientY) {
+  return { clientX, clientY };
+}
+
 /** A drag that extends one character at a time: an ordinary single-click drag. */
 export const CHARACTER = "character";
 /** A drag that extends a whole word at a time: started by a double-click. */
