@@ -60,7 +60,7 @@
 //! (ECMA-376 §17.7.4.6, *"Style Cannot Be Applied"*). `165` §7.6 measured all three of
 //! `w:formatting`, `w:locked` and `w:latentStyles/@w:defLockedState` as imported, exported,
 //! and **consumed by nothing** — the "modeled is not shipped" failure, three constructs deep,
-//! inside the one feature family whose whole job is to refuse. [`refuse_if_formatting_locked`]
+//! inside the one feature family whose whole job is to refuse. `refuse_if_formatting_locked`
 //! is their first consumer.
 //!
 //! It is a *separate* axis in the model and it has to be one here: a document may carry
