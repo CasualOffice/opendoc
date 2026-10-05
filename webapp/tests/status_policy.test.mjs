@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   DOCUMENT_STATE_BADGES,
   announcementRegion,
+  backgroundProgressMayPaint,
   documentStateBadge,
   documentTabTitle,
   isObjectSelectionStatus,
@@ -133,4 +134,30 @@ test("only the editor's own object-selection lines are treated as clearable", ()
   ]) {
     assert.equal(isObjectSelectionStatus(text), false, String(text));
   }
+});
+
+// A background task's progress and a reader's action feedback are not the same
+// message, and one channel carried both. The font-provisioning
+// pass wrote through `setStatus`, so it announced itself into a live region, it
+// toasted wherever the footer is hidden, it reported itself to an embedding host
+// as editor status, and it held the line for as long as the download took — on
+// the default editor page 31.40 MB of coverage-driven CJK and colour-emoji
+// faces, measured 2026-10-06.
+test("background progress may have the status line only when nobody else wants it", () => {
+  // Free: nothing there, or the line is already this task's own.
+  assert.equal(backgroundProgressMayPaint("", false), true);
+  assert.equal(backgroundProgressMayPaint("Fetching fonts for sample.docx…", true), true);
+  // Taken: a reader's message, whatever kind it is. A confirmation counts as
+  // much as a refusal — "Footnote added — type the note text" is an instruction
+  // the reader is still following.
+  assert.equal(backgroundProgressMayPaint("Footnote added — type the note text", false), false);
+  assert.equal(
+    backgroundProgressMayPaint("Viewing mode is read-only; switch to Editing", false),
+    false,
+  );
+  // An absent flag is not a progress line. `delete`ing a `data-` attribute
+  // leaves `undefined`, and treating that as "mine" would hand every reader's
+  // message straight back to the next background pass.
+  assert.equal(backgroundProgressMayPaint("Saved Q3 Report.docx", undefined), false);
+  assert.equal(backgroundProgressMayPaint("Saved Q3 Report.docx", "1"), false);
 });

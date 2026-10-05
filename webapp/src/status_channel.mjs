@@ -34,7 +34,20 @@
 // `aria-hidden` — the live region is the single thing that speaks, so a screen
 // reader hears the message once, not twice.
 
-import { announcementRegion, needsToast, toastDuration } from "./status_policy.mjs";
+import {
+  announcementRegion,
+  backgroundProgressMayPaint,
+  needsToast,
+  statusClassName,
+  toastDuration,
+} from "./status_policy.mjs";
+
+/** The marker a background-progress line carries on the status element, so the
+ *  channel can tell its own writing from the reader's without keeping a second
+ *  copy of the string. A `data-` attribute rather than a module variable
+ *  because the DOM is where the line actually is: a host that clears the footer,
+ *  or a reload, cannot leave the flag disagreeing with the text. */
+const PROGRESS_FLAG = "statusProgress";
 
 /**
  * Wires the three feedback surfaces together.
@@ -114,6 +127,10 @@ export function createStatusChannel({ live, alert, toast, statusLine }) {
      * the rule below.
      */
     publish(text, kind = "") {
+      // The reader's message owns the line from here. Clearing the flag is what
+      // stops a later background pass deciding the line is still its own and
+      // painting over an answer the reader is reading.
+      if (statusLine) delete statusLine.dataset[PROGRESS_FLAG];
       announce(text, kind);
       if (text && needsToast(kind, statusLineVisible())) showToast(text, kind);
       // Otherwise the toast is LEFT ALONE to finish its dwell, and that is the
@@ -136,5 +153,35 @@ export function createStatusChannel({ live, alert, toast, statusLine }) {
      * second copy of something the user is already looking at.
      */
     announce,
+    /**
+     * A BACKGROUND task's progress — a font download, not something the reader
+     * asked for.
+     *
+     * It is deliberately the smallest of the three surfaces: the status line
+     * and nothing else. No live region, because a screen reader being told
+     * "Fetching fonts…" is being interrupted by a detail it cannot act on; no
+     * toast, because a card over the document is reserved for must-notice
+     * messages and this is not one; and the caller does not route it to the host
+     * either, because a host listening for editor status would re-issue a font
+     * fetch as if the editor had refused something.
+     *
+     * Paints only when `backgroundProgressMayPaint` allows it, so a refusal the
+     * reader just earned is never replaced by progress on work they did not
+     * start. An empty `text` retires the line, but only if it is still the
+     * line this channel wrote.
+     *
+     * @returns whether the line was painted, so a caller can tell "shown" from
+     *   "the reader owns the line" rather than assuming.
+     */
+    progress(text) {
+      if (!statusLine) return false;
+      const mine = statusLine.dataset[PROGRESS_FLAG] === "1";
+      if (!backgroundProgressMayPaint(statusLine.textContent, mine)) return false;
+      statusLine.textContent = text;
+      statusLine.className = statusClassName("");
+      if (text) statusLine.dataset[PROGRESS_FLAG] = "1";
+      else delete statusLine.dataset[PROGRESS_FLAG];
+      return true;
+    },
   };
 }

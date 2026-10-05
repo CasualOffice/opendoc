@@ -8,6 +8,7 @@ import {
   NAMED_WEB_FONT_FACES,
   SCRIPT_FALLBACK_FONTS,
   allManifestFaces,
+  eagerBytes,
   fallbackKeysFor,
   fetchFontBytes,
   localUrlFor,
@@ -295,6 +296,44 @@ test("the self-hosting byte totals are derived, not typed", () => {
 weight on every clone for ever — raise this ceiling deliberately, with the owner's \
 font-provisioning decision in hand, or mirror the new face instead`,
   );
+});
+
+// What a reader waits on, as a ratchet.
+//
+// The committed-bytes ceiling above answers "how heavy is a clone". It cannot
+// answer the question the owner asked — "does a reader actually need 9.28 MB
+// before they can work" — because a face can be committed and never fetched
+// (the 14 small script faces are coverage-driven and most documents ask for
+// none of them). This is the other number: the bytes EVERY reader transfers on
+// EVERY editor load, whatever their document contains.
+//
+// Measured in Chromium on 2026-10-06, the default editor page transfers
+// 74.14 MB in total. These six faces are 9.28 MB of it, the coverage-driven CJK
+// and colour-emoji buckets are 31.40 MB, and the engine is 26.07 MB. So this is
+// a ceiling on the one part of that which is paid unconditionally — and the
+// reason a ceiling is the right instrument rather than a smaller set is in
+// `NAMED_WEB_FONT_FACES`'s own comment: there is no engine seam that can tell
+// whether the open document names one of these three families, so a deferral
+// would have to guess, and guessing wrong renders a document in the wrong face
+// and says nothing.
+test("the eagerly-fetched bytes are derived, and capped", () => {
+  assert.equal(
+    eagerBytes(),
+    NAMED_WEB_FONT_FACES.reduce((sum, face) => sum + face.bytes, 0),
+  );
+  // 9.28 MB today. A seventh eager face, or a bigger build of one of the six,
+  // is a decision about what every reader waits for — not a diff.
+  assert.ok(
+    eagerBytes() <= 9_727_000,
+    `the eager set has grown to ${eagerBytes()} B — that is what EVERY reader \
+transfers on EVERY editor load before the editor has finished settling, whatever \
+their document contains. Make it coverage- or demand-driven like \
+SCRIPT_FALLBACK_FONTS, or raise this ceiling deliberately with the measurement \
+that justifies it`,
+  );
+  // And the eager set must stay a strict subset of the committed set: a
+  // mirrored eager face would cost a third-party round trip on every load.
+  assert.ok(eagerBytes() < selfHostingBytes().committed);
 });
 
 // The design rule behind which faces are committed and which are mirrored, as
