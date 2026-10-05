@@ -14,6 +14,8 @@
 // satisfies. So each test here names a value the deck itself states.
 
 import { expect, test } from "@playwright/test";
+// The suite's one box reader — see `box_read_contract.test.mjs`.
+import { stableBox } from "./fixtures.mjs";
 
 /** The generated fixture, staged by `build.sh` beside the page. */
 const DECK = "demo.pptx";
@@ -223,7 +225,12 @@ test("a screen reader can read the slide, which the canvas itself says nothing t
   // `visually-hidden` is the repository's own utility for exactly that, and the
   // measurement is the one that distinguishes it from `display: none`: a box of
   // one pixel rather than no box at all.
-  const box = await page.locator("#slideText").boundingBox();
+  // `stableBox` and not a raw `boundingBox()`: it polls the element it is HANDED
+  // until that element has a real box, so the wait and the measurement cannot
+  // drift onto two different elements. `box_read_contract.test.mjs` enforces that
+  // across the whole suite after a spec that waited for a wrapper and measured
+  // the sheet inside it turned `main` red and made two neighbours flaky.
+  const box = await stableBox(page.locator("#slideText"));
   expect(box, "the mirror must be in the layout, not display:none").not.toBeNull();
   expect(box.width).toBeLessThan(3);
 
