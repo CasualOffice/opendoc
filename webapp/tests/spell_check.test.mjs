@@ -46,7 +46,7 @@ function fakeEngine(pagesCount = 6, { language = "", unknownWord = null } = {}) 
     paragraphs.push({ node: `p${page}b`, page, text: `This word ${word} is wrong` });
   }
   const index = new Map(paragraphs.map((p, i) => [p.node, i]));
-  const asked = { copyText: [], languageAt: [] };
+  const asked = { copyText: [], languageAt: [], selectionRects: [], decorationRects: [] };
 
   const cursor = (node, offset) => ({ node, offset, free() {} });
 
@@ -75,7 +75,19 @@ function fakeEngine(pagesCount = 6, { language = "", unknownWord = null } = {}) 
     caretRect(node) {
       return [paragraphs[index.get(node)].page, 0, 0, 2, 20];
     },
+    // The LINE box: `ascent + descent + leading`, 40 twips tall here. This is
+    // what the painter used to ask for, and a mark drawn at its bottom edge sat
+    // below the text by the whole of the leading (measured in the engine: 3.9 px
+    // below the baseline at single spacing, 23.3 px at double). It is kept on
+    // the fake engine, and every call RECORDED, so a regression to it is an
+    // assertion rather than a visual difference nothing checks.
     selectionRects(node) {
+      asked.selectionRects.push(node);
+      return [paragraphs[index.get(node)].page, 100, 200, 40, 40];
+    },
+    // The marked run's TEXT box: 14 twips tall, no leading.
+    decorationRects(node) {
+      asked.decorationRects.push(node);
       return [paragraphs[index.get(node)].page, 100, 200, 40, 14];
     },
   };
@@ -106,7 +118,9 @@ function harness(engine, overrides = {}) {
         hTwip: 15840,
       })),
     place: (flat, kind) => {
-      const el = { className: kind, dataset: {} };
+      // The rect is kept, not just the class: a mark's BOX is the thing the
+      // owner reported wrong, so a test has to be able to read it.
+      const el = { className: kind, dataset: {}, flat: [...flat] };
       placed.push(el);
       return el;
     },
@@ -149,6 +163,7 @@ function harness(engine, overrides = {}) {
         className: el.className,
         word: el.dataset.spellWord,
         rule: el.dataset.grammarRule,
+        height: el.flat[4],
       }));
     },
     setWindow(first, last) {
@@ -942,4 +957,54 @@ test("a findings subscriber hears about a scan, and stops when it unsubscribes",
   h.checker.setPack(PACK);
   await settle(h);
   assert.equal(heard.length, seen, "and nothing after unsubscribing");
+});
+
+// ---- Where the mark is placed -------------------------------------------------
+
+test("a mark is placed from the run's TEXT box, never from the line box", async () => {
+  // The owner's report: "the spelling zigzag is appear way below the content
+  // line". `paint` asked the engine for `selectionRects` — the LINE box,
+  // `ascent + descent + leading` — and the wave is drawn at the bottom edge of
+  // the element it is placed in, so the mark walked away from the text as the
+  // paragraph's line spacing grew. Measured in the engine, px below the painted
+  // baseline at 96 dpi on an 11pt line: single 3.9, 1.15x 6.9, 1.5x 13.6,
+  // double 23.3. The geometry itself is guarded in
+  // `crates/casual-doc-layout/tests/decoration_geometry.rs`; what is guarded
+  // HERE is that the painter asks for the right box at all, which no visual
+  // check would notice and which is one identifier away from regressing.
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This has one qzxtypo in it is is wrong";
+  const h = harness(engine, { grammarEnabled: () => true });
+  h.setWindow(1, 1);
+  await settle(h);
+
+  const marks = h.placedMarks();
+  assert.ok(
+    marks.some((mark) => mark.className === "spell-error"),
+    `expected a squiggle before asking where it is, got ${JSON.stringify(marks)}`,
+  );
+  assert.ok(
+    marks.some((mark) => mark.className === "grammar-error"),
+    `grammar shares the paint pass, so it shares the guard: ${JSON.stringify(marks)}`,
+  );
+  // The fake engine answers 14 twips for a text box and 40 for a line box, so
+  // the height names which one the painter asked for.
+  for (const mark of marks) {
+    assert.equal(
+      mark.height,
+      14,
+      `${mark.className} was placed in a ${mark.height}-twip box; the run's text ` +
+        "box is 14 and the line box is 40 — a 40 means it is back on selectionRects",
+    );
+  }
+  assert.ok(
+    engine.asked.decorationRects.length > 0,
+    "the painter must ask for decoration rects",
+  );
+  assert.deepEqual(
+    engine.asked.selectionRects,
+    [],
+    "the painter must NOT ask for selection rects — that is the line box, and a " +
+      "mark hung from it sits below the text by the whole of the leading",
+  );
 });

@@ -3276,6 +3276,46 @@ impl WasmDocument {
         out
     }
 
+    /// Rectangles for a mark that HANGS OFF THE TEXT'S BASELINE over a range —
+    /// a spelling or grammar squiggle, a tracked-change or comment underline —
+    /// flattened as `[page, x, y, w, h, …]` (page-local twips), one 5-tuple per
+    /// covered line-fragment.
+    ///
+    /// Horizontally identical to [`selectionRects`](Self::selection_rects);
+    /// vertically it is the marked run's own text box (its painted baseline
+    /// bracketed by its own ascent and descent) rather than the line box. A
+    /// host that hangs a decoration off the bottom of a selection rect puts it
+    /// at the bottom of the LINE, which walks away from the text as line
+    /// spacing grows — measured at 23.3 px below the baseline on a
+    /// double-spaced 11pt paragraph against 3.9 px at single. Use
+    /// `selectionRects` for a region fill (the selection, a find highlight) and
+    /// this for anything anchored to the glyphs.
+    #[wasm_bindgen(js_name = decorationRects)]
+    #[must_use]
+    pub fn decoration_rects(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Vec<i32> {
+        let Ok((start, end)) = self.order_endpoints(start_node, start_offset, end_node, end_offset)
+        else {
+            return Vec::new();
+        };
+        let range = ModelRange::new(
+            self.view_pos(ModelPos::new(start.node, start.offset)),
+            self.view_pos(ModelPos::new(end.node, end.offset)),
+        );
+        let mut out = Vec::new();
+        for (page, rect) in LayoutSnapshot::new(self.painted_layout())
+            .decoration_rects_on(range, self.edit_context.running_page())
+        {
+            out.extend_from_slice(&flat_rect(page, rect));
+        }
+        out
+    }
+
     /// The plain text a selection covers — the first (read-only) action of the
     /// interaction pipeline (doc 58 §4). Walks the model between the two anchors
     /// in document order, slicing each node's shaped text at the byte offsets and

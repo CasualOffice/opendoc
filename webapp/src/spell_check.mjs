@@ -850,7 +850,27 @@ export function createSpellChecker(io) {
         if (dismissed(entry, paragraph)) continue;
         let rects = [];
         try {
-          rects = doc.selectionRects(paragraph.node, entry.byteStart, paragraph.node, entry.byteEnd);
+          // `decorationRects`, NOT `selectionRects`. A selection rect is the
+          // LINE BOX — `ascent + descent + leading` — and the squiggle is drawn
+          // at the bottom of the element it is placed in, so the mark walked
+          // away from the text as the paragraph's line spacing grew. Measured
+          // through the real pipeline on an 11pt line, as px below the painted
+          // baseline at 96 dpi: single 3.9, 1.15x 6.9, 1.5x 13.6, double 23.3 —
+          // which is the owner's "zigzag is appear way below the content line".
+          // It was also charged the TALLEST run on the line, so an 11pt
+          // misspelling beside 28pt text was marked 10.1 px down instead of 3.9.
+          //
+          // `decorationRects` answers the marked run's own text box, so the
+          // wave sits in its descender space at every spacing and every size —
+          // which is where Word puts it and where ONLYOFFICE puts it
+          // (`sdkjs/.../line-draw-state.js` feeds `Baseline + 0.4 *
+          // TextDescent` to `Spelling` and to the character `Underline` alike).
+          rects = doc.decorationRects(
+            paragraph.node,
+            entry.byteStart,
+            paragraph.node,
+            entry.byteEnd,
+          );
         } catch {
           continue;
         }
