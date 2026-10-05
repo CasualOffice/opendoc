@@ -496,6 +496,39 @@ gone the other way and three of them are claims about what a reader hears.
   everywhere but PowerPoint, so a reader hearing nothing where the slide plainly
   says "7" would be the field's own loss read aloud.
 
+**The chrome is the document editor's, not a second one.** The page is built from
+`.bar`, `.workarea`, `.rail`, `.side-panel`, `.viewport`, `.page-wrap` and
+`.footer`; the slide sorter IS the editor's page navigator (`.pages-panel` /
+`.pages-grid` / `.page-thumb`, down to `data-page`, so `pagesPanelRange` windows a
+long deck and `reflectPagesPanelSelection` marks the current card); the toolbar and
+menus are `createCompactToolbar` and `createMenuBar` over a twelve-command registry;
+and the popover manager, zoom ladder, theme, preferences, feedback channel, phone
+rung and chord matcher are the modules that already existed.
+
+That is the same finding §1 rests on, applied one layer up — and it had to be
+learned twice. An earlier revision of this page invented a parallel `.slides-*`
+vocabulary for all of it and shipped **with no stylesheet at all**, because every
+guard it had asserted on structure and a canvas paints correctly whether or not
+anything around it has a layout. `slides_style.test.mjs` now makes that
+unshippable: every class the markup uses and every class the script creates must
+have a rule somewhere, and the page must link its own stylesheet after the
+editor's. `slides.css` is four rules, and a browser spec measures the bands' boxes
+and their left-to-right order rather than their presence.
+
+**The overlapping text had nothing to do with fill.** It is recorded here because
+the wrong cause was published first. `casual-pres-layout`'s `flow_paragraph` shapes
+a paragraph in `a:br`-delimited batches and rebases each under the ones above it;
+a shaper positions a line's children relative to the PARAGRAPH, so line *k* already
+carries the heights above it, and advancing the cursor by `line.height` once per
+line *inside* a batch applied that offset a second time. The first line of every
+batch stayed correct, so a paragraph written `text <a:br/> text` — which is what
+every fixture had — never showed it. Only a batch that WRAPPED painted wrong. The
+document path did not share the defect because `casual-doc-layout` already had the
+correct helper **and a guard for the invariant**; the slide path had hand-rolled a
+second copy. The fix deletes both copies for one shared
+`casual_doc_layout::text::stack_lines`, which is this document's thesis in
+miniature: the second copy is the defect.
+
 Two things in this tier are still NOT done:
 
 * the notes pane, the layout picker and the master editor are untouched.
