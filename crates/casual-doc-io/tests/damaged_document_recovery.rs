@@ -971,18 +971,24 @@ fn a_resource_bound_still_refuses() {
     let bytes = zip(&healthy_parts());
     let mut package =
         DocxPackage::open(&bytes, PackageLimits::default()).expect("the control package opens");
+    // Ten elements: fewer than the fixture's twenty-odd, so the bound is
+    // genuinely crossed, and MORE than the two in the empty main document the
+    // ladder's last rung reads. The second half matters — with a bound of one,
+    // even that last rung fails, so the test would pass whatever the policy on
+    // bounds was.
     let refused = import_package(
         &mut package,
         ImportConfig {
             mode: ImportMode::Semantic,
             recover: true,
-            max_elements: 1,
+            max_elements: 10,
             ..ImportConfig::default()
         },
     );
-    assert!(
-        refused.is_err(),
-        "an element-count bound was recovered past: {refused:?}"
+    assert_eq!(
+        refused.err().map(|error| error.to_string()),
+        Some("import limit xml_elements exceeded".to_owned()),
+        "a resource bound was recovered past instead of refusing"
     );
 }
 
