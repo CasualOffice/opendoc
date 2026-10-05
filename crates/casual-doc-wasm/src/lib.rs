@@ -4920,6 +4920,15 @@ impl WasmDocument {
 
     /// Backspace at a collapsed caret: deletes the character before `offset`, or —
     /// at a paragraph start — joins this paragraph into the previous one.
+    ///
+    /// **O(1) in document size inside a paragraph; O(document) at a paragraph
+    /// boundary.** The boundary arm needs the paragraph *before* this one, which
+    /// is a question about document ORDER, and `ordered_paragraphs` is what
+    /// answers it. So holding Backspace is O(1) per character but O(document)
+    /// **per boundary crossed** — bounded by the number of paragraphs the reader
+    /// actually deletes through, not by one scan per keystroke, which is what it
+    /// used to be. Recorded as a residue rather than claimed away; closing it
+    /// wants a predecessor lookup the route hint does not provide.
     #[wasm_bindgen(js_name = deleteBackward)]
     pub fn delete_backward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
@@ -4953,6 +4962,11 @@ impl WasmDocument {
 
     /// Forward-delete at a collapsed caret: deletes the character at `offset`, or —
     /// at a paragraph end — joins the next paragraph into this one.
+    ///
+    /// **O(1) in document size inside a paragraph; O(document) at a paragraph
+    /// boundary**, for the reason on
+    /// [`deleteBackward`](Self::delete_backward) — the successor is a question
+    /// about document order. Residue, stated rather than claimed away.
     #[wasm_bindgen(js_name = deleteForward)]
     pub fn delete_forward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
@@ -5316,6 +5330,11 @@ impl WasmDocument {
     }
 
     /// The first caret position in the document (⌘↑ / select-all anchor).
+    ///
+    /// **O(document)** — it asks for the first paragraph in document order, and
+    /// `ordered_paragraphs` is what knows the order. Residue: not on the typing
+    /// path, but it is on ⌘↑ and on Select All, so a reader can reach it. Stated
+    /// rather than left to look like an accessor.
     #[wasm_bindgen(js_name = firstPosition)]
     #[must_use]
     pub fn first_position(&self) -> Caret {
@@ -5332,6 +5351,9 @@ impl WasmDocument {
     }
 
     /// The last caret position in the document (⌘↓ / select-all focus).
+    ///
+    /// **O(document)**, for the reason on
+    /// [`firstPosition`](Self::first_position). Residue.
     #[wasm_bindgen(js_name = lastPosition)]
     #[must_use]
     pub fn last_position(&self) -> Caret {
@@ -16954,6 +16976,17 @@ impl WasmDocument {
         parts.join("\n")
     }
 
+    /// The rich-run clipboard fragment for a model range.
+    ///
+    /// **O(document), including for a selection inside one paragraph** — unlike
+    /// [`copy_text_inner`](Self::copy_text_inner), which grew a same-paragraph
+    /// fast path. Deliberately left: this walk does not only order the endpoints,
+    /// it also builds a `ParagraphIndex` and a `NoteAnchorLengths` for the whole
+    /// document, and the same-paragraph case would have to be threaded through
+    /// both to be correct rather than merely fast. A partial fast path here would
+    /// be the "two mechanisms for one rule" shape `SKILL` §8 warns about, so it is
+    /// recorded as a residue for the lane that owns rich copy instead of being
+    /// half-done here.
     fn copy_rich_runs_inner(&self, range: ModelRange) -> Vec<ClipboardRun> {
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
         collect_block_text_all_surfaces(&self.document, &mut nodes);
