@@ -282,6 +282,7 @@ autosave
 autoshape
 backend
 backends
+backoff
 backpressure
 basedOn
 bbox
