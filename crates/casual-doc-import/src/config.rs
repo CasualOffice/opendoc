@@ -50,6 +50,19 @@ pub struct ImportConfig {
     /// Every repair it performs is reported. A document that opens with half its
     /// tables gone and says nothing is worse than a refusal, because the reader
     /// saves over the original — so the report is the feature, not the document.
+    ///
+    /// # One consequence for the retention byte floor, stated rather than left to be found
+    ///
+    /// In [`ImportMode::Retention`] the snapshot retains the **repaired** main
+    /// document, not the damaged original, so an "exact if unchanged" export of a
+    /// damaged file returns the *fixed* file. That is a deliberate choice between
+    /// two imperfect answers, and handing the reader back bytes no consumer can
+    /// open is the worse one; the recovery report is non-empty either way, so a
+    /// host can say what changed. It does mean the source-snapshot record no
+    /// longer reproduces the import input byte for byte when a repair happened.
+    /// `35-DISPOSITION-TAXONOMY.md` describes the floor as reproducing the input
+    /// exactly, and for a damaged input that is not achievable at the same time
+    /// as producing a readable document.
     pub recover: bool,
 }
 
