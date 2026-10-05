@@ -13,6 +13,9 @@
 //! code.
 
 mod deck;
+// Own line (anti-conflict): the object-level guards (`a:srcRect`, `a:hlinkClick`,
+// a connector's end bindings), split out at the file ceiling.
+mod objects;
 // Own line (anti-conflict): the table guards, split out at the file ceiling.
 mod table;
 // Own line (anti-conflict): the theme guards, split out at the file ceiling.

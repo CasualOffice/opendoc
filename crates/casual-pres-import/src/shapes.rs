@@ -42,10 +42,11 @@ use std::collections::BTreeSet;
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Extent, Fill, GroupChild, GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
-    MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
-    MAX_SHAPE_PATH_COMMANDS, MAX_SHAPE_PRESET_BYTES, MediaId, PointEmu, ShapeAdjustment,
-    ShapeGeometry, ShapePath, ShapePathCommand, ShapeStyleRef, WordprocessingGroup,
+    CropRect, DrawingHyperlink, Extent, ExternalTarget, Fill, GroupChild, GroupPicture, GroupShape,
+    GroupTransform, HyperlinkTarget, MAX_GROUP_DEPTH, MAX_SHAPE_ADJUSTMENTS,
+    MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES, MAX_SHAPE_PATH_COMMANDS,
+    MAX_SHAPE_PRESET_BYTES, MediaId, PointEmu, ShapeAdjustment, ShapeGeometry, ShapePath,
+    ShapePathCommand, ShapeStyleRef, WordprocessingGroup,
 };
 use casual_pres_model::{
     Placeholder, PlaceholderKind, PlaceholderOrientation, PlaceholderSize, ShapeTree, SlideNode,
@@ -58,6 +59,8 @@ use crate::color::{FillRead, LineRead, read_fill_child, read_line};
 use crate::ids::Ids;
 use crate::loss::Reporter;
 use crate::media::MediaResolver;
+// Own line (anti-conflict): the relationship table `a:hlinkClick` resolves against.
+use crate::opc::{LinkTarget, Relationships, link_target};
 // Own line (anti-conflict): the theme a shape's colours and `p:style` resolve against.
 use crate::text::read_text_body;
 use crate::theme::{Resolver, read_shape_style};
@@ -301,13 +304,16 @@ fn read_tree_child(
     styles: &mut Vec<(NodeId, ShapeStyleRef)>,
 ) -> Result<bool, ImportError> {
     let part = cursor.part().to_owned();
+    // Lives as long as the relationship table rather than as long as the borrow,
+    // so it can be held across the `&mut media` calls below.
+    let links = media.relationships();
     match local {
         b"sp" => {
             if empty {
                 reporter.invalid(&part, b"sp");
                 return Ok(false);
             }
-            if let Some(node) = read_shape(cursor, reporter, ids, false, resolver, styles)? {
+            if let Some(node) = read_shape(cursor, reporter, ids, false, resolver, styles, links)? {
                 nodes.push(node);
             }
             Ok(true)
@@ -315,15 +321,20 @@ fn read_tree_child(
         b"cxnSp" => {
             // A connector is a shape with endpoints. Its geometry, fill and line
             // read identically, so it maps onto the same `GroupShape`; what is
-            // lost is the `p:nvCxnSpPr/p:cNvCxnSpPr` start/end shape bindings,
-            // which have no field — so a connector imports at its authored
-            // position but stops following the shapes it joins.
+            // lost is the `p:cNvCxnSpPr` start/end shape bindings, which have no
+            // field — so a BOUND connector imports at its authored position but
+            // stops following the shapes it joins.
+            //
+            // There is no blanket `degraded(cxnSp)` here any more. It fired on
+            // every connector, and a connector that binds neither end loses
+            // nothing at all, so the report charged a loss to the plain drawn line
+            // that is most of them. `read_non_visual` now reports each binding
+            // that is actually declared, by the name of the end it lost.
             if empty {
                 reporter.invalid(&part, b"cxnSp");
                 return Ok(false);
             }
-            reporter.degraded(&part, b"cxnSp");
-            if let Some(node) = read_shape(cursor, reporter, ids, true, resolver, styles)? {
+            if let Some(node) = read_shape(cursor, reporter, ids, true, resolver, styles, links)? {
                 nodes.push(node);
             }
             Ok(true)
@@ -367,7 +378,9 @@ fn read_tree_child(
                 reporter.invalid(&part, b"graphicFrame");
                 return Ok(false);
             }
-            if let Some(node) = crate::table::read_graphic_frame(cursor, reporter, ids, resolver)? {
+            if let Some(node) =
+                crate::table::read_graphic_frame(cursor, reporter, ids, resolver, links)?
+            {
                 nodes.push(node);
             }
             Ok(true)
@@ -391,12 +404,20 @@ pub(crate) struct NonVisual {
     pub(crate) hidden: bool,
     pub(crate) placeholder: Option<Placeholder>,
     descr: Option<String>,
+    /// The resolved `p:cNvPr/a:hlinkClick` — the thing that makes this shape or
+    /// picture clickable — when it names a target the model can carry.
+    pub(crate) hyperlink: Option<DrawingHyperlink>,
 }
 
 /// Reads a `p:nv*Pr` wrapper: its `p:cNvPr`, its `p:cNv*Pr`, and its `p:nvPr`.
+///
+/// `links` is the DECLARING part's relationship table, because `a:hlinkClick`
+/// spells its target as an `r:id` scoped to that part — the same scoping rule
+/// `MediaResolver`'s module note sets out for `a:blip@r:embed`.
 pub(crate) fn read_non_visual(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
+    links: &Relationships,
 ) -> Result<NonVisual, ImportError> {
     let part = cursor.part().to_owned();
     let mut non_visual = NonVisual::default();
@@ -416,7 +437,22 @@ pub(crate) fn read_non_visual(
                     boolean_attribute(element, b"hidden", cursor.part())?.unwrap_or(false);
                 non_visual.descr =
                     attribute(element, b"descr", cursor.part())?.filter(|descr| !descr.is_empty());
-                Ok(false)
+                // Its CHILDREN are entered now, which they were not before: a
+                // `p:cNvPr` holds `a:hlinkClick`, and returning `Ok(false)` here
+                // made `children` skip the subtree — so a linked shape lost its
+                // link with nothing in the report saying so. A skipped subtree is
+                // silent, not reported (see `children`'s own contract).
+                enter(cursor, empty, |cursor, child, child_empty| {
+                    read_click_target(
+                        cursor,
+                        reporter,
+                        child,
+                        child_empty,
+                        &part,
+                        links,
+                        &mut non_visual.hyperlink,
+                    )
+                })
             }
             b"nvPr" => {
                 if empty {
@@ -425,13 +461,31 @@ pub(crate) fn read_non_visual(
                 non_visual.placeholder = read_placeholder_slot(cursor, reporter)?;
                 Ok(true)
             }
+            // A CONNECTOR's own non-visual properties, and the one shape kind
+            // whose `p:cNv*Pr` carries document content rather than editing
+            // locks: `a:stCxn`/`a:endCxn` bind the connector's two ends to the
+            // shapes it joins, and `GroupShape` has no field for either.
+            //
+            // Entered rather than skipped, so the report can name WHICH end was
+            // unbound. The blanket `degraded(cxnSp)` this replaces fired on every
+            // connector in the deck, including the overwhelming majority that bind
+            // nothing at all and therefore lose nothing — a finding on healthy
+            // markup, which is the half of `fc3ec556` that was wrong in the
+            // generous direction.
+            b"cNvCxnSpPr" => enter(cursor, empty, |_cursor, child, _child_empty| {
+                match local_name(child) {
+                    end @ (b"stCxn" | b"endCxn") => reporter.omitted(&part, end),
+                    // An editing lock, not document content.
+                    b"cxnSpLocks" | b"extLst" => {}
+                    other => reporter.omitted(&part, other),
+                }
+                Ok(false)
+            }),
             // `p:cNvGraphicFramePr` joins the list for a `p:graphicFrame`. Its only
             // child is `a:graphicFrameLocks`, which is an editing lock and not
             // document content, so reporting it would put a false loss in the
             // report for every table in a deck.
-            b"cNvSpPr" | b"cNvPicPr" | b"cNvGrpSpPr" | b"cNvCxnSpPr" | b"cNvGraphicFramePr" => {
-                Ok(false)
-            }
+            b"cNvSpPr" | b"cNvPicPr" | b"cNvGrpSpPr" | b"cNvGraphicFramePr" => Ok(false),
             b"extLst" => Ok(false),
             other => {
                 reporter.omitted(&part, other);
@@ -440,6 +494,95 @@ pub(crate) fn read_non_visual(
         }
     })?;
     Ok(non_visual)
+}
+
+/// Reads one child of a `p:cNvPr`, resolving `a:hlinkClick` into `hyperlink`.
+///
+/// # The empty `r:id`, which is NOT a link
+///
+/// PowerPoint writes `<a:hlinkClick r:id=""/>` where a link was removed, and on
+/// shapes that never had one. Resolving the empty id against the relationship
+/// table finds nothing, so the obvious reading is "a link we could not resolve" —
+/// and reporting that would put a loss finding on markup that states no link, in
+/// a deck that lost nothing. It is therefore distinguished from a *populated* id
+/// that fails to resolve, which is a real loss and is reported.
+fn read_click_target(
+    cursor: &mut Cursor<'_>,
+    reporter: &mut Reporter,
+    element: &BytesStart<'_>,
+    empty: bool,
+    part: &str,
+    links: &Relationships,
+    hyperlink: &mut Option<DrawingHyperlink>,
+) -> Result<bool, ImportError> {
+    let local = local_name(element);
+    match local {
+        b"hlinkClick" => {
+            let Some(relationship_id) = attribute(element, b"id", cursor.part())? else {
+                // No `r:id` at all. If it carries an `@action` it is a show action
+                // (`ppaction://hlinkshowjump?jump=nextslide`), which this build does
+                // not model; with neither, it states nothing.
+                if action(element, cursor.part())?.is_some() {
+                    reporter.omitted(part, local);
+                }
+                return Ok(false);
+            };
+            if relationship_id.is_empty() {
+                // See this function's note: the no-link spelling.
+                return Ok(false);
+            }
+            // The screen tip, under the model's own bound for it
+            // (`v1::DrawingHyperlink::tooltip`: non-empty, at most 255 bytes).
+            let tooltip = attribute(element, b"tooltip", cursor.part())?
+                .filter(|value| !value.is_empty() && value.len() <= 255);
+            match link_target(links, &relationship_id) {
+                LinkTarget::External(url) => {
+                    // No `anchor`: `a:hlinkClick` has no `@anchor` of its own —
+                    // unlike `w:hyperlink` — so a fragment is already part of the
+                    // relationship target and splitting it out here would invent a
+                    // field the file does not have.
+                    *hyperlink = Some(DrawingHyperlink {
+                        target: HyperlinkTarget::External(ExternalTarget { url, anchor: None }),
+                        tooltip,
+                    });
+                    // The link survives; the VERB does not. `ppaction://hlinkfile`
+                    // on an external target says "open this in its application"
+                    // rather than "navigate", and nothing carries that.
+                    if action(element, cursor.part())?.is_some() {
+                        reporter.degraded_attribute(part, local, b"action");
+                    }
+                }
+                // Both are losses, and reported under the one feature name,
+                // because what the reader can say about each is the same: the file
+                // declared a link here and the model holds none.
+                LinkTarget::InPackage | LinkTarget::Unresolved => reporter.omitted(part, local),
+            }
+            Ok(false)
+        }
+        // The HOVER link. A separate element with a separate target, and
+        // `DrawingHyperlink` is one link per drawing, so there is nowhere for it
+        // to go even when the click link is absent.
+        b"hlinkHover" => {
+            reporter.omitted(part, local);
+            Ok(false)
+        }
+        b"extLst" => Ok(false),
+        other => {
+            if !empty {
+                reporter.omitted(part, other);
+            }
+            Ok(false)
+        }
+    }
+}
+
+/// An `@action`, filtered to the non-empty case.
+///
+/// `action=""` is how PowerPoint spells "no action" beside a real `r:id`, the
+/// same way `r:id=""` spells "no link"; treating it as a lost verb would report a
+/// loss on every ordinary hyperlink it writes.
+fn action(element: &BytesStart<'_>, part: &str) -> Result<Option<String>, ImportError> {
+    Ok(attribute(element, b"action", part)?.filter(|value| !value.is_empty()))
 }
 
 /// Reads `p:nvPr`'s children, returning the `p:ph` slot if it declares one.
@@ -527,6 +670,7 @@ fn read_shape(
     connector: bool,
     resolver: Resolver,
     styles: &mut Vec<(NodeId, ShapeStyleRef)>,
+    links: &Relationships,
 ) -> Result<Option<SlideNode>, ImportError> {
     let part = cursor.part().to_owned();
     let id = ids.next()?;
@@ -541,7 +685,7 @@ fn read_shape(
                 if empty {
                     return Ok(false);
                 }
-                non_visual = read_non_visual(cursor, reporter)?;
+                non_visual = read_non_visual(cursor, reporter, links)?;
                 Ok(true)
             }
             // An empty `<p:spPr/>` needs no special case: `Transform::default`
@@ -613,7 +757,7 @@ fn read_shape(
         flip_h: properties.transform.flip_h,
         flip_v: properties.transform.flip_v,
         rotation: properties.transform.rotation,
-        hyperlink: None,
+        hyperlink: non_visual.hyperlink,
     };
     Ok(Some(SlideNode {
         placeholder: non_visual.placeholder,
@@ -643,8 +787,11 @@ fn read_picture(
     let id = ids.next()?;
     let mut non_visual = NonVisual::default();
     let mut properties = ShapeProperties::default();
-    let mut embed: Option<String> = None;
+    let mut blip_fill = BlipFill::default();
     let mut text: Option<TextBody> = None;
+    // See `read_tree_child`: outlives the borrow, so the closure below and the
+    // `&mut media` resolution after it can both have what they need.
+    let links = media.relationships();
 
     children(cursor, |cursor, element, empty| {
         let local = local_name(element);
@@ -653,14 +800,14 @@ fn read_picture(
                 if empty {
                     return Ok(false);
                 }
-                non_visual = read_non_visual(cursor, reporter)?;
+                non_visual = read_non_visual(cursor, reporter, links)?;
                 Ok(true)
             }
             b"blipFill" => {
                 if empty {
                     return Ok(false);
                 }
-                embed = read_blip_fill(cursor, reporter)?;
+                blip_fill = read_blip_fill(cursor, reporter)?;
                 Ok(true)
             }
             // See `read_shape`: the post-loop check is the single reporting
@@ -703,7 +850,7 @@ fn read_picture(
     // nothing admitted cannot be modelled at all. Reported as invalid — refused,
     // not merely dropped — rather than substituting a placeholder image, which
     // would look like the author's choice.
-    let Some(embed) = embed else {
+    let Some(embed) = blip_fill.embed else {
         reporter.invalid(&part, b"blip");
         return Ok(None);
     };
@@ -722,9 +869,9 @@ fn read_picture(
         offset: properties.transform.offset,
         extent: properties.transform.extent,
         descr: non_visual.descr,
-        crop: None,
+        crop: blip_fill.crop,
         opacity: None,
-        hyperlink: None,
+        hyperlink: non_visual.hyperlink,
         border: properties.line.stroke,
         flip_h: properties.transform.flip_h,
         flip_v: properties.transform.flip_v,
@@ -747,22 +894,33 @@ fn read_picture(
     }))
 }
 
-/// Reads a `p:blipFill`, returning the `a:blip@r:embed` relationship id.
+/// What a `p:blipFill` carries that a [`GroupPicture`] has a field for.
+#[derive(Debug, Default)]
+struct BlipFill {
+    /// The `a:blip@r:embed` relationship id.
+    embed: Option<String>,
+    /// The `a:srcRect` source crop, when it hides something.
+    crop: Option<CropRect>,
+}
+
+/// Reads a `p:blipFill` into the fields a picture can hold.
 ///
 /// `r:link` is deliberately not followed: an external image is a network fetch at
 /// open time, which is an exfiltration channel and a hang. Reported instead.
 fn read_blip_fill(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
-) -> Result<Option<String>, ImportError> {
+) -> Result<BlipFill, ImportError> {
     let part = cursor.part().to_owned();
-    let mut embed = None;
+    let mut blip_fill = BlipFill::default();
     children(cursor, |cursor, element, _empty| {
         let local = local_name(element);
         match local {
             b"blip" => {
-                embed = attribute(element, b"embed", cursor.part())?;
-                if embed.is_none() && attribute(element, b"link", cursor.part())?.is_some() {
+                blip_fill.embed = attribute(element, b"embed", cursor.part())?;
+                if blip_fill.embed.is_none()
+                    && attribute(element, b"link", cursor.part())?.is_some()
+                {
                     reporter.omitted(&part, b"blip/link");
                 }
                 // `a:blip`'s children are the picture effects (`a:alphaModFix`,
@@ -773,11 +931,38 @@ fn read_blip_fill(
                 Ok(false)
             }
             b"srcRect" => {
-                // `GroupPicture::crop` exists, so a crop is representable — but
-                // reading it here and not in the DOCX importer's shape would be
-                // the start of two implementations. Reported for now; the four
-                // edge fractions are in thousandths of a percent.
-                reporter.omitted(&part, b"srcRect");
+                // The four edge fractions, in thousandths of a percent of the
+                // SOURCE image (`ST_Percentage`). A missing edge is zero — crop
+                // nothing on that side — so `<a:srcRect t="20000"/>` is a top crop
+                // and not three dropped attributes.
+                //
+                // This is a second parse SITE and not a second implementation of
+                // the rule. The two decisions that could drift are the clamp into
+                // the legal range and "an all-zero rect is no crop at all", and
+                // both are `CropRect::clamped`/`CropRect::is_identity` on the
+                // shared model — the same two calls `casual-doc-import` makes.
+                // Only reaching the element differs, because a `p:blipFill` is
+                // reached differently from a `pic:blipFill`.
+                //
+                // The identity rect is dropped rather than modelled, so a producer
+                // that writes the no-op explicitly does not become a document
+                // carrying a field that changes nothing — and an editor offering to
+                // reset a crop does not offer it on a picture that has none.
+                let edge = |name: &[u8]| -> Result<i32, ImportError> {
+                    Ok(integer_attribute(element, name, cursor.part())?
+                        .and_then(|value| i32::try_from(value).ok())
+                        .unwrap_or(0))
+                };
+                let crop = CropRect {
+                    left: edge(b"l")?,
+                    top: edge(b"t")?,
+                    right: edge(b"r")?,
+                    bottom: edge(b"b")?,
+                }
+                .clamped();
+                if !crop.is_identity() {
+                    blip_fill.crop = Some(crop);
+                }
                 Ok(false)
             }
             b"stretch" | b"tile" => Ok(false),
@@ -787,7 +972,7 @@ fn read_blip_fill(
             }
         }
     })?;
-    Ok(embed)
+    Ok(blip_fill)
 }
 
 /// Reads one `p:grpSp`, having just entered it.
@@ -806,6 +991,9 @@ fn read_group(
     let mut non_visual = NonVisual::default();
     let mut transform = Transform::default();
     let mut nodes: Vec<SlideNode> = Vec::new();
+    // See `read_tree_child`: outlives the borrow, so the closure can read it while
+    // the recursion below holds `media` mutably.
+    let links = media.relationships();
 
     children(cursor, |cursor, element, empty| {
         let local = local_name(element);
@@ -814,7 +1002,7 @@ fn read_group(
                 if empty {
                     return Ok(false);
                 }
-                non_visual = read_non_visual(cursor, reporter)?;
+                non_visual = read_non_visual(cursor, reporter, links)?;
                 Ok(true)
             }
             b"grpSpPr" => {
@@ -927,7 +1115,12 @@ fn read_group(
             flip_v: transform.flip_v,
             rotation: transform.rotation,
         },
-        hyperlink: None,
+        // A GROUP can be clickable too, and `WordprocessingGroup` has the field, so
+        // this is carried rather than reported. A linked child inside a linked group
+        // keeps its own link: `GroupChild::Shape`/`Picture` each have `hyperlink`,
+        // which is the one thing the `SlideNode` wrapper above does NOT have to
+        // carry for them.
+        hyperlink: non_visual.hyperlink,
         children: group_children,
     };
     Ok(Some(SlideNode {

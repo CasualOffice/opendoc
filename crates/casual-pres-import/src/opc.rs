@@ -117,10 +117,81 @@ pub(crate) struct Relationship {
     /// The normalized part name for an internal, in-package target. `None` for an
     /// external target (never fetched) or an internal one that escapes the root.
     pub(crate) resolved_part: Option<String>,
+    /// The `@Target` exactly as the part wrote it, and the ONLY thing an external
+    /// relationship carries.
+    ///
+    /// Kept because `resolved_part` is deliberately `None` for
+    /// `TargetMode="External"` — an in-package part name is the wrong type for a
+    /// URL, and resolving one against the package root would turn
+    /// `https://example.com/a` into a part that does not exist. A hyperlink is
+    /// exactly that case: `a:hlinkClick@r:id` names an external relationship whose
+    /// whole content is this string, so dropping it loses the link rather than
+    /// degrading it. Never dereferenced — see `MediaResolver::resolve` on why an
+    /// external image is not fetched; a URL is carried, not opened.
+    pub(crate) target: String,
+    /// Whether the part declared `TargetMode="External"`.
+    ///
+    /// Recorded rather than inferred from `resolved_part.is_none()`, which is NOT
+    /// the same question: that is also `None` for an *internal* target which
+    /// escapes the package root. Treating the two alike would hand a path
+    /// traversal attempt to the model as a URL — the one place where getting this
+    /// wrong is a security answer rather than a fidelity one.
+    pub(crate) external: bool,
 }
 
 /// A part's relationships, keyed by `Id`.
 pub(crate) type Relationships = BTreeMap<String, Relationship>;
+
+/// What an `a:hlinkClick@r:id` turns out to point at.
+///
+/// Three outcomes and not two, because the caller has to report them
+/// differently: only the first is modellable, and the other two are different
+/// findings about different losses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LinkTarget {
+    /// An external URL, inside the model's own bounds, that a
+    /// `v1::ExternalTarget` carries verbatim.
+    External(String),
+    /// The relationship resolves to a part INSIDE the package. On a hyperlink
+    /// that is PowerPoint's slide jump — `action="ppaction://hlinksldjump"` with
+    /// an `r:id` naming a slide part — and the model's only internal target is a
+    /// document BOOKMARK, so there is nothing honest to put in it. Writing a
+    /// slide part name into `InternalTarget::anchor` would make the model state an
+    /// anchor the deck does not contain, which is worse than reporting the loss.
+    InPackage,
+    /// Nothing usable: no such relationship, or a target the model's domain
+    /// refuses. A link the file declared and this build cannot carry.
+    Unresolved,
+}
+
+/// Resolves one `@r:id` as a hyperlink target.
+///
+/// # Why the bounds are checked here and not left to the model
+///
+/// `casual_pres_model::ShapeTree::validate` does not check hyperlink targets —
+/// only the document path's `check_hyperlink_target` does — so an over-long URL
+/// would reach the model unchecked on this path and `validate` would not say so.
+/// Refusing it at the reader, and *reporting* it, keeps the presentation model
+/// inside the domain the document model already enforces. The two numbers are
+/// deliberately that model's own (`v1::ExternalTarget`: non-empty, at most 2048
+/// bytes), so one construct does not get two domains depending on which reader
+/// opened the file.
+///
+/// # Complexity
+///
+/// O(log relationships) — one map lookup, plus one copy of the target string.
+pub(crate) fn link_target(relationships: &Relationships, relationship_id: &str) -> LinkTarget {
+    let Some(relationship) = relationships.get(relationship_id) else {
+        return LinkTarget::Unresolved;
+    };
+    if !relationship.external {
+        return LinkTarget::InPackage;
+    }
+    if relationship.target.is_empty() || relationship.target.len() > 2048 {
+        return LinkTarget::Unresolved;
+    }
+    LinkTarget::External(relationship.target.clone())
+}
 
 /// `[Content_Types].xml`'s default and override mappings.
 #[derive(Debug, Default)]
@@ -373,6 +444,8 @@ fn parse_relationships(
                 Relationship {
                     relationship_type,
                     resolved_part,
+                    target,
+                    external,
                 },
             );
         }

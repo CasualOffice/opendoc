@@ -70,6 +70,8 @@ use crate::color::{FillRead, read_fill_child, read_line};
 use crate::ids::Ids;
 use crate::limits::ImportLimits;
 use crate::loss::Reporter;
+// Own line (anti-conflict): the relationship table a frame's `a:hlinkClick` needs.
+use crate::opc::Relationships;
 use crate::shapes::read_non_visual;
 use crate::theme::Resolver;
 use crate::xml::{
@@ -91,6 +93,7 @@ pub(crate) fn read_graphic_frame(
     reporter: &mut Reporter,
     ids: &mut Ids,
     resolver: Resolver,
+    links: &Relationships,
 ) -> Result<Option<SlideNode>, ImportError> {
     let part = cursor.part().to_owned();
     let id = ids.next()?;
@@ -110,7 +113,7 @@ pub(crate) fn read_graphic_frame(
                 if empty {
                     return Ok(false);
                 }
-                non_visual = Some(read_non_visual(cursor, reporter)?);
+                non_visual = Some(read_non_visual(cursor, reporter, links)?);
                 Ok(true)
             }
             b"xfrm" => {
@@ -218,7 +221,10 @@ pub(crate) fn read_graphic_frame(
             flip_h: false,
             flip_v: false,
             rotation: None,
-            hyperlink: None,
+            // A frame's `p:cNvPr` carries `a:hlinkClick` like any other shape's —
+            // a clickable chart is ordinary — and the box this frame becomes is
+            // what would be clicked, so the link belongs on it.
+            hyperlink: non_visual.hyperlink,
         }),
         text: None,
         table,

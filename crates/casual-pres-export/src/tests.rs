@@ -500,7 +500,7 @@ fn a_retained_deck_still_reopens() {
 /// So this authors all four and asserts each one separately.
 #[test]
 fn a_picture_keeps_its_orientation_crop_opacity_and_its_image_in_a_group() {
-    use casual_doc_model::v1::GroupChild;
+    use casual_doc_model::v1::{CropRect, GroupChild};
 
     let slide_two = String::from_utf8(
         deck::deck_parts()
@@ -598,19 +598,35 @@ fn a_picture_keeps_its_orientation_crop_opacity_and_its_image_in_a_group() {
     assert!(first_before.flip_h && first_before.flip_v, "and both flips");
     assert_eq!(first_after.flip_h, first_before.flip_h, "@flipH");
     assert_eq!(first_after.flip_v, first_before.flip_v, "@flipV");
-    // `a:srcRect` and `a:alphaModFix` are NOT read by the presentation importer —
-    // both are named in its "does not read" list. So the round trip cannot carry
-    // them, and pinning that is more useful than asserting nothing: the day the
-    // importer learns either, this row fails and says so, and the writer already
-    // handles both. Asserting `is_some()` here instead would have the writer
-    // appear verified by a path that cannot reach it.
+    // `a:srcRect` IS read by the presentation importer now, so this row became the
+    // round-trip assertion the pinned version asked for. The crop is stated per
+    // edge rather than compared as one value, because the edges are four distinct
+    // numbers in the fixture precisely so a transposition shows up here as well as
+    // at the reader.
     assert_eq!(
-        first_before.crop, None,
-        "a:srcRect is unread on the presentation path; when the importer gains it, \
-         turn this into a round-trip assertion — the writer emits it already"
+        first_before.crop,
+        Some(CropRect {
+            left: 5_000,
+            top: 6_000,
+            right: 7_000,
+            bottom: 8_000,
+        }),
+        "the fixture's picture is cropped, or the round trip below is vacuous"
     );
-    assert_eq!(first_before.opacity, None, "same for a:alphaModFix");
-    assert_eq!(first_after.crop, first_before.crop);
+    assert_eq!(
+        first_after.crop, first_before.crop,
+        "a:srcRect survives the round trip, edge for edge"
+    );
+    // `a:alphaModFix` is still unread on the presentation path, and pinning that is
+    // more useful than asserting nothing: the day the importer learns it, this row
+    // fails and says so, and the writer already handles it. Asserting `is_some()`
+    // here instead would have the writer appear verified by a path that cannot
+    // reach it.
+    assert_eq!(
+        first_before.opacity, None,
+        "a:alphaModFix is unread on the presentation path; when the importer gains \
+         it, turn this into a round-trip assertion — the writer emits it already"
+    );
     assert_eq!(first_after.opacity, first_before.opacity);
 
     // The nested picture kept its image. `media` resolves through the model's own

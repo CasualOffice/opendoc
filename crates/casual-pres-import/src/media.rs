@@ -67,6 +67,22 @@ impl<'a> MediaResolver<'a> {
         }
     }
 
+    /// The declaring part's relationships.
+    ///
+    /// A picture is not the only thing in a shape tree that spells a reference as
+    /// an `r:id`: `a:hlinkClick` does too, and it is read from the same part with
+    /// the same table. Handing the table out — rather than growing a second
+    /// resolver, or threading `&Relationships` alongside this type through the
+    /// whole recursion — keeps one answer to "which relationships is this part
+    /// reading against", which is the question `MediaResolver`'s module note says
+    /// is the easy one to get wrong.
+    ///
+    /// The returned borrow lives as long as the table, not as long as `self`, so
+    /// a caller can hold it across a `&mut self` call to [`resolve`](Self::resolve).
+    pub(crate) fn relationships(&self) -> &'a Relationships {
+        self.relationships
+    }
+
     /// Resolves an `r:embed` to a media id, registering the entry on first use.
     ///
     /// `None` when the id resolves to no relationship, to an external target, or

@@ -1039,3 +1039,70 @@ fn a_line_whose_outline_is_suppressed_paints_no_anchor_at_all() {
          passing because the shape never reached layout"
     );
 }
+
+/// An `a:srcRect` crop reaches the **display list**, which is what the raster
+/// backend consumes.
+///
+/// # Why this is asserted at the paint item and not at the model
+///
+/// The importer's own guards prove the four edges land on `GroupPicture::crop`,
+/// and `SKILL` §9.4 is the reason that is not enough: a field the model holds and
+/// nothing draws is the most expensive recurring claim in this repository. The
+/// backend crops by reading `PaintItem::Image::crop`, so this walks the whole
+/// seam — package bytes, reader, model, anchor, composed display list — and the
+/// crop either arrives there or the picture is drawn uncropped and the author's
+/// framing is lost.
+///
+/// Differential: the plain fixture's picture is uncropped, so the "before" half
+/// proves the `Some` came from the markup. The four edges are distinct and none is
+/// a multiple of another, so a transposition between the layers fails here too.
+#[test]
+fn an_imported_crop_reaches_the_display_list() {
+    fn image_crops(imported: &ImportedPresentation) -> Vec<Option<casual_doc_model::v1::CropRect>> {
+        let canvas = lay_out_slide(&imported.presentation, 1, &shaper()).expect("slide 2 lays out");
+        compose_slide(&canvas)
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Image { crop, .. } => Some(*crop),
+                _ => None,
+            })
+            .collect()
+    }
+
+    let slide_two = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slides/slide2.xml")
+            .expect("the fixture carries slide2.xml")
+            .1,
+    )
+    .expect("the slide part is UTF-8");
+    const UNCROPPED: &str = r#"<p:blipFill><a:blip r:embed="rIdImage"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>"#;
+    const CROPPED: &str = r#"<p:blipFill><a:blip r:embed="rIdImage"/><a:srcRect l="11000" t="23000" r="7000" b="31000"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>"#;
+    assert_eq!(
+        slide_two.matches(UNCROPPED).count(),
+        1,
+        "the two halves of this guard must be one change apart"
+    );
+
+    assert_eq!(
+        image_crops(&open(&deck::deck())),
+        vec![None],
+        "the fixture's one picture is uncropped, so a crop below can only have come \
+         from the markup"
+    );
+    assert_eq!(
+        image_crops(&open(&deck::deck_with(
+            "ppt/slides/slide2.xml",
+            slide_two.replace(UNCROPPED, CROPPED).as_bytes(),
+        ))),
+        vec![Some(casual_doc_model::v1::CropRect {
+            left: 11_000,
+            top: 23_000,
+            right: 7_000,
+            bottom: 31_000,
+        })],
+        "every edge, on the edge it was authored on, in the item the backend draws"
+    );
+}
