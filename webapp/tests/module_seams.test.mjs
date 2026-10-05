@@ -417,8 +417,17 @@ const SRC = new URL("../src/", import.meta.url);
  *      is built from — it is the function that decides WHICH of the two engine
  *      payloads a copy carries, and it was the only part of that decision
  *      living outside the module that owns the format.
- *  MEASURED with `wc -l` on this tree. */
-const MAIN_JS_LINE_CEILING = 16145;
+ *
+ *  Lowered again to 16,081 by the font-provisioning round, whose decisions moved
+ *  to `font_provisioning.mjs` and left only the EFFECTS here — the engine
+ *  handle, the verified-byte fetch, the byte-cache release, the progress channel
+ *  and the console. `provisionFonts`, two key sets, `provisionMissingFallbacks`
+ *  and the old `ensureGlyphCoverage` were 89 lines of decision in a file no unit
+ *  test can reach, which is why a face that failed while leaving coverage
+ *  complete was reported to the reader as a loss.
+ *  MEASURED with `wc -l` on this tree, not carried from the lane that handed the
+ *  edit over — their number was 16,096 against a different base. */
+const MAIN_JS_LINE_CEILING = 16081;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -436,6 +445,17 @@ const PURE_MODULES = [
   // Holds the vertical goal column and nothing else: no DOM and no engine, so
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",
+  // What a pointer drag selects: the click-count rule, the word/paragraph snap
+  // at both ends, and the auto-scroll ramp. The engine, the clock and the
+  // geometry are all injected, which is the only reason a drag's ENGINE-CALL
+  // BUDGET can be asserted at all — the property that keeps a pointer-move O(1)
+  // in document size while the engine's own word lookup is O(document).
+  "drag_selection.mjs",
+  // Which faces are fetched when, and what a reader is told when one cannot be
+  // had. The engine handle, the fetch, the byte cache, the progress channel and
+  // the console are all injected, so the three decisions are drivable in node
+  // without a browser or a network.
+  "font_provisioning.mjs",
   "command_taxonomy.mjs",
   // The responsive ladder and the soft-keyboard inset (docs/148). Its window,
   // body and root are injected rather than reached for, which is the only
