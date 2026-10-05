@@ -2064,6 +2064,25 @@
               <button data-i18n="protect.level.forms" type="button" data-protect-level="forms">Filling in forms</button>
             </div>
           </div>
+          <!-- The SECOND axis. Word's Restrict Editing pane is two independent
+               restrictions — "1. Formatting restrictions" over "2. Editing
+               restrictions" — and this dialog shipped only the second while
+               carrying `w:formatting` through untouched, which is `165` U3: half
+               of a pane with the whole pane's name. `w:formatting` is now
+               enforced at the operation (`casual_doc_edit::protection`), so the
+               control that sets it is no longer a claim without an engine.
+               Placed BELOW the editing levels rather than above them, which is
+               Word's order reversed, and the reason is this dialog's own shape
+               rather than taste: our radio group's first row IS Stop Protection,
+               where Word gives that its own button at the foot of the pane, so a
+               reader who opened this to LIFT a restriction must meet that row
+               first. Recorded rather than left as an unexplained departure. -->
+          <div class="settings-section" id="restrictEditingFormattingRow">
+            <label class="dialog-check">
+              <input id="restrictEditingFormatting" type="checkbox" />
+              <span><strong data-i18n="protect.formatting">Limit formatting to the document's unlocked styles</strong><small data-i18n="protect.formatting.hint">Bold, colour, spacing and other direct formatting are refused; applying a style the document has not locked is not. Which styles are locked is set in the file, not here.</small></span>
+            </label>
+          </div>
           <div class="settings-section" id="restrictEditingEnforceRow">
             <label class="dialog-check">
               <input id="restrictEditingEnforce" type="checkbox" />

@@ -127,8 +127,15 @@ export function readProtection(json) {
     enforcement: parsed?.enforcement === true,
     formatting: parsed?.formatting === true,
     /** Whether a restriction is actually in force, which is the ribbon button's
-     *  pressed state. `edit="none"` restricts nothing however it is enforced. */
-    active: edit !== null && edit !== "none" && parsed?.enforcement === true,
+     *  pressed state and the access badge's document authority. `edit="none"`
+     *  restricts nothing however it is enforced — **unless `w:formatting` is on**,
+     *  which is Word's pure formatting restriction and is a restriction in force by
+     *  any reading: a document that refuses every formatting gesture was reporting
+     *  itself unprotected, so the lock button showed unpressed and the badge named
+     *  no authority at all. Both axes, one predicate, because "is anything in
+     *  force" is one question and two predicates would answer it differently. */
+    active:
+      parsed?.enforcement === true && (restricts(edit) || parsed?.formatting === true),
   };
 }
 
@@ -150,6 +157,7 @@ export function createDocumentProtection(io) {
   const levels = el("restrictEditingLevels");
   const enforce = el("restrictEditingEnforce");
   const enforceRow = el("restrictEditingEnforceRow");
+  const formatting = el("restrictEditingFormatting");
   const applyBtn = el("restrictEditingApply");
   const cancelBtn = el("restrictEditingCancel");
   const closeBtn = el("restrictEditingClose");
@@ -179,10 +187,18 @@ export function createDocumentProtection(io) {
   });
 
   /** The enforcement checkbox is meaningless with no restriction chosen, so it is
-   *  disabled CARRYING THE REASON rather than greyed in silence. */
+   *  disabled CARRYING THE REASON rather than greyed in silence.
+   *
+   *  "No restriction chosen" means NEITHER axis, and that is the whole difference
+   *  the formatting checkbox makes here: Word writes
+   *  `w:edit="none" w:formatting="1" w:enforcement="1"` when an author ticks the
+   *  formatting box and no editing box, so a reader who has ticked only the
+   *  formatting box has chosen something and must be able to apply it. Reading the
+   *  radio group alone would disable Apply's own precondition on exactly the state
+   *  the new control exists to reach. */
   function reflectEnforce() {
     if (!enforce) return;
-    const off = (group.value() ?? "off") === "off";
+    const off = (group.value() ?? "off") === "off" && formatting?.checked !== true;
     enforce.disabled = off;
     if (off) enforce.checked = false;
     if (enforceRow) enforceRow.title = off ? t("protect.enforceOff") : "";
@@ -193,6 +209,7 @@ export function createDocumentProtection(io) {
     const state = current();
     group.reflect(state.value);
     if (enforce) enforce.checked = state.enforcement;
+    if (formatting) formatting.checked = state.formatting;
     reflectEnforce();
     modal.open();
   }
@@ -209,7 +226,24 @@ export function createDocumentProtection(io) {
     if (!doc) return;
     const state = current();
     const row = PROTECTION_LEVELS.find((level) => level.value === (group.value() ?? "off"));
-    const wantedEdit = row?.edit ?? null;
+    // `formatting ? … : state.formatting` and NOT `formatting?.checked === true`.
+    // The control is optional markup — a host may compose this dialog down, and
+    // `createDocumentProtection` returns the same shape when the whole dialog is
+    // absent — so an absent checkbox must mean "the reader was not asked", which
+    // carries the document's own flag through. Reading `?.checked` would answer
+    // `false` for "not asked" and switch a restriction the file carries off behind
+    // the reader, which is the silent loss this dialog's previous note promised it
+    // did not do and `w:formatting is carried through…` has guarded since.
+    const wantedFormatting = formatting ? formatting.checked === true : state.formatting;
+    // **The element has to EXIST to carry a formatting restriction.** A reader who
+    // ticks only the formatting box has chosen Word's pure formatting restriction,
+    // which Word writes as `w:edit="none" w:formatting="1" w:enforcement="1"` — so
+    // `edit` becomes the explicit `"none"` token rather than `null`, because `null`
+    // removes `w:documentProtection` outright and there is then nowhere for
+    // `w:formatting` to live. The two are different states and this module already
+    // keeps them apart everywhere else; this is the one place the SECOND axis
+    // decides which of them is meant.
+    const wantedEdit = row?.edit ?? (wantedFormatting ? "none" : null);
     const wantedEnforcement = wantedEdit !== null && enforce?.checked === true;
     // Compared on what RESTRICTS, not on the raw token. `edit=null` (the element
     // absent) and `edit="none"` (a restriction an author set up and switched off)
@@ -218,32 +252,50 @@ export function createDocumentProtection(io) {
     // presses Apply has chosen nothing and must get no write. Comparing the tokens
     // directly made `null === "none"` false and rewrote the file, which is what
     // both this function's note above and `readProtection`'s said it did not do.
+    //
+    // `wantedFormatting` joins the comparison rather than riding past it: without
+    // it, ticking the formatting box on a document whose editing level is unchanged
+    // would be read as "nothing the reader can see has changed" and silently
+    // discarded — which is the same defect the token comparison had, in the new axis.
     const sameRestriction =
       wantedEdit === state.edit || (!restricts(wantedEdit) && !restricts(state.edit));
-    if (sameRestriction && wantedEnforcement === state.enforcement) {
+    if (
+      sameRestriction &&
+      wantedEnforcement === state.enforcement &&
+      wantedFormatting === state.formatting
+    ) {
       modal.close();
       return;
     }
-    // `formatting` (`w:formatting`, Word's "limit formatting to a selection of
-    // styles") is carried through untouched rather than defaulted: this dialog does
-    // not offer the style whitelist, so Apply must not switch a restriction the
-    // document already carries off behind the reader's back.
-    //
     // NO `gate`. See the ordering-trap note in this module's header — gating a
     // policy change behind the suggesting-mode check would rebuild the one-way door
     // ADR-059 removed in the engine.
     const applied = await io.runEdit(() =>
-      doc.setDocumentProtection(wantedEdit, wantedEnforcement, state.formatting),
+      doc.setDocumentProtection(wantedEdit, wantedEnforcement, wantedFormatting),
     );
     if (!applied) return;
     modal.close();
     reflect();
     io.onChanged();
-    io.setStatus(
-      wantedEdit === null || !wantedEnforcement
-        ? t("protect.removed")
-        : t("protect.applied", { level: t(row.labelKey) }),
-    );
+    // Three outcomes rather than two, because the formatting axis can be the ONLY
+    // thing in force and "Editing restricted to: No restriction" would be a
+    // sentence that contradicts itself. What is said is what will now be refused.
+    io.setStatus(statusFor(wantedEdit, wantedEnforcement, wantedFormatting, row));
+  }
+
+  /** What the status bar says after Apply.
+   *
+   *  Pure and separate so the three outcomes can be read — and tested — without a
+   *  dialog: nothing in force, the formatting axis alone, and an editing level
+   *  (which absorbs the formatting axis into its own sentence, because a reader who
+   *  has just been told the document is read-only does not also need to be told its
+   *  formatting is). O(1). */
+  function statusFor(edit, enforcement, formattingWanted, row) {
+    if (edit === null || !enforcement) return t("protect.removed");
+    if (!restricts(edit)) {
+      return formattingWanted ? t("protect.appliedFormatting") : t("protect.removed");
+    }
+    return t("protect.applied", { level: t(row.labelKey) });
   }
 
   /** Nothing to reflect HERE, deliberately.
@@ -263,6 +315,12 @@ export function createDocumentProtection(io) {
   cancelBtn?.addEventListener("click", () => modal.close());
   closeBtn?.addEventListener("click", () => modal.close());
   enforce?.addEventListener("change", reflectEnforce);
+  // The formatting box changes whether ANYTHING is restricted, so it changes the
+  // enforcement checkbox's own precondition. Without this, ticking it left Apply's
+  // enforcement control disabled until some other event reflected, and Word's pure
+  // formatting restriction was unreachable through this dialog even with the engine
+  // enforcing it. Found by the guard, not by reading the code.
+  formatting?.addEventListener("change", reflectEnforce);
 
   return {
     open,

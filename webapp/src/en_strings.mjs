@@ -1255,6 +1255,12 @@ export const EN_STRINGS = Object.freeze({
   "protect.command": "Restrict editing\u2026",
   "protect.applied": "Editing restricted to: {level}",
   "protect.removed": "Editing is no longer restricted",
+  // The SECOND axis applied on its own \u2014 `w:edit="none" w:formatting="1"`, which
+  // is what Word writes when an author ticks the formatting box and no editing
+  // box. Its own sentence rather than `protect.applied` with a level
+  // interpolated, because the level would read "No restriction" and the sentence
+  // would contradict itself.
+  "protect.appliedFormatting": "Formatting is now limited to this document's unlocked styles",
   // Not `protect.enforce.disabled`: `protect.enforce` is a markup key, and a
   // catalogue entry that looks like a child of another key invites `isDeclared`'s
   // plural-family prefix rule to answer for it.
@@ -1317,6 +1323,16 @@ export const EN_STRINGS = Object.freeze({
   "document.protectedCommentsOnly": "This document is protected: only comments can be added",
   "document.protectedTrackedChangesOnly": "This document is protected: changes must be tracked, and tracked changes cannot be accepted or rejected",
   "document.protectedFormsOnly": "This document is protected: only its form fields can be edited",
+  // `w:formatting` and `w:locked` — the other axis, whose refusals say what is
+  // still possible as well as what was refused, because a reader who is told only
+  // "no" tries the same gesture again. Neither says secure, encrypted or
+  // password-protected: `w:documentProtection` is plain-text XML and the standard
+  // says in its own note that it "is not intended as a security feature", so a
+  // sentence a reader would read as one would be a false claim in the place they
+  // are most likely to believe it. The engine asserts that in
+  // `every_protection_refusal_carries_a_distinct_routable_code_and_sentence`.
+  "document.protectedFormatting": "This document is protected: its formatting can only be changed by applying one of its styles",
+  "document.protectedStyleLocked": "This document is protected and that style is locked, so it cannot be applied",
   // The `ODC-7xxx` collaboration family (`docs/20`), every row of it. Each says
   // what the reader should DO, because that is the difference between the codes:
   // one invites a retry, one asks them to copy their work out, one is terminal.
@@ -1387,6 +1403,10 @@ export const EN_STRINGS = Object.freeze({
   "access.level.suggest": "Suggesting only",
   "access.level.comment": "Comments only",
   "access.level.read": "Read only",
+  // The one state where a reader may write and may not reformat — `w:formatting`
+  // with no editing restriction. Short enough for the footer badge at phone
+  // width, where the second half of the badge is shed.
+  "access.level.noFormatting": "No formatting changes",
   // Each source names WHERE the limit was decided, in the reader's terms rather
   // than the mechanism's: "set when this document was opened" is something a
   // reader can act on (ask whoever opened it), "the container grant withheld

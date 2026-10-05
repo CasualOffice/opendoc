@@ -153,11 +153,27 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // facade's mutation choke point, `readOnly`/`comments`/`trackedChanges` at
   // the operation in `casual-doc-edit`. The pin used to say the other three
   // were NOT enforced, which had been false since ADR-052 landed: a guard can
-  // pin a lie (SKILL §9 rule 6), so this one now states what keeps the cell off
-  // "full" - `w:formatting` style locking is not enforced, and a
-  // `trackedChanges`-protected document does not force Suggesting on open.
+  // pin a lie (SKILL §9 rule 6), so this one states what keeps the cell off
+  // "full". `w:formatting` style locking WAS one of the two reasons and is no
+  // longer: it is enforced at the operation, with `w:style/@w:locked` and
+  // `w:latentStyles/@w:defLockedState` as its whitelist. What keeps the cell
+  // off "full" now is the one Word obligation still unmet - a
+  // `trackedChanges`-protected document does not force Suggesting on open and
+  // its Track Changes control stays live, so a reader can reach a state where
+  // every keystroke is refused.
   assert.equal(by["Document protection & forms"].editable, "partial");
   assert.equal(by["Document protection & forms"].rendered, "none");
+  // `modeled` was "full" and that was an overstatement by omission (SKILL §9
+  // rule 3), by its own note's admission in the same object: `w:permStart` /
+  // `w:permEnd` have no typed model at all, `w:sectPr/w:formProt` has none
+  // either, and the sixteen password attributes have none. `grep -rn
+  // "permStart\|formProt" crates/ --include="*.rs"` returns one comment in a
+  // test and no model, importer arm or exporter arm. Three unmodelled
+  // constructs in one family is "partial", and the note now says which three
+  // rather than leaving the cell to imply there are none. Pinned so the cell
+  // cannot drift back to "full" the way the editable cell drifted into a lie.
+  assert.equal(by["Document protection & forms"].modeled, "partial");
+  assert.notEqual(by["Document protection & forms"].modeled, "full");
   // Round-trip is NOT full, and it never was: the sixteen `AG_Password` /
   // `AG_TransitionalPassword` attributes on `w:documentProtection` and
   // `w:writeProtection` have no home in the model, and `word/settings.xml` is a

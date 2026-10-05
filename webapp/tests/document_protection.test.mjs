@@ -133,7 +133,7 @@ test("every level the dialog offers maps onto a distinct engine token", () => {
 /** A stand-in for the elements `editor.html` carries, which RECORDS the
  *  listeners the module installs — so Apply is pressed through the real wiring
  *  rather than through a seam added to production code for a test. */
-function fakeMarkup() {
+function fakeMarkup(withFormatting = true) {
   const listeners = new Map();
   const node = (id) => ({
     addEventListener: (type, handler) => void listeners.set(`${id}:${type}`, handler),
@@ -144,15 +144,23 @@ function fakeMarkup() {
     disabled: false,
     addEventListener: (type, handler) => void listeners.set(`enforce:${type}`, handler),
   };
+  // The SECOND axis's control. `withFormatting` is false for the one case the
+  // real chrome also has — a host that composed this row away — because "the
+  // reader was not asked" and "the reader said no" must not be the same answer.
+  const formattingBox = {
+    checked: false,
+    addEventListener: (type, handler) => void listeners.set(`formatting:${type}`, handler),
+  };
   elements.clear();
   elements.set("restrictEditingDialog", node("dialog"));
   elements.set("restrictEditingLevels", levels);
   elements.set("restrictEditingEnforce", enforce);
   elements.set("restrictEditingEnforceRow", { title: "" });
+  if (withFormatting) elements.set("restrictEditingFormatting", formattingBox);
   elements.set("restrictEditingApply", node("apply"));
   elements.set("restrictEditingCancel", node("cancel"));
   elements.set("restrictEditingClose", node("close"));
-  return { levels, enforce, listeners };
+  return { levels, enforce, formatting: formattingBox, listeners };
 }
 
 /**
@@ -163,8 +171,8 @@ function fakeMarkup() {
  * That is what makes this a guard against the one-way door rather than an
  * assertion about an argument.
  */
-function build(start) {
-  const { enforce, listeners } = fakeMarkup();
+function build(start, withFormatting = true) {
+  const { enforce, formatting, listeners } = fakeMarkup(withFormatting);
   let stored = start;
   const doc = {
     documentProtection: () => stored,
@@ -202,6 +210,7 @@ function build(start) {
   return {
     protection,
     enforce,
+    formatting,
     status,
     listeners,
     closed: () => closed,
@@ -288,14 +297,122 @@ test("Apply writes nothing when nothing the reader can see has changed", async (
 });
 
 test("w:formatting is carried through rather than defaulted away", async () => {
-  // This dialog does not offer Word's style whitelist, so Apply must not switch
-  // off a `w:formatting` restriction the document already carries.
+  // Apply must not switch off a `w:formatting` restriction the document already
+  // carries. It used to be carried through because the dialog never offered the
+  // control; now it is carried through because `open()` REFLECTS it, which is a
+  // different mechanism for the same guarantee — so this guard stays as it is and
+  // the assertion is still about the file rather than about the checkbox.
   const h = build(json("readOnly", true, true));
   h.protection.open();
   h.choose("comments");
   h.enforce.checked = true;
   await applyVia(h);
   assert.equal(h.stored().formatting, true, "the formatting lock was dropped behind the reader");
+});
+
+test("a dialog composed WITHOUT the formatting row still carries the flag through", async () => {
+  // The one case where "not asked" and "said no" would otherwise be the same
+  // answer. A host may render a cut-down dialog, and reading `?.checked` on an
+  // absent element answers `false` — which would switch a restriction the FILE
+  // carries off behind a reader who was never shown a control for it. That is
+  // silent loss of a document property, which is the one thing `AGENTS.md`'s
+  // release behaviour forbids outright.
+  const h = build(json("readOnly", true, true), false);
+  h.protection.open();
+  h.choose("comments");
+  h.enforce.checked = true;
+  await applyVia(h);
+  assert.equal(h.stored().edit, "comments", "the level the reader DID choose landed");
+  assert.equal(h.stored().formatting, true, "and the flag they were never asked about survived");
+});
+
+// ---------------------------------------------------------------------------
+// The SECOND axis. `w:formatting` was imported, exported, carried through this
+// dialog untouched and enforced by nothing (`165` §7.6/U3); it is now enforced
+// at the operation by `casual_doc_edit::protection`, so the control that sets it
+// is no longer a claim with no engine behind it.
+// ---------------------------------------------------------------------------
+
+test("ticking only the formatting box writes Word's pure formatting restriction", async () => {
+  // `w:edit="none" w:formatting="1" w:enforcement="1"` — what Word writes when
+  // an author ticks the formatting box and no editing box. The `edit` token has
+  // to be the explicit `"none"` rather than `null`, because `null` removes
+  // `w:documentProtection` and there is then nowhere for `w:formatting` to live.
+  const h = build(null);
+  h.protection.open();
+  h.choose("off");
+  h.formatting.checked = true;
+  h.enforce.checked = true;
+  await applyVia(h);
+  assert.equal(h.stored().edit, "none", "the element must exist to carry the flag");
+  assert.equal(h.stored().formatting, true);
+  assert.equal(h.stored().enforcement, true);
+  assert.equal(
+    h.stored().active,
+    true,
+    "and the document reports itself protected, so the lock button is pressed and the \
+access badge names the file as the authority",
+  );
+  assert.equal(
+    h.status.at(-1).text,
+    EN["protect.appliedFormatting"],
+    "announced with its OWN sentence: `protect.applied` would interpolate “No \
+restriction” and contradict itself",
+  );
+});
+
+test("the formatting box alone is enough to enable Apply's enforcement checkbox", () => {
+  // Reading the radio group alone disabled the enforcement checkbox on exactly
+  // the state the new control exists to reach, so the pure formatting restriction
+  // was unreachable through the dialog even once the engine enforced it.
+  const h = build(null);
+  h.protection.open();
+  h.choose("off");
+  assert.equal(h.enforce.disabled, true, "nothing chosen on either axis");
+  h.formatting.checked = true;
+  // Named rather than called straight off the map: removing the listener made this
+  // guard red with `h.listeners.get(...) is not a function`, which proves the
+  // listener is gone and says nothing about which guarantee broke.
+  const changed = h.listeners.get("formatting:change");
+  assert.ok(
+    changed,
+    "the formatting checkbox has no change listener, so ticking it cannot re-enable \
+the enforcement control and Word's pure formatting restriction is unreachable",
+  );
+  changed();
+  assert.equal(h.enforce.disabled, false, "the formatting axis is a restriction too");
+});
+
+test("ticking the formatting box is a change Apply does not discard as a no-op", async () => {
+  // The no-op guard compares what RESTRICTS, and before the axis joined that
+  // comparison a reader who changed only the formatting box was told nothing and
+  // got no write — the same defect the `null`/`"none"` comparison had, one axis
+  // over.
+  const h = build(json("comments", true, false));
+  h.protection.open();
+  h.choose("comments");
+  h.enforce.checked = true;
+  h.formatting.checked = true;
+  const wrote = await applyVia(h);
+  assert.equal(wrote, true, "the change reached the document");
+  assert.equal(h.stored().formatting, true);
+  assert.equal(h.stored().edit, "comments", "and the editing axis was left where it was");
+});
+
+test("un-ticking the formatting box on a formatting-only document lifts it", async () => {
+  // The other direction, which is the one-way door on the new axis: a document
+  // whose only restriction is `w:formatting` must be liftable from the same
+  // control that imposed it.
+  const h = build(json("none", true, true));
+  h.protection.open();
+  assert.equal(h.formatting.checked, true, "the dialog opens showing what is in force");
+  assert.equal(h.protection.isActive(), true, "and the document reports itself protected");
+  h.choose("off");
+  h.formatting.checked = false;
+  await applyVia(h);
+  assert.equal(h.stored().formatting, false);
+  assert.equal(h.stored().active, false);
+  assert.equal(h.status.at(-1).text, EN["protect.removed"]);
 });
 
 test("the command row is live on a document that is ALREADY protected", () => {
