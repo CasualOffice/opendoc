@@ -15229,13 +15229,41 @@ impl WasmDocument {
 
     /// The shaped plain text of paragraph `node` (empty if it is not a paragraph),
     /// used to resolve character boundaries for backspace/forward-delete.
+    ///
+    /// **O(1) in document size**, and one allocation: a direct resolution of the id
+    /// through `casual_doc_model::v1::locate`'s route hint, which is re-verified on
+    /// use. O(document) only on the first touch of a paragraph, which records the
+    /// route the keystrokes after it ride.
+    ///
+    /// # The defect this replaced
+    ///
+    /// It called `collect_block_text_all_surfaces`: every paragraph on every
+    /// surface shaped into a `String` of its own, then the whole `Vec` filtered
+    /// down to one entry and dropped. With 31 callers — `delete_backward`,
+    /// `delete_forward`, both word-deletes, `paragraph_length` and `word_at` among
+    /// them — **holding Backspace walked and materialised the entire document once
+    /// per character**, which on the owner's 1.3-million-paragraph file is 1.3
+    /// million `String` allocations per keystroke. `docs/107` §4 is explicit that
+    /// per-interaction work is O(1) in document size, and `SKILL` §8 names this
+    /// exact shape — a lookup-by-id dressed as an accessor — as the most expensive
+    /// recurring defect in this repository.
+    ///
+    /// # Why the hint and not an index
+    ///
+    /// Because the hint already exists and a second mechanism for one rule
+    /// diverges (`SKILL` §8). `Document::paragraph` is memoization *validated on
+    /// use* — the route is walked and the paragraph it lands on must still carry
+    /// the id asked for — so there is nothing to invalidate at a structural edit,
+    /// which is precisely what an index would have to do on the keystroke after
+    /// every Enter. Guarded by `a_keystroke_does_not_examine_the_document` and
+    /// `a_keystroke_does_not_materialise_the_document`.
     fn paragraph_text(&self, node: NodeId) -> String {
-        let mut nodes: Vec<(NodeId, String)> = Vec::new();
-        collect_block_text_all_surfaces(&self.document, &mut nodes);
-        nodes
-            .into_iter()
-            .find(|(id, _)| *id == node)
-            .map(|(_, text)| text)
+        self.document
+            .paragraph(node)
+            .map(|paragraph| {
+                note_shaped_paragraph();
+                node_plain_text(&paragraph.inlines)
+            })
             .unwrap_or_default()
     }
 
@@ -15266,6 +15294,7 @@ impl WasmDocument {
         let mut text = String::new();
         for (surface, blocks) in surface_block_lists(&self.document).into_iter().enumerate() {
             visit_paragraphs(blocks, &mut |paragraph| {
+                note_shaped_paragraph();
                 text.clear();
                 append_node_plain_text(
                     &paragraph.inlines,
@@ -15325,6 +15354,19 @@ impl WasmDocument {
     }
 
     /// Orders two selection endpoints into `(start, end)` by document position.
+    ///
+    /// **O(1) in document size when both endpoints are in the same paragraph** —
+    /// which is every collapsed caret, so every printable keystroke — and
+    /// O(document) across paragraphs, where document ORDER is the question being
+    /// asked and the ordering walk is what answers it.
+    ///
+    /// The same-paragraph case needs no ordering at all: two offsets in one
+    /// paragraph are ordered by comparing the offsets. It used to build the whole
+    /// document's paragraph ordering first and then compare the offsets anyway, so
+    /// `type_text` — one call per character typed — walked every paragraph of every
+    /// surface before inserting one character. The cross-paragraph residue is
+    /// recorded as still O(document) rather than silently claimed O(1); see
+    /// `docs/109`.
     fn order_endpoints(
         &self,
         start_node: &str,
@@ -15334,6 +15376,18 @@ impl WasmDocument {
     ) -> Result<(Pos, Pos), String> {
         let s_node = NodeId::from_str(start_node).map_err(|_| "invalid start node".to_string())?;
         let e_node = NodeId::from_str(end_node).map_err(|_| "invalid end node".to_string())?;
+        if s_node == e_node {
+            // Still resolved, so an id that names no paragraph is refused exactly
+            // as the walk refused it — a fast path that also widened what counts
+            // as a valid position would be a behaviour change wearing a
+            // performance change's clothes.
+            if self.document.paragraph(s_node).is_none() {
+                return Err("start node not found".to_string());
+            }
+            let a = Pos::new(s_node, start_offset);
+            let b = Pos::new(e_node, end_offset);
+            return Ok(if start_offset <= end_offset { (a, b) } else { (b, a) });
+        }
         let paras = self.ordered_paragraphs();
         let si = paras
             .iter()
@@ -18757,8 +18811,108 @@ fn group_block_stories<'a>(children: &'a [GroupChild], visit: &mut impl FnMut(&'
     }
 }
 
+std::thread_local! {
+    /// Blocks examined by **this crate's own** whole-surface paragraph walks, per
+    /// thread. See [`walked_block_visits`].
+    static WALKED_BLOCK_VISITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Charges `n` blocks to this thread's [`walked_block_visits`] counter.
+fn note_walked_blocks(n: usize) {
+    WALKED_BLOCK_VISITS.with(|visits| visits.set(visits.get().saturating_add(n as u64)));
+}
+
+/// How many blocks `visit_paragraphs` — and therefore every walk written on it:
+/// `collect_block_text`, `collect_block_text_all_surfaces`,
+/// `visit_paragraphs_all_surfaces`, `WasmDocument::ordered_paragraphs_by_surface`
+/// — has examined on this thread since [`reset_walked_block_visits`].
+///
+/// # Why this counter has to exist at all
+///
+/// `casual_doc_edit::block_visits` describes itself as the honest total of the
+/// blocks a position lookup examined, and it was — for the two crates that charge
+/// it, `casual-doc-edit` and `casual_doc_model::v1::locate`. **This crate charged
+/// nothing**, so its own whole-document walks were free as far as every complexity
+/// guard in the workspace could see. That is how `paragraph_text` came to shape
+/// every paragraph of every surface into a `String` on every Backspace while
+/// `a_keystroke_is_linear_in_document_length_after_the_transaction_migration` sat
+/// green: the walk it was measuring was not the walk that was happening.
+///
+/// A meter that measures one implementation rather than one quantity is the defect
+/// `casual_doc_edit::block_visits`'s own documentation warns about, seen from the
+/// other side — there it read zero when the walk moved; here it read zero because
+/// the walk was never in it. So the quantity a keystroke guard asks about is
+/// [`position_block_visits`], the sum, and not either half.
+#[must_use]
+pub fn walked_block_visits() -> u64 {
+    WALKED_BLOCK_VISITS.with(core::cell::Cell::get)
+}
+
+/// Zeroes [`walked_block_visits`] for this thread.
+pub fn reset_walked_block_visits() {
+    WALKED_BLOCK_VISITS.with(|visits| visits.set(0));
+}
+
+/// **The honest total**: every block examined resolving a position, wherever the
+/// walk lives — `casual-doc-edit`'s by-id searches, `casual_doc_model::v1::locate`'s
+/// route walk, and this crate's own paragraph traversals.
+///
+/// This is the quantity a complexity guard means by "blocks examined", and it is
+/// invariant to which crate does the walking — which is the whole point, because
+/// the walk has already moved between crates once and reading one half turned an
+/// improvement into a red guard.
+#[must_use]
+pub fn position_block_visits() -> u64 {
+    casual_doc_edit::block_visits().saturating_add(walked_block_visits())
+}
+
+/// Zeroes every half of [`position_block_visits`] for this thread.
+pub fn reset_position_block_visits() {
+    casual_doc_edit::reset_block_visits();
+    reset_walked_block_visits();
+}
+
+std::thread_local! {
+    /// Paragraphs whose plain text this crate has materialised, per thread. See
+    /// [`shaped_paragraphs`].
+    static SHAPED_PARAGRAPHS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Charges one shaped paragraph to this thread's [`shaped_paragraphs`] counter.
+fn note_shaped_paragraph() {
+    SHAPED_PARAGRAPHS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+/// How many paragraphs' plain text this crate has materialised on this thread
+/// since [`reset_shaped_paragraphs`].
+///
+/// A second meter, because [`position_block_visits`] cannot see this cost: it
+/// charges a block list whether anything was allocated for it or not, so a lookup
+/// that resolves one paragraph and a walk that shapes every paragraph of the same
+/// block list score the same. This counts the `String`s — the quantity that made
+/// `paragraph_text` cost 1.3 million allocations per Backspace on the owner's file
+/// to read the text of one paragraph.
+///
+/// Charged where a paragraph's plain text is produced in a loop over the document
+/// (`collect_block_text`, `WasmDocument::ordered_paragraphs_by_surface`) and where
+/// one is produced for a single resolved id (`WasmDocument::paragraph_text`), so a
+/// guard can state "a keystroke shapes the paragraph under the caret, and no
+/// others" as an equality at `n` and `2n`.
+#[must_use]
+pub fn shaped_paragraphs() -> u64 {
+    SHAPED_PARAGRAPHS.with(core::cell::Cell::get)
+}
+
+/// Zeroes [`shaped_paragraphs`] for this thread.
+pub fn reset_shaped_paragraphs() {
+    SHAPED_PARAGRAPHS.with(|count| count.set(0));
+}
+
 /// Every paragraph in `blocks`, in document order, with the paragraph itself in
 /// hand — the traversal [`collect_block_text`] is written on top of.
+///
+/// Charges its block lists to [`walked_block_visits`], so a complexity guard can
+/// see this crate's walks and not only the two crates below it.
 ///
 /// This exists because the alternative shape is quadratic. A caller that
 /// collects node **ids** and then asks the document about each one pays a linear
@@ -18770,6 +18924,7 @@ fn group_block_stories<'a>(children: &'a [GroupChild], visit: &mut impl FnMut(&'
 /// node is the fix, and it is the only fix: a faster by-id lookup would still be
 /// the wrong shape. `docs/116`.
 fn visit_paragraphs(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
+    note_walked_blocks(blocks.len());
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
@@ -18897,6 +19052,7 @@ fn drawing_hyperlink_with_paragraph(
 
 fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     visit_paragraphs(blocks, &mut |paragraph| {
+        note_shaped_paragraph();
         out.push((paragraph.id, node_plain_text(&paragraph.inlines)));
     });
 }
@@ -44200,6 +44356,203 @@ mod tests {
              {large} at {}",
             small_n * 2
         );
+    }
+
+    /// A plain-text document of `paragraphs` lines, each long enough that several
+    /// keystrokes in a row land *inside* one paragraph.
+    ///
+    /// `plain_text_document`'s "Line 7" is six bytes, which is too short to measure
+    /// a steady-state keystroke: a second word-delete in the same paragraph runs
+    /// out of word to delete and the row under test starts reporting an error
+    /// instead of a cost.
+    fn typing_document(paragraphs: usize) -> WasmDocument {
+        let mut text = String::new();
+        for i in 0..paragraphs {
+            if i > 0 {
+                text.push('\n');
+            }
+            text.push_str("alpha beta gamma delta epsilon zeta eta theta line ");
+            text.push_str(&i.to_string());
+        }
+        open_document(text.as_bytes()).expect("open plain text")
+    }
+
+    /// One interaction, performed on a document and the id of its first paragraph.
+    type Keystroke = fn(&mut WasmDocument, &str);
+
+    /// Every keystroke a reader can hold down, plus the two reads the host makes
+    /// about the paragraph under the caret. A new per-keystroke entry point
+    /// belongs in this list.
+    const KEYSTROKES: [(&str, Keystroke); 9] = [
+        ("Backspace — deleteBackward inside a paragraph", |d, node| {
+            d.delete_backward(node, 20).expect("backspace");
+        }),
+        ("Delete — deleteForward inside a paragraph", |d, node| {
+            d.delete_forward(node, 20).expect("forward delete");
+        }),
+        ("Ctrl+Backspace — deleteWordBackward", |d, node| {
+            d.delete_word_backward(node, 20).expect("word backspace");
+        }),
+        ("Ctrl+Delete — deleteWordForward", |d, node| {
+            d.delete_word_forward(node, 20).expect("word forward delete");
+        }),
+        ("a printable character — typeText at a caret", |d, node| {
+            d.type_text(node, 20, node, 20, "x".to_owned(), 7)
+                .expect("typing tick");
+        }),
+        (
+            "a printable character typed over a selection in one paragraph",
+            |d, node| {
+                d.type_text(node, 10, node, 15, "x".to_owned(), 8)
+                    .expect("typing over a selection");
+            },
+        ),
+        (
+            "Backspace over a selection in one paragraph — deleteSelection",
+            |d, node| {
+                d.delete_selection(node, 10, node, 15)
+                    .expect("delete selection");
+            },
+        ),
+        ("paragraphLength — the host's caret clamp", |d, node| {
+            assert!(d.paragraph_length(node) > 0, "paragraph length");
+        }),
+        ("wordAt — double-click word select", |d, node| {
+            assert!(!d.word_at(node, 20).is_empty(), "word at");
+        }),
+    ];
+
+    /// **A keystroke must not examine the document at all.**
+    ///
+    /// `docs/107` §4 is an owner constraint: per-interaction work is O(1) in
+    /// document size, and a keystroke is the canonical interaction.
+    ///
+    /// # Why the guard above it could not see this
+    ///
+    /// `a_keystroke_is_linear_in_document_length_after_the_transaction_migration`
+    /// holds *linear* and was green while every Backspace walked the whole
+    /// document — for two independent reasons, each worth stating because each is
+    /// a way a complexity guard lies.
+    ///
+    /// 1. It reads `casual_doc_edit::block_visits`, and **this crate charged
+    ///    nothing to it**. `paragraph_text` walked every surface and shaped every
+    ///    paragraph into a `String` of its own through this crate's own
+    ///    `visit_paragraphs`, which no meter was wired to. See
+    ///    [`walked_block_visits`]; this guard reads
+    ///    [`position_block_visits`], the honest total.
+    /// 2. `large < small * 3` on a 2× fixture passes for anything up to cubic. A
+    ///    ratio bound is the right tool for a read that is O(document) by nature;
+    ///    it is the wrong tool for an interaction that must be O(1), where the
+    ///    statement is **equality**.
+    ///
+    /// # The defect this pins
+    ///
+    /// `paragraph_text` built `Vec<(NodeId, String)>` over every paragraph on
+    /// every surface — one `String` allocated per paragraph — and then kept one
+    /// entry and dropped the rest. It had 31 callers, among them `deleteBackward`,
+    /// `deleteForward`, both word-deletes, `paragraphLength` and `wordAt`, so
+    /// holding Backspace materialised the entire document once per character.
+    /// `order_endpoints` was the same shape on the typing path: it built the whole
+    /// document's paragraph ordering to compare two offsets that were inside the
+    /// same paragraph. Both are now direct id resolutions through
+    /// `casual_doc_model::v1::locate`'s re-verified route hint.
+    #[test]
+    fn a_keystroke_does_not_examine_the_document() {
+        // Small on purpose: the shape shows at any size, and a mutation that
+        // reintroduces the walk must fail fast rather than hang the suite.
+        const SMALL: usize = 400;
+
+        // The steady-state keystroke: the second one in the same paragraph, which
+        // is what a reader holding a key actually spends their time in. The first
+        // touch of a paragraph is a cold route lookup and O(document) by design.
+        let steady = |paragraphs: usize, row: Keystroke| -> u64 {
+            let mut d = typing_document(paragraphs);
+            let node = d.ordered_paragraphs()[0].0.to_string();
+            row(&mut d, &node);
+            reset_position_block_visits();
+            row(&mut d, &node);
+            position_block_visits()
+        };
+        // The same interaction with no warm-up, used only to prove the meter is
+        // wired to THIS path and that the fixture really is twice the document.
+        // Without it every row below could pass on a counter that is never
+        // charged — which is exactly how the existing guard stayed green.
+        let cold = |paragraphs: usize, row: Keystroke| -> u64 {
+            let mut d = typing_document(paragraphs);
+            let node = d.ordered_paragraphs()[0].0.to_string();
+            reset_position_block_visits();
+            row(&mut d, &node);
+            position_block_visits()
+        };
+
+        let (name, probe) = KEYSTROKES[0];
+        let cold_small = cold(SMALL, probe);
+        let cold_large = cold(SMALL * 2, probe);
+        assert!(
+            cold_small > 0,
+            "the meter is not charged by {name} at all — every assertion below is vacuous"
+        );
+        assert!(
+            cold_large > cold_small,
+            "a COLD {name} examined {cold_small} blocks at {SMALL} paragraphs and \
+             {cold_large} at {} — the meter cannot see the document growing, so it \
+             cannot see a walk either",
+            SMALL * 2
+        );
+
+        for (name, row) in KEYSTROKES {
+            let one = steady(SMALL, row);
+            let two = steady(SMALL * 2, row);
+            assert_eq!(
+                one, two,
+                "{name} examined {one} blocks in a {SMALL}-paragraph document and {two} in \
+                 one twice as long. Per-interaction work is O(1) in document size \
+                 (`docs/107` §4): a keystroke resolves the paragraph under the caret, it \
+                 does not walk the document to find it."
+            );
+        }
+    }
+
+    /// The same interaction must not ALLOCATE proportionally to the document
+    /// either, which is a cost the block meter cannot see.
+    ///
+    /// `paragraph_text`'s walk allocated a `String` per paragraph — on the owner's
+    /// 1.3-million-paragraph file, 1.3 million allocations to read one paragraph's
+    /// text — and the block counter charges a block list whether anything was
+    /// allocated for it or not. The two numbers are different defects, so they get
+    /// different meters: [`shaped_paragraphs`] counts the paragraphs whose plain
+    /// text was materialised, which is that allocation count stated directly.
+    #[test]
+    fn a_keystroke_does_not_materialise_the_document() {
+        const SMALL: usize = 400;
+
+        let shaped = |paragraphs: usize, row: Keystroke| -> u64 {
+            let mut d = typing_document(paragraphs);
+            let node = d.ordered_paragraphs()[0].0.to_string();
+            row(&mut d, &node);
+            reset_shaped_paragraphs();
+            row(&mut d, &node);
+            shaped_paragraphs()
+        };
+
+        // The meter is charged on this path at all — otherwise every equality
+        // below holds at zero and proves nothing.
+        let (probe_name, probe) = KEYSTROKES[0];
+        assert!(
+            shaped(SMALL, probe) > 0,
+            "{probe_name} shapes no paragraph text at all, so this guard is vacuous"
+        );
+
+        for (name, row) in KEYSTROKES {
+            let one = shaped(SMALL, row);
+            let two = shaped(SMALL * 2, row);
+            assert_eq!(
+                one, two,
+                "{name} shaped the text of {one} paragraphs in a {SMALL}-paragraph \
+                 document and {two} in one twice as long: it is materialising paragraphs \
+                 other than the one under the caret"
+            );
+        }
     }
 
     /// `documentOutline` must cost work proportional to the document, not to its
