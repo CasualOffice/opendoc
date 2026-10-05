@@ -141,6 +141,18 @@ struct LineBox<'a> {
     left: Twip,
     /// Page-local y of the top of the line.
     top: Twip,
+    /// Page-local y of the **paragraph content origin** the line's glyph runs are
+    /// positioned against — `compose_fragment`'s `content_origin.y`, which is the
+    /// fragment's placed y plus `space_before`.
+    ///
+    /// Carried because a [`GlyphRun`]'s `origin.y` is the baseline measured from
+    /// there, and the baseline is the only correct anchor for anything that hangs
+    /// off the text (the caret, a proofing mark, an underline). Deriving it as
+    /// `top + line.ascent` instead is wrong for a `w:lineRule="atLeast"` line,
+    /// where `apply_line_rule` puts the extra space ABOVE the baseline: measured
+    /// on `atLeast w:line="480"` over an 11pt line, the painted baseline is 1861
+    /// and `top + ascent` is 1671 — 190 twips (12.7 px at 96 dpi) too high.
+    content_top: Twip,
     /// The page-local border box of the table cell this line belongs to (the
     /// innermost cell for a nested table). `None` for a body paragraph, which
     /// spans the content width. Lets hit-testing route a click to the cell it
@@ -155,6 +167,39 @@ impl<'a> LineBox<'a> {
     /// The y just past the bottom of the line.
     fn bottom(&self) -> i32 {
         self.top.raw() + self.line.height.raw()
+    }
+
+    /// The **text box** of the run owning `offset`: the box bracketing that run's
+    /// own painted baseline by its own ascent and descent, in page-local twips,
+    /// as `(top, height)`.
+    ///
+    /// The single answer to "where is this run's text", used by the caret and by
+    /// every baseline-hung decoration, and the same box
+    /// `compose_fragment`'s `run_box` fills for `w:highlight` and `w:shd` — so a
+    /// mark, a highlight and the caret on one word cannot disagree.
+    ///
+    /// The baseline is READ from the run (`content_top + run.origin.y`), never
+    /// recomputed. Recomputing it as `top + line.ascent` is wrong twice over:
+    /// `apply_line_rule` puts a `w:lineRule="atLeast"` floor's extra space ABOVE
+    /// the baseline (measured: painted baseline 1861 vs. `top + ascent` 1671 on
+    /// `atLeast w:line="480"` over an 11pt line — 190 twips, 12.7 px at 96 dpi,
+    /// too high), and a sub/superscript run carries its own shift in
+    /// `origin.y`, so a mark on a raised word belongs under the raised word.
+    ///
+    /// The height does NOT include leading, so unlike the line box it does not
+    /// grow with the paragraph's line spacing.
+    ///
+    /// A line with no shaped run at all (an empty paragraph, a line holding only
+    /// inline boxes) has nothing to read, and falls back to the line's own
+    /// `top + ascent` — exactly the behaviour that predates per-run metrics.
+    fn run_text_box(&self, offset: u32) -> (Twip, Twip) {
+        match shaped_run_at(self.line, offset) {
+            Some(run) => {
+                let baseline = self.content_top + run.origin.y;
+                (baseline - run.ascent, run.ascent + run.descent)
+            }
+            None => (self.top, self.line.ascent + self.line.descent),
+        }
     }
 
     /// Whether `y` (page-local) falls within this line's vertical band.
@@ -471,12 +516,17 @@ impl<'a> LayoutSnapshot<'a> {
         //
         // Both read as the editor being about to type at the wrong size, which is
         // the one thing the caret's height is for.
-        let (ascent, descent) = caret_metrics(lb.line, pos.offset);
-        let baseline = lb.top + lb.line.ascent;
-        let rect = Rect::new(
-            Point::new(x, baseline - ascent),
-            Size::new(Twip::ZERO, ascent + descent),
-        );
+        //
+        // A THIRD mistake, measured 2026-10-06: the baseline was recomputed as
+        // `lb.top + lb.line.ascent` rather than read from the run the caret sits
+        // in. `apply_line_rule` puts a `w:lineRule="atLeast"` floor's extra space
+        // ABOVE the baseline, so on `atLeast w:line="480"` over an 11pt line the
+        // painted baseline is 1861 while `top + ascent` is 1671 — the caret was
+        // drawn 190 twips (12.7 px at 96 dpi) too high, ending ABOVE the baseline
+        // it is supposed to straddle. `run_text_box` reads the painted baseline
+        // instead, and is the same box a proofing mark is hung from.
+        let (top, height) = lb.run_text_box(pos.offset);
+        let rect = Rect::new(Point::new(x, top), Size::new(Twip::ZERO, height));
         Some((lb.page, rect))
     }
 
@@ -591,6 +641,29 @@ impl<'a> LayoutSnapshot<'a> {
     /// `on_page`.
     #[must_use]
     pub fn selection_rects_on(&self, range: ModelRange, on_page: Option<u32>) -> Vec<(u32, Rect)> {
+        self.covered_line_spans(range, on_page, |lb, lo, hi| {
+            Rect::new(Point::new(lo, lb.top), Size::new(hi - lo, lb.line.height))
+        })
+    }
+
+    /// The shared walk behind [`Self::selection_rects_on`] and
+    /// [`Self::decoration_rects_on`]: the horizontal span the `range` covers on
+    /// each line it touches, handed to `rect` to turn into a box.
+    ///
+    /// The first and last covered lines are clipped to the range's endpoints;
+    /// the lines between span their full inked width. One walk, so the two
+    /// callers cannot disagree about WHICH lines or WHICH x-extent a range
+    /// covers — the only thing they differ in is the vertical box, which is the
+    /// whole point of there being two.
+    fn covered_line_spans<F>(
+        &self,
+        range: ModelRange,
+        on_page: Option<u32>,
+        rect: F,
+    ) -> Vec<(u32, Rect)>
+    where
+        F: Fn(&LineBox<'_>, Twip, Twip) -> Rect,
+    {
         let lines = self.line_boxes_with_running(on_page);
         let Some(mut start_i) = caret_start_line(&lines, range.start) else {
             return Vec::new();
@@ -631,12 +704,81 @@ impl<'a> LayoutSnapshot<'a> {
             if lo.raw() == hi.raw() {
                 continue;
             }
-            rects.push((
-                lb.page,
-                Rect::new(Point::new(lo, lb.top), Size::new(hi - lo, lb.line.height)),
-            ));
+            rects.push((lb.page, rect(lb, lo, hi)));
         }
         rects
+    }
+
+    /// [`Self::selection_rects`]'s horizontal spans over the marked run's **text
+    /// box** instead of the line box: one rectangle per covered line-fragment,
+    /// bracketing that run's painted baseline by its own ascent and descent.
+    ///
+    /// This is the geometry for everything a host hangs off the baseline — a
+    /// spelling or grammar squiggle, a tracked-change or comment underline, a
+    /// mark that tints the glyphs. [`Self::selection_rects`] stays the line box,
+    /// which is correct for a selection or a find highlight: those fill a
+    /// REGION of the page, and Word and Google Docs both fill the whole line box
+    /// for them. The two are not one rule with two implementations; they are two
+    /// rules, and this is which is which.
+    ///
+    /// # Why the line box is wrong for a mark, measured
+    ///
+    /// A line box is `ascent + descent + leading`, and leading is the gap
+    /// BETWEEN lines. A mark drawn at its bottom therefore walks away from the
+    /// text as the paragraph's line spacing grows. Measured on an 11pt line
+    /// through the real pipeline, as twips below the painted baseline:
+    ///
+    /// | paragraph | line box bottom | this box's bottom |
+    /// | --- | --- | --- |
+    /// | single | +59 (3.9 px) | +59 |
+    /// | `w:line="115"` (1.15x) | +103 (6.9 px) | +59 |
+    /// | `w:line="150"` (1.5x) | +204 (13.6 px) | +59 |
+    /// | `w:line="200"` (2x) | +349 (23.3 px) | +59 |
+    ///
+    /// The mark is also charged the TALLEST run on its line, because
+    /// `Line::descent` is the maximum over the line's runs: an 11pt misspelling
+    /// beside 28pt text was marked 152 twips below its baseline instead of 59.
+    ///
+    /// # The competitive standard this matches
+    ///
+    /// ONLYOFFICE draws the spelling line at the character underline's y, from
+    /// the run's own metrics, never from the line box:
+    /// `sdkjs/word/Editor/Paragraph.js` computes `UnderlineOffset =
+    /// lineMetrics.TextDescent * 0.4`, and
+    /// `sdkjs/word/Editor/Paragraph/draw/line-draw-state.js`'s
+    /// `updateStrikeoutUnderlinePos` sets `underlineY = Baseline - yOffset +
+    /// UnderlineOffset` and then feeds the SAME y to `Underline`, `DUnderline`
+    /// and `Spelling`. Their newer per-handler path agrees:
+    /// `CGraphics.prototype.drawCustomRange` in `sdkjs/word/Drawing/Graphics.js`
+    /// takes `baseLine` as a parameter and uses `0.1 * (baseLine - y0) +
+    /// baseLine` for a spelling range and `0.2 * …` for a grammar one.
+    ///
+    /// Our own raster renderer already does this — `casual-doc-render` draws
+    /// `w:u`/`w:strike` at `baseline_y - metrics.underline.offset` from the
+    /// face's own metrics — so before this existed the engine drew a character
+    /// underline on the glyphs' baseline and the host drew a proofing underline
+    /// on the line box, two answers to one question.
+    ///
+    /// An empty or inverted range yields no rectangles, as
+    /// [`Self::selection_rects`] does.
+    #[must_use]
+    pub fn decoration_rects(&self, range: ModelRange) -> Vec<(u32, Rect)> {
+        self.decoration_rects_on(range, None)
+    }
+
+    /// [`Self::decoration_rects`], answered for the running content drawn on
+    /// `on_page`.
+    #[must_use]
+    pub fn decoration_rects_on(&self, range: ModelRange, on_page: Option<u32>) -> Vec<(u32, Rect)> {
+        self.covered_line_spans(range, on_page, |lb, lo, hi| {
+            // The run that owns the first offset the range covers ON THIS LINE:
+            // the range's own start on the line it starts on, the line's start
+            // after that. A mark that wraps is charged to the run it sits beside
+            // on each line, not to whatever run the first line happened to hold.
+            let offset = range.start.offset.max(lb.line.range.start.offset);
+            let (top, height) = lb.run_text_box(offset);
+            Rect::new(Point::new(lo, top), Size::new(hi - lo, height))
+        })
     }
 
     /// Moves the caret at `pos` vertically to the adjacent visual line, returning
@@ -1360,12 +1502,18 @@ fn collect_fragment<'a>(
             // indented origin, so the caret/selection geometry must start there
             // too, or indented/list/tabbed lines resolve left of their glyphs.
             let content_left = left + box_metrics.indent_start;
-            let mut y = top + box_metrics.space_before;
+            // `compose_fragment` builds exactly this y as `content_origin.y`, and
+            // every line's glyph-run `origin.y` is a baseline measured from it.
+            // Carried so a decoration can be anchored on the baseline the text
+            // was painted from rather than on a recomputed one.
+            let content_top = top + box_metrics.space_before;
+            let mut y = content_top;
             for line in &lines.lines {
                 out.push(LineBox {
                     page,
                     left: content_left,
                     top: y,
+                    content_top,
                     cell,
                     line,
                 });
@@ -1546,8 +1694,13 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     stops
 }
 
-/// The vertical extent to draw a caret at `offset` on `line`: the metrics of the
-/// run the caret sits in, falling back to the line's own.
+/// The shaped run that owns `offset` on `line`, or `None` when the line has no
+/// shaped run at all.
+///
+/// This is the one place that decides which run an offset belongs to, so the
+/// caret's height, a proofing mark's box and anything else anchored to "the run
+/// at this offset" cannot pick different runs — two implementations of one rule
+/// diverge.
 ///
 /// The run to the LEFT of the offset wins, because the caret advertises the
 /// formatting that typing would use, and typing takes the properties of the
@@ -1555,10 +1708,10 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
 /// the caret is at the very start of a line does the following run answer.
 ///
 /// A run with zero metrics is one this crate synthesized rather than shaped (a
-/// tab leader, a flow-built marker); it has no face to measure, so it defers to
-/// the line and the behaviour is exactly what it was before per-run metrics
-/// existed.
-fn caret_metrics(line: &Line, offset: u32) -> (Twip, Twip) {
+/// tab leader, a flow-built marker); it has no face to measure, so it is skipped
+/// and the caller falls back to the line, which is exactly the behaviour that
+/// predates per-run metrics.
+fn shaped_run_at(line: &Line, offset: u32) -> Option<&GlyphRun> {
     let mut best: Option<&GlyphRun> = None;
     for run in &line.runs {
         if run.ascent.is_zero() && run.descent.is_zero() {
@@ -1585,12 +1738,11 @@ fn caret_metrics(line: &Line, offset: u32) -> (Twip, Twip) {
     }
     // Nothing to the left (caret at a line start), so the first shaped run on the
     // line answers instead.
-    let run = best.or_else(|| {
+    best.or_else(|| {
         line.runs
             .iter()
             .find(|run| !(run.ascent.is_zero() && run.descent.is_zero()))
-    });
-    run.map_or((line.ascent, line.descent), |run| (run.ascent, run.descent))
+    })
 }
 
 /// The offset just after the last non-whitespace glyph on `line`, or `None` if the
@@ -3299,12 +3451,21 @@ mod tests {
         };
 
         // Offset 0 sits in the small run: 240 twips tall, not the line's 560.
-        assert_eq!(caret_metrics(&line, 0), (Twip(200), Twip(40)));
+        assert_eq!(
+            shaped_run_at(&line, 0).map(|r| (r.ascent, r.descent)),
+            Some((Twip(200), Twip(40)))
+        );
         // Offset 1 is the boundary; the run to the LEFT wins, because typing takes
         // the preceding character's formatting.
-        assert_eq!(caret_metrics(&line, 1), (Twip(480), Twip(80)));
+        assert_eq!(
+            shaped_run_at(&line, 1).map(|r| (r.ascent, r.descent)),
+            Some((Twip(480), Twip(80)))
+        );
         // And the tall run answers where the caret really is inside it.
-        assert_eq!(caret_metrics(&line, 2), (Twip(480), Twip(80)));
+        assert_eq!(
+            shaped_run_at(&line, 2).map(|r| (r.ascent, r.descent)),
+            Some((Twip(480), Twip(80)))
+        );
     }
 
     /// The wiring, not just the helper: a caret resolved through `caret_rect_on`
@@ -3443,7 +3604,14 @@ mod tests {
             tab_extents: Vec::new(),
             charts: Vec::new(),
         };
-        assert_eq!(caret_metrics(&line, 0), (Twip(200), Twip(40)));
+        assert!(
+            shaped_run_at(&line, 0).is_none(),
+            "a zero-metrics run must not be offered as the run at an offset — the \
+             caller's job is then to defer to the line, and a run answered here \
+             would give the caret a height of zero"
+        );
+        // And the line it defers to is the one that carries the real extent.
+        assert_eq!((line.ascent, line.descent), (Twip(200), Twip(40)));
     }
 
     // The list-marker caret contract — reported as "the cursor skips the first ~4
