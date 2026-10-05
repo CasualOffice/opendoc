@@ -688,11 +688,12 @@ pub fn import_package(
     // took before this existed, repairs nothing, and reports nothing, so no
     // amount of leniency below can change what a well-formed file imports to.
     //
-    // Rung 2 repairs every XML input's bytes (`crate::xml_repair`) and reads them
-    // tolerantly. The two halves do different work and both are needed: the byte
-    // repair recovers damage a stream reader cannot get past at all — a DTD, a
-    // mislabelled encoding, a stray end tag, a file cut off mid-element — while
-    // the tolerant read recovers the head of a part whose damage survives repair.
+    // Rung 2 repairs the content parts' bytes (`crate::xml_repair`) and reads
+    // everything tolerantly. The two halves do different work and both are
+    // needed: the byte repair recovers damage a stream reader cannot get past at
+    // all — a DTD, a mislabelled encoding, a stray end tag, a file cut off
+    // mid-element — while the tolerant read recovers the head of a part whose
+    // damage survives repair, and drops a definition part whole.
     //
     // Rung 3 reads an empty main document with the file's other parts around it,
     // for the case where the main document yields nothing at all. An empty
