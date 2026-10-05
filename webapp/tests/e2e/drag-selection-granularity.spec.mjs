@@ -51,12 +51,37 @@ async function caretBox(page) {
 /** The client point the caret occupies at byte `offset` of the first paragraph.
  *
  *  Measured from the painted caret rather than computed from a font metric: the
- *  spec needs the pixel a user would aim at, and only the renderer knows it. */
+ *  spec needs the pixel a user would aim at, and only the renderer knows it.
+ *
+ *  Polled until the rect STOPS MOVING, which is not pedantry: read mid-repaint
+ *  it answers the previous offset's x, and a drag between two points that are
+ *  really the same point selects one word and looks exactly like the defect
+ *  this file is about. That is a flake that would have been read as a
+ *  regression. */
 async function pointAtOffset(page, offset) {
   await moveCaretToDocStart(page);
   for (let i = 0; i < offset; i += 1) await page.keyboard.press("ArrowRight");
-  const box = await caretBox(page);
+  let previous = null;
+  let box = null;
+  await expect
+    .poll(async () => {
+      const next = await caretBox(page);
+      const settled = previous !== null && Math.abs(next.x - previous.x) < 0.5;
+      previous = next;
+      box = next;
+      return settled;
+    })
+    .toBe(true);
   return { x: box.x + 1, y: box.y + box.height / 2 };
+}
+
+/** Two points a drag can actually travel between. A spec that drags between two
+ *  points the renderer happened to answer identically proves nothing. */
+function expectApart(from, to, what) {
+  expect(
+    Math.abs(to.x - from.x) + Math.abs(to.y - from.y),
+    `${what}: the two ends of the drag resolved to the same pixel`,
+  ).toBeGreaterThan(10);
 }
 
 /** The text the ENGINE believes is selected: the native copy payload. */
@@ -75,14 +100,16 @@ async function selectedText(page) {
  *  The button stays down between the final `down` and the `up`, which is the
  *  whole point: this is one gesture, and `dblclick` (or the third `click`) fires
  *  at the end of it. */
-async function clickAndDrag(page, from, to, clickCount) {
+async function clickAndDrag(page, from, through, clickCount) {
   await page.mouse.move(from.x, from.y);
   for (let n = 1; n < clickCount; n += 1) {
     await page.mouse.down({ clickCount: n });
     await page.mouse.up({ clickCount: n });
   }
   await page.mouse.down({ clickCount: clickCount });
-  await page.mouse.move(to.x, to.y, { steps: 14 });
+  for (const point of [through].flat()) {
+    await page.mouse.move(point.x, point.y, { steps: 14 });
+  }
   await page.mouse.up({ clickCount: clickCount });
 }
 
@@ -106,6 +133,7 @@ test("double-click-and-drag selects whole words, not the one under the pointer",
   // Press inside "aardvark" (offset 3) and drag to inside "capybara" (offset 22).
   const from = await pointAtOffset(page, 3);
   const to = await pointAtOffset(page, 22);
+  expectApart(from, to, "aardvark to capybara");
   await clickAndDrag(page, from, to, 2);
 
   const selected = await selectedText(page);
@@ -134,6 +162,7 @@ test("a word drag grows the ANCHOR end too, so the first word stays whole", asyn
   // start mid-word at "bandi" and the word the gesture began on would be cut.
   const from = await pointAtOffset(page, 13);
   const to = await pointAtOffset(page, 4);
+  expectApart(from, to, "bandicoot back to aardvark");
   await clickAndDrag(page, from, to, 2);
 
   const selected = await selectedText(page);
@@ -141,6 +170,38 @@ test("a word drag grows the ANCHOR end too, so the first word stays whole", asyn
     selected,
     `a backward word drag selected ${JSON.stringify(selected)}`,
   ).toBe("aardvark bandicoot");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a word drag that reverses past its own press keeps the word it started on", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await seedWords(page);
+
+  // Press in "bandicoot" (13), drag BACKWARD into "aardvark" (4), then FORWARD
+  // again past the press point into "capybara" (22), and release.
+  //
+  // This is the case that decides whether the anchor may be read back from the
+  // selection. Dragging backward puts the anchor on "bandicoot"'s END offset,
+  // which is the space after it — and `word_bounds` answers `[]` for a space,
+  // so an anchor re-snapped from the live selection STAYS on that space and the
+  // word the gesture began on is silently dropped from the selection. Keeping
+  // the raw press position is what makes the reversal recoverable.
+  const press = await pointAtOffset(page, 13);
+  const back = await pointAtOffset(page, 4);
+  const forward = await pointAtOffset(page, 22);
+  expectApart(press, back, "bandicoot back to aardvark");
+  expectApart(press, forward, "bandicoot forward to capybara");
+  await clickAndDrag(page, press, [back, forward], 2);
+
+  const selected = await selectedText(page);
+  expect(
+    selected,
+    `a reversed word drag selected ${JSON.stringify(selected)}`,
+  ).toBe("bandicoot capybara");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -171,6 +232,7 @@ test("a single-click drag is still character-granular", async ({ page, consoleEr
   // selecting part of a word would have become impossible.
   const from = await pointAtOffset(page, 2);
   const to = await pointAtOffset(page, 5);
+  expectApart(from, to, "three characters");
   await clickAndDrag(page, from, to, 1);
 
   expect(await selectedText(page)).toBe("rdv");
@@ -198,6 +260,7 @@ test("triple-click-and-drag selects whole paragraphs", async ({ page, consoleErr
   const second = await caretBox(page);
   const to = { x: second.x + 1, y: second.y + second.height / 2 };
 
+  expectApart(from, to, "paragraph one to paragraph two");
   await clickAndDrag(page, from, to, 3);
 
   const selected = await selectedText(page);

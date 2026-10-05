@@ -25,7 +25,7 @@ import {
   fetchFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
+import { extractMarker, htmlToRuns, htmlToStructured, selectionClipboardHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
 import { bindComparePanel, comparableBytes } from "./compare_documents.mjs";
@@ -157,7 +157,7 @@ import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a dif
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
-import { CHARACTER, autoScrollDelta, createGranularityCache, granularEnds, granularityForClickCount, paragraphEnds } from "./drag_selection.mjs";
+import { CHARACTER, autoScrollDelta, createClickChain, createGranularityCache, granularEnds, granularityForClickCount, paragraphEnds } from "./drag_selection.mjs";
 import {
   reviewCardSignature,
   reviewCommentIsReplyTo,
@@ -2638,6 +2638,10 @@ function positionEditorTextInput(focus = selection?.focus) {
 /** The engine questions a word/paragraph-granular drag asks, memoised for the
  *  life of one gesture because both engine lookups are O(document) today. */
 const dragGranularity = createGranularityCache(() => doc);
+/** The browser's click count, carried forward by hand: `pointerdown.detail` is
+ *  0 by specification and the `mousedown` that would carry one is suppressed by
+ *  this surface's own `preventDefault` (`drag_selection.mjs` records the trace). */
+const clickChain = createClickChain();
 /** Whether the gesture that just ended selected by dragging — `dblclick` and the
  *  triple-click `click` fire AFTER pointer-up and must not overwrite it. */
 let lastGestureDragged = false;
@@ -6037,7 +6041,7 @@ function onPointerDown(page, event) {
     // (Word, Docs, ONLYOFFICE); the press's click count decides and it holds for
     // the gesture. Applied in `updateDragSelection`, so a press that never drags
     // is answered by the `dblclick`/triple-click handlers exactly as before.
-    granularity: granularityForClickCount(event.detail),
+    granularity: granularityForClickCount(clickChain.countFor(event.clientX, event.clientY)),
     // The RAW press position: a granular drag recomputes BOTH ends from the raw
     // pair every move rather than re-snapping its own anchor.
     rawAnchor: anchor,
@@ -6247,32 +6251,10 @@ function selectionText() {
   return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
 }
 
-/** The selection as clipboard HTML: the exact `copyRichRuns` JSON embedded as
- * a leading comment (a lossless internal round-trip marker) plus a visible
- * rendering built from the same runs (what an external app sees). `null` if
- * there's nothing to copy. */
-function selectionRichHtml() {
-  if (!selection) return null;
-  const { anchor, focus } = selection;
-  const runsJson = doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset);
-  const runs = JSON.parse(runsJson);
-  // When the selection spans block structure the flat runs flatten — a table or
-  // a list — carry a structured payload for internal OpenDoc-to-OpenDoc paste
-  // (`{ blocks, runs }`: the flat runs ride along so a Suggesting-mode paste, or
-  // a structured paste the engine declines, still has the rich-run fallback).
-  const structured = doc.copyStructured(anchor.node, anchor.offset, focus.node, focus.offset);
-  if (structured) {
-    const blocks = JSON.parse(structured).blocks;
-    return embedMarker(JSON.stringify({ blocks, runs })) + runsToHtml(runs);
-  }
-  if (!runs.length) return null;
-  return embedMarker(runsJson) + runsToHtml(runs);
-}
-
 async function copySelection(event = null) {
   const text = selectionText();
   if (!text) return;
-  const html = selectionRichHtml();
+  const html = selectionClipboardHtml(doc, selection.anchor, selection.focus);
   if (event?.clipboardData) {
     event.preventDefault();
     event.clipboardData.setData("text/plain", text);
@@ -6524,6 +6506,7 @@ pagesEl.addEventListener("dblclick", (e) => {
 // a triple-click that DRAGGED has already selected by paragraph, to the end of
 // the drag, so this must not pull it back to one paragraph.
 pagesEl.addEventListener("click", (e) => {
+  clickChain.noteClick(e.detail, e.clientX, e.clientY); // every click, not only the third
   if (e.detail !== 3 || lastGestureDragged) return;
   const page = pageFromEvent(e);
   const a = page && anchorAt(page, e);

@@ -401,8 +401,24 @@ const SRC = new URL("../src/", import.meta.url);
  *      `previewPx`, as `nextZoomStep`'s sibling, where the past-the-end
  *      behaviour and the `w:sz` clamps are asserted rather than pressed.
  *  MEASURED with `wc -l` on this tree AFTER the rebase onto `origin/main`
- *  564db686, not carried from the branch. */
-const MAIN_JS_LINE_CEILING = 16162;
+ *  564db686, not carried from the branch.
+ *
+ *  Lowered to 16,145 by the drag-selection round. Word-wise and paragraph-wise
+ *  drag selection is a NET REDUCTION, which is what the ratchet is for: the
+ *  gesture needed about twenty lines here, and it paid with two things that had
+ *  no business being in this file and could not be tested from it —
+ *    * the drag AUTO-SCROLL arithmetic, one axis written out twice, whose
+ *      horizontal copy did not exist for a while (so at any zoom where the
+ *      sheet is wider than the window the end of a line was unreachable by
+ *      mouse), now one `autoScrollStep` over one axis in `drag_selection.mjs`
+ *      with the band, the ramp and the clamp asserted on both;
+ *    * `selectionRichHtml` moved to `clipboard.mjs` as
+ *      `selectionClipboardHtml`, beside the `embedMarker` and `runsToHtml` it
+ *      is built from — it is the function that decides WHICH of the two engine
+ *      payloads a copy carries, and it was the only part of that decision
+ *      living outside the module that owns the format.
+ *  MEASURED with `wc -l` on this tree. */
+const MAIN_JS_LINE_CEILING = 16145;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

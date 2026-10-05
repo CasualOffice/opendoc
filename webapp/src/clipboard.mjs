@@ -494,6 +494,36 @@ export function embedMarker(runsJson) {
   return `<!--${MARKER_PREFIX}${utf8ToBase64(runsJson)}-->`;
 }
 
+/**
+ * The selection as clipboard HTML: the exact `copyRichRuns` JSON embedded as a
+ * leading comment (a lossless internal round-trip marker) plus a visible
+ * rendering built from the same runs (what an external app sees).
+ *
+ * Here rather than in `main.js` (`109` HF-085) because every piece of it is
+ * already here — `embedMarker` and `runsToHtml` are two lines up — and because
+ * this is the one function that decides WHICH of the two engine payloads a copy
+ * carries. When the selection spans block structure (a table, a list) the flat
+ * runs flatten, so a structured payload rides along for an internal
+ * OpenDoc-to-OpenDoc paste; the flat runs ride with it so a Suggesting-mode
+ * paste, or a structured paste the engine declines, still has the fallback.
+ *
+ * @param {object} doc the engine
+ * @param {{node: string, offset: number}} anchor
+ * @param {{node: string, offset: number}} focus
+ * @returns {string|null} null when there is nothing to carry
+ */
+export function selectionClipboardHtml(doc, anchor, focus) {
+  const runsJson = doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset);
+  const runs = JSON.parse(runsJson);
+  const structured = doc.copyStructured(anchor.node, anchor.offset, focus.node, focus.offset);
+  if (structured) {
+    const blocks = JSON.parse(structured).blocks;
+    return embedMarker(JSON.stringify({ blocks, runs })) + runsToHtml(runs);
+  }
+  if (!runs.length) return null;
+  return embedMarker(runsJson) + runsToHtml(runs);
+}
+
 /** Extracts the `runsJson` string `embedMarker` embedded, or `null` if `html`
  * has no (valid) leading marker — an external app's paste, or a stale/edited
  * clipboard payload. */

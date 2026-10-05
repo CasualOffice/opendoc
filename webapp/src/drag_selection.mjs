@@ -94,6 +94,74 @@ export const WORD = "word";
 /** A drag that extends a whole paragraph at a time: started by a triple-click. */
 export const PARAGRAPH = "paragraph";
 
+// ### Where the click count comes from, and why it is not `pointerdown.detail`
+//
+// Measured in Chromium through the editor's own surface:
+//
+//   pointerdown:0  pointerup:0  click:1
+//   pointerdown:0  pointerup:0  click:2  dblclick:2
+//
+// `MouseEvent.detail` is specified as **0 on `pointerdown`** — a Pointer Event
+// carries no click count — and the compatibility `mousedown`, which does carry
+// one, never fires here at all because `onPointerDown` calls `preventDefault()`.
+// So at the moment a drag begins, the only thing the browser has told us is the
+// `detail` of the click that ENDED the previous press. `click:2` and `dblclick`
+// arrive after the drag is over, which is far too late to choose a granularity
+// and is exactly why the old code could only correct the selection at the end,
+// destroying it.
+//
+// `createClickChain` therefore carries the chain forward one press at a time,
+// with the browser's own two conditions for continuing it: the previous click
+// was recent, and it was in the same place. Both bounds are deliberately TIGHT,
+// because the two ways of being wrong are not equally bad — predicting a plain
+// press as a second click gives an unasked-for word-granular drag, while
+// failing to predict one only falls back to the character drag that was the
+// behaviour before any of this. A press that lands within a few pixels of a
+// click a fraction of a second earlier is a double-click by any reading.
+
+/** How long a click chain stays open. Chromium's own fallback double-click
+ *  interval; macOS lets the user set 0.2-1.0s and we take the short view, so a
+ *  user with a long interval gets a character drag rather than a surprise. */
+export const CLICK_CHAIN_MS = 500;
+/** How far a press may land from the previous click and still continue its
+ *  chain. The same 4px the drag threshold uses, so "did not move" means one
+ *  thing in this file. */
+export const CLICK_CHAIN_SLOP_PX = 4;
+
+/**
+ * The browser's click count, carried forward by hand because `pointerdown`
+ * does not have it.
+ *
+ * `noteClick` is fed every `click` the surface sees — including the first of a
+ * pair, which is the one that matters — and `countFor` answers what the press
+ * happening right now is numbered.
+ *
+ * O(1), and no timers: a chain that is never continued simply ages out the next
+ * time it is asked about.
+ *
+ * @param {() => number} now injected so the window can be driven in a test
+ *        rather than waited out
+ */
+export function createClickChain(now = () => Date.now()) {
+  let last = null; // { count, time, x, y }
+  return {
+    noteClick(detail, x, y) {
+      last = { count: Number.isFinite(detail) && detail > 0 ? detail : 1, time: now(), x, y };
+    },
+    countFor(x, y) {
+      if (!last) return 1;
+      const fresh = now() - last.time <= CLICK_CHAIN_MS;
+      const near = Math.hypot(x - last.x, y - last.y) <= CLICK_CHAIN_SLOP_PX;
+      return fresh && near ? last.count + 1 : 1;
+    },
+    /** Ends the chain: a keystroke, a command, a document change. Anything that
+     *  moves the caret by other means means the next press starts fresh. */
+    reset() {
+      last = null;
+    },
+  };
+}
+
 /**
  * The granularity a press with this click count starts a drag at.
  *
