@@ -245,10 +245,25 @@ const CEILINGS = new Map([
   // All four are debt MOVED out of `main.js`, which came down by eight in the
   // same commit, plus the twelve ribbon rows that were already English there.
   //
-  // The object properties panel's four: the four `<legend>`/button labels its
-  // one `innerHTML` template carries. They were four of `main.js`'s, and they
-  // move with the panel.
-  ["src/object_inspector.mjs", 4],
+  // The object properties panel. FOUR until `105` UX-027, and the four were a
+  // lie this scanner could not see: the panel's whole DOM was ONE `innerHTML`
+  // template literal holding about forty user-facing strings, and the patterns
+  // above only match a literal ADJACENT to a sink — so forty untranslated
+  // strings were counted as one, and the three that happened to sit beside
+  // `aria-label`, `placeholder` and `setStatus` made up the rest of the four.
+  // The markup now lives in `editor.html` and goes through `data-i18n` like
+  // every other surface, which is what made the debt real and then removed it.
+  //
+  // TWO left, and they are different in kind:
+  //   * the outline-weight options' `${points} pt` — a number and the unit
+  //     abbreviation, which is what the paragraph panel's spacing fields also
+  //     write as a bare `pt` in markup;
+  //   * the "now shows the selected object" refusal. A `t()` key is
+  //     script-side, `locale_coverage.test.mjs` requires every script-side key
+  //     to be answered by all eighteen translated catalogues, and no catalogue
+  //     carries a neighbouring sentence this one can be derived from. Reported
+  //     as debt rather than guessed at in eighteen languages.
+  ["src/object_inspector.mjs", 2],
   // The object chip's action labels ("Alt text", "Properties", "Crop",
   // "Delete", and the two drag hints). Same debt, new file.
   ["src/object_bar.mjs", 1],

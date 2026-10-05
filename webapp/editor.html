@@ -2951,87 +2951,117 @@
         <div class="panel-body properties-panel-body">
           <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
           <div class="properties-panel-grid">
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.styleAmpAlignment">Style &amp; alignment</legend>
-              <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
-              <div class="dialog-field">
-                <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
-                <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
-                     multi-paragraph selection this control is tri-state and
-                     publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
-                     is not legal on a radio. Word, Google Docs and ONLYOFFICE all
-                     use toggle buttons for exactly this control for the same
-                     reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
-                     'alignGroup'`, with no radiogroup wrapper). The groups that
-                     ARE always exactly-one-of go through `radio_group.mjs`. -->
-                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
-                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
-                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
-                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
-                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
-                </span>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.indentation">Indentation</legend>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="paragraphPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-              </div>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.special" class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
-                  <option data-i18n="indentSpecial.mixed" value="">Mixed</option>
-                  <option value="none">None</option>
-                  <option data-i18n="indentSpecial.firstLine" value="first">First line</option>
-                  <option data-i18n="indentSpecial.hanging" value="hanging">Hanging</option>
-                </select></label>
-                <label data-i18n="paragraphPropertiesPanel.by" class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.spacing">Spacing</legend>
-              <label data-i18n="paragraphPropertiesPanel.lineSpacing" class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
-                <option data-i18n="paraLineSpacing.mixedInherited" value="">Mixed or inherited</option>
-                <option data-i18n="paraLineSpacing.single" value="100">Single</option>
-                <option value="115">1.15</option>
-                <option value="150">1.5</option>
-                <option data-i18n="paraLineSpacing.double" value="200">Double</option>
-              </select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.before" class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
-                <label data-i18n="paragraphPropertiesPanel.after" class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.shadingAmpBorders">Shading &amp; borders</legend>
-              <div class="property-color-row">
-                <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span data-i18n="paragraphPropertiesPanel.fill">Fill</span></label>
-                <button data-i18n="paragraphPropertiesPanel.noFill" type="button" id="paraShadeNone" class="chip-btn">No fill</button>
-                <span data-i18n="paragraphPropertiesPanel.mixed" id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
-              </div>
-              <div class="property-border-row">
-                <div data-i18n-label="paragraphPropertiesPanel.paragraphBorders.label" class="border-presets" role="group" aria-label="Paragraph borders">
-                  <button data-i18n-title="paragraphPropertiesPanel.noBorder.title" data-i18n-label="paragraphPropertiesPanel.noBorder.label" type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.allBorders.title" data-i18n-label="paragraphPropertiesPanel.allBorders.label" type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.topBorder.title" data-i18n-label="paragraphPropertiesPanel.topBorder.label" type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.bottomBorder.title" data-i18n-label="paragraphPropertiesPanel.bottomBorder.label" type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.leftBorder.title" data-i18n-label="paragraphPropertiesPanel.leftBorder.label" type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
+            <details class="dialog-group property-section" data-property-section="paraStyle" open>
+              <summary>
+                <span data-i18n="paragraphPropertiesPanel.styleAmpAlignment" class="property-section-title">Style &amp; alignment</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
+                <div class="dialog-field">
+                  <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
+                  <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
+                       multi-paragraph selection this control is tri-state and
+                       publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
+                       is not legal on a radio. Word, Google Docs and ONLYOFFICE all
+                       use toggle buttons for exactly this control for the same
+                       reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
+                       'alignGroup'`, with no radiogroup wrapper). The groups that
+                       ARE always exactly-one-of go through `radio_group.mjs`. -->
+                  <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
+                    <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
+                    <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
+                    <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
+                    <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
+                  </span>
                 </div>
-                <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
-                <span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
               </div>
-            </fieldset>
+            </details>
 
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.pagination">Pagination</legend>
-              <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepNext">Keep with next</strong><small data-i18n="paragraphPropertiesPanel.keepParagraphFollowingParagraph">Keep this paragraph with the following paragraph.</small></span></label>
-              <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepLinesTogether">Keep lines together</strong><small data-i18n="paragraphPropertiesPanel.avoidSplittingParagraphAcross">Avoid splitting the paragraph across pages.</small></span></label>
-              <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.pageBreakBefore">Page break before</strong><small data-i18n="paragraphPropertiesPanel.startEachSelectedParagraph">Start each selected paragraph on a new page.</small></span></label>
-            </fieldset>
+            <details class="dialog-group property-section" data-property-section="paraIndent">
+              <summary>
+                <span data-i18n="paragraphPropertiesPanel.indentation" class="property-section-title">Indentation</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <div class="dialog-field-grid">
+                  <label data-i18n="paragraphPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                  <label data-i18n="paragraphPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                </div>
+                <div class="dialog-field-grid">
+                  <label data-i18n="paragraphPropertiesPanel.special" class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
+                    <option data-i18n="indentSpecial.mixed" value="">Mixed</option>
+                    <option value="none">None</option>
+                    <option data-i18n="indentSpecial.firstLine" value="first">First line</option>
+                    <option data-i18n="indentSpecial.hanging" value="hanging">Hanging</option>
+                  </select></label>
+                  <label data-i18n="paragraphPropertiesPanel.by" class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
+                </div>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-property-section="paraSpacing">
+              <summary>
+                <span data-i18n="paragraphPropertiesPanel.spacing" class="property-section-title">Spacing</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="paragraphPropertiesPanel.lineSpacing" class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
+                  <option data-i18n="paraLineSpacing.mixedInherited" value="">Mixed or inherited</option>
+                  <option data-i18n="paraLineSpacing.single" value="100">Single</option>
+                  <option value="115">1.15</option>
+                  <option value="150">1.5</option>
+                  <option data-i18n="paraLineSpacing.double" value="200">Double</option>
+                </select></label>
+                <div class="dialog-field-grid">
+                  <label data-i18n="paragraphPropertiesPanel.before" class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+                  <label data-i18n="paragraphPropertiesPanel.after" class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+                </div>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-property-section="paraShading">
+              <summary>
+                <span data-i18n="paragraphPropertiesPanel.shadingAmpBorders" class="property-section-title">Shading &amp; borders</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <div class="property-color-row">
+                  <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span data-i18n="paragraphPropertiesPanel.fill">Fill</span></label>
+                  <button data-i18n="paragraphPropertiesPanel.noFill" type="button" id="paraShadeNone" class="chip-btn">No fill</button>
+                  <span data-i18n="paragraphPropertiesPanel.mixed" id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
+                </div>
+                <div class="property-border-row">
+                  <div data-i18n-label="paragraphPropertiesPanel.paragraphBorders.label" class="border-presets" role="group" aria-label="Paragraph borders">
+                    <button data-i18n-title="paragraphPropertiesPanel.noBorder.title" data-i18n-label="paragraphPropertiesPanel.noBorder.label" type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
+                    <button data-i18n-title="paragraphPropertiesPanel.allBorders.title" data-i18n-label="paragraphPropertiesPanel.allBorders.label" type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
+                    <button data-i18n-title="paragraphPropertiesPanel.topBorder.title" data-i18n-label="paragraphPropertiesPanel.topBorder.label" type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
+                    <button data-i18n-title="paragraphPropertiesPanel.bottomBorder.title" data-i18n-label="paragraphPropertiesPanel.bottomBorder.label" type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
+                    <button data-i18n-title="paragraphPropertiesPanel.leftBorder.title" data-i18n-label="paragraphPropertiesPanel.leftBorder.label" type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
+                    <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
+                  </div>
+                  <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
+                  <span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
+                </div>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-property-section="paraPaginate">
+              <summary>
+                <span data-i18n="paragraphPropertiesPanel.pagination" class="property-section-title">Pagination</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepNext">Keep with next</strong><small data-i18n="paragraphPropertiesPanel.keepParagraphFollowingParagraph">Keep this paragraph with the following paragraph.</small></span></label>
+                <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepLinesTogether">Keep lines together</strong><small data-i18n="paragraphPropertiesPanel.avoidSplittingParagraphAcross">Avoid splitting the paragraph across pages.</small></span></label>
+                <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.pageBreakBefore">Page break before</strong><small data-i18n="paragraphPropertiesPanel.startEachSelectedParagraph">Start each selected paragraph on a new page.</small></span></label>
+              </div>
+            </details>
           </div>
         </div>
       </aside>
@@ -3051,57 +3081,281 @@
         <div class="panel-body table-properties-body">
           <p data-i18n="tablePropertiesPanel.adjustCurrentTableRow" id="tablePropertiesDescription" class="table-properties-intro">Adjust the current table, row, column, and default cell spacing. Changes apply automatically.</p>
           <div class="table-properties-grid">
-            <fieldset class="dialog-group table-property-section">
-              <legend data-i18n="tablePropertiesPanel.table">Table</legend>
-              <label data-i18n="tablePropertiesPanel.caption" class="dialog-field">Caption<input data-i18n-placeholder="tablePropertiesPanel.optionalTableCaption.placeholder" id="tableCaption" type="text" maxlength="255" placeholder="Optional table caption" /></label>
-              <label data-i18n="tablePropertiesPanel.description" class="dialog-field">Description<input data-i18n-placeholder="tablePropertiesPanel.accessibilityDescription.placeholder" id="tableDescription" type="text" maxlength="255" placeholder="Accessibility description" /></label>
-              <div class="dialog-field">
-                <span data-i18n="tablePropertiesPanel.alignment">Alignment</span>
-                <span data-i18n-label="tablePropertiesPanel.tableAlignment.label" class="segmented" id="tableAlign" role="radiogroup" aria-label="Table alignment">
-                  <button data-i18n="tableAlign.left" type="button" data-talign="left">Left</button>
-                  <button data-i18n="tableAlign.center" type="button" data-talign="center">Center</button>
-                  <button data-i18n="tableAlign.right" type="button" data-talign="right">Right</button>
-                </span>
+            <details class="dialog-group table-property-section" data-property-section="tableTable" open>
+              <summary>
+                <span data-i18n="tablePropertiesPanel.table" class="property-section-title">Table</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="tablePropertiesPanel.caption" class="dialog-field">Caption<input data-i18n-placeholder="tablePropertiesPanel.optionalTableCaption.placeholder" id="tableCaption" type="text" maxlength="255" placeholder="Optional table caption" /></label>
+                <label data-i18n="tablePropertiesPanel.description" class="dialog-field">Description<input data-i18n-placeholder="tablePropertiesPanel.accessibilityDescription.placeholder" id="tableDescription" type="text" maxlength="255" placeholder="Accessibility description" /></label>
+                <div class="dialog-field">
+                  <span data-i18n="tablePropertiesPanel.alignment">Alignment</span>
+                  <span data-i18n-label="tablePropertiesPanel.tableAlignment.label" class="segmented" id="tableAlign" role="radiogroup" aria-label="Table alignment">
+                    <button data-i18n="tableAlign.left" type="button" data-talign="left">Left</button>
+                    <button data-i18n="tableAlign.center" type="button" data-talign="center">Center</button>
+                    <button data-i18n="tableAlign.right" type="button" data-talign="right">Right</button>
+                  </span>
+                </div>
+                <div class="dialog-field-grid">
+                  <label data-i18n="tablePropertiesPanel.preferredWidth" class="dialog-field">Preferred width<span class="number-control"><input id="tableWidth" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                  <label data-i18n="tablePropertiesPanel.indentFromLeft" class="dialog-field">Indent from left<span class="number-control"><input id="tableIndent" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                </div>
+                <label class="dialog-check"><input id="tableFixedLayout" type="checkbox" /><span><strong data-i18n="tablePropertiesPanel.fixedColumnWidths">Fixed column widths</strong><small data-i18n="tablePropertiesPanel.turnOffAutofitStyle">Turn off for AutoFit-style layout.</small></span></label>
               </div>
-              <div class="dialog-field-grid">
-                <label data-i18n="tablePropertiesPanel.preferredWidth" class="dialog-field">Preferred width<span class="number-control"><input id="tableWidth" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="tablePropertiesPanel.indentFromLeft" class="dialog-field">Indent from left<span class="number-control"><input id="tableIndent" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-              </div>
-              <label class="dialog-check"><input id="tableFixedLayout" type="checkbox" /><span><strong data-i18n="tablePropertiesPanel.fixedColumnWidths">Fixed column widths</strong><small data-i18n="tablePropertiesPanel.turnOffAutofitStyle">Turn off for AutoFit-style layout.</small></span></label>
-            </fieldset>
+            </details>
 
-            <fieldset class="dialog-group table-property-section">
-              <legend data-i18n="tablePropertiesPanel.currentRow">Current row</legend>
-              <label class="dialog-check"><input id="tableHeaderRow" type="checkbox" /><span><strong data-i18n="tablePropertiesPanel.repeatAsHeaderRow">Repeat as header row</strong><small data-i18n="tablePropertiesPanel.repeatRowWhenTable">Repeat this row when the table continues on another page.</small></span></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="tablePropertiesPanel.height" class="dialog-field">Height<span class="number-control"><input id="tableRowHeight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="tablePropertiesPanel.heightRule" class="dialog-field">Height rule<select id="tableRowHeightRule" class="dialog-select">
-                  <option value="auto">Auto</option>
-                  <option data-i18n="tableRowHeightRule.atLeast" value="atLeast">At least</option>
-                  <option data-i18n="tableRowHeightRule.exact" value="exact">Exact</option>
+            <details class="dialog-group table-property-section" data-property-section="tableRow">
+              <summary>
+                <span data-i18n="tablePropertiesPanel.currentRow" class="property-section-title">Current row</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label class="dialog-check"><input id="tableHeaderRow" type="checkbox" /><span><strong data-i18n="tablePropertiesPanel.repeatAsHeaderRow">Repeat as header row</strong><small data-i18n="tablePropertiesPanel.repeatRowWhenTable">Repeat this row when the table continues on another page.</small></span></label>
+                <div class="dialog-field-grid">
+                  <label data-i18n="tablePropertiesPanel.height" class="dialog-field">Height<span class="number-control"><input id="tableRowHeight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                  <label data-i18n="tablePropertiesPanel.heightRule" class="dialog-field">Height rule<select id="tableRowHeightRule" class="dialog-select">
+                    <option value="auto">Auto</option>
+                    <option data-i18n="tableRowHeightRule.atLeast" value="atLeast">At least</option>
+                    <option data-i18n="tableRowHeightRule.exact" value="exact">Exact</option>
+                  </select></label>
+                </div>
+              </div>
+            </details>
+
+            <details class="dialog-group table-property-section" data-property-section="tableColumn">
+              <summary>
+                <span data-i18n="tablePropertiesPanel.currentColumn" class="property-section-title">Current column</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="tablePropertiesPanel.preferredWidth2" class="dialog-field">Preferred width<span class="number-control"><input id="tableColumnWidth" type="number" min="0.01" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <p data-i18n="tablePropertiesPanel.availableRegularUnmergedTables" id="tableColumnWidthNote" class="dialog-field-note">Available for regular, unmerged tables.</p>
+              </div>
+            </details>
+
+            <details class="dialog-group table-property-section" data-property-section="tableSpacing">
+              <summary>
+                <span data-i18n="tablePropertiesPanel.defaultCellSpacing" class="property-section-title">Default cell spacing</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <div class="dialog-field-grid">
+                  <label data-i18n="tablePropertiesPanel.cellMargin" class="dialog-field">Cell margin<span class="number-control"><input id="tableCellMargin" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                  <label data-i18n="tablePropertiesPanel.betweenCells" class="dialog-field">Between cells<span class="number-control"><input id="tableCellSpacing" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                </div>
+              </div>
+            </details>
+            <details class="dialog-group table-property-section" data-property-section="tableFormula">
+              <summary>
+                <span data-i18n="tablePropertiesPanel.formulaResult" class="property-section-title">Formula result</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="tablePropertiesPanel.formula" class="dialog-field">Formula<input data-i18n-placeholder="tablePropertiesPanel.sumAbove.placeholder" id="tableFormula" type="text" placeholder="=SUM(ABOVE)" /></label>
+                <button data-i18n="tablePropertiesPanel.calculateFormula" id="tableFormulaApply" type="button" class="dialog-button dialog-button-primary">Calculate formula</button>
+                <p data-i18n="tablePropertiesPanel.supportsSumAverageMin" class="dialog-field-note">Supports SUM, AVERAGE, MIN, and MAX over ABOVE or LEFT numeric cells.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Object properties. Word's Format Picture / Format Shape pane, Google
+           Docs' image sidebar, ONLYOFFICE's right-hand panel.
+
+           THIS MARKUP USED TO LIVE IN `src/object_inspector.mjs` as one 4.5 KB
+           `innerHTML` line, and moving it here is the structural half of the
+           owner's "who designed it" (`105` UX-027). Three consequences, all of
+           them the point:
+
+             * it goes through the SAME localisation seam as every other
+               surface. As a template literal inside a `.mjs` it went through
+               none: `tools/build-locale.mjs` reads `editor.html` and the site
+               templates for `data-i18n`, and `EN_STRINGS` for `t()`, and a
+               string in neither is a string no catalogue can ever answer. The
+               panel was 100% English in all nineteen locales and nothing could
+               see it, because the unrouted-string scanner only reads literals
+               ADJACENT to a sink and this was one literal holding forty.
+             * it is a peer of the paragraph and table panels rather than the
+               one panel built a different way, so the three share one shell,
+               one section mechanism and one commit model (ADR-062 C3).
+             * `panel-alignment.spec.mjs` can enumerate it from the DOM like the
+               other eight instead of reading this module's source for a
+               className. -->
+      <aside id="objectPropertiesPanel" class="object-inspector side-panel properties-panel" hidden aria-labelledby="objectPropertiesTitle">
+        <header class="panel-head properties-panel-head">
+          <div class="properties-panel-heading">
+            <span>
+              <strong data-i18n="objectPropertiesPanel.objectProperties" id="objectPropertiesTitle" class="panel-title">Object properties</strong>
+              <small data-object-inspector-kind></small>
+            </span>
+          </div>
+          <button data-i18n-title="objectPropertiesPanel.close.title" data-i18n-label="objectPropertiesPanel.closeObjectProperties.label" type="button" class="panel-close" title="Close" aria-label="Close object properties">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="panel-body properties-panel-body">
+          <div class="properties-panel-grid">
+            <!-- Size is the one section open by default, which is Word's own
+                 default for its Format pane and ONLYOFFICE's for its right
+                 panel. Everything else folds, and a folded section still says
+                 what it holds through the digest in its summary. -->
+            <details class="dialog-group property-section" data-property-section="size" open>
+              <summary>
+                <span data-i18n="objectPropertiesPanel.size" class="property-section-title">Size</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <div class="dialog-field-grid">
+                  <label data-i18n="objectPropertiesPanel.width" class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" inputmode="decimal" data-measure-min-twip="144" data-measure-max-twip="31680" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="objectPropertiesPanel.height" class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" inputmode="decimal" data-measure-min-twip="144" data-measure-max-twip="31680" /><span data-measure-suffix>in</span></span></label>
+                </div>
+                <!-- Word's own control, and the reason a reader can type one
+                     number instead of two. Panel-side on purpose: the engine's
+                     `resizeObject` takes both edges, so the ratio is a property
+                     of this form and not of the document. -->
+                <label class="dialog-check"><input data-object-inspector-lock-ratio type="checkbox" /><span><strong data-i18n="objectPropertiesPanel.lockAspectRatio">Lock aspect ratio</strong></span></label>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-property-section="position">
+              <summary>
+                <span data-i18n="objectPropertiesPanel.position" class="property-section-title">Position</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <div class="dialog-field-grid">
+                  <label data-i18n="objectPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" inputmode="decimal" data-measure-min-twip="-31680" data-measure-max-twip="31680" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="objectPropertiesPanel.top" class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" inputmode="decimal" data-measure-min-twip="-31680" data-measure-max-twip="31680" /><span data-measure-suffix>in</span></span></label>
+                </div>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-object-inspector-wrap data-property-section="wrap" hidden>
+              <summary>
+                <span data-i18n="objectPropertiesPanel.textWrapping" class="property-section-title">Text wrapping</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <!-- The same six words the object bar's wrap row uses, from the
+                     same catalogue entries (`object.wrap.*`), because two
+                     vocabularies for one property is how a surface starts
+                     reading as a different product. -->
+                <select data-i18n-label="objectPropertiesPanel.textWrapping" data-object-inspector-wrap-select class="dialog-select" aria-label="Text wrapping">
+                  <option data-i18n="objectPropertiesPanel.wrapSquare" value="square">Square</option>
+                  <option data-i18n="objectPropertiesPanel.wrapTight" value="tight">Tight</option>
+                  <option data-i18n="objectPropertiesPanel.wrapThrough" value="through">Through</option>
+                  <option data-i18n="objectPropertiesPanel.wrapTopAndBottom" value="topAndBottom">Top &amp; bottom</option>
+                  <option data-i18n="objectPropertiesPanel.wrapBehind" value="behind">Behind text</option>
+                  <option data-i18n="objectPropertiesPanel.wrapFront" value="front">In front</option>
+                </select>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-object-inspector-rotation data-property-section="rotation" hidden>
+              <summary>
+                <span data-i18n="objectPropertiesPanel.rotation" class="property-section-title">Rotation</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="objectPropertiesPanel.angle" class="dialog-field">Angle<span class="number-control"><input data-object-prop="rotation" type="number" min="0" max="360" step="1" inputmode="numeric" /><span>°</span></span></label>
+              </div>
+            </details>
+
+            <!-- Appearance. The two buttons here used to be the whole section,
+                 and they only OPEN the ribbon's own fill and outline pickers —
+                 so the panel could not tell a reader what the shape's fill
+                 actually is. `shapeFormat` has returned `{fill, outline,
+                 outlineWidthEmu}` all along and nothing in a panel read it: the
+                 swatches and the weight below are that read, which is this
+                 lane's "modeled is not shipped" row (`SKILL` §9 rule 4). -->
+            <details class="dialog-group property-section" data-object-inspector-appearance data-property-section="appearance" hidden>
+              <summary>
+                <span data-i18n="objectPropertiesPanel.appearance" class="property-section-title">Appearance</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <!-- The colour INPUT, not a swatch: the same row shape the
+                     paragraph panel's shading uses, so the value is both
+                     readable and changeable here. The button beside it still
+                     opens the ribbon's own picker, which is where "No fill" and
+                     the twenty standard colours live — two surfaces for one
+                     property, which is `SKILL` §10's rule and not duplication. -->
+                <div class="property-color-row" data-object-inspector-fill-row>
+                  <label data-i18n-title="objectPropertiesPanel.fill.title" class="shade-pick" title="Fill"><input data-i18n-label="objectPropertiesPanel.fill.label" data-object-inspector-fill-color type="color" aria-label="Fill" /><span data-i18n="objectPropertiesPanel.fill">Fill</span></label>
+                  <button data-i18n="objectPropertiesPanel.shapeFill" type="button" class="chip-btn" data-object-inspector-fill>Shape fill</button>
+                </div>
+                <div class="property-color-row" data-object-inspector-stroke-row>
+                  <label data-i18n-title="objectPropertiesPanel.outline.title" class="shade-pick" title="Outline"><input data-i18n-label="objectPropertiesPanel.outline.label" data-object-inspector-stroke-color type="color" aria-label="Outline" /><span data-i18n="objectPropertiesPanel.outline">Outline</span></label>
+                  <button data-i18n="objectPropertiesPanel.shapeOutline" type="button" class="chip-btn" data-object-inspector-stroke>Shape outline</button>
+                </div>
+                <!-- Outline weight. `shapeFormat().outlineWidthEmu` has been
+                     readable since the getter landed and no panel showed it;
+                     the options are numbers plus `pt`, so they carry no
+                     translatable sentence and are filled by the module. -->
+                <label data-i18n="objectPropertiesPanel.weight" class="dialog-field">Weight<select data-object-inspector-weight class="dialog-select"></select></label>
+              </div>
+            </details>
+
+            <details class="dialog-group property-section" data-object-inspector-textbox data-property-section="textbox" hidden>
+              <summary>
+                <span data-i18n="objectPropertiesPanel.textBox" class="property-section-title">Text box</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <span data-i18n="objectPropertiesPanel.insets" class="property-subhead">Insets</span>
+                <div class="property-grid-2">
+                  <label data-i18n="objectPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input data-object-textbox-inset="left" type="number" min="0" step="0.01" inputmode="decimal" data-measure-min-twip="0" data-measure-max-twip="2880" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="objectPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input data-object-textbox-inset="right" type="number" min="0" step="0.01" inputmode="decimal" data-measure-min-twip="0" data-measure-max-twip="2880" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="objectPropertiesPanel.top" class="dialog-field">Top<span class="number-control"><input data-object-textbox-inset="top" type="number" min="0" step="0.01" inputmode="decimal" data-measure-min-twip="0" data-measure-max-twip="2880" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="objectPropertiesPanel.bottom" class="dialog-field">Bottom<span class="number-control"><input data-object-textbox-inset="bottom" type="number" min="0" step="0.01" inputmode="decimal" data-measure-min-twip="0" data-measure-max-twip="2880" /><span data-measure-suffix>in</span></span></label>
+                </div>
+                <label data-i18n="objectPropertiesPanel.verticalAlignment" class="dialog-field">Vertical alignment<select data-object-textbox-anchor class="dialog-select">
+                  <option data-i18n="objectPropertiesPanel.top" value="top">Top</option>
+                  <option data-i18n="objectPropertiesPanel.center" value="center">Center</option>
+                  <option data-i18n="objectPropertiesPanel.bottom" value="bottom">Bottom</option>
                 </select></label>
+                <label data-i18n="objectPropertiesPanel.autofit" class="dialog-field">Autofit<select data-object-textbox-autofit class="dialog-select">
+                  <option data-i18n="objectPropertiesPanel.fixedShape" value="none">Fixed shape</option>
+                  <option data-i18n="objectPropertiesPanel.growShapeFit" value="shape">Grow shape to fit</option>
+                  <option data-i18n="objectPropertiesPanel.scaleText" value="normal">Scale text</option>
+                </select></label>
+                <div class="dialog-field-grid">
+                  <label data-i18n="objectPropertiesPanel.horizontalOverflow" class="dialog-field">Horizontal overflow<select data-object-textbox-h-overflow class="dialog-select">
+                    <option data-i18n="objectPropertiesPanel.overflow" value="overflow">Overflow</option>
+                    <option data-i18n="objectPropertiesPanel.clip" value="clip">Clip</option>
+                  </select></label>
+                  <label data-i18n="objectPropertiesPanel.verticalOverflow" class="dialog-field">Vertical overflow<select data-object-textbox-v-overflow class="dialog-select">
+                    <option data-i18n="objectPropertiesPanel.overflow" value="overflow">Overflow</option>
+                    <option data-i18n="objectPropertiesPanel.clip" value="clip">Clip</option>
+                    <option data-i18n="objectPropertiesPanel.ellipsis" value="ellipsis">Ellipsis</option>
+                  </select></label>
+                </div>
               </div>
-            </fieldset>
+            </details>
 
-            <fieldset class="dialog-group table-property-section">
-              <legend data-i18n="tablePropertiesPanel.currentColumn">Current column</legend>
-              <label data-i18n="tablePropertiesPanel.preferredWidth2" class="dialog-field">Preferred width<span class="number-control"><input id="tableColumnWidth" type="number" min="0.01" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-              <p data-i18n="tablePropertiesPanel.availableRegularUnmergedTables" id="tableColumnWidthNote" class="dialog-field-note">Available for regular, unmerged tables.</p>
-            </fieldset>
-
-            <fieldset class="dialog-group table-property-section">
-              <legend data-i18n="tablePropertiesPanel.defaultCellSpacing">Default cell spacing</legend>
-              <div class="dialog-field-grid">
-                <label data-i18n="tablePropertiesPanel.cellMargin" class="dialog-field">Cell margin<span class="number-control"><input id="tableCellMargin" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="tablePropertiesPanel.betweenCells" class="dialog-field">Between cells<span class="number-control"><input id="tableCellSpacing" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+            <details class="dialog-group property-section" data-object-inspector-alt data-property-section="alt" hidden>
+              <summary>
+                <span data-i18n="objectPropertiesPanel.altText" class="property-section-title">Alt text</span>
+                <span class="property-section-digest" data-property-digest></span>
+                <span class="ms property-section-chevron" aria-hidden="true">expand_more</span>
+              </summary>
+              <div class="property-section-fields">
+                <label data-i18n="objectPropertiesPanel.description" class="dialog-field">Description<input data-i18n-placeholder="objectPropertiesPanel.eGBarChart.placeholder" data-object-inspector-alt-input type="text" maxlength="255" placeholder="e.g. Bar chart of quarterly revenue" /></label>
               </div>
-            </fieldset>
-            <fieldset class="dialog-group table-property-section">
-              <legend data-i18n="tablePropertiesPanel.formulaResult">Formula result</legend>
-              <label data-i18n="tablePropertiesPanel.formula" class="dialog-field">Formula<input data-i18n-placeholder="tablePropertiesPanel.sumAbove.placeholder" id="tableFormula" type="text" placeholder="=SUM(ABOVE)" /></label>
-              <button data-i18n="tablePropertiesPanel.calculateFormula" id="tableFormulaApply" type="button" class="dialog-button dialog-button-primary">Calculate formula</button>
-              <p data-i18n="tablePropertiesPanel.supportsSumAverageMin" class="dialog-field-note">Supports SUM, AVERAGE, MIN, and MAX over ABOVE or LEFT numeric cells.</p>
-            </fieldset>
+            </details>
           </div>
         </div>
       </aside>
@@ -3231,5 +3485,9 @@
     <div id="statusToast" class="toast" aria-hidden="true" hidden></div>
 
     <script type="module" src="./src/main.js"></script>
+    <!-- The properties panels' collapsible sections. A second entry script
+         rather than two lines in `main.js`, which is at its line ratchet and
+         owned by another lane; `src/properties_panels.js` says why in full. -->
+    <script type="module" src="./src/properties_panels.js"></script>
   </body>
 </html>

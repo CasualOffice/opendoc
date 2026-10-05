@@ -1290,7 +1290,8 @@ input {
 .settings-label,
 .dialog-group legend,
 .metadata-section h3,
-.metadata-disclosure summary {
+.metadata-disclosure summary,
+.property-section-title {
   margin: 0 0 var(--space-2);
   padding: 0;
   color: var(--ink);
@@ -6469,6 +6470,163 @@ body.is-format-painting .page-wrap * {
 .table-property-section legend {
   margin: 0;
   padding: 0 5px;
+}
+
+/* ---- A property section is a DISCLOSURE ----------------------------------
+ *
+ * `105` UX-027, and the owner's own words: "alot of cognative burden". The
+ * three properties panels put 22 (paragraph), 17 (table) and up to 23 (object)
+ * controls on screen at once in a 320px column, with nothing folded anywhere —
+ * the only collapsed container in the whole editor was one `<details>` in the
+ * Document properties dialog.
+ *
+ * THE COMPETITOR DOES NOT DO THIS, and saying so is the point. Read at
+ * `reference/web-apps` 9c0ca538c3b211052347df09d2a4d6781f023403: ONLYOFFICE's
+ * right panel has no collapsible-section component at all. Its headings are
+ * plain bold labels with a horizontal rule between them
+ * (`resources/less/common.less:444-446`), its panes are mutually exclusive and
+ * switched by a vertical icon-tab rail
+ * (`app/template/RightMenu.template:16-27`, `app/view/RightMenu.js:397-398`),
+ * and inside a pane everything is open and you scroll. Their image pane shows
+ * 12 controls and their TABLE pane 30. What they separate with instead is a
+ * second surface: an "Advanced settings" text link at the foot of each pane
+ * (`app/template/ImageSettings.template:118`) opening a dialog with its own
+ * category list, and the split is consistent — everything numeric or geometric
+ * goes behind Advanced, everything one-click stays in the pane. Their image
+ * pane cannot even edit width and height; they are read-only labels
+ * (`app/view/ImageSettings.js:113-120`).
+ *
+ * So the fold is Word's Format pane and Google Docs' sidebar, not theirs, and
+ * it is chosen over their answer deliberately: a second surface costs a
+ * round trip and a modal, and a 320px column can hold a fold. What is added on
+ * top of Word is the DIGEST — ONLYOFFICE has no folds to lose information in,
+ * and Word's folds do lose it.
+ *
+ * `<details>`/`<summary>` and not a button plus `aria-expanded`: the element
+ * already is a disclosure to assistive technology, already takes Enter and
+ * Space, and already reports its own state, so there is no second source of
+ * truth to drift. It is also the primitive this tree already had, in
+ * `.metadata-disclosure`.
+ *
+ * `display: block` overrides the `display: grid` above. A grid `<details>`
+ * makes the summary a grid item, so the row's own flex layout and the gap
+ * between the summary and the fields stop being separable; the fields keep the
+ * grid on `.property-section-fields` instead, where it belongs. */
+details.property-section,
+details.table-property-section {
+  display: block;
+  padding: 0;
+}
+
+/* The summary IS the section's heading, so it takes the same typography as a
+ * `.dialog-group legend` and a `.metadata-disclosure summary` — one vocabulary
+ * for one meaning (the shared rule near the top of this file). What is added
+ * here is the row: the title, the folded-state digest, and the chevron. */
+.property-section > summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  list-style: none;
+}
+
+.property-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.property-section > summary:hover {
+  background: var(--bg-2);
+}
+
+.property-section > summary:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+/* Typography is the shared group heading near the top of this file — the same
+ * rule a `.dialog-group legend` and a `.metadata-disclosure summary` take, so a
+ * section title in a panel and a group title in a dialog are one vocabulary.
+ * Only the row behaviour is stated here, and the heading's block margin is
+ * zeroed because inside a flex summary it would push the chevron off-centre. */
+.property-section-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The digest: what a FOLDED section currently holds, so folding hides controls
+ * and not information. Derived from the section's own controls by
+ * `property_sections.mjs`, which is why no panel maintains a second
+ * description of its own state. `margin-inline-start: auto` pushes it and the
+ * chevron to the right edge; `:empty` collapses it so an open section's row is
+ * title plus chevron and nothing else. */
+.property-section-digest {
+  min-width: 0;
+  margin-inline-start: auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  font-weight: 450;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.property-section-digest:empty {
+  display: none;
+}
+
+/* The chevron. One ligature rotated rather than two swapped in script, so the
+ * open/closed states cannot disagree with the element's own `open` attribute —
+ * and `expand_more` is already in the bundled subset (the outline tree and the
+ * fold chrome use it), which is what `105` UX-028 is about. */
+.property-section-chevron {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: var(--icon-compact);
+  transition: transform 0.12s ease;
+}
+
+.property-section-digest:not(:empty) + .property-section-chevron {
+  margin-inline-start: 0;
+}
+
+.property-section:not([open]) .property-section-chevron {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .property-section-chevron {
+    transition: none;
+  }
+}
+
+/* The fields. This carries the grid the fieldset used to, and the inset that
+ * pairs with the summary's — so an open section's content lines up under its
+ * own title, which is `panel-alignment`'s rule applied one level in. */
+.property-section-fields {
+  display: grid;
+  min-width: 0;
+  gap: 11px;
+  padding: 0 13px 13px;
+}
+
+/* A heading for a run of fields INSIDE a section — the four text-box insets.
+ * It takes the field-label level deliberately, not the shared group heading:
+ * one step below the section title is the hierarchy, and a second 13px/650
+ * heading inside a section flattens it (the mistake Settings used to make in
+ * the other direction, recorded beside `.dialog-group legend`). */
+.property-subhead {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
 }
 
 .property-color-row,
