@@ -6,6 +6,8 @@ use quick_xml::events::Event;
 
 use crate::contenttypes::ContentTypes;
 use crate::error::PackageError;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::recover::PackageRepair;
 use crate::package::ROOT_RELATIONSHIPS_PART;
 use crate::relationships::{
     DocumentRelationship, Relationship, TargetMode, is_office_document_type, parent_segments,
@@ -54,6 +56,140 @@ pub(crate) fn discover_main_document(
         return Err(PackageError::UnsupportedMainDocumentType);
     }
     Ok(resolved)
+}
+
+/// Conventional main-document part names, tried in order when nothing in the
+/// package points at one. `document2.xml` is Word's own second choice, written
+/// when a `document.xml` entry already exists in the archive.
+const CONVENTIONAL_MAIN_DOCUMENTS: [&str; 2] = ["word/document.xml", "word/document2.xml"];
+
+/// Locates the main document in a damaged package, recording what it had to
+/// assume.
+///
+/// Every refusal the strict discovery raises becomes a repair here, because none
+/// of them is a fact about document *content*:
+///
+/// - **No relationships part, or an unreadable one.** The index is plumbing a
+///   writer regenerates; losing it loses no text.
+/// - **No `officeDocument` relationship, or one whose target is not in the
+///   package.** The document part is still in the archive under a conventional
+///   name, or is still the only part declaring a WordprocessingML content type.
+/// - **More than one.** Picking the first in relationship order is deterministic,
+///   and is strictly better than showing the reader nothing.
+/// - **A content type that is absent or contradicts the part.** A content type is
+///   a label; the markup inside the part is the fact. If the markup is not
+///   WordprocessingML the import says so with its own finding — refusing here
+///   would stop the file opening because of its label.
+///
+/// `Err(MissingMainDocument)` is still possible, and it is the honest one: a
+/// package with no candidate part at all holds no Word document, and the caller
+/// renders that as a sentence rather than retrying.
+pub(crate) fn discover_main_document_recovering(
+    relationships_bytes: Option<&[u8]>,
+    content_types: &ContentTypes,
+    package: &BoundedPackage<'_>,
+    repairs: &mut Vec<PackageRepair>,
+) -> Result<String, PackageError> {
+    let relationships = match relationships_bytes {
+        None => {
+            repairs.push(PackageRepair::PackageRelationshipsMissing);
+            Vec::new()
+        }
+        Some(bytes) => match parse_relationships(bytes, ROOT_RELATIONSHIPS_PART) {
+            Ok(relationships) => relationships,
+            Err(_) => {
+                repairs.push(PackageRepair::PackageRelationshipsUnreadable);
+                Vec::new()
+            }
+        },
+    };
+    let office: Vec<&Relationship> = relationships
+        .iter()
+        .filter(|relationship| {
+            !relationship.external && is_office_document_type(&relationship.rel_type)
+        })
+        .collect();
+    let declared = office
+        .first()
+        .and_then(|relationship| resolve_relative_target(&[], &relationship.target))
+        .filter(|part| package.contains_part(part));
+    let (part, located_by_name) = match declared {
+        Some(part) => (part, false),
+        None => (conventional_main_document(content_types, package)?, true),
+    };
+    if located_by_name {
+        repairs.push(PackageRepair::MainDocumentLocatedByName { part: part.clone() });
+    } else if office.len() > 1 {
+        repairs.push(PackageRepair::MainDocumentAmbiguous { part: part.clone() });
+    }
+    let content_type = content_types.content_type_of(&part);
+    if !content_type.is_some_and(|declared| MAIN_DOCUMENT_CONTENT_TYPES.contains(&declared)) {
+        repairs.push(PackageRepair::MainDocumentContentTypeIgnored {
+            declared: content_type.map(str::to_owned),
+        });
+    }
+    Ok(part)
+}
+
+/// The best candidate main document in a package that does not point at one:
+/// the first part declaring a WordprocessingML main-document type, then the
+/// conventional names, then any `word/document*.xml`.
+fn conventional_main_document(
+    content_types: &ContentTypes,
+    package: &BoundedPackage<'_>,
+) -> Result<String, PackageError> {
+    // Entries are already ordered by normalized part name, so every branch below
+    // is deterministic.
+    if let Some(entry) = package.entries().iter().find(|entry| {
+        content_types
+            .content_type_of(&entry.part_name)
+            .is_some_and(|declared| MAIN_DOCUMENT_CONTENT_TYPES.contains(&declared))
+    }) {
+        return Ok(entry.part_name.clone());
+    }
+    for candidate in CONVENTIONAL_MAIN_DOCUMENTS {
+        if package.contains_part(candidate) {
+            return Ok(candidate.to_owned());
+        }
+    }
+    if let Some(name) = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.as_str())
+        .find(|name| name.starts_with("word/document") && name.ends_with(".xml"))
+    {
+        return Ok(name.to_owned());
+    }
+    // Last resort: the conventional name even though no such part exists. A
+    // package holding `word/styles.xml` and `word/numbering.xml` but no
+    // `word/document.xml` is a Word document whose text is gone, and naming the
+    // part that should have been there lets the import open an empty document
+    // with that file's styles, properties and headers around it, saying plainly
+    // that the text could not be read. Refusing instead shows the reader nothing
+    // about a file they can still partly recover.
+    if looks_like_wordprocessingml(content_types, package) {
+        return Ok(CONVENTIONAL_MAIN_DOCUMENTS[0].to_owned());
+    }
+    Err(PackageError::MissingMainDocument)
+}
+
+/// Whether a package identifies itself as WordprocessingML even though it holds
+/// no main document.
+///
+/// This is what stops the fallback above turning every ZIP into an empty Word
+/// document. Two independent signals, either of which is enough: a part under
+/// `word/` (the directory ECMA-376 and every producer use for this format), or a
+/// declared content type in the WordprocessingML family. Both are properties of
+/// the *package* rather than of a name this engine chose, so a package of another
+/// format cannot satisfy either by accident — an ODF or a JAR is still refused
+/// here, and is still detected by its own adapter.
+fn looks_like_wordprocessingml(content_types: &ContentTypes, package: &BoundedPackage<'_>) -> bool {
+    package.entries().iter().any(|entry| {
+        entry.part_name.starts_with("word/")
+            || content_types
+                .content_type_of(&entry.part_name)
+                .is_some_and(|declared| declared.contains("wordprocessingml"))
+    })
 }
 
 /// Resolves any part's part-level relationships, classifying each as internal

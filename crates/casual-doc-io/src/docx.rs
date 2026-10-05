@@ -8,6 +8,11 @@ use casual_doc_import::{
     ModelOutcome as DocxModelOutcome, RetainedParts, RetentionOutcome as DocxRetentionOutcome,
     import_package,
 };
+// Own lines, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_import::{
+    RecoveryReport as DocxRecoveryReport, Severity as DocxSeverity,
+};
+use casual_doc_ooxml::{PackageRepair, repair_archive};
 use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_rtf::RtfLimits;
@@ -19,6 +24,8 @@ use crate::{
     NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, ProbeRequest,
     ProbeResult, RetentionOutcome, SourceEnvelope, formats,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::{RecoveryReport, RepairSeverity, SourceRepair};
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -68,22 +75,84 @@ impl FormatImporter for DocxAdapter {
         &self.descriptor
     }
 
+    /// # Detection of damaged input
+    ///
+    /// A strict admission is tried first, and a damaged package falls through to
+    /// the same best-effort open [`FormatImporter::import`] performs. Without
+    /// that second attempt the recovery below would be unreachable: detection
+    /// runs before import, so a truncated `.docx` would be reported as an
+    /// unrecognised format and never reach an importer that could recover it.
+    ///
+    /// It does not widen what this adapter claims. The best-effort open still
+    /// has to find a part that could be a WordprocessingML main document, which
+    /// no ODF, RTF or plain-text source has — so a damaged file of another
+    /// format still gets `no_match` here and is still detected by its own
+    /// adapter.
     fn probe(&self, request: ProbeRequest<'_>) -> ProbeResult {
-        match DocxPackage::open(request.bytes, self.package_limits) {
-            Ok(_) => ProbeResult::definite("docx.opc.office-document"),
+        if DocxPackage::open(request.bytes, self.package_limits).is_ok() {
+            return ProbeResult::definite("docx.opc.office-document");
+        }
+        let repaired = repair_archive(request.bytes);
+        let bytes = repaired.as_deref().unwrap_or(request.bytes);
+        match DocxPackage::open_recovering(bytes, self.package_limits) {
+            Ok(_) => ProbeResult::definite("docx.opc.office-document.recovered"),
             Err(_) => ProbeResult::no_match("docx.opc.not-admitted"),
         }
     }
 
+    /// # Opening damaged input
+    ///
+    /// A damaged `.docx` **opens**, and what was repaired is reported in
+    /// [`ImportArtifact::recovery`]. The ladder is: strict admission; a rebuilt
+    /// ZIP directory ([`repair_archive`]) for a truncated file; a best-effort
+    /// OPC open that infers a missing content-type manifest or relationship
+    /// index; then the importer's own recovery
+    /// ([`ImportConfig::recover`]) for damaged XML inside the parts.
+    ///
+    /// Each rung runs only after the one above it fails, so a well-formed file
+    /// takes exactly the path it took before any of this existed.
+    ///
+    /// Three refusals remain, and each is a sentence rather than a retry: a
+    /// macro project part (undecided policy, not an oversight), an encrypted
+    /// entry (there is no password to try), and bytes holding nothing that could
+    /// be a Word document.
     fn import(&self, request: ImportRequest<'_>) -> Result<ImportArtifact, AdapterError> {
-        let mut package = DocxPackage::open(request.bytes, self.package_limits)
-            .map_err(|error| AdapterError::new(format!("package admission: {error}")))?;
+        let strict = DocxPackage::open(request.bytes, self.package_limits);
+        let repaired_archive = match &strict {
+            Ok(_) => None,
+            Err(_) => repair_archive(request.bytes),
+        };
+        let bytes = repaired_archive.as_deref().unwrap_or(request.bytes);
+        let mut package_repairs: Vec<PackageRepair> = Vec::new();
+        let mut package = match strict {
+            Ok(package) => package,
+            Err(_) => {
+                // The one refusal left, and the sentence a reader gets for it:
+                // `PackageError::summary` rather than its `Display`, because a
+                // host renders this verbatim and "DOCX ZIP structure is
+                // malformed" in front of someone who double-clicked a file is
+                // the same defect as showing them an internal error name.
+                let (package, repairs) = DocxPackage::open_recovering(bytes, self.package_limits)
+                    .map_err(|error| AdapterError::new(error.summary()))?;
+                if repaired_archive.is_some() {
+                    package_repairs.push(PackageRepair::ArchiveDirectoryRebuilt {
+                        entries: u32::try_from(package.entries().len()).unwrap_or(u32::MAX),
+                    });
+                }
+                package_repairs.extend(repairs);
+                package
+            }
+        };
         let mut config = self.import_config;
         config.mode = if request.retain_source {
             ImportMode::Retention
         } else {
             ImportMode::Semantic
         };
+        // A package that needed repairing is a file whose parts are likely
+        // damaged too, so the importer recovers from the start rather than
+        // refusing once and being retried.
+        config.recover = true;
         let imported = import_package(&mut package, config)
             .map_err(|error| AdapterError::new(format!("semantic import: {error}")))?;
 
@@ -177,6 +246,7 @@ impl FormatImporter for DocxAdapter {
             resources,
             source,
             report,
+            recovery: convert_recovery(&package_repairs, &imported.recovery),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: None,
@@ -461,6 +531,53 @@ fn convert_report(report: &casual_doc_import::CompatibilityReport) -> Compatibil
     };
     converted.sort();
     converted
+}
+
+/// Lifts the package-level and importer-level repairs into one format-neutral
+/// recovery report.
+///
+/// Both halves render their own sentence, because both own their vocabulary: the
+/// package layer knows what a rebuilt ZIP directory means and the importer knows
+/// what a truncated body means, and a translation table in this crate would be a
+/// third copy of each fact that could drift from either.
+///
+/// Order is package repairs first, then importer repairs. That is the order the
+/// damage occurred in, and it is the order a reader needs: "this file's index was
+/// rebuilt" explains why the part after it was missing.
+fn convert_recovery(
+    package_repairs: &[PackageRepair],
+    recovery: &DocxRecoveryReport,
+) -> RecoveryReport {
+    let mut repairs: Vec<SourceRepair> = package_repairs
+        .iter()
+        .map(|repair| SourceRepair {
+            token: repair.token().to_owned(),
+            summary: repair.summary(),
+            // Every package-level repair is plumbing: the archive index and the
+            // OPC manifests carry no document meaning, so rebuilding them puts
+            // none at risk. What the rebuild may not have *found* is reported by
+            // the importer, as a missing part.
+            severity: RepairSeverity::Structural,
+            part_name: None,
+            occurrences: 1,
+        })
+        .collect();
+    repairs.extend(recovery.repairs().iter().map(|repair| SourceRepair {
+        token: repair.kind.token().to_owned(),
+        summary: repair.summary(),
+        severity: convert_severity(repair.severity()),
+        part_name: repair.part.clone(),
+        occurrences: repair.occurrences,
+    }));
+    RecoveryReport { repairs }
+}
+
+const fn convert_severity(severity: DocxSeverity) -> RepairSeverity {
+    match severity {
+        DocxSeverity::Structural => RepairSeverity::Structural,
+        DocxSeverity::ContentDropped => RepairSeverity::ContentDropped,
+        DocxSeverity::BodyLost => RepairSeverity::BodyLost,
+    }
 }
 
 #[cfg(test)]

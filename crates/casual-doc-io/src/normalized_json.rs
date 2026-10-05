@@ -8,6 +8,8 @@ use crate::{
     FormatImporter, FormatProfile, ImportArtifact, ImportRequest, ModelOutcome, ProbeRequest,
     ProbeResult, RetentionOutcome, SourceEnvelope, formats,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::RecoveryReport;
 
 const JSON_MIME: &str = "application/vnd.casualoffice.document+json";
 
@@ -76,6 +78,10 @@ impl FormatImporter for NormalizedJsonAdapter {
                 },
             ),
             report: CompatibilityReport::default(),
+            // This adapter has no best-effort recovery path yet: its importer
+            // still refuses damaged source, so there is nothing it could have
+            // repaired. An empty report is the honest value, not a placeholder.
+            recovery: RecoveryReport::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some("1".to_owned()),

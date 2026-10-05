@@ -1008,6 +1008,11 @@ enum SectionNoteScope {
 }
 
 struct BodyParser<'a> {
+    /// Which part of the document this parse is reading, so a repair recorded
+    /// mid-stream can name it. A damaged header and a damaged body are different
+    /// facts for a reader, and a recovery report that called both "the document
+    /// text" would be telling them the wrong one.
+    role: crate::recovery::PartRole,
     ids: &'a mut IdGenerator,
     styles: &'a Styles,
     numbering: &'a Numbering,
@@ -1385,10 +1390,12 @@ impl<'a> BodyParser<'a> {
         inputs: &ParseInputs<'a>,
         parsed_defs: &'a mut ParsedDefinitions,
         note_container: Option<&'static [u8]>,
+        role: crate::recovery::PartRole,
         config: ImportConfig,
     ) -> Self {
         let palette = inputs.color_scheme.map(resolve_palette).unwrap_or_default();
         BodyParser {
+            role,
             ids,
             styles: inputs.styles,
             numbering: inputs.numbering,
@@ -1580,7 +1587,15 @@ pub(crate) fn parse<'a>(
     parsed_defs: &'a mut ParsedDefinitions,
     config: ImportConfig,
 ) -> Result<BodyParse, ImportError> {
-    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, config);
+    let mut parser = BodyParser::build(
+        ids,
+        reporter,
+        &inputs,
+        parsed_defs,
+        None,
+        crate::recovery::PartRole::MainDocument,
+        config,
+    );
     parser.run(xml)?;
     // The body is one block container: unwind any text box left open by malformed
     // input so the true body root is restored, balance a field range the markup
@@ -1630,8 +1645,20 @@ pub(crate) fn parse_notes(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser =
-        BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(container), config);
+    let role = if container == b"endnote" {
+        crate::recovery::PartRole::Endnotes
+    } else {
+        crate::recovery::PartRole::Footnotes
+    };
+    let mut parser = BodyParser::build(
+        ids,
+        reporter,
+        &inputs,
+        parsed_defs,
+        Some(container),
+        role,
+        config,
+    );
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -1690,7 +1717,13 @@ pub(crate) fn parse_header_footer(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, config);
+    let role = if root == b"ftr" {
+        crate::recovery::PartRole::Footer
+    } else {
+        crate::recovery::PartRole::Header
+    };
+    let mut parser =
+        BodyParser::build(ids, reporter, &inputs, parsed_defs, None, role, config);
     parser.hf_root = Some(root);
     parser.run(xml)?;
     // A header/footer part is one block container.
@@ -1739,6 +1772,7 @@ pub(crate) fn parse_comments(
         &inputs,
         parsed_defs,
         Some(b"comment"),
+        crate::recovery::PartRole::Comments,
         config,
     );
     parser.run(xml)?;
@@ -1774,13 +1808,83 @@ impl BodyParser<'_> {
             .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })
     }
 
+    /// Decodes raw bytes from a text or CDATA event as UTF-8.
+    ///
+    /// # Recovery
+    ///
+    /// Recovering replaces each invalid sequence with `U+FFFD` and records one
+    /// repair per replacement. A single stray byte in one run — the usual damage
+    /// from a truncated transfer or a byte-level edit — otherwise costs the whole
+    /// document, and `U+FFFD` is what every other reader shows for it.
+    fn decode_bytes(&mut self, raw: &[u8]) -> Result<String, ImportError> {
+        match core::str::from_utf8(raw) {
+            Ok(text) => Ok(text.to_owned()),
+            Err(_) if self.reporter.may_recover() => {
+                let (text, repairs) = crate::xml_repair::decode_text_lossy(raw);
+                self.reporter.repair_all(repairs);
+                Ok(text)
+            }
+            Err(_) => Err(ImportError::MalformedXml),
+        }
+    }
+
+    /// Decodes raw text-event bytes and resolves their XML references.
+    ///
+    /// # Recovery
+    ///
+    /// Recovering keeps the text with the unresolvable reference left as written,
+    /// and names it. The alternative — refusing the document because one `&` was
+    /// never escaped — throws away every character in the file for one character
+    /// in one run.
+    fn decode_text(&mut self, raw: &[u8]) -> Result<String, ImportError> {
+        let text = self.decode_bytes(raw)?;
+        match quick_xml::escape::unescape(&text) {
+            Ok(decoded) => Ok(decoded.into_owned()),
+            Err(_) if self.reporter.may_recover() => {
+                self.reporter.repair(
+                    crate::recovery::Repair::in_role(
+                        crate::recovery::RepairKind::UndeclaredEntityRemoved,
+                        self.role,
+                    )
+                    .with_detail("an unresolvable reference in run text"),
+                );
+                Ok(text)
+            }
+            Err(_) => Err(ImportError::MalformedXml),
+        }
+    }
+
+    /// Streams one part's XML through the element handlers.
+    ///
+    /// # Recovery
+    ///
+    /// When the reporter permits recovery ([`crate::ImportConfig::recover`]) a
+    /// well-formedness error does not refuse the document: it **stops reading
+    /// this part** and records a repair naming how much was recovered. That is
+    /// panic-mode recovery in its usual sense, and the usual caveat applies —
+    /// what comes after the damage is unreachable, because a stream reader has no
+    /// way to resynchronise inside a tree it can no longer parse. The byte-level
+    /// repair pass (`crate::xml_repair`) is what recovers the tail; this arm is
+    /// what recovers the head when even the repaired bytes break.
     fn run(&mut self, xml: &[u8]) -> Result<(), ImportError> {
         let mut reader = Reader::from_reader(xml);
         let mut buffer = Vec::new();
         loop {
-            let event = reader
-                .read_event_into(&mut buffer)
-                .map_err(|_| ImportError::MalformedXml)?;
+            let event = match reader.read_event_into(&mut buffer) {
+                Ok(event) => event,
+                Err(_) if self.reporter.may_recover() => {
+                    let recovered = self.blocks.len();
+                    self.reporter.repair(
+                        crate::recovery::Repair::in_role(
+                            crate::recovery::RepairKind::BodyStoppedAtDamage,
+                            self.role,
+                        )
+                        .with_detail(&format!("{recovered} blocks read before the damage")),
+                    );
+                    break;
+                }
+                Err(_) => return Err(ImportError::MalformedXml),
+            };
             // VML raw-XML capture: mirror every event inside a `w:pict` subtree so
             // the closed pict can be re-parsed by `parse_vml_pict` for its positioned
             // shapes. Teeing runs BEFORE dispatch (and before the math guard) so the
@@ -1798,6 +1902,17 @@ impl BodyParser<'_> {
             }
             match event {
                 Event::Eof => break,
+                // A DTD is refused rather than read (unbounded entity
+                // expansion). Recovering skips it instead: it carries no
+                // document content, so dropping it loses nothing a reader could
+                // have seen, and refusing the file over it loses everything.
+                Event::DocType(_) if self.reporter.may_recover() => {
+                    self.reporter
+                        .repair(crate::recovery::Repair::in_role(
+                            crate::recovery::RepairKind::DoctypeRemoved,
+                            self.role,
+                        ));
+                }
                 Event::DocType(_) => return Err(ImportError::MalformedXml),
                 Event::Start(element) => {
                     self.depth += 1;
@@ -1864,21 +1979,37 @@ impl BodyParser<'_> {
                 }
                 Event::Text(text) if self.in_text || self.in_instr => {
                     let raw = text.into_inner();
-                    let raw =
-                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
-                    let decoded =
-                        quick_xml::escape::unescape(raw).map_err(|_| ImportError::MalformedXml)?;
-                    self.push_text(decoded.as_ref())?;
+                    let decoded = self.decode_text(raw.as_ref())?;
+                    self.push_text(&decoded)?;
                 }
                 Event::GeneralRef(reference) if self.in_text || self.in_instr => {
-                    let decoded = crate::decode_xml_reference(&reference)?;
-                    self.push_text(&decoded)?;
+                    match crate::decode_xml_reference(&reference) {
+                        Ok(decoded) => self.push_text(&decoded)?,
+                        // An undeclared general entity: there is no DTD to read a
+                        // declaration from (this engine refuses them), so there is
+                        // no text the reference could stand for. The reference is
+                        // dropped and named rather than taking the document down.
+                        Err(error) if self.reporter.may_recover() => {
+                            let name = reference
+                                .decode()
+                                .map(std::borrow::Cow::into_owned)
+                                .unwrap_or_default();
+                            self.reporter.repair(
+                                crate::recovery::Repair::in_role(
+                                    crate::recovery::RepairKind::UndeclaredEntityRemoved,
+                                    self.role,
+                                )
+                                .with_detail(&name),
+                            );
+                            let _ = error;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Event::CData(cdata) if self.in_text || self.in_instr => {
                     let raw = cdata.into_inner();
-                    let text =
-                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
-                    self.push_text(text)?;
+                    let text = self.decode_bytes(raw.as_ref())?;
+                    self.push_text(&text)?;
                 }
                 _ => {}
             }

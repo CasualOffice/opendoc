@@ -51,5 +51,7 @@ pub use registry::{
 pub use report::{
     CompatibilityEntry, CompatibilityReport, FeatureLocation, ModelOutcome, RetentionOutcome,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use report::{RecoveryReport, RepairSeverity, SourceRepair};
 pub use rtf::RtfAdapter;
 pub use text::{PlainTextAdapter, PlainTextLimits};

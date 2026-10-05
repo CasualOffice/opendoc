@@ -29,6 +29,28 @@ pub struct ImportConfig {
     /// Maximum aggregate text bytes mapped into runs, and the ceiling on
     /// retained source bytes in `Retention` mode.
     pub max_text_bytes: usize,
+    /// Whether opening a **damaged** document recovers what the bytes allow and
+    /// reports it, instead of refusing.
+    ///
+    /// Off by default, because every existing caller — the round-trip suites, the
+    /// fidelity gates, the writer's fixed-point tests — depends on a refusal
+    /// being a refusal. The product path turns it on: a reader who is handed a
+    /// damaged file is better served by the document plus a report of what was
+    /// repaired than by an error dialog, and a converter pipeline cannot offer
+    /// that at all.
+    ///
+    /// What it does **not** do is widen what counts as damage. A strict open is
+    /// still attempted first and still has to fail before any repair is
+    /// considered, so a healthy document takes exactly the path it took before
+    /// and produces an empty [`crate::RecoveryReport`]. It also does not relax a
+    /// resource bound: a limit is a refusal on purpose
+    /// ([`crate::ImportError::LimitExceeded`]), and recovering past one would
+    /// turn a defence into a suggestion.
+    ///
+    /// Every repair it performs is reported. A document that opens with half its
+    /// tables gone and says nothing is worse than a refusal, because the reader
+    /// saves over the original — so the report is the feature, not the document.
+    pub recover: bool,
 }
 
 impl ImportConfig {
@@ -56,6 +78,7 @@ impl Default for ImportConfig {
             max_elements: 5_000_000,
             max_depth: 512,
             max_text_bytes: 64 * 1024 * 1024,
+            recover: false,
         }
     }
 }

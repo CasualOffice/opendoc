@@ -692,7 +692,28 @@ pub(crate) struct Reporter {
     findings: BTreeMap<(String, FindingKey), Pending>,
     retention: SourceRetention,
     overflow: u32,
+    /// Whether the parsers reading through this reporter may recover from damage
+    /// instead of refusing ([`crate::ImportConfig::recover`]).
+    ///
+    /// The policy rides the reporter because the reporter is already threaded
+    /// through every parser in the crate, and because the two halves of a repair
+    /// are inseparable: a parser that may recover must also be able to *say* it
+    /// did. Putting the permission anywhere else makes a silent recovery
+    /// expressible, and a silent recovery is the one failure this whole path
+    /// exists to prevent.
+    recovering: bool,
+    /// Repairs applied while reading, in application order. Drained by
+    /// [`Reporter::take_repairs`] and aggregated into a
+    /// [`crate::RecoveryReport`]; bounded by that aggregation, and by
+    /// [`MAX_RECOVERY_REPAIRS`] here so adversarial input cannot grow the vector
+    /// without limit before it is aggregated.
+    repairs: Vec<crate::recovery::Repair>,
 }
+
+/// Ceiling on repairs retained before aggregation. Past it, repairs are counted
+/// but not individually kept; the aggregation's own overflow row carries the
+/// count, so a reader is never told a damaged file was clean.
+const MAX_RECOVERY_REPAIRS: usize = 4_096;
 
 impl Reporter {
     /// A reporter for source whose unconsumed detail is retained as `retention`
@@ -704,7 +725,51 @@ impl Reporter {
             findings: BTreeMap::new(),
             retention,
             overflow: 0,
+            recovering: false,
+            repairs: Vec::new(),
         }
+    }
+
+    /// The same reporter, permitted to recover from damage and to record it.
+    pub(crate) fn recovering(retention: SourceRetention) -> Self {
+        Self {
+            recovering: true,
+            ..Self::new(retention)
+        }
+    }
+
+    /// Whether a parser reading through this reporter may recover from damage
+    /// rather than refuse. A parser that answers `true` here **must** record a
+    /// repair for whatever it recovered from.
+    pub(crate) const fn may_recover(&self) -> bool {
+        self.recovering
+    }
+
+    /// Records one repair. Ignored when not recovering, so a call site cannot
+    /// claim a repair on the strict path.
+    pub(crate) fn repair(&mut self, repair: crate::recovery::Repair) {
+        if !self.recovering {
+            return;
+        }
+        if self.repairs.len() < MAX_RECOVERY_REPAIRS {
+            self.repairs.push(repair);
+        }
+    }
+
+    /// Records every repair in `repairs` (the byte-level XML repair pass hands
+    /// back a batch).
+    pub(crate) fn repair_all(
+        &mut self,
+        repairs: impl IntoIterator<Item = crate::recovery::Repair>,
+    ) {
+        for repair in repairs {
+            self.repair(repair);
+        }
+    }
+
+    /// Takes the recorded repairs, leaving the reporter's findings untouched.
+    pub(crate) fn take_repairs(&mut self) -> Vec<crate::recovery::Repair> {
+        std::mem::take(&mut self.repairs)
     }
 
     /// Reports an element the model does not represent.
