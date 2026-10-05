@@ -359,9 +359,26 @@ Color is supplemental. Every change carries a textual author and change-kind lab
 
 ### 9.4 Diff isolation
 
-Version diff is derived data. It does not add tracked changes, comments, nodes, or marks to
-either source document. Creating a comparison document is a separate explicit later action
-that produces a new document, matching Word's source-preserving behavior.
+**This requirement stands for VERSION HISTORY and is superseded for Review ▸ Compare
+(ADR-061, then ADR-062).** It was published, reversed for both routes by one ADR, and
+restored for this one; the history is kept here rather than overwritten, because the version
+that was superseded turned out to be the one that matched two of the three references.
+
+For **version history's Show changes**, as shipped: version diff is derived data. It does not
+add tracked changes, comments, nodes, or marks to either source document. The live document is
+not read, not exported and not written; both sides are stored checkpoints, and the result is a
+read-only unified diff in the Compare panel. This is what Word and Google Docs do (each
+produces a third document and leaves the sources untouched) and what ONLYOFFICE's history does
+by construction (`docs/164` §5). It is also what a reader is owed: asking what changed in a
+past version must not change the document in front of them.
+
+For **Review ▸ Compare**, ADR-061 governs and this paragraph does not: a comparison against a
+document the reader chose is applied to the open document as tracked changes, with a warning
+said up front, as one undo step. That is ONLYOFFICE's answer and it is deliberate.
+
+Creating a merged **third** document remains an unbuilt, separate, explicit action — `docs/140`
+§11.6, and `docs/164` §9 question 6 records that it is still an open product question rather
+than a decision.
 
 ## 10. Edit-management requirements
 

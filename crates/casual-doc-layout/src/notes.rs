@@ -11,6 +11,7 @@ use casual_doc_model::v1::{Document, NoteId, NoteKind, NotePosition, SectionId};
 
 use crate::block::{BlockFragment, CellFragment};
 use crate::columns::{SectionRun, paginate_columns_with_reservations};
+use crate::flow::MeasureFit;
 use crate::flow::build_galley_for_note_blocks;
 use crate::note_numbering::{NoteLabels, note_props_for_section_id};
 use crate::page::{Page, PaginatedLayout, PlacedFragment};
@@ -59,8 +60,9 @@ pub(crate) fn paginate_section_footnotes(
     shaper: &dyn LineShaper,
     runs: &[SectionRun],
     labels: &NoteLabels,
+    fit: MeasureFit,
 ) -> PaginatedLayout {
-    let notes = build_section_footnote_galleys(document, shaper, runs, labels);
+    let notes = build_section_footnote_galleys(document, shaper, runs, labels, fit);
     if notes.is_empty() {
         return paginate_columns_with_reservations(runs, &[]);
     }
@@ -104,6 +106,7 @@ fn build_footnote_galleys(
     shaper: &dyn LineShaper,
     width: Twip,
     labels: &NoteLabels,
+    fit: MeasureFit,
 ) -> BTreeMap<NoteId, Vec<BlockFragment>> {
     document
         .definitions()
@@ -129,6 +132,7 @@ fn build_footnote_galleys(
                     width,
                     &label,
                     Some(labels),
+                    fit,
                 ),
             )
         })
@@ -140,6 +144,7 @@ fn build_section_footnote_galleys(
     shaper: &dyn LineShaper,
     runs: &[SectionRun],
     labels: &NoteLabels,
+    fit: MeasureFit,
 ) -> BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>> {
     let mut out = BTreeMap::new();
     for run in runs {
@@ -148,7 +153,7 @@ fn build_section_footnote_galleys(
                 section: run.config.section,
                 width,
             })
-            .or_insert_with(|| build_footnote_galleys(document, shaper, width, labels));
+            .or_insert_with(|| build_footnote_galleys(document, shaper, width, labels, fit));
         }
     }
     out
@@ -1325,6 +1330,7 @@ mod tests {
             width,
             "7",
             None,
+            MeasureFit::Bleed,
         );
         assert!(!galley.is_empty(), "the note body flows to a fragment");
 

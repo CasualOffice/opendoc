@@ -72,6 +72,9 @@ use crate::flow::{
     build_galley_cached_labeled, build_galley_for_blocks_inner, flow_header_footer_labeled,
     line_grid_for_section,
 };
+// Own line (anti-conflict): whether content wider than the measure may be laid
+// out past it (`docs/166` R-1).
+use crate::flow::MeasureFit;
 // Own line (anti-conflict): the per-viewer fold filter (ADR-049).
 use crate::fold::FoldSet;
 use crate::incremental::{DirtySet, GalleyCache};
@@ -299,33 +302,82 @@ impl LayoutView {
         matches!(self, Self::Reflow { .. })
     }
 
-    /// The approximations a [`LayoutView::Reflow`] pass knowingly makes, as
-    /// sentences, so a host reports them instead of a reader discovering them.
-    /// Empty for [`LayoutView::Paged`].
+    /// Whether content that declares itself wider than the measure may be laid
+    /// out past it — [`MeasureFit::Bleed`] on paper, [`MeasureFit::Fit`] in a
+    /// reflowed column, and the reason is geometric rather than aesthetic: a tile
+    /// is exactly the measure plus its two gutters and the host guarantees no
+    /// horizontal scroll, so there is nothing past the measure to bleed onto.
+    /// See [`MeasureFit`] for the whole argument.
     ///
-    /// These are recorded rather than hidden because each is visible to a reader
-    /// and none is fixed by this increment (`docs/151` §8 item 1 stays open on
-    /// the first of them).
-    ///
-    /// Complexity: `O(1)` — a fixed list, allocating only its strings.
+    /// Complexity: `O(1)`.
     #[must_use]
-    pub fn approximations(self) -> Vec<String> {
-        if !self.is_reflow() {
-            return Vec::new();
+    pub const fn measure_fit(self) -> MeasureFit {
+        if self.is_reflow() {
+            MeasureFit::Fit
+        } else {
+            MeasureFit::Bleed
         }
-        vec![
-            "A drawing anchored to the page or to the margin keeps its paper-relative position, \
-             because a reflow tile has no page edges for it to be relative to; it can therefore \
-             sit away from the text it belongs with (docs/151 section 8 item 1, still open)."
-                .to_owned(),
-            "A footnote is placed at the bottom of the tile its reference lands in, which is a \
-             raster boundary rather than a page bottom, so it can fall mid-thought rather than \
-             under the page that cites it."
-                .to_owned(),
-            "A PAGE or NUMPAGES field prints a refusal token rather than a number, because a tile \
-             index is not a page number (docs/151 section 6.5)."
-                .to_owned(),
-        ]
+    }
+
+    /// The approximations a [`LayoutView::Reflow`] pass knowingly makes **in
+    /// `document`**, as sentences, so a host reports them instead of a reader
+    /// discovering them. Empty for [`LayoutView::Paged`].
+    ///
+    /// Derived from the document rather than constant. The constant list it
+    /// replaces told every reader about footnote placement and `PAGE` fields
+    /// whether or not the document had any — four sentences of which three were
+    /// usually false is not a report, and a host that showed it would have been
+    /// publishing a guess (`docs/166` R-7).
+    ///
+    /// The widths matter too, which is why this reads `self`: whether a table or
+    /// a drawing is *over-wide* is a question about this measure, and a document
+    /// that fits has nothing to say about fitting.
+    ///
+    /// Complexity: `O(document)` — one walk, descending into tables, SDTs and
+    /// text boxes, stopping as soon as all four answers are known. It runs once
+    /// per view change, which already costs a full re-shape; it must never be put
+    /// on a per-keystroke path (`docs/107` §4).
+    #[must_use]
+    pub fn approximations(self, document: &Document) -> Vec<String> {
+        let LayoutView::Reflow { content_width, .. } = self else {
+            return Vec::new();
+        };
+        let found = crate::reflow_report::survey(document, content_width);
+        let mut out = Vec::new();
+        if found.over_wide_content {
+            out.push(
+                "A table or an image wider than the reading column has been fitted to it — a \
+                 table's columns are narrowed from the widths the document declares, and an \
+                 image is scaled down with its proportions kept. Nothing is hidden, but the \
+                 widths are not the author's; switch to page view to see them."
+                    .to_owned(),
+            );
+        }
+        if found.page_anchored_drawing {
+            out.push(
+                "A drawing anchored to the page or to the margin keeps its paper-relative \
+                 position, because a reflow tile has no page edges for it to be relative to; it \
+                 can therefore sit away from the text it belongs with (docs/151 section 8 item 1, \
+                 still open)."
+                    .to_owned(),
+            );
+        }
+        if found.note {
+            out.push(
+                "A footnote is placed at the bottom of the tile its reference lands in, which is \
+                 a raster boundary rather than a page bottom, so it can fall mid-thought rather \
+                 than under the page that cites it."
+                    .to_owned(),
+            );
+        }
+        if found.page_field {
+            out.push(
+                "A PAGE or NUMPAGES field prints a refusal token rather than a number, because a \
+                 tile index is not a page number (docs/151 section 6.5)."
+                    .to_owned(),
+            );
+        }
+        out
     }
 }
 
@@ -846,6 +898,7 @@ fn build_section_runs_inner(
             None,
             labels,
             folds,
+            view.measure_fit(),
         );
         if view.is_reflow() {
             suspend_page_break_constraints(&mut galley);
@@ -1067,6 +1120,7 @@ fn push_section_run(
         ),
         labels,
         folds,
+        view.measure_fit(),
     );
     if view.is_reflow() {
         suspend_page_break_constraints(&mut galley);
@@ -1089,6 +1143,7 @@ fn push_section_run(
                     ),
                     labels,
                     folds,
+                    view.measure_fit(),
                 )
             })
             .collect()
@@ -1126,6 +1181,7 @@ fn build_body_galley(
     line_grid: Option<crate::flow::LineGrid>,
     labels: &NoteLabels,
     folds: &FoldSet,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     let mut galley = build_galley_for_blocks_inner(
         document,
@@ -1140,6 +1196,7 @@ fn build_body_galley(
         },
         line_grid,
         folds,
+        fit,
     );
     // A positioned table (`w:tblPr/w:tblpPr`) is not a block in the flow: drop
     // its rows here so the paginator never reserves a band for them and the
@@ -1701,7 +1758,8 @@ fn resume_pagination(
     // A paragraph-anchored float drives the exclusion fixed point in
     // `finish_pagination`, which re-flows the body at a narrowed width; there is
     // nothing incremental about it, so hand the whole job back.
-    if !paragraph_float_exclusions(document, shaper, plans, &layout).is_empty() {
+    if !paragraph_float_exclusions(document, shaper, plans, &layout, view.measure_fit()).is_empty()
+    {
         return Resume::NotOffered;
     }
     // What a host must repaint. A page outside the re-flowed range was moved
@@ -1740,7 +1798,8 @@ fn finish_pagination(
     folds: &FoldSet,
 ) -> crate::page::PaginatedLayout {
     let mut layout = finish_pagination_pass(document, shaper, plans, runs, labels, view);
-    let mut exclusions = paragraph_float_exclusions(document, shaper, plans, &layout);
+    let mut exclusions =
+        paragraph_float_exclusions(document, shaper, plans, &layout, view.measure_fit());
     if exclusions.is_empty() {
         return layout;
     }
@@ -1762,7 +1821,8 @@ fn finish_pagination(
             folds,
         );
         let next = finish_pagination_pass(document, shaper, plans, &runs, labels, view);
-        let next_exclusions = paragraph_float_exclusions(document, shaper, plans, &next);
+        let next_exclusions =
+            paragraph_float_exclusions(document, shaper, plans, &next, view.measure_fit());
         if next_exclusions == exclusions {
             return next;
         }
@@ -1800,7 +1860,7 @@ fn finish_pagination_pass(
     view: LayoutView,
 ) -> crate::page::PaginatedLayout {
     let mut layout = if runs.iter().any(run_has_body_footnotes) {
-        paginate_section_footnotes(document, shaper, runs, labels)
+        paginate_section_footnotes(document, shaper, runs, labels, view.measure_fit())
     } else {
         paginate_columns(runs)
     };
@@ -1909,7 +1969,13 @@ fn post_pagination_passes(
     place_floats(layout, document, shaper, &fallback_config);
     // Positioned tables (`w:tblPr/w:tblpPr`) join the same float layer, straight
     // after the drawings, so one z-space covers both (`docs/109` row 64).
-    crate::table_float::place_floating_tables(layout, document, shaper, &fallback_config);
+    crate::table_float::place_floating_tables(
+        layout,
+        document,
+        shaper,
+        &fallback_config,
+        view.measure_fit(),
+    );
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.
@@ -2024,8 +2090,9 @@ fn paragraph_float_exclusions(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     layout: &crate::page::PaginatedLayout,
+    fit: MeasureFit,
 ) -> ParagraphFloatExclusions {
-    let wraps = body_wrap_rects(layout, document, shaper, &plans[0].config);
+    let wraps = body_wrap_rects(layout, document, shaper, &plans[0].config, fit);
     if wraps.is_empty() {
         return ParagraphFloatExclusions::new();
     }
@@ -2271,6 +2338,7 @@ fn build_section_runs_cached(
         },
         review_view,
         folds,
+        view.measure_fit(),
     );
     // Same lift as the uncached builder: a positioned table is not a block in
     // the flow. The incremental path must agree with the fresh one fragment for

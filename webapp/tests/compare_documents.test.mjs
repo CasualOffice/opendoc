@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 
 import {
   CANCELLED,
+  CATEGORY_KEY,
   COMPLETE,
   FAMILY_KEY,
   FAMILY_ORDER,
@@ -26,9 +27,15 @@ import {
   REFUSAL_KEY,
   UNMARKED_KEY,
   WORKING,
+  blockIndexOfPath,
   changeFields,
+  changeLines,
   changeObjectName,
   changeText,
+  diffHunks,
+  diffLines,
+  diffWindow,
+  pathAtIndex,
   runComparison,
   storyLabel,
   summariseDiff,
@@ -155,7 +162,7 @@ test("a job that never converges is bounded rather than spinning the tab", async
   assert.equal(job.cancelled, true);
 });
 
-test("the summary counts by family and orders rows in reading order", () => {
+test("the summary counts by family and keeps the engine's DOCUMENT order", () => {
   const summary = summariseDiff({
     complete: true,
     left: { blocks: 12 },
@@ -172,16 +179,34 @@ test("the summary counts by family and orders rows in reading order", () => {
   assert.equal(summary.leftBlocks, 12);
   assert.equal(summary.rightBlocks, 14);
   // Blocks, then text, then metadata — the order a reader asks the questions in,
-  // which is `FAMILY_ORDER` and is deliberately not alphabetical.
+  // which is `FAMILY_ORDER` and is deliberately not alphabetical. The COUNTS are
+  // still grouped by family; it is the ROWS that are not.
   assert.deepEqual(summary.families, [
     { family: "block", count: 1 },
     { family: "text", count: 2 },
     { family: "metadata", count: 1 },
   ]);
-  assert.deepEqual(summary.rows.map((row) => row.id), ["c", "b", "d", "a"]);
+  // CORRECTED 2026-10-05. This asserted `["c", "b", "d", "a"]` — the family
+  // order — and the assertion was pinning a regression of a guarantee the engine
+  // already makes: `DiffJob::finish` sorts `pending` by `(story, path, family,
+  // kind)` before sealing the sidecar, and `record.rs` documents `changes` as
+  // "in document order of the right side, then of the left". `summariseDiff`
+  // re-sorted that away by family, which handed the reader a list grouped by
+  // what a change IS rather than by where it is — unwalkable beside the
+  // document, and impossible to build a unified diff from (`docs/164` §4 gap 2).
+  //
+  // So the guarantee this now asserts is PRESERVATION: the input order, which is
+  // the engine's, comes back untouched.
+  assert.deepEqual(summary.rows.map((row) => row.id), ["a", "b", "c", "d"]);
+  assert.equal(
+    summary.rows,
+    // The same array, not a copy, because there is nothing left to copy FOR —
+    // and a copy would invite the next lane to sort it.
+    summary.rows,
+  );
 });
 
-test("a family this build has never heard of is counted and sorted last, never dropped", () => {
+test("a family this build has never heard of is counted and ordered last, never dropped", () => {
   // The engine may grow a thirteenth family. Dropping it would make the panel
   // report fewer differences than the engine found, which is the one failure a
   // comparison cannot be allowed: a reader would conclude the documents agree
@@ -193,8 +218,221 @@ test("a family this build has never heard of is counted and sorted last, never d
     ],
   });
   assert.equal(summary.total, 2);
+  // The unknown family sorts LAST among the COUNTS, which is still where an
+  // unrecognised name belongs: a reader scanning a comparison is not asking
+  // about it first.
   assert.deepEqual(summary.families.map((entry) => entry.family), ["text", "somethingNew"]);
-  assert.equal(summary.rows.at(-1).id, "x");
+  // And it is still THERE in the rows, in its document position, which is what
+  // "never dropped" means now that the rows are not re-sorted.
+  assert.deepEqual(summary.rows.map((row) => row.id), ["x", "y"]);
+});
+
+test("Word's five categories are published, and a move is counted ONCE", () => {
+  // Microsoft's sourced spec: the Reviewing Pane shows "the total number of
+  // changes and the number of insertions, deletions, moves, formatting changes,
+  // and comments". The numbers come from the engine's own `kindCounts`, so the
+  // breakdown and the total cannot drift apart.
+  const summary = summariseDiff({
+    changes: [
+      { id: "a", family: "text", kind: "insertion" },
+      { id: "b", family: "block", kind: "move_from" },
+      { id: "c", family: "block", kind: "move_to" },
+      { id: "d", family: "comment", kind: "insertion" },
+    ],
+    kindCounts: [
+      ["insertion", 2],
+      ["move_from", 1],
+      ["move_to", 1],
+    ],
+  });
+  assert.deepEqual(summary.categories, [
+    { category: "insertions", count: 2 },
+    { category: "deletions", count: 0 },
+    // ONE move, not two. The engine reports a move as two records — the origin
+    // and the destination — and adding both would print "2 moves" for one block
+    // that moved. The destination is counted because every move has exactly one.
+    { category: "moves", count: 1 },
+    { category: "formatting", count: 0 },
+    { category: "properties", count: 0 },
+    // Comments are a FAMILY in our engine and a category in Word's, so this one
+    // number does not come from `kindCounts` at all.
+    { category: "comments", count: 1 },
+  ]);
+});
+
+test("every category has a catalogue key, so no row can render blank", () => {
+  // The same rule `FAMILY_KEY` is under: a key the extractor cannot read is a key
+  // no translator is ever shown, so the keys are written out and this fails the
+  // build if a category is added without one.
+  for (const { category } of summariseDiff({ changes: [] }).categories) {
+    assert.ok(CATEGORY_KEY[category], `the ${category} category has no catalogue key`);
+  }
+});
+
+test("a hunk groups nearby changes and splits on a gap, a story and a container", () => {
+  const body = { kind: "body" };
+  const at = (index) => [{ kind: "block", index }];
+  const change = (id, index, extra = {}) => ({
+    id,
+    family: "text",
+    kind: "insertion",
+    rightText: id,
+    right: { story: body, path: at(index), start: 0, end: 0 },
+    ...extra,
+  });
+  const hunks = diffHunks(
+    [
+      change("a", 2),
+      // Within `context * 2` of block 2, so the same hunk — otherwise the two
+      // context runs would meet and there would be nothing between them.
+      change("b", 7),
+      // A gap of 9 from block 7: its own hunk.
+      change("c", 16),
+      // A different STORY at the same index: never the same hunk, however close
+      // the numbers look.
+      {
+        id: "d",
+        family: "text",
+        kind: "insertion",
+        rightText: "d",
+        right: { story: { kind: "footnote", index: 0 }, path: at(17), start: 0, end: 0 },
+      },
+      // A different CONTAINER — inside a table cell — at a plausible index.
+      {
+        id: "e",
+        family: "text",
+        kind: "insertion",
+        rightText: "e",
+        right: {
+          story: body,
+          path: [{ kind: "block", index: 18 }, { kind: "row", index: 0 }, { kind: "block", index: 0 }],
+          start: 0,
+          end: 0,
+        },
+      },
+    ],
+    { context: 3 },
+  );
+  assert.deepEqual(
+    hunks.map((hunk) => hunk.changes.map((entry) => entry.id)),
+    [["a", "b"], ["c"], ["d"], ["e"]],
+  );
+  assert.equal(hunks[0].start, 2);
+  assert.equal(hunks[0].end, 7);
+});
+
+test("a change with no anchor is its own unplaceable hunk, never dropped", () => {
+  // A difference the engine found and this surface cannot place is still a
+  // difference. Dropping it is the silent loss `AGENTS.md` puts first, and a
+  // panel that reported fewer changes than the engine found would be telling a
+  // reader the documents agree about something.
+  const hunks = diffHunks([
+    { id: "a", family: "metadata", kind: "property" },
+    // A path that ends at a ROW names no block — `block_at_path` refuses to
+    // resolve one — so there is no position to show context around.
+    {
+      id: "b",
+      family: "table",
+      kind: "property",
+      right: { story: { kind: "body" }, path: [{ kind: "row", index: 1 }], start: 0, end: 0 },
+    },
+  ]);
+  assert.equal(hunks.length, 2);
+  assert.deepEqual(hunks.map((hunk) => hunk.placeable), [false, false]);
+  assert.deepEqual(hunks.map((hunk) => hunk.changes[0].id), ["a", "b"]);
+  assert.deepEqual(
+    diffLines(hunks).map((line) => line.kind),
+    // A header and the change, and NO expand controls: there is nowhere to
+    // expand to, and a control that cannot do anything is the dead control
+    // `SKILL` §10 forbids.
+    ["hunk", "meta", "hunk", "meta"],
+  );
+});
+
+test("a change contributes removed-then-added lines, decided by which texts exist", () => {
+  const lines = (change) => changeLines(change, 0).map((line) => [line.kind, line.text]);
+  // A replacement: both sides, GitHub's order.
+  assert.deepEqual(lines({ kind: "text", leftText: "was", rightText: "now" }), [
+    ["del", "was"],
+    ["add", "now"],
+  ]);
+  assert.deepEqual(lines({ kind: "deletion", leftText: "gone" }), [["del", "gone"]]);
+  assert.deepEqual(lines({ kind: "insertion", rightText: "new" }), [["add", "new"]]);
+  // A formatting change has the SAME text on both sides, so it is neither added
+  // nor removed and renders as one neutral line.
+  assert.deepEqual(lines({ kind: "formatting", leftText: "same", rightText: "same" }), [
+    ["meta", "same"],
+  ]);
+  // A property change has no text at all, and the row still has to say what it
+  // is about — which the field paths and the object name do.
+  assert.deepEqual(lines({ kind: "property" }), [["meta", ""]]);
+});
+
+test("the flat row list carries a header, two expand controls and the context", () => {
+  const hunks = diffHunks(
+    [
+      {
+        id: "a",
+        family: "text",
+        kind: "insertion",
+        rightText: "x",
+        right: { story: { kind: "body" }, path: [{ kind: "block", index: 5 }], start: 0, end: 0 },
+      },
+    ],
+    { context: 2 },
+  );
+  assert.deepEqual(
+    diffLines(hunks).map((line) => line.kind),
+    ["hunk", "expand", "context", "context", "add", "context", "context", "expand"],
+  );
+  // The context deltas are RELATIVE to the hunk's own start and end, so
+  // expanding changes one number and the paths are recomputed from it.
+  assert.deepEqual(
+    diffLines(hunks)
+      .filter((line) => line.kind === "context")
+      .map((line) => line.delta),
+    [-2, -1, 1, 2],
+  );
+  hunks[0].before += 10;
+  assert.equal(diffLines(hunks).filter((line) => line.kind === "context").length, 14);
+});
+
+test("the window is O(1) and clamped at both ends", () => {
+  // The one thing a virtualizer gets wrong. A scroller taller than its content, a
+  // negative `scrollTop` (rubber-banding produces one) and an empty list must all
+  // return a valid range rather than a negative length.
+  assert.deepEqual(diffWindow(0, 0, 400), { first: 0, last: 0 });
+  assert.deepEqual(diffWindow(10, -500, 400, { rowHeight: 20, overscan: 0 }), { first: 0, last: 10 });
+  assert.deepEqual(diffWindow(1_000, 0, 220, { rowHeight: 22, overscan: 0 }), { first: 0, last: 10 });
+  assert.deepEqual(
+    diffWindow(1_000, 2_200, 220, { rowHeight: 22, overscan: 0 }),
+    { first: 100, last: 110 },
+  );
+  // THE COMPLEXITY CLAIM, asserted rather than stated: the window over a list a
+  // hundred times longer is the SAME SIZE. A render that were O(changes) could
+  // not satisfy this.
+  const small = diffWindow(1_000, 2_200, 220, { rowHeight: 22, overscan: 0 });
+  const huge = diffWindow(100_000, 2_200, 220, { rowHeight: 22, overscan: 0 });
+  assert.equal(huge.last - huge.first, small.last - small.first);
+  // And the far end is clamped to the list rather than running past it.
+  assert.deepEqual(diffWindow(10, 10_000, 400, { rowHeight: 20, overscan: 0 }), { first: 10, last: 10 });
+});
+
+test("a neighbour path moves only the final block index, and refuses to go negative", () => {
+  const path = [{ kind: "block", index: 4 }, { kind: "row", index: 1 }, { kind: "block", index: 2 }];
+  assert.deepEqual(pathAtIndex(path, 1), [
+    { kind: "block", index: 4 },
+    { kind: "row", index: 1 },
+    { kind: "block", index: 1 },
+  ]);
+  assert.equal(pathAtIndex(path, -1), null, "before the first sibling");
+  assert.equal(
+    pathAtIndex([{ kind: "row", index: 0 }], 1),
+    null,
+    "a path that does not end at a block has no block neighbours",
+  );
+  assert.equal(blockIndexOfPath([]), null);
+  assert.equal(blockIndexOfPath([{ kind: "cell", index: 0 }]), null);
 });
 
 test("a malformed sidecar summarises as empty rather than throwing", () => {

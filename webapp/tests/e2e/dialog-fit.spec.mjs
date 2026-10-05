@@ -16,133 +16,72 @@
 // against `clientHeight`) rather than a height, because a height that fits in
 // Inter on a Mac clips in the Linux runner's fallback faces — a mistake already
 // made in this stylesheet (`.drop-cap-sample`, where a 52px box fit Georgia and
-// cut off the CI serif). The margin is deliberately large: these four now sit
-// 107px to 265px inside the shell's own ceiling, so a face with wider metrics
-// has room to wrap a note without turning this red.
+// cut off the CI serif). The margin is deliberately large: these now sit well
+// inside the shell's own ceiling, so a face with wider metrics has room to wrap
+// a note without turning this red.
 //
-// Scoped to the four dialogs the density pass reshaped. It should grow to the
-// rest as they are done, not be weakened to fit one that has not been.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+// THE ROSTER IS NOW ALL OF THEM, and that is the finding this round came from.
+// This file used to carry its own list of eight "dialogs the density pass
+// reshaped", with a comment saying it "should grow to the rest as they are done,
+// not be weakened to fit one that has not been". It never grew. Measured
+// 2026-10-05: Keyboard shortcuts held 872px of content in a 612px body on a
+// 1280x720 laptop AND had no footer, so the keymap ran off the bottom edge of
+// the card with nothing under it — the same class of defect this spec had
+// already been written for once, in a dialog it did not cover. A guard whose
+// subject list is maintained by hand will always be behind the product, so the
+// list is `modal-roster.mjs` — the one `dialog-contract.spec.mjs` already proves
+// is complete against `editor.html`.
+import { test, expect } from "./fixtures.mjs";
+import { DIALOGS } from "./modal-roster.mjs";
 
 /** A laptop. The complaint does not reproduce at 900px of viewport height,
  *  which is why the earlier passes measured it away rather than at it. */
 const LAPTOP = { width: 1280, height: 720 };
 
-const DIALOGS = [
-  {
-    id: "propertiesPanel",
-    name: "Document properties",
-    async open(page) {
-      await page.locator("#propertiesBtn").click();
-    },
-  },
-  {
-    id: "settingsPanel",
-    name: "Settings",
-    async open(page) {
-      await page.locator("#settingsBtn").click();
-    },
-  },
-  {
-    id: "watermarkDialog",
-    name: "Watermark",
-    async open(page) {
-      await clickIntoFirstPage(page);
-      await page.locator('[data-tab="layout"]').click();
-      await page.locator("#watermarkBtn").click();
-      // The text half is what the dialog is FOR, and it is the taller state —
-      // measuring the default "No watermark" state would measure the easy one.
-      await page.locator("#watermarkKindText").check();
-    },
-  },
-  // Page setup joins the roster because it was FAILING this property and nothing
-  // covered it: measured on this same laptop viewport, its body held 602px of
-  // content in a 560px box, so the bottom of the Columns group was below the fold.
-  // Its groups are now a balanced two-column flow rather than one tall stack.
-  {
-    id: "pageSetupMenu",
-    name: "Page setup",
-    async open(page) {
-      await clickIntoFirstPage(page);
-      await page.locator('[data-tab="layout"]').click();
-      await page.locator("#layoutMarginsBtn").click();
-    },
-  },
-  // And the new one, measured before it shipped rather than after: at its
-  // content-sized 476px it held 598px in a 542px box.
-  {
-    id: "headerFooterSettingsDialog",
-    name: "Header and footer settings",
-    async open(page) {
-      await clickIntoFirstPage(page);
-      await page.locator('[data-tab="insert"]').click();
-      await page.locator("#headerFooterSettingsBtn").click();
-    },
-  },
-  {
-    id: "dropCapDialog",
-    name: "Drop cap",
-    async open(page) {
-      await clickIntoFirstPage(page);
-      await page.keyboard.press(`${MOD}+Shift+P`);
-      await expect(page.locator("#cmdPalette")).toBeVisible();
-      await page.locator("#cmdInput").fill("drop cap");
-      await page.locator(".cmd-item", { hasText: /drop cap/i }).first().click();
-    },
-  },
-  {
-    id: "captionDialog",
-    name: "Insert caption",
-    // The TALLEST state, deliberately: Word's dialog has eight rows and ours adds
-    // a preview line and a chapter note, and the chapter note only appears once
-    // "Include chapter number" is on. Measuring the default state would measure
-    // the easy one — the same reason the Watermark row above checks its text half.
-    async open(page) {
-      await clickIntoFirstPage(page);
-      await page.locator('[data-tab="references"]').click();
-      await page.locator("#refCaptionBtn").click();
-      await page.locator("#captionIncludeChapter").check();
-      await page.locator("#captionNewLabelBtn").click();
-    },
-  },
-  {
-    id: "crossRefDialog",
-    name: "Cross-reference",
-    // A heading reference: six options in the combo and a target list with rows
-    // in it, which is the state that has height. The blank-document fixture has
-    // headings, so the list is not empty.
-    async open(page) {
-      await clickIntoFirstPage(page);
-      await page.locator('[data-tab="references"]').click();
-      await page.locator("#refCrossRefBtn").click();
-      await page.locator("#crossRefType").selectOption("k:heading");
-    },
-  },
-];
-
-for (const dialog of DIALOGS) {
+for (const dialog of DIALOGS()) {
   test(`${dialog.name}: the whole dialog is on the screen of a laptop`, async ({
     page,
     consoleErrors,
   }) => {
     await page.setViewportSize(LAPTOP);
-    await gotoEditor(page);
     await dialog.open(page);
     await expect(page.locator(`#${dialog.id}`)).toBeVisible();
 
     const fit = await page.evaluate((id) => {
       const root = document.getElementById(id);
       const card = root.querySelector(".dialog-card");
+      // A confirmation carries its whole message in the head, so it has no
+      // `.dialog-body` at all (`.dialog-card:not(:has(.dialog-body))` in the
+      // stylesheet says so). There is then nothing that scrolls, and the card
+      // check below is the whole question for it.
       const body = root.querySelector(".dialog-body");
       const box = card.getBoundingClientRect();
       return {
         cardHeight: Math.round(box.height),
         top: Math.round(box.top),
         bottom: Math.round(box.bottom),
-        client: body.clientHeight,
-        scroll: body.scrollHeight,
+        client: body ? body.clientHeight : 0,
+        scroll: body ? body.scrollHeight : 0,
+        // A real, PAINTED action row. `.dialog-foot` alone is not the
+        // guarantee: an empty one would read as satisfied and close nothing.
+        actions: [...root.querySelectorAll(".dialog-foot button")].filter(
+          (b) => b.getClientRects().length > 0,
+        ).length,
       };
     }, dialog.id);
+
+    // A dialog whose body scrolls must also SAY where it ends. Keyboard
+    // shortcuts had no footer at all, which is what turned its overflow from
+    // "scroll for more" into "the keymap runs off the edge of the card with
+    // nothing under it" (HF-265 D3). Every other dialog here already closes
+    // from its own action row as well as from the X.
+    if (fit.client > 0) {
+      expect(
+        fit.actions,
+        `#${dialog.id} has a scrolling body and no painted action row under it, so its ` +
+          `content ends at the edge of the card with nothing beneath it`,
+      ).toBeGreaterThan(0);
+    }
 
     expect(
       fit.scroll,

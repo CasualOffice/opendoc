@@ -676,9 +676,29 @@ A change record contains:
 
 ### 11.4 Rendering
 
-The diff overlay is a read-only render decoration keyed by sidecar anchors. It does not
-modify normalized nodes, review revisions, source envelopes, or export. Virtualized pages
-request only visible change geometry. The side panel owns the complete ordered list.
+**Two routes, and this paragraph describes one of them** (ADR-061, then ADR-062; `docs/164`
+§7.2 found these two documents publishing the opposite of what shipped, and this is the
+correction).
+
+**Version history's Show changes** is as written here and as shipped: read-only. It modifies
+no normalized nodes, no review revisions, no source envelope and no export, because it never
+touches the live document at all — both sides are stored checkpoints. The panel owns the
+presentation, and the presentation is a **unified diff**: changed blocks as added/removed
+lines, each hunk carrying a few unchanged blocks of context with a control that pulls more.
+The context blocks are not in the sidecar (a change record names only what changed), so they
+are read from the comparison's own two parsed sides through `WasmVersionDiff.blockTextAt`,
+O(depth) per block, on the press that asks for them.
+
+"The side panel owns the complete ordered list" stands, with two corrections it needed:
+the order is the **document's**, not the family's — `DiffJob::finish` already sorts by
+`(story, path, family, kind)` and the host was re-sorting that away — and the list is
+**windowed**: a flat fixed-height row array with only the visible slice in the DOM, so a
+scroll tick is O(window) and not O(changes) (`docs/107` §4).
+
+**Review ▸ Compare** is the route ADR-061 governs, and for it this paragraph is false by
+design: the sidecar is applied to the open document as tracked changes. Its differences are
+then read through the review surface that already existed, which is what makes the overlay
+unnecessary there.
 
 ### 11.5 Attribution
 
@@ -689,10 +709,16 @@ guess from colors or text.
 
 ### 11.6 Compare document generation
 
-The later **Create comparison document** command compiles a supported `VersionDiff` into a
-new document with tracked revision markup. Neither source changes. Unsupported diff records
-remain findings attached to the new document/session; they are not dropped. This is separate
-from ordinary preview and does not block VH-3.
+**Still unbuilt, and no longer the only way tracked-change output can happen** — ADR-061 made
+Review ▸ Compare write revisions into the open document, so "a separate later command" is no
+longer a reservation of that capability. What remains reserved for this command is the **third
+document**: Word's and Google's answer, which is two of the three references (`docs/164` §5)
+and is recorded as an open question rather than a decision (`docs/164` §9 question 6).
+
+As specified: the **Create comparison document** command compiles a supported `VersionDiff`
+into a new document with tracked revision markup. Neither source changes. Unsupported diff
+records remain findings attached to the new document/session; they are not dropped. This is
+separate from ordinary preview and does not block VH-3.
 
 ### 11.7 Families detected, and families deliberately not
 

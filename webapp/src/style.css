@@ -313,7 +313,44 @@
      fails if a dialog goes back to hardcoding its chrome padding. */
   --dlg-pad-x: clamp(14px, 2.2vw, 22px);
   --dlg-pad-y: clamp(10px, 1.4vh, 16px);
-  --dlg-gap: clamp(8px, 0.9vh, 14px);
+  /* PANEL rhythm — the same mechanism as the dialog pair above, for the side
+     panels, which had no shared shell at all.
+   *
+     MEASURED, 2026-10-05, Chromium at 1280x720 and 1440x900, on this branch's
+     parent: `.panel-head` was `padding: 0 8px 0 14px` and `.panel-body` was
+     `padding: 6px`, so head and body disagreed by 8px in EVERY side panel —
+     Outline's title sat at x=101.09 over a body whose content box started at
+     93.09, Compare's title at 101.09 over its first paragraph at 93.09, Version
+     History's title at 967 over a body at 959. Five panels then overrode even
+     those (`.glyph-body` 10px, `.version-list` 4px 6px, the two properties
+     bodies 13px 14px 16px), so there were four insets in a family of nine
+     surfaces and the head/body step was different in each.
+   *
+     The values are not invented: they are what `.find-panel-head` and
+     `.find-panel-body` already used — `var(--space-2) var(--space-4)` — and the
+     find panel was the ONE panel whose head and body agreed. One pair, declared
+     here, is why 23 dialogs have 23 identical left edges; the panels now take
+     their inset the same way. `dialog_density.test.mjs` fails if a panel goes
+     back to hardcoding its chrome padding, and
+     `e2e/panel-alignment.spec.mjs` measures the result. */
+  --pnl-pad-x: var(--space-4);
+  --pnl-pad-y: var(--space-2);
+  /* The File page's reading measure (HF-265 D4). The pane is 960px wide at
+     1280 and 1600px at 1920 — it is a two-column backstage, not a card — and
+     the content inside it was capped at a flat 760px while the HEADING over
+     that content was not capped at all. Measured: the heading ran 152px past
+     its own column at 1280 and 792px past it at 1920, which is a title that
+     stops looking like it belongs to the thing under it.
+
+     The fix is the measure, not the alignment: the heading joins the column
+     rather than the column chasing the heading. Centring a 760px column inside
+     a pane that is CHOSEN FROM A LEFT NAV would put the content nowhere near
+     the row that opened it (ONLYOFFICE's backstage, Word's File page and Google
+     Docs' settings all left-align a measured column under a heading of the same
+     width), and letting the column grow to 1600px is the "a four-field dialog as
+     wide as a twenty-field one" defect this stylesheet already names. One token,
+     read by the heading, the blurb and the pane, so the three cannot drift. */
+  --file-page-measure: 760px;
   /* Bottom edge of the fixed shell chrome: header bar (which now carries the
      tab strip) + ribbon band. Anything that floats over the workarea from a viewport-fixed
      position anchors to THIS, never to a literal, so the ribbon's right-hand
@@ -323,9 +360,16 @@
   --icon-compact: 16px;
   --icon-control: 18px;
   --icon-rail: 20px;
+  /* The dialog width scale. Four rungs, and the fourth is here because
+     `.settings-dialog` had already invented it in raw pixels (960px) while
+     `--dialog-width-wide` was declared and referenced nowhere — a scale with a
+     dead rung and an undeclared one is not a scale. `dialog_density.test.mjs`
+     now fails on ANY unused token in this family rather than on a two-name
+     list, which is what let the dead rung sit here. */
   --dialog-width-compact: 380px;
   --dialog-width-standard: 640px;
   --dialog-width-wide: 760px;
+  --dialog-width-xwide: 960px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -1186,9 +1230,13 @@ input {
  * margin either side of a 1280px laptop, and collapses to two columns and then
  * one on narrower viewports with no breakpoint enumerated — the same mechanism,
  * one number changed. */
+/* `--dialog-width-xwide`, not a fourth raw pixel value (HF-265 D8). 960 was
+ * already the widest card in the product while `--dialog-width-wide` sat
+ * declared and unused — so the scale had a dead rung and this dialog had an
+ * unnamed one. Same number, stated in the scale. */
 .dialog-card.settings-dialog {
-  width: min(960px, 100%);
-  max-inline-size: min(100%, 960px);
+  width: min(var(--dialog-width-xwide), 100%);
+  max-inline-size: min(100%, var(--dialog-width-xwide));
 }
 
 /* Six topics, read down one column then down the next.
@@ -1401,7 +1449,17 @@ body.modal-open {
  * fields it was written for; it is not right for a cell count, so this dialog
  * states its own. The card then falls to what the ACTION ROW needs, which is
  * the widest thing left in it. */
-#splitCellDialog .dialog-card {
+/* `body:not(.phone-mode)` is load-bearing, not decoration (HF-265 D5).
+ * `#splitCellDialog .dialog-card` is specificity (1,1,0) and the phone bottom
+ * sheet is `body.phone-mode .dialog-card` at (0,2,0), so an ID written here
+ * outranked the rung no matter where it was declared — measured on a 390px
+ * phone, Split cell rendered as a 292px slab pinned to the bottom-LEFT of the
+ * screen instead of a full-width sheet. `#confirmDialog` below has the same
+ * shape and only reached full width when its runtime message happened to be
+ * long enough. The desktop qualifier is what makes the two cascades disjoint
+ * rather than making the phone rule shout `!important`.
+ * `e2e/phone-dialog-sheet.spec.mjs` measures every dialog's left edge. */
+body:not(.phone-mode) #splitCellDialog .dialog-card {
   width: fit-content;
   max-inline-size: min(100%, 46ch);
 }
@@ -1429,7 +1487,8 @@ body.modal-open {
  * supplied at runtime by `confirmModal()`: a short question gets a small card,
  * and the ceiling is the width at which the longest action row this product
  * builds still fits on one line. */
-#confirmDialog .dialog-card {
+/* Desktop-qualified for the reason `#splitCellDialog` above is. */
+body:not(.phone-mode) #confirmDialog .dialog-card {
   width: fit-content;
   max-inline-size: min(100%, 56ch);
 }
@@ -1615,8 +1674,24 @@ body.modal-open {
  * 80ch leaves the two columns about 36px of slack over the widest group here,
  * and `.shortcuts-group` below now wraps its label column rather than
  * overflowing if a translation or a substituted font eats that slack. */
+/* 80ch was the wrong UNIT for this card, and that is why it overflowed
+ * (HF-265 D3). Measured at 1280x720 before this change: 80ch resolved to about
+ * 560px, which left the body 516px of inner width — and `.shortcuts-body`'s
+ * multicol track is `clamp(15rem, 22vw, 17rem)`, i.e. 272px at this viewport,
+ * so only ONE column fitted. One column of the whole keymap is 872px of
+ * content in a 612px box: the reference ran off the bottom of a card that had
+ * no footer under it either.
+ *
+ * The card's width here is not set by how wide its TEXT wants to be — it is set
+ * by how many `rem`-sized multicol tracks have to fit, so it is stated in the
+ * same pixel scale the tracks are: `--dialog-width-xwide` (960px) holds three
+ * 272px tracks plus two gaps inside the dialog padding and still leaves a
+ * margin either side of a 1280px laptop. Below that the track count falls to
+ * two and then one with no breakpoint enumerated, exactly as before. Keyboard
+ * shortcuts is in `dialog-fit`'s roster now — with all 23 of them — so neither
+ * the overflow nor the single column can come back unnoticed. */
 .shortcuts-dialog {
-  width: min(80ch, 100%);
+  width: min(var(--dialog-width-xwide), 100%);
 }
 
 /* About is a short fact list, so it is sized by its CONTENT rather than by a
@@ -1722,10 +1797,60 @@ body.modal-open {
 
 .shortcuts-body {
   /* Column COUNT derives from the width available, rather than being fixed at
-     two and overridden at one breakpoint: three fit at 1280, one at 390, and
-     nothing in between has to be enumerated. */
+     two and overridden at one breakpoint: four fit on the 960px card, two at a
+     620px window, one at 390, and nothing in between has to be enumerated.
+   *
+     The track was `clamp(15rem, 22vw, 17rem)`, and the `22vw` term is why the
+     clamp never did what it looks like it does: at 1280 it resolves to 281.6px
+     and is pulled back to the 17rem ceiling, so the floor was unreachable and
+     the track was a constant 272px at every desktop width. Three such tracks
+     put 643px of keymap in a 560px body on a 1280x720 laptop (measured), which
+     is the overflow `dialog-fit.spec.mjs` now covers for this dialog.
+   *
+     A flat 13rem instead. The label column is `minmax(0, max-content)`, so a
+     label that does not fit a track WRAPS inside it and cannot paint across the
+     next column — which is what makes a narrower track safe here, and it is
+     already the reason that spelling was chosen.
+
+     MEASURED AFTER, and the two steps reported separately because they are not
+     the same size: four columns of 211px take the eleven groups from 643px to
+     540px, and the group margin below takes 540 to 532, in a body whose ceiling
+     on this viewport is 560.
+
+     THAT 28px OF HEADROOM WAS NOT REAL, and the argument that made it look safe
+     was wrong. It ran: this card's type is SELF-HOSTED, so the Linux runner lays
+     these rows out in the same faces a Mac does. The faces are the same; the
+     METRICS are not. CI measured the same body at 577px against the same 560px
+     ceiling — `#shortcutsDialog hides 17px of its content below the fold` — a
+     45px platform delta on a 28px margin. Same font file is not same line box.
+
+     So `.shortcuts-group` lets a group break across columns, which is the 57px
+     the previous pass measured and declined. Four configurations, all measured
+     at 1280x720 through `modal-roster`'s own open path, with the CI delta
+     applied:
+
+       break-inside | track | local | projected CI (+45px)
+       avoid        | 13rem |  532  |  577  <- what CI rejected
+       avoid        | 10rem |  517  |  562  <- still over the 560 ceiling
+       auto         | 13rem |  475  |  520  <- taken
+       auto         | 10rem |  453  |  498
+
+     A narrower track alone cannot fix this: `break-inside: avoid` means no
+     column is shorter than the tallest group and Paragraph alone is 281px, so
+     10rem buys 15px where 45px is needed. The track stays at 13rem rather than
+     going to 10rem, because narrowing it is a SECOND readability cost on top of
+     the split and 520px already clears the ceiling by more than the delta that
+     produced this failure.
+
+     The cost is real and is the one the previous pass named: a keymap is read by
+     scanning a group, and a group split down a column boundary is the thing
+     multicol is normally asked not to do. It is accepted because the
+     alternative on a 1280x720 laptop is content below the fold, and a group a
+     reader cannot see at all is worse than one that continues in the next
+     column. Multicol preserves reading order, so a split group continues where
+     a reader's eye is already going. */
   columns: auto;
-  column-width: clamp(15rem, 22vw, 17rem);
+  column-width: 13rem;
   column-gap: var(--space-6);
 }
 
@@ -1743,7 +1868,7 @@ body.modal-open {
  * `display: contents` on the row hands its two cells to this grid; the row
  * padding it drops comes back as `row-gap`. */
 .shortcuts-group {
-  break-inside: avoid;
+  break-inside: auto;
   display: grid;
   /* `minmax(0, max-content)` on the LABEL column, not bare `max-content`: the
      card is now sized to the measured width of these groups, so a group that
@@ -1755,7 +1880,12 @@ body.modal-open {
   align-items: baseline;
   column-gap: clamp(8px, 1vw, 16px);
   row-gap: 6px;
-  margin: 0 0 var(--space-5);
+  /* One step down from `--space-5` (HF-265 D3). Eleven groups paid that margin
+     eleven times — 220px spread over four columns — and the uppercase group
+     heading is what separates the groups anyway, as it always was. Measured:
+     540px of content to 532px, in a 560px box. A small step, reported as one:
+     the track correction above is what did the work, this is the last 8px. */
+  margin: 0 0 var(--space-4);
 }
 
 .shortcuts-group .shortcuts-row {
@@ -2139,7 +2269,13 @@ body.modal-open {
      Page setup is in `dialog-fit`'s roster now, so neither the overflow nor the
      width can come back unnoticed. */
   width: min(756px, 100%);
-  max-inline-size: min(100%, 100ch);
+  /* The stated ceiling, from the scale rather than from a `ch` count that
+     happened to land near it: `--dialog-width-wide` IS the 760px this comment
+     already names, and `header-menu.spec.mjs` asserts this card stays under it.
+     It does not bind (the width above caps at 756), so nothing renders
+     differently — but the token is now read where the prose already relied on
+     it, which is the point of a scale (HF-265 D8). */
+  max-inline-size: min(100%, var(--dialog-width-wide));
 }
 
 /* `min(fit-content, 100%)` IS NOT VALID CSS, and it is written on five cards in
@@ -3009,10 +3145,11 @@ body.modal-open {
   flex-direction: column;
 }
 
+/* Two lines of heading. No padding and no `height: auto` of its own any more:
+ * `.panel-head` is `min-height` plus `var(--pnl-pad-*)`, so a head that needs
+ * to grow simply grows and keeps the shell's inset (HF-265 D2). */
 .glyph-panel .panel-head {
-  height: auto;
   min-height: 58px;
-  padding: 9px 8px 9px 12px;
   align-items: flex-start;
 }
 
@@ -3035,7 +3172,8 @@ body.modal-open {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  /* The shell's inset — see `.version-foot`. */
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -4152,13 +4290,20 @@ body.modal-open {
   display: none;
 }
 
+/* Find and replace keeps its GEOMETRY — fixed, top-right, so it does not cover
+ * the text you are searching, which is Word's and Google Docs' model and not a
+ * defect — but takes the shell's PADDING from the same pair as every other
+ * panel. It was already the only panel whose head and body agreed, and
+ * `var(--space-2) var(--space-4)` is where `--pnl-pad-y`/`--pnl-pad-x` came
+ * from; naming them here is what stops the two drifting apart again. The right
+ * inset was `--space-3` and is now symmetric, as the dialog heads are. */
 .find-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   min-height: 48px;
-  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-bottom: 1px solid var(--line);
 }
 
@@ -4180,7 +4325,7 @@ body.modal-open {
   min-height: 0;
   overflow: auto;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   overscroll-behavior: contain;
 }
 
@@ -5511,9 +5656,22 @@ body.is-format-painting .page-wrap * {
    straight off the page — measured, the sheet starts at x=78 instead of x=40
    and the column then covers a third of it rather than a quarter. The icons
    keep their `aria-label`, which is what `editor-narrow-chrome.spec.mjs` asserts
-   for the phone rung, so nothing becomes unreachable or unnameable. */
-:root:has(#viewport.has-review-sidebar:not(.review-sheet)) .rail-btn > span:not(.ms) {
-  display: none;
+   for the phone rung, so nothing becomes unreachable or unnameable.
+
+   THE WIDTH CONDITION IS THE FIX (HF-265 D6). This rule carried none: its own
+   comment justifies itself "at 860px", and it was matching at EVERY width, so
+   opening Comments on a 1920x1080 screen with 1113px of spare room silently
+   took the four rail captions away — measured, the rail went 78px -> 64px and
+   `display` on `#railOutline`'s caption went `block` -> `none` at 1920. A
+   justification that names a breakpoint and a selector that does not is the
+   same defect as a dead token: the stylesheet states an intention it does not
+   implement. 860px is the rung the column's own geometry already uses (see the
+   `.review-sidebar` block below), so the two now move together; below 620px the
+   captions are gone anyway, for the phone's own reason. */
+@media (max-width: 860px) {
+  :root:has(#viewport.has-review-sidebar:not(.review-sheet)) .rail-btn > span:not(.ms) {
+    display: none;
+  }
 }
 
 .rail-btn:hover:not(:disabled) {
@@ -5586,10 +5744,6 @@ body.is-format-painting .page-wrap * {
   flex-basis: 360px;
   width: 360px;
   max-width: min(360px, calc(100vw - 52px));
-}
-
-.glyph-panel .panel-body.glyph-body {
-  padding: 10px;
 }
 
 /* The legacy left-side review inventory is retained only as compatibility
@@ -5899,7 +6053,14 @@ body.is-format-painting .page-wrap * {
   top: 8px;
   z-index: 6;
   margin: 8px 0 6px;
-  padding: 8px 10px;
+  /* The PADDING convention, not the geometry one (HF-265). This column is
+     absolutely positioned and rides the document scroll so each card stays
+     pinned to its anchor — that is the model, and it is deliberately outside
+     the `.panel-head`/`.panel-body` shell. What it shares with the shell is the
+     inset: this header and `.review-margin-card` below both said `8px 10px`,
+     which was already self-consistent and was two more raw pixel values in a
+     family that now has a token pair. */
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
@@ -5981,7 +6142,9 @@ body.is-format-painting .page-wrap * {
   right: 0;
   width: auto;
   box-sizing: border-box;
-  padding: 8px 10px;
+  /* Same inset as `.review-sidebar-header`, from the same pair — the two are
+     read as one column and were already equal at `8px 10px`. */
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border: 0;
   border-radius: 8px;
   background: var(--bg-2);
@@ -6154,13 +6317,25 @@ body.is-format-painting .page-wrap * {
     min-width: 0;
   }
 }
+/* ---- The side-panel shell -------------------------------------------------
+ *
+ * One head, one body, one token pair — the mechanism the dialogs already prove
+ * works here. Before this, `.side-panel` was a width plus a margin plus a
+ * border and nothing else: the head and the body each stated their own padding,
+ * in raw pixels, and five panels restated it again. Nine surfaces, no shell.
+ *
+ * `min-height` rather than `height`, so a head carrying a title AND a subtitle
+ * (the two glyph panels and the two properties panels) grows instead of needing
+ * a per-panel override to un-fix the height. That is what removed four of the
+ * overrides rather than re-tuning them. */
 .panel-head {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  height: var(--h-rail-control);
-  padding: 0 8px 0 14px;
+  gap: var(--space-3);
+  min-height: var(--h-rail-control);
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-bottom: 1px solid var(--line);
 }
 
@@ -6190,11 +6365,21 @@ body.is-format-painting .page-wrap * {
   color: var(--ink);
 }
 
+/* The body takes the SAME inset as the head. That is the whole of HF-265 D2:
+ * a head at 14px over a body at 6px is a panel whose title does not sit over
+ * its content, and it was true of all nine panels.
+ *
+ * A row inside the body may still carry its own inset — the outline tree's
+ * 18px disclosure gutter, a version row's hit target — and that is the row's
+ * business, exactly as a `.dialog-group` fieldset's inset is inside a dialog
+ * body. What this rule fixes is the SHELL, which is what the eye reads as
+ * alignment. `e2e/panel-alignment.spec.mjs` asserts head and body resolve to
+ * one content edge and that the title's text lands on it. */
 .panel-body {
   flex: 1;
   min-width: 0;
   overflow: auto;
-  padding: 6px;
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   overscroll-behavior: contain;
 }
 
@@ -6205,11 +6390,12 @@ body.is-format-painting .page-wrap * {
   max-width: min(320px, calc(100vw - 52px));
 }
 
+/* Two lines of heading, no padding of its own: the shell's `min-height` and
+ * `var(--pnl-pad-*)` both apply, which is what the `height: auto; min-height:
+ * 58px; padding: 9px 8px 9px 12px` this replaces was working around. */
 .table-properties-head,
 .properties-panel-head {
-  height: auto;
   min-height: 58px;
-  padding: 9px 8px 9px 12px;
 }
 
 .table-panel-heading,
@@ -6227,18 +6413,21 @@ body.is-format-painting .page-wrap * {
   flex-direction: column;
 }
 
-.table-panel-icon,
-.properties-panel-icon {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-size: var(--icon-control);
-}
+/* The 30px `--accent-soft` tile that used to lead this heading is GONE, and
+ * that is a deliberate visual change rather than a side effect (HF-265 D1).
+ *
+ * Measured at 1280x720: it put the panel's title text at x=1004 inside a body
+ * whose intro started at 967, its fieldset legends at 986 and its labels at
+ * 981 — FOUR left edges in a 320px column, and the tile was the whole of the
+ * 37px step. Nothing else in the product does this: of the 23 dialogs exactly
+ * ONE carries a `.dialog-heading-icon`, the confirmation, and a confirmation
+ * has no `.dialog-body` for its heading to sit over. Word's Format panes,
+ * Google Docs' sidebars and ONLYOFFICE's right-hand panel all title a side
+ * panel with plain text at the panel's own inset, for this reason.
+ *
+ * The tile was identity the panel did not need — it is opened from a named
+ * control, it names itself in its title, and it states its subject in the
+ * `small` beneath. What it cost was the one alignment a reader actually sees. */
 
 .table-panel-heading small,
 .properties-panel-heading small {
@@ -6251,10 +6440,6 @@ body.is-format-painting .page-wrap * {
   white-space: nowrap;
 }
 
-.table-properties-body,
-.properties-panel-body {
-  padding: 13px 14px 16px;
-}
 
 .table-properties-intro,
 .properties-panel-intro {
@@ -6497,8 +6682,12 @@ body.is-format-painting .page-wrap * {
   max-width: min(320px, calc(100vw - 52px));
 }
 
+/* A BAND of the panel shell, so it takes the shell's inset like the head and
+   the body above and below it. At 12px it put the "Only named versions"
+   checkbox 4px to the left of the title it sits under, which is the same
+   defect the head and body had, one row further down (HF-265 D2). */
 .version-filter {
-  padding: 7px 12px;
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-bottom: 1px solid var(--line);
 }
 
@@ -6512,10 +6701,6 @@ body.is-format-painting .page-wrap * {
   color: var(--muted);
   font-size: var(--fs-small);
   cursor: pointer;
-}
-
-.version-list {
-  padding: 4px 6px;
 }
 
 .version-list:focus-visible {
@@ -6659,8 +6844,11 @@ body.is-format-painting .page-wrap * {
   color: inherit;
 }
 
+/* The shell's inset, for the reason `.version-filter` takes it: this is the
+   "flow bottom" half of the report — the footer's text started 4px inside the
+   body's. */
 .version-foot {
-  padding: 8px 12px 10px;
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-top: 1px solid var(--line);
 }
 
@@ -6693,6 +6881,195 @@ body.is-format-painting .page-wrap * {
 
 .compare-changes q {
   margin-inline-start: 0.4em;
+}
+
+/* THE UNIFIED DIFF — GitHub's shape over blocks, and a WINDOWED list.
+   `compare_documents.mjs` owns the arithmetic: it writes `--diff-row-h` onto
+   `.compare-diff` so there is ONE source for the row height, because a
+   virtualizer whose height disagrees with its stylesheet scrolls to the wrong
+   place and has no other symptom. Every rule below that touches height reads
+   that property rather than repeating the number.
+
+   NO NEW TOKENS AND NO NEW COLOURS (SKILL §11): the added/removed colours are
+   `--review-insert*` / `--review-delete*`, which are the ones the canvas already
+   paints a tracked change with and are already defined for both themes — a diff
+   and a redline are the same two ideas, so a third pair of greens and reds would
+   be two spellings of one thing.
+
+   Rows are `nowrap` with their own horizontal overflow, which is what a GitHub
+   diff line does and is the one case `SKILL`'s no-horizontal-scroll rule allows:
+   a code-shaped block in its own `overflow-x` container. It is also what makes
+   every row exactly one `--diff-row-h` tall, which is what the window needs. */
+.compare-diff {
+  --diff-row-h: 22px;
+  max-height: 46vh;
+  overflow: auto;
+  /* A chrome scroller must not hand the wheel to the document behind it when it
+     reaches its end — that reads as the panel stuttering and then the page
+     lurching. `style_tokens.test.mjs` fails the build for any scroller in this
+     stylesheet that omits it, and it caught this one. */
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  /* `content`, NOT `strict`. `strict` implies SIZE containment, which makes the
+     box's height independent of its contents — so `max-height` with no `height`
+     collapses the scroller to nothing and the diff renders into a zero-high box.
+     `content` is layout + paint + style containment, which is the part that is
+     actually wanted here: it keeps the windowed rows' layout and painting from
+     escaping into the panel. */
+  contain: content;
+}
+
+.compare-diff-sizer {
+  position: relative;
+}
+
+.compare-diff .compare-changes {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  will-change: transform;
+}
+
+.compare-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  height: var(--diff-row-h);
+  padding-inline: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* The same rule one axis over. `style_tokens.test.mjs` only matches `overflow`
+     and `overflow-y`, so it does not ask for this — but a row that hands a
+     horizontal gesture to the page rubber-bands the whole frame sideways, which
+     is the defect that guard exists for. */
+  overscroll-behavior: contain;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  /* The gutter mark a diff is read by. Set per kind below; declared here so a
+     row kind this stylesheet has not heard of still lines up with the rest. */
+  border-inline-start: 3px solid transparent;
+}
+
+.compare-diff-hunk {
+  color: var(--muted);
+  background: var(--surface-alt);
+  border-block: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.compare-diff-context {
+  color: var(--muted);
+}
+
+.compare-diff-context.is-empty {
+  font-style: italic;
+}
+
+.compare-diff-del {
+  background: var(--review-delete-soft);
+  border-inline-start-color: var(--review-delete-line);
+}
+
+.compare-diff-del .compare-kind,
+.compare-diff-del .compare-diff-text {
+  color: var(--review-delete);
+}
+
+.compare-diff-add {
+  background: var(--review-insert-soft);
+  border-inline-start-color: var(--review-insert-line);
+}
+
+.compare-diff-add .compare-kind,
+.compare-diff-add .compare-diff-text {
+  color: var(--review-insert);
+}
+
+/* A formatting or property change: real, and neither added nor removed, so it
+   gets the neutral accent rather than borrowing one of the two meanings. */
+.compare-diff-meta {
+  border-inline-start-color: var(--line);
+}
+
+.compare-diff-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The changed range INSIDE a line — GitHub's intra-line highlight. `<mark>`'s UA
+   default is a yellow that belongs to neither theme and to neither meaning, so
+   the row's own colour is deepened instead: the line already says added or
+   removed, and this says where. */
+.compare-diff-mark {
+  background: none;
+  color: inherit;
+  font-weight: 600;
+  border-radius: var(--radius);
+  padding-inline: 1px;
+}
+
+.compare-diff-del .compare-diff-mark {
+  background: var(--review-delete-soft);
+  box-shadow: inset 0 -2px 0 var(--review-delete-line);
+}
+
+.compare-diff-add .compare-diff-mark {
+  background: var(--review-insert-soft);
+  box-shadow: inset 0 -2px 0 var(--review-insert-line);
+}
+
+/* The row is a BUTTON when there is somewhere to go (Review ▸ Compare, where the
+   right-hand side is the open document). It fills the row so the whole line is
+   the target — a 22px row with a small inline link in it is a pointer target
+   below the floor and a keyboard stop that is hard to see. */
+.compare-diff-goto {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.compare-diff-goto:hover {
+  text-decoration: underline;
+}
+
+.compare-diff-more {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.compare-diff-more:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* A phone: the panel is narrower than a diff line, and a diff line is allowed to
+   scroll (see above) — but the panel itself must not. The row keeps its own
+   scroller and nothing wider than the viewport is handed to the body. */
+@media (max-width: 520px) {
+  .compare-diff {
+    max-height: 38vh;
+  }
 }
 
 .version-foot-line {
@@ -8306,8 +8683,13 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   overscroll-behavior: contain;
 }
 
+/* The heading takes the SAME measure as the content it heads — see
+ * `--file-page-measure`. It was uncapped, so at 1920 a one-line title was
+ * allowed 1552px of pane over a 760px column. `file-page-panes.spec.mjs`
+ * measures the three right edges against each other. */
 .file-page-detail h2 {
   margin: 0 0 4px;
+  max-width: var(--file-page-measure);
   font-size: 20px;
   font-weight: 600;
   color: var(--ink);
@@ -8315,6 +8697,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 .file-page-detail .file-detail-sub {
   margin: 0 0 20px;
+  max-width: var(--file-page-measure);
   color: var(--muted);
 }
 
@@ -9283,8 +9666,18 @@ body:not(.doc-loaded) .drop-title {
     border-radius: var(--radius-dialog);
   }
 
-  .dialog-head {
-    padding: 16px;
+  /* The narrow rung is stated in the TOKENS, not re-stated on the three
+     chrome bands (HF-265 D7). `.dialog-head`, `.dialog-body` and `.dialog-foot`
+     each carried `padding: 16px` here, which put every dialog below 620px back
+     on hardcoded pixels — and `dialog_density.test.mjs`'s token guard could not
+     see it, because its `rule()` helper anchored on `(^|\n)` plus the bare
+     selector and therefore matched only the first, unindented rule in the file.
+     A guard that structurally cannot read an override is not a guard; it is
+     fixed now to collect EVERY rule for a selector, which is what makes this
+     the only place the rung can live. */
+  :root {
+    --dlg-pad-x: 16px;
+    --dlg-pad-y: 16px;
   }
 
   .dialog-heading {
@@ -9307,13 +9700,6 @@ body:not(.doc-loaded) .drop-title {
     line-height: 1.35;
   }
 
-  .dialog-body {
-    padding: 16px;
-  }
-
-  .dialog-foot {
-    padding: 12px 16px;
-  }
 
   .dialog-note {
     display: none;
@@ -11039,7 +11425,7 @@ body[data-shape-draw] .page-wrap * {
   display: block;
   inset: auto;
   width: auto;
-  max-width: 760px;
+  max-width: var(--file-page-measure);
   max-height: none;
   margin: 0;
   padding: 0;

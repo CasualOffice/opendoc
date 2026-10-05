@@ -177,58 +177,201 @@ test("comparing a document with itself reports no differences", async ({ page, c
   expect(consoleErrors).toEqual([]);
 });
 
-test("Show changes is live on a stored version and refused on the head, with the reason", async ({
+test("Show changes on a version compares it with its PREDECESSOR, and writes nothing", async ({
   page,
   consoleErrors,
 }) => {
-  // Google Docs' route into a comparison, and the row whose disabled reason used
-  // to say the structural diff "is not built yet" — which was wrong about which
-  // half was missing: the diff was built and the PANEL was not.
+  // THIS TEST REPLACES ONE THAT COULD NOT FAIL, and the replacement is the point.
+  //
+  // The assertion that stood here was
+  //
+  //     await expect(page.locator("#compareBody"))
+  //       .toContainText(/Compared with|No differences/i);
+  //
+  // which passes whether the comparison found every difference or none —
+  // `docs/164` §8 row 12 and `SKILL` §4: a guard that cannot fail is worse than
+  // no guard, because it gets cited as evidence. It was cited as evidence, and
+  // the feature under it had never worked from the route a reader takes.
+  //
+  // IT ALSO TOOK THE WRONG ROUTE. It opened the ⋮ without ever clicking the row,
+  // and `entry` and `actionCell` are SIBLINGS in `version_panel.mjs`
+  // (`item.append(entry, actionCell)`), so a press on the ⋮ does not reach the
+  // row's own click handler and no preview opens. Every reader opens the preview
+  // first — clicking a row is how you look at a version — and that click runs
+  // `void openPreview(row.versionId)`, after which `main.js` does `doc =
+  // previewDoc`. The panel's own right-hand side is `comparableBytes(doc, …)`,
+  // a freshly parsed preview has `revision == 0`, and `ExportMode::ExactIfUnchanged`
+  // then returns the retained ORIGINAL BYTES VERBATIM. So "mine" was byte-identical
+  // to the checkpoint handed in as "theirs" and the comparison could not find
+  // anything. The old spec's route is the one route in which the bug is invisible.
+  //
+  // So this test clicks the row, which is what makes it able to fail.
   await gotoEditor(page);
-  // TWO rows are needed, and they have to be two real versions: the import
-  // baseline plus a save of a document that actually changed. A Save over an
-  // unmodified document reports `history.unchanged` and writes nothing (the
-  // owner's rule, `docs/139` §18 q3 as revised), so typing first is not padding —
-  // without it `rows.last()` is `rows.first()` and this test would assert the
-  // head's refusal twice and call it a pass.
+  // THREE rows, because the rule under test is about a PREDECESSOR and a rule
+  // stated over two rows cannot distinguish "its predecessor" from "the oldest
+  // one". The import baseline, then two saves that each really changed the
+  // document — a Save over an unmodified document reports `history.unchanged`
+  // and writes nothing (#782's content identity), so the typing is not padding.
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+Home`);
-  await page.keyboard.type("Compared. ");
+  await page.keyboard.type("Alpha only in the middle version. ");
+  await saveDocument(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.type("Beta only in the newest version. ");
   await saveDocument(page);
   await runAppMenuCommand(page, "file", "file.versionHistory");
   await expect(page.locator("#versionPanel")).toBeVisible();
 
   const rows = page.locator("#versionPanelBody .version-item");
-  await expect(rows, "two versions, or the head's refusal is asserted twice").toHaveCount(2, {
+  await expect(rows, "three versions, or the predecessor rule is untestable").toHaveCount(3, {
     timeout: 45_000,
   });
   const changes = page.locator('#versionRowMenu [data-command-id="version.changes"]');
 
-  // The HEAD row refuses, because the head IS the document on screen: comparing
-  // it with itself would report nothing. Disabled WITH a reason — and
-  // specifically not the old sentence, which is the line that fails if the stale
-  // claim comes back.
-  await rows.first().locator(".version-item-menu").click();
-  await expect(page.locator("#versionRowMenu")).toBeVisible();
-  await expect(changes).toBeDisabled();
-  await expect(changes).toHaveAttribute("title", /comparing it with itself/i);
-  await expect(changes).not.toHaveAttribute("title", /not built yet/i);
-  await page.keyboard.press("Escape");
+  // THE REAL ROUTE, step one: CLICK THE ROW. This is the gesture the old spec
+  // skipped and the one that made the feature report "No differences" forever.
+  //
+  // It is the MIDDLE row and not the head, and that is measured rather than
+  // chosen: `openPreview` returns early on the head — "the head IS the document
+  // on screen. Previewing it would swap the live session for a byte-identical
+  // copy and throw away the caret for nothing" — so a click on the head opens no
+  // preview and cannot create the condition. Every other row does. (This test
+  // failed on exactly that line first, against the head, which is how the
+  // narrowing was done.)
+  await rows.nth(1).locator(".version-item-entry").click();
+  await expect(
+    page.locator("#versionPreviewBanner"),
+    "no preview, so the live document was never replaced and this run cannot see the defect",
+  ).toBeVisible({ timeout: 45_000 });
 
-  // Any OTHER row is live. The oldest, which is the one the version-history spec
-  // drives too — and the row this whole lane exists to stop lying about.
-  await rows.last().locator(".version-item-menu").click();
+  await rows.nth(1).locator(".version-item-menu").click();
   await expect(page.locator("#versionRowMenu")).toBeVisible();
   await expect(changes).toBeEnabled();
   await changes.click();
 
-  // THE EFFECT: it opens the comparison surface and finishes a real comparison
-  // against that checkpoint — the same panel Review ▸ Compare opens, named by
-  // WHEN the version was rather than by a file name every version shares.
   await expect(page.locator("#comparePanel")).toBeVisible();
-  await expect(page.locator("#compareBody")).toContainText(/Compared with|No differences/i, {
-    timeout: 45_000,
-  });
+  const total = page.locator("#compareBody [data-compare-total]");
+  await expect(
+    total,
+    'the comparison produced no count at all — "No differences", which is the defect',
+  ).toBeVisible({ timeout: 45_000 });
+  const found = Number(await total.getAttribute("data-compare-total"));
+  // NON-ZERO, on a pair that is KNOWN to differ by one typed sentence. This is
+  // the assertion the old one refused to make.
+  expect(
+    found,
+    'the middle version contains "Alpha only in the middle version. " and its ' +
+      "predecessor — the import baseline — does not, so a comparison of the two " +
+      "cannot find nothing",
+  ).toBeGreaterThan(0);
+
+  // AND IT FOUND THE RIGHT DIFFERENCE, not merely some difference. A comparison
+  // run against the wrong side, or with the sides swapped, would also report a
+  // non-zero count — so the text is named.
+  await expect(page.locator("#compareBody")).toContainText("Alpha only in the middle version.");
+  await expect(
+    page.locator("#compareBody"),
+    "Beta is in NEITHER of the two versions being compared, so naming it means " +
+      "the comparison is against the wrong side — the live document, which is the defect",
+  ).not.toContainText("Beta only in the newest version.");
+
+  // READ-ONLY, which is the second half of the fix (`docs/139` §9.4, restored for
+  // this route by ADR-062). `[data-compare-marked]` is rendered if and only if
+  // the sidecar was applied to the live document through `applyDiffAsRevisions`
+  // — `compare-on-canvas.spec.mjs` asserts it VISIBLE for Review ▸ Compare, which
+  // keeps ADR-061. Version history must not write into the reader's document:
+  // no competitor does, and the reader asked a question about the past.
+  await expect(
+    page.locator("#compareBody [data-compare-marked]"),
+    "version history wrote tracked changes into the live document",
+  ).toHaveCount(0);
+  await expect(page.locator("#reviewShowChangesBtn")).toHaveAttribute("aria-pressed", "false");
+  // AND IT IS SAID, not merely true. An absence assertion alone would pass over a
+  // panel that is read-only and never mentions it — the reader would be left to
+  // infer, from a surface whose other route writes into their document, that this
+  // one did not. Both halves are needed for either to be worth anything.
+  await expect(
+    page.locator("#compareBody [data-compare-read-only]"),
+    "the panel never tells the reader their document was left alone",
+  ).toHaveCount(1);
+  await expect(page.locator("#compareBody")).toContainText(/Read-only/i);
+
+  // IT IS A UNIFIED DIFF, and this is the part the owner asked for: "diff should
+  // be like how GitHub diff appears on a PR — things added or removed, on that
+  // changes, while you can expect to see more."
+  //
+  // So all three parts are asserted, not just the changed lines. A panel that
+  // rendered added/removed rows and no context and no expand control would be a
+  // list with colours on it, which is what this replaced.
+  const diff = page.locator("#compareBody [data-compare-diff]");
+  await expect(diff).toBeVisible();
+  // The HUNK header: where in the document this run of changes is.
+  await expect(diff.locator('[data-compare-row="hunk"]').first()).toContainText(/Paragraph \d+/);
+  // An ADDED line, carrying the inserted sentence. (This pair differs by an
+  // insertion, so there is no removed line to assert and none is claimed.)
+  await expect(diff.locator('[data-compare-row="add"]').first()).toContainText(
+    "Alpha only in the middle version.",
+  );
+  // CONTEXT: unchanged blocks around the change, which are in NEITHER side's
+  // sidecar — a change record names only what changed — so a context row with
+  // real text in it is the proof that `blockTextAt` is wired and that the two
+  // parsed sides survived the comparison completing.
+  const context = diff.locator('[data-compare-row="context"]');
+  await expect(context).not.toHaveCount(0);
+  const contextText = (await context.allInnerTexts()).join(" ").trim();
+  expect(
+    contextText.length,
+    "every context row is empty, so the context is a placeholder and not the document",
+  ).toBeGreaterThan(0);
+
+  // THE EXPAND CONTROLS ARE THERE, one per side of the hunk, and the one that
+  // points off the top of the document is disabled WITH ITS REASON rather than
+  // enabled and doing nothing when pressed — `SKILL` §10. The edit in this
+  // fixture is at `Ctrl+Home`, so the hunk is at the first block and "above" is
+  // genuinely the end of the document; that is asserted rather than worked
+  // around. The REVEAL half is asserted in the test below, on a fixture whose
+  // paragraph count is written in this file.
+  await expect(diff.locator("[data-compare-expand]")).not.toHaveCount(0);
+  const above = diff.locator('[data-compare-expand="before"]').first();
+  await expect(above).toBeDisabled();
+  await expect(above).toHaveAttribute("title", /no more of the document/i);
+
+  // THE VERSION PANEL IS REOPENED, and that is not scaffolding: both surfaces
+  // live in the right-hand rail and opening Compare takes it, so the version
+  // rows are genuinely not on screen now. Measured — the ⋮ resolved and stayed
+  // "not visible" for the whole timeout. The two menu-state assertions below
+  // therefore need the panel back, and they are deliberately AFTER the
+  // comparison rather than before it so that a run against the old behaviour
+  // fails on the defect ("no count at all") and not on a corollary.
+  // Closing Compare is the gesture, and it is the honest one: `file.versionHistory`
+  // is a TOGGLE and the version panel is still open in STATE while Compare covers
+  // it, so driving the command once closes it rather than revealing it (measured —
+  // "#versionPanel … unexpected value hidden"). Closing Compare is also what
+  // releases the two parsed sides the unified diff was reading context from.
+  await page.locator("#compareClose").click();
+  await expect(page.locator("#comparePanel")).toBeHidden();
+  await expect(page.locator("#versionPanel")).toBeVisible();
+  await expect(rows).toHaveCount(3, { timeout: 45_000 });
+
+  // THE EARLIEST ROW HAS NO PREDECESSOR, so it is disabled WITH ITS REASON
+  // rather than enabled and silently useless — `SKILL` §10, never a dead control.
+  await rows.last().locator(".version-item-menu").click();
+  await expect(page.locator("#versionRowMenu")).toBeVisible();
+  await expect(changes).toBeDisabled();
+  await expect(changes).toHaveAttribute("title", /earliest version/i);
+  await expect(changes).not.toHaveAttribute("title", /not built yet/i);
+  await page.keyboard.press("Escape");
+
+  // AND THE HEAD ROW IS NOW LIVE, which is the other half of the behaviour
+  // change. It used to refuse with "comparing it with itself" — true only of a
+  // comparison against the document on screen. Against its predecessor the head
+  // is the most useful row in the panel: it answers "what changed in the latest
+  // save?", which is the question Google's history answers first.
+  await rows.first().locator(".version-item-menu").click();
+  await expect(page.locator("#versionRowMenu")).toBeVisible();
+  await expect(changes).toBeEnabled();
+  await expect(changes).not.toHaveAttribute("title", /comparing it with itself/i);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -252,6 +395,13 @@ test("every entry in the list names what it is about, never only its kind", asyn
   // THE CONDITION IS A FORMATTING-ONLY CHANGE, deliberately: a text edit already
   // rendered its excerpt, so a test that only inserted a paragraph passed over
   // the defect — which is exactly what the four tests above do.
+  //
+  // THE BOLD IS NOW SAVED, which it was not before, and it had to change with
+  // ADR-062. The comparison used to run against the LIVE document, so an unsaved
+  // bold was in it; it now runs between two stored versions, so a bold that was
+  // never saved is in neither side and the formatting condition this test needs
+  // would not exist. Three versions: the import baseline, the typed sentence,
+  // and the bold.
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+Home`);
@@ -262,13 +412,18 @@ test("every entry in the list names what it is about, never only its kind", asyn
   await page.keyboard.press(`${MOD}+Home`);
   for (let i = 0; i < 8; i += 1) await page.keyboard.press("Shift+ArrowRight");
   await page.locator("#bold").click();
+  await saveDocument(page);
 
   await runAppMenuCommand(page, "file", "file.versionHistory");
   const rows = page.locator("#versionPanelBody .version-item");
-  await expect(rows, "two versions, or there is nothing to compare against").toHaveCount(2, {
+  await expect(rows, "three versions, or there is nothing to compare against").toHaveCount(3, {
     timeout: 45_000,
   });
-  await rows.last().locator(".version-item-menu").click();
+  // THE NEWEST row, not the oldest. ADR-062 compares against a PREDECESSOR, so
+  // the oldest row has nothing before it and refuses (asserted in the test
+  // above); the newest holds the bold and its predecessor does not, which is the
+  // formatting-only difference this test is about.
+  await rows.first().locator(".version-item-menu").click();
   const changes = page.locator('#versionRowMenu [data-command-id="version.changes"]');
   await expect(changes).toBeEnabled();
   await changes.click();
@@ -276,7 +431,13 @@ test("every entry in the list names what it is about, never only its kind", asyn
     timeout: 45_000,
   });
 
-  const entries = page.locator("#compareBody .compare-changes li");
+  // `li[data-compare-kind]` — the CHANGE rows, which is what this rule is about.
+  // The unified diff puts hunk headers, context blocks and expand controls in the
+  // same list, and those are not entries about a change: only a change row
+  // carries `data-compare-kind`, and selecting on it keeps the guarantee exactly
+  // ("every entry names what it is about") while naming the rows it is a
+  // guarantee over.
+  const entries = page.locator("#compareBody .compare-changes li[data-compare-kind]");
   // NON-VACUITY: a comparison that found nothing would make every assertion
   // below pass over an empty list, and a formatting change is exactly the kind
   // this build might have failed to detect.
@@ -310,5 +471,174 @@ test("every entry in the list names what it is about, never only its kind", asyn
   // not finished. `record.rs`: `complete` is false whenever `findings` is
   // non-empty, which an inline object in the demo document makes true.
   await expect(page.locator("#compareBody")).not.toContainText(/did not finish/i);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the unified diff expands its context, and an entry scrolls to its change", async ({
+  page,
+  consoleErrors,
+}) => {
+  // THE FIXTURE'S SHAPE IS WRITTEN IN THIS FILE, which is the point of doing this
+  // on the file route rather than on the demo document. Two properties are needed
+  // and neither is available there:
+  //
+  //   * the change is in the MIDDLE, so there are unchanged blocks in both
+  //     directions and both expand controls are genuinely live — on the
+  //     version-history fixture the edit is at `Ctrl+Home`, where "above" is the
+  //     end of the document (a correct disabled control, and no way to test the
+  //     reveal);
+  //   * the document is LONGER THAN A PAGE, so the paragraph the entry navigates
+  //     to is off-screen and "it took me there" is observable as the canvas
+  //     moving rather than being true by accident.
+  const COUNT = 200;
+  const AT = 119; // zero-based, so "Paragraph 120" in the panel's own numbering.
+  const unchanged = (index) => `Paragraph number ${index + 1} is unchanged`;
+  const lines = (changed) =>
+    Array.from({ length: COUNT }, (_, index) => (index === AT ? changed : unchanged(index))).join(
+      "\n",
+    );
+  await openText(page, textFile("mine.txt", `${lines("This paragraph is as I wrote it")}\n`));
+  await compareAgainst(
+    page,
+    textFile("theirs.txt", `${lines("This paragraph is as THEY wrote it")}\n`),
+    { via: "rail" },
+  );
+
+  const diff = page.locator("#compareBody [data-compare-diff]");
+  await expect(diff).toBeVisible();
+  // One hunk, named by position. 200 paragraphs differing in exactly one place
+  // cannot produce two hunks, so this also catches a grouping rule that split on
+  // every change.
+  await expect(diff.locator('[data-compare-row="hunk"]')).toHaveCount(1);
+  await expect(diff.locator('[data-compare-row="hunk"]')).toContainText(`Paragraph ${AT + 1}`);
+
+  // REMOVED then ADDED, GitHub's order, with the real text on both sides — the
+  // half a summary count cannot show. `openText` opened MINE, so mine is the
+  // right-hand (newer) side and theirs is the left: an insertion is what this
+  // document has.
+  const removed = diff.locator('[data-compare-row="del"]');
+  const added = diff.locator('[data-compare-row="add"]');
+  await expect(removed).toHaveCount(1);
+  await expect(added).toHaveCount(1);
+  await expect(removed).toContainText("as THEY wrote it");
+  await expect(added).toContainText("as I wrote it");
+
+  // CONTEXT ON BOTH SIDES, with the actual neighbouring paragraphs in it. These
+  // are in NEITHER side's sidecar — a change record names only what changed — so
+  // this is the proof that `blockTextAt` is wired to the right side and the
+  // right path. The two blocks that bracket the change are named; naming them is
+  // what distinguishes real context from three blank rows.
+  const context = diff.locator('[data-compare-row="context"]');
+  await expect(context).toHaveCount(6, { timeout: 45_000 });
+  await expect(diff).toContainText(unchanged(AT - 1));
+  await expect(diff).toContainText(unchanged(AT + 1));
+  await expect(
+    diff,
+    "a block ten away is showing before anything was expanded, so the context is not bounded",
+  ).not.toContainText(unchanged(AT - 10));
+
+  // AND YOU CAN SEE MORE — the owner's "while you can expect to see more". Both
+  // controls are live here, and pressing one must actually add rows: a button
+  // that renders and does nothing is the dead control `SKILL` §10 forbids.
+  const above = diff.locator('[data-compare-expand="before"]');
+  const below = diff.locator('[data-compare-expand="after"]');
+  await expect(above).toBeEnabled();
+  await expect(below).toBeEnabled();
+  // THE SIZER IS THE ROW ARRAY and the DOM is the window, so growth is measured
+  // on the sizer rather than by counting rendered rows. Counting rows is what
+  // this test tried first and it is the wrong instrument: 26 context rows do not
+  // fit in a 46vh scroller, so an exact count asserts the viewport's height.
+  const sizerHeight = () =>
+    diff.locator(".compare-diff-sizer").evaluate((element) => element.offsetHeight);
+  const start = await sizerHeight();
+  await above.click();
+  await expect(
+    diff,
+    "the expand control was enabled and revealed nothing above",
+  ).toContainText(unchanged(AT - 10));
+  const expanded = await sizerHeight();
+  expect(expanded, "the row array did not grow when context was revealed").toBeGreaterThan(start);
+  await below.click();
+  expect(await sizerHeight(), "expanding below did not grow the row array").toBeGreaterThan(
+    expanded,
+  );
+
+  // THE WINDOW IS NOT THE LIST, and this is the assertion that fails if the
+  // renderer goes back to one node per change in one synchronous loop. The row
+  // array is `sizer / 22` rows tall (`DIFF_ROW_HEIGHT`, which JS writes onto the
+  // container as `--diff-row-h` so the arithmetic and the stylesheet cannot
+  // disagree); the DOM holds strictly fewer.
+  const rows2 = Math.round((await sizerHeight()) / 22);
+  const rendered = await diff.locator(".compare-changes > li").count();
+  expect(rows2, "the sizer is not sized from the whole row array").toBeGreaterThan(28);
+  expect(
+    rendered,
+    `the DOM holds ${rendered} of ${rows2} rows — the window is rendering the whole list`,
+  ).toBeLessThan(rows2);
+
+  // AN ENTRY SCROLLS TO ITS CHANGE. This is the route where it CAN: Review ▸
+  // Compare's right-hand side IS the open document, so the change's `right.path`
+  // addresses a block on screen and `nodeAtStoryPath` turns it into that
+  // paragraph's real NodeId. `DiffAnchor.node` is never used — it addresses a
+  // throwaway parse whose counter restarted at 1, so it would land on an
+  // unrelated paragraph and report nothing wrong.
+  const goto = diff.locator("[data-compare-goto]").first();
+  await expect(goto).toBeVisible();
+  // THE OBSERVABLE IS NOT `window.getSelection()`, and that is measured rather
+  // than assumed: this editor paints its own selection onto an overlay and the
+  // body is a canvas, so `getSelection().toString()` is `""` however well the
+  // navigation worked. (That is what this assertion tried first, and it waited
+  // out the full 45 s on an empty string.) The effects that ARE observable are
+  // the selection highlight the overlay paints over the navigated range, and the
+  // canvas moving.
+  //
+  // THE OFF-SCREEN PRECONDITION IS CREATED HERE, NOT ASSUMED FROM THE FIXTURE.
+  // A 200-paragraph document was supposed to leave paragraph 120 off screen, and
+  // it does not: `landed` applies the comparison and then navigates to the first
+  // change, so by the time the panel reports a total the canvas has ALREADY been
+  // taken there — measured `#viewport.scrollTop` 2072, with the highlight's box
+  // at 665..682 inside a viewport of 156..690. `scrollReviewSelectionIntoView`
+  // then uses `"nearest"`, which is correct behaviour for a target that is
+  // already visible and does nothing at all, so `scrollTop` could not increase
+  // and the assertion below waited out its full timeout on a working feature.
+  // Scrolling back to the top first — and asserting we got there — makes the
+  // precondition this test needs explicit instead of a side effect of wherever
+  // landing happened to leave the canvas.
+  const viewport = page.locator("#viewport");
+  await viewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect
+    .poll(async () => viewport.evaluate((element) => element.scrollTop))
+    .toBe(0);
+  const highlight = page.locator("#pages .overlay .highlight");
+  await expect(
+    highlight,
+    "a highlight is already painted, so the one below proves nothing",
+  ).toHaveCount(0);
+  await goto.click();
+  await expect(highlight, "nothing was selected, so nothing was navigated to").not.toHaveCount(0, {
+    timeout: 45_000,
+  });
+  await expect
+    .poll(async () => viewport.evaluate((element) => element.scrollTop), { timeout: 45_000 })
+    .toBeGreaterThan(0);
+  // AND THE CHANGE IS IN VIEW, which is the guarantee; `scrollTop` moving is only
+  // the mechanism, and a scroll that landed somewhere else entirely would satisfy
+  // it. Both boxes are read in ONE `evaluate` so they come from the same frame —
+  // two separate reads can straddle a scroll tick and compare a stale rect.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const view = document.querySelector("#viewport")?.getBoundingClientRect();
+          const mark = document
+            .querySelector("#pages .overlay .highlight")
+            ?.getBoundingClientRect();
+          return !!view && !!mark && mark.top >= view.top && mark.bottom <= view.bottom;
+        }),
+      { timeout: 45_000 },
+    )
+    .toBe(true);
   expect(consoleErrors).toEqual([]);
 });

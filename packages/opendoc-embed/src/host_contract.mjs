@@ -524,6 +524,12 @@ export const COMMAND_CONTRACT = Object.freeze([
   // the editor offers that this file does not name is invisible to a host, which
   // is the one audience it has.
   exact("view.reflow", null),
+  // Saying what the current view approximates requires NOTHING, for the same
+  // reason the view itself does: it reads a list the layout already computed and
+  // speaks it. It is enabled in the paged view too, where the answer is
+  // "nothing" — a host offering a read-only embed can wire it and a reader can
+  // always ask (`docs/166` R-7).
+  exact("view.reflowApproximations", null),
   // Reconnecting a shared session requires NOTHING of the host, and that is the
   // interesting part rather than an omission. It mutates no document — it opens a
   // socket the reader already had — so a host that granted no mutation capability

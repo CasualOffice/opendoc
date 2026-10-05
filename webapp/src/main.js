@@ -10556,7 +10556,7 @@ const documentProtection = createDocumentProtection({
 // gutter" because that order is the decision, and this is the 93%-of-the-webapp
 // module with no mount seam (`109` HF-085). `landed` doubles as the capability
 // test — withheld, the panel claims no tracked changes it cannot write.
-const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); } });
+const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); }, navigate: (a) => { const node = doc?.nodeAtStoryPath(JSON.stringify(a.story), JSON.stringify(a.path)); if (node) navigateToReviewAnchor({ node, start: a.start, end: a.end }); else setStatus(t("compare.diff.unresolved"), "error"); } });
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -12326,7 +12326,7 @@ function toggleShortcutsReference(open) {
     shortcutsModal.close();
   }
 }
-shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
+for (const b of shortcutsDialog?.querySelectorAll("[data-shortcuts-dismiss]") ?? []) b.addEventListener("click", () => toggleShortcutsReference(false));
 
 // ---- About -----------------------------------------------------------------
 const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);
@@ -15832,7 +15832,7 @@ const versionHistory = createVersionHistory({
     // never squeezed from both sides at once.
     if (isOpen && !reviewSidebar.hidden) toggleReview(false);
   },
-  showChanges: (bytes, name) => void comparePanel.compareWith(bytes, name),
+  showChanges: comparePanel.compareVersions && ((older, newer, olderName, newerName) => void comparePanel.compareVersions(older, newer, olderName, newerName)),
 });
 
 /**

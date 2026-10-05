@@ -128,6 +128,7 @@ pub(crate) fn body_wrap_rects(
     document: &Document,
     shaper: &dyn LineShaper,
     config: &PageConfig,
+    fit: crate::flow::MeasureFit,
 ) -> Vec<BodyWrapRect> {
     let ctx = FloatCtx {
         document,
@@ -157,7 +158,7 @@ pub(crate) fn body_wrap_rects(
     // drawing does, so it contributes to the same exclusion set rather than to a
     // parallel one (`docs/109` row 64 / `105` FID-L-07).
     out.extend(crate::table_float::wrap_rects(
-        layout, document, shaper, config,
+        layout, document, shaper, config, fit,
     ));
     out
 }

@@ -27,7 +27,7 @@
 // | A ⋮ menu on every entry carrying that entry's actions | same | — (see "The row actions" below: this row USED to read "an action bar below the list", and that difference is what the owner rejected) |
 // | Restore also offered prominently while previewing | on the preview bar, beside "Back to current" | — |
 // | Restore this version, current state kept as a version | same | Docs restores without confirming; this asks once, because the confirmation is where the reader is TOLD their current work is kept — see `confirmRestore` |
-// | "Show changes" diff toggle | present and LIVE: it compares this version with the document on screen and lists the differences in the Compare panel | Docs paints its differences into the preview; ours lists them beside it, because `casual-doc-diff` returns a typed sidecar and not a merged document, and the Compare panel says so rather than implying otherwise. The head row refuses with a reason, because comparing the current state with itself reports nothing |
+// | "Show changes" diff toggle | present and LIVE: it compares this version with its PREDECESSOR and renders the result as a read-only unified diff in the Compare panel (ADR-062) | Docs paints its differences into the preview; ours puts them in a panel beside it, as added/removed blocks with context that expands — GitHub's shape, because `casual-doc-diff` returns a typed sidecar and not a merged document. Three rows of this table were stale and are corrected here: it used to compare against the document ON SCREEN, which during a preview is the same version (so it could only report "No differences"); it used to write the result into the reader's document as tracked changes, which no competitor does; and the row that refuses is the EARLIEST version kept, not the head |
 // | Make a copy | same, and it replaces the document in the tab | Docs opens the copy as a NEW file in Drive and leaves yours alone. There is no document manager here, so the copy arrives where the reader is — which is a real difference and is therefore CONFIRMED, and the current document becomes a version of its own first so nothing is left in neither place |
 // | Download this version | same | the bytes are the checkpoint's, handed over unchanged; see `downloadVersion` for why that is the whole point |
 //
@@ -893,10 +893,16 @@ export function createVersionHistory({
         id: "version.changes",
         group: "edit",
         label: t("versionPanel.showChanges"),
-        enabled: !isHead && typeof showChanges === "function",
-        disabledReason: isHead
-          ? t("versionHistory.headNotComparable")
-          : t("versionHistory.action.showChangesUnavailable"),
+        // THE EARLIEST ROW IS THE ONE THAT REFUSES NOW, not the head. The
+        // comparison is against a PREDECESSOR (ADR-062), so the head is the most
+        // useful row in the panel — "what changed in the latest save?" — and the
+        // earliest one kept has nothing before it to compare with. Disabled with
+        // that reason rather than enabled and silently useless.
+        enabled: predecessorOf(id) !== null && typeof showChanges === "function",
+        disabledReason:
+          predecessorOf(id) === null
+            ? t("versionHistory.earliestNotComparable")
+            : t("versionHistory.action.showChangesUnavailable"),
         run: () => void queue(() => showChangesFor(id)),
       },
       {
@@ -1261,22 +1267,71 @@ export function createVersionHistory({
    * explicit act. It never touches the live document and never walks the
    * timeline.
    */
+  /** The row immediately OLDER than `versionId`, or `null` for the earliest one
+   *  kept.
+   *
+   *  `listVersions` sorts by `createdAt` descending — newest first — so the
+   *  predecessor of `rows[i]` is `rows[i + 1]`. Derived from the list rather than
+   *  from a stored parent pointer because there is no such pointer: a lineage is
+   *  a set of checkpoints with timestamps, and retention prunes from the middle,
+   *  so "the version before this one" means "the one before it in what is still
+   *  kept" — which is also what the reader sees on screen and therefore the only
+   *  honest answer.
+   *
+   *  O(versions). Called on an explicit act, never per render. */
+  function predecessorOf(versionId) {
+    const index = rows.findIndex((candidate) => candidate.versionId === versionId);
+    if (index < 0) return null;
+    return rows[index + 1] ?? null;
+  }
+
   /**
-   * Show changes: this version against the document on screen.
+   * Show changes: this version against its PREDECESSOR, read-only (**ADR-062**).
    *
-   * Reads the checkpoint and hands the bytes to the comparison surface. Nothing
-   * about the live document is touched — a comparison is two byte arrays, and
-   * `casual-doc-diff`'s facade references nothing in the editing session — so
-   * this is as safe as a download and is gated the same way, except that it
-   * writes no file and therefore needs no `download` grant.
+   * ## What this used to do, and why it could only ever say "No differences"
    *
-   * The checkpoint is read on EVERY invocation rather than cached. A cached
-   * checkpoint would be a second copy of a multi-megabyte document held for a
-   * panel nobody may open again, and reading it is one store round trip on an
-   * explicit act.
+   * It read one checkpoint and handed it to `compareWith`, whose other side is
+   * `comparableBytes(doc, …)` — the LIVE document. That is Google's model and it
+   * is defensible, but four facts made it report nothing through the route every
+   * reader takes:
    *
-   * Complexity: O(version bytes) for the read; the comparison itself is the
-   * engine's and is driven in slices by the surface that received the bytes.
+   *   1. clicking a row runs `void openPreview(row.versionId)` — "a click is a
+   *      decision already made";
+   *   2. `showVersionPreview` assigns `doc = previewDoc`, so the module-level live
+   *      document IS the historical one while a preview is up;
+   *   3. the comparison's own side is therefore an export of that preview;
+   *   4. a freshly parsed preview has `revision == 0`, and
+   *      `ExportMode::ExactIfUnchanged` returns the retained ORIGINAL BYTES
+   *      verbatim.
+   *
+   * So "mine" was byte-identical to "theirs" and the comparison was a version
+   * against itself. The doc comment here claimed "Nothing about the live document
+   * is touched", which had also been false since ADR-061 — the sidecar was
+   * written into the reader's document as tracked changes.
+   *
+   * ## What it does now
+   *
+   * Reads BOTH checkpoints and compares them: the predecessor as the older side,
+   * this version as the newer, so an insertion is what this version added. The
+   * live document is not read, not exported and not written — see
+   * `compare_documents.mjs`'s `compareVersions` for the mechanics and for why the
+   * split keeps ADR-061 for Review ▸ Compare.
+   *
+   * THE HEAD ROW IS LIVE NOW. It used to refuse with "comparing it with itself",
+   * which was true of a comparison against the document on screen and is not true
+   * of one against a predecessor — and the head is the row a reader asks about
+   * first: what changed in the latest save? The row that refuses instead is the
+   * EARLIEST one kept, which has nothing before it, and it refuses with that
+   * reason rather than being enabled and silently useless.
+   *
+   * Both checkpoints are read on EVERY invocation rather than cached: a cached
+   * checkpoint is a second copy of a multi-megabyte document held for a panel
+   * nobody may open again, and reading one is a store round trip on an explicit
+   * act.
+   *
+   * Complexity: O(both versions' bytes) for the two reads; the comparison itself
+   * is the engine's and is driven in slices, with progress and a Cancel, by the
+   * surface that received the bytes.
    */
   async function showChangesFor(versionId) {
     if (typeof showChanges !== "function") {
@@ -1285,14 +1340,28 @@ export function createVersionHistory({
     const ready = await ensureStore();
     const row = rows.find((candidate) => candidate.versionId === versionId);
     if (!ready || !row) return;
+    const older = predecessorOf(versionId);
+    // Reachable even though the menu row is disabled for it: the command is also
+    // reachable from the palette and from a host driving it, and a refusal that
+    // exists only as a disabled control is a refusal the second surface does not
+    // have (`SKILL` §10 — every capability from ≥2 surfaces, and the same rule
+    // applies to every refusal).
+    if (!older) return void publish(t("versionHistory.earliestNotComparable"), "error");
     const loaded = await ready.readCheckpoint(row.checkpointId);
     if (!loaded.ok) return void report(loaded);
-    // Named by WHEN it was, not by its file name: every version of a document
-    // shares one file name, so "opendoc-demo.docx" on a comparison against a
-    // version would tell the reader nothing about which version they are looking
-    // at. The timestamp is the only thing that distinguishes them, and it is
-    // formatted in the reader's own locale by the same helper the rows use.
-    showChanges(loaded.bytes, versionRowText(row, { isHead: false }).timestamp);
+    const previous = await ready.readCheckpoint(older.checkpointId);
+    if (!previous.ok) return void report(previous);
+    // Named by WHEN each was, not by file name: every version of a document
+    // shares one file name, so "opendoc-demo.docx" on both sides of a comparison
+    // would tell the reader nothing about which two versions they are looking at.
+    // The timestamp is the only thing that distinguishes them, formatted in the
+    // reader's own locale by the same helper the rows use.
+    showChanges(
+      previous.bytes,
+      loaded.bytes,
+      versionRowText(older, { isHead: false }).timestamp,
+      versionRowText(row, { isHead: false }).timestamp,
+    );
   }
 
   async function downloadVersion(versionId) {

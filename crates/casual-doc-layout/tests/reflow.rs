@@ -50,11 +50,16 @@ use casual_doc_model::v1::{
 };
 // Separate `use` lines (the repo's anti-conflict convention for new v1 imports).
 use casual_doc_model::v1::BorderEdge;
+use casual_doc_model::v1::Drawing;
+use casual_doc_model::v1::Extent;
 use casual_doc_model::v1::Field;
 use casual_doc_model::v1::FieldKind;
 use casual_doc_model::v1::LineNumbering;
+use casual_doc_model::v1::MediaId;
+use casual_doc_model::v1::MediaReference;
 use casual_doc_model::v1::RgbColor;
 use casual_doc_model::v1::Rgba;
+use casual_doc_model::v1::TableWidth;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::WatermarkContent;
 use casual_doc_model::v1::WatermarkLayout;
@@ -1261,29 +1266,103 @@ fn reflow_geometry_that_is_not_a_reading_column_is_refused_with_a_reason() {
     assert!(LayoutView::reflow(Twip(31_680), Twip(47_520), Twip::ZERO).is_ok());
 }
 
-/// The known approximations are reported by the view, not discovered by a reader.
+/// What reflow approximates is reported **about this document**, not recited.
+///
+/// The guarantee is that every sentence the host can show is true of the document
+/// it is shown for. The old list was a `vec![]` of three literals keyed on nothing
+/// but `is_reflow()`, so a document with no footnotes was told where its footnotes
+/// go and a document with no `PAGE` field was told that its page numbers refuse —
+/// and the one approximation a reader can actually see, content fitted to the
+/// measure, was not in the list at all (`docs/166` R-7 and R-1).
+///
+/// MUTATION PROOF: restoring the constant list (returning all four sentences
+/// whenever `is_reflow()`) fails on the first assertion with
+/// `plain prose approximates nothing, but 4 sentences were reported: ["A table or
+/// an image wider than the reading column has been fitted…", "A drawing anchored
+/// to the page…", "A footnote is placed…", "A PAGE or NUMPAGES field…"]`.
 #[test]
-fn reflow_reports_its_approximations_and_paged_reports_none() {
-    assert!(LayoutView::Paged.approximations().is_empty());
-    assert!(!LayoutView::Paged.is_reflow());
-
+fn reflow_reports_what_this_document_approximates_and_paged_reports_none() {
     let view = reflow();
     assert!(view.is_reflow());
-    let reported = view.approximations();
-    assert_eq!(reported.len(), 3, "{reported:?}");
-    let joined = reported.join(" ");
-    for topic in ["anchored to the page", "footnote", "PAGE or NUMPAGES"] {
+    assert!(!LayoutView::Paged.is_reflow());
+
+    // Paper approximates nothing, whatever the document.
+    for (name, doc) in inertness_corpus() {
         assert!(
-            joined.contains(topic),
-            "no approximation mentions {topic}: {joined}"
+            LayoutView::Paged.approximations(&doc).is_empty(),
+            "paged reported approximations for {name}"
         );
     }
+
+    // Plain prose: no notes, no fields, no page-anchored art, nothing over-wide.
+    let plain = view.approximations(&prose(4));
+    assert!(
+        plain.is_empty(),
+        "plain prose approximates nothing, but {} sentences were reported: {plain:?}",
+        plain.len()
+    );
+
+    // A document with a NUMPAGES field and nothing else: exactly that sentence.
+    let fielded = view.approximations(&field_document());
+    assert_eq!(
+        fielded.len(),
+        1,
+        "a document whose only reflow casualty is a NUMPAGES field: {fielded:?}"
+    );
+    assert!(
+        fielded[0].contains("PAGE or NUMPAGES"),
+        "the reported sentence is not the field one: {fielded:?}"
+    );
+
+    // A document whose table is wider than the measure: the fitting sentence,
+    // which is the one the constant list omitted.
+    let wide = view.approximations(&table_document());
+    assert_eq!(
+        wide.len(),
+        1,
+        "the table fixture's only reflow approximation is the fit: {wide:?}"
+    );
+    assert!(
+        wide[0].contains("wider than the reading column"),
+        "the over-wide case is still not reported: {wide:?}"
+    );
+
+    // And the measure is part of the question: the same table in a column wide
+    // enough to hold it approximates nothing.
+    let roomy = LayoutView::reflow(Twip(13_000), TILE, GUTTER).expect("a 9in reading column");
+    assert!(
+        roomy.approximations(&table_document()).is_empty(),
+        "a table that fits was still reported as fitted"
+    );
 }
 
 // --------------------------------------------------------------------------
 // A table still flows, and the incremental path agrees with the fresh one
 // --------------------------------------------------------------------------
 
+/// The number of columns and rows in [`table_document`], so the guards can name
+/// every cell without restating the fixture.
+const TABLE_COLS: u64 = 4;
+const TABLE_ROWS: u64 = 6;
+
+/// The node id of the paragraph in cell `(row, col)` of [`table_document`].
+fn table_cell_paragraph(row: u64, col: u64) -> NodeId {
+    node(310 + row * 40 + col * 6 + 1)
+}
+
+/// The table fixture: **9 inches of declared table in a 3.75-inch column.**
+///
+/// The width is the point. This fixture used to declare a 2,600 + 2,600 = 5,200
+/// twip grid against a `COLUMN` of 5,400 and no `w:tblW` at all — so it was an
+/// `Auto`/`Autofit` table, which `solve_column_widths` has always clamped to the
+/// available width, and it **fitted**. Every assertion below was therefore
+/// satisfied by arithmetic and could not have failed however badly an over-wide
+/// table behaved, which is exactly the shape `SKILL.md` §4 forbids and is why
+/// `docs/166` R-1 survived two design documents (`docs/166` §5, last paragraph).
+///
+/// So it now declares `w:tblW` in `dxa` at 12,960 twips over a four-column grid
+/// of 3,240 each: the one input the solver consulted `available` for neither
+/// before nor after, and the input that produced the loss.
 fn table_document() -> Document {
     let cell = |id: u64, text: &str| TableCell {
         id: node(id),
@@ -1295,24 +1374,23 @@ fn table_document() -> Document {
             paragraph(100, vec![run(101, &LINE.repeat(2))]),
             BlockNode::Table(Box::new(Table {
                 id: node(200),
-                properties: TableProperties::default(),
+                properties: TableProperties {
+                    width: Some(TableWidth::dxa(12_960)),
+                    ..TableProperties::default()
+                },
                 grid_change: None,
-                grid: vec![
-                    GridColumn {
-                        width_twips: Some(2_600),
-                    },
-                    GridColumn {
-                        width_twips: Some(2_600),
-                    },
-                ],
-                rows: (0..6)
+                grid: (0..TABLE_COLS)
+                    .map(|_| GridColumn {
+                        width_twips: Some(3_240),
+                    })
+                    .collect(),
+                rows: (0..TABLE_ROWS)
                     .map(|r| TableRow {
-                        id: node(300 + r * 20),
+                        id: node(300 + r * 40),
                         properties: TableRowProperties::default(),
-                        cells: vec![
-                            cell(310 + r * 20, "left"),
-                            cell(316 + r * 20, "right cell text"),
-                        ],
+                        cells: (0..TABLE_COLS)
+                            .map(|c| cell(310 + r * 40 + c * 6, "cell text"))
+                            .collect(),
                     })
                     .collect(),
             })),
@@ -1486,4 +1564,183 @@ fn entering_reflow_costs_the_document_and_a_keystroke_in_it_costs_the_edit() {
         "a keystroke in reflow re-shaped {keystroke_n} paragraphs; it should re-shape the edited \
          one and its immediate neighbours, not more"
     );
+}
+
+// --------------------------------------------------------------------------
+// Nothing authored is unreachable — `docs/166` R-1
+// --------------------------------------------------------------------------
+
+/// **No authored content is unreachable in reflow.** Asserted over a table nine
+/// inches wide in a three-and-three-quarter-inch column, through the only route a
+/// reader has: the caret.
+///
+/// This is the guarantee rather than the circumstance. It does not say the raster
+/// is N twips wide, nor what width the solver chose, nor how many lines a cell
+/// wrapped to — all of which move for reasons that lose nothing. It says that for
+/// every one of the fixture's twenty-four cells there is a caret position inside
+/// the tile that was rasterised, and that clicking it comes back to that cell. A
+/// cell whose caret lies outside the raster is a cell the reader cannot see, put
+/// the caret in, select, search to, or read with a screen reader, and the only
+/// way to reach it is to leave the view.
+///
+/// WHY THE CARET AND NOT THE PAINT. A display list that places a glyph at
+/// x = 10,080 in a 6,120-twip tile is not evidence on its own: a renderer could
+/// in principle be made to scroll it. A caret rect outside the raster is evidence,
+/// because the host paints exactly the raster and guarantees no horizontal scroll
+/// (`reflow_view.mjs`'s quantised bucket never exceeds `clientWidth`), so there is
+/// nothing to scroll with.
+///
+/// MUTATION PROOF: with `MeasureFit::Fit` removed from `solve_column_widths` — the
+/// single line `MeasureFit::Fit => target.min(available)` reverted to `target` —
+/// this fails on the first cell of the third column:
+///
+/// ```text
+/// cell (0,2)'s caret sits at 6948..6948 twips, outside the 0..6120 raster of
+/// tile 2 — that part of the table is painted nowhere a reader can reach it
+/// ```
+#[test]
+fn no_cell_of_a_table_wider_than_the_reading_column_is_unreachable() {
+    let shaper = ParleyShaper::new();
+    let doc = table_document();
+    let layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+    let snapshot = LayoutSnapshot::new(&layout);
+
+    for row in 0..TABLE_ROWS {
+        for col in 0..TABLE_COLS {
+            let pos = ModelPos::new(table_cell_paragraph(row, col), 0);
+            let (page, rect) = snapshot
+                .caret_rect(pos)
+                .unwrap_or_else(|| panic!("cell ({row},{col}) has no caret rect in reflow at all"));
+            let raster = layout.pages[page as usize].page_size.width;
+            assert!(
+                rect.origin.x >= Twip::ZERO && rect.origin.x + rect.size.width <= raster,
+                "cell ({row},{col})'s caret sits at {}..{} twips, outside the 0..{} raster of \
+                 tile {} — that part of the table is painted nowhere a reader can reach it",
+                rect.origin.x.raw(),
+                (rect.origin.x + rect.size.width).raw(),
+                raster.raw(),
+                page + 1
+            );
+            let midpoint = Point::new(
+                rect.origin.x,
+                rect.origin.y + Twip(rect.size.height.raw() / 2),
+            );
+            let hit = snapshot.hit_test(page, midpoint).unwrap_or_else(|| {
+                panic!("clicking cell ({row},{col})'s own caret in reflow found nothing")
+            });
+            assert_eq!(
+                hit.pos, pos,
+                "clicking cell ({row},{col})'s caret landed in {:?} instead",
+                hit.pos
+            );
+        }
+    }
+}
+
+/// An inline image wider than the reading column is **scaled into it with its
+/// proportions kept**, not laid out past the raster and cut off.
+///
+/// Google document exactly this behaviour for pageless — *"images will adjust to
+/// your screen size"* ([answer/11528737], quoted in `docs/166` §5 **[G1]**) — and
+/// `hr_item`, the function immediately below `image_item` in `flow.rs`, already
+/// resolved its width against the measure. Only the image did not.
+///
+/// The guarantee asserted is "the whole picture is inside the raster, and it is
+/// still the same picture": the painted box fits, and its aspect ratio is the
+/// declared one. The exact scaled height is NOT asserted as a number — it is
+/// derived from the fixture's own ratio, so a fixture change cannot make this
+/// pass for the wrong reason.
+///
+/// MUTATION PROOF: reverting `image_item` to ignore its `measure` — the
+/// `fit_box_to_measure` call replaced by the bare `extent_to_size` it wrapped —
+/// fails with
+/// `the image is painted 10080 twips wide in a 6120-twip tile: 4320 twips of it
+/// are outside the raster`. Squashing instead of scaling — the height kept while
+/// the width is clamped — fails the ratio assertion with `the image was squashed
+/// rather than scaled: 5400x5040 twips is not the declared 6400800:3200400
+/// ratio`.
+#[test]
+fn an_image_wider_than_the_reading_column_is_scaled_into_it() {
+    let shaper = ParleyShaper::new();
+    // 7in x 3.5in — wider than the 3.75in reading column, and a 2:1 ratio so a
+    // scale that forgot the height would be visible rather than plausible.
+    const WIDTH_EMU: i64 = 6_400_800;
+    const HEIGHT_EMU: i64 = 3_200_400;
+    let doc = image_document(WIDTH_EMU, HEIGHT_EMU);
+    let layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+
+    let mut seen = 0;
+    for page in &layout.pages {
+        for item in &compose_page(page).items {
+            let PaintItem::Image { rect, .. } = item else {
+                continue;
+            };
+            seen += 1;
+            let overshoot = (rect.origin.x + rect.size.width).raw() - page.page_size.width.raw();
+            assert!(
+                overshoot <= 0,
+                "the image is painted {} twips wide in a {}-twip tile: {overshoot} twips of it \
+                 are outside the raster",
+                rect.size.width.raw(),
+                page.page_size.width.raw()
+            );
+            // Same picture, not a crop of it: the painted box keeps the declared
+            // ratio to within the twip the integer scale can cost.
+            let expected_height = (i64::from(rect.size.width.raw()) * HEIGHT_EMU) / WIDTH_EMU;
+            assert!(
+                (i64::from(rect.size.height.raw()) - expected_height).abs() <= 1,
+                "the image was squashed rather than scaled: {}x{} twips is not the declared \
+                 {WIDTH_EMU}:{HEIGHT_EMU} ratio",
+                rect.size.width.raw(),
+                rect.size.height.raw()
+            );
+        }
+    }
+    assert_eq!(seen, 1, "the fixture paints exactly one image");
+}
+
+/// A paragraph holding one inline drawing of the given EMU extent, between two
+/// paragraphs of prose so the image is a real in-flow box rather than the whole
+/// document.
+fn image_document(width_emu: i64, height_emu: i64) -> Document {
+    let media_id = MediaId::new(node(7_100_001));
+    let mut media = DefinitionMap::default();
+    media.insert(
+        media_id,
+        MediaReference {
+            relationship_id: "rId9".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "word/media/wide.png".to_owned(),
+        },
+    );
+    document(
+        vec![
+            paragraph(100, vec![run(101, LINE)]),
+            paragraph(
+                200,
+                vec![InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
+                    opacity: None,
+                    id: node(201),
+                    media: media_id,
+                    extent: Some(Extent {
+                        width_emu,
+                        height_emu,
+                    }),
+                    descr: None,
+                    crop: None,
+                    rotation: None,
+                    border: None,
+                    flip_h: false,
+                    flip_v: false,
+                }))],
+            ),
+            paragraph(300, vec![run(301, LINE)]),
+        ],
+        Definitions {
+            sections: vec![letter_section(7_000_002)],
+            media,
+            ..Definitions::default()
+        },
+    )
 }
