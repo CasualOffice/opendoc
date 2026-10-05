@@ -237,6 +237,7 @@ WMF
 WOPI
 WYSIWYG
 WebAssembly
+WebCrypto
 WebGPU
 WebKit
 WebSocket
@@ -309,6 +310,7 @@ checkboxes
 checkmark
 checksums
 ciphertext
+cjk
 clippy
 cmap
 codebase
@@ -496,6 +498,7 @@ pointercancel
 pointerdown
 pointermove
 polyline
+populatable
 postMessage
 pre
 preedit
