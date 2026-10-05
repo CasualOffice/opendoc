@@ -139,6 +139,13 @@ export const PROTECTION_REFUSAL_KEYS = Object.freeze({
   "document.protected-comments-only": "document.protectedCommentsOnly",
   "document.protected-tracked-changes-only": "document.protectedTrackedChangesOnly",
   "document.protected-forms-only": "document.protectedFormsOnly",
+  // The SECOND axis's two, `w:formatting` and `w:locked`. Both reach a reader of
+  // an ordinary file with no room, like the four above, and both are routed in the
+  // same commit that made them reachable — a refusal arriving in the engine's
+  // English in nineteen locales is the defect this table was built to close, and
+  // adding an enforcement without its sentence would reopen it.
+  "document.protected-formatting": "document.protectedFormatting",
+  "document.protected-style-locked": "document.protectedStyleLocked",
 });
 
 /** The `ODC-7xxx` collaboration family (`docs/20`) → catalogue key.

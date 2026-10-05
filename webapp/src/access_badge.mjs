@@ -96,6 +96,14 @@ export const ACCESS_LEVEL_KEYS = Object.freeze({
   suggest: "access.level.suggest",
   comment: "access.level.comment",
   read: "access.level.read",
+  /** `w:formatting` with no editing restriction — Word's pure formatting
+   *  restriction, which is now enforced at the operation
+   *  (`casual_doc_edit::protection`). It is the one state where a reader may write
+   *  whatever they like and may not change how it looks, so neither `full` nor
+   *  `read` is true of them: `full` would be the lie this badge exists to stop,
+   *  and `read` would stop them typing in a document they can type in. The two
+   *  axes are independent in the file and the badge has to be able to say so. */
+  noFormatting: "access.level.noFormatting",
 });
 
 /** The container role, as `capabilities.mjs` grades it, reduced to a level — or
@@ -188,10 +196,23 @@ export function accessState({
     if (level === "trackedChanges") {
       return frozen(ACCESS_LEVEL_KEYS.suggest, ACCESS_SOURCE_KEYS.document);
     }
+    // The SECOND axis, and it is tested before the fall-through rather than after
+    // it, because the fall-through says `read` and a formatting-restricted reader
+    // is not a reader — they may type. `w:documentProtection` carries two
+    // independent restrictions (`w:edit` and `w:formatting`) and a document whose
+    // editing axis restricts NOTHING while its formatting axis restricts
+    // everything is a state Word writes and this engine now enforces. Reported
+    // here rather than left to the `local` branch, which would have named no
+    // authority for a refusal the file is about to hand the reader.
+    if (level === "off") {
+      return frozen(ACCESS_LEVEL_KEYS.noFormatting, ACCESS_SOURCE_KEYS.document);
+    }
     // `readOnly` and `forms` both leave the body alone; `forms` admits a field
     // and the badge does not promise one, because "you may type in the form
     // fields" is a sentence about where rather than about what, and the reader
-    // finds the fields by looking.
+    // finds the fields by looking. Both absorb the formatting axis into their own
+    // sentence: a reader told the document is read-only does not also need to be
+    // told its formatting is.
     return frozen(ACCESS_LEVEL_KEYS.read, ACCESS_SOURCE_KEYS.document);
   }
 

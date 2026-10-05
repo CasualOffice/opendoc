@@ -4838,6 +4838,103 @@ mod semantic_tests {
         assert!(on_reopened, "and reads back as enforced");
     }
 
+    /// The `w:formatting` axis and its whitelist survive open → save → open.
+    ///
+    /// The axis is **two** constructs, and either one going missing disarms it without
+    /// changing the other: `w:documentProtection/@w:formatting` is the restriction, and
+    /// `w:style/@w:locked` plus `w:latentStyles/@w:defLockedState` are the whitelist it
+    /// restricts *to*. `casual_doc_edit::protection::refuse_if_formatting_locked` is the
+    /// first consumer of all three, and the thing a consumer makes newly expensive is a
+    /// silent drop on save: a document saved here and reopened in Word would then permit
+    /// formatting Word's own author forbade, which is a document-safety defect rather
+    /// than a fidelity one.
+    ///
+    /// Asserted from SOURCE XML through to a re-import rather than by inspecting the
+    /// written bytes, because "the attribute is in the output" and "the restriction
+    /// survives" are two claims and only the second is the guarantee — the rule
+    /// `w_enforcement_is_always_written_explicitly…` already follows.
+    #[test]
+    fn the_formatting_axis_and_its_locked_styles_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::DocumentProtectionEdit;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let document_xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        // Word's pure formatting restriction: `w:edit="none"` with the formatting flag
+        // on. The level restricts nothing and the axis restricts everything, which is
+        // the combination a model carrying one `bool` per element could not express and
+        // the one this round trip has to keep distinguishable from "unprotected".
+        let settings = br#"<w:settings xmlns:w="urn:w">
+            <w:documentProtection w:edit="none" w:enforcement="1" w:formatting="1"/>
+        </w:settings>"#;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:latentStyles w:defLockedState="1" w:count="3"/>
+            <w:style w:type="paragraph" w:styleId="Locked">
+                <w:name w:val="Locked"/><w:locked/>
+            </w:style>
+            <w:style w:type="paragraph" w:styleId="Open">
+                <w:name w:val="Open"/>
+            </w:style>
+        </w:styles>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document_xml),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings),
+            ("word/styles.xml", styles),
+        ]);
+
+        let graded = |document: &casual_doc_model::v1::Document| {
+            let protection = document
+                .definitions()
+                .settings
+                .document_protection
+                .expect("the element is present, so a restriction is modeled");
+            let locked: Vec<bool> = document
+                .definitions()
+                .styles
+                .iter()
+                .map(|(id, _)| document.definitions().style_locked(*id))
+                .collect();
+            (
+                protection.edit,
+                protection.enforcement,
+                protection.formatting,
+                locked,
+            )
+        };
+
+        let before = reopen(&source);
+        assert_eq!(
+            graded(&before),
+            (DocumentProtectionEdit::None, true, true, vec![true, false]),
+            "import must read the formatting flag and grade one style locked and one not"
+        );
+
+        let bytes = write_document(&before, &BTreeMap::new()).unwrap();
+        let after = reopen(&bytes);
+        assert_eq!(
+            graded(&after),
+            graded(&before),
+            "the formatting restriction or its locked style did not survive the save — a \
+             document saved here would permit formatting its author forbade"
+        );
+
+        // And the whitelist's third construct, which no `Style` can carry: a style the
+        // table does not define inherits `w:defLockedState`. It is written and read back,
+        // so an id that resolves to nothing is still graded locked after a save.
+        assert_eq!(
+            after
+                .definitions()
+                .latent_styles
+                .as_ref()
+                .and_then(|latent| latent.default_locked_state),
+            Some(true),
+            "w:defLockedState was dropped, so every latent style silently became applicable"
+        );
+    }
+
     #[test]
     fn document_default_note_props_survive_the_semantic_round_trip() {
         // settings.xml carrying the document-default footnote/endnote property

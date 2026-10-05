@@ -1492,4 +1492,51 @@ impl Definitions {
     pub fn numbering_resolver(&self) -> NumberingResolver<'_> {
         NumberingResolver::new(&self.styles, &self.numbering, &self.abstract_numbering)
     }
+
+    /// Whether `style` is **locked** — `w:locked`, ECMA-376 §17.7.4.6 "Style
+    /// Cannot Be Applied".
+    ///
+    /// # What the attribute means, and the one condition it depends on
+    ///
+    /// `w:locked` is not an unconditional lock. It takes effect only while
+    /// document protection is enforced **and** the formatting restriction
+    /// (`w:documentProtection/@w:formatting`) is on; outside that, every style
+    /// is applicable. This function answers only "is the flag set", because the
+    /// condition belongs to the caller that holds the protection —
+    /// `casual_doc_edit::protection`, which is this method's reason to exist.
+    ///
+    /// # Why it is a method here and not a field read at the call site
+    ///
+    /// Because the answer for a style the table does **not** define is not on
+    /// any `Style`. `w:latentStyles/@w:defLockedState` is the declared default
+    /// `w:locked` for the built-in styles a part leaves latent, so a style id
+    /// that resolves to nothing inherits it. A caller reading `style.locked`
+    /// directly would get `false` for that case by not looking, which is the
+    /// shape of answer that reads as a decision and is an omission.
+    ///
+    /// `w:lsdException/@w:locked` — the per-style latent override — is
+    /// deliberately **not** consulted, and this is a recorded limit rather than
+    /// an oversight: an `LsdException` is keyed by the built-in style's
+    /// `w:name` ("heading 1"), a [`StyleId`] carries a [`NodeId`] and no name,
+    /// and the `w:name` that would bridge them lives on the `Style` that is by
+    /// definition absent in exactly this case. Guessing that an id spells its
+    /// own name would be a heuristic in an access decision, so the block's
+    /// declared default is used and the exception list is not searched.
+    ///
+    /// # Complexity
+    ///
+    /// O(log n) in the style table — one `BTreeMap` lookup, no document walk.
+    /// It runs on the edit path, so it may not scan (`docs/107` §4 B1); the
+    /// exception list is never traversed, which is also why.
+    #[must_use]
+    pub fn style_locked(&self, style: StyleId) -> bool {
+        match self.styles.get(&style) {
+            Some(defined) => defined.locked,
+            None => self
+                .latent_styles
+                .as_ref()
+                .and_then(|latent| latent.default_locked_state)
+                .unwrap_or(false),
+        }
+    }
 }

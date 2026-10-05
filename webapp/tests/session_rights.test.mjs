@@ -326,6 +326,28 @@ test("the badge reports the narrowest authority and names which one decided", ()
     ACCESS_SOURCE_KEYS.local,
   );
 
+  // THE SECOND AXIS. `w:documentProtection` carries two independent restrictions
+  // and a document can enforce `w:formatting` while its `w:edit` restricts
+  // nothing — Word's pure formatting restriction, now enforced at the operation.
+  // Such a reader may TYPE, so neither `full` nor `read` is true of them, and
+  // both wrong answers are asserted against here rather than only the right one:
+  // `full` is the lie this badge exists to stop, and `read` would stop a reader
+  // typing in a document they can type in.
+  const formattingOnly = accessState({
+    protection: { active: true, value: "off", formatting: true },
+  });
+  assert.equal(formattingOnly.levelKey, ACCESS_LEVEL_KEYS.noFormatting);
+  assert.equal(formattingOnly.sourceKey, ACCESS_SOURCE_KEYS.document);
+  assert.notEqual(formattingOnly.levelKey, ACCESS_LEVEL_KEYS.full);
+  assert.notEqual(formattingOnly.levelKey, ACCESS_LEVEL_KEYS.read);
+  // And an editing level ABSORBS the formatting axis rather than being
+  // reclassified by it: a reader told the document is read-only does not also
+  // need to be told its formatting is.
+  assert.equal(
+    accessState({ protection: { active: true, value: "readOnly", formatting: true } }).levelKey,
+    ACCESS_LEVEL_KEYS.read,
+  );
+
   // The container's grant, read from the CAPABILITY and not the role name — a
   // host may withhold a capability from a named preset.
   const embedded = accessState({ capabilities: { has: (name) => name === "comment" } });
