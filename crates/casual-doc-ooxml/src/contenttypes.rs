@@ -81,7 +81,10 @@ impl ContentTypes {
             ("webp", "image/webp"),
             ("emf", "image/x-emf"),
             ("wmf", "image/x-wmf"),
-            ("bin", "application/vnd.openxmlformats-officedocument.oleObject"),
+            (
+                "bin",
+                "application/vnd.openxmlformats-officedocument.oleObject",
+            ),
         ] {
             this.defaults
                 .insert(extension.to_owned(), content_type.to_owned());

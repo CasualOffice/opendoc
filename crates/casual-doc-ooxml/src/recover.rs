@@ -140,8 +140,7 @@ impl PackageRepair {
                     .to_owned()
             }
             Self::PackageRelationshipsMissing => {
-                "This file is missing the index that says which part holds the document."
-                    .to_owned()
+                "This file is missing the index that says which part holds the document.".to_owned()
             }
             Self::PackageRelationshipsUnreadable => {
                 "The index that says which part holds the document is damaged.".to_owned()
@@ -159,9 +158,9 @@ impl PackageRepair {
                          opened as one anyway."
                     .to_owned(),
             },
-            Self::MainDocumentAmbiguous { part } => format!(
-                "This file names more than one main document. The first ({part}) was used."
-            ),
+            Self::MainDocumentAmbiguous { part } => {
+                format!("This file names more than one main document. The first ({part}) was used.")
+            }
             Self::PartRelationshipsUnreadable { part } => format!(
                 "The list of what {part} refers to is damaged, so images and links inside it \
                  are not shown."

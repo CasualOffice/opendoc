@@ -119,9 +119,8 @@ pub(crate) fn repair(bytes: &[u8]) -> Option<(Vec<u8>, Vec<Repair>)> {
                             while stack.len() > position + 1 {
                                 let unclosed = stack.pop().unwrap_or_default();
                                 repairs.push(
-                                    Repair::new(RepairKind::UnclosedElementClosed).with_detail(
-                                        &String::from_utf8_lossy(&unclosed),
-                                    ),
+                                    Repair::new(RepairKind::UnclosedElementClosed)
+                                        .with_detail(&String::from_utf8_lossy(&unclosed)),
                                 );
                                 out.extend_from_slice(b"</");
                                 out.extend_from_slice(&unclosed);
@@ -144,7 +143,7 @@ pub(crate) fn repair(bytes: &[u8]) -> Option<(Vec<u8>, Vec<Repair>)> {
                     );
                     cursor = source.len();
                 }
-                Markup::NotMarkup => {
+                Markup::Text => {
                     repairs.push(Repair::new(RepairKind::MalformedMarkupEscaped));
                     out.extend_from_slice(b"&lt;");
                     cursor += 1;
@@ -261,7 +260,7 @@ pub(crate) fn main_document_shape(bytes: &[u8]) -> MainDocumentShape {
             | Markup::Instruction(end)
             | Markup::Doctype(end) => cursor = end,
             Markup::Unterminated => break,
-            Markup::NotMarkup => cursor += 1,
+            Markup::Text => cursor += 1,
         }
     }
     match root {
@@ -394,7 +393,7 @@ enum Markup<'a> {
     Unterminated,
     /// A `<` that cannot begin a tag, so it is text the producer failed to
     /// escape.
-    NotMarkup,
+    Text,
 }
 
 /// Classifies the markup at `start`, which must be a `<`.
@@ -428,7 +427,7 @@ fn classify(source: &[u8], start: usize) -> Markup<'_> {
         let name_start = start + 2;
         let name_end = name_end(source, name_start);
         if name_end == name_start {
-            return Markup::NotMarkup;
+            return Markup::Text;
         }
         return match tag_end(source, name_end) {
             Some(end) => Markup::End {
@@ -441,7 +440,7 @@ fn classify(source: &[u8], start: usize) -> Markup<'_> {
     let name_start = start + 1;
     let name_end = name_end(source, name_start);
     if name_end == name_start {
-        return Markup::NotMarkup;
+        return Markup::Text;
     }
     match tag_end(source, name_end) {
         Some(end) => Markup::Start {
@@ -542,7 +541,12 @@ fn scrub_into(tag: &[u8], out: &mut Vec<u8>, repairs: &mut Vec<Repair>) {
 /// there is no declaration to read and no text the reference could stand for. A
 /// bare `&` is escaped, which is the single most common hand-edit damage in the
 /// wild (a URL query string written into an attribute unescaped).
-fn scrub_entity(source: &[u8], start: usize, out: &mut Vec<u8>, repairs: &mut Vec<Repair>) -> usize {
+fn scrub_entity(
+    source: &[u8],
+    start: usize,
+    out: &mut Vec<u8>,
+    repairs: &mut Vec<Repair>,
+) -> usize {
     let limit = source.len().min(start + MAX_ENTITY_BYTES);
     let terminator = source[start..limit].iter().position(|byte| *byte == b';');
     let Some(offset) = terminator else {

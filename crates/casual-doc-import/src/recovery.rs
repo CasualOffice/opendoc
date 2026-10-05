@@ -405,9 +405,7 @@ impl Repair {
                  properties, styles and any headers — was opened around an empty document."
                     .to_owned()
             }
-            RepairKind::BodyMissing => {
-                "The document has no body, so it opened empty.".to_owned()
-            }
+            RepairKind::BodyMissing => "The document has no body, so it opened empty.".to_owned(),
             RepairKind::NotWordprocessingMl => format!(
                 "This file is packaged as a Word document but its main part is not one{}. \
                  Only an empty document could be built from it.",
@@ -462,13 +460,14 @@ impl Repair {
     }
 
     fn role_description(&self) -> &'static str {
-        self.role
-            .map_or("part of the file", PartRole::describe)
+        self.role.map_or("part of the file", PartRole::describe)
     }
 
     fn consequence(&self) -> &'static str {
-        self.role
-            .map_or("that part of the document is not shown", PartRole::consequence)
+        self.role.map_or(
+            "that part of the document is not shown",
+            PartRole::consequence,
+        )
     }
 
     /// `is`/`are`, so the sentence agrees with the role's own number.
@@ -533,12 +532,7 @@ impl RecoveryReport {
     /// [`MAX_REPAIRS`] distinct rows into one [`RepairKind::FurtherRepairs`] row.
     #[must_use]
     pub(crate) fn from_repairs(repairs: impl IntoIterator<Item = Repair>) -> Self {
-        type Key = (
-            RepairKind,
-            Option<PartRole>,
-            Option<String>,
-            Option<String>,
-        );
+        type Key = (RepairKind, Option<PartRole>, Option<String>, Option<String>);
         let mut aggregated: BTreeMap<Key, u32> = BTreeMap::new();
         let mut overflow = 0_u32;
         for repair in repairs {

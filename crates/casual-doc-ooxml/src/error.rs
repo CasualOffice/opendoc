@@ -214,9 +214,7 @@ impl PackageError {
             Self::UnsupportedMainDocumentType => {
                 "This file's main part is not a Word document.".to_owned()
             }
-            Self::PartNotFound => {
-                "A part this document refers to is not in the file.".to_owned()
-            }
+            Self::PartNotFound => "A part this document refers to is not in the file.".to_owned(),
             Self::PartReadFailed => {
                 "A part of this document could not be unpacked; its compressed data does not \
                  match what the file says it should be."

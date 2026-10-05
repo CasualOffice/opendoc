@@ -1722,8 +1722,7 @@ pub(crate) fn parse_header_footer(
     } else {
         crate::recovery::PartRole::Header
     };
-    let mut parser =
-        BodyParser::build(ids, reporter, &inputs, parsed_defs, None, role, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, role, config);
     parser.hf_root = Some(root);
     parser.run(xml)?;
     // A header/footer part is one block container.
@@ -1907,11 +1906,10 @@ impl BodyParser<'_> {
                 // document content, so dropping it loses nothing a reader could
                 // have seen, and refusing the file over it loses everything.
                 Event::DocType(_) if self.reporter.may_recover() => {
-                    self.reporter
-                        .repair(crate::recovery::Repair::in_role(
-                            crate::recovery::RepairKind::DoctypeRemoved,
-                            self.role,
-                        ));
+                    self.reporter.repair(crate::recovery::Repair::in_role(
+                        crate::recovery::RepairKind::DoctypeRemoved,
+                        self.role,
+                    ));
                 }
                 Event::DocType(_) => return Err(ImportError::MalformedXml),
                 Event::Start(element) => {

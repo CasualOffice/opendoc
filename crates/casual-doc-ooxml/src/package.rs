@@ -9,9 +9,9 @@ use crate::discovery::{
     discover_main_document, discover_main_document_recovering, resolve_part_relationships,
 };
 use crate::error::PackageError;
+use crate::path::is_macro_part;
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 use crate::recover::PackageRepair;
-use crate::path::is_macro_part;
 use crate::relationships::DocumentRelationship;
 
 pub(crate) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";

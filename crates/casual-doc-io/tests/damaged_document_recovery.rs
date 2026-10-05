@@ -304,7 +304,12 @@ static DAMAGE: &[Damage] = &[
     },
     Damage {
         name: "the document closes a tag it never opened",
-        build: || replacing("word/document.xml", &document_with("</w:body>", "</w:nope>")),
+        build: || {
+            replacing(
+                "word/document.xml",
+                &document_with("</w:body>", "</w:nope>"),
+            )
+        },
         expectation: Expectation::Opens,
     },
     Damage {
@@ -538,7 +543,13 @@ fn open(bytes: &[u8]) -> Result<Opened, String> {
             .recovery
             .repairs
             .iter()
-            .map(|repair| (repair.token.clone(), repair.summary.clone(), repair.severity))
+            .map(|repair| {
+                (
+                    repair.token.clone(),
+                    repair.summary.clone(),
+                    repair.severity,
+                )
+            })
             .collect(),
         compatibility_findings: artifact.report.entries.len(),
     })
@@ -667,9 +678,10 @@ fn an_empty_recovery_is_always_accounted_for() {
             .repairs
             .iter()
             .any(|(_, _, severity)| *severity == RepairSeverity::BodyLost)
-            || opened.repairs.iter().any(|(token, _, _)| {
-                matches!(token.as_str(), "body-missing" | "body-unreadable")
-            });
+            || opened
+                .repairs
+                .iter()
+                .any(|(token, _, _)| matches!(token.as_str(), "body-missing" | "body-unreadable"));
         assert!(
             accounted,
             "{}: opened with no text at all and nothing in the report says the body was \

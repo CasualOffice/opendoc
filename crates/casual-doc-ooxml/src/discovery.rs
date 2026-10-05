@@ -6,9 +6,9 @@ use quick_xml::events::Event;
 
 use crate::contenttypes::ContentTypes;
 use crate::error::PackageError;
+use crate::package::ROOT_RELATIONSHIPS_PART;
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 use crate::recover::PackageRepair;
-use crate::package::ROOT_RELATIONSHIPS_PART;
 use crate::relationships::{
     DocumentRelationship, Relationship, TargetMode, is_office_document_type, parent_segments,
     parse_relationships, relationship_part_name, resolve_relative_target,

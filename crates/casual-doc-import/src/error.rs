@@ -72,9 +72,7 @@ impl ImportError {
                     .to_owned()
             }
             Self::Package(error) => error.summary(),
-            Self::MalformedXml => {
-                "This document's text is damaged beyond reading.".to_owned()
-            }
+            Self::MalformedXml => "This document's text is damaged beyond reading.".to_owned(),
             Self::LimitExceeded { limit } => format!(
                 "This document is too large to open safely: it exceeds the limit on {limit}. \
                  The limit protects against a file that would expand without bound once \

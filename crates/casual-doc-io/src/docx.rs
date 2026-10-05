@@ -9,12 +9,10 @@ use casual_doc_import::{
     import_package,
 };
 // Own lines, kept out of any sorted block (the repo's parallel-PR rule).
-use casual_doc_import::{
-    RecoveryReport as DocxRecoveryReport, Severity as DocxSeverity,
-};
-use casual_doc_ooxml::{PackageRepair, repair_archive};
+use casual_doc_import::{RecoveryReport as DocxRecoveryReport, Severity as DocxSeverity};
 use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
+use casual_doc_ooxml::{PackageRepair, repair_archive};
 use casual_doc_rtf::RtfLimits;
 
 use crate::{

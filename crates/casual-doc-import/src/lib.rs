@@ -63,12 +63,12 @@ pub use config::{ImportConfig, ImportMode};
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use coverage::{MeaningfulMarkup, meaningful_markup};
 pub use error::ImportError;
+pub use opaque::{
+    RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
+};
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use recovery::{
     MAX_DETAIL_BYTES, MAX_REPAIRS, PartRole, RecoveryReport, Repair, RepairKind, Severity,
-};
-pub use opaque::{
-    RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
 };
 pub use report::{
     CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
@@ -405,38 +405,34 @@ pub fn import_package(
     // The font table plus its own relationships (embedded `.odttf` fonts resolve
     // through `fontTable.xml.rels`, not the document's).
     let (font_table_bytes, font_table_rels) = match font_table_part {
-        Some(part) => match recover_read(
-            package,
-            &part,
-            PartRole::FontTable,
-            recover,
-            &mut repairs,
-        )? {
-            None => (None, std::collections::BTreeMap::new()),
-            Some(bytes) => {
-            let relationships = match package.part_relationships(&part) {
-                Ok(relationships) => relationships,
-                Err(error) if recover => {
-                    let _ = error;
-                    repairs.push(Repair::in_part(
-                        RepairKind::PartUnparsable,
-                        PartRole::FontTable,
-                        &part,
-                    ));
-                    Vec::new()
+        Some(part) => {
+            match recover_read(package, &part, PartRole::FontTable, recover, &mut repairs)? {
+                None => (None, std::collections::BTreeMap::new()),
+                Some(bytes) => {
+                    let relationships = match package.part_relationships(&part) {
+                        Ok(relationships) => relationships,
+                        Err(error) if recover => {
+                            let _ = error;
+                            repairs.push(Repair::in_part(
+                                RepairKind::PartUnparsable,
+                                PartRole::FontTable,
+                                &part,
+                            ));
+                            Vec::new()
+                        }
+                        Err(error) => return Err(ImportError::Package(error)),
+                    };
+                    let font_rels: std::collections::BTreeMap<String, String> = relationships
+                        .iter()
+                        .filter(|relationship| relationship.relationship_type.ends_with("/font"))
+                        .filter_map(|relationship| {
+                            Some((relationship.id.clone(), relationship.resolved_part.clone()?))
+                        })
+                        .collect();
+                    (Some(bytes), font_rels)
                 }
-                Err(error) => return Err(ImportError::Package(error)),
-            };
-            let font_rels: std::collections::BTreeMap<String, String> = relationships
-                .iter()
-                .filter(|relationship| relationship.relationship_type.ends_with("/font"))
-                .filter_map(|relationship| {
-                    Some((relationship.id.clone(), relationship.resolved_part.clone()?))
-                })
-                .collect();
-                (Some(bytes), font_rels)
             }
-        },
+        }
         None => (None, std::collections::BTreeMap::new()),
     };
     for part in font_table_rels.values() {
@@ -488,16 +484,31 @@ pub fn import_package(
             }
             let mut sources = sources;
             if let (Some(sources), Some(companion)) = (sources.as_mut(), extended_part) {
-                sources.comments_extended =
-                    recover_read(package, &companion, PartRole::Comments, recover, &mut repairs)?;
+                sources.comments_extended = recover_read(
+                    package,
+                    &companion,
+                    PartRole::Comments,
+                    recover,
+                    &mut repairs,
+                )?;
             }
             if let (Some(sources), Some(companion)) = (sources.as_mut(), ids_part) {
-                sources.comments_ids =
-                    recover_read(package, &companion, PartRole::Comments, recover, &mut repairs)?;
+                sources.comments_ids = recover_read(
+                    package,
+                    &companion,
+                    PartRole::Comments,
+                    recover,
+                    &mut repairs,
+                )?;
             }
             if let (Some(sources), Some(companion)) = (sources.as_mut(), people_part) {
-                sources.people =
-                    recover_read(package, &companion, PartRole::Comments, recover, &mut repairs)?;
+                sources.people = recover_read(
+                    package,
+                    &companion,
+                    PartRole::Comments,
+                    recover,
+                    &mut repairs,
+                )?;
             }
             sources
         }
@@ -628,19 +639,19 @@ pub fn import_package(
             }
             Err(error) => return Err(ImportError::Package(error)),
         }
-            .iter()
-            .filter(|relationship| !relationship.id.is_empty())
-            .filter_map(|relationship| {
-                let part = relationship.resolved_part.clone()?;
-                Some((
-                    relationship.id.clone(),
-                    EmbeddedRel {
-                        relationship_type: relationship.relationship_type.clone(),
-                        part_name: part,
-                    },
-                ))
-            })
-            .collect();
+        .iter()
+        .filter(|relationship| !relationship.id.is_empty())
+        .filter_map(|relationship| {
+            let part = relationship.resolved_part.clone()?;
+            Some((
+                relationship.id.clone(),
+                EmbeddedRel {
+                    relationship_type: relationship.relationship_type.clone(),
+                    part_name: part,
+                },
+            ))
+        })
+        .collect();
         chart_part_sources.insert(part_name, crate::chart::ChartPartSource { bytes, rels });
     }
 
@@ -743,23 +754,23 @@ pub fn import_package(
                 repair_part(&mut part.xml, PartRole::Footer, &mut repairs);
             }
             match import_with_sources(
-        &document_bytes,
-        styles_bytes.as_deref(),
-        numbering_bytes.as_deref(),
-        font_table_bytes.as_deref(),
-        &font_table_rels,
-        theme_bytes.as_deref(),
-        settings_bytes.as_deref(),
-        footnotes.as_ref(),
-        endnotes.as_ref(),
-        &header_parts,
-        &footer_parts,
-        comments.as_ref(),
-        &media_sources,
-        &hyperlink_rels,
-        &embedded_index,
-        &chart_part_sources,
-        config,
+                &document_bytes,
+                styles_bytes.as_deref(),
+                numbering_bytes.as_deref(),
+                font_table_bytes.as_deref(),
+                &font_table_rels,
+                theme_bytes.as_deref(),
+                settings_bytes.as_deref(),
+                footnotes.as_ref(),
+                endnotes.as_ref(),
+                &header_parts,
+                &footer_parts,
+                comments.as_ref(),
+                &media_sources,
+                &hyperlink_rels,
+                &embedded_index,
+                &chart_part_sources,
+                config,
             ) {
                 Ok(import) => import,
                 Err(inner) if is_damage(&inner) => {
@@ -769,23 +780,23 @@ pub fn import_package(
                     ));
                     document_bytes = EMPTY_MAIN_DOCUMENT.to_vec();
                     import_with_sources(
-        &document_bytes,
-        styles_bytes.as_deref(),
-        numbering_bytes.as_deref(),
-        font_table_bytes.as_deref(),
-        &font_table_rels,
-        theme_bytes.as_deref(),
-        settings_bytes.as_deref(),
-        footnotes.as_ref(),
-        endnotes.as_ref(),
-        &header_parts,
-        &footer_parts,
-        comments.as_ref(),
-        &media_sources,
-        &hyperlink_rels,
-        &embedded_index,
-        &chart_part_sources,
-        config,
+                        &document_bytes,
+                        styles_bytes.as_deref(),
+                        numbering_bytes.as_deref(),
+                        font_table_bytes.as_deref(),
+                        &font_table_rels,
+                        theme_bytes.as_deref(),
+                        settings_bytes.as_deref(),
+                        footnotes.as_ref(),
+                        endnotes.as_ref(),
+                        &header_parts,
+                        &footer_parts,
+                        comments.as_ref(),
+                        &media_sources,
+                        &hyperlink_rels,
+                        &embedded_index,
+                        &chart_part_sources,
+                        config,
                     )?
                 }
                 Err(inner) => return Err(inner),
@@ -793,7 +804,6 @@ pub fn import_package(
         }
         Err(error) => return Err(error),
     };
-
 
     // In Retention mode, retain every admitted part verbatim (the package-level
     // byte floor) so styles, media, and other parts can be reproduced too.
@@ -805,8 +815,13 @@ pub fn import_package(
             .collect();
         let mut total = 0_usize;
         for name in names {
-            let Some(bytes) =
-                recover_read(package, &name, PartRole::RetainedPart, recover, &mut repairs)?
+            let Some(bytes) = recover_read(
+                package,
+                &name,
+                PartRole::RetainedPart,
+                recover,
+                &mut repairs,
+            )?
             else {
                 continue;
             };
@@ -916,7 +931,9 @@ pub fn import_package(
         .map_err(ImportError::Disposition)?;
     // The driver's own repairs join the ones the parsers recorded through the
     // reporter, so one report describes the whole open.
-    import.recovery.absorb(RecoveryReport::from_repairs(repairs));
+    import
+        .recovery
+        .absorb(RecoveryReport::from_repairs(repairs));
 
     Ok(import)
 }
