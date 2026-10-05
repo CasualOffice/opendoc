@@ -1168,10 +1168,31 @@ pub struct DashStop {
 /// away from every one of them and a new field would break each literal — a
 /// change with nothing for a merge to conflict on (`SKILL` §5a shape 1).
 ///
-/// **Nothing paints any of this**; the stroke still draws as a plain centred,
-/// single, round-capped line of its modeled width and preset dash. Each part is
-/// reported at import, and export re-emits it, so the round trip is honest even
-/// though the render is not.
+/// # What paints, and what is carried without painting
+///
+/// This sentence used to read "nothing paints any of this", and it stopped being
+/// true in two steps. Stated per part, because a blanket claim in either direction
+/// is the defect `docs/99` §9.2 names:
+///
+/// | part | state |
+/// | --- | --- |
+/// | `cap` | **paints**, raster and PDF |
+/// | `join` kind | **paints**, raster and PDF |
+/// | `join`'s `a:miter@lim` | **paints**, raster and PDF |
+/// | `custom_dash` | **paints**, raster and PDF |
+/// | `compound` = `dbl` | **paints** on the raster backend; PDF records a gap |
+/// | `compound` = `thickThin`/`thinThick`/`tri` | carried and reported, not painted |
+/// | `align` | carried and reported, not painted |
+///
+/// The reasons the last two rows are deliberate rather than unfinished are stated
+/// where the decision lives — `casual_doc_layout::display::ShapeOutline`'s
+/// `compound_paint` for the compound forms (ECMA-376 states no band proportions, and
+/// the asymmetric ones additionally need a side that an open path does not have), and
+/// that type's own doc comment for `@algn` (an inset pen moves the path, so it is
+/// geometry rather than a stroke parameter, and neither backend can offset a path).
+///
+/// Every part is reported at import and re-emitted at export regardless, so the round
+/// trip is honest whether or not the render is.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StrokeDetail {
@@ -1223,15 +1244,16 @@ impl StrokeDetail {
 ///
 /// # What it does NOT buy
 ///
-/// Reachability. Nothing in layout, render, PDF or the editor reads this table —
-/// a shape with a picture or pattern fill still paints unfilled, a custom dash
-/// still draws solid, a `cmpd="dbl"` outline still draws single, and a
-/// `path="shape"` gradient still paints concentric. What the table buys is that
+/// Reachability, for everything in it. What the table buys unconditionally is that
 /// **a save no longer destroys any of it** and that the import report names each
-/// one. `docs/156` §6 row 0.3 is **not** closed by this: painting is a separate,
-/// unlanded piece of work in `casual-doc-layout`, and calling the row done here
-/// would be the "modeled but not consumed" claim `SKILL` §9.4 calls the most
-/// expensive recurring mistake in this repository.
+/// one; whether a row also *paints* is a separate question with a separate answer
+/// per row, and the rows differ. [`StrokeDetail`]'s own doc comment carries the
+/// current per-part state of the outline geometry, the gradient geometry and the
+/// drop shadow now reach the display list, and `a:pattFill` is still unpainted by
+/// policy. `docs/156` §6 row 0.3 is therefore partly, not wholly, closed — stating
+/// that per construct rather than as one verdict is the point, because "modeled but
+/// not consumed" (`SKILL` §9.4) and "claimed as shipped when it is not" are the same
+/// mistake read from opposite ends.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShapeFillDetail {

@@ -959,6 +959,227 @@ fn document_in_font(font: &str, text: &str) -> Document {
     .expect("a one-paragraph document is valid")
 }
 
+/// One page's content-stream operators, decompressed.
+///
+/// Reading the file bytes as text would pass on a `J` that landed in a font name or
+/// an XMP packet, so the stream is resolved and inflated instead.
+fn content_stream(export: &PdfExport) -> String {
+    let pdf = inspect::parse(&export.bytes).expect("the export parses as a PDF");
+    let page = *pdf.pages().first().expect("one page");
+    let contents = pdf.get(page, "Contents").expect("the page has contents");
+    let bytes = pdf
+        .stream_data(pdf.resolve(contents))
+        .expect("the content stream decodes");
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// A one-shape display list carrying an outline with the stated `a:ln` geometry.
+fn outlined_shape_page(
+    cap: Option<casual_doc_model::v1::LineCap>,
+    join: Option<casual_doc_model::v1::LineJoin>,
+    compound: Option<casual_doc_model::v1::CompoundLine>,
+    custom_dash: Vec<casual_doc_model::v1::DashStop>,
+) -> casual_doc_layout::display::DisplayList {
+    use casual_doc_layout::display::{Color, DisplayList, PaintItem, ShapeGeometry, ShapeOutline};
+    use casual_doc_layout::units::{Point, Rect, Size, Twip};
+    use casual_doc_model::v1::DashStyle;
+
+    let mut list = DisplayList::new();
+    list.push(PaintItem::Shape {
+        geometry: ShapeGeometry::Rect {
+            rect: Rect::new(
+                Point::new(Twip(1440), Twip(1440)),
+                Size::new(Twip(2880), Twip(2160)),
+            ),
+        },
+        fill: None,
+        stroke: Some(ShapeOutline {
+            color: Color::BLACK,
+            width: 4.0,
+            dash: DashStyle::Solid,
+            cap,
+            join,
+            custom_dash,
+            compound,
+        }),
+        head_end: None,
+        tail_end: None,
+        transform: None,
+    });
+    list
+}
+
+/// The outline geometry must reach the PDF, not only the screen.
+///
+/// The raster backend has painted `a:ln@cap`, the join and an authored `a:custDash`
+/// since the outline-geometry lane landed; this backend set only colour, width and the
+/// PRESET dash, so the two outputs disagreed about every bordered shape with a stated
+/// cap or join — which is precisely the divergence `docs/98` step 2 says must be either
+/// closed or recorded. PDF expresses all of it natively (`J`, `j`, `M`, `d`), so it is
+/// closed rather than recorded.
+#[test]
+fn a_shapes_cap_join_and_miter_limit_reach_the_pdf_content_stream() {
+    use casual_doc_model::v1::{LineCap, LineJoin};
+
+    let round_bevel = write_pdf(
+        &[page_of(&outlined_shape_page(
+            Some(LineCap::Round),
+            Some(LineJoin::Bevel),
+            None,
+            Vec::new(),
+        ))],
+        &casual_doc_pdf::BundledFontSource,
+        &MapMediaSource::new(),
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    let stream = content_stream(&round_bevel);
+    assert!(
+        stream.contains("1 J"),
+        "a round cap must reach the stream as `1 J`: {stream}"
+    );
+    assert!(
+        stream.contains("2 j"),
+        "a bevel join must reach the stream as `2 j`: {stream}"
+    );
+
+    // A square cap and a mitred corner with an authored limit. 800% of the line width
+    // is a ratio of 8 — not PDF's own default of 10, and not the 4 the raster backend
+    // defaults to, so the operator has to carry the number for the two to agree.
+    let square_miter = write_pdf(
+        &[page_of(&outlined_shape_page(
+            Some(LineCap::Square),
+            Some(LineJoin::Miter {
+                limit: Some(800_000),
+            }),
+            None,
+            Vec::new(),
+        ))],
+        &casual_doc_pdf::BundledFontSource,
+        &MapMediaSource::new(),
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    let stream = content_stream(&square_miter);
+    assert!(
+        stream.contains("2 J"),
+        "a square cap must reach the stream as `2 J`: {stream}"
+    );
+    assert!(
+        stream.contains("0 j"),
+        "a miter join must reach the stream as `0 j`: {stream}"
+    );
+    assert!(
+        stream.contains("8 M"),
+        "lim=800000 is a ratio of 8 and must reach the stream as `8 M`: {stream}"
+    );
+
+    // An outline that states NOTHING must still write its state, because PDF's initial
+    // graphics state is not the raster backend's: a viewer starts at a miter limit of
+    // 10 and tiny-skia at 4, so leaving it implicit is the divergence, not the fix.
+    let bare = write_pdf(
+        &[page_of(&outlined_shape_page(None, None, None, Vec::new()))],
+        &casual_doc_pdf::BundledFontSource,
+        &MapMediaSource::new(),
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    let stream = content_stream(&bare);
+    assert!(
+        stream.contains("0 J") && stream.contains("0 j") && stream.contains("4 M"),
+        "an unstated cap, join and limit must be written as butt/miter/4, which is          what the rasterizer would use: {stream}"
+    );
+}
+
+/// An authored `a:custDash` must outrank the preset in the PDF too.
+#[test]
+fn an_authored_custom_dash_reaches_the_pdf_as_its_own_pattern() {
+    use casual_doc_model::v1::DashStop;
+
+    // 400% on, 200% off, at a 4px (3pt) line: 12pt on, 6pt off.
+    let export = write_pdf(
+        &[page_of(&outlined_shape_page(
+            None,
+            None,
+            None,
+            vec![DashStop {
+                dash: 400_000,
+                space: 200_000,
+            }],
+        ))],
+        &casual_doc_pdf::BundledFontSource,
+        &MapMediaSource::new(),
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    let stream = content_stream(&export);
+    assert!(
+        stream.contains("[12 6] 0 d"),
+        "a 400%/200% custDash on a 3pt line is 12pt on, 6pt off — the lengths are          thousandths of a percent of the width, not device units: {stream}"
+    );
+}
+
+/// A compound outline PDF cannot express is reported, not quietly drawn as one line.
+///
+/// The raster backend paints `cmpd="dbl"` by stroking the path to an outline at two
+/// widths and filling the difference with the even-odd rule. A PDF content stream has
+/// neither a stroke-to-path nor a path-offset operator, so the band geometry is not
+/// expressible — and `SKILL` §9.4 says the answer to that is a finding, not an
+/// approximation. Without this the PDF would show one line where the editor shows two
+/// and nothing would say so.
+#[test]
+fn a_compound_outline_the_pdf_cannot_express_is_reported() {
+    use casual_doc_model::v1::CompoundLine;
+
+    for form in [
+        CompoundLine::Double,
+        CompoundLine::ThickThin,
+        CompoundLine::Triple,
+    ] {
+        let export = write_pdf(
+            &[page_of(&outlined_shape_page(
+                None,
+                None,
+                Some(form),
+                Vec::new(),
+            ))],
+            &casual_doc_pdf::BundledFontSource,
+            &MapMediaSource::new(),
+            &PdfExportOptions::default(),
+        )
+        .expect("export");
+        let finding = export
+            .findings
+            .iter()
+            .find(|finding| finding.code == "pdf.shape.compound");
+        assert!(
+            finding.is_some(),
+            "{form:?} must be reported as `pdf.shape.compound`, got {:?}",
+            export.findings
+        );
+    }
+
+    // And `sng` — or no `@cmpd` at all — must NOT be reported: a finding on every
+    // bordered shape in every document is a finding callers filter out.
+    for quiet in [None, Some(CompoundLine::Single)] {
+        let export = write_pdf(
+            &[page_of(&outlined_shape_page(None, None, quiet, Vec::new()))],
+            &casual_doc_pdf::BundledFontSource,
+            &MapMediaSource::new(),
+            &PdfExportOptions::default(),
+        )
+        .expect("export");
+        assert!(
+            !export
+                .findings
+                .iter()
+                .any(|finding| finding.code == "pdf.shape.compound"),
+            "{quiet:?} is a single line, which PDF expresses exactly: {:?}",
+            export.findings
+        );
+    }
+}
+
 /// A display list placing one picture, for the picture guards.
 fn image_list() -> casual_doc_layout::display::DisplayList {
     use casual_doc_layout::display::{DisplayList, PaintItem};

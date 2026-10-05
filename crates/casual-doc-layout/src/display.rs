@@ -11,6 +11,8 @@ use casual_doc_model::v1::{CropRect, DashStyle, LineEnd};
 // Own `use` line (anti-conflict), matching the convention in `anchor.rs`: the
 // outline geometry `a:ln` carries beyond colour, width and a preset dash.
 use casual_doc_model::v1::{DashStop, LineCap, LineJoin};
+// Own `use` line (anti-conflict): `a:ln@cmpd`, the multi-line outline form.
+use casual_doc_model::v1::CompoundLine;
 // Own `use` line (anti-conflict): a path gradient's family is DrawingML's own
 // `a:path@path` token, so the model's enum is reused rather than mirrored.
 use casual_doc_model::v1::GradientPath;
@@ -179,6 +181,17 @@ impl GradientFocus {
 /// `custom_dash` outranks `dash` when non-empty, for the same reason a custom
 /// geometry outranks a preset: `a:custDash` IS the pattern the author stated, and
 /// `a:prstDash` is only present when they picked from the gallery.
+///
+/// # What `a:ln` carries that is deliberately absent
+///
+/// `@algn` (`ST_PenAlignment`). `algn="in"` puts the pen wholly inside the outline,
+/// which moves the *path* inward by half the line width — a different geometry, not a
+/// stroke parameter, and one no rasterizer here can produce because neither
+/// `tiny-skia` nor PDF offers a path offset. Faking it by narrowing the stroke, or by
+/// insetting only the rectangular cases, would make a shape's painted extent agree
+/// with Word for a rectangle and disagree for every `a:custGeom` — worse than one
+/// honest centred stroke plus the importer's finding. It stays modeled, round-tripped
+/// and reported.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ShapeOutline {
     /// The outline color.
@@ -197,6 +210,102 @@ pub struct ShapeOutline {
     /// which is the unit `ST_PositivePercentage` uses. Empty means none authored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_dash: Vec<DashStop>,
+    /// `a:ln@cmpd` — how many parallel lines the outline draws as. `None` and
+    /// `Some(CompoundLine::Single)` both mean one line, which is DrawingML's
+    /// default; what each other value paints is [`ShapeOutline::compound_paint`]'s
+    /// decision, not a backend's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compound: Option<CompoundLine>,
+}
+
+/// The default miter limit, as the ratio of a corner's miter length to the stroke
+/// width past which the corner degenerates into a bevel.
+///
+/// 4 because that is `tiny-skia`'s default, Skia's, and SVG's `stroke-miterlimit`
+/// initial value. PDF's default is **10**, which is why the PDF backend emits an
+/// explicit `M` rather than relying on the viewer's initial graphics state: left
+/// implicit, the same unstated-`a:miter` corner would bevel in the raster output and
+/// stay sharp in the PDF.
+pub const DEFAULT_MITER_LIMIT: f32 = 4.0;
+
+/// What one `a:ln@cmpd` value paints, decided once here so the raster and PDF
+/// backends cannot disagree about it.
+///
+/// A compound outline's lines are concentric about the path, so each **symmetric**
+/// pair of them is the region between two stroke widths — an annulus — and needs no
+/// path offsetting to express. The asymmetric forms do, which is why they are
+/// [`CompoundPaint::Unsupported`] rather than approximated.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CompoundPaint {
+    /// One plain stroke of the modeled width: `sng`, or no `@cmpd` at all.
+    Single,
+    /// Concentric bands, each `(knockout, outer)` as a pair of **stroke widths** in
+    /// device pixels. A band is the area a stroke of `outer` covers minus the area a
+    /// stroke of `knockout` covers, so a `knockout` of zero is a plain centred
+    /// stroke of `outer` and anything larger is a symmetric pair of lines.
+    ///
+    /// Ordered outside in.
+    Bands(Vec<(f32, f32)>),
+    /// Modeled, carried, re-emitted — and deliberately not painted.
+    Unsupported,
+}
+
+impl ShapeOutline {
+    /// The miter limit this outline's join asks for, as a stroke-width ratio.
+    ///
+    /// `a:miter@lim` is an `ST_PositivePercentage`, i.e. 1/1000 of a percent, so
+    /// `lim="800000"` is 800% and a ratio of 8. The floor is 1: a miter cannot be
+    /// shorter than the stroke is wide, and a rasterizer reads a sub-1 limit as
+    /// "always bevel", so clamping states that intent instead of relying on it.
+    ///
+    /// Any other join — and an `a:miter` with no `@lim` — gets
+    /// [`DEFAULT_MITER_LIMIT`]. A round or bevel join ignores the limit entirely;
+    /// returning the default rather than `None` keeps both backends writing one
+    /// value unconditionally, which is what stops PDF's own default of 10 leaking in.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn miter_limit(&self) -> f32 {
+        match self.join {
+            Some(LineJoin::Miter { limit: Some(limit) }) => (limit as f32 / 100_000.0).max(1.0),
+            _ => DEFAULT_MITER_LIMIT,
+        }
+    }
+
+    /// How `a:ln@cmpd` decomposes for this outline's width.
+    ///
+    /// # Why only `dbl` paints
+    ///
+    /// `dbl` is two lines of equal weight, and the only reading of "equal" that fits
+    /// a stated total width is three equal bands — line, gap, line, each a third of
+    /// the width. That is what a `double` border means in CSS and ODF too, so the
+    /// geometry is not invented here.
+    ///
+    /// `thickThin`, `thinThick` and `tri` are **not** painted, and the reason is not
+    /// effort. ECMA-376 states no proportions for them, so a renderer has to invent
+    /// both the weights and, for the two asymmetric forms, which side the thick line
+    /// is on — and "which side" is only defined for a closed path, so an open
+    /// connector has no answer at all. A thick line drawn on the wrong side of a
+    /// shape's outline is a worse output than one honest line plus a loss report
+    /// (`SKILL` §9.4), so these return [`CompoundPaint::Unsupported`] and the
+    /// importer's finding stands.
+    ///
+    /// Complexity: O(1) — at most one band is produced.
+    #[must_use]
+    pub fn compound_paint(&self) -> CompoundPaint {
+        match self.compound {
+            None | Some(CompoundLine::Single) => CompoundPaint::Single,
+            // Three equal thirds: the visible lines are the outermost and innermost
+            // third, which is the area a `width` stroke covers minus the area a
+            // `width / 3` stroke covers.
+            Some(CompoundLine::Double) => {
+                CompoundPaint::Bands(vec![(self.width / 3.0, self.width)])
+            }
+            Some(CompoundLine::ThickThin | CompoundLine::ThinThick | CompoundLine::Triple) => {
+                CompoundPaint::Unsupported
+            }
+        }
+    }
 }
 
 /// One command of a resolved shape path, in the same device-scaled twips as the

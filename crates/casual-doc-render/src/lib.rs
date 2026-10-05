@@ -37,6 +37,9 @@ use casual_doc_layout::display::ShapeTransform;
 // Own `use` line (anti-conflict): the path-gradient focus and the stop type the
 // banded decomposition samples between.
 use casual_doc_layout::display::{GradientFocus, GradientStop as DisplayGradientStop};
+// Own `use` line (anti-conflict): what `a:ln@cmpd` decomposes to, decided in the
+// display list so this backend and the PDF one cannot disagree about it.
+use casual_doc_layout::display::CompoundPaint;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::{Point, Rect};
@@ -1952,11 +1955,18 @@ fn render_shape(
                 .or_else(|| dash_pattern(stroke.dash, width)),
             line_cap: line_cap(stroke.cap),
             line_join: line_join(stroke.join),
-            ..Stroke::default()
+            miter_limit: stroke.miter_limit(),
         };
-        surface
-            .pixmap
-            .stroke_path(&path, &paint, &sk_stroke, transform, clip);
+        // A compound (`a:ln@cmpd`) outline is more than one parallel line, which no
+        // rasterizer strokes in one pass; `paint_compound_bands` draws the bands the
+        // display list decided on. It returns `false` for `sng` and for the forms
+        // `CompoundPaint::Unsupported` names, which then take the plain stroke below —
+        // the same shape the banded path gradient uses one block up.
+        if !paint_compound_bands(surface, &path, stroke, &sk_stroke, &paint, clip, transform) {
+            surface
+                .pixmap
+                .stroke_path(&path, &paint, &sk_stroke, transform, clip);
+        }
 
         // Arrowheads sit at the line's endpoints, oriented along the segment. The
         // endpoints ride the same transform so a rotated/flipped line keeps its
@@ -2353,10 +2363,11 @@ fn line_cap(cap: Option<ModelLineCap>) -> LineCap {
 
 /// `a:ln`'s join child as the rasterizer's line join.
 ///
-/// A miter limit is carried by the model but not applied: tiny-skia's `Stroke` takes
-/// a `miter_limit` and DrawingML's `a:miter@lim` is a percentage of the line width,
-/// so the two are expressible in each other — this converts the KIND only, and a
-/// non-default limit is still unapplied. Stated rather than silently approximated.
+/// The KIND only. `a:miter@lim` travels separately, through
+/// `ShapeOutline::miter_limit`, because the limit is a ratio rather than a kind and
+/// both backends must read it from one place — PDF's own default miter limit is 10
+/// against this rasterizer's 4, so an unstated limit left implicit would make the same
+/// corner bevel in one output and stay sharp in the other.
 fn line_join(join: Option<ModelLineJoin>) -> LineJoin {
     match join {
         Some(ModelLineJoin::Round) => LineJoin::Round,
@@ -2364,6 +2375,107 @@ fn line_join(join: Option<ModelLineJoin>) -> LineJoin {
         Some(ModelLineJoin::Miter { .. }) | None => LineJoin::Miter,
     }
 }
+
+/// Paints a compound (`a:ln@cmpd`) outline as its concentric bands, returning whether
+/// it did.
+///
+/// # The mechanism, and why it needs no path offsetting
+///
+/// A compound outline's lines are concentric about the path, so a **symmetric pair** of
+/// them — one line each side of the centre, as `dbl` draws — is exactly the area a wide
+/// stroke covers minus the area a narrow one covers. Stroke-to-path both widths, append
+/// the narrow outline to the wide one, and fill the result with the **even-odd** rule:
+/// a ray crossing inward meets the wide contour (1, inside), the narrow contour (2,
+/// outside again), and on a closed path the narrow and wide contours on the far side
+/// (3 and 4). Filled, empty, filled — the two lines and the gap between them.
+///
+/// That is exact rather than approximate, and it is why no path-offset primitive is
+/// needed: `tiny-skia` has none, and the offset of an arbitrary Bézier is not a Bézier.
+///
+/// The dash is applied to the path ONCE, before either stroke, so both lines break at
+/// the same places; dashing each width separately would give two patterns beating
+/// against each other. `a:custDash` lengths are percentages of the *stated* line width
+/// (the whole compound), which is the width the pattern was already built from.
+///
+/// # Limits, stated rather than left to be discovered
+///
+/// Even-odd filling turns a self-overlap into a hole, so a stroke wider than the
+/// curvature radius at a concave corner can show one. A plain stroke has the same
+/// geometry and resolves it by winding; this cannot, because the knockout *is* the
+/// even-odd crossing. The alternative — an inverted mask per band — costs a
+/// surface-sized allocation per outline and a hand-written mask multiply to compose
+/// with the enclosing clip, which is not worth paying on every bordered shape for an
+/// artifact a 1/3-width band makes hard to reach.
+///
+/// Complexity: O(bands) stroke-to-path operations, and `compound_paint` yields at most
+/// one band.
+fn paint_compound_bands(
+    surface: &mut Surface,
+    path: &tiny_skia::Path,
+    stroke: &ShapeOutline,
+    sk_stroke: &Stroke,
+    paint: &Paint<'_>,
+    clip: Option<&Mask>,
+    transform: Transform,
+) -> bool {
+    let CompoundPaint::Bands(bands) = stroke.compound_paint() else {
+        return false;
+    };
+    // Dash first, once, so every band breaks in the same places.
+    let dashed = match sk_stroke.dash.as_ref() {
+        Some(dash) => path.dash(dash, STROKE_RESOLUTION_SCALE),
+        None => None,
+    };
+    let source = dashed.as_ref().unwrap_or(path);
+    // The caller clamps a hairline up to one device pixel, and the bands are fractions
+    // of the STATED width, so they take the same clamp — otherwise a hairline double
+    // outline would paint narrower than a hairline single one.
+    let scale = if stroke.width > 0.0 {
+        sk_stroke.width / stroke.width
+    } else {
+        1.0
+    };
+    let mut painted = false;
+    for (knockout, outer) in bands {
+        let (knockout, outer) = (knockout * scale, outer * scale);
+        let band = Stroke {
+            width: outer,
+            dash: None,
+            ..sk_stroke.clone()
+        };
+        let Some(outline) = source.stroke(&band, STROKE_RESOLUTION_SCALE) else {
+            continue;
+        };
+        let mut builder = PathBuilder::new();
+        builder.push_path(&outline);
+        // A zero knockout is a plain centred band, so there is nothing to subtract and
+        // the even-odd fill of one contour set is the stroke itself.
+        if knockout > 0.0 {
+            let hole = Stroke {
+                width: knockout,
+                dash: None,
+                ..sk_stroke.clone()
+            };
+            if let Some(inner) = source.stroke(&hole, STROKE_RESOLUTION_SCALE) {
+                builder.push_path(&inner);
+            }
+        }
+        if let Some(region) = builder.finish() {
+            surface
+                .pixmap
+                .fill_path(&region, paint, FillRule::EvenOdd, transform, clip);
+            painted = true;
+        }
+    }
+    painted
+}
+
+/// The resolution scale handed to `tiny-skia`'s stroker and dasher.
+///
+/// 1.0 because the display list is already in device pixels at this point: the scale
+/// exists to tell the stroker how finely to flatten curves relative to the final
+/// device space, and here the two are the same space.
+const STROKE_RESOLUTION_SCALE: f32 = 1.0;
 
 /// An authored `a:custDash` as a dash pattern.
 ///
@@ -3805,6 +3917,11 @@ mod tests {
     // Separate `use` line to minimize import-block merge conflicts.
     use casual_doc_layout::display::ShapeTransform;
 
+    /// Own `use` lines (anti-conflict): the shared miter default this backend's own
+    /// default must equal, and the `a:ln@cmpd` token the compound guards parameterise.
+    use casual_doc_layout::display::DEFAULT_MITER_LIMIT;
+    use casual_doc_model::v1::CompoundLine;
+
     fn shape_surface(list: &DisplayList, w: u32, h: u32) -> Surface {
         let mut surface = Surface::new(w, h).unwrap();
         render(
@@ -4285,6 +4402,7 @@ mod tests {
                     cap: None,
                     join: None,
                     custom_dash: custom,
+                    compound: None,
                 }),
                 head_end: None,
                 tail_end: None,
@@ -4340,6 +4458,7 @@ mod tests {
                     cap,
                     join: None,
                     custom_dash: Vec::new(),
+                    compound: None,
                 }),
                 head_end: None,
                 tail_end: None,
@@ -4370,6 +4489,224 @@ mod tests {
         );
     }
 
+    /// A V with an apex sharp enough that the miter limit decides the corner.
+    ///
+    /// Two arms from an apex at (50, 20) down to (34, 120) and (66, 120). The half
+    /// angle at the apex has `tan = 16 / 100`, so `sin = 0.15749`, and the miter
+    /// ratio a rasterizer compares the limit against is `1 / sin = 6.35`. That sits
+    /// between the 4 both backends default to and the 800% the fixture authors, which
+    /// is exactly what makes an UNAPPLIED limit visible: default and authored differ.
+    ///
+    /// With the limit honoured the outer corner runs to `apex - width/2 * 6.35`
+    /// along the bisector: for `width = 4` that is 12.7px above the apex, i.e. y≈7.3.
+    /// With the corner bevelled instead, the outline stops at the two offset-line
+    /// endpoints, both at `apex_y - width/2 * cos(half angle)` ≈ y 18.0. So a sample
+    /// at y 13 — between the two — is painted for a miter and blank for a bevel,
+    /// with 5px of margin either side.
+    fn miter_v(join: Option<ModelLineJoin>) -> Surface {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(Twip(34), Twip(120)),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(Twip(50), Twip(20)),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(Twip(66), Twip(120)),
+                    },
+                ],
+                closed: false,
+            },
+            fill: None,
+            stroke: Some(ShapeOutline {
+                color: ShapeColor::BLACK,
+                width: 4.0,
+                dash: DashStyle::Solid,
+                cap: None,
+                join,
+                custom_dash: Vec::new(),
+                compound: None,
+            }),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        shape_surface(&list, 100, 130)
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_miter_limit_decides_whether_a_sharp_corner_keeps_its_point() {
+        // `a:miter@lim` was carried by the model and the display list and then
+        // dropped: the rasterizer built its stroke with `..Stroke::default()`, so
+        // every mitred corner used tiny-skia's limit of 4 whatever the file said. On a
+        // corner sharper than the default allows, that silently turns the author's
+        // point into a bevel — and a bevel at a 9-degree corner is a visibly blunted
+        // arrow head, not a rounding error.
+        let generous = miter_v(Some(ModelLineJoin::Miter {
+            limit: Some(800_000),
+        }));
+        let tight = miter_v(Some(ModelLineJoin::Miter {
+            limit: Some(200_000),
+        }));
+        let unstated = miter_v(Some(ModelLineJoin::Miter { limit: None }));
+
+        // On the bisector, 7px above the apex: inside an 800% miter's point, past the
+        // end of a 200% one and past the end of the default-4 one.
+        assert!(
+            pixel_at(&generous, 100, 50, 13)[0] < 150,
+            "a 800% limit keeps the miter's point (got {:?})",
+            pixel_at(&generous, 100, 50, 13)
+        );
+        assert!(
+            pixel_at(&tight, 100, 50, 13)[0] > 200,
+            "a 200% limit cannot reach a 635% corner, so it bevels (got {:?})",
+            pixel_at(&tight, 100, 50, 13)
+        );
+        // An `a:miter` with no `@lim` must take the backend default, not the last
+        // authored value and not an unbounded miter.
+        assert_eq!(
+            pixel_at(&unstated, 100, 50, 13),
+            pixel_at(&tight, 100, 50, 13),
+            "an unstated limit must bevel this corner exactly as a too-tight one does"
+        );
+        // Both still stroke their arms: this is a guard about the corner, and a guard
+        // that passes because nothing painted at all would be worthless.
+        for (name, surface) in [("generous", &generous), ("tight", &tight)] {
+            assert!(
+                pixel_at(surface, 100, 42, 70)[0] < 150,
+                "the {name} V still strokes its left arm (got {:?})",
+                pixel_at(surface, 100, 42, 70)
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_double_compound_outline_paints_two_lines_with_a_gap_between_them() {
+        // `a:ln@cmpd="dbl"` drew as one line: the attribute was imported, modelled and
+        // re-emitted, and no backend read it. A 30px-wide double outline is three
+        // 10px thirds — line, gap, line — so the CENTRE of the stroke is blank, which
+        // is the one place a single line of the same width is at its most solid.
+        let line = |compound| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Line {
+                    from: Point::new(Twip(5), Twip(20)),
+                    to: Point::new(Twip(55), Twip(20)),
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 30.0,
+                    dash: DashStyle::Solid,
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
+                    compound,
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            shape_surface(&list, 60, 40)
+        };
+        let double = line(Some(CompoundLine::Double));
+        let single = line(None);
+
+        // y 20 is the centre line, y 10 and y 30 are the middles of the two thirds.
+        assert!(
+            pixel_at(&double, 60, 30, 20)[0] > 200,
+            "a dbl outline's middle third is the GAP, so the centre is blank (got {:?})",
+            pixel_at(&double, 60, 30, 20)
+        );
+        assert!(
+            pixel_at(&double, 60, 30, 10)[0] < 100,
+            "the outer third is painted (got {:?})",
+            pixel_at(&double, 60, 30, 10)
+        );
+        assert!(
+            pixel_at(&double, 60, 30, 30)[0] < 100,
+            "and so is the inner third (got {:?})",
+            pixel_at(&double, 60, 30, 30)
+        );
+        // The single line is the control: same width, same place, solid through the
+        // centre. Without it this guard could pass on a stroke that simply moved.
+        assert!(
+            pixel_at(&single, 60, 30, 20)[0] < 100,
+            "an unstated cmpd is one solid line through the centre (got {:?})",
+            pixel_at(&single, 60, 30, 20)
+        );
+        // Neither form may spill past the stated total width: the outline spans
+        // y [5, 35], so y 2 is outside both.
+        for (name, surface) in [("double", &double), ("single", &single)] {
+            assert!(
+                pixel_at(surface, 60, 30, 2)[0] > 200,
+                "the {name} outline stays inside its stated 30px width (got {:?})",
+                pixel_at(surface, 60, 30, 2)
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_compound_form_with_no_stated_geometry_paints_one_honest_line() {
+        // `thickThin`, `thinThick` and `tri` are `CompoundPaint::Unsupported`: ECMA-376
+        // states no band proportions for them, and the two asymmetric forms also need
+        // a side that an open path has no answer for. The fallback must be the single
+        // line the file's own width describes — NOT nothing, which is what a backend
+        // that treated "no bands" as "nothing to paint" would draw, and not a guessed
+        // double either.
+        for form in [
+            CompoundLine::ThickThin,
+            CompoundLine::ThinThick,
+            CompoundLine::Triple,
+        ] {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Line {
+                    from: Point::new(Twip(5), Twip(20)),
+                    to: Point::new(Twip(55), Twip(20)),
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 30.0,
+                    dash: DashStyle::Solid,
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
+                    compound: Some(form),
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            let surface = shape_surface(&list, 60, 40);
+            assert!(
+                pixel_at(&surface, 60, 30, 20)[0] < 100,
+                "{form:?} falls back to one solid line, so the centre is painted (got {:?})",
+                pixel_at(&surface, 60, 30, 20)
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_miter_limit_is_the_rasterizers_own() {
+        // `display::DEFAULT_MITER_LIMIT` exists so the PDF backend can emit the same
+        // value this rasterizer would have used implicitly. If tiny-skia ever changes
+        // its default, the two outputs diverge silently — so pin the equality here,
+        // in the only crate that can see both numbers.
+        assert!(
+            (DEFAULT_MITER_LIMIT - Stroke::default().miter_limit).abs() < f32::EPSILON,
+            "the shared default ({DEFAULT_MITER_LIMIT}) must be tiny-skia's ({})",
+            Stroke::default().miter_limit
+        );
+    }
+
     #[test]
     #[cfg_attr(target_os = "windows", ignore)]
     fn dashed_outline_leaves_gaps_a_solid_one_does_not() {
@@ -4392,6 +4729,7 @@ mod tests {
                     cap: None,
                     join: None,
                     custom_dash: Vec::new(),
+                    compound: None,
                 }),
                 head_end: None,
                 tail_end: None,
@@ -4451,6 +4789,7 @@ mod tests {
                 cap: None,
                 join: None,
                 custom_dash: Vec::new(),
+                compound: None,
             }),
             head_end: None,
             tail_end: None,
@@ -4496,6 +4835,7 @@ mod tests {
                 cap: None,
                 join: None,
                 custom_dash: Vec::new(),
+                compound: None,
             }),
             head_end: None,
             tail_end: None,
@@ -4554,6 +4894,7 @@ mod tests {
                     cap: None,
                     join: None,
                     custom_dash: Vec::new(),
+                    compound: None,
                 }),
                 head_end: None,
                 tail_end: None,
@@ -4628,6 +4969,7 @@ mod tests {
                 cap: None,
                 join: None,
                 custom_dash: Vec::new(),
+                compound: None,
             }),
             head_end: None,
             tail_end: None,
@@ -4660,6 +5002,7 @@ mod tests {
                 cap: None,
                 join: None,
                 custom_dash: Vec::new(),
+                compound: None,
             }),
             head_end: None,
             tail_end: Some(LineEnd {

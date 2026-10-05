@@ -1407,6 +1407,7 @@ fn preset_geometry_content(
                     cap: None,
                     join: None,
                     custom_dash: Vec::new(),
+                    compound: None,
                 }),
                 head_end: stroke.and_then(|s| s.head_end),
                 tail_end: stroke.and_then(|s| s.tail_end),
@@ -2301,6 +2302,7 @@ pub fn shape_stroke(
         custom_dash: detail
             .map(|detail| detail.custom_dash.clone())
             .unwrap_or_default(),
+        compound: detail.and_then(|detail| detail.compound),
     })
 }
 

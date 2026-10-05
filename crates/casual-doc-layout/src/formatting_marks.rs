@@ -434,10 +434,11 @@ impl MarkLayer {
                 width: 1.0,
                 dash: DashStyle::Dash,
                 // A non-printing mark is this build's own chrome, not an `a:ln`, so
-                // it states no cap, join or authored dash.
+                // it states no cap, join, authored dash or compound form.
                 cap: None,
                 join: None,
                 custom_dash: Vec::new(),
+                compound: None,
             }),
             head_end: None,
             tail_end: None,

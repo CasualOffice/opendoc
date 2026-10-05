@@ -326,10 +326,11 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
             width: stroke_px(stroke.width),
             dash: DashStyle::Solid,
             // A chart primitive is drawn by the chart layer, not from an `a:ln`, so
-            // there is no authored cap, join or custom dash to carry.
+            // there is no authored cap, join, custom dash or compound form to carry.
             cap: None,
             join: None,
             custom_dash: Vec::new(),
+            compound: None,
         })
     };
     let solid = |fill: Option<[u8; 4]>| fill.map(|fill| Fill::Solid(rgba(fill)));
@@ -486,6 +487,7 @@ fn shape_outline(stroke: &AnchorStroke) -> ShapeOutline {
         cap: stroke.cap,
         join: stroke.join,
         custom_dash: stroke.custom_dash.clone(),
+        compound: stroke.compound,
     }
 }
 
@@ -2852,6 +2854,7 @@ mod tests {
                     cap: None,
                     join: None,
                     custom_dash: Vec::new(),
+                    compound: None,
                 }),
             },
             rect,
@@ -2903,6 +2906,7 @@ mod tests {
                         cap: None,
                         join: None,
                         custom_dash: Vec::new(),
+                        compound: None,
                     }),
                 },
                 rect,
@@ -3114,6 +3118,7 @@ mod tests {
                     cap: None,
                     join: None,
                     custom_dash: Vec::new(),
+                    compound: None,
                 }),
             },
             rect,

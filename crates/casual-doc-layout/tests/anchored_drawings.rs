@@ -4548,6 +4548,230 @@ fn an_authored_cap_join_and_custom_dash_reach_the_display_list() {
     );
 }
 
+/// `a:ln@cmpd` and `a:miter@lim` must TRAVEL too, and the policy must be one policy.
+///
+/// The same hole as the guard above, one construct later: a raster guard that builds a
+/// `ShapeOutline` by hand proves the backend can paint a compound outline and proves
+/// nothing about whether `Definitions::shape_fill_detail`'s `@cmpd` ever reaches it.
+/// Two of the mutations recorded for this change are exactly that — `shape_stroke`
+/// dropping the field, and `shape_outline` dropping it — and both leave the whole
+/// render suite green.
+///
+/// It also pins the decomposition itself, because that is a decision and not an
+/// implementation detail: `dbl` is three equal thirds, and the two backends read it
+/// from this one function rather than each inventing it.
+#[test]
+fn the_compound_form_and_the_miter_limit_reach_the_display_list() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::{CompoundPaint, PaintItem};
+    use casual_doc_model::v1::{
+        CompoundLine, LineJoin, PenAlignment, Rgba, ShapeFillDetail, ShapeStroke, StrokeDetail,
+    };
+
+    let shape_id = node(93);
+    let child = GroupChild::Shape(GroupShape {
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: None,
+        stroke: Some(ShapeStroke {
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            // 2.25pt, so the thirds below are not whole numbers by accident.
+            width_emu: 28_575,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        }),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+        hyperlink: None,
+    });
+
+    let mut document = single_child_group_document(child);
+    document.definitions_mut().shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: None,
+            pattern: None,
+            gradient: None,
+            stroke: Some(StrokeDetail {
+                cap: None,
+                compound: Some(CompoundLine::Double),
+                // Carried and reported rather than painted; asserted here so the
+                // decision stays visible at the seam that would have to implement it.
+                align: Some(PenAlignment::Inset),
+                // 600% — above the 4 both backends default to, which is the whole
+                // point: an unapplied limit is indistinguishable from the default.
+                join: Some(LineJoin::Miter {
+                    limit: Some(600_000),
+                }),
+                custom_dash: Vec::new(),
+            }),
+            outer_shadow: None,
+        },
+    );
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+
+    let outline = list
+        .items
+        .iter()
+        .find_map(|item| match item {
+            PaintItem::Shape {
+                stroke: Some(stroke),
+                ..
+            } => Some(stroke.clone()),
+            _ => None,
+        })
+        .expect("the shape's outline reached the display list");
+
+    assert_eq!(
+        outline.compound,
+        Some(CompoundLine::Double),
+        "the authored compound form must survive the walk and compose"
+    );
+    assert_eq!(
+        outline.join,
+        Some(LineJoin::Miter {
+            limit: Some(600_000)
+        }),
+        "and the miter limit must survive with its join, not just the join's kind"
+    );
+
+    // 600000 is an `ST_PositivePercentage`: 1/1000 of a percent, so 600%, a ratio of
+    // 6 — not 600000, not 6000, and not the 4 an unapplied limit would leave behind.
+    assert!(
+        (outline.miter_limit() - 6.0).abs() < f32::EPSILON,
+        "lim=600000 is 600% of the line width, i.e. a ratio of 6, not {}",
+        outline.miter_limit()
+    );
+
+    // `dbl` is line, gap, line in equal thirds, so the band is the area a full-width
+    // stroke covers minus the area a third-width stroke covers.
+    let third = outline.width / 3.0;
+    assert_eq!(
+        outline.compound_paint(),
+        CompoundPaint::Bands(vec![(third, outline.width)]),
+        "dbl decomposes to one band: a full-width stroke knocked out by a third-width one"
+    );
+}
+
+/// Each `a:ln@cmpd` token's verdict, stated once so neither backend invents one.
+///
+/// `SKILL` §9.4: a half-painted construct is worse than a reported one. `dbl` has a
+/// single reading that fits a stated total width; the other three do not, so they are
+/// `Unsupported` ON PURPOSE and this guard fails if someone quietly promotes one to a
+/// band — which would mean inventing band proportions ECMA-376 does not state, and for
+/// the asymmetric pair a side that an open path has no answer for.
+#[test]
+fn only_the_compound_form_with_an_unambiguous_geometry_paints() {
+    use casual_doc_layout::display::{Color, CompoundPaint, ShapeOutline};
+    use casual_doc_model::v1::{CompoundLine, DashStyle};
+
+    let outline = |compound| ShapeOutline {
+        color: Color::BLACK,
+        width: 9.0,
+        dash: DashStyle::Solid,
+        cap: None,
+        join: None,
+        custom_dash: Vec::new(),
+        compound,
+    };
+
+    assert_eq!(outline(None).compound_paint(), CompoundPaint::Single);
+    assert_eq!(
+        outline(Some(CompoundLine::Single)).compound_paint(),
+        CompoundPaint::Single,
+        "a stated sng must paint exactly as an unstated cmpd does"
+    );
+    assert_eq!(
+        outline(Some(CompoundLine::Double)).compound_paint(),
+        CompoundPaint::Bands(vec![(3.0, 9.0)]),
+        "dbl at width 9 is a 9-wide stroke with a 3-wide knockout: 3, 3, 3"
+    );
+    for unsupported in [
+        CompoundLine::ThickThin,
+        CompoundLine::ThinThick,
+        CompoundLine::Triple,
+    ] {
+        assert_eq!(
+            outline(Some(unsupported)).compound_paint(),
+            CompoundPaint::Unsupported,
+            "{unsupported:?} has no stated band proportions, so it must not paint"
+        );
+    }
+}
+
+/// The miter limit's unit conversion and its floor, at the seam both backends read.
+#[test]
+fn a_miter_limit_is_a_percentage_of_the_line_width_with_a_floor_of_one() {
+    use casual_doc_layout::display::{Color, DEFAULT_MITER_LIMIT, ShapeOutline};
+    use casual_doc_model::v1::{DashStyle, LineJoin};
+
+    let outline = |join| ShapeOutline {
+        color: Color::BLACK,
+        width: 4.0,
+        dash: DashStyle::Solid,
+        cap: None,
+        join,
+        custom_dash: Vec::new(),
+        compound: None,
+    };
+
+    // 800% of the line width is a ratio of 8.
+    assert!(
+        (outline(Some(LineJoin::Miter {
+            limit: Some(800_000)
+        }))
+        .miter_limit()
+            - 8.0)
+            .abs()
+            < f32::EPSILON
+    );
+    // A miter cannot be shorter than the stroke is wide, so a sub-1 limit clamps to 1
+    // rather than being handed to a rasterizer that reads it as a private sentinel.
+    assert!(
+        (outline(Some(LineJoin::Miter {
+            limit: Some(50_000)
+        }))
+        .miter_limit()
+            - 1.0)
+            .abs()
+            < f32::EPSILON
+    );
+    // An `a:miter` with no `@lim`, a round join, a bevel join and no join at all all
+    // take the default — one value, so PDF's own default of 10 cannot leak in.
+    for join in [
+        Some(LineJoin::Miter { limit: None }),
+        Some(LineJoin::Round),
+        Some(LineJoin::Bevel),
+        None,
+    ] {
+        assert!(
+            (outline(join).miter_limit() - DEFAULT_MITER_LIMIT).abs() < f32::EPSILON,
+            "{join:?} must take the default miter limit"
+        );
+    }
+}
+
 /// A vertical text box turns its TEXT and leaves its chrome upright.
 ///
 /// `105` FID-L-08: `wps:bodyPr@vert` was not read at all, so a Word text box with

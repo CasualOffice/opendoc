@@ -18,6 +18,7 @@
 use std::collections::BTreeMap;
 
 use casual_doc_layout::display::Color;
+use casual_doc_layout::display::CompoundPaint;
 use casual_doc_layout::display::DisplayList;
 use casual_doc_layout::display::Fill;
 use casual_doc_layout::display::Gradient;
@@ -36,9 +37,11 @@ use casual_doc_layout::units::Twip;
 use casual_doc_model::v1::CROP_FULL;
 use casual_doc_model::v1::CropRect;
 use casual_doc_model::v1::DashStyle;
+use casual_doc_model::v1::LineCap;
 use casual_doc_model::v1::LineEnd;
 use casual_doc_model::v1::LineEndKind;
 use casual_doc_model::v1::LineEndSize;
+use casual_doc_model::v1::LineJoin;
 use casual_doc_model::v1::OPACITY_FULL;
 use casual_doc_model::v1::UnderlineStyle;
 use skrifa::FontRef;
@@ -787,9 +790,34 @@ impl<'a> Transcriber<'a> {
             out.bytes.extend_from_slice(
                 format!("{} w\n", num((stroke.width * PX96_TO_POINTS).max(0.1))).as_bytes(),
             );
-            out.set_dash(stroke.dash, stroke.width * PX96_TO_POINTS);
+            // The end and corner geometry `a:ln` carries. Emitted unconditionally,
+            // including for an outline that states none, because PDF's initial
+            // graphics state is not the raster backend's default: a viewer starts at
+            // `0 J 0 j 10 M` and `tiny-skia` at butt/miter/**4**, so an unstated
+            // `a:miter` corner left implicit would bevel on screen and stay sharp in
+            // the file. That divergence predates any of this painting, and the only
+            // way to close it is to state the value.
+            out.set_line_cap(stroke.cap);
+            out.set_line_join(stroke.join);
+            out.set_miter_limit(stroke.miter_limit());
+            out.set_stroke_dash(stroke);
+            // A compound outline is more than one parallel line. The raster backend
+            // draws the bands by stroking the path to an outline at two widths and
+            // filling the difference even-odd; PDF has no stroke-to-path operator and
+            // no path-offset operator, so the band geometry cannot be expressed in a
+            // content stream at all. Recorded as a gap rather than approximated by
+            // the single line below, which is what the page would otherwise quietly
+            // show.
+            if !matches!(stroke.compound_paint(), CompoundPaint::Single) {
+                self.gap("pdf.shape.compound");
+            }
             out.op("S");
             out.op("[] 0 d");
+            // Back to PDF's own initial state, so one shape's outline geometry cannot
+            // leak into the next item in the stream.
+            out.op("0 J");
+            out.op("0 j");
+            out.op("10 M");
             // Arrowheads ride inside the shape's own transform, so a rotated
             // connector keeps its heads attached and oriented, exactly as the
             // raster backend places them.
@@ -1204,6 +1232,67 @@ impl Content {
     }
 
     /// Sets the stroke dash pattern for a preset DrawingML dash style.
+    /// `a:ln@cap` as PDF's line-cap style (`J`).
+    ///
+    /// `0` butt, `1` round, `2` projecting square — the same three DrawingML has, and
+    /// in the same meanings, so this is a renaming rather than a mapping. An unstated
+    /// cap is `flat`/butt, which is DrawingML's default and the raster backend's.
+    fn set_line_cap(&mut self, cap: Option<LineCap>) {
+        let style = match cap {
+            Some(LineCap::Round) => 1,
+            Some(LineCap::Square) => 2,
+            Some(LineCap::Flat) | None => 0,
+        };
+        self.op(&format!("{style} J"));
+    }
+
+    /// `a:ln`'s join child as PDF's line-join style (`j`).
+    ///
+    /// `0` miter, `1` round, `2` bevel. An unstated join is a miter, matching both
+    /// DrawingML's default and the raster backend's.
+    fn set_line_join(&mut self, join: Option<LineJoin>) {
+        let style = match join {
+            Some(LineJoin::Round) => 1,
+            Some(LineJoin::Bevel) => 2,
+            Some(LineJoin::Miter { .. }) | None => 0,
+        };
+        self.op(&format!("{style} j"));
+    }
+
+    /// The miter limit (`M`), as the stroke-width ratio `ShapeOutline::miter_limit`
+    /// resolved from `a:miter@lim`.
+    fn set_miter_limit(&mut self, limit: f32) {
+        self.bytes
+            .extend_from_slice(format!("{} M\n", num(limit)).as_bytes());
+    }
+
+    /// The outline's dash pattern (`d`), authored pattern first.
+    ///
+    /// `a:custDash` outranks `a:prstDash` here for the same reason it does in the
+    /// raster backend: it IS the pattern the author stated. Each `a:ds` length is an
+    /// `ST_PositivePercentage` — 1/1000 of a percent of the line width — so the width
+    /// multiplies in, exactly as `custom_dash_pattern` does for `tiny-skia`.
+    fn set_stroke_dash(&mut self, stroke: &ShapeOutline) {
+        let width = stroke.width * PX96_TO_POINTS;
+        if stroke.custom_dash.is_empty() {
+            self.set_dash(stroke.dash, width);
+            return;
+        }
+        let unit = width.max(0.1) / 100_000.0;
+        let values: Vec<String> = stroke
+            .custom_dash
+            .iter()
+            .flat_map(|stop| {
+                [
+                    num((stop.dash as f32 * unit).max(0.1)),
+                    num((stop.space as f32 * unit).max(0.1)),
+                ]
+            })
+            .collect();
+        self.bytes
+            .extend_from_slice(format!("[{}] 0 d\n", values.join(" ")).as_bytes());
+    }
+
     fn set_dash(&mut self, dash: DashStyle, width: f32) {
         let unit = width.max(0.1);
         let pattern: &[f32] = match dash {

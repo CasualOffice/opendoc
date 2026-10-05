@@ -14,6 +14,8 @@ use casual_doc_model::v1::{DashStyle, Fill, LineEnd};
 // Own `use` line (anti-conflict): the outline geometry `a:ln` carries beyond
 // colour, width and a preset dash.
 use casual_doc_model::v1::{DashStop, LineCap, LineJoin};
+// Own `use` line (anti-conflict): `a:ln@cmpd`, the multi-line outline form.
+use casual_doc_model::v1::CompoundLine;
 // Own `use` line (anti-conflict): the `a:gradFill` geometry the model's `Fill`
 // has nowhere to put, carried beside it by `AnchorFill`.
 use casual_doc_model::v1::GradientDetail;
@@ -123,6 +125,11 @@ pub struct AnchorStroke {
     /// pattern the author stated, where `a:prstDash` is one picked from a gallery.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_dash: Vec<DashStop>,
+    /// `a:ln@cmpd` — the multi-line outline form. `None` is DrawingML's `sng`.
+    /// Which values actually paint is decided once, on the display-list value, by
+    /// `display::ShapeOutline::compound_paint`; this only carries what the file said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compound: Option<CompoundLine>,
 }
 
 /// The default dash for a serialized [`AnchorStroke`] that predates the field.
