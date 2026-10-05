@@ -759,6 +759,45 @@ impl LineLayout {
     }
 }
 
+/// Appends one shaped **batch** of lines below the lines already in `out`,
+/// rebasing every paintable child of each appended line from the batch's own
+/// content top into the paragraph's, then advancing `cursor` past the whole
+/// batch.
+///
+/// `cursor` is the paragraph-relative y the batch starts at, and the caller
+/// carries it so that stacking *n* batches stays O(total lines) rather than
+/// O(n × lines).
+///
+/// # The invariant this function exists to hold, and the bug it exists to make
+/// unwriteable
+///
+/// A shaper positions a line's children relative to the **paragraph** it was
+/// handed, not relative to that line's own top: line *k* of one
+/// [`shape_paragraph`](LineShaper::shape_paragraph) result already carries the
+/// sum of the heights above it. So a batch is rebased by **one** offset shared
+/// by all of its lines, and the cursor advances **once**, after the batch —
+/// never per line inside it.
+///
+/// Advancing per line instead adds each line's intra-batch offset to the offset
+/// the shaper had already applied, so line *k*'s baseline lands at
+/// `base + 2 × Σᵢ₍ᵏ hᵢ` instead of `base + Σᵢ₍ᵏ hᵢ`. The first line of every
+/// batch is still right, which is what makes the mistake survive a guard: a
+/// paragraph whose every batch holds one line reads as correct, and only a batch
+/// that *wrapped* paints its second line a whole line box too low — over the top
+/// of whatever follows the paragraph. That shipped on the slide path, which had
+/// hand-rolled this loop (`docs/109` HF-265), which is why there is now one
+/// function and both paths call it.
+///
+/// Complexity: O(lines in the batch × their paintable children).
+pub fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor: &mut Twip) {
+    let base = *cursor;
+    for line in &mut lines {
+        line.translate_contents_y(base);
+    }
+    *cursor = lines.iter().fold(base, |cursor, line| cursor + line.height);
+    out.extend(lines);
+}
+
 /// A styled span of text handed to the shaper (one run of uniform properties).
 #[derive(Clone, Debug)]
 pub struct StyledRun<'a> {
