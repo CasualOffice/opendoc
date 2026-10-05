@@ -318,6 +318,27 @@ static DAMAGE: &[Damage] = &[
         expectation: Expectation::Opens,
     },
     Damage {
+        // Two documents concatenated, or a producer that wrote a declaration
+        // into a subtree. Ill-formed per XML 1.0, where a declaration may only
+        // be the first thing in an entity. Measured: this engine's reader treats
+        // it as an ordinary processing instruction, and processing instructions
+        // carry no document content, so the document that comes back is the
+        // control's. Recorded here rather than left out, because "the reader
+        // happens to tolerate it" is a fact worth a guard: if that ever changes,
+        // this row turns into a refusal and the table says so.
+        name: "an XML declaration appears in the middle of the document",
+        build: || {
+            replacing(
+                "word/document.xml",
+                &document_with(
+                    "<w:p><w:r><w:t>Omega</w:t></w:r></w:p>",
+                    r#"<?xml version="1.0"?><w:p><w:r><w:t>Omega</w:t></w:r></w:p>"#,
+                ),
+            )
+        },
+        expectation: Expectation::OpensWithNothingLost,
+    },
+    Damage {
         // Ill-formed per XML Namespaces, and a conformant reader refuses it.
         // This engine's readers match on LOCAL names, so the element is read as
         // the `w:t` it was meant to be and the document that comes back is the
@@ -690,6 +711,67 @@ fn every_repair_speaks_to_a_reader() {
         "only {seen} repairs across {} damage shapes: the gate is not reaching the \
          reporting path",
         DAMAGE.len()
+    );
+}
+
+/// A body the repair pass cannot help recovers the blocks before the damage.
+///
+/// The table above goes through the full ladder, where the byte-level repair pass
+/// runs first and makes almost every damaged main document well-formed — which
+/// means the body parser's **own** recovery arm is not reached by any row in it.
+/// Measured, not assumed: a mutation that restored that arm's refusal left every
+/// table guard green.
+///
+/// `import_main_document_xml` is the entry point with no ladder: it hands bytes
+/// straight to the body parser. That is the arm under test, and it is the one
+/// that decides whether a part the repair pass cannot fix costs the reader
+/// everything or only what follows the damage.
+#[test]
+fn a_body_the_repair_pass_cannot_help_keeps_what_came_before_the_damage() {
+    use casual_doc_import::{ImportConfig, ImportMode, import_main_document_xml};
+
+    // A stray end tag mid-body: the reader stops there, and the paragraph before
+    // it is already built.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>Alpha</w:t></w:r></w:p>
+        </w:nope>
+        <w:p><w:r><w:t>Omega</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+    let config = ImportConfig {
+        mode: ImportMode::Semantic,
+        recover: true,
+        ..ImportConfig::default()
+    };
+    assert_eq!(
+        import_main_document_xml(
+            xml,
+            ImportConfig {
+                recover: false,
+                ..config
+            }
+        )
+        .err()
+        .map(|error| error.to_string()),
+        Some("document XML is malformed".to_owned()),
+        "the precondition: without recovery these bytes are refused, so the guard is \
+         measuring recovery rather than a reader that never minded"
+    );
+    let import = import_main_document_xml(xml, config).expect("recovering, it opens");
+    assert_eq!(
+        import.document.body().len(),
+        1,
+        "the paragraph before the damage was not kept"
+    );
+    assert!(
+        !import.recovery.is_empty(),
+        "the body stopped at damage and said nothing"
+    );
+    let repair = &import.recovery.repairs()[0];
+    assert_eq!(repair.kind.token(), "body-stopped-at-damage");
+    assert_eq!(
+        repair.severity(),
+        casual_doc_import::Severity::ContentDropped,
+        "content after the damage is gone, and the severity has to say so"
     );
 }
 
