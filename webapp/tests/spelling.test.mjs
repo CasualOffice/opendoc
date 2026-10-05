@@ -410,3 +410,140 @@ test("a real misspelling beside an emoji is still found", () => {
   assert.equal(found.length, 1);
   assert.equal(found[0].word, "recieve");
 });
+
+// ---- Contractions: the two apostrophes, and the lower-case `i` ---------------
+//
+// Both halves of the owner's report ("in spelling errors `i'm` shown error,
+// suggestion was `hmm`/`um`"). Measured before the fix, on the shipped list:
+//
+//   "don’t"  flagged=true   sug=["don't","dent","done","dons","don"]
+//   "can’t"  flagged=true   sug=["cant","can't","canst"]
+//   "we’re"  flagged=true   sug=["were","we're","wear","weer","wire"]
+//   "it’s"   flagged=false  — the ONE that worked, and only by accident
+//   "i'm"    flagged=true   sug=["I'd","ism","h'm"]
+//   "i've"   flagged=true   sug=["I'm","ice","ire","ivy","idle"]
+//
+// The tokenizer was never the problem: `tokenizeWords("i'm")` has always
+// produced the single token `i'm`, apostrophe included. Asserted below so that
+// claim is not re-litigated.
+
+test("the tokenizer keeps a contraction whole, with either apostrophe", () => {
+  for (const mark of ["'", "’"]) {
+    assert.deepEqual(
+      tokenizeWords(`i${mark}m don${mark}t`).map((t) => t.word),
+      [`i${mark}m`, `don${mark}t`],
+      "a contraction must be ONE token — the apostrophe is a word-body character",
+    );
+    // And an apostrophe at either END is a quote mark, not part of the word.
+    // Both spellings, because `CONNECTOR` is the one place that decides and a
+    // class that lists only U+0027 flags every smart-quoted word.
+    assert.deepEqual(
+      tokenizeWords(`‘quoted${mark} and ${mark}again’`).map((t) => t.word),
+      ["quoted", "and", "again"],
+      "a trailing or leading apostrophe must be trimmed before the lookup",
+    );
+  }
+});
+
+test("a contraction written with a typographic apostrophe is not a misspelling", () => {
+  // Smart quotes are on in this product, so this is what a reader actually has
+  // in the document. The dictionary spells all 77 of its apostrophe entries
+  // with U+0027 and carries not one U+2019.
+  const curly = "don’t can’t won’t isn’t we’re they’re you’re I’ve I’ll o’clock";
+  assert.deepEqual(
+    findMisspellings(curly, enUS.all),
+    [],
+    "every contraction with U+2019 was flagged; the lookup must fold it to U+0027",
+  );
+  // The same sentence with typewriter apostrophes was already clean, and still is.
+  assert.deepEqual(findMisspellings(curly.replaceAll("’", "'"), enUS.all), []);
+  // en-GB shares the shape, so it shares the guard.
+  assert.deepEqual(findMisspellings(curly, enGB.all), []);
+});
+
+test("folding the apostrophe does not silence the checker", () => {
+  // The paired positive case: a genuinely wrong word carrying each apostrophe
+  // must still be flagged, so "nothing is flagged any more" cannot pass above.
+  for (const mark of ["'", "’"]) {
+    const found = findMisspellings(`qzxnt${mark}t is wrong`, enUS.all);
+    assert.deepEqual(
+      found.map((m) => m.word),
+      [`qzxnt${mark}t`],
+      "a nonsense contraction must still be flagged",
+    );
+  }
+});
+
+test("`i'm` is offered `I'm` — a capitalization-only fix is the first suggestion", () => {
+  // Word and Google Docs both answer `i'm` with `I'm`. `I'm` is in en-US.txt and
+  // was reachable by `canonical` the whole time; `consider` dropped it because
+  // the candidate equalled the lower-cased input.
+  for (const [typed, want] of [
+    ["i'm", "I'm"],
+    ["i've", "I've"],
+    ["i'd", "I'd"],
+    ["i'll", "I'll"],
+  ]) {
+    const suggestions = suggestionsFor(typed, enUS);
+    assert.equal(
+      suggestions[0],
+      want,
+      `${typed} must offer ${want} FIRST, not a distance-2 near-miss`,
+    );
+  }
+  // The typographic apostrophe is carried into the suggestion, so accepting it
+  // does not write a typewriter apostrophe into a smart-quoted document.
+  assert.equal(suggestionsFor("i’m", enUS)[0], "I’m");
+});
+
+test("a word nothing knows gains no self-suggestion", () => {
+  // The guard that stops the distance-0 rule degenerating into "offer the word
+  // back": `qzxlyph` is in no tier, so nothing may be offered for it at all.
+  assert.deepEqual(suggestionsFor("qzxlyph", enUS), []);
+  // And a real typo still gets its real answer, ranked first.
+  assert.equal(suggestionsFor("teh", enUS)[0], "the");
+});
+
+test("a word the user ignored with a typographic apostrophe stays ignored", () => {
+  // `ignoreAll` records the token as flagged, so the entry carries U+2019.
+  // Folding only the lookup would stop honouring that decision.
+  const ignored = new Set(["qzxnt’t"]);
+  assert.ok(isKnownWord("qzxnt’t", enUS.all, { ignored }));
+  assert.ok(!isKnownWord("qzxnt’t", enUS.all, {}));
+});
+
+test("EVERY apostrophe entry in both shipped lists is accepted with either apostrophe", () => {
+  // The mechanical close, rather than a list of the six contractions I happened
+  // to think of. The defect was one rule — "the two apostrophes are the same
+  // character for a lookup" — spelled `['’]` in `possessiveStem` and `'`
+  // everywhere else, so the words that survived were exactly the ones the
+  // possessive rule happened to cover. This asserts the whole CLASS: any future
+  // comparison path that forgets to fold reddens on dozens of words at once,
+  // not on whichever six a test named.
+  for (const [name, dictionary] of [
+    ["en-US", enUS],
+    ["en-GB", enGB],
+  ]) {
+    const withApostrophe = [...dictionary.all].filter((entry) => entry.includes("'"));
+    assert.ok(
+      withApostrophe.length > 50,
+      `${name} must really carry apostrophe entries (found ${withApostrophe.length})`,
+    );
+    const rejected = withApostrophe.filter(
+      (entry) => !isKnownWord(entry.replaceAll("'", "’"), dictionary.all),
+    );
+    assert.deepEqual(
+      rejected,
+      [],
+      `${name}: ${rejected.length} of ${withApostrophe.length} entries are rejected when ` +
+        "their apostrophe is the typographic one smart quotes produce",
+    );
+    // And the straight form, which is the shape the file is written in, so the
+    // assertion above cannot pass by accepting everything.
+    const brokenStraight = withApostrophe.filter((entry) => !isKnownWord(entry, dictionary.all));
+    assert.deepEqual(brokenStraight, [], `${name}: a committed entry is not accepted as written`);
+  }
+  // The paired negative: folding must not make nonsense acceptable.
+  assert.ok(!isKnownWord("qzxnt’t", enUS.all));
+  assert.ok(!isKnownWord("qzxnt't", enUS.all));
+});

@@ -118,11 +118,28 @@ export function emptyDictionary() {
 
 // ---- Tokenizing ------------------------------------------------------------
 
+/** THE apostrophe, as one character class, spelled once.
+ *
+ *  Real text carries two: U+0027 from a keyboard and U+2019 from smart quotes,
+ *  which are on in this product. Every rule in this file that touches an
+ *  apostrophe has to accept both, and the reported defect was one rule
+ *  (`possessiveStem`) spelling it `['’]` while the lookup spelled it `'` — so
+ *  every `…’s` contraction was accepted and every other one was flagged. A rule
+ *  that is spelled in four places is a rule that will diverge again, so the
+ *  class is a named constant and every site below composes it. */
+const PLAIN_APOSTROPHE = "'";
+const TYPOGRAPHIC_APOSTROPHE = "’";
+const APOSTROPHE_CLASS = PLAIN_APOSTROPHE + TYPOGRAPHIC_APOSTROPHE;
+
+/** The two apostrophes and the hyphen: the connectors a word may carry inside
+ *  it but not at either end. */
+const CONNECTOR = new RegExp(`[${APOSTROPHE_CLASS}-]`, "u");
+
 /** Characters that can be INSIDE a word. Letters and marks, plus the two
  *  apostrophes (`don't`, `don’t`) and the hyphen — the hyphen is kept so a
  *  token like `e-mail` can be recognized and then split, rather than producing
  *  two tokens one of which is a single letter. */
-const WORD_BODY = /[\p{L}\p{M}\p{Nd}'’-]/u;
+const WORD_BODY = new RegExp(`[\\p{L}\\p{M}\\p{Nd}${APOSTROPHE_CLASS}-]`, "u");
 
 /** Scalars that join an EMOJI cluster and never belong to a word.
  *
@@ -200,8 +217,8 @@ export function tokenizeWords(text) {
       // `'quoted'` and `dash-` do not carry one into the lookup.
       let from = start;
       let to = i;
-      while (from < to && /['’-]/.test(source[from])) from += 1;
-      while (to > from && /['’-]/.test(source[to - 1])) to -= 1;
+      while (from < to && CONNECTOR.test(source[from])) from += 1;
+      while (to > from && CONNECTOR.test(source[to - 1])) to -= 1;
       if (to > from) tokens.push({ start: from, end: to, word: source.slice(from, to) });
       start = -1;
     }
@@ -263,11 +280,50 @@ function matchesWithCase(word, dictionary) {
   return false;
 }
 
+/**
+ * The typographic apostrophe folded to the typewriter one, for LOOKUP ONLY.
+ *
+ * ## Why this exists, measured
+ *
+ * The word lists carry 77 apostrophe entries each (`don't`, `can't`, `we're`,
+ * `I've`, `o'clock`, `ma'am`, `O'Neill`…) and **every one of them is written
+ * with U+0027**: `grep -c "’" webapp/dict/en-US.txt` is 0. Smart quotes are on
+ * in this product, so what a reader actually has in the document is U+2019 —
+ * and `Set.has("don’t")` is false. Measured before this fix: `don’t`, `can’t`
+ * and `we’re` were all flagged as misspellings, each one offering its own
+ * straight-apostrophe spelling as the "correction".
+ *
+ * `it’s` was NOT flagged, and that near miss is the whole finding. The
+ * possessive rule below already spells the apostrophe as `['’]`, so every
+ * `…’s` contraction was accepted while every other contraction was flagged —
+ * one rule (the two apostrophes are the same character for lookup) implemented
+ * in exactly one of the places that needs it. `SKILL.md` §8: two
+ * implementations of one rule diverge. So it is stated once, here, and applied
+ * at the one place the comparison happens.
+ *
+ * Only the LOOKUP is folded, for the same reason `isKnownWord` only normalizes
+ * the lookup: the token keeps its original form, so the offsets that address
+ * the document and the word shown in the menu are untouched.
+ */
+function foldApostrophes(word) {
+  return word.includes(TYPOGRAPHIC_APOSTROPHE)
+    ? word.replaceAll(TYPOGRAPHIC_APOSTROPHE, PLAIN_APOSTROPHE)
+    : word;
+}
+
 /** Strips one trailing possessive `'s` / `’s`, or returns `null`. The file
  *  deliberately does not carry the ~29,500 possessive forms SCOWL ships
- *  (`tools/build-dictionary.mjs`), so they are handled by rule. */
+ *  (`tools/build-dictionary.mjs`), so they are handled by rule.
+ *
+ *  It is handed a word that `isKnownWord` has already folded, so it could spell
+ *  the apostrophe `'` — it composes `APOSTROPHE_CLASS` anyway, because a rule
+ *  that is only correct while its caller remembers to fold is the rule that
+ *  broke, and this one is one `match` away from being called from somewhere
+ *  else. */
+const POSSESSIVE = new RegExp(`^(.*\\p{L})[${APOSTROPHE_CLASS}]s$`, "u");
+
 function possessiveStem(word) {
-  const match = word.match(/^(.*\p{L})['’]s$/u);
+  const match = word.match(POSSESSIVE);
   return match ? match[1] : null;
 }
 
@@ -317,9 +373,19 @@ export function isKnownWord(
   // Only the LOOKUP is normalized. The token keeps its original form, so the
   // offsets that address the document and the word shown in the menu are
   // untouched — normalizing those would move a range by a code unit.
-  const word = rawWord.normalize("NFC");
-  if (personal && (personal.has(word) || personal.has(word.toLowerCase()))) return true;
-  if (ignored && (ignored.has(word) || ignored.has(word.toLowerCase()))) return true;
+  const typed = rawWord.normalize("NFC");
+  // The typographic apostrophe is folded with the same justification and in the
+  // same breath as NFC: it is a different string for the same word, and the
+  // lists are written with U+0027 (see `foldApostrophes`).
+  //
+  // The user's OWN two sets are matched against the word as typed as well as
+  // folded, because those entries are recorded from the flagged token — a
+  // reader who used "Ignore all" on a word carrying U+2019 stored it that way,
+  // and folding only the lookup would stop honouring their decision.
+  const word = foldApostrophes(typed);
+  const mine = (set, candidate) => set.has(candidate) || set.has(candidate.toLowerCase());
+  if (personal && (mine(personal, word) || mine(personal, typed))) return true;
+  if (ignored && (mine(ignored, word) || mine(ignored, typed))) return true;
   // The glossary is matched with the SAME capitalization rule the dictionary
   // gets, so `OpenDoc` accepts `OPENDOC` and `opendoc` accepts `Opendoc`, and
   // a term recorded in Title case still carries that information.
@@ -530,16 +596,45 @@ export function boundedEditDistance(a, b, max) {
  * in **4–26 ms** for the same words and ranks better, because it knows each
  * candidate's real distance instead of inferring it from which pass found it.
  *
- * Ranking: distance, then same first letter (typists rarely get the first
- * letter wrong), then edit kind, then the common tier, then length difference,
- * then alphabetical — a total order, so the tests can name cases.
+ * Ranking: a capitalization-only fix first (see below), then distance, then
+ * same first letter (typists rarely get the first letter wrong), then edit
+ * kind, then the common tier, then length difference, then alphabetical — a
+ * total order, so the tests can name cases.
+ *
+ * ## A capitalization-only correction is a distance-ZERO suggestion
+ *
+ * Stage 1 generates the distance-1 edits of the LOWER-CASED word, and
+ * `consider` dropped any candidate equal to that lower-cased form — on the
+ * assumption that the word itself is never its own correction. For a word whose
+ * only fault is its case, it is the correction, and the assumption silently
+ * removed the right answer.
+ *
+ * Measured on the shipped list before this fix: `i'm` offered
+ * `["I'd", "ism", "h'm"]`, `i've` offered `["I'm", "ice", "ire", "ivy",
+ * "idle"]`, `i'd` offered `["id", "I'm", "it'd"]`. `I'm` is in `en-US.txt`
+ * (line 69) and `canonical("i'm")` already returned it — it was simply never
+ * considered. The junk comes from the distance-2 fallback that runs because
+ * stage 1 found almost nothing, which is why the owner saw answers like `hmm`
+ * and `um` to `i'm`.
+ *
+ * Word and Google Docs both answer `i'm` with `I'm`. So the cased form is
+ * considered at distance 0, which puts it first in the existing total order
+ * without a special case in the comparator.
  */
 export function suggestionsFor(
   word,
   { common, all },
   { limit = 5, personal, glossary, supplement, deepScan = true } = {},
 ) {
-  const lower = String(word ?? "").toLowerCase();
+  const typed = String(word ?? "");
+  // Fold the typographic apostrophe for every comparison, exactly as
+  // `isKnownWord` does, and put the reader's own apostrophe back in what is
+  // SHOWN: offering `don't` for `don’t` would write a typewriter apostrophe
+  // into a document whose every other one is typographic.
+  const apostrophe = typed.includes(TYPOGRAPHIC_APOSTROPHE)
+    ? TYPOGRAPHIC_APOSTROPHE
+    : PLAIN_APOSTROPHE;
+  const lower = foldApostrophes(typed).toLowerCase();
   if (!lower) return [];
   /** The form to SHOW for a lower-case candidate, or null if nothing knows it.
    *  The glossary is consulted so a mistyped product name suggests the product
@@ -564,13 +659,22 @@ export function suggestionsFor(
   /** lower-case candidate → { distance, shown } */
   const scored = new Map();
   const consider = (candidate, distance) => {
-    if (candidate === lower) return;
+    // The word is its own correction only when the fix is its CASE, which is
+    // what distance 0 means here; at any other distance it is the input and
+    // offering it back is noise.
+    if (candidate === lower && distance !== 0) return;
     const existing = scored.get(candidate);
     if (existing && existing.distance <= distance) return;
     const shown = canonical(candidate);
     if (!shown) return;
     scored.set(candidate, { distance, shown });
   };
+
+  // The capitalization-only fix, offered before any edit is generated. It is
+  // taken only when `canonical` found a form that differs from what was typed,
+  // so a word nothing knows gains no self-suggestion.
+  const casedSelf = canonical(lower);
+  if (casedSelf !== null && casedSelf !== foldApostrophes(typed)) consider(lower, 0);
 
   for (const candidate of edits1(lower)) consider(candidate, 1);
 
@@ -639,7 +743,9 @@ export function suggestionsFor(
       return wordA < wordB ? -1 : 1;
     })
     .slice(0, limit)
-    .map(([, entry]) => matchCase(entry.shown, word));
+    .map(([, entry]) =>
+      matchCase(entry.shown, typed).replaceAll(PLAIN_APOSTROPHE, apostrophe),
+    );
 }
 
 // ---- The keystroke cadence ---------------------------------------------------
