@@ -154,14 +154,52 @@ const mirrored = (file, bytes, sha256, mirror) =>
  * their document is in. The CJK faces are only fetched by CJK documents; these
  * are fetched by all of them.
  *
- * The editor still paints from the bundled metric-compatible substitutes first
- * and upgrades when these land, which is what `tests/e2e/first-paint.spec.mjs`
- * holds. Provenance: `google/fonts@${GOOGLE_FONTS_REVISION}/ofl`. All three
- * families are SIL OFL 1.1 — including Roboto, which Google Fonts relicensed
- * from Apache-2.0; the engine's BUNDLED Roboto in
- * `crates/casual-doc-layout/fonts/` is the older Apache-2.0 build and a
- * different file. Licence texts sit beside the fonts in
- * `assets/fonts/script/`.
+ * ## What the eager set actually buys, measured 2026-10-06
+ *
+ * This comment used to say the editor "paints from the bundled
+ * metric-compatible substitutes first and upgrades when these land", which
+ * reads as though these faces are the real version of what the first paint
+ * approximates. They are not, and the distinction decides whether fetching
+ * 9.28 MB before anyone asks is right.
+ *
+ * `registerFonts` hands these to `casual-doc-wasm`'s `register_font`, which
+ * registers a face **by family name** and wires no coverage fallback. So a face
+ * here is consulted only when a run's requested family IS `Roboto`,
+ * `Noto Sans` or `Noto Serif`. Everything else a document names is served by
+ * `font_substitution.rs` out of the engine's own bundle — Arial on Liberation
+ * Sans, Times on Liberation Serif, Calibri on Carlito, an unknown serif on
+ * Liberation Serif — and none of that waits on the network at all.
+ *
+ * Measured in Chromium against `sample.docx`, the document the editor page
+ * opens by default, whose runs are 311 × Calibri plus Arial / Times / Courier /
+ * DejaVu Sans Mono and which names none of these three families:
+ *
+ *   * blocking all six faces leaves the page count, the accessibility text and
+ *     `caretRect` **identical at eight probe points** down the first page;
+ *   * the whole editor load transfers 74.14 MB, of which these six are 9.28 MB
+ *     and the coverage-driven CJK + colour-emoji buckets are 31.40 MB.
+ *
+ * So for both shipped fixtures the eager set is 9.28 MB that changes nothing —
+ * and `tests/e2e/first-paint.spec.mjs` now holds that as a guarantee rather
+ * than a hope, because an upgrade that DID move line breaks would move a
+ * reader's caret after they had clicked.
+ *
+ * It does not follow that the set should be dropped. Nothing in JS can tell
+ * whether the open document names one of these families: there is no
+ * requested-family inventory on the engine, `missingCoverage()` answers about
+ * code points and these faces change no coverage, and the families a document's
+ * STYLES name (`listStyles` + `stylePreview`) miss direct run formatting. A
+ * deferral built on a partial signal would render a document that asks for
+ * Noto Sans in Liberation Sans and say nothing, which is a fidelity defect
+ * traded for a smaller number. The seam that would make it correct is an engine
+ * getter for the families the document references — import already parses them
+ * into `FontDescriptor` — and until that exists the eager set stays.
+ *
+ * Provenance: `google/fonts@${GOOGLE_FONTS_REVISION}/ofl`. All three families
+ * are SIL OFL 1.1 — including Roboto, which Google Fonts relicensed from
+ * Apache-2.0; the engine's BUNDLED Roboto in `crates/casual-doc-layout/fonts/`
+ * is the older Apache-2.0 build and a different file. Licence texts sit beside
+ * the fonts in `assets/fonts/script/`.
  */
 export const NAMED_WEB_FONT_FACES = Object.freeze([
   Object.freeze({
@@ -486,6 +524,19 @@ export function selfHostingBytes() {
     mirroredFaces,
     total: committed + mirrored,
   });
+}
+
+/** What a reader waits on before the editor has finished settling, whatever
+ *  their document contains: the bytes of the eagerly-fetched named faces.
+ *
+ * Derived, not written down, for the same reason as `selfHostingBytes` — and
+ * separate from it because the two answer different questions. `committed` is
+ * repository and deployed-origin weight, paid once per clone and per deploy;
+ * this is paid by **every reader on every editor load**, and it is the number a
+ * seventh eager face would move. `tests/web_fonts.test.mjs` holds a ceiling on
+ * it so adding one is a decision rather than a diff. */
+export function eagerBytes() {
+  return NAMED_WEB_FONT_FACES.reduce((sum, face) => sum + face.bytes, 0);
 }
 
 /** Every URL a face may legitimately be served from → its manifest entry, so a

@@ -96,6 +96,29 @@ export function needsToast(kind, statusLineVisible) {
   return kind === "error" || !statusLineVisible;
 }
 
+/** Whether a BACKGROUND task's progress may paint the shared status line.
+ *
+ *  A background task's progress and a reader's action feedback are not the same
+ *  message, and routing them through one channel cost the reader their own
+ *  answer. `provisionFonts` wrote "Fetching web fonts for sample.docx…" through
+ *  `setStatus`, which means it also announced into the live region, raised a
+ *  toast wherever the footer is hidden, and reported itself to an embedding host
+ *  as editor status — for the 31.40 MB the default editor page's coverage fetch
+ *  takes (measured 2026-10-06). Anything the reader had just
+ *  been told was gone.
+ *
+ *  So progress is allowed the line only when nobody is using it: it is empty, or
+ *  the text already there is progress of its own (one pass handing over to the
+ *  next). It never takes the line off a reader's message, and the reader's next
+ *  message always takes it back — `publish` clears the flag, so the reader wins
+ *  both directions, which is the half a "don't overwrite" rule alone would miss.
+ *
+ *  @param lineText what the status line currently reads
+ *  @param lineIsProgress whether that text was written by a background task */
+export function backgroundProgressMayPaint(lineText, lineIsProgress) {
+  return !lineText || lineIsProgress === true;
+}
+
 /** How long a toast stays, in milliseconds.
  *
  *  A refusal outlives a confirmation because it has to be *read* — it names a
