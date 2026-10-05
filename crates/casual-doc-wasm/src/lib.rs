@@ -29,7 +29,7 @@ use casual_doc_edit::find_shape;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
     RunningRegion, caret_run_properties, cell_properties, find_table, locate_cell,
-    locate_table_cell, locate_table_row, paragraph_properties, run_properties_in_range,
+    locate_table_cell, locate_table_row, run_properties_in_range,
 };
 // The transaction envelope and the ordered revision log (doc 147, ADR-043). Its
 // own `use` line, where the pinned rustfmt sorts it, so a parallel branch adding
@@ -6134,7 +6134,9 @@ impl WasmDocument {
         let (start, _end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let current = paragraph_properties(&self.document, start.node).and_then(|p| p.numbering);
+        let current = self
+            .paragraph_properties_of(start.node)
+            .and_then(|p| p.numbering);
         let already = if checklist {
             current.is_some_and(|n| self.checklist_state_of_instance(n.instance).is_some())
         } else {
@@ -6162,7 +6164,8 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = toggleChecklistItem)]
     pub fn toggle_checklist_item(&mut self, node: &str) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let reference = paragraph_properties(&self.document, nid)
+        let reference = self
+            .paragraph_properties_of(nid)
             .and_then(|p| p.numbering)
             .ok_or_else(|| to_js("not a list item".into()))?;
         let checked = self
@@ -6400,7 +6403,8 @@ impl WasmDocument {
         let (start, _) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        if paragraph_properties(&self.document, start.node)
+        if self
+            .paragraph_properties_of(start.node)
             .and_then(|p| p.numbering)
             .is_none()
         {
@@ -6429,8 +6433,9 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = restartList)]
     pub fn restart_list(&mut self, node: &str) -> Result<EditResult, JsValue> {
         let start_node = node_id(node)?;
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        let Some(current) = self
+            .paragraph_properties_of(start_node)
+            .and_then(|p| p.numbering)
         else {
             return Err(to_js(
                 "restart numbering requires a numbered list item".into(),
@@ -6544,8 +6549,9 @@ impl WasmDocument {
         let Ok(start_node) = NodeId::from_str(node) else {
             return false;
         };
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        let Some(current) = self
+            .paragraph_properties_of(start_node)
+            .and_then(|p| p.numbering)
         else {
             return false;
         };
@@ -6584,8 +6590,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return String::new();
         };
-        let Some(reference) = paragraph_properties(&self.document, nid).and_then(|p| p.numbering)
-        else {
+        let Some(reference) = self.paragraph_properties_of(nid).and_then(|p| p.numbering) else {
             return String::new();
         };
         // A checklist (bullet with a checkbox marker) is recognized by its glyph,
@@ -6628,8 +6633,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return String::new();
         };
-        let Some(reference) = paragraph_properties(&self.document, nid).and_then(|p| p.numbering)
-        else {
+        let Some(reference) = self.paragraph_properties_of(nid).and_then(|p| p.numbering) else {
             return String::new();
         };
         let defs = self.document.definitions();
@@ -6678,8 +6682,9 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = setListFormat)]
     pub fn set_list_format(&mut self, node: &str, spec: &str) -> Result<EditResult, JsValue> {
         let start_node = node_id(node)?;
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        let Some(current) = self
+            .paragraph_properties_of(start_node)
+            .and_then(|p| p.numbering)
         else {
             return Err(to_js(
                 refused!(
@@ -6925,7 +6930,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return -1;
         };
-        paragraph_properties(&self.document, nid)
+        self.paragraph_properties_of(nid)
             .and_then(|p| p.numbering)
             .map_or(-1, |reference| i32::from(reference.level))
     }
@@ -9250,7 +9255,7 @@ impl WasmDocument {
         let cascade = StyleCascade::new(self.document.definitions());
         NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
             .is_some_and(|direct| {
                 cascade
                     .resolve_paragraph(&direct)
@@ -9666,7 +9671,8 @@ impl WasmDocument {
         lines: u8,
     ) -> Result<EditResult, JsValue> {
         let id = NodeId::from_str(node).map_err(|_| to_js("invalid node id".to_string()))?;
-        let properties = paragraph_properties(&self.document, id)
+        let properties = self
+            .paragraph_properties_of(id)
             .ok_or_else(|| to_js("no such paragraph".to_string()))?;
         let text = self
             .document
@@ -9737,7 +9743,8 @@ impl WasmDocument {
         mode: DropCapMode,
         lines: u8,
     ) -> Result<EditResult, JsValue> {
-        let mut properties = paragraph_properties(&self.document, cap)
+        let mut properties = self
+            .paragraph_properties_of(cap)
             .ok_or_else(|| to_js("no such paragraph".to_string()))?;
         properties.drop_cap_frame = Some(drop_cap_frame(mode, lines));
         properties.keep_next = Some(true);
@@ -9792,7 +9799,7 @@ impl WasmDocument {
             })
             .unwrap_or_default();
         let end = u32::try_from(letter.len()).unwrap_or(1);
-        let mut merged = paragraph_properties(&self.document, body).unwrap_or_default();
+        let mut merged = self.paragraph_properties_of(body).unwrap_or_default();
         // The surviving paragraph is the BODY's, so it must not inherit the
         // frame — the whole point of removing the drop cap.
         merged.drop_cap_frame = None;
@@ -9840,7 +9847,7 @@ impl WasmDocument {
         let payload = self
             .drop_cap_pair(node)
             .and_then(|(cap, _body)| {
-                paragraph_properties(&self.document, cap)?
+                self.paragraph_properties_of(cap)?
                     .drop_cap_frame
                     .map(|frame| DropCapJson {
                         mode: match frame.mode {
@@ -9940,7 +9947,7 @@ impl WasmDocument {
     pub fn paragraph_indent(&self, node: &str) -> Indents {
         let ind = NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
             .and_then(|p| p.indentation);
         match ind {
             Some(i) => Indents {
@@ -9971,7 +9978,7 @@ impl WasmDocument {
     pub fn paragraph_spacing(&self, node: &str) -> ParagraphSpacing {
         let Some(direct) = NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
         else {
             return ParagraphSpacing::default();
         };
@@ -9997,7 +10004,7 @@ impl WasmDocument {
         let properties: Vec<ParagraphProperties> = self
             .paragraphs_in_selection(start, end)
             .into_iter()
-            .filter_map(|node| paragraph_properties(&self.document, node))
+            .filter_map(|node| self.paragraph_properties_of(node))
             .collect();
         if properties.is_empty() {
             return ParagraphState::default();
@@ -11320,7 +11327,8 @@ impl WasmDocument {
         let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
-        let current = paragraph_properties(&self.document, node)
+        let current = self
+            .paragraph_properties_of(node)
             .ok_or_else(|| to_js("paragraph not found".to_string()))?;
         let len = self.paragraph_text(node).len() as u32;
         if offset > len {
@@ -11398,7 +11406,8 @@ impl WasmDocument {
         let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref())?;
         let node = NodeId::from_str(node).map_err(|_| "invalid node".to_string())?;
-        let current = paragraph_properties(&self.document, node)
+        let current = self
+            .paragraph_properties_of(node)
             .ok_or_else(|| "paragraph not found".to_string())?;
         let caret = Pos::new(node, self.paragraph_text(node).len() as u32);
         let Some(next) = adjacent_next_paragraph(&self.document, node) else {
@@ -11410,7 +11419,8 @@ impl WasmDocument {
         };
         let operation = match &current.mark_revision {
             Some(mark) if mark.kind == MarkRevisionKind::Insertion && mark.author == author => {
-                let survivor = paragraph_properties(&self.document, next)
+                let survivor = self
+                    .paragraph_properties_of(next)
                     .ok_or_else(|| "paragraph not found".to_string())?;
                 Operation::JoinParagraphs {
                     first: node,
@@ -12142,7 +12152,7 @@ impl WasmDocument {
     pub fn paragraph_shading_at(&self, node: &str) -> i32 {
         NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
             .and_then(|p| p.shading.fill)
             .map_or(-1, |c| {
                 (i32::from(c.r) << 16) | (i32::from(c.g) << 8) | i32::from(c.b)
@@ -12201,7 +12211,7 @@ impl WasmDocument {
     pub fn paragraph_flags(&self, node: &str) -> ParagraphFlags {
         NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
             .map_or(ParagraphFlags::default(), |p| ParagraphFlags {
                 keep_next: p.keep_next.unwrap_or(false),
                 keep_lines: p.keep_lines.unwrap_or(false),
@@ -12270,7 +12280,7 @@ impl WasmDocument {
     pub fn paragraph_border_edges(&self, node: &str) -> u8 {
         NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
             .map_or(0, |p| {
                 let bd = &p.borders;
                 u8::from(bd.top.is_some())
@@ -12369,7 +12379,7 @@ impl WasmDocument {
     pub fn paragraph_tabs(&self, node: &str) -> Vec<i32> {
         NodeId::from_str(node)
             .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|nid| self.paragraph_properties_of(nid))
             .map(|p| {
                 p.tabs
                     .iter()
@@ -12450,7 +12460,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return "start".into();
         };
-        match paragraph_properties(&self.document, nid).and_then(|p| p.alignment) {
+        match self.paragraph_properties_of(nid).and_then(|p| p.alignment) {
             Some(Alignment::Center) => "center",
             Some(Alignment::End) => "end",
             Some(Alignment::Justify) => "justify",
@@ -12535,7 +12545,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return String::new();
         };
-        paragraph_properties(&self.document, nid)
+        self.paragraph_properties_of(nid)
             .and_then(|p| p.style_ref)
             .and_then(|id| self.document.definitions().styles.get(&id).cloned())
             .and_then(|style| style.name)
@@ -12662,7 +12672,9 @@ impl WasmDocument {
             .map_err(to_js)?;
         // Inherit from the selection's current paragraph style so the new style is
         // a delta on top of it (Word's `basedOn`).
-        let based_on = paragraph_properties(&self.document, start.node).and_then(|p| p.style_ref);
+        let based_on = self
+            .paragraph_properties_of(start.node)
+            .and_then(|p| p.style_ref);
         let id = StyleId::new(
             self.edit_ids
                 .next_id()
@@ -12737,7 +12749,8 @@ impl WasmDocument {
         base: Option<ParagraphProperties>,
     ) -> ParagraphProperties {
         let cascade = StyleCascade::new(self.document.definitions());
-        let effective = paragraph_properties(&self.document, start.node)
+        let effective = self
+            .paragraph_properties_of(start.node)
             .map(|direct| cascade.resolve_paragraph(&direct))
             .unwrap_or_default();
         let mut props = base.unwrap_or_default();
@@ -15267,6 +15280,54 @@ impl WasmDocument {
             .unwrap_or_default()
     }
 
+    /// The properties of paragraph `node` — a clone — or `None` if `node` names
+    /// no paragraph.
+    ///
+    /// **O(1) in document size**, through the same re-verified route hint
+    /// [`paragraph_text`](Self::paragraph_text) uses. O(document) only on the
+    /// first touch of a paragraph, which records the route the reads after it
+    /// ride.
+    ///
+    /// # The defect this replaced, which is the same defect twice
+    ///
+    /// `casual_doc_edit::paragraph_properties` is
+    /// `surface_block_lists(document).into_iter().find_map(|blocks| find_paragraph(blocks, node))`
+    /// — a linear scan of every surface's block list, and the function `SKILL` §8
+    /// names outright as "a linear scan that looks like an accessor at the call
+    /// site". It had 30 callers in this crate.
+    ///
+    /// `paragraph_text`'s walk cost a keystroke; this one costs **every caret
+    /// move**, which is strictly worse because caret moves are continuous where
+    /// deletes are occasional. The host's `updateToolbar` reads
+    /// [`alignmentAt`](Self::alignment_at),
+    /// [`selectionRunStyle`](Self::selection_run_style) and
+    /// [`caretRunStyle`](Self::caret_run_style) on every selection change, and
+    /// `drawSelection` — which calls it — has 68 call sites in `webapp/src/main.js`,
+    /// one of them the pointermove handler of a drag-selection. So dragging a
+    /// selection across a document performed a document-length scan **per pointer
+    /// move**.
+    ///
+    /// # One mechanism, not two
+    ///
+    /// `paragraph_properties` and `paragraph_text` were the same defect wearing two
+    /// names, so they get one fix and not two (`SKILL` §8). Coverage is identical
+    /// and that is load-bearing, not incidental: `casual_doc_model::v1::locate`
+    /// resolves the body, headers, footers, footnotes and endnotes plus everything
+    /// nested in them — tables, block content controls, text boxes, shape groups,
+    /// inline containers — and deliberately **not** comments, which is exactly the
+    /// set `surface_block_lists` lists. A paragraph the walk found, the hint finds;
+    /// a paragraph the walk answered `None` for, the hint answers `None` for. That
+    /// matters because the walk exists to fix a body-only read that reported a
+    /// right-aligned header paragraph as left-aligned, and a fast path that
+    /// narrowed the surfaces back down would reintroduce it.
+    ///
+    /// Guarded by `a_toolbar_reflect_does_not_examine_the_document`.
+    fn paragraph_properties_of(&self, node: NodeId) -> Option<ParagraphProperties> {
+        self.document
+            .paragraph(node)
+            .map(|paragraph| paragraph.properties.get().clone())
+    }
+
     /// Every text-bearing paragraph in document order, with its byte length —
     /// the ordering caret navigation and cross-paragraph edits traverse.
     fn ordered_paragraphs(&self) -> Vec<(NodeId, u32)> {
@@ -15827,8 +15888,9 @@ impl WasmDocument {
     /// (bullet/non-list rejection, no preceding list, already continuous) are
     /// unit-testable off-wasm, where constructing a `JsValue` error would panic.
     fn continue_list_inner(&mut self, start_node: NodeId) -> Result<EditResult, String> {
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        let Some(current) = self
+            .paragraph_properties_of(start_node)
+            .and_then(|p| p.numbering)
         else {
             return Err(refused!(
                 "list.continue-not-numbered",
@@ -16396,7 +16458,7 @@ impl WasmDocument {
     /// The checked state of the checklist item at `node`: `Some(bool)` for a
     /// checklist item, `None` otherwise.
     fn checklist_state_at(&self, node: NodeId) -> Option<bool> {
-        let reference = paragraph_properties(&self.document, node)?.numbering?;
+        let reference = self.paragraph_properties_of(node)?.numbering?;
         self.checklist_state_of_instance(reference.instance)
     }
 
@@ -29517,6 +29579,13 @@ fn collect_review_format_ids_all(document: &Document, out: &mut Vec<NodeId>) {
 mod tests {
     use super::*;
     use casual_doc_edit::find_paragraph;
+    // The whole-surface linear scan `WasmDocument::paragraph_properties_of`
+    // replaced. Still imported HERE because several tests assert on the stored
+    // properties of a paragraph directly and the walk is the independent reading
+    // of them — a test that read the value through the fast path it is checking
+    // would be checking the fast path against itself. Its own `use` line so a
+    // parallel branch adding an import does not conflict here.
+    use casual_doc_edit::paragraph_properties;
     use casual_doc_model::v1::TabLeader;
 
     const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
@@ -44439,7 +44508,7 @@ mod tests {
     /// Every keystroke a reader can hold down, plus the two reads the host makes
     /// about the paragraph under the caret. A new per-keystroke entry point
     /// belongs in this list.
-    const KEYSTROKES: [(&str, Keystroke); 10] = [
+    const KEYSTROKES: [(&str, Keystroke); 11] = [
         (
             "Backspace — deleteBackward inside a paragraph",
             |d, node| {
@@ -44486,6 +44555,19 @@ mod tests {
         ("copyText of a selection inside one paragraph", |d, node| {
             assert!(!d.copy_text(node, 10, node, 20).is_empty(), "copy text");
         }),
+        // Not a keystroke, and the hottest row in this table. The host's
+        // `updateToolbar` makes exactly these three calls on the caret, and
+        // `drawSelection` — which calls it — is reached from 68 sites in
+        // `webapp/src/main.js`, one of them a drag-selection's pointermove. So
+        // this is per POINTER MOVE, where the rows above are per character.
+        (
+            "the toolbar reflect — alignmentAt + selectionRunStyle + caretRunStyle",
+            |d, node| {
+                assert!(!d.alignment_at(node, 20).is_empty(), "alignment at");
+                let _ = d.selection_run_style(node, 20, node, 20);
+                let _ = d.caret_run_style(node, 20);
+            },
+        ),
     ];
 
     /// **A keystroke must not examine the document at all.**
