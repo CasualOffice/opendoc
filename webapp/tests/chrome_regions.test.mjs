@@ -68,7 +68,10 @@ const EXPECTED = Object.freeze({
     'class="object-handle"',
     'class="object-bar-actions"',
   ],
-  menu: ['id="appMenuBar"'],
+  // The bar, and the phone header's door to it (`menu_sheet.mjs`, docs/148
+  // §5.3b): a host that withholds the menus and leaves the door would ship a
+  // button that opens nothing.
+  menu: ['id="appMenuBar"', 'id="appMenusBtn"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
   // Both durable entry points, not just the View band's: the rail's Versions

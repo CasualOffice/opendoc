@@ -4156,6 +4156,24 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   font-variant-numeric: tabular-nums;
 }
 
+/* A finger cannot hit a 15px cell. Drawn for a mouse — Docs' own hover grid is
+   about this size — and measured at 15x15 on a phone, under this file's own
+   floor: WCAG 2.5.8 Target Size (Minimum), Level AA, which `phone_chrome.mjs`
+   exports as `MIN_TOUCH_TARGET_PX = 24`. Keyed on the POINTER, like every other
+   touch rule here, so a touchscreen laptop gets the same grid as a phone. Ten
+   24px columns and nine 2px gaps are 258px: an anchored popover still fits a
+   320px window with its 8px gutters. */
+@media (pointer: coarse) {
+  .grid-cells {
+    grid-template-columns: repeat(10, 24px);
+  }
+
+  .grid-cells .gc {
+    width: 24px;
+    height: 24px;
+  }
+}
+
 /* ---- Command palette (⌘K) -------------------------------------------------- */
 .cmd-overlay {
   position: fixed;
@@ -8975,6 +8993,63 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* A sheet says what is ON (`compact_toolbar.mjs`'s `SHEET_STATE`). The Aa
+   sheet's character toggles are Google Docs' toggle row — B / I / U / S side by
+   side at the head of the band, lit when on — and they light the way the bar's
+   own toggles do (`.compact-toolbar .ctool[aria-pressed="true"]`), so a toggle
+   reads the same in the bar and in the sheet. Same box, same tokens. */
+.compact-command-menu .menu-toggle-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+.compact-command-menu .menu-toggle {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2, var(--ink));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.compact-command-menu .menu-toggle .ms { font-size: 20px; line-height: 1; }
+.compact-command-menu .menu-toggle:hover:not(:disabled) {
+  background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent));
+}
+.compact-command-menu .menu-toggle:disabled { opacity: 0.38; cursor: default; }
+.compact-command-menu .menu-toggle[aria-checked="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+/* Half the selection is bold: outlined rather than filled, so "mixed" is
+   neither of the two answers it is not. */
+.compact-command-menu .menu-toggle[aria-checked="mixed"] {
+  box-shadow: inset 0 0 0 1px var(--accent-text);
+}
+.compact-command-menu .menu-toggle:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+/* Rows with a state (alignment, lists) carry the chrome's one tick, the
+   language and spacing menus' `.menu-check`, opacity-toggled. */
+.compact-command-menu .menu-item[role="menuitemcheckbox"],
+.compact-command-menu .menu-item[role="menuitemradio"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.compact-command-menu .menu-item[aria-checked="true"] .menu-check {
+  opacity: 1;
+}
+.compact-command-menu .menu-item[aria-checked="mixed"] .menu-check {
+  opacity: 0.45;
+}
 .compact-overflow-menu {
   flex-wrap: wrap;
   max-width: min(560px, calc(100vw - 24px));
@@ -9065,6 +9140,9 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 /* Touch: the same 44px floor the coarse-pointer block applies elsewhere. */
 @media (pointer: coarse) {
   .compact-toolbar .ctool { min-width: 44px; height: 44px; }
+  /* The sheet's toggle row floats over the document, so it takes the same
+     floor as the bar it opened from; six of them are 276px of a 320px sheet. */
+  .compact-command-menu .menu-toggle { min-width: 44px; height: 44px; }
   .chrome-mode-btn { height: 36px; padding: 0 14px; }
 }
 
@@ -9787,8 +9865,9 @@ body:not(.doc-loaded) .drop-title {
    to lower it.
 
    WHAT MOVES, and why each:
-     header   two rows, brand mark dropped; the menu bar WRAPS instead of
-              scrolling under a mask
+     header   ONE row, brand mark dropped; the menu bar is a sheet behind a
+              menus button (`docs/148` §5.3b). It first WRAPPED instead of
+              scrolling under a mask, which cost 93px at 390 and 120px at 320
      ribbon   gone — `body.compact-mode` already hides it, and `setChromeMode`
               forces compact at this rung
      rail     turns its axis: a horizontal strip above the document instead of
@@ -9817,10 +9896,28 @@ body.phone-mode {
      honours `interactive-widget=resizes-content` (the meta tag in editor.html)
      the layout viewport has already shrunk and this reads 0, which is correct. */
   --phone-bottom-inset: calc(var(--phone-keyboard-inset, 0px) + env(safe-area-inset-bottom, 0px));
-  --phone-bottom-chrome: calc(var(--h-footer) + var(--h-compact-bar) + var(--phone-bottom-inset));
+  /* The docked bar's height, stated rather than borrowed. Every bottom reserve
+     on this rung — the sheets' bottom edge, the document's padding, the toast —
+     used to read `--h-compact-bar`, which is `clamp(38px, 3.4vh, 46px)` and
+     resolves to 38px on any phone, while the bar actually paints 41px (34px
+     controls, 3px padding each side, a 1px rule) and, under a finger, 51px
+     (the coarse block's 44px controls). So every sheet's bottom edge lay 3px —
+     and on a touch phone 13px — across the top of the bar's own buttons
+     (`narrow-review-column.spec.mjs` recorded the 3px; `phone-09f` shows the
+     13). The global token is left alone (`SKILL.md` §11); the rung states its
+     own number and `body.phone-mode .compact-toolbar` below is held to it, so
+     the two cannot disagree again (`109` HF-278). */
+  --phone-bar-height: 41px;
+  --phone-bottom-chrome: calc(var(--h-footer) + var(--phone-bar-height) + var(--phone-bottom-inset));
 }
 
-/* ---- Header: two rows, no brand, a menu bar that wraps ------------------ */
+@media (pointer: coarse) {
+  body.phone-mode {
+    --phone-bar-height: 51px;
+  }
+}
+
+/* ---- Header: ONE row, no brand, the menu bar behind a button ------------ */
 
 /* The brand mark is the first thing a phone gives up — it names the product to
    someone already inside it, and it is the only header cell that can be spent
@@ -9839,12 +9936,24 @@ body.phone-mode .chrome-mode {
   display: none;
 }
 
+/* ONE ROW: the document's name, its state, and three buttons — the menus, its
+   properties, settings. Google Docs' phone header is exactly this shape (the
+   document and a few icons, everything else behind one control), and so are
+   Word mobile's and ONLYOFFICE mobile's (`docs/148` §2-§4).
+
+   It was three rows. The menu bar wrapped File Edit View Insert Format Table /
+   References Review onto two lines under the title, measured at 92px of an
+   844px window (`phone-09a`), and with the docked bar and the status bar the
+   chrome took ~40% of the screen before a soft keyboard took its own half.
+   `docs/148` §5.3 kept the bar on screen because "an axis may not be
+   abbreviated", and that is still the rule: nothing here abbreviates it. All
+   eight names are kept, in order, each opening its own menu — they are drawn
+   in a sheet the menus button opens instead of across the header
+   (`menu_sheet.mjs`, §5.3b). */
 body.phone-mode .bar {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: var(--h-header-title) auto;
-  grid-template-areas:
-    "title docstate"
-    "nav   apptools";
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto;
+  grid-template-areas: "title docstate menus apptools";
   align-items: center;
   height: auto;
   /* Paint under a notch, then pay for it (`viewport-fit=cover`). */
@@ -9852,32 +9961,90 @@ body.phone-mode .bar {
     calc(8px + env(safe-area-inset-left, 0px));
 }
 
-/* The menu bar is the compact chrome's one navigation axis (docs/122), so on a
-   phone it is the one thing in the header that may not be abbreviated. It was
-   a 21px strip with `overflow-x: auto` and a fade mask — at 360px
-   `responsive-shell.spec.mjs` measures it genuinely clipping, and reaching the
-   last menu needs a sideways drag on a bar most people will not think to drag.
-   Seven short names wrap into two rows at 320px and one at 390px, which costs
-   the header ~24px and costs the reader nothing. */
+/* The door. Not painted at any other width, where the bar is the row. */
+.app-menus-button {
+  display: none;
+}
+
+body.phone-mode .app-menus-button {
+  display: inline-flex;
+  grid-area: menus;
+}
+
+body.phone-mode .app-menus-button[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* The bar itself is not painted in the row… */
 body.phone-mode .app-menu-bar {
+  display: none;
+}
+
+/* …and when the door is open it is a bottom sheet of eight rows, where every
+   other phone sheet is: the menu each name opens is a bottom sheet in the same
+   place (see `.app-menu-popover` below), so choosing one REPLACES the list
+   rather than stacking a second card beside it. The list is not scrolled
+   sideways and not masked: it is a column, and it is as tall as it needs up to
+   the room between the header and the docked bar. */
+body.phone-mode .app-menu-bar.is-open {
+  position: fixed;
+  right: 0;
+  bottom: calc(var(--h-footer) + var(--phone-bar-height) + var(--phone-bottom-inset));
+  left: 0;
+  z-index: var(--z-menu);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   height: auto;
-  min-height: var(--h-tab);
-  flex-wrap: wrap;
-  overflow: visible;
-  row-gap: 3px;
+  max-height: calc(100dvh - var(--phone-header-height, var(--h-header)) - var(--phone-bottom-chrome) - 8px);
+  margin: 0;
+  padding: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
   mask-image: none;
   -webkit-mask-image: none;
 }
 
-/* The coarse-pointer block above explicitly defers this row — "a 44px floor
-   there needs the header redesigned, not restyled". This block IS that
-   redesign, for this rung: the header is no longer a committed 58px band, so
-   the row can take the WCAG 2.5.8 floor without pushing anything out. 24, not
-   44, because these sit in a dense navigation bar rather than floating over
-   the document, which is the same line the rest of this file draws. */
-body.phone-mode .app-menu-button {
-  min-height: 24px;
-  padding-inline: 9px;
+/* A fixed box inside the header is still inside the header's stacking context
+   (`.bar` is a flex item of `body` with a z-index), so without this the sheet
+   would sit at `--z-bar` under every drawer and object toolbar on the page.
+   Raised only while it is open. The menu a name opens is `--z-menu` too and
+   comes later in the document, so it still paints above the list. */
+body.phone-mode:has(#appMenuBar.is-open) .bar {
+  z-index: var(--z-menu);
+}
+
+/* While a menu is open the list steps out of sight; Escape brings it back with
+   focus on the name that opened it — a drill, the shape a submenu already has
+   at this rung. `visibility`, not `display`, so the names keep their boxes and
+   that focus has somewhere to land the moment the menu closes. */
+body.phone-mode:has(#appMenuPopover:not([hidden])) .app-menu-bar.is-open {
+  visibility: hidden;
+}
+
+/* Rows a finger can hit. The coarse-pointer block below raises floating menu
+   rows to 44px and these are floating rows now, so they take the same floor;
+   with a mouse they keep the dense 36px the rest of this rung's menus use. */
+body.phone-mode .app-menu-bar.is-open .app-menu-button {
+  height: auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  line-height: normal;
+  text-align: start;
+}
+
+@media (pointer: coarse) {
+  body.phone-mode .app-menu-bar.is-open .app-menu-button {
+    min-height: 44px;
+  }
 }
 
 /* ---- The work area ----------------------------------------------------- */
@@ -9950,6 +10117,10 @@ body.phone-mode .compact-toolbar {
   padding-inline: calc(8px + env(safe-area-inset-left, 0px)) calc(8px + env(safe-area-inset-right, 0px));
   border-top: 1px solid var(--line);
   border-radius: 0;
+  /* Held to the number every bottom reserve on this rung reads (see
+     `--phone-bar-height` at the top of this block). */
+  height: var(--phone-bar-height);
+  min-height: 0;
 }
 
 /* The bar's own buttons. The `(pointer: coarse)` block further down raises
@@ -10045,7 +10216,9 @@ body.phone-mode.modal-open .toast,
 body.phone-mode:has(.app-menu-popover:not([hidden])) .toast,
 body.phone-mode:has(.compact-command-menu:not([hidden])) .toast,
 body.phone-mode:has(.compact-align-menu:not([hidden])) .toast,
-body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast {
+body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast,
+body.phone-mode:has(.grid-picker:not([hidden])) .toast,
+body.phone-mode:has(#appMenuBar.is-open) .toast {
   /* `--phone-header-height` and NOT `--h-header`: the token says 63px and this
      rung's header is two rows at 390px and three at 320px, because the menu bar
      wraps rather than scrolling (§5.3) and how many rows that takes depends on
@@ -10119,11 +10292,12 @@ body.phone-mode .cmd-palette {
 body.phone-mode .app-menu-popover,
 body.phone-mode .compact-command-menu,
 body.phone-mode .compact-align-menu,
-body.phone-mode .compact-overflow-menu {
+body.phone-mode .compact-overflow-menu,
+body.phone-mode .grid-picker {
   position: fixed !important;
   top: auto !important;
   right: 0 !important;
-  bottom: calc(var(--h-footer) + var(--h-compact-bar) + var(--phone-bottom-inset)) !important;
+  bottom: calc(var(--h-footer) + var(--phone-bar-height) + var(--phone-bottom-inset)) !important;
   left: 0 !important;
   width: auto !important;
   max-width: none;
@@ -10134,6 +10308,28 @@ body.phone-mode .compact-overflow-menu {
      caught this rule the first time it was written without it). */
   overscroll-behavior: contain;
   border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+}
+
+/* The table-size grid joins the sheets above, for the reason they are sheets
+   (`109` HF-275).
+   On a phone it is opened from the + sheet, whose row has vanished by the time
+   the grid measures its anchor, so `popoverAnchor` fell back to the ribbon's
+   hidden Insert-table button and `popoverPosition` put the grid at the window's
+   top-left — measured at y 4, across the header and the menu bar
+   (`phone-08-insert-table.png`). A sheet has no anchor to lose. And once it is
+   a sheet the cells can spend the width: ten columns of at least the 24px
+   floor, at most 40 so a 620px window does not get a grid taller than the
+   60vh the sheet may take. 390px gives ~34px cells, 320px ~27px. */
+body.phone-mode .grid-cells {
+  grid-template-columns: repeat(10, minmax(24px, 40px));
+  justify-content: center;
+  gap: 3px;
+}
+
+body.phone-mode .grid-cells .gc {
+  width: auto;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 /* =========================================================================
@@ -11685,6 +11881,7 @@ body.chrome-no-ribbon.ribbon-mode #appMenuBar {
    engine — gets neither axis, because it has no commands to reach. */
 body.chrome-no-menu #appMenuBar,
 body.chrome-no-menu.ribbon-mode #appMenuBar,
+body.chrome-no-menu #appMenusBtn,
 body.chrome-no-menu #appMenuPopover {
   display: none !important;
 }

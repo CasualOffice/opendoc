@@ -64,6 +64,16 @@
             title="Rename document"
           />
         </div>
+        <!-- The menu bar's door on a phone (docs/148 §5.3b). At the phone rung the
+             header is ONE row — title, state, this button, info, settings — and
+             the eight menu names live in a sheet this button opens, each still
+             opening its own menu; at every other width it is not painted and the
+             bar below is the row. A disclosure, not a menu button: it reveals the
+             nav element, it does not stand in for a menu, so it carries
+             `aria-expanded`/`aria-controls` and no `aria-haspopup`. Named by the
+             nav's own key, so the door and the room are one word in every
+             language. -->
+        <button data-i18n-title="documentChrome.applicationMenus.label" data-i18n-label="documentChrome.applicationMenus.label" id="appMenusBtn" type="button" class="btn icon-only app-menus-button" title="Application menus" aria-label="Application menus" aria-expanded="false" aria-controls="appMenuBar"><span class="ms" aria-hidden="true">menu</span></button>
         <!-- The menu bar is COMPACT-MODE chrome only (`body.ribbon-mode` hides it
              in style.css). Ribbon mode's one navigation axis is the tab strip,
              whose first tab is File — ONLYOFFICE's arrangement, verified in
