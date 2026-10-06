@@ -124,7 +124,12 @@ export const FILE_SURFACE = [
   // Options ▸ Advanced. This row lands on the chooser inside Settings rather than
   // being a second copy of it, so the preference has one control and two ways in.
   { nameKey: "menuGroup.settings", ids: ["view.settings", "view.measurementUnits"] },
-  { nameKey: "menuGroup.help", ids: ["help.commands", "help.shortcuts", "help.about"] },
+  // Help behind one row, as Google Docs (a Help menu) and Word (File ▸ Help)
+  // both file it: the three rows are where a reader goes for the editor rather
+  // than for the document. Folded when Compatibility findings joined Document and
+  // took the File menu to 14 top-level rows, one past `menu-submenus.spec.mjs`'s
+  // cap of 13. The File PAGE renders a submenu flat, so its Help group is unchanged.
+  { nameKey: "menuGroup.help", submenu: true, ids: ["help.commands", "help.shortcuts", "help.about"] },
 ];
 
 /**

@@ -130,8 +130,12 @@ test("application menus support keyboard traversal, disabled reasons, and real d
   await page.locator("#propertiesClose").click();
 
   // "Find a command" was a Help-menu row; Help is a File group now, which is
-  // where ONLYOFFICE keeps it too.
+  // where ONLYOFFICE keeps it too — one level in, behind File ▸ Help, so the
+  // File menu stays within `menu-submenus.spec.mjs`'s cap.
   await openAppMenu(page, "file");
+  const help = menu.locator(".app-menu-item-parent", { hasText: "Help" });
+  await help.click();
+  await expect(help).toHaveAttribute("aria-expanded", "true");
   await menu.locator('[data-command="help.commands"]').click();
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await page.keyboard.press("Escape");
