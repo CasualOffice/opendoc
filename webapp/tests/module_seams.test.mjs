@@ -401,8 +401,20 @@ const SRC = new URL("../src/", import.meta.url);
  *      `previewPx`, as `nextZoomStep`'s sibling, where the past-the-end
  *      behaviour and the `w:sz` clamps are asserted rather than pressed.
  *  MEASURED with `wc -l` on this tree AFTER the rebase onto `origin/main`
- *  564db686, not carried from the branch. */
-const MAIN_JS_LINE_CEILING = 16162;
+ *  564db686, not carried from the branch.
+ *
+ *  Lowered to 16,065 by the UX-fix round (Ctrl+H, the heading chords, F6 region
+ *  cycling, the findings dialog, style display names, disabled-control reasons).
+ *  The file was AT its ceiling with zero slack, and the round needed registry
+ *  rows, a construction or two and its call sites — so it paid by extracting the
+ *  Insert-table size grid whole into `table_grid_picker.mjs` (~120 lines), which
+ *  was also the round's own subject: its size label disagreed with the Table
+ *  band's, and the two now read one formatter. Every new behaviour lives in its
+ *  own module (`region_focus`, `quick_styles`, `style_names`, `compat_findings`,
+ *  `control_reasons`), so `main.js` carries their wiring and nothing else.
+ *  MEASURED with `wc -l` from the tree AFTER rebasing onto `origin/main` 0e441fc
+ *  (#809), not carried from the branch, which had read 16,066. */
+const MAIN_JS_LINE_CEILING = 16065;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -516,6 +528,11 @@ const PURE_MODULES = [
   // UX-005). Selectors and ids only: the caller supplies the root, so the table
   // is checkable in node and cannot quietly grow a DOM opinion.
   "ribbon_faces.mjs",
+  // Which stored style Ctrl+Alt+2 means, and what a built-in style is CALLED.
+  // Both are decisions over a list of names with no DOM and no engine, which is
+  // what lets `quick_styles.test.mjs` and `style_names.test.mjs` drive them.
+  "quick_styles.mjs",
+  "style_names.mjs",
   "review_labels.mjs",
   "review_layout.mjs",
   // Takes nodes as arguments and never reaches for a global one, which is what

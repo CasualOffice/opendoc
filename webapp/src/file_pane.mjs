@@ -77,13 +77,23 @@ export function renderFilePane(deps) {
   const registry = menuRegistry();
   renderExportPane(
     host,
-    exportRows.map((row) => ({
-      ...formatInfoOf(row.format),
-      id: row.id,
-      icon: row.icon,
-      enabled: registry.get(row.id)?.enabled !== false,
-      reason: registry.get(row.id)?.reason,
-    })),
+    exportRows.map((row) => {
+      const command = registry.get(row.id);
+      const enabled = command?.enabled !== false;
+      return {
+        ...formatInfoOf(row.format),
+        id: row.id,
+        icon: row.icon,
+        enabled,
+        // `disabledReason`, which is the field a command descriptor carries. This
+        // read `.reason`, which no descriptor has, so the RTF tile — disabled
+        // because this build has no RTF writer — greyed out saying nothing while
+        // its palette row gave the reason. Only when DISABLED: every export row
+        // carries a reason for the day it is unavailable, and an enabled PDF tile
+        // titled "This build cannot write PDF" would be a lie.
+        reason: enabled ? undefined : command?.disabledReason,
+      };
+    }),
     (format) => {
       closeFilePage();
       registry.get(format.id)?.run();

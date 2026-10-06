@@ -20,8 +20,15 @@ import {
   bindTableBand,
   tableBandStates,
   tableContextLabel,
+  tableSizeLabel,
 } from "../src/table_band.mjs";
 import { EN_STRINGS } from "../src/en_strings.mjs";
+import { setCatalogue, setLocale } from "../src/i18n.mjs";
+
+// The size sentence is a catalogue entry now, so the labels below read English
+// from the compiled-in catalogue rather than printing their keys.
+setCatalogue("en", { ...EN_STRINGS });
+setLocale("en");
 
 const html = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
 
@@ -319,12 +326,28 @@ test("the context hint names the grid, the caret's cell, and a merge when there 
   // three e2e specs happen to match on. 1-based in the words, 0-based in the model.
   assert.equal(
     tableContextLabel({ rows: 3, columns: 3, row: 0, column: 1, regular: true }),
-    "3×3 table · row 1, column 2",
+    "3 × 3 table · row 1, column 2",
   );
   assert.equal(
     tableContextLabel({ rows: 3, columns: 3, row: 0, column: 0, regular: false }),
-    "3×3 table · row 1, column 1 · merged/spanned",
+    "3 × 3 table · row 1, column 1 · merged/spanned",
   );
+});
+
+test("a table's size reads columns first, on the band and in the Insert grid alike", () => {
+  // Word's convention: its Insert Table grid reads "4x3 Table" for FOUR COLUMNS
+  // and THREE ROWS. The band used to print rows first, so a table the grid had
+  // just called "4 × 3" became "3×4 table" on the Table tab. A square table
+  // cannot tell the two orders apart, which is how the test above stayed green
+  // through it — so this one is deliberately not square.
+  assert.equal(tableSizeLabel(4, 3), "4 × 3 table");
+  assert.equal(
+    tableContextLabel({ rows: 3, columns: 4, row: 2, column: 0, regular: true }),
+    "4 × 3 table · row 3, column 1",
+  );
+  // And the grid reads the same function rather than a copy of the sentence.
+  const grid = readFileSync(new URL("../src/table_grid_picker.mjs", import.meta.url), "utf8");
+  assert.match(grid, /tableSizeLabel\(columns, rows\)/, "the Insert grid formats the size itself again");
 });
 
 test("every band button can have its authored title restored", () => {

@@ -72,6 +72,20 @@ async function insertTwoByTwoTable(page) {
 // requires that focus lands somewhere inside the editor rather than on <body>.
 export const MODALS = [
   {
+    id: "compatibilityFindingsDialog",
+    name: "Compatibility findings",
+    // Built by `compat_findings.mjs` rather than authored in `editor.html`, and
+    // registered through the same `registerModal`, so it answers this contract
+    // by construction. Its opener is the header chip — a count that could not be
+    // pressed until it became this button (`desk-11-import-findings.png`).
+    opener: "#compatibilityStatus",
+    focus: "#compatibilityFindingsDialogDone",
+    async open(page) {
+      await gotoEditor(page);
+      await page.locator("#compatibilityStatus").click();
+    },
+  },
+  {
     id: "propertiesPanel",
     name: "Document properties",
     opener: "#propertiesBtn",

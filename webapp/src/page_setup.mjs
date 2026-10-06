@@ -174,11 +174,33 @@ export function createPageSetup(io) {
    *  Complexity: O(fields). */
   function reflectUnits() {
     const twips = DISTANCE_FIELDS().map((input) => (input ? fieldTwips(input) : null));
-    for (const input of DISTANCE_FIELDS()) io.measure.applyToField(input);
+    applyUnits();
     DISTANCE_FIELDS().forEach((input, index) => {
       if (input && twips[index] !== null) input.value = inchText(twips[index]);
     });
     updatePreview();
+  }
+
+  /** The unit in force, applied to every distance field's suffix, step and
+   *  bounds — WITHOUT touching a value.
+   *
+   *  It is the half of `reflectUnits` that every PAINT needs, and it lives apart
+   *  because the paints are where it was missing. `inchText` writes a value in
+   *  the reader's unit, but the suffix beside it is whatever the markup says
+   *  (`in`) until something applies the unit — and only `toggle()` did, through
+   *  `reflectUnits`. So the File page's Page setup PANE, which calls `reflect()`
+   *  and never `toggle()`, showed `21.59` / `27.94` centimetres labelled `in` on a
+   *  centimetre preference whenever the dialog had not been opened first in that
+   *  session; Apply would then have read those numerals back in centimetres, so
+   *  the page was not resized — but a reader who "corrected" a field labelled
+   *  inches would have typed inches into a centimetre field. The Line numbers
+   *  popover's "From text" field had the same gap. Every path that paints a
+   *  distance now applies the unit first, so a value and its label cannot come
+   *  from two different units.
+   *
+   *  Complexity: O(fields). */
+  function applyUnits() {
+    for (const input of DISTANCE_FIELDS()) io.measure.applyToField(input);
   }
 
   function reflectColumns(columns) {
@@ -312,6 +334,7 @@ export function createPageSetup(io) {
   function reflect() {
     const list = sections();
     if (!list) return false;
+    applyUnits();
     sectionSelect.replaceChildren();
     for (const [index, section] of list.sections.entries()) {
       const option = document.createElement("option");
@@ -549,6 +572,7 @@ export function createPageSetup(io) {
       item.setAttribute("aria-checked", String(item.dataset.linenumber === mode));
     }
     lineNumberSuppress.checked = rule?.suppressed === true;
+    applyUnits(); // the "From text" suffix, before its value is painted in that unit
     lineNumberStart.value = String(rule?.start ?? 1);
     lineNumberCountBy.value = String(rule?.countBy ?? 1);
     // `w:distance` absent is Word's "Auto", which it resolves against the text;

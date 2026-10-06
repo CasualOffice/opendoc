@@ -43,7 +43,7 @@
 // places and would have to be kept in step with
 // `casual_doc_edit::protection::exempt_from_protection` by hand.
 
-import { STANDARD_PLATFORM, matchesShortcut } from "./keyboard.mjs";
+import { APPLE_PLATFORM, STANDARD_PLATFORM, formatShortcut, matchesShortcut } from "./keyboard.mjs";
 
 /** Where a chord is allowed to fire.
  *
@@ -99,6 +99,14 @@ export const KEYMAP = [
   { chord: "⌘S", command: "file.save", scope: APP_SCOPE },
   { chord: "⌘P", command: "file.print", scope: APP_SCOPE },
   { chord: "⌘F", command: "edit.find", scope: APP_SCOPE },
+  // Find and REPLACE, with the replacement field ready. Ctrl+H is the chord in
+  // Word, Google Docs and ONLYOFFICE alike, and it did nothing here. Split by
+  // platform because the platforms genuinely differ: on a Mac ⌘H is the
+  // operating system's Hide, which a page never receives, so the Apple row is
+  // Google Docs' ⌘⇧H (Word for Mac uses ⌃H, which is a text field's
+  // delete-backward on macOS and is left to it).
+  { chord: "⌘H", command: "edit.replace", scope: APP_SCOPE, platform: STANDARD_PLATFORM },
+  { chord: "⌘⇧H", command: "edit.replace", scope: APP_SCOPE, platform: APPLE_PLATFORM },
   // Google Docs' own chord for revision history (Ctrl+Alt+Shift+H), which is
   // ⌘⌥⇧H on an Apple keyboard. Taken from the competition rather than invented:
   // a chord nobody else uses is a chord nobody reaches for, and this one is free
@@ -145,6 +153,19 @@ export const KEYMAP = [
   { chord: "⌘1", command: "paragraph.spacing.100", scope: EDITOR_SCOPE },
   { chord: "⌘5", command: "paragraph.spacing.150", scope: EDITOR_SCOPE },
   { chord: "⌘2", command: "paragraph.spacing.200", scope: EDITOR_SCOPE },
+  // Heading styles. Ctrl+Alt+1/2/3 is Word's (⌘⌥1/2/3 on its Mac build) and the
+  // first three of Google Docs' Ctrl+Alt+1..6; Ctrl+Alt+0 is Docs' "Normal text".
+  // Measured free before it was taken: no row here uses ⌘⌥ with a digit, and
+  // `matchesShortcut` compares Alt exactly, so these cannot collide with the
+  // ⌘1 / ⌘5 / ⌘2 line-spacing rows above. Where Ctrl+Alt is AltGr (German,
+  // Polish, French and other layouts) the keystroke TYPES a character — AltGr+0
+  // is "}" in German — and since matching reads `event.key` off Apple, the
+  // character wins and the chord does not fire there: typing is never stolen,
+  // and the palette and the Styles box remain the route on those layouts.
+  { chord: "⌘⌥1", command: "paragraph.heading.1", scope: EDITOR_SCOPE },
+  { chord: "⌘⌥2", command: "paragraph.heading.2", scope: EDITOR_SCOPE },
+  { chord: "⌘⌥3", command: "paragraph.heading.3", scope: EDITOR_SCOPE },
+  { chord: "⌘⌥0", command: "paragraph.normal", scope: EDITOR_SCOPE },
 
   // ---- Insert --------------------------------------------------------------
   { chord: "⌘K", command: "insert.link", scope: EDITOR_SCOPE },
@@ -208,6 +229,13 @@ export const KEYMAP = [
   // on all of them, which is UX-007 exactly. `⌘` already resolves to Control off
   // Apple, so this is ⌘8 on a Mac and Ctrl+8 elsewhere, both live.
   { chord: "⌘8", command: "view.formattingMarks", scope: APP_SCOPE },
+  // Move between the window's regions — tab strip, open side panes, document,
+  // status bar — the way F6 / Shift+F6 does in Word and in every Windows
+  // application, and the only keyboard route from the document OUT to the chrome
+  // that does not mean tabbing through every control on the way. No modifier, so
+  // `chordCommand` admits function keys explicitly (an F-key never types).
+  { chord: "F6", command: "view.region.next", scope: APP_SCOPE },
+  { chord: "⇧F6", command: "view.region.previous", scope: APP_SCOPE },
 
   // ---- Review --------------------------------------------------------------
   // `review.comment`, NOT `comment.add`: the latter is the annotate surface's own
@@ -240,6 +268,19 @@ export function shortcutForCommand(commandId, platform, keymap = KEYMAP) {
   )?.chord;
 }
 
+/** A control's tooltip: its name, then the chord its command is bound to here.
+ *
+ *  For the controls whose chord DIFFERS by platform and so cannot be written
+ *  into markup: Replace is ⌘H off Apple and ⌘⇧H on it, because ⌘H on a Mac is
+ *  the operating system's Hide. A title authored as "Replace (⌘F)" was a chord
+ *  that never opened Replace; one authored as "(⌘H)" would advertise Hide to
+ *  every Mac. Read from the same table the dispatcher matches against, so the
+ *  tooltip cannot name a chord that is not bound. */
+export function chordTitle(label, commandId, platform, keymap = KEYMAP) {
+  const chord = shortcutForCommand(commandId, platform, keymap);
+  return chord ? `${label} (${formatShortcut(chord, platform)})` : label;
+}
+
 /** The command a keystroke asks for, or `null`.
  *
  *  `inEditor` says whether the editing surface currently owns the keyboard; an
@@ -250,12 +291,19 @@ export function shortcutForCommand(commandId, platform, keymap = KEYMAP) {
 export function chordCommand(event, platform, { inEditor = true } = {}, keymap = KEYMAP) {
   // Ordinary typing carries no chord modifier. Checking this first keeps the
   // per-keystroke cost of the whole mechanism at one boolean for the common case
-  // (`docs/107` §4: per-interaction work is O(1) and small).
-  if (!event.metaKey && !event.ctrlKey && !event.altKey) return null;
+  // (`docs/107` §4: per-interaction work is O(1) and small). A FUNCTION key is the
+  // one exception: F6 is a chord with no modifier, and no F-key ever types.
+  if (!event.metaKey && !event.ctrlKey && !event.altKey && !isFunctionKey(event.key)) return null;
   for (const row of keymap) {
     if (row.platform && row.platform !== platform) continue;
     if (row.scope === EDITOR_SCOPE && !inEditor) continue;
     if (matchesShortcut(row.chord, event, platform)) return row.command;
   }
   return null;
+}
+
+/** `F1`…`F24`. A string test, not a regex, because it runs on every keystroke
+ *  that carries no modifier. */
+function isFunctionKey(key) {
+  return typeof key === "string" && key.length >= 2 && key.length <= 3 && key[0] === "F" && key[1] >= "1" && key[1] <= "9";
 }

@@ -220,7 +220,15 @@ const CEILINGS = new Map([
   // literal adjacent to a sink, and two of them sat behind a conditional inside
   // `setStatus(…)`), so the measured fall is two rather than four. MEASURED from the
   // file, never calculated.
-  ["src/main.js", 302],
+  // 302 -> 295 with the UX round that extracted the Insert-table grid
+  // (`table_grid_picker.mjs`, whose "Table size" and per-cell names now go through
+  // `table.size*` keys) and routed the four reasons Restart/Continue numbering and
+  // Insert ▸ Link share with their palette rows (`list.reason.*`,
+  // `insert.reason.linkNeedsText`). Every sentence the round added is a `t()` key.
+  // MEASURED from the file after rebasing onto `origin/main` 0e441fc, whose
+  // status-progress change (#809) took two more literals out underneath the
+  // branch's own 297 — measured, never calculated.
+  ["src/main.js", 295],
   // The nine `label:`/`disabledReason:` literals that moved out of `main.js` with
   // the `table.*` command tree. Same debt in a new place, not a new debt: `main.js`
   // came down by more than nine in the same commit. They stay English because this

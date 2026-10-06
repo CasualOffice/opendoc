@@ -55,10 +55,13 @@ import { spellingContextCommands } from "./spell_check.mjs";
 import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { FONT_SIZE_STEPS, RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
-import { downloadBytes, populateSaveFormats, showCompatibilityFindings } from "./save_formats.mjs";
+import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
+import { createCompatibilityFindings } from "./compat_findings.mjs";
+import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
 import { createCompactToolbar } from "./compact_toolbar.mjs";
@@ -78,12 +81,11 @@ import {
 } from "./page_scroll.mjs";
 import {
   compatibilityOccurrenceCount,
-  importFindingCount,
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
 import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, navigationShortcuts, wordDeletionDirection } from "./keyboard.mjs";
-import { chordCommand, shortcutForCommand } from "./keymap.mjs";
+import { chordCommand, chordTitle, shortcutForCommand } from "./keymap.mjs";
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import {
   focusMenuIndex,
@@ -252,6 +254,9 @@ import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
+import { createTableGridPicker } from "./table_grid_picker.mjs";
+import { createRegionCycle } from "./region_focus.mjs";
+import { quickStyleCommands } from "./quick_styles.mjs";
 import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
@@ -464,8 +469,6 @@ const reviewGrammarCheckBtn = document.getElementById("reviewGrammarCheckBtn");
 const reviewSmartQuotesBtn = document.getElementById("reviewSmartQuotesBtn");
 const reviewProofLanguagesBtn = document.getElementById("reviewProofLanguagesBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
-const gridPicker = document.getElementById("gridPicker");
-const gridLabel = document.getElementById("gridLabel");
 const ribbonTabs = [...document.querySelectorAll(".ribbon-tab")];
 const ribbonPanels = [...document.querySelectorAll(".ribbon-panel")];
 const tabTable = document.getElementById("tabTable");
@@ -623,11 +626,11 @@ const copyBtn = document.getElementById("copyBtn");
 const replaceBtn = document.getElementById("replaceBtn");
 // Clipboard buttons reuse the exact clipboard actions the command palette and
 // keyboard already invoke (`paste`/`cut`/`copySelection`), so they are never a
-// second code path. Replace opens the same Find & Replace panel as Find.
+// second code path. Replace opens the same Find & Replace panel on its replace field.
 pasteBtn.addEventListener("click", () => { paste(); });
 cutBtn.addEventListener("click", () => { cut(); });
 copyBtn.addEventListener("click", () => { copySelection(); });
-replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
+replaceBtn.addEventListener("click", () => { if (!replaceBtn.disabled) openFind({ replace: true }); });
 
 // The Styles control — the ONE control the band offers for paragraph styles (docs/115).
 // It replaces three: a `#paragraphStyle` select listing every style in the document
@@ -692,7 +695,7 @@ function makeStyleOption(name) {
   option.appendChild(check);
   const label = document.createElement("span");
   label.className = "style-option-name";
-  label.textContent = name;
+  label.textContent = styleDisplayName(name);
   applyStylePreview(label, name, (style) => doc?.stylePreview?.(style));
   option.appendChild(label);
   option.addEventListener("click", () => {
@@ -801,11 +804,11 @@ function syncStylesGalleryActive() {
   // A style outside the offered six is still shown on the trigger — it is what
   // the caret is in, and a control reporting something else is worse than one
   // reporting a style it cannot re-offer. `offeredStyles` gives it a slot anyway.
-  stylesTriggerLabel.textContent = active || "Normal";
+  stylesTriggerLabel.textContent = styleDisplayName(active || "Normal");
   stylesTrigger.classList.toggle("is-placeholder", !active);
   stylesTrigger.setAttribute(
     "aria-label",
-    active ? `Paragraph style: ${active}` : "Paragraph style",
+    active ? `Paragraph style: ${styleDisplayName(active)}` : "Paragraph style",
   );
   for (const option of stylesMenuList.querySelectorAll(".style-option")) {
     const selected = option.dataset.style === active;
@@ -897,7 +900,7 @@ async function updateStyleFromSelection(name) {
   await runToolbarEdit((a, b, c, d) => doc.updateStyleFromSelection(a, b, c, d, name));
   populateStyles();
   updateToolbar();
-  setStatus(`Updated “${name}” to match the selection`);
+  setStatus(`Updated “${styleDisplayName(name)}” to match the selection`);
 }
 
 /** Creates a new paragraph style from the selection and applies it (Word's
@@ -2438,7 +2441,8 @@ const paraControls = [
 ];
 const saveBtn = document.getElementById("save");
 const saveFormatEl = document.getElementById("saveFormat");
-const compatibilityStatusEl = document.getElementById("compatibilityStatus");
+// The findings chip is a button that opens them (`compat_findings.mjs`), not a count leading nowhere.
+const compatFindings = createCompatibilityFindings({ chip: document.getElementById("compatibilityStatus"), registerModal, fallbackFocus: () => pagesEl });
 // The two zoom steppers are looked up where they are USED, below: one reader
 // each, and a name in the widest scope in the product for it.
 const documentChrome = document.getElementById("documentChrome");
@@ -2476,6 +2480,8 @@ function backingDpr() {
 
 /** The currently open document handle (or null). Kept so a zoom change re-renders. */
 let doc = null;
+/** F6 / Shift+F6 between the window's regions (`region_focus.mjs`); early, because the registry reads it. */
+const regionCycle = createRegionCycle({ root: document, focusEditor: () => focusEditorSurface(), documentOpen: () => !!doc, modalOpen: modalIsOpen });
 /** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
 let collab = null;
 /** Arrivals paint one at a time: two must not interleave two `renderAll()`s. */
@@ -3138,7 +3144,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // engine getter with zero consumers: loss was computed on every open and
     // thrown away, while export loss was reported. SKILL §1 names reporting as
     // the condition under which verbatim retention is an advantage at all.
-    showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
+    compatFindings.show(doc.importReportJson, "import");
     railOutline.disabled = railPages.disabled = false;
     reflowView.setEnabled();
     // The reader's formatting-mark preference, replayed onto the new handle: the
@@ -6976,7 +6982,7 @@ function buildContextCommands(context) {
         ? "Link changes cannot be tracked in Suggesting mode"
         : context.hasRange
           ? "Links must stay within one paragraph"
-          : "Select text to add a link",
+          : t("insert.reason.linkNeedsText"),
       run: () => editSelectionLink(),
     });
   }
@@ -8905,11 +8911,10 @@ function updateToolbar() {
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
   checkListBtn.setAttribute("aria-pressed", String(listKind === "checklist"));
-  restartListBtn.disabled = !hasSel || listKind !== "numbered";
-  // Continue numbering is available only when the caret's numbered item has an
-  // earlier numbered list at the same level to resume (the engine's own guard).
-  continueListBtn.disabled =
-    !hasSel || listKind !== "numbered" || !doc.canContinueList(selection.focus.node);
+  // Restart/Continue numbering, each saying WHY when unavailable — the palette's own sentences.
+  const numbering = listNumberingStates({ hasCaret: hasSel && !!doc, listKind, canContinue: () => doc.canContinueList(selection.focus.node) });
+  reflectEnablement(restartListBtn, numbering.restart, EDITOR_KEYBOARD_PLATFORM);
+  reflectEnablement(continueListBtn, numbering.continue, EDITOR_KEYBOARD_PLATFORM);
   // The contextual Table ribbon is enabled only inside a table; regular-grid
   // column commands stay unavailable on merged/spanned tables rather than
   // failing after the user clicks them. WITH A STATED REASON, from the same
@@ -8958,7 +8963,7 @@ if (unstampedFaces.length) console.warn("ribbon faces with no control:", unstamp
 
 for (const entry of INSERT_SURFACE) {
     const enabled = insertCommandEnabled(entry.command, { hasRange: range });
-    for (const button of entry.buttons) button.disabled = !enabled;
+    for (const button of entry.buttons) reflectEnablement(button, { enabled, reasonKey: INSERT_REASON_KEYS[entry.requires] }, EDITOR_KEYBOARD_PLATFORM);
   }
   // Layout and References take their enablement from the same tables their
   // palette rows read, for the same reason: one rule, one place.
@@ -9004,6 +9009,8 @@ for (const entry of INSERT_SURFACE) {
   undoBtn.title = localizeShortcutText(`${undoName} (⌘Z)`, EDITOR_KEYBOARD_PLATFORM);
   redoBtn.title = localizeShortcutText(`${redoName} (⌘⇧Z)`, EDITOR_KEYBOARD_PLATFORM);
   findBtn.disabled = replaceBtn.disabled = !doc;
+  // The chord comes from the keymap, per platform (Replace is ⌘⇧H on a Mac), never from markup.
+  for (const [button, id] of [[findBtn, "edit.find"], [replaceBtn, "edit.replace"]]) button.title = chordTitle(button.getAttribute("aria-label"), id, EDITOR_KEYBOARD_PLATFORM);
   // Clipboard buttons mirror the clipboard actions' own preconditions: copy/cut
   // need a range; paste needs a caret. The actions still fail closed in Viewing
   // mode, but the buttons also disable there so the affordance matches.
@@ -9020,7 +9027,7 @@ for (const entry of INSERT_SURFACE) {
   railReview.disabled = !doc;
   railReview.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   viewZoom.setEnabled(!!doc);
-  tabTable.disabled = !inTable;
+  reflectEnablement(tabTable, { enabled: !!inTable, reasonKey: "table.reason.caretOutsideTable" }, EDITOR_KEYBOARD_PLATFORM);
   // The compact bar's Table group is contextual for the same reason this tab is.
   compactToolbarUi?.setTableContext(inTable);
   if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
@@ -9036,7 +9043,7 @@ for (const entry of INSERT_SURFACE) {
 function populateStyles() {
   const styles = doc ? doc.listStyles() : [];
   paraPanelStyle.replaceChildren();
-  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
+  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, styleDisplayName(s)])]) {
     const opt = document.createElement("option");
     opt.value = value;
     opt.textContent = label;
@@ -10749,130 +10756,21 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// -- Insert table: a hover grid picker (Google-Docs style) --------------------
-// It is a real grid, not eighty anonymous buttons: rows carry `role="row"` (with
-// `display: contents`, so the ten-column CSS grid is untouched), every cell has
-// the size it inserts as its accessible name, and one roving tab stop plus arrow
-// keys makes it navigable. Insertion lives on the cell's `click`, so the pointer
-// and the keyboard travel the same path instead of the keyboard having none.
-const GRID_ROWS = 8;
-const GRID_COLS = 10;
-const gridCells = [];
-gridPicker.setAttribute("role", "grid");
-gridPicker.setAttribute("aria-label", "Table size");
-for (let r = 1; r <= GRID_ROWS; r++) {
-  const row = document.createElement("div");
-  row.setAttribute("role", "row");
-  row.style.display = "contents";
-  const cells = [];
-  for (let c = 1; c <= GRID_COLS; c++) {
-    const cell = document.createElement("button");
-    cell.type = "button";
-    cell.className = "gc";
-    cell.dataset.r = String(r);
-    cell.dataset.c = String(c);
-    cell.setAttribute("role", "gridcell");
-    cell.setAttribute("aria-label", `${c} by ${r} table`);
-    cell.tabIndex = r === 1 && c === 1 ? 0 : -1;
-    row.appendChild(cell);
-    cells.push(cell);
-  }
-  gridPicker.appendChild(row);
-  gridCells.push(cells);
-}
-/** The cell at 1-based `r`/`c`, or undefined outside the grid. */
-const gridCellAt = (r, c) => gridCells[r - 1]?.[c - 1];
-
-function highlightGrid(rows, cols) {
-  for (const row of gridCells) {
-    for (const cell of row) {
-      const on = Number(cell.dataset.r) <= rows && Number(cell.dataset.c) <= cols;
-      cell.classList.toggle("on", on);
-    }
-  }
-  gridLabel.textContent = rows ? `${cols} × ${rows}` : "Insert table";
-}
-
-/** Moves the single tab stop to `r`/`c`, previews that size, and focuses it —
- *  the roving-tabindex pattern, so Tab enters the grid once and the arrows do
- *  the rest. */
-function focusGridCell(r, c) {
-  const cell = gridCellAt(r, c);
-  if (!cell) return;
-  for (const row of gridCells) for (const other of row) other.tabIndex = other === cell ? 0 : -1;
-  highlightGrid(r, c);
-  cell.focus();
-}
-
-async function insertTableFromGrid(cell) {
-  if (!cell || !selection || !doc) return;
-  const rows = Number(cell.dataset.r);
-  const cols = Number(cell.dataset.c);
-  await runEdit(() => doc.insertTable(selection.focus.node, rows, cols), { gate: true });
-  closePopover(insertTablePopover);
-  focusEditorSurface();
-}
-
-gridPicker.addEventListener("pointermove", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
-});
-gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
-// Keep a pointer press from collapsing the document selection the table is
-// about to be inserted into; the click that follows is what inserts.
-gridPicker.addEventListener("pointerdown", (e) => {
-  if (e.target.closest(".gc")) e.preventDefault();
-});
-gridPicker.addEventListener("click", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) void insertTableFromGrid(cell);
-});
-gridPicker.addEventListener("focusin", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
-});
-gridPicker.addEventListener("keydown", (e) => {
-  const cell = e.target.closest(".gc");
-  if (!cell) return;
-  const r = Number(cell.dataset.r);
-  const c = Number(cell.dataset.c);
-  const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
-  if (step) {
-    const next = gridCellAt(r + step[0], c + step[1]);
-    if (!next) return; // at an edge: stay put rather than wrapping to a different size
-    e.preventDefault();
-    focusGridCell(r + step[0], c + step[1]);
-  } else if (e.key === "Home") {
-    e.preventDefault();
-    focusGridCell(e.ctrlKey || e.metaKey ? 1 : r, 1);
-  } else if (e.key === "End") {
-    e.preventDefault();
-    focusGridCell(e.ctrlKey || e.metaKey ? GRID_ROWS : r, GRID_COLS);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closePopover(insertTablePopover);
-    insertTableBtn.focus();
-  }
-  // Enter and Space need no handling: these are real buttons, so the browser
-  // turns them into the same `click` the pointer path uses.
-});
-// The grid picker is a dialog-opening insert, so it refuses BEFORE it opens —
-// the same as Symbol, Emoji, Field and Drop cap, and for the reason
-// `insert-surface.spec.mjs` states for those: a reader must never be led into
-// choosing a size that cannot be applied. Registered ahead of `registerPopover`
-// so it runs first on the same button, and it stops there; the refusal itself is
-// still `blockMutationInViewing()`, the one choke point, not a disabled control.
-insertTableBtn.addEventListener("click", (event) => {
-  if (!insertTableMenu.hidden || !blockMutationInViewing()) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-});
-const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => {
-  // Opening puts the keyboard inside the grid at 1×1. Without this the popover
-  // opened behind the focus ring and Tab walked past it into the rest of the
-  // page, which is what made the whole picker pointer-only.
-  focusGridCell(1, 1);
-  highlightGrid(0, 0);
+// -- Insert table: the size grid (`table_grid_picker.mjs`) --------------------
+createTableGridPicker({
+  picker: document.getElementById("gridPicker"),
+  label: document.getElementById("gridLabel"),
+  button: insertTableBtn,
+  menu: insertTableMenu,
+  registerPopover,
+  closePopover,
+  blocked: () => blockMutationInViewing(),
+  insert: async (rows, columns) => {
+    if (!selection || !doc) return false;
+    await runEdit(() => doc.insertTable(selection.focus.node, rows, columns), { gate: true });
+    return true;
+  },
+  focusEditor: focusEditorSurface,
 });
 
 /** Rebuilds the off-screen accessibility mirror for the caret's part of the
@@ -11685,6 +11583,7 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => selectAll(),
     },
     { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
+    { id: "edit.replace", label: t("find.replaceCommand"), group: "Edit", kw: "find substitute swap change text", run: () => openFind({ replace: true }) },
     { id: "format.bold", label: "Bold", group: "Format", kw: "strong", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("bold") },
     { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("italic") },
     { id: "format.underline", label: "Underline", group: "Format", kw: "", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("underline") },
@@ -11737,8 +11636,8 @@ function editorCommands(context = { surface: "palette" }) {
     // Restart/continue take the SAME predicate the ribbon buttons take
     // (`updateToolbar`), so a row can never be live in the menu while the button
     // for it is greyed — they are now on both surfaces (docs/104 HF-076).
-    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", enabled: numberedListAtCaret(), disabledReason: "Place the caret in a numbered list", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
-    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", enabled: numberedListAtCaret() && doc.canContinueList(selection.focus.node), disabledReason: "There is no earlier numbered list to continue", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
+    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", enabled: numberedListAtCaret(), disabledReason: t("list.reason.notNumbered"), run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
+    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", enabled: numberedListAtCaret() && doc.canContinueList(selection.focus.node), disabledReason: t(numberedListAtCaret() ? "list.reason.nothingToContinue" : "list.reason.notNumbered"), run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(-360) },
     // Insert commands take their `enabled` from `insertCommandEnabled`, the same
@@ -11765,7 +11664,7 @@ function editorCommands(context = { surface: "palette" }) {
     // are held at exact parity by `insert-surface.spec.mjs` and adding a control
     // to both is a chrome change, not this fix.
     { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", enabled: !!selection && reviewMode !== "suggesting", disabledReason: reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void insertLineBreakAtSelection() },
-    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: insertCommandEnabled("insert.link", context), disabledReason: t("insert.reason.linkNeedsText"), run: () => editSelectionLink() },
     { id: "layout.firstPageVariant", label: t("headerFooter.firstPageSwitch", { state: t(headerFooterSettings.variantState().firstPage ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.toggleVariant("firstPage") },
     { id: "layout.evenOddVariant", label: t("headerFooter.evenOddSwitch", { state: t(headerFooterSettings.variantState().evenOdd ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.toggleVariant("evenOdd") },
     { id: "layout.headerFooterSettings", label: t("headerFooter.settingsCommand"), group: "Layout", kw: "header footer position from top bottom distance page numbering number format start at continue link to previous", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.open(true) },
@@ -11918,7 +11817,7 @@ function editorCommands(context = { surface: "palette" }) {
   cmds.push(
     {
       id: "style.updateFromSelection",
-      label: styleTarget ? `Update “${styleTarget}” to match selection` : "Update style to match selection",
+      label: styleTarget ? `Update “${styleDisplayName(styleTarget)}” to match selection` : "Update style to match selection",
       group: "Style",
       kw: "redefine modify match formatting paragraph style",
       enabled: !!styleTarget,
@@ -12047,12 +11946,13 @@ function editorCommands(context = { surface: "palette" }) {
     });
   }
   if (doc) {
+    cmds.push(...quickStyleCommands({ styles: () => doc.listStyles(), hasCaret: () => !!selection, apply: (name) => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }) }));
     for (const name of doc.listStyles()) {
       cmds.push({
         id: `style.${name}`,
-        label: `Style: ${name}`,
+        label: `Style: ${styleDisplayName(name)}`,
         group: "Style",
-        kw: "paragraph heading",
+        kw: `paragraph heading ${name}`.toLowerCase(),
         run: () => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }),
       });
     }
@@ -12154,6 +12054,7 @@ function editorCommands(context = { surface: "palette" }) {
   // the compact bar's tooltip and the shortcut reference all read
   // `command.shortcut`, and the only thing that can set it is the table the
   // dispatcher matches against.
+  cmds.push(...compatFindings.commands(), ...regionCycle.commands());
   for (const command of cmds) command.shortcut = shortcutForCommand(command.id, EDITOR_KEYBOARD_PLATFORM);
   // Narrowed to the ROOM's grant HERE, once, for every surface this registry
   // feeds — palette, menu bar, compact bar, context menus — rather than by a
@@ -13416,15 +13317,17 @@ async function replaceAllMatches() {
   setFindStatus(`Replaced ${matches.length}`);
 }
 
-function openFind() {
+function openFind({ replace = false } = {}) {
   if (!doc) return;
   findPanel.hidden = false;
   if (findSelection.checked) findSelection.dispatchEvent(new Event("change"));
   const selected = selectedPlainText();
   if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
   updateFindStatus();
-  findInput.focus();
-  findInput.select();
+  // ⌘H lands on the replacement once there is a query to replace (VS Code's rule; Word's Replace tab).
+  const field = replace && findInput.value ? replaceInput : findInput;
+  field.focus();
+  field.select();
 }
 
 function closeFind() {
@@ -13613,12 +13516,13 @@ function exportDocumentAs(targetFormat, intent = "export") {
     const bytes = artifact.bytes;
     const mimeType = artifact.mimeType;
     const extension = artifact.suggestedExtension;
-    const findings = compatibilityOccurrenceCount(artifact.reportJson);
+    const report = artifact.reportJson;
+    const findings = compatibilityOccurrenceCount(report);
     artifact.free();
     const saved = downloadBytes(bytes, mimeType, downloadNameForFormat(currentName, extension), document);
     hostSession?.noteWrite(intent, { format: targetFormat, name: saved, bytes: bytes.length });
     markDocumentSaved();
-    showCompatibilityFindings(compatibilityStatusEl, findings, "export");
+    compatFindings.show(report, "export");
     setStatus(
       findings === 0
         ? `Saved ${saved}`

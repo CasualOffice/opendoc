@@ -985,6 +985,73 @@ input {
   white-space: nowrap;
 }
 
+/* `hidden` is a UA `display: none`, and the author `display` above beats it, so a
+   clean document's chip painted as an empty 16x4 bordered box. As a BUTTON that
+   would be a focusable control with nothing to say, so the attribute is honoured
+   here explicitly. */
+.compatibility-status[hidden] {
+  display: none;
+}
+
+/* It opens the findings, so it reads as something to press. */
+button.compatibility-status {
+  cursor: pointer;
+}
+
+button.compatibility-status:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* The findings dialog (`compat_findings.mjs`): one section per kind of outcome,
+   one compact row per finding. A feature id is a technical token and may be long,
+   so it wraps anywhere rather than pushing the card wider. */
+.findings-group + .findings-group {
+  margin-top: var(--space-4);
+}
+
+.findings-group-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.findings-total {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.findings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.findings-feature {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.findings-count,
+.findings-where {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-where {
+  overflow-wrap: anywhere;
+}
+
 .file {
   position: relative;
 }
@@ -9110,6 +9177,11 @@ body:not(.doc-loaded) .search-trigger,
 body:not(.doc-loaded) #save,
 body:not(.doc-loaded) .save-format,
 body:not(.doc-loaded) .compatibility-status,
+/* The state chip says what state THE DOCUMENT is in, and before one exists there
+   is no state to report: the markup's resting text is "Opened", so the boot frame
+   and the bare `?blank=1` upload screen both claimed a document had been opened
+   over an empty drop card. Hidden with its neighbour until `.doc-loaded`. */
+body:not(.doc-loaded) .document-state,
 body:not(.doc-loaded) #propertiesBtn {
   display: none;
 }

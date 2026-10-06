@@ -99,7 +99,12 @@ export const FILE_SURFACE = [
   // Docs files it under File and Word under Layout. It is on the Layout ribbon
   // too; this gives it a File home that matches the competition.
   { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print"] },
-  { nameKey: "menuGroup.document", ids: ["file.properties"] },
+  // Compatibility findings beside the document's properties: Word's File ▸ Info
+  // is where both live (Properties, and Check for Issues ▸ Check Compatibility).
+  // It is the second surface the header chip's report needed — the chip is
+  // hidden on a phone, so without this row the report was a pointer-only
+  // capability on one device class and unreachable on another.
+  { nameKey: "menuGroup.document", ids: ["file.properties", "file.compatibilityReport"] },
   // Version history's PRIMARY home, and the one both references agree on: Google
   // Docs is File ▸ Version history ▸ See version history, ONLYOFFICE is a File
   // page item (`DE.Views.FileMenu.btnHistory`), Word puts it under File ▸ Info.

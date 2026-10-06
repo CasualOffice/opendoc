@@ -124,12 +124,15 @@ test("a command id looks like one, and a family prefix is a prefix", () => {
   }
 });
 
-test("two faces for one command is allowed, because a command can have two", () => {
-  // Find and Replace, and `review.toggle` on both View and Review. The
-  // declarative tables all take `buttons`, plural, for the same reason.
+test("Find and Replace are two commands with a face each, so Replace can carry ⌘H", () => {
+  // They were declared as two faces of `edit.find`, which made Ctrl+H impossible:
+  // a chord binds to a command id, and the Replace button's own chord had no id to
+  // be. `review.toggle`'s second face is on the Review band, outside these tables,
+  // so no command is declared twice here any more.
   const ids = declaredCommandIds();
   const twice = ids.filter((id, i) => ids.indexOf(id) !== i);
-  assert.deepEqual([...new Set(twice)], ["edit.find"]);
+  assert.deepEqual([...new Set(twice)], []);
+  assert.ok(ids.includes("edit.find") && ids.includes("edit.replace"));
 });
 
 test("stamping puts the ids on the controls, and reports the ones it could not find", () => {
