@@ -14,10 +14,11 @@
 //! only true if it does.
 //!
 //! **This is not a renderer and must never become one.** It reads declared
-//! widths, not resolved ones: a table whose `w:tblW` is wider than the measure
-//! *will* have been fitted, which is what the sentence says, and a table that
-//! fits says nothing. Asking the layout instead would mean laying the document
-//! out twice.
+//! widths, not resolved ones: a top-level table whose `w:tblW` is wider than the
+//! measure *will* keep that width and scroll sideways (`MeasureFit::Scroll`,
+//! `docs/151` §6.3d), an image or a nested table that is wider *will* have been
+//! fitted, and content that fits says nothing. Asking the layout instead would
+//! mean laying the document out twice.
 
 use casual_doc_model::v1::BlockNode;
 use casual_doc_model::v1::Document;
@@ -30,13 +31,17 @@ use casual_doc_model::v1::VerticalAnchor;
 
 use crate::units::{Twip, emu_to_twip_extent};
 
-/// The four questions a reflow report asks of a document. Every field is "this
+/// The five questions a reflow report asks of a document. Every field is "this
 /// document contains at least one of these", so a `false` is a sentence the host
 /// must not show.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Survey {
-    /// A table or an inline drawing that declares itself wider than the measure,
-    /// and has therefore been fitted to it (`docs/166` R-1).
+    /// A TOP-LEVEL table that declares itself wider than the measure, and so
+    /// keeps its declared width and scrolls sideways inside the column
+    /// (`docs/151` §6.3d) rather than being narrowed.
+    pub(crate) scrolled_table: bool,
+    /// An inline drawing, or a table nested in a cell, that declares itself wider
+    /// than the measure, and has therefore been fitted to it (`docs/166` R-1).
     pub(crate) over_wide_content: bool,
     /// A drawing anchored to the page or to a margin, whose paper-relative
     /// position a tile cannot honour (`docs/151` §8 item 1).
@@ -51,25 +56,32 @@ pub(crate) struct Survey {
 impl Survey {
     /// Whether every question is answered `true`, so the walk can stop.
     const fn complete(self) -> bool {
-        self.over_wide_content && self.page_anchored_drawing && self.note && self.page_field
+        self.scrolled_table
+            && self.over_wide_content
+            && self.page_anchored_drawing
+            && self.note
+            && self.page_field
     }
 }
 
-/// Surveys `document`'s body for the four things a reflowed column at `measure`
-/// approximates.
+/// Surveys `document`'s body for the five things a reflowed column at `measure`
+/// approximates or presents differently.
 ///
 /// Complexity: `O(document)` in the worst case — one visit per block and inline,
 /// descending into tables, content controls and text boxes — and it short-circuits
-/// the moment all four answers are known, so the common real document (which has
+/// the moment all five answers are known, so the common real document (which has
 /// a `PAGE` field in a header, not in the body, and no page-anchored art) costs
 /// the walk and nothing else. Called once per view change; never on an edit path.
 pub(crate) fn survey(document: &Document, measure: Twip) -> Survey {
     let mut found = Survey::default();
-    visit_blocks(document.body(), measure, &mut found);
+    visit_blocks(document.body(), measure, true, &mut found);
     found
 }
 
-fn visit_blocks(blocks: &[BlockNode], measure: Twip, found: &mut Survey) {
+/// `top_level` is whether `blocks` are body blocks — the only blocks whose table
+/// rows are placed fragments a scroller can address. Inside a cell or a text box
+/// an over-wide table is fitted instead, which is the other sentence.
+fn visit_blocks(blocks: &[BlockNode], measure: Twip, top_level: bool, found: &mut Survey) {
     for block in blocks {
         if found.complete() {
             return;
@@ -77,16 +89,20 @@ fn visit_blocks(blocks: &[BlockNode], measure: Twip, found: &mut Survey) {
         match block {
             BlockNode::Paragraph(paragraph) => visit_inlines(&paragraph.inlines, measure, found),
             BlockNode::Table(table) => {
-                if !found.over_wide_content && table_is_over_wide(table, measure) {
-                    found.over_wide_content = true;
+                if table_is_over_wide(table, measure) {
+                    if top_level {
+                        found.scrolled_table = true;
+                    } else {
+                        found.over_wide_content = true;
+                    }
                 }
                 for row in &table.rows {
                     for cell in &row.cells {
-                        visit_blocks(&cell.blocks, measure, found);
+                        visit_blocks(&cell.blocks, measure, false, found);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => visit_blocks(&sdt.blocks, measure, found),
+            BlockNode::Sdt(sdt) => visit_blocks(&sdt.blocks, measure, top_level, found),
             // An `w:altChunk` references a preserved part; it carries no inline
             // content here to survey.
             BlockNode::AltChunk(_) => {}
@@ -148,7 +164,7 @@ fn visit_inlines(inlines: &[InlineNode], measure: Twip, found: &mut Survey) {
                 }
                 for child in &group.children {
                     if let GroupChild::TextBox(text_box) = child {
-                        visit_blocks(&text_box.blocks, measure, found);
+                        visit_blocks(&text_box.blocks, measure, false, found);
                     }
                 }
             }
@@ -161,7 +177,7 @@ fn visit_inlines(inlines: &[InlineNode], measure: Twip, found: &mut Survey) {
                 {
                     found.page_anchored_drawing = true;
                 }
-                visit_blocks(&text_box.blocks, measure, found);
+                visit_blocks(&text_box.blocks, measure, false, found);
             }
             InlineNode::NoteReference(_) => found.note = true,
             InlineNode::Field(field) => {

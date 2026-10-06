@@ -345,6 +345,7 @@ export const APP_MENU_SECTIONS = {
       "view.textWidth.narrow",
       "view.textWidth.reading",
       "view.textWidth.fit",
+      "view.textWidth.wide",
       "view.textWidth.full",
     ),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),

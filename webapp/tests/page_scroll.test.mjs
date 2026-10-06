@@ -11,12 +11,16 @@
 // arithmetic: the browser half (a real scroller, a real last page, real ink on
 // it) is `viewer-scroll-ceiling.spec.mjs`.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  MAX_BACKING_RATIO,
   MAX_SCROLL_PX,
   PAGE_GAP_PX,
+  backingRatio,
   buildPageBand,
+  rasterExtent,
   docToScroll,
   pageBandPitch,
   pageClientRect,
@@ -184,13 +188,14 @@ test("a document shorter than the viewport does not move when scrolled", () => {
 
 test("the pitch between page boxes is the desk on paper and nothing in reflow", () => {
   assert.deepEqual(pageBandPitch(false), { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
-  assert.deepEqual(pageBandPitch(true), { gap: 0, maxScroll: MAX_SCROLL_PX });
+  assert.deepEqual(pageBandPitch(true, 2), { gap: 0, maxScroll: MAX_SCROLL_PX, snap: 2 });
 
   // And it composes, which is the half a constant comparison cannot see: the
   // band positions sheets from the pitch, so a reflow tile must ABUT the one
-  // above it and a paper sheet must not.
+  // above it and a paper sheet must not. (Letter is a whole number of pixels at
+  // 100%, so here abutting is exact; the fractional case is the next test.)
   const sizes = [LETTER, LETTER, LETTER];
-  const reflowed = buildPageBand(sizes, CSS_PER_TWIP, pageBandPitch(true));
+  const reflowed = buildPageBand(sizes, CSS_PER_TWIP, pageBandPitch(true, 1));
   const paper = buildPageBand(sizes, CSS_PER_TWIP, pageBandPitch(false));
   for (let i = 1; i < sizes.length; i += 1) {
     assert.equal(
@@ -206,4 +211,98 @@ test("the pitch between page boxes is the desk on paper and nothing in reflow", 
   }
   // The scroll bound is NOT a view choice and must survive either answer.
   assert.equal(pageBandPitch(true).maxScroll, pageBandPitch(false).maxScroll);
+});
+
+// ---- SEAMLESS TILES (`docs/151` §4.4b) ---------------------------------------
+//
+// A trimmed reflow tile is a fractional number of pixels tall; the engine
+// rasterises the CEILING of it. Measured at 2x before this: a table border that
+// crosses a cut read dark, dark, LIGHT, dark — the raster's padding row squeezed
+// onto the screen, and every tile resampled into a slot one row short of it.
+// The guarantee is stated on the grid, where it is exact:
+//
+//   1. every tile's box is EXACTLY the engine's raster, in whole backing pixels,
+//      so it is blitted 1:1 and never resampled;
+//   2. every tile starts on a whole backing pixel;
+//   3. consecutive tiles never leave a gap, and overlap by at most the one
+//      partial row — so no partly-covered row is ever on screen.
+//
+// Real trimmed heights from the measured fixture, plus awkward ones, at the
+// ratios a browser actually reports.
+
+/** Tile heights in twips that are NOT whole pixels at 100% — the shape a trim
+ *  produces. The first three are the heights measured on `wide.docx`'s tiles. */
+const TRIMMED = [15_811, 15_832, 15_733, 15_840, 7, 14_401, 9_999];
+const TILE_WIDTH = 7_520;
+
+for (const ratio of [1, 1.25, 1.5, 2]) {
+  for (const zoom of [1, 1.1, 0.9, 1.5]) {
+    test(`reflow tiles sit on the raster grid with no seam at ratio ${ratio}, zoom ${zoom}`, () => {
+      const cssPerTwip = (96 * zoom) / 1440;
+      const sizes = TRIMMED.map((heightTwip) => ({ widthTwip: TILE_WIDTH, heightTwip }));
+      const b = buildPageBand(sizes, cssPerTwip, pageBandPitch(true, ratio));
+      // `main.js`'s `currentDpi()`, which the tiles are rendered at.
+      const dpi = 96 * zoom * ratio;
+      const grid = (px) => Math.round(px * ratio * 1e6) / 1e6;
+      for (let i = 0; i < sizes.length; i += 1) {
+        const rows = Math.ceil(rasterExtent(sizes[i].heightTwip, dpi));
+        const cols = Math.ceil(rasterExtent(sizes[i].widthTwip, dpi));
+        assert.equal(grid(b.heights[i]), rows, `tile ${i} box is not its ${rows}-row raster`);
+        assert.equal(grid(b.widths[i]), cols, `tile ${i} box is not its ${cols}-column raster`);
+        assert.ok(Number.isInteger(grid(b.tops[i])), `tile ${i} starts between two pixels`);
+        if (i === 0) continue;
+        const bottom = grid(b.tops[i - 1] + b.heights[i - 1]);
+        const top = grid(b.tops[i]);
+        assert.ok(
+          top <= bottom,
+          `a ${top - bottom}-pixel gap between tile ${i - 1} and tile ${i}: a seam`,
+        );
+        // Exactly the partial row is covered: one row when the raster above ends
+        // on a fraction of a pixel (its last row is part content, part padding,
+        // and must not be seen), none when it ends on a whole one.
+        const above = rasterExtent(sizes[i - 1].heightTwip, dpi);
+        const partial = Math.ceil(above) > above ? 1 : 0;
+        assert.equal(
+          bottom - top,
+          partial,
+          `tile ${i} covers ${bottom - top} rows of tile ${i - 1}; its partial row is ${partial} ` +
+            "— a partial row left on screen is the hairline seam",
+        );
+      }
+      assert.equal(
+        grid(b.docHeight),
+        grid(b.tops[sizes.length - 1] + b.heights[sizes.length - 1]),
+        "the document ends where its last tile's box does",
+      );
+    });
+  }
+}
+
+test("paper is not snapped: a sheet keeps its exact CSS geometry", () => {
+  const sizes = [{ widthTwip: 12_240, heightTwip: 15_811 }];
+  const b = buildPageBand(sizes, CSS_PER_TWIP, pageBandPitch(false));
+  assert.equal(b.heights[0], 15_811 * CSS_PER_TWIP);
+  assert.equal(b.widths[0], 12_240 * CSS_PER_TWIP);
+});
+
+test("the raster extent is the engine's f32 arithmetic, not f64's", () => {
+  // `Twip::to_device_px` is `(twip as f32) * dpi / 1440.0` in f32. 15,811 twips
+  // at 192 dpi is 2108.1333… in f64 and 2108.1333 in f32 — the same ceiling —
+  // so the check that matters is that rounding happens in f32 at each step.
+  const f = Math.fround;
+  assert.equal(rasterExtent(15_811, 192), f(f(f(15_811) * f(192)) / 1440));
+  assert.equal(Math.ceil(rasterExtent(15_840, 96)), 1056, "a whole-pixel page stays whole");
+});
+
+test("the backing ratio is main.js's: one cap, mirrored, never two", () => {
+  // `main.js` exports nothing, so its cap is mirrored here; a band snapped to a
+  // grid the rasters are not painted at would be resampled again. Read from the
+  // source so the two cannot drift.
+  const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+  const declared = main.match(/const MAX_BACKING_DPR = (\d+(?:\.\d+)?);/);
+  assert.ok(declared, "main.js no longer declares MAX_BACKING_DPR where this reads it");
+  assert.equal(Number(declared[1]), MAX_BACKING_RATIO);
+  assert.equal(backingRatio({ devicePixelRatio: 3 }), MAX_BACKING_RATIO);
+  assert.equal(backingRatio({ devicePixelRatio: 1.25 }), 1.25);
+  assert.equal(backingRatio({}), 1);
 });

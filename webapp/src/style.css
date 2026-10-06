@@ -7780,6 +7780,109 @@ body.is-format-painting .page-wrap * {
    page affordance asserted in the one place a pixel test would look. */
 #viewport.is-reflow .page {
   border-radius: 0;
+  /* SEAMLESS TILES (docs/151 §4.4b): the band puts every tile on the raster's
+     own pixel grid at exactly its raster's size (`page_scroll.mjs`), so the
+     canvas is drawn 1:1. `auto` keeps it at its own aspect ratio rather than
+     stretching it to the box — if the box were ever a row off the raster, the
+     raster would still not be resampled, and the row would fall under the
+     next tile, which is laid over it by construction. */
+  height: auto;
+}
+
+/* The overlay may paint past its tile only as far as the fold chevron needs
+   (`--reflow-overlay-spill`, written by `reflow_chrome.mjs`: up to 24px, never
+   more than the surface beside the measure, 0 at the phone rung). A table
+   scrolled sideways (docs/151 §6.3d) can put its caret, selection or cell
+   outline wholly outside the tile; clipped here, they neither float in the
+   margin nor widen `#viewport` into a horizontal scroll. `clip` and not
+   `hidden`, because a clip does not count toward the scroller's overflow — and
+   HORIZONTAL only: vertically a tile's overlay must still reach over its
+   neighbour (a touch selection handle below the last line of a tile, an
+   object's rotate handle above the first), which `overflow-x: clip` leaves
+   `visible` where `hidden` would have forced it to `auto`. */
+#viewport.is-reflow .page-wrap > .overlay {
+  overflow-x: clip;
+  overflow-clip-margin: var(--reflow-overlay-spill, 0px);
+}
+
+/* WIDE TABLES SCROLL SIDEWAYS (docs/151 §6.3d) — Google Docs' pageless answer,
+   "you can create wide tables and view them by scrolling left and right".
+   `reflow_table_scroll.mjs` lays one of these over each over-wide table's band
+   on a tile: a native horizontal scroller holding the table rasterised once at
+   its full width, so the compositor does the scrolling. It spans the whole
+   tile, gutters included, exactly like a CSS scroll container whose padding is
+   inside its scrollport; it sits BEFORE the overlay in the wrap so the caret
+   and the selection stay on top of it. Vertical gestures chain to the page,
+   because it cannot scroll vertically. */
+.reflow-table-scroll {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* The tile's own cursor, which `reflow_table_scroll.mjs` copies here from the
+     hover router's answer on the canvas it covers; text until there is one. */
+  cursor: text;
+}
+
+.reflow-table-scroll__port {
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* The native bar would take its height out of the table's last row; the
+     overlay bar below replaces it and is always visible (docs/151 A-3). */
+  scrollbar-width: none;
+  background: var(--paper-surface);
+}
+
+.reflow-table-scroll__port::-webkit-scrollbar {
+  display: none;
+}
+
+.reflow-table-scroll__port,
+.reflow-table-strip {
+  cursor: inherit;
+}
+
+.reflow-table-strip {
+  display: block;
+}
+
+/* Always visible whenever the table overflows — a hover-only bar is an
+   invisible affordance for the one thing a reader must discover (A-3). The
+   visible bar is 6px; the press target is the 14px box it sits in. */
+.reflow-table-scroll__bar {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 14px;
+  cursor: default;
+  touch-action: none;
+}
+
+.reflow-table-scroll__bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--paper-ink) 7%, transparent);
+}
+
+.reflow-table-scroll__thumb {
+  position: absolute;
+  left: 0;
+  bottom: 2px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--paper-scrollbar-thumb);
+}
+
+.reflow-table-scroll__bar:hover .reflow-table-scroll__thumb {
+  background: var(--paper-scrollbar-thumb-hover);
 }
 
 /* Inside the band a sheet is placed, not flowed: `main.js` writes `top`/`left`

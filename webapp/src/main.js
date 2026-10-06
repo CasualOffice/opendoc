@@ -7555,7 +7555,7 @@ const reflowView = createReflowChrome({
   viewport: viewportEl,
   getDoc: () => doc,
   unavailableReason: () => readOnlyReason,
-  onChanged: () => renderAll(),
+  onChanged: () => renderAll(), redraw: () => drawSelection(),
   openOutline: () => void (outlinePanel.hidden && reviewSidebar.hidden && toggleOutline()),
   setStatus,
 });
