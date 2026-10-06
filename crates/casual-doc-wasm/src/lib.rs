@@ -69,6 +69,7 @@ use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
 use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
 use casual_doc_layout::document_layout::LayoutView;
+// Own line (anti-conflict): per-table horizontal scrolling in reflow (`docs/151` §6.3d).
 use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
@@ -76,6 +77,7 @@ use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
 use casual_doc_layout::page::{AnchorContent, Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
+use casual_doc_layout::reflow_scroll;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
@@ -644,6 +646,14 @@ pub struct WasmDocument {
     /// cannot observe it, which is the whole point of not driving reflow through
     /// `setPageSetup`.
     layout_view: LayoutView,
+    /// How far the reader has scrolled each over-wide table sideways in reflow,
+    /// by table node (`docs/151` §6.3d) — a VIEW like `layout_view` beside it:
+    /// no `Operation`, no revision, invisible to export. Remembered here because
+    /// every relayout builds fresh pages and the offset has to be written back
+    /// onto them (`reflow_scroll::apply_table_scroll`); the offset ON the pages
+    /// is the one geometry reads, and it is idempotent by construction. Empty
+    /// outside reflow.
+    reflow_table_scroll: BTreeMap<NodeId, Twip>,
     /// docs/108 phase 2 (HF-131). While `Some`, paragraph formatting applied through
     /// `apply_paragraph_props_as` or `apply_indent_props` is recorded as a tracked
     /// `w:pPrChange`, dated with the inner value. The host scopes it to ONE command
@@ -1203,8 +1213,10 @@ impl WasmDocument {
     ///
     /// Returns a JSON object: `{ "reflow": bool, "approximations": [string] }`.
     /// The approximations are **reported, not hidden**, and they are derived from
-    /// **this document at this measure** rather than recited: content wider than
-    /// the reading column has been fitted to it (`docs/166` R-1), a page- or
+    /// **this document at this measure** rather than recited: a top-level table
+    /// wider than the reading column keeps its widths and scrolls sideways
+    /// (`docs/151` §6.3d), an image wider than it has been fitted to it
+    /// (`docs/166` R-1), a page- or
     /// margin-anchored drawing keeps its paper-relative position (`docs/151` §8
     /// item 1 is still open), a footnote lands at a tile bottom rather than a page
     /// bottom, and a `PAGE`/`NUMPAGES` field prints a refusal because a tile index
@@ -1274,6 +1286,82 @@ impl WasmDocument {
             approximations: self.layout_view.approximations(&self.document),
         })
         .unwrap_or_else(|_| "{\"reflow\":false,\"approximations\":[]}".to_owned())
+    }
+
+    /// The over-wide tables on reflow tile `index`, as JSON:
+    /// `[{ "table": id, "topTwip", "heightTwip", "scrollWidthTwip",
+    /// "viewportTwip", "offsetTwip" }]`, top to bottom (`docs/151` §6.3d).
+    ///
+    /// In a reflowed column a top-level table keeps the width its document
+    /// declares (`MeasureFit::Scroll`), and the part past the tile is reached the
+    /// way Google Docs' pageless view reaches it: a horizontal scroller of the
+    /// table's own. This is what a host needs to put one there — the band the
+    /// table occupies on this tile, the width the scroller spans, the width it
+    /// shows, and where it is scrolled to now. `[]` on paper, and for a tile whose
+    /// tables all fit.
+    ///
+    /// Complexity: `O(fragments on the tile)`, plus each over-wide table's own
+    /// rows to find its widest — never the document.
+    #[wasm_bindgen(js_name = reflowTableOverflows)]
+    #[must_use]
+    pub fn reflow_table_overflows(&self, index: u32) -> String {
+        if !self.layout_view.is_reflow() {
+            return "[]".to_owned();
+        }
+        let rows: Vec<TableOverflowJson> =
+            reflow_scroll::table_overflows(self.painted_layout(), index as usize)
+                .into_iter()
+                .map(|overflow| TableOverflowJson {
+                    table: overflow.table.to_string(),
+                    top_twip: overflow.top.raw(),
+                    height_twip: overflow.height.raw(),
+                    scroll_width_twip: overflow.scroll_width.raw(),
+                    viewport_twip: overflow.viewport.raw(),
+                    offset_twip: overflow.offset.raw(),
+                })
+                .collect();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned())
+    }
+
+    /// Scrolls over-wide table `table` (on tile `index`, or any tile it spans)
+    /// sideways to `offsetTwip`, and returns the offset applied — clamped to the
+    /// table's range — or `-1` when there is no such over-wide table there.
+    ///
+    /// **A view, never an edit**, like `setLayoutView`: no `Operation`, no
+    /// revision, nothing on the export path. The offset is written onto the
+    /// placed rows themselves, so the raster, `hitTest`, the caret and every
+    /// selection rectangle agree about which column is where without one of them
+    /// having to remember to ask (`casual_doc_layout::reflow_scroll`). It is
+    /// remembered across a relayout — typing, a width step, a font arriving — and
+    /// forgotten on leaving reflow.
+    ///
+    /// Complexity: `O(rows of the table)`. A scroll gesture is an interaction and
+    /// must not cost the document (`docs/107` §4); this never walks it.
+    #[wasm_bindgen(js_name = setReflowTableScroll)]
+    pub fn set_reflow_table_scroll(&mut self, index: u32, table: &str, offset_twip: i32) -> i32 {
+        self.set_reflow_table_scroll_inner(index as usize, table, offset_twip)
+            .map_or(-1, Twip::raw)
+    }
+
+    /// Rasterises over-wide table `table`'s band on tile `index` at its FULL
+    /// width and at offset zero — `scrollWidthTwip` by `heightTwip` from
+    /// `reflowTableOverflows` — so a host can put it in a native scroll container
+    /// and let the compositor scroll it. A scroll gesture then costs no raster at
+    /// all; only an edit to the table, which repaints its tile, re-rasterises it.
+    ///
+    /// Same pixels as `renderPage` would paint for those rows, from the same
+    /// composer and the same layout (the markup one while changes are shown).
+    ///
+    /// Throws when the tile has no such over-wide table.
+    #[wasm_bindgen(js_name = renderReflowTableStrip)]
+    pub fn render_reflow_table_strip(
+        &mut self,
+        index: u32,
+        table: &str,
+        dpi: f32,
+    ) -> Result<PageBitmap, JsValue> {
+        self.render_reflow_table_strip_inner(index, table, dpi)
+            .map_err(to_js)
     }
 
     /// Why this document cannot be edited, or the empty string when it can be.
@@ -13015,6 +13103,7 @@ impl WasmDocument {
                 &self.folds,
             ));
         }
+        self.restore_reflow_table_scroll();
         self.revision += 1;
     }
 
@@ -14184,6 +14273,7 @@ impl WasmDocument {
                 &self.folds,
             )
         });
+        self.restore_reflow_table_scroll();
         Ok(())
     }
 
@@ -14268,6 +14358,13 @@ impl WasmDocument {
             return Ok(self.layout_view());
         }
         self.layout_view = requested;
+        // A table offset is a position in a REFLOWED column; on paper the table
+        // bleeds into the margin and there is nothing to scroll. Forgotten rather
+        // than kept for a later return, because the column it was measured in is
+        // gone too (`docs/151` §6.3d).
+        if !requested.is_reflow() {
+            self.reflow_table_scroll.clear();
+        }
         // The galley cache MUST go, for two independent reasons, and neither is an
         // optimisation:
         //
@@ -14308,11 +14405,102 @@ impl WasmDocument {
                 &self.folds,
             ));
         }
+        // Same tables, new measure: the remembered offsets are re-clamped to it.
+        self.restore_reflow_table_scroll();
         // A re-layout is a view change, not a document change: bump the view epoch
         // the host re-rasters on, and leave `log.head()` — the DOCUMENT revision —
         // exactly where it was.
         self.revision += 1;
         Ok(self.layout_view())
+    }
+
+    /// See [`WasmDocument::set_reflow_table_scroll`]. `None` when there is no
+    /// over-wide `table` on tile `index`, or the view is paged.
+    fn set_reflow_table_scroll_inner(
+        &mut self,
+        index: usize,
+        table: &str,
+        offset_twip: i32,
+    ) -> Option<Twip> {
+        if !self.layout_view.is_reflow() {
+            return None;
+        }
+        let table = NodeId::from_str(table).ok()?;
+        let BodyLayout::Whole(layout) = &mut self.layout else {
+            return None;
+        };
+        let applied = reflow_scroll::scroll_table(layout, index, table, Twip(offset_twip))?;
+        // The markup layout is what is PAINTED while changes are shown, and it has
+        // the same tables on the same tiles: both get the offset, or the raster
+        // and the hit test would disagree about where the columns are.
+        if let Some(markup) = self.markup_layout.as_mut() {
+            reflow_scroll::scroll_table(markup, index, table, applied);
+        }
+        self.reflow_table_scroll.insert(table, applied);
+        Some(applied)
+    }
+
+    /// See [`WasmDocument::render_reflow_table_strip`].
+    fn render_reflow_table_strip_inner(
+        &mut self,
+        index: u32,
+        table: &str,
+        dpi: f32,
+    ) -> Result<PageBitmap, String> {
+        if !self.layout_view.is_reflow() {
+            return Err("a table strip exists only in reflow".to_owned());
+        }
+        let table = NodeId::from_str(table).map_err(|_| format!("not a node id: {table}"))?;
+        let strip = reflow_scroll::table_strip_page(self.painted_layout(), index as usize, table)
+            .ok_or_else(|| format!("tile {index} has no over-wide table {table}"))?;
+        let width_px = strip.page_size.width.to_device_px(dpi).ceil() as u32;
+        let height_px = strip.page_size.height.to_device_px(dpi).ceil() as u32;
+        let mut surface = match self.document.background() {
+            Some(c) => Surface::with_background(width_px, height_px, [c.r, c.g, c.b]),
+            None => Surface::new(width_px, height_px),
+        }
+        .map_err(|e| format!("allocate surface: {e:?}"))?;
+        let registry = self.shaper.registry();
+        let fonts = RegistryFontSource::new(&registry);
+        render(
+            &compose_page_with(&strip, &ComposeOptions { marks: self.marks }),
+            &mut surface,
+            dpi,
+            &fonts,
+            &BorrowedMedia(self.resources.as_map()),
+        );
+        Ok(PageBitmap {
+            width_px,
+            height_px,
+            rgba: surface.data().to_vec(),
+        })
+    }
+
+    /// Writes every remembered table offset back onto the layouts a relayout
+    /// just rebuilt — re-clamped to the tables and the column as they now are.
+    /// A no-op when nothing has been scrolled, and outside reflow, where there
+    /// is nothing to scroll. Idempotent (`reflow_scroll`), so a rebuild site that
+    /// calls it twice, or a layout that kept some pages, cannot double an offset.
+    fn restore_reflow_table_scroll(&mut self) {
+        self.write_reflow_table_scroll(false);
+    }
+
+    /// Puts every scrolled table back at offset zero, so a layout handed to the
+    /// incremental paginator is exactly the layout it built.
+    fn reset_reflow_table_scroll(&mut self) {
+        self.write_reflow_table_scroll(true);
+    }
+
+    fn write_reflow_table_scroll(&mut self, reset: bool) {
+        if self.reflow_table_scroll.is_empty() || !self.layout_view.is_reflow() {
+            return;
+        }
+        if let BodyLayout::Whole(layout) = &mut self.layout {
+            reflow_scroll::apply_table_scroll(layout, &self.reflow_table_scroll, reset);
+        }
+        if let Some(markup) = self.markup_layout.as_mut() {
+            reflow_scroll::apply_table_scroll(markup, &self.reflow_table_scroll, reset);
+        }
     }
 
     /// See [`WasmDocument::page_size`].
@@ -14428,6 +14616,7 @@ impl WasmDocument {
                 &self.folds,
             ));
         }
+        self.restore_reflow_table_scroll();
     }
 
     fn register_fonts_inner(&mut self, bytes: &[u8], lengths: &[u32]) -> Result<(), String> {
@@ -15147,6 +15336,11 @@ impl WasmDocument {
     /// correct and always `O(document)`.
     fn finish_edit_with(&mut self, caret: Pos, damage: &DirtySet) -> EditResult {
         self.revision += 1;
+        // The incremental pass reuses pages from the layout it is handed, so it
+        // must be handed them exactly as they were BUILT — no table scrolled —
+        // or a reused page would carry an offset into a comparison and a resume
+        // decision that know nothing about it. Written back after the pass.
+        self.reset_reflow_table_scroll();
         // The previous layout is TAKEN, not borrowed, and handed to the layout
         // pass so the pages it reuses are moved rather than copied. `apply_group`
         // refuses every mutation on a windowed body, so a whole one is what
@@ -15215,6 +15409,7 @@ impl WasmDocument {
             None => pages_to_repaint(&update),
         };
         self.layout = BodyLayout::Whole(update.layout);
+        self.restore_reflow_table_scroll();
         EditResult {
             node: caret.node.to_string(),
             offset: caret.offset,
@@ -16855,6 +17050,20 @@ impl WasmDocument {
         }
         out
     }
+}
+
+/// One over-wide table's band on one reflow tile — `reflowTableOverflows`'s
+/// rows (`docs/151` §6.3d). Twips, tile-local; `table` is the node id string the
+/// rest of this API speaks.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TableOverflowJson {
+    table: String,
+    top_twip: i32,
+    height_twip: i32,
+    scroll_width_twip: i32,
+    viewport_twip: i32,
+    offset_twip: i32,
 }
 
 /// Walks one paragraph's inlines in the same byte-anchor space
@@ -26399,6 +26608,7 @@ fn open_document_bounded(
         marks: FormattingMarks::default(),
         folds,
         layout_view: LayoutView::Paged,
+        reflow_table_scroll: BTreeMap::new(),
     })
 }
 
@@ -32774,6 +32984,194 @@ mod tests {
         assert_eq!(doc.block_index_of("not-a-node"), -1);
     }
 
+    // ---- docs/151 §6.3d: a wide table scrolls sideways in reflow --------------
+
+    /// A plain document with an 8-column table 12in wide (`w:tblW` in dxa, fixed
+    /// layout) after its first line, laid out as a phone-width reflow column.
+    /// Returns the document, the table, and the paragraph in its LAST cell of row
+    /// one — the cell furthest from the column, which is the one a fit or a clip
+    /// would lose first.
+    fn wide_table_in_reflow() -> (WasmDocument, NodeId, NodeId) {
+        use casual_doc_edit::{find_table, locate_table_cell};
+        let mut d = open_document(&text_of_lines(30)).expect("plain text opens");
+        let body = d
+            .first_body_paragraph()
+            .expect("body paragraph")
+            .to_string();
+        let anchor = d.insert_table(&body, 6, 8).expect("insert table").node();
+        d.set_table_width(&anchor, 17_280).expect("12in wide");
+        d.set_table_fixed_layout(&anchor, true)
+            .expect("fixed layout");
+        let (table, _) = locate_table_cell(
+            &d.document,
+            NodeId::from_str(&anchor).expect("table anchor"),
+        )
+        .expect("table cell");
+        let last = find_table(&d.document, table)
+            .and_then(|t| first_paragraph_of_cell(&t.rows[0].cells[7]))
+            .expect("the last cell of row one has a paragraph");
+        d.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a phone reading column");
+        (d, table, last)
+    }
+
+    /// Parses `reflowTableOverflows` for tile `index`.
+    fn overflows_on(d: &WasmDocument, index: u32) -> Vec<serde_json::Value> {
+        serde_json::from_str(&d.reflow_table_overflows(index)).expect("overflows serialize")
+    }
+
+    /// The first tile the table is reported on, and its row there.
+    fn first_overflow(d: &WasmDocument, table: NodeId) -> (u32, serde_json::Value) {
+        (0..d.page_count())
+            .find_map(|index| {
+                overflows_on(d, index)
+                    .into_iter()
+                    .find(|row| row["table"] == table.to_string())
+                    .map(|row| (index, row))
+            })
+            .expect("the wide table is reported on some tile")
+    }
+
+    /// THE FACADE GUARANTEE: the over-wide table is listed, scrolling it brings
+    /// its far column into the raster, and a CLICK there lands in that column —
+    /// the raster, the caret and the hit test agree, because they read the same
+    /// shifted rows. And its strip is the full scroll width.
+    ///
+    /// MUTATION PROOF, run and seen red: `set_reflow_table_scroll_inner` scrolling
+    /// a CLONE of the layout (so the offset is clamped and recorded but never
+    /// applied to the rows anything reads) fails with `scrolled to 11880, the last
+    /// column's caret is still at 15588, outside the 6120-twip raster`.
+    #[test]
+    fn a_wide_table_scrolls_and_a_click_lands_where_it_is_painted() {
+        let (mut d, table, last) = wide_table_in_reflow();
+        let (index, row) = first_overflow(&d, table);
+        let viewport = row["viewportTwip"].as_i64().expect("viewport") as i32;
+        let scroll_width = row["scrollWidthTwip"].as_i64().expect("scroll width") as i32;
+        assert!(
+            scroll_width > viewport,
+            "the precondition: the table is wider than its tile ({scroll_width} vs {viewport})"
+        );
+        assert_eq!(row["offsetTwip"], 0, "a table starts unscrolled");
+
+        let before = d.caret_rect(&last.to_string(), 0);
+        assert!(
+            before[1] > viewport,
+            "the precondition: the last column starts past the raster ({before:?})"
+        );
+
+        let max = scroll_width - viewport;
+        let applied = d.set_reflow_table_scroll(index, &table.to_string(), i32::MAX);
+        assert_eq!(
+            applied, max,
+            "an offset past the end clamps to the table's range"
+        );
+        let after = d.caret_rect(&last.to_string(), 0);
+        assert!(
+            after[1] >= 0 && after[1] < viewport,
+            "scrolled to {applied}, the last column's caret is still at {}, outside the \
+             {viewport}-twip raster",
+            after[1]
+        );
+        let hit = d
+            .hit_test(after[0] as u32, after[1] + 20, after[2] + after[4] / 2)
+            .expect("a click on the scrolled-in column hits something");
+        assert_eq!(
+            hit.node(),
+            last.to_string(),
+            "a click on the last column, scrolled into view, landed in another paragraph"
+        );
+
+        // The strip a host scrolls natively is the whole width, at the dpi asked.
+        let strip = d
+            .render_reflow_table_strip_inner(index, &table.to_string(), 96.0)
+            .expect("a strip for the over-wide table");
+        let expected = Twip(scroll_width).to_device_px(96.0).ceil() as u32;
+        assert_eq!(
+            strip.width_px, expected,
+            "the strip is not the full scroll width"
+        );
+        assert!(
+            d.render_reflow_table_strip_inner(index, "not-a-node", 96.0)
+                .is_err()
+        );
+    }
+
+    /// A table offset is a VIEW: no operation, no revision, nothing to undo. It
+    /// survives every relayout the reader can cause — typing, a new column width,
+    /// a font arriving — re-clamped to the table as it then is, and it is
+    /// forgotten on paper, where the table bleeds into the margin and nothing
+    /// scrolls.
+    ///
+    /// MUTATION PROOFS, run and seen red: deleting the
+    /// `restore_reflow_table_scroll()` after `finish_edit_with`'s layout swap
+    /// fails with `typing elsewhere scrolled the table back: offset 0, not 1440`;
+    /// deleting the `reflow_table_scroll.clear()` on leaving reflow fails with
+    /// `back in reflow, the table came back scrolled to 1440 from a column that
+    /// no longer exists`.
+    #[test]
+    fn a_table_scroll_is_a_view_that_survives_relayout_and_is_forgotten_on_paper() {
+        let (mut d, table, _) = wide_table_in_reflow();
+        let undo_before = d.can_undo();
+        let head_before = d.log.head();
+        let (index, _) = first_overflow(&d, table);
+        assert_eq!(
+            d.set_reflow_table_scroll(index, &table.to_string(), 1_440),
+            1_440
+        );
+        assert_eq!(
+            d.can_undo(),
+            undo_before,
+            "scrolling a table put something on the undo stack"
+        );
+        assert_eq!(
+            d.log.head(),
+            head_before,
+            "scrolling a table moved the document revision"
+        );
+        let offset = |d: &WasmDocument| first_overflow(d, table).1["offsetTwip"].clone();
+
+        // Typing in a paragraph BELOW the table relays the body out.
+        let below = body_paragraph_ids(&d)
+            .last()
+            .cloned()
+            .expect("a paragraph after the table");
+        d.insert_text(&below, 0, "typed ".to_owned())
+            .expect("type below the table");
+        assert_eq!(
+            offset(&d),
+            1_440,
+            "typing elsewhere scrolled the table back: offset {}, not 1440",
+            offset(&d)
+        );
+
+        // A wider column: the same table, a smaller range, the offset kept.
+        d.set_layout_view_inner(PHONE_COLUMN + 1_440, PHONE_TILE, PHONE_GUTTER)
+            .expect("a wider reading column");
+        assert_eq!(
+            offset(&d),
+            1_440,
+            "a new column width lost the table's offset"
+        );
+
+        // A font registration re-shapes everything.
+        d.repaginate();
+        assert_eq!(offset(&d), 1_440, "a repagination lost the table's offset");
+
+        // Paper: nothing to scroll, and the setter says so.
+        d.set_layout_view_inner(0, 0, 0).expect("back to paper");
+        assert_eq!(d.reflow_table_overflows(0), "[]");
+        assert_eq!(d.set_reflow_table_scroll(0, &table.to_string(), 100), -1);
+        d.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("reflow again");
+        assert_eq!(
+            offset(&d),
+            0,
+            "back in reflow, the table came back scrolled to {} from a column that no longer \
+             exists",
+            offset(&d)
+        );
+    }
+
     // ---- docs/108 phase 2: authoring paragraph-level suggestions (HF-130/131) ----
 
     /// Four plain paragraphs, written and re-opened through the real package path,
@@ -34836,6 +35234,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
         let node = paragraph.to_string();
 
@@ -35286,6 +35685,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
         let node = paragraph.to_string();
 
@@ -35596,6 +35996,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
 
         let summary: serde_json::Value =
@@ -39457,6 +39858,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         }
     }
 
@@ -40638,6 +41040,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
             session: None,
         }
     }
@@ -42132,6 +42535,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
         (handle, source_id, target_id)
     }

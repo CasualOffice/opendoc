@@ -303,17 +303,20 @@ impl LayoutView {
     }
 
     /// Whether content that declares itself wider than the measure may be laid
-    /// out past it — [`MeasureFit::Bleed`] on paper, [`MeasureFit::Fit`] in a
-    /// reflowed column, and the reason is geometric rather than aesthetic: a tile
-    /// is exactly the measure plus its two gutters and the host guarantees no
-    /// horizontal scroll, so there is nothing past the measure to bleed onto.
-    /// See [`MeasureFit`] for the whole argument.
+    /// out past it — [`MeasureFit::Bleed`] on paper, [`MeasureFit::Scroll`] in
+    /// a reflowed column. The reason is geometric rather than aesthetic: a tile is
+    /// exactly the measure plus its two gutters, so nothing laid out past it is
+    /// painted. An image is therefore fitted to it, and a top-level table keeps
+    /// its declared width and is reached through the per-table horizontal offset
+    /// in `reflow_scroll` — Google Docs' pageless answer (`docs/151` §6.3d).
+    /// Contexts with no scroller of their own take
+    /// [`MeasureFit::without_scroll`]. See [`MeasureFit`] for the whole argument.
     ///
     /// Complexity: `O(1)`.
     #[must_use]
     pub const fn measure_fit(self) -> MeasureFit {
         if self.is_reflow() {
-            MeasureFit::Fit
+            MeasureFit::Scroll
         } else {
             MeasureFit::Bleed
         }
@@ -344,12 +347,21 @@ impl LayoutView {
         };
         let found = crate::reflow_report::survey(document, content_width);
         let mut out = Vec::new();
+        if found.scrolled_table {
+            out.push(
+                "A table wider than the reading column keeps the column widths the document \
+                 declares and scrolls sideways inside the column — drag its scrollbar, scroll \
+                 sideways over it, or move the caret through it. Nothing is narrowed or hidden."
+                    .to_owned(),
+            );
+        }
         if found.over_wide_content {
             out.push(
-                "A table or an image wider than the reading column has been fitted to it — a \
-                 table's columns are narrowed from the widths the document declares, and an \
-                 image is scaled down with its proportions kept. Nothing is hidden, but the \
-                 widths are not the author's; switch to page view to see them."
+                "An image wider than the reading column, or a table wider than the table cell it \
+                 sits in, has been fitted to it — an image is scaled down with its proportions \
+                 kept, and a nested table's columns are narrowed from the widths the document \
+                 declares. Nothing is hidden, but the widths are not the author's; switch to \
+                 page view to see them."
                     .to_owned(),
             );
         }
@@ -1758,7 +1770,14 @@ fn resume_pagination(
     // A paragraph-anchored float drives the exclusion fixed point in
     // `finish_pagination`, which re-flows the body at a narrowed width; there is
     // nothing incremental about it, so hand the whole job back.
-    if !paragraph_float_exclusions(document, shaper, plans, &layout, view.measure_fit()).is_empty()
+    if !paragraph_float_exclusions(
+        document,
+        shaper,
+        plans,
+        &layout,
+        view.measure_fit().without_scroll(),
+    )
+    .is_empty()
     {
         return Resume::NotOffered;
     }
@@ -1798,8 +1817,13 @@ fn finish_pagination(
     folds: &FoldSet,
 ) -> crate::page::PaginatedLayout {
     let mut layout = finish_pagination_pass(document, shaper, plans, runs, labels, view);
-    let mut exclusions =
-        paragraph_float_exclusions(document, shaper, plans, &layout, view.measure_fit());
+    let mut exclusions = paragraph_float_exclusions(
+        document,
+        shaper,
+        plans,
+        &layout,
+        view.measure_fit().without_scroll(),
+    );
     if exclusions.is_empty() {
         return layout;
     }
@@ -1821,8 +1845,13 @@ fn finish_pagination(
             folds,
         );
         let next = finish_pagination_pass(document, shaper, plans, &runs, labels, view);
-        let next_exclusions =
-            paragraph_float_exclusions(document, shaper, plans, &next, view.measure_fit());
+        let next_exclusions = paragraph_float_exclusions(
+            document,
+            shaper,
+            plans,
+            &next,
+            view.measure_fit().without_scroll(),
+        );
         if next_exclusions == exclusions {
             return next;
         }
@@ -1860,7 +1889,13 @@ fn finish_pagination_pass(
     view: LayoutView,
 ) -> crate::page::PaginatedLayout {
     let mut layout = if runs.iter().any(run_has_body_footnotes) {
-        paginate_section_footnotes(document, shaper, runs, labels, view.measure_fit())
+        paginate_section_footnotes(
+            document,
+            shaper,
+            runs,
+            labels,
+            view.measure_fit().without_scroll(),
+        )
     } else {
         paginate_columns(runs)
     };
@@ -1974,7 +2009,9 @@ fn post_pagination_passes(
         document,
         shaper,
         &fallback_config,
-        view.measure_fit(),
+        // A positioned table is a float, not a placed body row: it has no
+        // scroller, so it is fitted rather than laid out past the raster.
+        view.measure_fit().without_scroll(),
     );
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the

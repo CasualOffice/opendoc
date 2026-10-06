@@ -24,20 +24,24 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-function crc32(buf) {
+/** CRC-32 (ISO 3309), as ZIP and PNG both checksum with it. Exported for
+ *  `wide-content-docx.mjs`, which builds its PNG with it. */
+export function crc32(buf) {
   let c = -1;
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
   return (c ^ -1) >>> 0;
 }
 
-/** A stored-or-deflated ZIP of `{ name: string }` entries, as a Buffer. */
-function zip(entries) {
+/** A deflated ZIP of `{ name: string|Buffer }` entries, as a Buffer — text
+ *  parts as UTF-8, binary parts (a picture) as they are. Exported so every
+ *  in-memory DOCX builder shares ONE package writer rather than drifting apart. */
+export function zip(entries) {
   const locals = [];
   const central = [];
   let offset = 0;
   for (const [name, text] of Object.entries(entries)) {
     const nameBytes = Buffer.from(name, "utf8");
-    const raw = Buffer.from(text, "utf8");
+    const raw = Buffer.isBuffer(text) ? text : Buffer.from(text, "utf8");
     const deflated = deflateRawSync(raw);
     const crc = crc32(raw);
     const local = Buffer.alloc(30 + nameBytes.length);

@@ -574,6 +574,7 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("view.textWidth.narrow", null),
   exact("view.textWidth.reading", null),
   exact("view.textWidth.fit", null),
+  exact("view.textWidth.wide", null),
   exact("view.textWidth.full", null),
   // Formatting marks — the ¶ button and its five individual switches
   // (`docs/153` `shell.formatting-marks`). EXACT rows and not a family, by this

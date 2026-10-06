@@ -211,13 +211,14 @@ test("the measure is capped at 1440px, and the cap is what gets painted", () => 
   assert.equal(Math.round(capped.contentWidthTwip / perChar), 80, "and closed");
 });
 
-test("every step is min(available, X) — one mechanism, four values", () => {
+test("every step is min(available, X) — one mechanism, five values", () => {
   // Monotonic, and each one no wider than the space available. A step that could
   // produce a column WIDER than the window would be the horizontal scroll reflow
   // exists to retire, reintroduced through the control.
   const docMeasureTwip = 9360; // a Letter page's own 6.5in text column
+  const docPageTwip = 12240; // and the Letter page itself, 8.5in
   const widths = REFLOW_WIDTH_STEPS.map((step) => {
-    const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip });
+    const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip, docPageTwip });
     const measure = reflowMeasure(1920, AT_100, { capTwip: cap });
     return [step.id, measure.contentWidthTwip];
   });
@@ -236,15 +237,52 @@ test("every step is min(available, X) — one mechanism, four values", () => {
   // And Reading is narrower than the paper, which is the whole point — a Letter
   // page's own column is 107 characters, already past WCAG's 80.
   assert.ok(reflowCapTwip("reading", CALIBRI_11) < docMeasureTwip);
+  // Wide is the PAGE, also from the document: the sheet with its margins gone.
+  assert.equal(reflowCapTwip("wide", { docPageTwip }), docPageTwip);
+  assert.ok(docPageTwip > docMeasureTwip, "Wide gives more room than the paper's column");
 });
 
-test("the desktop default is Reading, which is the one line that changes it", () => {
-  // The call `docs/154` §5 left open and ADR-048 records as the owner's. Named
-  // here so that changing it is a visible, single-line decision rather than a
-  // silent drift, and so the owner overruling it moves one assertion with it.
-  assert.equal(REFLOW_WIDTH_DEFAULT, "reading");
-  assert.equal(reflowWidthStep(null).id, "reading", "never chosen resolves to the default");
-  assert.equal(reflowWidthStep("nonsense").id, "reading", "and so does a bad preference");
+test("the desktop default is Wide, which is the one line that changes it", () => {
+  // The call `docs/154` §5 left open and ADR-048 recorded as the owner's — and
+  // the owner made it on 2026-10-06: "at present width of page is too small",
+  // against Google Docs' pageless view (`docs/151` §6.2a). Named here so that
+  // changing it is a visible, single-line decision rather than a silent drift.
+  assert.equal(REFLOW_WIDTH_DEFAULT, "wide");
+  assert.equal(reflowWidthStep(null).id, "wide", "never chosen resolves to the default");
+  assert.equal(reflowWidthStep("nonsense").id, "wide", "and so does a bad preference");
+  // A reader who CHOSE a step keeps it: every id ever shipped still resolves to
+  // itself, so a stored preference is never silently reinterpreted.
+  for (const id of ["narrow", "reading", "fit", "full"]) {
+    assert.equal(reflowWidthStep(id).id, id, `a stored "${id}" was reinterpreted`);
+  }
+});
+
+test("by default, turning the pages off never narrows the text — the owner's complaint", () => {
+  // The defect as measured on 2026-10-06: at a 1440px window with the outline
+  // open (`#viewport` 1,094px wide), Reading gave a 469px column — NARROWER than
+  // the 624px text column the same Letter document shows on paper. Pageless is
+  // for MORE horizontal room ("adds more horizontal space for content like
+  // tables and images", Google's announcement), so the default column is now
+  // the page's width wherever the window has room for it.
+  const doc = { ...CALIBRI_11, docMeasureTwip: 9360, docPageTwip: 12240 };
+  const paperColumnPx = 9360 * AT_100; // 624
+  for (const clientWidth of [934, 1094, 1248, 1408]) {
+    const measure = reflowMeasure(clientWidth, AT_100, {
+      capTwip: reflowCapTwip(REFLOW_WIDTH_DEFAULT, doc),
+    });
+    const columnPx = measure.contentWidthTwip * AT_100;
+    assert.ok(
+      columnPx >= paperColumnPx,
+      `at a ${clientWidth}px viewport the default column is ${columnPx}px, narrower than ` +
+        `the ${paperColumnPx}px it has on paper`,
+    );
+    const pagePx = 12240 * AT_100; // 816
+    assert.equal(
+      columnPx,
+      Math.min(pagePx, reflowMeasure(clientWidth, AT_100, {}).contentWidthTwip * AT_100),
+      `at ${clientWidth}px the default is not the page width (or the window, when narrower)`,
+    );
+  }
 });
 
 test("a viewport past the old 22in refusal lays out instead of being refused", () => {
@@ -322,7 +360,7 @@ test("the phone is untouched: at 390px the default is still the whole window", (
     "the 60 characters `docs/154` §3.2 calls correct",
   );
   for (const step of REFLOW_WIDTH_STEPS) {
-    const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip: 9360 });
+    const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip: 9360, docPageTwip: 12240 });
     const measure = reflowMeasure(390, AT_100, { capTwip: cap });
     assert.ok(
       measure.contentWidthTwip <= available.contentWidthTwip,
@@ -342,8 +380,9 @@ test("the phone is untouched: at 390px the default is still the whole window", (
   // And the DEFAULT specifically, because that is what a phone reader is given
   // without choosing anything at all.
   assert.equal(
-    reflowMeasure(390, AT_100, { capTwip: reflowCapTwip(REFLOW_WIDTH_DEFAULT, CALIBRI_11) })
-      .contentWidthTwip,
+    reflowMeasure(390, AT_100, {
+      capTwip: reflowCapTwip(REFLOW_WIDTH_DEFAULT, { ...CALIBRI_11, docPageTwip: 12240 }),
+    }).contentWidthTwip,
     available.contentWidthTwip,
   );
 });
@@ -378,6 +417,8 @@ test("a cap that cannot be resolved falls back to the window, never to a failure
   }
   assert.equal(reflowCapTwip("fit", {}), Infinity, "no document measure -> no cap");
   assert.equal(reflowCapTwip("fit", { docMeasureTwip: 0 }), Infinity);
+  assert.equal(reflowCapTwip("wide", {}), Infinity, "no page width -> no cap");
+  assert.equal(reflowCapTwip("wide", { docPageTwip: -1 }), Infinity);
   assert.equal(reflowCapTwip("full", CALIBRI_11), Infinity, "Full is uncapped by policy");
   const measure = reflowMeasure(1440, AT_100, { capTwip: Infinity });
   assert.deepEqual(measure.contentWidthTwip, reflowMeasure(1440, AT_100, {}).contentWidthTwip);

@@ -376,18 +376,28 @@ test("printing while a heading is folded prints the whole document and keeps the
  *  racy: `renderAll` is asynchronous and writes that class early, inside the
  *  same pass that talks to the engine, so a caret move placed in between paints
  *  a chevron against page records the finishing render then replaces. The tile's
- *  own width is the band's report that it is done. */
-async function reflowSettled(page) {
+ *  own width is the band's report that it is done.
+ *
+ *  Compared against the PAPER sheet's width, measured before reflow was turned
+ *  on, rather than against a constant: this used to wait for "narrower than
+ *  600px", which was a fact about the old 80-character default and stopped
+ *  being true when the default became the page's own width (`docs/151` §6.2a),
+ *  whose tile — the page plus two gutters — is WIDER than the sheet. */
+async function reflowSettled(page, paperWidth) {
   await expect
-    .poll(
-      async () =>
-        page.evaluate(() => {
-          const wrap = document.querySelector(".page-band > .page-wrap");
-          return wrap ? Math.round(wrap.getBoundingClientRect().width) : 0;
-        }),
-      { message: "the band never re-built at the reflow column", timeout: 30_000 },
-    )
-    .toBeLessThan(600);
+    .poll(() => sheetWidth(page), {
+      message: "the band never re-built at the reflow column",
+      timeout: 30_000,
+    })
+    .not.toBe(paperWidth);
+}
+
+/** The first sheet's painted width, CSS px. */
+async function sheetWidth(page) {
+  return page.evaluate(() => {
+    const wrap = document.querySelector(".page-band > .page-wrap");
+    return wrap ? Math.round(wrap.getBoundingClientRect().width) : 0;
+  });
 }
 
 test("the in-body chevron folds the heading, on paper and in reflow", async ({
@@ -431,9 +441,10 @@ test("the in-body chevron folds the heading, on paper and in reflow", async ({
   await expect(beta()).toHaveAttribute("aria-expanded", "true");
 
   // ---- 2. IN REFLOW: still painted, beside the measure, and it still folds --
+  const paperWidth = await sheetWidth(page);
   await runPaletteCommand(page, "view.reflow", "reflow");
   await expect(page.locator("#viewport")).toHaveClass(/is-reflow/);
-  await reflowSettled(page);
+  await reflowSettled(page, paperWidth);
   await caretInHeading(page, BETA_PARENT);
   await expect(chevron, "a heading in reflow has no collapse control").toBeVisible();
 

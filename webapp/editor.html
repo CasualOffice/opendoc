@@ -959,7 +959,7 @@
                    text button on a band that fits far below 1280px. Its other
                    faces are the View menu's Text width submenu and the palette. -->
               <span class="rgroup-mini-divider" aria-hidden="true"></span>
-              <button data-i18n-title="panelView.textWidth.title" data-i18n-label="panelView.textWidth.label" id="viewTextWidthBtn" type="button" class="fmt fmt-num" title="Text width — how many characters a line holds" aria-label="Text width" aria-haspopup="menu" aria-controls="textWidthMenu" aria-expanded="false" disabled><span data-i18n="textWidth.reading.short" data-width-label>Reading</span></button>
+              <button data-i18n-title="panelView.textWidth.title" data-i18n-label="panelView.textWidth.label" id="viewTextWidthBtn" type="button" class="fmt fmt-num" title="Text width — how many characters a line holds" aria-label="Text width" aria-haspopup="menu" aria-controls="textWidthMenu" aria-expanded="false" disabled><span data-i18n="textWidth.wide.short" data-width-label>Wide</span></button>
             </div>
             <span data-i18n="panelView.show" class="rgroup-label">Show</span>
           </div>
@@ -1644,8 +1644,9 @@
     <div data-i18n-label="ui.textWidth.label" id="textWidthMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Text width">
       <div data-i18n="textWidthMenu.heading" class="menu-heading">Text width</div>
       <button type="button" class="menu-item" data-text-width="narrow" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.narrow.row">Narrow — about 55 characters</span></button>
-      <button type="button" class="menu-item" data-text-width="reading" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.reading.row">Reading — 80 characters (WCAG AAA)</span></button>
+      <button type="button" class="menu-item" data-text-width="reading" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.reading.row">Reading — 80 characters (WCAG AAA)</span></button>
       <button type="button" class="menu-item" data-text-width="fit" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.fit.row">Paper — this document's own column</span></button>
+      <button type="button" class="menu-item" data-text-width="wide" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.wide.row">Wide — the page without its margins</span></button>
       <button type="button" class="menu-item" data-text-width="full" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.full.row">Full — as wide as the window</span></button>
     </div>
 

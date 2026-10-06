@@ -132,26 +132,32 @@ export const EN_STRINGS = Object.freeze({
   "reflowNotes.command": "What this view approximates",
   "reflowNotes.none":
     "Nothing: every part of this document is laid out the way the document asks for it.",
-  // -- Text width (`docs/154` §5.1, ADR-048) ---------------------------------
-  // Four steps for one measure, each labelled by what it does rather than by a
-  // number: "Wide" tells a reader nothing and "80" tells them nothing until they
-  // know it is WCAG 2.1 SC 1.4.8's maximum, which is what the `.title` sentences
-  // are for. The `.row` sentences and `textWidth.reading.short` are declared in
-  // `editor.html` beside the markup that carries them — `build-locale.mjs`
-  // refuses a key declared in both places — and `reflow_view.test.mjs` asserts
-  // every step has all four, so the split cannot rot into a half-labelled step.
+  // -- Text width (`docs/154` §5.1, ADR-048, `docs/151` §6.2a) ---------------
+  // Five steps for one measure, each labelled by what it does rather than by a
+  // number: "80" tells a reader nothing until they know it is WCAG 2.1 SC
+  // 1.4.8's maximum, and "Wide" nothing until they know it is the page without
+  // its margins, which is what the `.title` sentences are for. The `.row`
+  // sentences and `textWidth.wide.short` (the default's label, on the button)
+  // are declared in `editor.html` beside the markup that carries them —
+  // `build-locale.mjs` refuses a key declared in both places — and
+  // `reflow_view.test.mjs` asserts every step has all four, so the split cannot
+  // rot into a half-labelled step.
   "textWidth.command": "Text width",
   "textWidth.narrow.short": "Narrow",
+  "textWidth.reading.short": "Reading",
   "textWidth.fit.short": "Paper",
   "textWidth.full.short": "Full",
   "textWidth.narrow.title": "Narrow text: about 55 characters a line.",
   "textWidth.reading.title":
     "Reading width: 80 characters a line, which is the widest WCAG 2.1 SC 1.4.8 allows a block of text to be.",
   "textWidth.fit.title": "As wide as this document's own text column, so no line is longer than on paper.",
+  "textWidth.wide.title":
+    "As wide as this document's page, edge to edge — the page with its margins taken away, which is what pageless means.",
   "textWidth.full.title": "As wide as the window, however wide the window is.",
   "textWidth.narrow.command": "Text width: Narrow",
   "textWidth.reading.command": "Text width: Reading",
   "textWidth.fit.command": "Text width: Paper",
+  "textWidth.wide.command": "Text width: Wide",
   "textWidth.full.command": "Text width: Full",
   "textWidth.pagedWithheld":
     "Text width applies in reflow. On pages the measure is the document's own, so turn Reflow on to choose one.",

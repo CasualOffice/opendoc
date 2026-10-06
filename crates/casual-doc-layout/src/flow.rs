@@ -205,6 +205,14 @@ fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author:
 /// cheapest of the three answers the field offers (Google Docs give the table its
 /// own scroller; ONLYOFFICE scale the whole table down; Word refits with columns
 /// and larger type). It loses nothing and needs no new paint primitive.
+///
+/// **[`Scroll`](Self::Scroll) is Google's answer, and it is what the body of a
+/// reflowed column now gets** (`docs/151` §6.3d). Fitting a table narrows the
+/// columns the author chose, which is the wrong trade for a wide data table; a
+/// scroller keeps every column at its declared width and contains the overflow in
+/// the one element that genuinely cannot fit. The engine half is only the layout
+/// decision — lay a top-level body table out at its own width — plus the per-table
+/// horizontal offset in `reflow_scroll`; the scroller itself is the host's.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MeasureFit {
     /// Declared widths stand, and content wider than the measure is laid out
@@ -216,6 +224,42 @@ pub enum MeasureFit {
     /// inline drawing's painted extent (aspect ratio preserved), resolve against
     /// the width the content is being flowed at.
     Fit,
+    /// A reflowed BODY with per-table horizontal scrolling: an inline drawing is
+    /// fitted exactly as under [`Fit`](Self::Fit) (*"images will adjust to your
+    /// screen size"*), while a **top-level** table keeps the width the document
+    /// declares, as under [`Bleed`](Self::Bleed), and the host reaches its
+    /// overflow with a scroller of its own (*"you can create wide tables and view
+    /// them by scrolling left and right"* — both from Google's pageless help,
+    /// answer 11528737).
+    ///
+    /// Only a top-level table scrolls, because only a top-level table row is a
+    /// placed fragment the scroller can address. A table nested in a cell is
+    /// fitted to its cell — under the outer table's scroller that is still the
+    /// whole of it — and every context with no scroller of its own (note bodies,
+    /// positioned tables, text boxes) is handed [`Self::without_scroll`], i.e.
+    /// [`Fit`](Self::Fit), so nothing anywhere reverts to being laid out past a
+    /// raster nobody can scroll.
+    Scroll,
+}
+
+impl MeasureFit {
+    /// This policy for a context that has no scroller of its own: [`Scroll`]
+    /// becomes [`Fit`], everything else is unchanged.
+    ///
+    /// [`Scroll`]: Self::Scroll
+    /// [`Fit`]: Self::Fit
+    #[must_use]
+    pub const fn without_scroll(self) -> Self {
+        match self {
+            Self::Scroll => Self::Fit,
+            other => other,
+        }
+    }
+
+    /// Whether an inline drawing is fitted to the width it is flowed at.
+    const fn fits_images(self) -> bool {
+        matches!(self, Self::Fit | Self::Scroll)
+    }
 }
 
 struct FlowCtx<'a> {
@@ -3129,7 +3173,15 @@ fn solve_table_columns(
         Some(TableLayout::Fixed) => TableLayout::Fixed,
         _ => TableLayout::Autofit,
     };
-    solve_column_widths(&cols, spec, available, layout, ctx.fit)
+    // A nested table has no scroller of its own — only a placed, top-level row
+    // is something the host can scroll — so under `Scroll` it is fitted to its
+    // cell exactly as it would be under `Fit` (see `MeasureFit::Scroll`).
+    let fit = if ctx.table_depth > 0 {
+        ctx.fit.without_scroll()
+    } else {
+        ctx.fit
+    };
+    solve_column_widths(&cols, spec, available, layout, fit)
         .into_iter()
         .map(Twip)
         .collect()
@@ -3176,8 +3228,10 @@ fn solve_column_widths(
     // deficit comes out of each column's slack above its content minimum first,
     // which is Word's AutoFit-to-window and keeps the type at full size (rather
     // than ONLYOFFICE's `GetScaleBySection`, which shrinks the glyphs too).
+    // `Scroll` keeps the author's width here: the overflow is the host's
+    // scroller's to reach (`MeasureFit::Scroll`, `docs/151` §6.3d).
     let target = match fit {
-        MeasureFit::Bleed => target,
+        MeasureFit::Bleed | MeasureFit::Scroll => target,
         MeasureFit::Fit => target.min(available),
     };
 
@@ -3955,8 +4009,8 @@ fn collect_items_with_measure<'a>(
                 // The intrinsic passes measure what the drawing WANTS, so they
                 // are handed no measure at all; the real pass clamps it to the
                 // width it got, and only on a surface with nothing past it.
-                let measure = match (intrinsic, ctx.fit) {
-                    (None, MeasureFit::Fit) => Some(width),
+                let measure = match intrinsic {
+                    None if ctx.fit.fits_images() => Some(width),
                     _ => None,
                 };
                 if let Some(item) = image_item(drawing, measure, ctx) {
@@ -4773,7 +4827,12 @@ fn flow_text_box_with_ctx(
     ctx.text_scale = ((u64::from(previous_scale) * u64::from(local_scale)) / 100_000)
         .min(u64::from(u32::MAX)) as u32;
     ctx.line_spacing_reduction = combine_percentage_reductions(previous_reduction, local_reduction);
+    // A text box is not a placed body block, so a table inside one has no
+    // scroller to reach its overflow: fit it instead (`MeasureFit::Scroll`).
+    let previous_fit = ctx.fit;
+    ctx.fit = previous_fit.without_scroll();
     let (flowed, _float_floor) = flow_blocks(blocks, shaper, inner_width, ctx);
+    ctx.fit = previous_fit;
     ctx.text_scale = previous_scale;
     ctx.line_spacing_reduction = previous_reduction;
     ctx.para_style = previous_para_style;

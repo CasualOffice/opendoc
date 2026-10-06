@@ -38,6 +38,8 @@ use casual_doc_layout::hittest::LayoutSnapshot;
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::ModelPos;
 use casual_doc_layout::page::{Page, PaginatedLayout};
+// Own line (anti-conflict): per-table horizontal scrolling (`docs/151` §6.3d).
+use casual_doc_layout::reflow_scroll;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Twip};
 use casual_doc_model::NodeId;
@@ -1314,17 +1316,30 @@ fn reflow_reports_what_this_document_approximates_and_paged_reports_none() {
         "the reported sentence is not the field one: {fielded:?}"
     );
 
-    // A document whose table is wider than the measure: the fitting sentence,
-    // which is the one the constant list omitted.
+    // A document whose top-level table is wider than the measure: the SCROLL
+    // sentence, not the fitting one — the table keeps its widths now
+    // (`docs/151` §6.3d), and telling the reader its columns were narrowed
+    // would be the over-report this list was rebuilt to stop.
     let wide = view.approximations(&table_document());
     assert_eq!(
         wide.len(),
         1,
-        "the table fixture's only reflow approximation is the fit: {wide:?}"
+        "the table fixture's only reflow note is that it scrolls: {wide:?}"
     );
     assert!(
-        wide[0].contains("wider than the reading column"),
-        "the over-wide case is still not reported: {wide:?}"
+        wide[0].contains("wider than the reading column") && wide[0].contains("scrolls sideways"),
+        "the over-wide table is not reported as scrolling: {wide:?}"
+    );
+    assert!(
+        !wide[0].contains("fitted"),
+        "a scrolled table was reported as fitted: {wide:?}"
+    );
+
+    // An image wider than the measure is still FITTED, and says so.
+    let pictured = view.approximations(&image_document(6_400_800, 3_200_400));
+    assert!(
+        pictured.iter().any(|sentence| sentence.contains("fitted")),
+        "an over-wide image is not reported as fitted: {pictured:?}"
     );
 
     // And the measure is part of the question: the same table in a column wide
@@ -1332,7 +1347,7 @@ fn reflow_reports_what_this_document_approximates_and_paged_reports_none() {
     let roomy = LayoutView::reflow(Twip(13_000), TILE, GUTTER).expect("a 9in reading column");
     assert!(
         roomy.approximations(&table_document()).is_empty(),
-        "a table that fits was still reported as fitted"
+        "a table that fits was still reported as over-wide"
     );
 }
 
@@ -1364,6 +1379,12 @@ fn table_cell_paragraph(row: u64, col: u64) -> NodeId {
 /// of 3,240 each: the one input the solver consulted `available` for neither
 /// before nor after, and the input that produced the loss.
 fn table_document() -> Document {
+    table_document_rows(TABLE_ROWS)
+}
+
+/// [`table_document`] with `rows` rows, for the guards that need the table to
+/// cross a tile boundary — the 6-row fixture fits on one 2in tile.
+fn table_document_rows(rows: u64) -> Document {
     let cell = |id: u64, text: &str| TableCell {
         id: node(id),
         properties: TableCellProperties::default(),
@@ -1384,7 +1405,7 @@ fn table_document() -> Document {
                         width_twips: Some(3_240),
                     })
                     .collect(),
-                rows: (0..TABLE_ROWS)
+                rows: (0..rows)
                     .map(|r| TableRow {
                         id: node(300 + r * 40),
                         properties: TableRowProperties::default(),
@@ -1403,24 +1424,73 @@ fn table_document() -> Document {
     )
 }
 
-/// A table reflows through the same pipeline, its auto widths resolving against
-/// the reflow column, and the tiles it is cut into still trim to their content.
+/// A wide table reflows through the same pipeline **keeping the widths its
+/// document declares**, everything that is not the table stays inside the
+/// column, and the tiles it is cut into still trim to their content.
+///
+/// This is the half of Google's pageless behaviour the layout owns: *"you can
+/// create wide tables and view them by scrolling left and right"* (answer
+/// 11528737). The fit that preceded it (FID-R-13) narrowed the author's columns
+/// to the measure — lossless, and the wrong trade for a data table, which is what
+/// the owner asked to have changed. Every tile the table reaches past is reported
+/// by `table_overflows`, which is what the host hangs its scroller on; a tile the
+/// table is on but that did not report it would be content with no way to reach
+/// it, which is the defect R-1 was.
+///
+/// MUTATION PROOF: making `LayoutView::measure_fit` return `MeasureFit::Fit` in
+/// reflow again — the behaviour before this — fails, run and seen, with
+/// `tile 1 holds some rows of the wide table and reported []` (`left: 0, right:
+/// 1`): the narrowed table no longer overflows, so there is nothing to scroll and
+/// the widths the author declared are gone. The width assertion below is the
+/// same fact stated as a number, for a mutation that kept the report.
 #[test]
-fn a_table_reflows_into_the_column_and_its_tiles_still_trim() {
+fn a_wide_table_keeps_its_widths_in_reflow_and_its_tiles_still_trim() {
     let shaper = ParleyShaper::new();
     let doc = table_document();
     let layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
     assert!(layout.pages.len() > 1, "a 2in tile cuts this fixture");
 
-    for page in &layout.pages {
-        let (_, _, right, bottom) = painted_extent(page).expect("a tile paints something");
-        assert!(
-            right <= GUTTER + COLUMN,
-            "tile {} paints a table out to {}, past the {} column",
-            page.number,
-            right.raw(),
-            (GUTTER + COLUMN).raw()
-        );
+    let mut widest = 0;
+    for (index, page) in layout.pages.iter().enumerate() {
+        let mut has_table = false;
+        for placed in &page.placed {
+            match &placed.fragment {
+                BlockFragment::TableRow { cells, .. } => {
+                    has_table = true;
+                    let extent = cells
+                        .iter()
+                        .map(|cell| (cell.x + cell.width).raw())
+                        .max()
+                        .unwrap_or(0);
+                    widest = widest.max(extent);
+                }
+                paragraph @ BlockFragment::Paragraph { .. } => {
+                    let mut list = DisplayList::new();
+                    let lone = Page {
+                        placed: vec![casual_doc_layout::page::PlacedFragment {
+                            fragment: paragraph.clone(),
+                            rect: placed.rect,
+                            section: placed.section,
+                        }],
+                        ..page.clone()
+                    };
+                    list.items.extend(compose_page(&lone).items);
+                    for item in &list.items {
+                        if let Some((_, _, right, _)) = painted_bounds(item) {
+                            assert!(
+                                right <= GUTTER + COLUMN,
+                                "tile {} paints PROSE out to {}, past the {} column — only the \
+                                 table may reach past it",
+                                page.number,
+                                right.raw(),
+                                (GUTTER + COLUMN).raw()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let (_, _, _, bottom) = painted_extent(page).expect("a tile paints something");
         assert!(
             bottom <= page.page_size.height + DESCENT_ROUNDING,
             "tile {} paints down to {} below its own trimmed {} height",
@@ -1428,7 +1498,20 @@ fn a_table_reflows_into_the_column_and_its_tiles_still_trim() {
             bottom.raw(),
             page.page_size.height.raw()
         );
+        let reported = reflow_scroll::table_overflows(&layout, index);
+        assert_eq!(
+            reported.len(),
+            usize::from(has_table),
+            "tile {} holds {} rows of the wide table and reported {reported:?}",
+            page.number,
+            if has_table { "some" } else { "no" }
+        );
     }
+    assert_eq!(
+        widest, 12_960,
+        "the table was narrowed in reflow: its widest row spans {widest} twips, not the \
+         declared 12960"
+    );
 }
 
 /// The incremental entry produces the layout a fresh pass produces, in reflow as
@@ -1584,42 +1667,64 @@ fn entering_reflow_costs_the_document_and_a_keystroke_in_it_costs_the_edit() {
 /// way to reach it is to leave the view.
 ///
 /// WHY THE CARET AND NOT THE PAINT. A display list that places a glyph at
-/// x = 10,080 in a 6,120-twip tile is not evidence on its own: a renderer could
-/// in principle be made to scroll it. A caret rect outside the raster is evidence,
-/// because the host paints exactly the raster and guarantees no horizontal scroll
-/// (`reflow_view.mjs`'s quantised bucket never exceeds `clientWidth`), so there is
-/// nothing to scroll with.
+/// x = 10,080 in a 6,120-twip tile is not evidence on its own. A caret rect
+/// outside the raster is, because the host paints exactly the raster: the only
+/// way to a cell past it is the table's own scroller, so the guarantee is that
+/// for EVERY cell there is a scroll offset in the table's range at which the
+/// cell's caret is inside the raster AND a click on it lands back in that cell.
+/// The offset is chosen the way the host's caret-follow chooses it — just far
+/// enough to bring the caret in — so the test is also the specification of that.
 ///
-/// MUTATION PROOF: with `MeasureFit::Fit` removed from `solve_column_widths` — the
-/// single line `MeasureFit::Fit => target.min(available)` reverted to `target` —
-/// this fails on the first cell of the third column:
+/// MUTATION PROOFS, each run and seen red:
 ///
-/// ```text
-/// cell (0,2)'s caret sits at 6948..6948 twips, outside the 0..6120 raster of
-/// tile 2 — that part of the table is painted nowhere a reader can reach it
-/// ```
+/// - `scroll_table` that clamps but never moves the rows (the `place_rows` loop
+///   deleted) fails on the first cell past the raster:
+///   `cell (0,2)'s caret sits at 6948..6948 twips, outside the 0..6120 raster of
+///   tile 1 even scrolled to 1189 — that part of the table cannot be reached`;
+/// - a `scroll_table` that moved the PAINT but not the geometry — the hit test —
+///   is the class the module comment exists to rule out, and fails the click
+///   assertion; it cannot be written against this API, because both read the
+///   same placed rows, which is the point.
 #[test]
 fn no_cell_of_a_table_wider_than_the_reading_column_is_unreachable() {
     let shaper = ParleyShaper::new();
     let doc = table_document();
-    let layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
-    let snapshot = LayoutSnapshot::new(&layout);
+    let mut layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+    let table = node(200);
 
     for row in 0..TABLE_ROWS {
         for col in 0..TABLE_COLS {
             let pos = ModelPos::new(table_cell_paragraph(row, col), 0);
-            let (page, rect) = snapshot
+            // Where the caret sits unscrolled, and the offset that brings it in.
+            let (page, home) = LayoutSnapshot::new(&layout)
                 .caret_rect(pos)
                 .unwrap_or_else(|| panic!("cell ({row},{col}) has no caret rect in reflow at all"));
-            let raster = layout.pages[page as usize].page_size.width;
+            // `caret_rect` answers a 1-BASED page; the layout is indexed from 0.
+            let tile = page as usize - 1;
+            let raster = layout.pages[tile].page_size.width;
+            let current = reflow_scroll::table_overflows(&layout, tile)
+                .first()
+                .map_or(0, |overflow| overflow.offset.raw());
+            let unscrolled_x = home.origin.x.raw() + current;
+            let wanted = (unscrolled_x - (raster.raw() - GUTTER.raw()) + 1).max(0);
+            let applied = if wanted > 0 || current > 0 {
+                reflow_scroll::scroll_table(&mut layout, tile, table, Twip(wanted))
+                    .map_or(0, |offset| offset.raw())
+            } else {
+                0
+            };
+            let snapshot = LayoutSnapshot::new(&layout);
+            let (page, rect) = snapshot
+                .caret_rect(pos)
+                .unwrap_or_else(|| panic!("cell ({row},{col}) lost its caret rect when scrolled"));
+            let raster = layout.pages[page as usize - 1].page_size.width;
             assert!(
                 rect.origin.x >= Twip::ZERO && rect.origin.x + rect.size.width <= raster,
                 "cell ({row},{col})'s caret sits at {}..{} twips, outside the 0..{} raster of \
-                 tile {} — that part of the table is painted nowhere a reader can reach it",
+                 tile {page} even scrolled to {applied} — that part of the table cannot be reached",
                 rect.origin.x.raw(),
                 (rect.origin.x + rect.size.width).raw(),
                 raster.raw(),
-                page + 1
             );
             let midpoint = Point::new(
                 rect.origin.x,
@@ -1743,4 +1848,279 @@ fn image_document(width_emu: i64, height_emu: i64) -> Document {
             ..Definitions::default()
         },
     )
+}
+
+// --------------------------------------------------------------------------
+// Per-table horizontal scrolling (`docs/151` §6.3d)
+// --------------------------------------------------------------------------
+
+/// THE INVARIANT the scroll offset's idempotence rests on: in a reflow layout,
+/// every placed body fragment sits at the content area's left edge, so a row's
+/// offset is `content_area.x - rect.x`, readable off the page rather than kept
+/// in a ledger that could disagree with it (`reflow_scroll`'s module comment).
+///
+/// Asserted over the whole corpus the inertness guard uses plus the table and
+/// image fixtures, because the property is about the paginator, not about a
+/// document, and a fixture that happened to have no table would prove nothing
+/// about the one thing the scroller moves.
+///
+/// MUTATION PROOF, run and seen red: placing a fragment one twip right of the
+/// column in the COLUMN paginator's `push` (`col.x + self.x_shift() + Twip(1)` in
+/// `columns.rs` — a reflow tile is a one-column section, so that is the
+/// paginator it runs through; the same mutation in `paginate.rs`'s `push` stays
+/// green, which is how that was found) fails with `"prose" tile 1 places a
+/// fragment at x=361, not at the content area's left edge 360`.
+#[test]
+fn every_placed_body_fragment_sits_at_the_content_left_edge() {
+    let shaper = ParleyShaper::new();
+    let mut corpus = inertness_corpus();
+    corpus.push(("wide table", table_document()));
+    corpus.push(("wide image", image_document(6_400_800, 3_200_400)));
+    for (name, doc) in corpus {
+        let layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+        for page in &layout.pages {
+            for placed in &page.placed {
+                assert_eq!(
+                    placed.rect.origin.x,
+                    page.content_area.origin.x,
+                    "{name:?} tile {} places a fragment at x={}, not at the content area's left \
+                     edge {}",
+                    page.number,
+                    placed.rect.origin.x.raw(),
+                    page.content_area.origin.x.raw()
+                );
+            }
+        }
+    }
+}
+
+/// Scrolling a table moves ITS rows on EVERY tile it spans, and nothing else;
+/// the same offset twice changes nothing; the offset clamps to the table's
+/// range; and `table_overflows` reads back the offset that was applied.
+///
+/// "Every tile" is the part a host cannot check for itself: it scrolls the strip
+/// it is looking at, and a table that is cut across three tiles must not be
+/// scrolled on one and left at home on the other two.
+///
+/// MUTATION PROOFS, run and seen red: walking only the hint tile in
+/// `scroll_table` (`layout.pages[hint..=hint]`) fails with `tile 1 holds rows of
+/// the scrolled table at offset 0, not 900`; dropping the clamp (`offset.raw()`
+/// written as is) fails with `an offset past the end was applied as
+/// Some(Twip(99999)), not clamped to 7560`.
+#[test]
+fn scrolling_a_table_moves_its_rows_on_every_tile_and_nothing_else() {
+    let shaper = ParleyShaper::new();
+    // 14 rows: the most the fixture's id scheme fits below its trailing paragraph
+    // (node 900), and enough to cross a 2in tile.
+    let doc = table_document_rows(14);
+    let mut layout = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+    let table = node(200);
+    let tiles: Vec<usize> = (0..layout.pages.len())
+        .filter(|&index| !reflow_scroll::table_overflows(&layout, index).is_empty())
+        .collect();
+    assert!(
+        tiles.len() > 1,
+        "the precondition: the wide table spans more than one tile, or 'every tile' is \
+         untested ({tiles:?})"
+    );
+    let before = layout.clone();
+    let hint = tiles[tiles.len() - 1];
+
+    let applied = reflow_scroll::scroll_table(&mut layout, hint, table, Twip(900));
+    assert_eq!(
+        applied,
+        Some(Twip(900)),
+        "an in-range offset is applied as asked"
+    );
+    for (index, (page, was)) in layout.pages.iter().zip(&before.pages).enumerate() {
+        for (placed, old) in page.placed.iter().zip(&was.placed) {
+            let is_row = matches!(&placed.fragment, BlockFragment::TableRow { table: id, .. } if *id == table);
+            let expected = if is_row {
+                page.content_area.origin.x - Twip(900)
+            } else {
+                old.rect.origin.x
+            };
+            assert_eq!(
+                placed.rect.origin.x,
+                expected,
+                "tile {} holds {} at offset {}, not {}",
+                index + 1,
+                if is_row {
+                    "rows of the scrolled table"
+                } else {
+                    "prose that moved"
+                },
+                (page.content_area.origin.x - placed.rect.origin.x).raw(),
+                if is_row { 900 } else { 0 }
+            );
+            assert_eq!(
+                placed.rect.origin.y, old.rect.origin.y,
+                "a scroll moved something vertically"
+            );
+        }
+        if tiles.contains(&index) {
+            let reported = reflow_scroll::table_overflows(&layout, index);
+            assert_eq!(
+                reported[0].offset,
+                Twip(900),
+                "tile {} reads back the offset",
+                index + 1
+            );
+        }
+    }
+
+    // Idempotent: the same offset again is the same layout.
+    let once = layout.clone();
+    reflow_scroll::scroll_table(&mut layout, tiles[0], table, Twip(900));
+    assert_eq!(
+        layout, once,
+        "scrolling to the offset already applied changed the layout"
+    );
+
+    // Clamped to the range, at both ends.
+    let max = reflow_scroll::table_overflows(&layout, tiles[0])[0].max_offset();
+    let far = reflow_scroll::scroll_table(&mut layout, tiles[0], table, Twip(99_999));
+    assert_eq!(
+        far,
+        Some(max),
+        "an offset past the end was applied as {:?}, not clamped to {}",
+        far,
+        max.raw()
+    );
+    let back = reflow_scroll::scroll_table(&mut layout, tiles[0], table, Twip(-50));
+    assert_eq!(back, Some(Twip::ZERO), "a negative offset clamps to zero");
+    assert_eq!(
+        layout, before,
+        "scrolled back to zero, the layout is the one that was built"
+    );
+
+    // A table that is not on the tile, or a tile with no over-wide table, is no answer.
+    assert_eq!(
+        reflow_scroll::scroll_table(&mut layout, tiles[0], node(999_999), Twip(10)),
+        None
+    );
+}
+
+/// The offsets a host remembers survive a relayout: `apply_table_scroll` writes
+/// them back onto fresh pages, re-clamped, and with `reset` puts the layout back
+/// exactly as it was built — which is what the incremental paginator is handed.
+///
+/// MUTATION PROOF, run and seen red: an `apply_table_scroll` that ignores
+/// `reset` (always writing the remembered offset) fails with `reset left the
+/// table scrolled: the layout handed back to the paginator is not the one it
+/// built`.
+#[test]
+fn remembered_offsets_are_written_back_and_reset_restores_the_built_layout() {
+    let shaper = ParleyShaper::new();
+    let doc = table_document();
+    let built = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+    let table = node(200);
+    let mut offsets = std::collections::BTreeMap::new();
+    offsets.insert(table, Twip(1_200));
+
+    let mut fresh = built.clone();
+    reflow_scroll::apply_table_scroll(&mut fresh, &offsets, false);
+    let mut scrolled = built.clone();
+    let first = (0..scrolled.pages.len())
+        .find(|&index| !reflow_scroll::table_overflows(&scrolled, index).is_empty())
+        .expect("the wide table is on some tile");
+    reflow_scroll::scroll_table(&mut scrolled, first, table, Twip(1_200));
+    assert_eq!(
+        fresh, scrolled,
+        "writing a remembered offset back is the same as scrolling to it"
+    );
+
+    // Twice is once.
+    let again = fresh.clone();
+    reflow_scroll::apply_table_scroll(&mut fresh, &offsets, false);
+    assert_eq!(fresh, again, "writing the same offsets twice doubled them");
+
+    // Re-clamped: an offset past the end of the table as it is now comes back
+    // as the end, never as a table scrolled off its own raster.
+    offsets.insert(table, Twip(1_000_000));
+    reflow_scroll::apply_table_scroll(&mut fresh, &offsets, false);
+    let max = reflow_scroll::table_overflows(&fresh, first)[0].max_offset();
+    assert_eq!(reflow_scroll::table_overflows(&fresh, first)[0].offset, max);
+
+    reflow_scroll::apply_table_scroll(&mut fresh, &offsets, true);
+    assert_eq!(
+        fresh, built,
+        "reset left the table scrolled: the layout handed back to the paginator is not the one \
+         it built"
+    );
+}
+
+/// The strip a host rasterises once and scrolls natively is the table's rows
+/// at offset zero, moved to the top of the strip, sized to the scroll width —
+/// and contains nothing else, because the tile under it still paints the rest.
+///
+/// Compared at the paint tier against the tile's own composition: the strip's
+/// items are the tile's TABLE items moved up by the band's top, item for item.
+/// A strip that drew the table at the current offset would scroll twice — once
+/// in the engine and once in the host's scroll container.
+///
+/// MUTATION PROOF, run and seen red: leaving the rows at their scrolled x in
+/// `table_strip_page` (the `Point::new(content_x, …)` written as
+/// `Point::new(placed.rect.origin.x, …)`) fails with `the strip draws the table
+/// at its scrolled position: item 0 at x=-432, the tile at offset zero has it at
+/// 468`.
+#[test]
+fn the_table_strip_is_the_table_at_offset_zero_and_nothing_else() {
+    let shaper = ParleyShaper::new();
+    let doc = table_document();
+    let built = paginate_document_in(&doc, &shaper, ReviewView::Editing, reflow());
+    let table = node(200);
+    let index = (0..built.pages.len())
+        .find(|&index| !reflow_scroll::table_overflows(&built, index).is_empty())
+        .expect("the wide table is on some tile");
+    let overflow = reflow_scroll::table_overflows(&built, index)[0];
+
+    // The tile's table items at offset zero, moved to the strip's origin.
+    let mut tile_only_table = built.pages[index].clone();
+    tile_only_table.clear_post_pagination();
+    tile_only_table
+        .placed
+        .retain(|placed| matches!(placed.fragment, BlockFragment::TableRow { .. }));
+    for placed in &mut tile_only_table.placed {
+        placed.rect.origin.y = placed.rect.origin.y - overflow.top;
+    }
+    let expected = compose_page(&tile_only_table).items;
+
+    // Scroll first: the strip must not care.
+    let mut scrolled = built.clone();
+    reflow_scroll::scroll_table(&mut scrolled, index, table, Twip(900));
+    let strip = reflow_scroll::table_strip_page(&scrolled, index, table).expect("a strip");
+    assert_eq!(strip.page_size.width, overflow.scroll_width);
+    assert_eq!(strip.page_size.height, overflow.height);
+    assert!(
+        strip
+            .placed
+            .iter()
+            .all(|placed| matches!(placed.fragment, BlockFragment::TableRow { .. })),
+        "the strip carries something that is not the table"
+    );
+    let got = compose_page(&strip).items;
+    assert_eq!(
+        got.len(),
+        expected.len(),
+        "the strip paints a different number of items"
+    );
+    for (i, (a, b)) in got.iter().zip(&expected).enumerate() {
+        let (ax, _, _, _) = painted_bounds(a).unwrap_or_default();
+        let (bx, _, _, _) = painted_bounds(b).unwrap_or_default();
+        assert_eq!(
+            ax,
+            bx,
+            "the strip draws the table at its scrolled position: item {i} at x={}, the tile at \
+             offset zero has it at {}",
+            ax.raw(),
+            bx.raw()
+        );
+    }
+    // `PaintItem` has no `PartialEq`; its `Debug` form is total over its fields.
+    assert_eq!(
+        format!("{got:?}"),
+        format!("{expected:?}"),
+        "the strip is not the tile's table moved to the top"
+    );
 }
