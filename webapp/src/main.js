@@ -3181,6 +3181,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // real faces register. Word and Docs both show the document before every
     // font it references is resolved; so do browsers, for the same reason.
     await renderAll();
+    if (statusEl.textContent === `Opening ${name}…`) setStatus(spellChecker.statusNote()); // the render clears only its own line
     buildOutline();
     referenceCommands.numbering.refresh();
     tocCommands.fields.refresh();
@@ -3270,7 +3271,7 @@ docTitleEl.addEventListener("blur", commitRename);
 async function provisionFonts(name) {
   if (!doc) return [];
   const warnings = [];
-  setStatus(`Fetching web fonts for ${name}…`);
+  statusChannel.progress(`Fetching web fonts for ${name}…`);
 
   const named = await Promise.allSettled(
     NAMED_WEB_FONT_FACES.map((face) => fetchFontBytes(face.url, fontCache)),
@@ -3321,7 +3322,7 @@ async function provisionMissingFallbacks(label) {
     (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
   );
   if (keys.length === 0) return warnings;
-  setStatus(`Fetching fonts for ${label} (${keys.join(", ")})…`);
+  statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
   for (const key of keys) inFlightFallbackKeys.add(key);
   for (const key of keys) {
     const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
@@ -3612,7 +3613,7 @@ async function renderAll() {
   const sizes = [];
   const renderingStatus =
     `Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`;
-  setStatus(renderingStatus);
+  statusChannel.progress(renderingStatus); // background progress: never over the reader's message
 
   for (let i = 0; i < count; i++) {
     if (token !== renderToken) return;
@@ -3667,12 +3668,10 @@ async function renderAll() {
   if (runningEditBand) drawRunningBands(runningEditBand);
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
-    // A command may have reported a more important status while this async
-    // render was running. Clear only the progress message this render owns.
-    // Clearing it hands the line back to whatever standing condition still
-    // wants it — today, "this document is in a language we have no dictionary
-    // for", which would otherwise be wiped by the font-upgrade re-render and
-    // leave an unchecked document looking like a clean one.
+    // The progress above painted only if nobody held the line, so what a command
+    // just told the reader survives the render ("Footnote added" did not, when the
+    // font upgrade repainted). Clearing our own text hands the line back to any
+    // standing condition, e.g. "no dictionary for this document's language".
     if (statusEl.textContent === renderingStatus) setStatus(spellChecker.statusNote());
     updateStats();
     pagesPanelView.build();
