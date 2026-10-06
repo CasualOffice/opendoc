@@ -643,7 +643,10 @@ export function sessionAccess(inputs, translate) {
     adopt(doc) {
       if (!grant.shared || !doc) return "";
       try {
-        if (grant.participant !== null) doc.adoptParticipantIdentity(grant.participant);
+        // The engine takes a `u64`, which wasm-bindgen accepts only as a BigInt: a
+        // plain number throws "Cannot convert 0 to a BigInt", and every grant was
+        // then reported unreadable and never applied.
+        if (grant.participant !== null) doc.adoptParticipantIdentity(BigInt(grant.participant));
         doc.adoptParticipantCapabilities([...grant.names]);
         return "";
       } catch {
