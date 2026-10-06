@@ -137,6 +137,26 @@ export function createMenuSheet({
     if (isOpen() && !inside(event.target)) close();
   });
 
+  // A command row is about to run. `createMenuBar` hands focus back to the
+  // menu's NAME before running it — and that name lives in this list, which the
+  // handler below closes once the command has run. A dialog the command opens
+  // remembers the focused name as the place to return to, so its Escape then
+  // returned focus to a hidden button: the body (`document-properties.spec.mjs`,
+  // File ▸ Page setup at 390px). So the list closes FIRST, in the capture phase,
+  // with focus on the menus button; the name's `focus()` is then a no-op on a
+  // hidden element, and the dialog remembers a button the reader can see.
+  // A submenu parent keeps the menu open, so it does not close the list.
+  popover?.addEventListener(
+    "click",
+    (event) => {
+      if (!isOpen()) return;
+      const row = event.target.closest?.(".app-menu-item");
+      if (!row || row.disabled || row.classList.contains("app-menu-item-parent")) return;
+      close({ restoreFocus: true });
+    },
+    true,
+  );
+
   // A command ran. `createMenuBar` closes its menu BEFORE running the command
   // (its `onRun`), so a click inside the menu that leaves it hidden is a command
   // that has run — and the list it was chosen from has done its job too. A
