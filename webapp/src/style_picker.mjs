@@ -4,6 +4,7 @@
 // and it was answered inline in main.js where the only way to check it was to
 // open a browser and count what appeared. It is the rule the owner has now
 // reported on four times; it belongs where a test can ask it directly.
+import { styleDisplayName } from "./style_names.mjs";
 
 /** What the band PREFERS to offer, in priority order: the paragraph styles
  *  Word's default template marks as Quick Styles, intersected with Google
@@ -246,11 +247,19 @@ export function nextFontSizeStep(current, direction) {
  * Recommended / All filter. A query narrows both; when it matches nothing the
  * caller shows its empty state rather than an unexplained blank popover.
  *
+ * The query matches the name a reader SEES as well as the stored one, because
+ * those differ for Word's built-ins (`styleDisplayName`): "comment" has to find
+ * `annotation text`, shown as "Comment Text", and "heading" still finds
+ * `heading 1`. The returned values are always the stored names.
+ *
  * @returns {{suggested: string[], rest: string[]}}
  */
 export function styleMenuGroups({ suggested, defined, query = "" }) {
   const needle = query.trim().toLowerCase();
-  const matches = (name) => !needle || name.toLowerCase().includes(needle);
+  const matches = (name) =>
+    !needle ||
+    name.toLowerCase().includes(needle) ||
+    styleDisplayName(name).toLowerCase().includes(needle);
   const top = suggested.filter(matches);
   const rest = [...defined]
     .filter((name) => !suggested.includes(name))
@@ -260,7 +269,8 @@ export function styleMenuGroups({ suggested, defined, query = "" }) {
       // unfiltered one had.
       const au = UTILITY_STYLE_PATTERN.test(a);
       const bu = UTILITY_STYLE_PATTERN.test(b);
-      return au === bu ? a.localeCompare(b) : Number(au) - Number(bu);
+      // Alphabetical by what is SHOWN: `heading 1` sorts as "Heading 1".
+      return au === bu ? styleDisplayName(a).localeCompare(styleDisplayName(b)) : Number(au) - Number(bu);
     });
   return { suggested: top, rest };
 }

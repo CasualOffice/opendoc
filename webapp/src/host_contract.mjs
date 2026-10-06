@@ -230,6 +230,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("file.print", "print"),
   // Reading the metadata is not a grant: the document is already on screen.
   exact("file.properties", null),
+  // Opening the compatibility findings reads a report the open already produced;
+  // it changes nothing, so it requires nothing.
+  exact("file.compatibilityReport", null),
   // Recovering a draft requires the capability that WROTE it. A host that
   // withheld `autosave` has no drafts of this visitor's typing, and offering to
   // restore some would be offering work from a session the host refused to keep.
@@ -256,6 +259,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("edit.pasteText", "mutate"),
   exact("edit.selectAll", null),
   exact("edit.find", null),
+  // The same panel on its replacement field (⌘H). Opening it changes nothing; a
+  // replacement is an edit and is refused at the edit, like every other one.
+  exact("edit.replace", null),
 
   // ---- format -------------------------------------------------------------
   exact("format.bold", "mutate"),
@@ -293,6 +299,12 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("paragraph.list.checklist", "mutate"),
   exact("paragraph.list.continue", "mutate"),
   exact("paragraph.list.restart", "mutate"),
+  // The heading chords' commands (Ctrl+Alt+1/2/3, Ctrl+Alt+0). Each applies a
+  // paragraph style, so each is the same `mutate` the `style.` family is.
+  exact("paragraph.heading.1", "mutate"),
+  exact("paragraph.heading.2", "mutate"),
+  exact("paragraph.heading.3", "mutate"),
+  exact("paragraph.normal", "mutate"),
 
   // ---- insert -------------------------------------------------------------
   exact("insert.link", "mutate"),
@@ -508,6 +520,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("view.pages", null),
   exact("view.settings", null),
   exact("view.showChanges", null),
+  // F6 / Shift+F6 move the keyboard between the window's regions. Focus is not
+  // document state, so they require nothing.
+  exact("view.region.next", null),
+  exact("view.region.previous", null),
   // Reflow lays the body out at the reader's window width instead of on the
   // document's paper (ADR-046). It requires NOTHING, and that is a claim worth
   // making explicitly rather than by omission: it is a LAYOUT VIEW and not an

@@ -58,16 +58,16 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   await expect(ribbon.locator('[data-table-distribute="columns"]')).toBeEnabled();
   await expect(page.locator("#splitCellBtn")).toBeEnabled();
   await expect(page.locator("#mergeCellsBtn")).toBeDisabled();
-  await expect(page.locator("#tableContext")).toContainText("2×2 table");
+  await expect(page.locator("#tableContext")).toContainText("2 × 2 table");
   await page.locator("#tableStyleBtn").click();
   await expect(page.locator("#tableStyleMenu")).toBeVisible();
   await expect(page.locator("#tableStyleMenu [data-table-style]")).toHaveCount(1);
   await page.locator("#tableStyleMenu [data-table-style]").click();
 
   await ribbon.locator('[data-table-action="insert-row-below"]').click();
-  await expect(page.locator("#tableContext")).toContainText("3×2 table");
+  await expect(page.locator("#tableContext")).toContainText("2 × 3 table");
   await ribbon.locator('[data-table-action="insert-column-right"]').click();
-  await expect(page.locator("#tableContext")).toContainText("3×3 table");
+  await expect(page.locator("#tableContext")).toContainText("3 × 3 table");
 
   await ribbon.locator('[data-table-select="row"]').click();
   await expect(page.locator(".table-cell-selection")).toHaveCount(3);
@@ -86,7 +86,7 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   const keyboardInsert = ribbon.locator('[data-table-action="insert-row-above"]');
   await keyboardInsert.focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator("#tableContext")).toContainText("4×3 table");
+  await expect(page.locator("#tableContext")).toContainText("3 × 4 table");
 
   await page.locator("#tableBtn").click();
   const formatMenu = page.locator("#tableMenu");
@@ -111,7 +111,7 @@ test("table properties commit live, undo per interaction, and restore focus", as
   const panel = page.locator("#tablePropertiesPanel");
   await trigger.click();
   await expect(panel).toBeVisible();
-  await expect(page.locator("#tablePropertiesContext")).toContainText("2×2 table");
+  await expect(page.locator("#tablePropertiesContext")).toContainText("2 × 2 table");
   await expect(page.locator("#viewport")).toBeVisible();
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
   await expect(page.locator("#tablePropertiesApply")).toHaveCount(0);

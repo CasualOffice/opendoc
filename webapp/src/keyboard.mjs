@@ -217,9 +217,26 @@ export function matchesShortcut(spec, event, platform = keyboardPlatform()) {
   if ((event.altKey === true) !== wanted.alt) return false;
   if ((event.shiftKey === true) !== wanted.shift) return false;
   const key = event.key ?? "";
-  return key.length === 1 && wanted.key.length === 1
-    ? key.toLowerCase() === wanted.key.toLowerCase()
-    : key === wanted.key;
+  if (key.length === 1 && wanted.key.length === 1) {
+    if (key.toLowerCase() === wanted.key.toLowerCase()) return true;
+    // On Apple, Option REWRITES the character a key produces — ⌥1 is "¡", ⌥M is
+    // "µ" — so a ⌘⌥ chord arrives with an `event.key` that is not the key it was
+    // declared with, and matching on `key` alone made every ⌘⌥ chord (the heading
+    // styles, ⌘⌥M, ⌘⌥D) dead on a Mac. The physical key is still `event.code`.
+    // Apple ONLY, and only with ⌘ held: no character input on a Mac uses ⌘, so
+    // this cannot steal a typed character. Elsewhere Ctrl+Alt is AltGr on many
+    // layouts (German AltGr+0 is "}"), where the character must keep winning —
+    // there `key` is the only honest signal and the chord simply does not fire.
+    return apple && wanted.mod && wanted.alt && physicalKey(event.code) === wanted.key.toLowerCase();
+  }
+  return key === wanted.key;
+}
+
+/** `"Digit1"` → `"1"`, `"KeyM"` → `"m"`, anything else → `""`. The layout-free
+ *  name of a letter or digit key, for the one case `matchesShortcut` needs it. */
+function physicalKey(code) {
+  const match = /^(?:Digit(\d)|Key([A-Z]))$/.exec(code ?? "");
+  return match ? (match[1] ?? match[2].toLowerCase()) : "";
 }
 
 /** Renders a declared shortcut for the keyboard in front of the user.

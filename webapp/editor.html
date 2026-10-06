@@ -184,8 +184,13 @@
                loudest thing in the chrome and read as an unexplained error.
                It is a neutral status chip now, beside the state chip it belongs
                with — Word and Docs both report conversion findings as neutral
-               status, never as an alert. -->
-          <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
+               status, never as an alert.
+               A BUTTON, because a count that cannot be opened reports that
+               something happened without saying what: it opens the findings
+               themselves (`compat_findings.mjs`). `aria-live` keeps what the old
+               `role="status"` gave — the count is still announced when it
+               changes — without taking the button's role away. -->
+          <button id="compatibilityStatus" class="compatibility-status" type="button" aria-haspopup="dialog" aria-live="polite" hidden></button>
         </div>
         <!-- Row 2, with the tab strip: how the APPLICATION is presented. -->
         <div class="controls-app">
@@ -627,7 +632,7 @@
             <div class="rgroup-ctl editing-ctl">
               <div class="stackrows">
                 <button data-i18n-title="panelHome.findReplaceF.title" data-i18n-label="panelHome.findReplace.label" id="findBtn" type="button" class="fmt" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><span class="ms" aria-hidden="true">search</span></button>
-                <button data-i18n-title="panelHome.replaceF.title" data-i18n-label="panelHome.replace.label" id="replaceBtn" type="button" class="fmt" title="Replace (⌘F)" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span></button>
+                <button data-i18n-title="panelHome.replace.label" data-i18n-label="panelHome.replace.label" id="replaceBtn" type="button" class="fmt" title="Replace" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span></button>
               </div>
             </div>
             <span data-i18n="panelHome.editing" class="rgroup-label">Editing</span>

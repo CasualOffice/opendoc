@@ -134,12 +134,13 @@ export const HOME_FACES = Object.freeze([
   face("#formattingMarksBtn", "view.formattingMarks"),
   chooser("#formattingMarksMenuBtn", "view.formattingMarks."),
   chooser("#stylesTrigger", "style."),
-  // Find and Replace are two faces of ONE command: `#replaceBtn`'s handler is
-  // `findBtn.click()`, and the panel it opens is the same panel with the replace
-  // row focused. Declaring both against `edit.find` says that out loud; declaring
-  // a separate `edit.replace` would be a second name for one dialog.
+  // Find and Replace open ONE panel, but they are two commands, as they are in
+  // Word (Ctrl+F / Ctrl+H) and Google Docs: Replace lands on the replacement
+  // field, and it is the command ⌘H runs. They used to be declared as one, and
+  // that was the whole reason Ctrl+H could not exist — a chord binds to a command
+  // id, and a second chord on `edit.find` could never say "and land on Replace".
   face("#findBtn", "edit.find"),
-  face("#replaceBtn", "edit.find"),
+  face("#replaceBtn", "edit.replace"),
 ]);
 
 /** The View band. `#reviewBtn` is `review.toggle`'s second ribbon face — the

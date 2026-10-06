@@ -171,13 +171,20 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     await expect(page.locator(selector)).toHaveAttribute("aria-label", label);
   }
 
-  // The ribbon teaches the shortcut the palette already lists, rendered for the
-  // keyboard this platform actually has (HF-025) — hardcoding either "⌘K" or
-  // "Ctrl+K" here passes on one OS and fails on the other.
-  await expect(page.locator("#insertLinkBtn")).toHaveAttribute(
-    "title",
-    new RegExp(shortcutHint("⌘K").replace(/[+]/g, "\\+")),
-  );
+  // With no text selected Link is unavailable, and a disabled control's title is
+  // the REASON — the palette's own sentence (`109` UX-038) — not the chord of a
+  // command that cannot run.
+  const link = page.locator("#insertLinkBtn");
+  await expect(link).toBeDisabled();
+  await expect(link).toHaveAttribute("title", "Select text to add a link");
+
+  // Once it is live the ribbon teaches the shortcut the palette already lists,
+  // rendered for the keyboard this platform actually has (HF-025) — hardcoding
+  // either "⌘K" or "Ctrl+K" here passes on one OS and fails on the other.
+  await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
+  await page.keyboard.press("Shift+End");
+  await expect(link).toBeEnabled();
+  await expect(link).toHaveAttribute("title", new RegExp(shortcutHint("⌘K").replace(/[+]/g, "\\+")));
 
   expect(consoleErrors).toEqual([]);
 });
