@@ -179,6 +179,27 @@
         </div>
         <!-- Row 2, with the tab strip: how the APPLICATION is presented. -->
         <div class="controls-app">
+          <!-- The editing mode, at the top right: where all three references put
+               it — ONLYOFFICE at the right of the tab row, Google Docs at the
+               right of the toolbar ("Editing ▾"), Word at the right of the ribbon
+               (`109` UX-025, docs/123 §4.5). One button naming the mode in force,
+               opening a three-row menu, which is Docs' shape.
+               It is the SECOND face of ONE state, not a second state: it holds
+               no mode of its own. `header_mode.mjs` reads the status bar's
+               segmented control (`#reviewModeControl`) and acts by pressing it,
+               so `setReviewMode` stays the only writer and the two surfaces
+               cannot disagree. The rows carry `data-header-mode`, NOT
+               `data-review-mode`: `main.js` collects every `[data-review-mode]`
+               at import and stamps `aria-pressed` on it, which a
+               `menuitemradio` must not carry. -->
+          <div id="headerModeControl" class="header-mode">
+            <span data-i18n="ui.editingMode.label" id="headerModeCaption" class="sr-only">Editing mode</span>
+            <button data-i18n-title="headerMode.title" id="headerModeBtn" type="button" class="header-mode-btn" title="Choose whether your edits change the document, become suggestions, or are not allowed" aria-haspopup="menu" aria-controls="headerModeMenu" aria-expanded="false" aria-labelledby="headerModeCaption headerModeText" data-mode="editing">
+              <span id="headerModeIcon" class="ms" aria-hidden="true">edit</span>
+              <span id="headerModeText" class="header-mode-text"></span>
+              <span class="ms header-mode-caret" aria-hidden="true">arrow_drop_down</span>
+            </button>
+          </div>
           <div data-i18n-label="ui.toolbarMode.label" class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
             <button data-i18n="ui.compact" type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
                     data-chrome-mode="compact" aria-checked="false" tabindex="-1">Compact</button>
@@ -998,7 +1019,7 @@
         <div id="panelReview" class="ribbon-panel" data-panel="review" role="tabpanel" aria-labelledby="tabReview" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelReview.trackChangesSuggestingMode.title" data-i18n-label="panelReview.trackChanges.label" id="reviewTrackBtn" type="button" class="fmt" title="Track changes (Suggesting mode)" aria-label="Track changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">track_changes</span></button>
+              <button data-i18n-title="panelReview.trackChanges.title" data-i18n-label="panelReview.trackChanges.label" id="reviewTrackBtn" type="button" class="fmt fmt-big" title="Record your edits as suggestions. The shortcut cycles Editing, Suggesting and Read only (⌘⇧E)" aria-label="Track changes" aria-pressed="false" data-tip-detail disabled><span class="ms" aria-hidden="true">track_changes</span><span data-i18n="reviewTrackBtn.trackChanges" class="fmt-big-label">Track changes</span></button>
               <button data-i18n-title="panelReview.showTrackedChangesDocument.title" data-i18n-label="panelReview.showChanges.label" id="reviewShowChangesBtn" type="button" class="fmt" title="Show tracked changes in the document" aria-label="Show changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span></button>
             </div>
             <span data-i18n="panelReview.tracking" class="rgroup-label">Tracking</span>
@@ -1008,8 +1029,8 @@
               <button data-i18n-title="panelReview.previousCommentChange.title" data-i18n-label="panelReview.previousCommentChange.label" id="reviewPrevBtn" type="button" class="fmt" title="Previous comment or change" aria-label="Previous comment or change" disabled><span class="ms" aria-hidden="true">navigate_before</span></button>
               <button data-i18n-title="panelReview.nextCommentChange.title" data-i18n-label="panelReview.nextCommentChange.label" id="reviewNextBtn" type="button" class="fmt" title="Next comment or change" aria-label="Next comment or change" disabled><span class="ms" aria-hidden="true">navigate_next</span></button>
               <span class="rgroup-mini-divider" aria-hidden="true"></span>
-              <button data-i18n-title="panelReview.acceptChangeAtCursor.title" data-i18n-label="panelReview.acceptChange.label" id="reviewAcceptBtn" type="button" class="fmt" title="Accept the change at the cursor and move to the next" aria-label="Accept change" disabled><span class="ms" aria-hidden="true">check</span></button>
-              <button data-i18n-title="panelReview.rejectChangeAtCursor.title" data-i18n-label="panelReview.rejectChange.label" id="reviewRejectBtn" type="button" class="fmt" title="Reject the change at the cursor and move to the next" aria-label="Reject change" disabled><span class="ms" aria-hidden="true">close</span></button>
+              <button data-i18n-title="panelReview.acceptChangeAtCursor.title" data-i18n-label="panelReview.acceptChange.label" id="reviewAcceptBtn" type="button" class="fmt fmt-big" title="Accept the change at the cursor and move to the next (⌘⌥⏎)" aria-label="Accept change" disabled><span class="ms" aria-hidden="true">check</span><span data-i18n="reviewAcceptBtn.accept" class="fmt-big-label">Accept</span></button>
+              <button data-i18n-title="panelReview.rejectChangeAtCursor.title" data-i18n-label="panelReview.rejectChange.label" id="reviewRejectBtn" type="button" class="fmt fmt-big" title="Reject the change at the cursor and move to the next (⌘⌥⌫)" aria-label="Reject change" disabled><span class="ms" aria-hidden="true">close</span><span data-i18n="reviewRejectBtn.reject" class="fmt-big-label">Reject</span></button>
               <span class="rgroup-mini-divider" aria-hidden="true"></span>
               <button data-i18n-title="panelReview.acceptAllChanges.title" data-i18n-label="panelReview.acceptAllChanges.label" id="reviewAcceptAllBtn" type="button" class="fmt" title="Accept all changes" aria-label="Accept all changes" disabled><span class="ms" aria-hidden="true">done_all</span></button>
               <button data-i18n-title="panelReview.rejectAllChanges.title" data-i18n-label="panelReview.rejectAllChanges.label" id="reviewRejectAllBtn" type="button" class="fmt" title="Reject all changes" aria-label="Reject all changes" disabled><span class="ms" aria-hidden="true">remove_done</span></button>
@@ -1041,8 +1062,8 @@
                a durable, one-click switch, so that is the placement taken. -->
           <div class="rgroup" data-group="proofing">
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelReview.checkSpellingAsYou.title" data-i18n-label="panelReview.spellCheck.label" id="reviewSpellCheckBtn" type="button" class="fmt" title="Check spelling as you type" aria-label="Spell check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span></button>
-              <button data-i18n-title="panelReview.checkGrammarAsYou.title" data-i18n-label="panelReview.grammarCheck.label" id="reviewGrammarCheckBtn" type="button" class="fmt" title="Check grammar as you type" aria-label="Grammar check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span><span class="table-command-badge" aria-hidden="true">G</span></button>
+              <button data-i18n-title="panelReview.checkSpellingAsYou.title" data-i18n-label="panelReview.spellCheck.label" id="reviewSpellCheckBtn" type="button" class="fmt fmt-big" title="Check spelling as you type" aria-label="Spell check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span><span data-i18n="settingsPanel.spelling" class="fmt-big-label">Spelling</span></button>
+              <button data-i18n-title="panelReview.checkGrammarAsYou.title" data-i18n-label="panelReview.grammarCheck.label" id="reviewGrammarCheckBtn" type="button" class="fmt fmt-big" title="Check grammar as you type" aria-label="Grammar check" aria-pressed="false"><span class="ms" aria-hidden="true">grading</span><span data-i18n="reviewGrammarCheckBtn.grammar" class="fmt-big-label">Grammar</span></button>
               <button data-i18n-title="panelReview.replaceStraightQuotesTypographic.title" data-i18n-label="panelReview.smartQuotes.label" id="reviewSmartQuotesBtn" type="button" class="fmt" title="Replace straight quotes with typographic quotes as you type" aria-label="Smart quotes" aria-pressed="false"><span class="ms" aria-hidden="true">format_quote</span></button>
               <!-- Proofing languages (docs/146 §3/§10, ADR-042). Word's own
                    install surface is File ▸ Options ▸ Language, but its Review tab
@@ -1868,6 +1889,37 @@
     <div id="languageMenu" class="context-menu language-menu" hidden>
       <div data-i18n-label="settings.language.label" id="languageMenuList" class="language-menu-list" role="menu" aria-label="Language"></div>
       <p data-i18n="settings.language.note" class="settings-note language-menu-note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
+    </div>
+
+    <!-- The header's editing-mode menu (`#headerModeBtn`). At body level, like
+         the language menu, so no ancestor's stacking context can put it under
+         the ribbon. The three names are the status bar's own keys — one
+         vocabulary for one state on two surfaces — and each row's sentence is
+         its DESCRIPTION, not part of its name: `aria-hidden` on the visible
+         copy and `aria-describedby` to it, so a screen reader hears "Suggesting,
+         radio menu item, checked" and then the explanation. -->
+    <div data-i18n-label="ui.editingMode.label" id="headerModeMenu" class="context-menu header-mode-menu" role="menu" aria-label="Editing mode" hidden>
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="true" data-header-mode="editing" aria-describedby="headerModeEditingNote">
+        <span class="ms" aria-hidden="true">edit</span>
+        <span class="header-mode-item-text">
+          <span data-i18n="reviewModeControl.editing" class="header-mode-item-label">Editing</span>
+          <span data-i18n="headerMode.editing.note" id="headerModeEditingNote" class="header-mode-item-note" aria-hidden="true">Edit the document directly</span>
+        </span>
+      </button>
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-header-mode="suggesting" aria-describedby="headerModeSuggestingNote">
+        <span class="ms" aria-hidden="true">rate_review</span>
+        <span class="header-mode-item-text">
+          <span data-i18n="reviewModeControl.suggesting" class="header-mode-item-label">Suggesting</span>
+          <span data-i18n="headerMode.suggesting.note" id="headerModeSuggestingNote" class="header-mode-item-note" aria-hidden="true">Edits become suggestions others can accept or reject</span>
+        </span>
+      </button>
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-header-mode="viewing" aria-describedby="headerModeViewingNote">
+        <span class="ms" aria-hidden="true">visibility</span>
+        <span class="header-mode-item-text">
+          <span data-i18n="reviewModeControl.readOnly" class="header-mode-item-label">Read only</span>
+          <span data-i18n="headerMode.readOnly.note" id="headerModeViewingNote" class="header-mode-item-note" aria-hidden="true">Read the document without changing it</span>
+        </span>
+      </button>
     </div>
 
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
@@ -3231,5 +3283,8 @@
     <div id="statusToast" class="toast" aria-hidden="true" hidden></div>
 
     <script type="module" src="./src/main.js"></script>
+    <!-- Chrome that binds to markup and needs no editor state: the header's
+         editing-mode selector, the status line's hover text, Alt key tips. -->
+    <script type="module" src="./src/chrome_wiring.mjs"></script>
   </body>
 </html>

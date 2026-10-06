@@ -74,7 +74,7 @@ such thing.
 | Stacked rows in one group | `.elset`, 20px tall, 8px between rows (`toolbar.less:530`) | — | ad hoc | `.stackrows`, same idea |
 | Tab side padding | 12px (`toolbar.less` `li > a`) | 7px | 14px | 12px |
 | Tab font | 12px | 14px | 13.5px | 13.5px (our token) |
-| Mode selector | top right of the **tab row** | right end of the **toolbar** | **in the band AND in the status bar** | status bar only (§4.5) |
+| Mode selector | top right of the **tab row** | right end of the **toolbar** | **in the band AND in the status bar** | status bar only (§4.5); since UX-025, **top right of the header** with the status bar as its second face |
 | Fold control | — (a "Hide toolbar" item) | `^` at the toolbar's right end | right end of the tab row | right end of the nav row |
 | **Chrome above the page** | **~179px** measured in the running editor (title + tabs + band + ruler) | **145px** (page top at 1408px) | **228.8px** | **178px** |
 | File / backstage page | full window below the tab strip, `bottom: 0` (`toolbar.less:940`); two columns, never empty | a **dropdown**, not a page | an overlay that did not cover the work area, one centred 720px column | full window below the header; two columns |
@@ -204,6 +204,14 @@ at the right of the toolbar, Word at the right of the ribbon — and **none** pu
 status bar. Ours stays in the status bar because that is where the compact chrome's copy
 lives, and moving it is a change to the compact chrome, which is out of scope here.
 Recorded as `109` UX-025.
+
+**Closed since (`109` UX-025).** The header's right cluster now carries Google Docs'
+"Editing ▾" — one button naming the mode in force, a three-row menu — in both chromes, and
+the status bar keeps its segments as the second face. It is a second face of ONE state,
+not a second state: `webapp/src/header_mode.mjs` reads the status bar's segments and acts
+by pressing them, so `setReviewMode` is still the only writer and the two cannot disagree
+the way UX-016's pair did. `webapp/tests/e2e/header-mode.spec.mjs` crosses the two faces in
+every test.
 
 ### 4.6 The empty right end of the band is not a defect
 
@@ -431,8 +439,8 @@ ONLYOFFICE's own ribbon while keeping 30px controls that ONLYOFFICE does not.
 
 ## 8. Open rows this raises
 
-- **`109` UX-025** — one mode control, but on the surface no reference uses. All three
-  put it in the top chrome; ours is in the status bar.
+- **`109` UX-025 — closed**: the header carries the mode selector at the top right, as a
+  second face of the status bar's control (§4.5).
 - **`109` UX-026 — closed** by §5.3: seven categories render into the pane.
 - **The header gear's Settings popup — closed.** See §5.7.
 - **Doc 122 §6's two deferrals** (`edit.selectAll`, `edit.pasteText` on Home ▸ Editing)

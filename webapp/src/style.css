@@ -4898,6 +4898,20 @@ body.compact-mode {
   position: relative;
 }
 
+/* The badge's containing block is the BUTTON that carries it, wherever that
+   button is. It was only ever made so for `.table-ribbon .fmt` above, so the
+   one badge placed outside the Table band — a "G" on Review ▸ Grammar — had
+   no positioned button to anchor to and resolved against `.ribbon-body`
+   instead: `right: 2px; bottom: 1px` of the whole ribbon, painted as a stray
+   "G" in the band's bottom-right corner, ~600px from the control it labelled.
+   Stated on the badge's owner rather than on a band, so a badge cannot escape
+   its control again by being used somewhere new.
+   `ribbon-glyphs.spec.mjs` asserts nothing in a band paints outside the
+   control that holds it. */
+.fmt:has(> .table-command-badge) {
+  position: relative;
+}
+
 .table-ribbon .table-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
@@ -5325,6 +5339,56 @@ body.compact-mode {
   font-size: var(--fs-ribbon-caption);
 }
 
+/* A second line under the name, for a control that opts in with
+   `data-tip-detail` because its name alone would mislead — Track changes,
+   whose chord CYCLES three modes rather than toggling one, says so here.
+   Word's tooltips carry exactly this: a bold name and chord, then a sentence. */
+.ribbon-tooltip-detail {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.86;
+}
+
+/* Key tips (`key_tips.mjs`): Word's letter badges, in the tooltip's own
+   inverted pair so they read in both themes without a new colour. Fixed to the
+   viewport and pointer-transparent; centred on the point the module computes. */
+.key-tips {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tooltip);
+  pointer-events: none;
+}
+
+.key-tips[hidden] {
+  display: none;
+}
+
+.key-tip {
+  position: fixed;
+  transform: translateX(-50%);
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: var(--fs-ribbon-caption);
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.24);
+}
+
+.key-tip[hidden] {
+  display: none;
+}
+
+/* A control that cannot run right now still shows its letter — the table of
+   letters must not reshuffle as availability changes — but reads as unavailable,
+   the way the control under it does. */
+.key-tip.is-unavailable {
+  opacity: 0.45;
+}
+
 .rgroup-hint {
   max-width: 190px;
   font-size: var(--fs-small);
@@ -5459,6 +5523,18 @@ body.compact-mode {
 .fmt .ms {
   font-size: var(--icon-control);
   display: block;
+}
+
+/* A glyph is an atom: it is never squeezed. Every `.ms` is `overflow: hidden`
+   (fonts.css), and a flex item that clips its overflow has an automatic
+   minimum width of ZERO — so wherever a button's content box was narrower than
+   its icon, the icon shrank silently and lost its right-hand side: the
+   zoom-presets caret drew 6 of its 16px (a dot), five split-button carets 12
+   or 15 of 18. Refusing to shrink turns any future mismatch into visible
+   overflow, which `ribbon-glyphs.spec.mjs` reports by name, instead of a
+   clipped glyph nobody measures. */
+.ms {
+  flex-shrink: 0;
 }
 
 /* A ribbon button whose face is a short piece of TEXT rather than an icon.
@@ -5928,6 +6004,12 @@ body.is-format-painting .page-wrap * {
   color: var(--muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  /* Yields to the engine's message as the counts do (`.status` takes its
+     width first), rather than pushing it off the end of the half. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .draft-status[hidden] { display: none; }
 .draft-status[data-draft-state="unavailable"] { color: var(--danger); font-weight: 600; }
@@ -5975,14 +6057,18 @@ body.is-format-painting .page-wrap * {
   min-width: 0;
 }
 
-/* The SOURCE is the half that goes first when the footer is tight, and it may:
-   the level is the answer and the source is the attribution, so losing the
-   attribution costs the reader the second question and not the first. The whole
-   statement stays on the container's `title`, so nothing is lost outright. */
-@media (max-width: 900px) {
-  .access-badge-source {
-    display: none;
-  }
+/* The SOURCE is not painted in the status bar at all, at any width — the level
+   is the answer and the source is the attribution, and the attribution is the
+   container's `title` and `aria-label`, which carry the whole statement.
+   It used to be painted above 900px, and at 1280px "Full access on this
+   device, where you are the only authority" took 357px of a row it shares
+   with the engine's own messages, which were left 0-106px and read "Cou…",
+   "Fetc…", "Draf…". Word and Google Docs both state status in a word or two
+   and explain it on hover; a sentence that never changes for a standalone
+   reader is the worst possible use of the one row that carries every
+   transient message. `footer-status.spec.mjs` holds the message's room. */
+.access-badge-source {
+  display: none;
 }
 
 /* At phone width the glyph goes too, and the level keeps every pixel there is.
@@ -9028,6 +9114,119 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 }
 .compact-overflow-menu .cadopted { height: 30px; flex: 0 0 auto; }
 
+/* The editing-mode selector at the top right (`header_mode.mjs`, `109` UX-025).
+   Google Docs' "Editing ▾": one button naming the mode in force. It carries the
+   mode's own colour only for Suggesting — the review-insert green the status
+   bar's pressed segment already uses — because that is the mode a person must
+   not forget they are in; Editing and Read only are drawn neutral. */
+.header-mode {
+  display: inline-flex;
+  align-items: center;
+}
+
+.header-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-ribbon-caption);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.header-mode-btn .ms {
+  font-size: var(--icon-compact);
+}
+
+.header-mode-btn:hover,
+.header-mode-btn[aria-expanded="true"] {
+  background: var(--bg-2);
+}
+
+.header-mode-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+.header-mode-btn[data-mode="suggesting"] {
+  color: var(--review-insert);
+  border-color: var(--review-insert-line);
+  background: var(--review-insert-soft);
+}
+
+.header-mode-menu {
+  min-width: 248px;
+}
+
+.header-mode-item {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  padding-block: 7px;
+}
+
+.header-mode-item .ms {
+  font-size: var(--icon-control);
+}
+
+.header-mode-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.header-mode-item-label {
+  font-weight: 600;
+}
+
+.header-mode-item-note {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  white-space: normal;
+}
+
+.header-mode-item[aria-checked="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.header-mode-item[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Before a document is open the mode means nothing — the status bar that carries
+   the other face is hidden then too — and on a phone the status bar's own
+   segments are the one face: the two-row phone header has no room for a third
+   cluster, and a control repeated in a 390px viewport is the clutter the phone
+   tier exists to remove. */
+body:not(.doc-loaded) .header-mode,
+body.phone-mode .header-mode {
+  display: none;
+}
+
+/* Below 1000px the mode's NAME goes and its glyph stays, which is what Google
+   Docs does with the same control in a narrow window. Measured, the narrowest
+   window in which every ribbon tab fits without the strip scrolling: 868px before
+   the selector existed, 968px with its name shown, 928px with the glyph alone —
+   so the selector costs the strip 60px at the narrow end, and nothing at 1024px
+   or above. Below the fit the strip scrolls under its fade, as it always has, and
+   every tab stays reachable by scroll, by arrows and by key tips. The name is
+   still the button's accessible name — it is
+   referenced by `aria-labelledby`, which reads hidden text — and its title. */
+@media (max-width: 1000px) {
+  .header-mode-text {
+    display: none;
+  }
+}
+
 /* Header mode switch */
 .chrome-mode {
   display: inline-flex;
@@ -9237,17 +9436,24 @@ body:not(.doc-loaded) .drop-title {
   display: none;
 }
 
-/* Inside the left half the transient engine message is the only thing allowed
-   to give way: it is prose that ellipsizes readably, whereas "12,483 words" is
-   worthless the moment a digit is cut. It is therefore the sole shrinkable
-   member of the row (`.stats` below is not), so a long "Opened <filename>"
-   message can never squeeze the counts. */
+/* Inside the left half the transient engine message comes FIRST. It used to be
+   the only member allowed to give way, on the argument that "12,483 words" is
+   worthless the moment a digit is cut — and that argument is right about the
+   digits and wrong about the priority: a message is the thing the reader is
+   being told NOW ("Could not fetch the dictionary", "Draft saved"), the counts
+   are on screen the rest of the time, and measured at 1280px the message got
+   0-106px and read "Cou…", "Fetc…", "Draf…" while the counts kept all of theirs.
+   So the message takes its whole width, up to the whole half; the counts give
+   way — a WHOLE count at a time, never a cut digit (`.stats` below) — and the
+   message only ellipsizes when it is longer than the half itself, in which case
+   `status_line.mjs` puts the full text on its `title`. */
 .status {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -9314,13 +9520,24 @@ body:not(.doc-loaded) .drop-title {
   }
 }
 
+/* The counts yield to a message one WHOLE count at a time. The row wraps, and
+   is exactly one line tall with its overflow clipped, so a count that no longer
+   fits drops onto a second line nobody sees instead of being cut mid-digit —
+   paragraphs first, then characters, then words, which is DOM order and is the
+   `data-status-priority` order the width ladder below sheds them in too. The
+   separators are `* + *::before`, so a dropped count takes its own "·" with it. */
 .stats {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
+  align-content: flex-start;
+  column-gap: 7px;
+  row-gap: 0;
+  height: 1.5em;
+  line-height: 1.5em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
 }
@@ -9390,6 +9607,9 @@ body:not(.doc-loaded) .drop-title {
   justify-content: center;
   width: 24px;
   height: 22px;
+  /* No user-agent padding: a button's default 6px a side left a 16px glyph
+     12px of a 24px box, so − and + were clipped on their right edge. */
+  padding: 0;
   border: none;
   border-radius: 5px;
   background: transparent;
@@ -10388,11 +10608,16 @@ body.phone-mode .compact-overflow-menu {
     var(--surface-alt);
 }
 
+/* Wide enough to HOLD its glyph. It was 16px with a 1px right border, so the
+   18px `arrow_drop_down` was squeezed to 15px and cut off on its right: a flex
+   item with `overflow: hidden` (which every `.ms` is) has an automatic minimum
+   width of zero, so it shrinks silently instead of overflowing visibly. The
+   box is stated FROM the glyph token, so the two cannot drift apart again. */
 .color-caret {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: calc(var(--icon-control) + 1px);
   height: var(--h-control);
   padding: 0;
   border: 1px solid transparent;
@@ -10443,9 +10668,11 @@ body.phone-mode .compact-overflow-menu {
   border-bottom-right-radius: 0;
 }
 
+/* The same rule as `.color-caret`: the box holds the glyph. 14px less two
+   borders left 12px of an 18px caret on screen. */
 .list-caret {
-  width: 14px;
-  min-width: 14px;
+  width: calc(var(--icon-control) + 2px);
+  min-width: calc(var(--icon-control) + 2px);
   padding: 0;
   color: var(--muted);
   border-top-left-radius: 0;
@@ -11018,6 +11245,10 @@ body[data-shape-draw] .page-wrap * {
   justify-content: center;
   width: 18px;
   height: 22px;
+  /* The zoom-presets caret drew as a DOT: the user-agent's 6px of padding a
+     side left its 16px `arrow_drop_down` a 6px box, and the glyph — a flex
+     item with `overflow: hidden` — shrank into it rather than overflowing. */
+  padding: 0;
   border: none;
   border-radius: 0 5px 5px 0;
   background: transparent;
@@ -11631,6 +11862,11 @@ body.chrome-no-history #versionPreviewBanner,
    offered; the GRANT still decides what the editor does, so taking the control
    away neither widens nor narrows anything. */
 body.chrome-no-review #reviewModeControl,
+/* …and its second face at the top right, and the menu that face opens. A region
+   that took the status-bar switch away and left the header one on screen would
+   be a host believing they had withheld a surface that is still there. */
+body.chrome-no-review #headerModeControl,
+body.chrome-no-review #headerModeMenu,
 body.chrome-no-status .footer,
 /* The toast is the status line's OTHER channel — body-level, so it survives the
    footer being taken away below 620px. A container that withheld `status`
@@ -11709,12 +11945,13 @@ body.chrome-no-caret .page-wrap {
    — otherwise a `preview` container, which composes ALL chrome away, still pays
    58px for an empty strip above the document it exists to show. The selector IS
    the bar's contents: brand, title, the state cluster, the menu bar, the ribbon's
-   tab strip and Settings. It is stated as a conjunction rather than as a separate
+   tab strip, Settings and the editing-mode selector (`review`, which joined the
+   bar with `109` UX-025). It is stated as a conjunction rather than as a separate
    `no-bar` flag so there is no second mechanism to keep in step with the region
    set — `chrome_regions.test.mjs` holds this list against the ids `.bar` really
    contains, so a control added to the header without a region fails the build
    instead of quietly re-inflating the strip. */
-body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ribbon.chrome-no-settings
+body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ribbon.chrome-no-settings.chrome-no-review
   .bar {
   display: none;
 }

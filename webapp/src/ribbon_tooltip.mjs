@@ -77,7 +77,15 @@ export function installRibbonTooltips(surfaces) {
     // would then drop the chord from the tooltip on exactly the platform
     // HF-025 exists for.
     const shortcut = isShortcutLike(parenthetical) ? formatShortcut(parenthetical) : "";
-    return { name, shortcut };
+    // A control that opts in with `data-tip-detail` gets its title's sentence as
+    // a second line, under the name and the chord — Word's tooltip shape. Opt-in,
+    // because for most controls the sentence restates the name; for Track changes
+    // it is the only place that says the chord CYCLES Editing, Suggesting and Read
+    // only rather than toggling tracking, and a chord chip alone would mislead.
+    // Never for a disabled control: there the sentence is already the name.
+    const detail =
+      el.hasAttribute("data-tip-detail") && !el.disabled && own.trim() !== name ? own.trim() : "";
+    return { name, shortcut, detail };
   }
 
   function position(el) {
@@ -93,13 +101,19 @@ export function installRibbonTooltips(surfaces) {
   }
 
   function show(el) {
-    const { name, shortcut } = contentFor(el);
+    const { name, shortcut, detail } = contentFor(el);
     if (!name) return;
     tooltip.textContent = name;
     if (shortcut) {
       const kbd = document.createElement("kbd");
       kbd.textContent = shortcut;
       tooltip.append(kbd);
+    }
+    if (detail) {
+      const line = document.createElement("span");
+      line.className = "ribbon-tooltip-detail";
+      line.textContent = detail;
+      tooltip.append(line);
     }
     tooltip.hidden = false;
     position(el);
