@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures.mjs";
-import { gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { appMenuButton, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 
 // The owner's report was about LENGTH, not about grouping: "my ask was to group
 // them and create sub menus .. so it's readable". Named bands with separators
@@ -121,7 +121,8 @@ test("on a phone a submenu drills inline and nothing scrolls sideways", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoEditor(page);
-  await page.locator('.app-menu-button[data-menu="format"]').click();
+  // Through the header's menus sheet, the phone's route to the bar (docs/148 §5.3b).
+  await (await appMenuButton(page, "format")).click();
   await expect(page.locator("#appMenuPopover")).toBeVisible();
   // Touch has no hover, so the click path is the only one — and it must open.
   await page.locator("#appMenuPopover .app-menu-item-parent").first().click();

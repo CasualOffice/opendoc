@@ -132,26 +132,32 @@ export const EN_STRINGS = Object.freeze({
   "reflowNotes.command": "What this view approximates",
   "reflowNotes.none":
     "Nothing: every part of this document is laid out the way the document asks for it.",
-  // -- Text width (`docs/154` §5.1, ADR-048) ---------------------------------
-  // Four steps for one measure, each labelled by what it does rather than by a
-  // number: "Wide" tells a reader nothing and "80" tells them nothing until they
-  // know it is WCAG 2.1 SC 1.4.8's maximum, which is what the `.title` sentences
-  // are for. The `.row` sentences and `textWidth.reading.short` are declared in
-  // `editor.html` beside the markup that carries them — `build-locale.mjs`
-  // refuses a key declared in both places — and `reflow_view.test.mjs` asserts
-  // every step has all four, so the split cannot rot into a half-labelled step.
+  // -- Text width (`docs/154` §5.1, ADR-048, `docs/151` §6.2a) ---------------
+  // Five steps for one measure, each labelled by what it does rather than by a
+  // number: "80" tells a reader nothing until they know it is WCAG 2.1 SC
+  // 1.4.8's maximum, and "Wide" nothing until they know it is the page without
+  // its margins, which is what the `.title` sentences are for. The `.row`
+  // sentences and `textWidth.wide.short` (the default's label, on the button)
+  // are declared in `editor.html` beside the markup that carries them —
+  // `build-locale.mjs` refuses a key declared in both places — and
+  // `reflow_view.test.mjs` asserts every step has all four, so the split cannot
+  // rot into a half-labelled step.
   "textWidth.command": "Text width",
   "textWidth.narrow.short": "Narrow",
+  "textWidth.reading.short": "Reading",
   "textWidth.fit.short": "Paper",
   "textWidth.full.short": "Full",
   "textWidth.narrow.title": "Narrow text: about 55 characters a line.",
   "textWidth.reading.title":
     "Reading width: 80 characters a line, which is the widest WCAG 2.1 SC 1.4.8 allows a block of text to be.",
   "textWidth.fit.title": "As wide as this document's own text column, so no line is longer than on paper.",
+  "textWidth.wide.title":
+    "As wide as this document's page, edge to edge — the page with its margins taken away, which is what pageless means.",
   "textWidth.full.title": "As wide as the window, however wide the window is.",
   "textWidth.narrow.command": "Text width: Narrow",
   "textWidth.reading.command": "Text width: Reading",
   "textWidth.fit.command": "Text width: Paper",
+  "textWidth.wide.command": "Text width: Wide",
   "textWidth.full.command": "Text width: Full",
   "textWidth.pagedWithheld":
     "Text width applies in reflow. On pages the measure is the document's own, so turn Reflow on to choose one.",
@@ -263,6 +269,13 @@ export const EN_STRINGS = Object.freeze({
   "toc.jumpedTo": "Jumped to {heading}",
   "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
   "paragraph.caretRequired": "Place the caret in a paragraph",
+  // Why Restart / Continue numbering and Insert ▸ Link are unavailable. They were
+  // the palette rows' English literals while the buttons for the same commands
+  // greyed out saying nothing (`control_reasons.mjs`); one entry each now, read
+  // by both surfaces.
+  "list.reason.notNumbered": "Place the caret in a numbered list",
+  "list.reason.nothingToContinue": "There is no earlier numbered list to continue",
+  "insert.reason.linkNeedsText": "Select text to add a link",
   "insert.chart": "Chart",
   // A disabled control has one channel — its title — and it must say what to
   // DO, not repeat what the control would have done. This one used to borrow
@@ -276,6 +289,23 @@ export const EN_STRINGS = Object.freeze({
   // not "Undo" plus a noun glued on, which is why this is one key and not two.
   "toolbar.undoNamed": "Undo {name}",
   "toolbar.redoNamed": "Redo {name}",
+  // Find and REPLACE as its own command, so ⌘H has an id to run — Word, Google
+  // Docs and ONLYOFFICE all bind Ctrl+H to it. The find panel's own button says
+  // the same word.
+  "find.replaceCommand": "Replace",
+  // The heading chords' palette rows (`quick_styles.mjs`). `{name}` is Word's UI
+  // name for a built-in style, which is not localised yet (`style_names.mjs`).
+  "style.apply.heading": "Apply Heading {level}",
+  "style.apply.normal": "Apply Normal style",
+  // The three heading chords as ONE row of File ▸ Shortcuts, the way Google
+  // Docs' own reference lists them.
+  "style.apply.headingRange": "Apply Heading 1–3",
+  "style.reason.missing": "This document has no {name} style",
+  // F6 / Shift+F6 (`region_focus.mjs`): Word's "move to the next pane", named for
+  // what moves — the keyboard — rather than for any one pane.
+  "region.next": "Move to the next region",
+  "region.previous": "Move to the previous region",
+  "region.move": "Move between regions",
   // The document-state pill. The words live in `status_policy.mjs`, which is
   // DOM-free and knows nothing of catalogues; these are the same strings, keyed.
   "status.state.opened": "Opened",
@@ -640,6 +670,22 @@ export const EN_STRINGS = Object.freeze({
   // the host withholding downloads — "this cannot be done" and "not for you" are
   // different answers and a reader deserves the right one.
   "filePane.export.noWriter": "This build cannot write {format}",
+  // The compatibility findings (`compat_findings.mjs`): what the header chip
+  // counts, opened. The kinds are named for what HAPPENED to a construct, because
+  // that is what a reader deciding whether to save over the original needs —
+  // the engine's two outcome axes, folded into five plain answers.
+  "findings.command": "Compatibility findings…",
+  "findings.none": "This document has no compatibility findings",
+  "findings.title": "Compatibility findings",
+  "findings.importIntro": "What this editor could not represent exactly when it opened the document, grouped by what happened to it.",
+  "findings.exportIntro": "What the last save could not write exactly, grouped by what happened to it.",
+  "findings.kind.lost": "Not kept",
+  "findings.kind.refused": "Refused for safety or size",
+  "findings.kind.approximated": "Shown approximately; the original is kept in the file",
+  "findings.kind.preserved": "Kept in the file, not shown or editable here",
+  "findings.kind.unsorted": "Other findings",
+  "findings.close": "Close",
+  "findings.closeLabel": "Close compatibility findings",
   "filePane.settings.label": "Settings",
   "filePane.settings.blurb": "Appearance, your reviewer identity, autosave and proofing.",
   "filePane.properties.label": "Document properties",
@@ -996,6 +1042,14 @@ export const EN_STRINGS = Object.freeze({
   // the live region is the only channel a reader who cannot see it has.
   "table.rowAppended": "Row added at the end of the table",
   "table.atFirstCell": "The caret is already in the first cell of the table",
+  // A table's size, COLUMNS first — Word's own convention ("4x3 Table" over its
+  // Insert grid for four columns and three rows). The Insert grid and the Table
+  // band's hint both read this one sentence, because they used to print the
+  // same table as "4 × 3" and "3×4 table". `sizeSpoken` is the grid cell's
+  // accessible name, where a screen reader would read "×" as "times".
+  "table.size": "{columns} × {rows} table",
+  "table.sizeSpoken": "{columns} by {rows} table",
+  "table.sizeGrid": "Table size",
   // The row/column/table selection's own status line. It was built as
   // `Selected table ${mode}`, the one table status line that was not localised
   // at all, and glueing a translated noun onto a fixed verb is what these three

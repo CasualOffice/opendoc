@@ -1620,6 +1620,9 @@ which is why it is corrected in place rather than left to `151`.**
 - A table too wide for the reflow width keeps a horizontal scroller **of its own** —
   Google's arbitration. That is the one horizontal scroll that survives, and it tells
   the reader something true about a table rather than something false about the page.
+  **Built 2026-10-06** (`151` §6.3d, `MeasureFit::Scroll`): from 2026-10-05 until then the
+  table was fitted to the column instead (FID-R-13), which kept the content and narrowed the
+  author's columns; the scroller restores this decision as written.
 - Entering or leaving reflow **discards the galley cache and rebuilds whole**, never
   resuming a layout built in the other view: a reflow pass clears the break flags on
   the galley it retains, and a paged rebuild served one of those fragments would
@@ -1777,6 +1780,17 @@ mirror that closes the `ColumnTooWide` refusal. Raised by the owner's challenge 
 (`REFLOW_WIDTH_DEFAULT` in `webapp/src/reflow_view.mjs`): a reader opening a document on a
 1440px screen should not be handed a 241-character line. **The owner may overrule it by
 changing that one line.**
+
+**Amended 2026-10-06 — the owner overruled the default, and a fifth step was added.** The owner
+compared reflow with Google Docs' pageless view and judged *"at present width of page is too
+small"*. Measured at 1440×900 with the outline open, Reading's 469px column was **narrower than
+the 624px text column the same Letter document shows on paper**, so turning the pages off took
+width away. The default is now **Wide** — the document's own page width, the page with its
+margins taken away (`pageSetup().pageSize.widthTwips`, derived, inventing no constant), capped by
+the window like every step. Reading (WCAG's 80) stays one click away; a stored choice is never
+reinterpreted. The rest of this ADR stands: one clamp, per-viewer, ≥2 surfaces. Google's own
+default step and its step widths could not be verified (`151` §6.2a says which sources were
+reachable), so Wide is chosen on our measurement, not as a claimed match.
 
 **What implementation changed about this ADR, recorded rather than smoothed over.**
 

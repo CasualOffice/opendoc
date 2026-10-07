@@ -35,7 +35,7 @@ test("table style and table structure commands are blocked in Suggesting mode in
   consoleErrors,
 }) => {
   await insertTwoByTwoTable(page);
-  await expect(page.locator("#tableContext")).toContainText("2×2 table");
+  await expect(page.locator("#tableContext")).toContainText("2 × 2 table");
 
   await enterSuggestingMode(page);
   await page.locator("#tabTable").click();
@@ -46,7 +46,7 @@ test("table style and table structure commands are blocked in Suggesting mode in
   const ribbon = page.locator(".table-ribbon");
   await ribbon.locator('[data-table-action="insert-row-below"]').click();
   await expect(page.locator("#status")).toContainText("cannot be tracked");
-  await expect(page.locator("#tableContext")).toContainText("2×2 table");
+  await expect(page.locator("#tableContext")).toContainText("2 × 2 table");
 
   // Table style (the exact bug named in REVIEW-GAP-004: `applyTableStyle`
   // called `runEdit` instead of `runToolbarEdit`).
@@ -60,7 +60,7 @@ test("table style and table structure commands are blocked in Suggesting mode in
   await setReviewMode(page, "editing");
   await page.locator("#tabTable").click();
   await ribbon.locator('[data-table-action="insert-row-below"]').click();
-  await expect(page.locator("#tableContext")).toContainText("3×2 table");
+  await expect(page.locator("#tableContext")).toContainText("2 × 3 table");
   expect(consoleErrors).toEqual([]);
 });
 

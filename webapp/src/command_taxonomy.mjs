@@ -99,7 +99,12 @@ export const FILE_SURFACE = [
   // Docs files it under File and Word under Layout. It is on the Layout ribbon
   // too; this gives it a File home that matches the competition.
   { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print"] },
-  { nameKey: "menuGroup.document", ids: ["file.properties"] },
+  // Compatibility findings beside the document's properties: Word's File ▸ Info
+  // is where both live (Properties, and Check for Issues ▸ Check Compatibility).
+  // It is the second surface the header chip's report needed — the chip is
+  // hidden on a phone, so without this row the report was a pointer-only
+  // capability on one device class and unreachable on another.
+  { nameKey: "menuGroup.document", ids: ["file.properties", "file.compatibilityReport"] },
   // Version history's PRIMARY home, and the one both references agree on: Google
   // Docs is File ▸ Version history ▸ See version history, ONLYOFFICE is a File
   // page item (`DE.Views.FileMenu.btnHistory`), Word puts it under File ▸ Info.
@@ -119,7 +124,12 @@ export const FILE_SURFACE = [
   // Options ▸ Advanced. This row lands on the chooser inside Settings rather than
   // being a second copy of it, so the preference has one control and two ways in.
   { nameKey: "menuGroup.settings", ids: ["view.settings", "view.measurementUnits"] },
-  { nameKey: "menuGroup.help", ids: ["help.commands", "help.shortcuts", "help.about"] },
+  // Help behind one row, as Google Docs (a Help menu) and Word (File ▸ Help)
+  // both file it: the three rows are where a reader goes for the editor rather
+  // than for the document. Folded when Compatibility findings joined Document and
+  // took the File menu to 14 top-level rows, one past `menu-submenus.spec.mjs`'s
+  // cap of 13. The File PAGE renders a submenu flat, so its Help group is unchanged.
+  { nameKey: "menuGroup.help", submenu: true, ids: ["help.commands", "help.shortcuts", "help.about"] },
 ];
 
 /**
@@ -335,6 +345,7 @@ export const APP_MENU_SECTIONS = {
       "view.textWidth.narrow",
       "view.textWidth.reading",
       "view.textWidth.fit",
+      "view.textWidth.wide",
       "view.textWidth.full",
     ),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),

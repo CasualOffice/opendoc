@@ -32,7 +32,16 @@
 // two tests with it, and `#viewport` is now swept by the general assertion below
 // like every other element. `tests/e2e/reflow.spec.mjs` holds the positive
 // claim; this file holds the property that no longer has a hole in it.
-import { clickIntoFirstPage, expect, gotoEditor, menuCommandRow, openCommandPalette, stableBox, test } from "./fixtures.mjs";
+import {
+  appMenuButton,
+  clickIntoFirstPage,
+  expect,
+  gotoEditor,
+  menuCommandRow,
+  openCommandPalette,
+  stableBox,
+  test,
+} from "./fixtures.mjs";
 
 /** Two real phones. 390 is an iPhone 14/15 and a Pixel 7 in portrait; 320 is
  *  the narrowest viewport still shipping (iPhone SE 1st gen) and is where a
@@ -172,8 +181,11 @@ for (const phone of PHONES) {
       await expect.poll(reflowing).toBe(!before);
     };
     const surfaces = [
-      { what: "the File menu", open: () => page.locator('.app-menu-button[data-menu="file"]').click(), shown: "#appMenuPopover" },
-      { what: "the Format menu", open: () => page.locator('.app-menu-button[data-menu="format"]').click(), shown: "#appMenuPopover" },
+      // The menus sheet itself (`docs/148` §5.3b), then two menus opened FROM it,
+      // which is the only way a phone reaches them now.
+      { what: "the menus sheet", open: () => page.locator("#appMenusBtn").click(), shown: "#appMenuBar" },
+      { what: "the File menu", open: async () => (await appMenuButton(page, "file")).click(), shown: "#appMenuPopover" },
+      { what: "the Format menu", open: async () => (await appMenuButton(page, "format")).click(), shown: "#appMenuPopover" },
       { what: "the Aa sheet", open: () => page.locator("#compactFormatBtn").click(), shown: "#compactFormatMenu" },
       { what: "the + sheet", open: () => page.locator("#compactInsertBtn").click(), shown: "#compactInsertMenu" },
       { what: "Settings", open: () => page.locator("#settingsBtn").click(), shown: "#settingsPanel" },
@@ -247,8 +259,13 @@ test("the phone chrome replaces the desktop chrome rather than shrinking it", as
 
   // The one it keeps is the one that is an axis, and it is whole: at 360px the
   // desktop bar clips under a fade mask (responsive-shell.spec.mjs measures
-  // exactly that). Here every menu is on screen without a sideways gesture.
+  // exactly that). Here every menu is on screen without a sideways gesture —
+  // in the sheet the header's menus button opens (`docs/148` §5.3b), because a
+  // wrapped bar across the header cost a phone 92px of its window. The bar is
+  // not painted in the row; it is one tap away and whole when it is.
   const bar = page.locator("#appMenuBar");
+  await expect(bar).toBeHidden();
+  await page.locator("#appMenusBtn").click();
   await expect(bar).toBeVisible();
   expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   const buttons = page.locator(".app-menu-button");

@@ -713,10 +713,10 @@ test("the width control is disabled WITH A REASON on paper, never dead", async (
   await page.locator("#viewReflowBtn").click();
   await expectReflow(page, true);
   await expect(button).toBeEnabled();
-  // And it names the step in effect, so the default's narrowness is discoverable
-  // rather than mysterious.
+  // And it names the step in effect, so the default is discoverable rather than
+  // mysterious: Wide, the page without its margins (`docs/151` §6.2a).
   expect((await button.textContent()).trim()).not.toBe("");
-  expect(await button.getAttribute("title")).toMatch(/80 characters/i);
+  expect(await button.getAttribute("title")).toMatch(/page/i);
 });
 
 // ---- 5. The surface, and the panel that navigates it ------------------------

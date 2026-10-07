@@ -5,7 +5,9 @@
 (`151-REFLOW-PAGELESS-LAYOUT-DESIGN.md` / ADR-046, not the `149`/ADR-045 this
 line cited while the document was being renumbered), which RETIRES `#viewport`'s
 exemption from §6's rule. The keyboard inset is still unverified on hardware
-(§12). §5.3 and §8.4 are both answered by later sections rather than rewritten.
+(§12). §5.3 and §8.4 are both answered by later sections rather than rewritten;
+§5.3's menu bar was answered a second time on 2026-10-06 (§5.3b: the header is
+one row and the bar is a sheet behind a menus button).
 **Opened:** 2026-09-30. **Decision:** [ADR-044](08-ADR-REGISTER.md).
 **Advances:** `105` UX-019 (no breakpoint below 620px), partially `105` UX-018.
 **Depends on:** `105` UX-001 (the editable focus owner), **closed** — a phone can
@@ -221,7 +223,7 @@ served by a separate, simpler `CReaderTouchManager`
 | Brand mark | shown | **gone** | Names the product to someone already inside it; the only header cell that can be spent without taking a capability with it |
 | Ribbon band + tab strip | shown (ribbon chrome) | **gone** | Two navigation systems do not fit; the strip measured 550px in a 109px box |
 | Toolbar-mode toggle | shown | **gone** | Offers a chrome the rung does not allow — a live control that cannot work is worse than an absent one |
-| Application menu bar | one scrolling row under a fade mask | **wraps to two rows** | It is the axis; an axis may not be abbreviated. Seven short names wrap at 320px and fit at 390px |
+| Application menu bar | one scrolling row under a fade mask | ~~wraps to two rows~~ **a sheet behind the header's menus button; the header is one row** (§5.3b, 2026-10-06) | It is the axis; an axis may not be abbreviated — and it is not: all eight names, in order, each opening its own menu. What changed is where they are drawn |
 | Navigation rail | a column, 40px wide | **a horizontal strip above the document** | Same four destinations; costs height (which a phone has) rather than width (which it has not). §5.3 |
 | Compact toolbar | under the header | **docked to the bottom**, above the status bar, above the keyboard | Where all three references put it, and where the thumb is |
 | Status bar | in flow | fixed, tracks the keyboard | Carries the language escape hatch, which `style.css` already refuses to shed |
@@ -294,6 +296,69 @@ than being deleted: `phone_chrome.test.mjs`'s "the rail is kept, because its Pag
 tile is the only surface that panel has" fired, as designed, and its replacement
 asserts the implication that can now rot — *a region a phone withholds has no
 capability that lives only there* — which fails if either id is removed.
+
+### 5.3b The menu bar moves into a sheet, and the header becomes one row
+
+**2026-10-06.** §5.3's third paragraph — "the menu bar survives, and grows" —
+is reversed in its conclusion and kept in its rule.
+
+**What it cost, measured** on the Pixel 7 project, `?fixture=rich`, before this
+change: the header was **93px at 390** (title row, then File Edit View Insert
+Format Table / References Review on two more) and **120px at 320**, where the
+names took three rows. With the docked command bar (51px under a finger) and the
+status bar (30px), chrome took 174 of 844px at 390 and **201 of 568px at 320 —
+35%** — before a soft keyboard took its own half. §5.3 priced the wrap at "~24px
+and costs the reader nothing"; it was 55-82px, and it cost the reader the
+document.
+
+**What the references do.** Google Docs' phone header is one row: the document
+and a few icons, everything else behind one control (§2). Word mobile (§4) and
+ONLYOFFICE mobile (§3, `Toolbar.jsx`'s single `Navbar`) are the same shape. None
+of the three draws a menu bar across a phone.
+
+**What changed.** At the phone rung the header is **one row** — the document's
+name, its state chip, a **menus button**, Document properties and Settings —
+measured **38px at both 390 and 320**, so chrome is 119px of 844 (14%) and 119
+of 568 (21%). The eight names are drawn in a **bottom sheet** the menus button
+opens, in their order, each opening its existing menu, which opens as a bottom
+sheet in the same place: choosing a name replaces the list, and Escape drills
+back out to it with focus on that name. A command chosen from a menu closes the
+list too; so do an outside press, Escape with no menu open, and focus leaving.
+
+**Why the rule still holds.** "An axis may not be abbreviated" was the right
+rule and §5.3 conflated it with "an axis must be painted in the header". The
+axis here is whole: no name renamed, none dropped, none behind a sideways drag,
+and every menu reachable in two taps from a control that is always in the row.
+What the phone gives up is seeing the eight names without asking, which no
+reference offers either.
+
+**The pattern, named (SKILL.md §8): a disclosure** — WAI-ARIA APG "Disclosure
+(Show/Hide)": one button with `aria-expanded` and `aria-controls` revealing a
+region it does not replace. The region is the existing `<nav id="appMenuBar">`
+and its eight existing buttons, so `command_menu.mjs`'s `createMenuBar` keeps
+every behaviour it had — which menu opens, the rows, the submenus, the gating,
+the keyboard model — and `menu_sheet.mjs` only decides whether the nav is
+shown. No second menu renderer, which is ADR-044's one-shell rule applied
+again: a phone paints the same surfaces, arranged differently.
+
+**Where it is wired, and why there.** From `compact_toolbar.mjs`, not
+`main.js`: the sheet answers the same `isPhone()` the phone roster renders by,
+and `main.js` is under a line ratchet and a single owner. The seam is four
+`getElementById`s and costs nothing to move.
+
+**Guarded** by `phone-command-surface.spec.mjs` ("the header" block): one row
+by geometry (every header control shares one horizontal band — a second row
+fails that whatever the pixel numbers are) AND a 52px budget (38 measured plus
+14; a second row of even one 24px touch target cannot fit under it); no page or
+header scroll at 390 and 320; all eight menus opened from the sheet and drilled
+back out of; and each dismissal path exercised on its own. Every assertion was
+driven red by reintroducing the defect it guards; the mutations are in the
+commit. `phone-no-horizontal-scroll.spec.mjs` measures the open sheet as one
+more surface, and `chrome_regions.test.mjs` holds the door to the `menu` region,
+so a host that withholds the menus withholds the button too.
+
+**Not changed:** the menus themselves, their order, the compact command bar, and
+every width above the rung, where the bar is the row exactly as before.
 
 ### 5.4 Why this is not the thing the owner cancelled
 

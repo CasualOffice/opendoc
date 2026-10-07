@@ -192,7 +192,9 @@ test("the insert-table grid is a named, arrow-navigable grid, not 80 anonymous b
   await page.keyboard.press("ArrowDown");
   for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
   await expect(page.locator('.gc[data-r="3"][data-c="4"]')).toBeFocused();
-  await expect(page.locator("#gridLabel")).toHaveText("4 × 3");
+  // Columns first, Word's convention — and the SAME sentence the Table band
+  // prints for this table once it exists, asserted below.
+  await expect(page.locator("#gridLabel")).toHaveText("4 × 3 table");
 
   // The edge does not wrap onto a different size.
   await page.keyboard.press("End");
@@ -206,6 +208,12 @@ test("the insert-table grid is a named, arrow-navigable grid, not 80 anonymous b
   await page.keyboard.press("Enter");
   await expect(page.locator("#insertTableMenu")).toBeHidden();
   await expect(page.locator("#tabTable")).toBeEnabled();
+
+  // The table the grid previewed as "4 × 3 table" is the table the band names.
+  // They used to disagree — "4 × 3" in the grid and "3×4 table" on the Table tab
+  // one click later — because each surface formatted the size itself.
+  await page.locator("#tabTable").click();
+  await expect(page.locator("#tableContext")).toContainText("4 × 3 table");
 
   expect(consoleErrors).toEqual([]);
 });

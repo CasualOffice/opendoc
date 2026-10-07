@@ -985,6 +985,73 @@ input {
   white-space: nowrap;
 }
 
+/* `hidden` is a UA `display: none`, and the author `display` above beats it, so a
+   clean document's chip painted as an empty 16x4 bordered box. As a BUTTON that
+   would be a focusable control with nothing to say, so the attribute is honoured
+   here explicitly. */
+.compatibility-status[hidden] {
+  display: none;
+}
+
+/* It opens the findings, so it reads as something to press. */
+button.compatibility-status {
+  cursor: pointer;
+}
+
+button.compatibility-status:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* The findings dialog (`compat_findings.mjs`): one section per kind of outcome,
+   one compact row per finding. A feature id is a technical token and may be long,
+   so it wraps anywhere rather than pushing the card wider. */
+.findings-group + .findings-group {
+  margin-top: var(--space-4);
+}
+
+.findings-group-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.findings-total {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.findings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.findings-feature {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.findings-count,
+.findings-where {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-where {
+  overflow-wrap: anywhere;
+}
+
 .file {
   position: relative;
 }
@@ -4156,6 +4223,24 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   font-variant-numeric: tabular-nums;
 }
 
+/* A finger cannot hit a 15px cell. Drawn for a mouse — Docs' own hover grid is
+   about this size — and measured at 15x15 on a phone, under this file's own
+   floor: WCAG 2.5.8 Target Size (Minimum), Level AA, which `phone_chrome.mjs`
+   exports as `MIN_TOUCH_TARGET_PX = 24`. Keyed on the POINTER, like every other
+   touch rule here, so a touchscreen laptop gets the same grid as a phone. Ten
+   24px columns and nine 2px gaps are 258px: an anchored popover still fits a
+   320px window with its 8px gutters. */
+@media (pointer: coarse) {
+  .grid-cells {
+    grid-template-columns: repeat(10, 24px);
+  }
+
+  .grid-cells .gc {
+    width: 24px;
+    height: 24px;
+  }
+}
+
 /* ---- Command palette (⌘K) -------------------------------------------------- */
 .cmd-overlay {
   position: fixed;
@@ -4898,6 +4983,20 @@ body.compact-mode {
   position: relative;
 }
 
+/* The badge's containing block is the BUTTON that carries it, wherever that
+   button is. It was only ever made so for `.table-ribbon .fmt` above, so the
+   one badge placed outside the Table band — a "G" on Review ▸ Grammar — had
+   no positioned button to anchor to and resolved against `.ribbon-body`
+   instead: `right: 2px; bottom: 1px` of the whole ribbon, painted as a stray
+   "G" in the band's bottom-right corner, ~600px from the control it labelled.
+   Stated on the badge's owner rather than on a band, so a badge cannot escape
+   its control again by being used somewhere new.
+   `ribbon-glyphs.spec.mjs` asserts nothing in a band paints outside the
+   control that holds it. */
+.fmt:has(> .table-command-badge) {
+  position: relative;
+}
+
 .table-ribbon .table-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
@@ -5325,6 +5424,56 @@ body.compact-mode {
   font-size: var(--fs-ribbon-caption);
 }
 
+/* A second line under the name, for a control that opts in with
+   `data-tip-detail` because its name alone would mislead — Track changes,
+   whose chord CYCLES three modes rather than toggling one, says so here.
+   Word's tooltips carry exactly this: a bold name and chord, then a sentence. */
+.ribbon-tooltip-detail {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.86;
+}
+
+/* Key tips (`key_tips.mjs`): Word's letter badges, in the tooltip's own
+   inverted pair so they read in both themes without a new colour. Fixed to the
+   viewport and pointer-transparent; centred on the point the module computes. */
+.key-tips {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tooltip);
+  pointer-events: none;
+}
+
+.key-tips[hidden] {
+  display: none;
+}
+
+.key-tip {
+  position: fixed;
+  transform: translateX(-50%);
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: var(--fs-ribbon-caption);
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.24);
+}
+
+.key-tip[hidden] {
+  display: none;
+}
+
+/* A control that cannot run right now still shows its letter — the table of
+   letters must not reshuffle as availability changes — but reads as unavailable,
+   the way the control under it does. */
+.key-tip.is-unavailable {
+  opacity: 0.45;
+}
+
 .rgroup-hint {
   max-width: 190px;
   font-size: var(--fs-small);
@@ -5459,6 +5608,18 @@ body.compact-mode {
 .fmt .ms {
   font-size: var(--icon-control);
   display: block;
+}
+
+/* A glyph is an atom: it is never squeezed. Every `.ms` is `overflow: hidden`
+   (fonts.css), and a flex item that clips its overflow has an automatic
+   minimum width of ZERO — so wherever a button's content box was narrower than
+   its icon, the icon shrank silently and lost its right-hand side: the
+   zoom-presets caret drew 6 of its 16px (a dot), five split-button carets 12
+   or 15 of 18. Refusing to shrink turns any future mismatch into visible
+   overflow, which `ribbon-glyphs.spec.mjs` reports by name, instead of a
+   clipped glyph nobody measures. */
+.ms {
+  flex-shrink: 0;
 }
 
 /* A ribbon button whose face is a short piece of TEXT rather than an icon.
@@ -5928,6 +6089,12 @@ body.is-format-painting .page-wrap * {
   color: var(--muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  /* Yields to the engine's message as the counts do (`.status` takes its
+     width first), rather than pushing it off the end of the half. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .draft-status[hidden] { display: none; }
 .draft-status[data-draft-state="unavailable"] { color: var(--danger); font-weight: 600; }
@@ -5975,14 +6142,18 @@ body.is-format-painting .page-wrap * {
   min-width: 0;
 }
 
-/* The SOURCE is the half that goes first when the footer is tight, and it may:
-   the level is the answer and the source is the attribution, so losing the
-   attribution costs the reader the second question and not the first. The whole
-   statement stays on the container's `title`, so nothing is lost outright. */
-@media (max-width: 900px) {
-  .access-badge-source {
-    display: none;
-  }
+/* The SOURCE is not painted in the status bar at all, at any width — the level
+   is the answer and the source is the attribution, and the attribution is the
+   container's `title` and `aria-label`, which carry the whole statement.
+   It used to be painted above 900px, and at 1280px "Full access on this
+   device, where you are the only authority" took 357px of a row it shares
+   with the engine's own messages, which were left 0-106px and read "Cou…",
+   "Fetc…", "Draf…". Word and Google Docs both state status in a word or two
+   and explain it on hover; a sentence that never changes for a standalone
+   reader is the worst possible use of the one row that carries every
+   transient message. `footer-status.spec.mjs` holds the message's room. */
+.access-badge-source {
+  display: none;
 }
 
 /* At phone width the glyph goes too, and the level keeps every pixel there is.
@@ -7609,6 +7780,109 @@ body.is-format-painting .page-wrap * {
    page affordance asserted in the one place a pixel test would look. */
 #viewport.is-reflow .page {
   border-radius: 0;
+  /* SEAMLESS TILES (docs/151 §4.4b): the band puts every tile on the raster's
+     own pixel grid at exactly its raster's size (`page_scroll.mjs`), so the
+     canvas is drawn 1:1. `auto` keeps it at its own aspect ratio rather than
+     stretching it to the box — if the box were ever a row off the raster, the
+     raster would still not be resampled, and the row would fall under the
+     next tile, which is laid over it by construction. */
+  height: auto;
+}
+
+/* The overlay may paint past its tile only as far as the fold chevron needs
+   (`--reflow-overlay-spill`, written by `reflow_chrome.mjs`: up to 24px, never
+   more than the surface beside the measure, 0 at the phone rung). A table
+   scrolled sideways (docs/151 §6.3d) can put its caret, selection or cell
+   outline wholly outside the tile; clipped here, they neither float in the
+   margin nor widen `#viewport` into a horizontal scroll. `clip` and not
+   `hidden`, because a clip does not count toward the scroller's overflow — and
+   HORIZONTAL only: vertically a tile's overlay must still reach over its
+   neighbour (a touch selection handle below the last line of a tile, an
+   object's rotate handle above the first), which `overflow-x: clip` leaves
+   `visible` where `hidden` would have forced it to `auto`. */
+#viewport.is-reflow .page-wrap > .overlay {
+  overflow-x: clip;
+  overflow-clip-margin: var(--reflow-overlay-spill, 0px);
+}
+
+/* WIDE TABLES SCROLL SIDEWAYS (docs/151 §6.3d) — Google Docs' pageless answer,
+   "you can create wide tables and view them by scrolling left and right".
+   `reflow_table_scroll.mjs` lays one of these over each over-wide table's band
+   on a tile: a native horizontal scroller holding the table rasterised once at
+   its full width, so the compositor does the scrolling. It spans the whole
+   tile, gutters included, exactly like a CSS scroll container whose padding is
+   inside its scrollport; it sits BEFORE the overlay in the wrap so the caret
+   and the selection stay on top of it. Vertical gestures chain to the page,
+   because it cannot scroll vertically. */
+.reflow-table-scroll {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* The tile's own cursor, which `reflow_table_scroll.mjs` copies here from the
+     hover router's answer on the canvas it covers; text until there is one. */
+  cursor: text;
+}
+
+.reflow-table-scroll__port {
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* The native bar would take its height out of the table's last row; the
+     overlay bar below replaces it and is always visible (docs/151 A-3). */
+  scrollbar-width: none;
+  background: var(--paper-surface);
+}
+
+.reflow-table-scroll__port::-webkit-scrollbar {
+  display: none;
+}
+
+.reflow-table-scroll__port,
+.reflow-table-strip {
+  cursor: inherit;
+}
+
+.reflow-table-strip {
+  display: block;
+}
+
+/* Always visible whenever the table overflows — a hover-only bar is an
+   invisible affordance for the one thing a reader must discover (A-3). The
+   visible bar is 6px; the press target is the 14px box it sits in. */
+.reflow-table-scroll__bar {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 14px;
+  cursor: default;
+  touch-action: none;
+}
+
+.reflow-table-scroll__bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--paper-ink) 7%, transparent);
+}
+
+.reflow-table-scroll__thumb {
+  position: absolute;
+  left: 0;
+  bottom: 2px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--paper-scrollbar-thumb);
+}
+
+.reflow-table-scroll__bar:hover .reflow-table-scroll__thumb {
+  background: var(--paper-scrollbar-thumb-hover);
 }
 
 /* Inside the band a sheet is placed, not flowed: `main.js` writes `top`/`left`
@@ -8975,6 +9249,63 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* A sheet says what is ON (`compact_toolbar.mjs`'s `SHEET_STATE`). The Aa
+   sheet's character toggles are Google Docs' toggle row — B / I / U / S side by
+   side at the head of the band, lit when on — and they light the way the bar's
+   own toggles do (`.compact-toolbar .ctool[aria-pressed="true"]`), so a toggle
+   reads the same in the bar and in the sheet. Same box, same tokens. */
+.compact-command-menu .menu-toggle-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+.compact-command-menu .menu-toggle {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2, var(--ink));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.compact-command-menu .menu-toggle .ms { font-size: 20px; line-height: 1; }
+.compact-command-menu .menu-toggle:hover:not(:disabled) {
+  background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent));
+}
+.compact-command-menu .menu-toggle:disabled { opacity: 0.38; cursor: default; }
+.compact-command-menu .menu-toggle[aria-checked="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+/* Half the selection is bold: outlined rather than filled, so "mixed" is
+   neither of the two answers it is not. */
+.compact-command-menu .menu-toggle[aria-checked="mixed"] {
+  box-shadow: inset 0 0 0 1px var(--accent-text);
+}
+.compact-command-menu .menu-toggle:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+/* Rows with a state (alignment, lists) carry the chrome's one tick, the
+   language and spacing menus' `.menu-check`, opacity-toggled. */
+.compact-command-menu .menu-item[role="menuitemcheckbox"],
+.compact-command-menu .menu-item[role="menuitemradio"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.compact-command-menu .menu-item[aria-checked="true"] .menu-check {
+  opacity: 1;
+}
+.compact-command-menu .menu-item[aria-checked="mixed"] .menu-check {
+  opacity: 0.45;
+}
 .compact-overflow-menu {
   flex-wrap: wrap;
   max-width: min(560px, calc(100vw - 24px));
@@ -9028,6 +9359,119 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 }
 .compact-overflow-menu .cadopted { height: 30px; flex: 0 0 auto; }
 
+/* The editing-mode selector at the top right (`header_mode.mjs`, `109` UX-025).
+   Google Docs' "Editing ▾": one button naming the mode in force. It carries the
+   mode's own colour only for Suggesting — the review-insert green the status
+   bar's pressed segment already uses — because that is the mode a person must
+   not forget they are in; Editing and Read only are drawn neutral. */
+.header-mode {
+  display: inline-flex;
+  align-items: center;
+}
+
+.header-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-ribbon-caption);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.header-mode-btn .ms {
+  font-size: var(--icon-compact);
+}
+
+.header-mode-btn:hover,
+.header-mode-btn[aria-expanded="true"] {
+  background: var(--bg-2);
+}
+
+.header-mode-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+.header-mode-btn[data-mode="suggesting"] {
+  color: var(--review-insert);
+  border-color: var(--review-insert-line);
+  background: var(--review-insert-soft);
+}
+
+.header-mode-menu {
+  min-width: 248px;
+}
+
+.header-mode-item {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  padding-block: 7px;
+}
+
+.header-mode-item .ms {
+  font-size: var(--icon-control);
+}
+
+.header-mode-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.header-mode-item-label {
+  font-weight: 600;
+}
+
+.header-mode-item-note {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  white-space: normal;
+}
+
+.header-mode-item[aria-checked="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.header-mode-item[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Before a document is open the mode means nothing — the status bar that carries
+   the other face is hidden then too — and on a phone the status bar's own
+   segments are the one face: the two-row phone header has no room for a third
+   cluster, and a control repeated in a 390px viewport is the clutter the phone
+   tier exists to remove. */
+body:not(.doc-loaded) .header-mode,
+body.phone-mode .header-mode {
+  display: none;
+}
+
+/* Below 1000px the mode's NAME goes and its glyph stays, which is what Google
+   Docs does with the same control in a narrow window. Measured, the narrowest
+   window in which every ribbon tab fits without the strip scrolling: 868px before
+   the selector existed, 968px with its name shown, 928px with the glyph alone —
+   so the selector costs the strip 60px at the narrow end, and nothing at 1024px
+   or above. Below the fit the strip scrolls under its fade, as it always has, and
+   every tab stays reachable by scroll, by arrows and by key tips. The name is
+   still the button's accessible name — it is
+   referenced by `aria-labelledby`, which reads hidden text — and its title. */
+@media (max-width: 1000px) {
+  .header-mode-text {
+    display: none;
+  }
+}
+
 /* Header mode switch */
 .chrome-mode {
   display: inline-flex;
@@ -9065,6 +9509,9 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 /* Touch: the same 44px floor the coarse-pointer block applies elsewhere. */
 @media (pointer: coarse) {
   .compact-toolbar .ctool { min-width: 44px; height: 44px; }
+  /* The sheet's toggle row floats over the document, so it takes the same
+     floor as the bar it opened from; six of them are 276px of a 320px sheet. */
+  .compact-command-menu .menu-toggle { min-width: 44px; height: 44px; }
   .chrome-mode-btn { height: 36px; padding: 0 14px; }
 }
 
@@ -9110,6 +9557,11 @@ body:not(.doc-loaded) .search-trigger,
 body:not(.doc-loaded) #save,
 body:not(.doc-loaded) .save-format,
 body:not(.doc-loaded) .compatibility-status,
+/* The state chip says what state THE DOCUMENT is in, and before one exists there
+   is no state to report: the markup's resting text is "Opened", so the boot frame
+   and the bare `?blank=1` upload screen both claimed a document had been opened
+   over an empty drop card. Hidden with its neighbour until `.doc-loaded`. */
+body:not(.doc-loaded) .document-state,
 body:not(.doc-loaded) #propertiesBtn {
   display: none;
 }
@@ -9237,17 +9689,24 @@ body:not(.doc-loaded) .drop-title {
   display: none;
 }
 
-/* Inside the left half the transient engine message is the only thing allowed
-   to give way: it is prose that ellipsizes readably, whereas "12,483 words" is
-   worthless the moment a digit is cut. It is therefore the sole shrinkable
-   member of the row (`.stats` below is not), so a long "Opened <filename>"
-   message can never squeeze the counts. */
+/* Inside the left half the transient engine message comes FIRST. It used to be
+   the only member allowed to give way, on the argument that "12,483 words" is
+   worthless the moment a digit is cut — and that argument is right about the
+   digits and wrong about the priority: a message is the thing the reader is
+   being told NOW ("Could not fetch the dictionary", "Draft saved"), the counts
+   are on screen the rest of the time, and measured at 1280px the message got
+   0-106px and read "Cou…", "Fetc…", "Draf…" while the counts kept all of theirs.
+   So the message takes its whole width, up to the whole half; the counts give
+   way — a WHOLE count at a time, never a cut digit (`.stats` below) — and the
+   message only ellipsizes when it is longer than the half itself, in which case
+   `status_line.mjs` puts the full text on its `title`. */
 .status {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -9314,13 +9773,24 @@ body:not(.doc-loaded) .drop-title {
   }
 }
 
+/* The counts yield to a message one WHOLE count at a time. The row wraps, and
+   is exactly one line tall with its overflow clipped, so a count that no longer
+   fits drops onto a second line nobody sees instead of being cut mid-digit —
+   paragraphs first, then characters, then words, which is DOM order and is the
+   `data-status-priority` order the width ladder below sheds them in too. The
+   separators are `* + *::before`, so a dropped count takes its own "·" with it. */
 .stats {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
+  align-content: flex-start;
+  column-gap: 7px;
+  row-gap: 0;
+  height: 1.5em;
+  line-height: 1.5em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
 }
@@ -9390,6 +9860,9 @@ body:not(.doc-loaded) .drop-title {
   justify-content: center;
   width: 24px;
   height: 22px;
+  /* No user-agent padding: a button's default 6px a side left a 16px glyph
+     12px of a 24px box, so − and + were clipped on their right edge. */
+  padding: 0;
   border: none;
   border-radius: 5px;
   background: transparent;
@@ -9787,8 +10260,9 @@ body:not(.doc-loaded) .drop-title {
    to lower it.
 
    WHAT MOVES, and why each:
-     header   two rows, brand mark dropped; the menu bar WRAPS instead of
-              scrolling under a mask
+     header   ONE row, brand mark dropped; the menu bar is a sheet behind a
+              menus button (`docs/148` §5.3b). It first WRAPPED instead of
+              scrolling under a mask, which cost 93px at 390 and 120px at 320
      ribbon   gone — `body.compact-mode` already hides it, and `setChromeMode`
               forces compact at this rung
      rail     turns its axis: a horizontal strip above the document instead of
@@ -9817,10 +10291,28 @@ body.phone-mode {
      honours `interactive-widget=resizes-content` (the meta tag in editor.html)
      the layout viewport has already shrunk and this reads 0, which is correct. */
   --phone-bottom-inset: calc(var(--phone-keyboard-inset, 0px) + env(safe-area-inset-bottom, 0px));
-  --phone-bottom-chrome: calc(var(--h-footer) + var(--h-compact-bar) + var(--phone-bottom-inset));
+  /* The docked bar's height, stated rather than borrowed. Every bottom reserve
+     on this rung — the sheets' bottom edge, the document's padding, the toast —
+     used to read `--h-compact-bar`, which is `clamp(38px, 3.4vh, 46px)` and
+     resolves to 38px on any phone, while the bar actually paints 41px (34px
+     controls, 3px padding each side, a 1px rule) and, under a finger, 51px
+     (the coarse block's 44px controls). So every sheet's bottom edge lay 3px —
+     and on a touch phone 13px — across the top of the bar's own buttons
+     (`narrow-review-column.spec.mjs` recorded the 3px; `phone-09f` shows the
+     13). The global token is left alone (`SKILL.md` §11); the rung states its
+     own number and `body.phone-mode .compact-toolbar` below is held to it, so
+     the two cannot disagree again (`109` HF-278). */
+  --phone-bar-height: 41px;
+  --phone-bottom-chrome: calc(var(--h-footer) + var(--phone-bar-height) + var(--phone-bottom-inset));
 }
 
-/* ---- Header: two rows, no brand, a menu bar that wraps ------------------ */
+@media (pointer: coarse) {
+  body.phone-mode {
+    --phone-bar-height: 51px;
+  }
+}
+
+/* ---- Header: ONE row, no brand, the menu bar behind a button ------------ */
 
 /* The brand mark is the first thing a phone gives up — it names the product to
    someone already inside it, and it is the only header cell that can be spent
@@ -9839,12 +10331,24 @@ body.phone-mode .chrome-mode {
   display: none;
 }
 
+/* ONE ROW: the document's name, its state, and three buttons — the menus, its
+   properties, settings. Google Docs' phone header is exactly this shape (the
+   document and a few icons, everything else behind one control), and so are
+   Word mobile's and ONLYOFFICE mobile's (`docs/148` §2-§4).
+
+   It was three rows. The menu bar wrapped File Edit View Insert Format Table /
+   References Review onto two lines under the title, measured at 92px of an
+   844px window (`phone-09a`), and with the docked bar and the status bar the
+   chrome took ~40% of the screen before a soft keyboard took its own half.
+   `docs/148` §5.3 kept the bar on screen because "an axis may not be
+   abbreviated", and that is still the rule: nothing here abbreviates it. All
+   eight names are kept, in order, each opening its own menu — they are drawn
+   in a sheet the menus button opens instead of across the header
+   (`menu_sheet.mjs`, §5.3b). */
 body.phone-mode .bar {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: var(--h-header-title) auto;
-  grid-template-areas:
-    "title docstate"
-    "nav   apptools";
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto;
+  grid-template-areas: "title docstate menus apptools";
   align-items: center;
   height: auto;
   /* Paint under a notch, then pay for it (`viewport-fit=cover`). */
@@ -9852,32 +10356,90 @@ body.phone-mode .bar {
     calc(8px + env(safe-area-inset-left, 0px));
 }
 
-/* The menu bar is the compact chrome's one navigation axis (docs/122), so on a
-   phone it is the one thing in the header that may not be abbreviated. It was
-   a 21px strip with `overflow-x: auto` and a fade mask — at 360px
-   `responsive-shell.spec.mjs` measures it genuinely clipping, and reaching the
-   last menu needs a sideways drag on a bar most people will not think to drag.
-   Seven short names wrap into two rows at 320px and one at 390px, which costs
-   the header ~24px and costs the reader nothing. */
+/* The door. Not painted at any other width, where the bar is the row. */
+.app-menus-button {
+  display: none;
+}
+
+body.phone-mode .app-menus-button {
+  display: inline-flex;
+  grid-area: menus;
+}
+
+body.phone-mode .app-menus-button[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* The bar itself is not painted in the row… */
 body.phone-mode .app-menu-bar {
+  display: none;
+}
+
+/* …and when the door is open it is a bottom sheet of eight rows, where every
+   other phone sheet is: the menu each name opens is a bottom sheet in the same
+   place (see `.app-menu-popover` below), so choosing one REPLACES the list
+   rather than stacking a second card beside it. The list is not scrolled
+   sideways and not masked: it is a column, and it is as tall as it needs up to
+   the room between the header and the docked bar. */
+body.phone-mode .app-menu-bar.is-open {
+  position: fixed;
+  right: 0;
+  bottom: calc(var(--h-footer) + var(--phone-bar-height) + var(--phone-bottom-inset));
+  left: 0;
+  z-index: var(--z-menu);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   height: auto;
-  min-height: var(--h-tab);
-  flex-wrap: wrap;
-  overflow: visible;
-  row-gap: 3px;
+  max-height: calc(100dvh - var(--phone-header-height, var(--h-header)) - var(--phone-bottom-chrome) - 8px);
+  margin: 0;
+  padding: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
   mask-image: none;
   -webkit-mask-image: none;
 }
 
-/* The coarse-pointer block above explicitly defers this row — "a 44px floor
-   there needs the header redesigned, not restyled". This block IS that
-   redesign, for this rung: the header is no longer a committed 58px band, so
-   the row can take the WCAG 2.5.8 floor without pushing anything out. 24, not
-   44, because these sit in a dense navigation bar rather than floating over
-   the document, which is the same line the rest of this file draws. */
-body.phone-mode .app-menu-button {
-  min-height: 24px;
-  padding-inline: 9px;
+/* A fixed box inside the header is still inside the header's stacking context
+   (`.bar` is a flex item of `body` with a z-index), so without this the sheet
+   would sit at `--z-bar` under every drawer and object toolbar on the page.
+   Raised only while it is open. The menu a name opens is `--z-menu` too and
+   comes later in the document, so it still paints above the list. */
+body.phone-mode:has(#appMenuBar.is-open) .bar {
+  z-index: var(--z-menu);
+}
+
+/* While a menu is open the list steps out of sight; Escape brings it back with
+   focus on the name that opened it — a drill, the shape a submenu already has
+   at this rung. `visibility`, not `display`, so the names keep their boxes and
+   that focus has somewhere to land the moment the menu closes. */
+body.phone-mode:has(#appMenuPopover:not([hidden])) .app-menu-bar.is-open {
+  visibility: hidden;
+}
+
+/* Rows a finger can hit. The coarse-pointer block below raises floating menu
+   rows to 44px and these are floating rows now, so they take the same floor;
+   with a mouse they keep the dense 36px the rest of this rung's menus use. */
+body.phone-mode .app-menu-bar.is-open .app-menu-button {
+  height: auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  line-height: normal;
+  text-align: start;
+}
+
+@media (pointer: coarse) {
+  body.phone-mode .app-menu-bar.is-open .app-menu-button {
+    min-height: 44px;
+  }
 }
 
 /* ---- The work area ----------------------------------------------------- */
@@ -9950,6 +10512,10 @@ body.phone-mode .compact-toolbar {
   padding-inline: calc(8px + env(safe-area-inset-left, 0px)) calc(8px + env(safe-area-inset-right, 0px));
   border-top: 1px solid var(--line);
   border-radius: 0;
+  /* Held to the number every bottom reserve on this rung reads (see
+     `--phone-bar-height` at the top of this block). */
+  height: var(--phone-bar-height);
+  min-height: 0;
 }
 
 /* The bar's own buttons. The `(pointer: coarse)` block further down raises
@@ -10045,7 +10611,9 @@ body.phone-mode.modal-open .toast,
 body.phone-mode:has(.app-menu-popover:not([hidden])) .toast,
 body.phone-mode:has(.compact-command-menu:not([hidden])) .toast,
 body.phone-mode:has(.compact-align-menu:not([hidden])) .toast,
-body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast {
+body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast,
+body.phone-mode:has(.grid-picker:not([hidden])) .toast,
+body.phone-mode:has(#appMenuBar.is-open) .toast {
   /* `--phone-header-height` and NOT `--h-header`: the token says 63px and this
      rung's header is two rows at 390px and three at 320px, because the menu bar
      wraps rather than scrolling (§5.3) and how many rows that takes depends on
@@ -10119,11 +10687,12 @@ body.phone-mode .cmd-palette {
 body.phone-mode .app-menu-popover,
 body.phone-mode .compact-command-menu,
 body.phone-mode .compact-align-menu,
-body.phone-mode .compact-overflow-menu {
+body.phone-mode .compact-overflow-menu,
+body.phone-mode .grid-picker {
   position: fixed !important;
   top: auto !important;
   right: 0 !important;
-  bottom: calc(var(--h-footer) + var(--h-compact-bar) + var(--phone-bottom-inset)) !important;
+  bottom: calc(var(--h-footer) + var(--phone-bar-height) + var(--phone-bottom-inset)) !important;
   left: 0 !important;
   width: auto !important;
   max-width: none;
@@ -10134,6 +10703,28 @@ body.phone-mode .compact-overflow-menu {
      caught this rule the first time it was written without it). */
   overscroll-behavior: contain;
   border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+}
+
+/* The table-size grid joins the sheets above, for the reason they are sheets
+   (`109` HF-275).
+   On a phone it is opened from the + sheet, whose row has vanished by the time
+   the grid measures its anchor, so `popoverAnchor` fell back to the ribbon's
+   hidden Insert-table button and `popoverPosition` put the grid at the window's
+   top-left — measured at y 4, across the header and the menu bar
+   (`phone-08-insert-table.png`). A sheet has no anchor to lose. And once it is
+   a sheet the cells can spend the width: ten columns of at least the 24px
+   floor, at most 40 so a 620px window does not get a grid taller than the
+   60vh the sheet may take. 390px gives ~34px cells, 320px ~27px. */
+body.phone-mode .grid-cells {
+  grid-template-columns: repeat(10, minmax(24px, 40px));
+  justify-content: center;
+  gap: 3px;
+}
+
+body.phone-mode .grid-cells .gc {
+  width: auto;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 /* =========================================================================
@@ -10388,11 +10979,16 @@ body.phone-mode .compact-overflow-menu {
     var(--surface-alt);
 }
 
+/* Wide enough to HOLD its glyph. It was 16px with a 1px right border, so the
+   18px `arrow_drop_down` was squeezed to 15px and cut off on its right: a flex
+   item with `overflow: hidden` (which every `.ms` is) has an automatic minimum
+   width of zero, so it shrinks silently instead of overflowing visibly. The
+   box is stated FROM the glyph token, so the two cannot drift apart again. */
 .color-caret {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: calc(var(--icon-control) + 1px);
   height: var(--h-control);
   padding: 0;
   border: 1px solid transparent;
@@ -10443,9 +11039,11 @@ body.phone-mode .compact-overflow-menu {
   border-bottom-right-radius: 0;
 }
 
+/* The same rule as `.color-caret`: the box holds the glyph. 14px less two
+   borders left 12px of an 18px caret on screen. */
 .list-caret {
-  width: 14px;
-  min-width: 14px;
+  width: calc(var(--icon-control) + 2px);
+  min-width: calc(var(--icon-control) + 2px);
   padding: 0;
   color: var(--muted);
   border-top-left-radius: 0;
@@ -11018,6 +11616,10 @@ body[data-shape-draw] .page-wrap * {
   justify-content: center;
   width: 18px;
   height: 22px;
+  /* The zoom-presets caret drew as a DOT: the user-agent's 6px of padding a
+     side left its 16px `arrow_drop_down` a 6px box, and the glyph — a flex
+     item with `overflow: hidden` — shrank into it rather than overflowing. */
+  padding: 0;
   border: none;
   border-radius: 0 5px 5px 0;
   background: transparent;
@@ -11631,6 +12233,11 @@ body.chrome-no-history #versionPreviewBanner,
    offered; the GRANT still decides what the editor does, so taking the control
    away neither widens nor narrows anything. */
 body.chrome-no-review #reviewModeControl,
+/* …and its second face at the top right, and the menu that face opens. A region
+   that took the status-bar switch away and left the header one on screen would
+   be a host believing they had withheld a surface that is still there. */
+body.chrome-no-review #headerModeControl,
+body.chrome-no-review #headerModeMenu,
 body.chrome-no-status .footer,
 /* The toast is the status line's OTHER channel — body-level, so it survives the
    footer being taken away below 620px. A container that withheld `status`
@@ -11685,6 +12292,7 @@ body.chrome-no-ribbon.ribbon-mode #appMenuBar {
    engine — gets neither axis, because it has no commands to reach. */
 body.chrome-no-menu #appMenuBar,
 body.chrome-no-menu.ribbon-mode #appMenuBar,
+body.chrome-no-menu #appMenusBtn,
 body.chrome-no-menu #appMenuPopover {
   display: none !important;
 }
@@ -11709,12 +12317,13 @@ body.chrome-no-caret .page-wrap {
    — otherwise a `preview` container, which composes ALL chrome away, still pays
    58px for an empty strip above the document it exists to show. The selector IS
    the bar's contents: brand, title, the state cluster, the menu bar, the ribbon's
-   tab strip and Settings. It is stated as a conjunction rather than as a separate
+   tab strip, Settings and the editing-mode selector (`review`, which joined the
+   bar with `109` UX-025). It is stated as a conjunction rather than as a separate
    `no-bar` flag so there is no second mechanism to keep in step with the region
    set — `chrome_regions.test.mjs` holds this list against the ids `.bar` really
    contains, so a control added to the header without a region fails the build
    instead of quietly re-inflating the strip. */
-body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ribbon.chrome-no-settings
+body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ribbon.chrome-no-settings.chrome-no-review
   .bar {
   display: none;
 }

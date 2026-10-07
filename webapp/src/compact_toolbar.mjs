@@ -78,7 +78,58 @@
 // the compact chrome's Table MENU carries every row, disabled with its reason,
 // which is where "never a dead control" is met.
 import { APP_MENU_SECTIONS, TABLE_MENU_LABELS, sectionCommandIds } from "./command_taxonomy.mjs";
-import { t } from "./i18n.mjs";
+import { has, t } from "./i18n.mjs";
+import { createMenuSheet } from "./menu_sheet.mjs";
+
+/** `data-i18n-*` suffix → the attribute it names, exactly as `localize.mjs`
+ *  reads them — the two of its four this bar uses. Restated rather than
+ *  imported: that module's table is private, and the names are the markup
+ *  contract, not an implementation detail. */
+const KEYED_ATTRIBUTES = { label: "aria-label", title: "title" };
+
+/** The words for `key` in the language now in force — never the key itself
+ *  (`109` HF-273).
+ *
+ *  `t()` returns the KEY when nothing answers it, deliberately ("visible in a
+ *  screenshot"). For a key this bar resolves, nothing answering is not a typo
+ *  but a TIMING: `appMenuBar.format`, `.insert` and `.table` are declared by
+ *  the MARKUP (the menu bar's own buttons), so they live in the fetched
+ *  `locales/en.json` and not in the compiled-in `EN_STRINGS` — and
+ *  `setChromeMode` renders this bar synchronously at module load, before that
+ *  fetch can have landed. Every phone boot therefore asked too early, and
+ *  `ensureMenu` cached the miss for the session: the Aa and + buttons were
+ *  announced as "appMenuBar.format" and "appMenuBar.insert" on every phone, and
+ *  the desktop compact chrome's Table trigger as "appMenuBar.table".
+ *
+ *  So the fallback is the one `localize.mjs` already promises the markup: the
+ *  English authored beside the key, read from the element that declares it —
+ *  which for these keys is the menu bar button with the same name. A key that
+ *  no catalogue answers AND no markup declares still comes back as itself, so
+ *  `raw-keys.mjs`'s sweep can still see it. O(1) in the document: one
+ *  attribute-selector lookup, at render time only. */
+function wordsFor(key) {
+  if (has(key)) return t(key);
+  const authored = document.querySelector(`[data-i18n="${key}"]`)?.textContent?.trim();
+  return authored || t(key);
+}
+
+/** Names a script-built element from a catalogue key the way markup names
+ *  itself: the words now, AND the `data-i18n-*` attribute that lets
+ *  `localizeTree()` re-say them when a catalogue lands or the language changes.
+ *
+ *  The second half is the class fix, not decoration. Resolving a key once and
+ *  writing the result is correct for exactly one language at exactly one
+ *  moment; every relabel after that walks `[data-i18n-label]` and
+ *  `[data-i18n-title]` and cannot find an element that carries neither, which
+ *  is how a name cached at boot outlived both the catalogue that would have
+ *  fixed it and any language the user chose afterwards. */
+function nameFromKey(el, key, suffixes = ["label"]) {
+  const words = wordsFor(key);
+  for (const suffix of suffixes) {
+    el.setAttribute(`data-i18n-${suffix}`, key);
+    el.setAttribute(KEYED_ATTRIBUTES[suffix], words);
+  }
+}
 
 /** The ribbon-owned controls this bar borrows, by row `control` key.
  *
@@ -422,6 +473,58 @@ export const PHONE_TOOLBAR = [
   },
 ];
 
+// ---- A sheet says what is ON (Google Docs' Aa panel; `109` HF-274) ---------
+//
+// The Aa sheet rendered Bold, Italic, Underline, Strikethrough, Superscript and
+// Subscript as six plain rows, so nothing in it said whether the caret's text
+// was already bold — and tapping Bold over bold text REMOVES bold, so a row that
+// cannot say which way it will go is a row that guesses for you. Docs' Aa panel
+// opens with B / I / U / S as a row of toggles that light up, and its Paragraph
+// tab shows the current alignment as the selected one of four. Word's ribbon and
+// this editor's own ribbon do the same. A menu row that toggles is a
+// `menuitemcheckbox` (one-of-several: `menuitemradio`) with `aria-checked` —
+// the WAI-ARIA menu pattern — and a sighted reader needs the same answer drawn.
+//
+// WHERE THE STATE COMES FROM, and why it is read rather than recomputed. Every
+// one of these already has a ribbon control whose `aria-pressed` `updateToolbar`
+// writes on every repaint — over a range it is the range's uniform format, over
+// a caret it is the ARMED format if there is one, and "mixed" where the range
+// disagrees. That arithmetic is the one answer to "is this bold?" and it lives
+// in one place; a second copy here would be a second answer, which is the drift
+// `ADOPTED_CONTROL_IDS` exists to prevent for the font picker. The ribbon is
+// hidden in compact chrome but never leaves the DOM (ADR-044: regions are
+// unpainted, not absent), so its state is always there to read. A host that
+// withheld the source simply gets a plain row: no state is better than a
+// guessed one.
+//
+// `strip` is the Material Symbols ligature for the compact toggle row; a row
+// without one stays a row with a check mark. Docs' strip is B/I/U/S; superscript
+// and subscript join it here because they are toggles of the same band
+// (`menuGroup.font`) and six 44px targets fit a 320px sheet with room to spare.
+export const SHEET_STATE = Object.freeze({
+  "format.bold": { from: "bold", strip: "format_bold" },
+  "format.italic": { from: "italic", strip: "format_italic" },
+  "format.underline": { from: "underline", strip: "format_underlined" },
+  "format.strike": { from: "strike", strip: "format_strikethrough" },
+  "format.superscript": { from: "superscript", strip: "superscript" },
+  "format.subscript": { from: "subscript", strip: "subscript" },
+  "paragraph.align.start": { from: "alignStart", radio: true },
+  "paragraph.align.center": { from: "alignCenter", radio: true },
+  "paragraph.align.end": { from: "alignEnd", radio: true },
+  "paragraph.align.justify": { from: "alignJustify", radio: true },
+  "paragraph.list.bullet": { from: "bulletList" },
+  "paragraph.list.numbered": { from: "numberedList" },
+  "paragraph.list.checklist": { from: "checkList" },
+});
+
+/** `aria-pressed` on the source → `aria-checked` on the row. "mixed" survives
+ *  the trip: `menuitemcheckbox` allows it, and a selection that is half bold is
+ *  exactly the case where a plain on/off would lie. A radio has no mixed. */
+export function checkedFrom(pressed, { radio = false } = {}) {
+  if (pressed === "mixed") return radio ? "false" : "mixed";
+  return pressed === "true" ? "true" : "false";
+}
+
 /** Which alignment key each align command applies, for the trigger's icon. */
 const ALIGN_KEY = {
   "paragraph.align.start": "start",
@@ -592,7 +695,6 @@ export function createCompactToolbar({
 
   function ensureMenu(entry) {
     if (menus.has(entry.id)) return menus.get(entry.id);
-    const name = t(entry.labelKey);
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.id = `${entry.id}Btn`;
@@ -600,8 +702,9 @@ export function createCompactToolbar({
     trigger.setAttribute("aria-haspopup", "menu");
     trigger.setAttribute("aria-expanded", "false");
     trigger.setAttribute("aria-controls", `${entry.id}Menu`);
-    trigger.setAttribute("aria-label", name);
-    trigger.title = name;
+    // Created ONCE and kept for the session (see `menus`), which is exactly why
+    // its name must stay addressable by the relabel sweep — see `nameFromKey`.
+    nameFromKey(trigger, entry.labelKey, ["label", "title"]);
     trigger.appendChild(iconSpan(entry.icon));
     const caret = iconSpan("arrow_drop_down");
     caret.classList.add("ctool-caret");
@@ -612,10 +715,15 @@ export function createCompactToolbar({
     surface.className = "context-menu compact-command-menu";
     surface.hidden = true;
     surface.setAttribute("role", "menu");
-    surface.setAttribute("aria-label", name);
+    nameFromKey(surface, entry.labelKey);
     // Hung off <body> for the reason the align menu is: the bar clips.
     document.body.appendChild(surface);
-    registerPopover(trigger, surface, () => fillMenu(entry, surface));
+    // The handle is kept: a row that RUNS a command closes its sheet through
+    // the manager (see `fillMenu`), so `aria-expanded` and the keyboard's place
+    // go back with it rather than being stranded by a bare `hidden = true`.
+    const pair = { trigger, surface, popover: null };
+    pair.popover = registerPopover(trigger, surface, () => fillMenu(entry, pair));
+    watchSheetState(entry, surface);
     // Filled once here as well as on every open. Two reasons, and neither is
     // cosmetic: the rows are then in the DOM for anything that asks what this
     // bar offers — including the guard that fails the build when a declared
@@ -623,18 +731,51 @@ export function createCompactToolbar({
     // bulleted and no numbered list button — and a surface that is empty until
     // it is opened cannot be told apart from one that is empty because the
     // command set vanished.
-    fillMenu(entry, surface);
-    const pair = { trigger, surface };
+    fillMenu(entry, pair);
     menus.set(entry.id, pair);
     return pair;
   }
 
-  /** Rebuilds one dropdown's rows from the LIVE registry.
+  /** Keeps a sheet's state-bearing rows in step with their sources WHILE IT IS
+   *  OPEN, not only when it is filled.
    *
-   *  A command the registry does not answer at all is skipped; one it answers
-   *  DISABLED is rendered disabled carrying its reason, never dropped — the
-   *  whole point of the surface is that a user browsing it learns the editor can
-   *  do this and what is missing, which an absent row cannot say. */
+   *  The open sheet IS refilled on every `updateToolbar` (through
+   *  `reflectOpenPopovers`), so for the font toggles a refill alone would do —
+   *  but `updateToolbar` calls that refill BEFORE it writes the list buttons'
+   *  pressed state, so a refill-only sheet would show the previous paragraph's
+   *  list kind until the next repaint. Observing the sources' own attribute
+   *  makes the order irrelevant: whichever write lands last, the row hears it.
+   *
+   *  One observer per sheet, attached to elements that live for the session.
+   *  A mutation costs O(rows in the sheet) and nothing on a hidden sheet, so it
+   *  stays off the keystroke path that `main-thread-budget` guards. */
+  function watchSheetState(entry, surface) {
+    if (typeof MutationObserver !== "function") return;
+    const sources = [
+      ...new Set(
+        sectionCommandIds(entry.sections)
+          .filter((id) => SHEET_STATE[id])
+          .map((id) => document.getElementById(SHEET_STATE[id].from))
+          .filter(Boolean),
+      ),
+    ];
+    if (sources.length === 0) return;
+    const observer = new MutationObserver(() => {
+      if (!surface.hidden) reflectSheetState(surface);
+    });
+    for (const source of sources) {
+      observer.observe(source, { attributes: true, attributeFilter: ["aria-pressed"] });
+    }
+  }
+
+  /** Copies each source's pressed state onto the rows that mirror it. */
+  function reflectSheetState(surface) {
+    for (const el of surface.querySelectorAll("[data-state-from]")) {
+      const pressed = document.getElementById(el.dataset.stateFrom)?.getAttribute("aria-pressed");
+      el.setAttribute("aria-checked", checkedFrom(pressed, { radio: el.getAttribute("role") === "menuitemradio" }));
+    }
+  }
+
   /** Moves the ribbon-owned value controls into a sheet's leading strip.
    *
    *  Google Docs' Aa panel opens with **Style, Font, Size** and only then the
@@ -661,24 +802,48 @@ export function createCompactToolbar({
         adoptedHome.set(el, { parent: el.parentNode, next: el.nextSibling });
       }
       el.classList.add("cadopted");
-      strip.appendChild(el);
+      // Already here from the last fill: leave it, for the reason `fillMenu`
+      // keeps the strip — moving a focused control blurs it.
+      if (el.parentNode !== strip) strip.appendChild(el);
     }
   }
 
-  function fillMenu(entry, surface) {
+  /** Rebuilds one dropdown's rows from the LIVE registry.
+   *
+   *  A command the registry does not answer at all is skipped; one it answers
+   *  DISABLED is rendered disabled carrying its reason, never dropped — the
+   *  whole point of the surface is that a user browsing it learns the editor can
+   *  do this and what is missing, which an absent row cannot say.
+   *
+   *  Runs on every open AND on every `updateToolbar` while open, so it keeps
+   *  two things the reader is holding: the value strip is reused rather than
+   *  rebuilt (detaching it would blur a font-size field mid-edit), and focus
+   *  goes back to the row with the same command id (a keyboard user who
+   *  pressed Enter on Bold must still be on Bold when it lights up). */
+  function fillMenu(entry, pair) {
+    const { surface } = pair;
     const commands = registry();
-    surface.replaceChildren();
+    const focusedId = surface.contains(document.activeElement)
+      ? document.activeElement.dataset?.commandId
+      : null;
+    let strip = surface.querySelector(":scope > .menu-value-strip");
+    for (const child of [...surface.children]) if (child !== strip) child.remove();
     if (entry.adopt?.length) {
-      const strip = document.createElement("div");
-      strip.className = "menu-group menu-value-strip";
-      strip.setAttribute("role", "group");
-      strip.setAttribute("aria-label", t(entry.adoptLabelKey));
-      strip.dataset.group = entry.adoptLabelKey;
+      if (!strip) {
+        strip = document.createElement("div");
+        strip.className = "menu-group menu-value-strip";
+        strip.setAttribute("role", "group");
+        strip.dataset.group = entry.adoptLabelKey;
+      }
+      nameFromKey(strip, entry.adoptLabelKey);
       adoptInto(strip, entry.adopt);
       // Only if something actually arrived: a host that withheld the ribbon
       // leaves the ids unresolvable, and an empty named group announces a band
       // that is not there.
-      if (strip.childElementCount) surface.appendChild(strip);
+      // Re-inserting a node that is already in place still detaches it first,
+      // and a detached focused field is a blurred one.
+      if (!strip.childElementCount) strip.remove();
+      else if (surface.firstElementChild !== strip) surface.prepend(strip);
     }
     for (const section of entry.sections) {
       // The SAME named band the Table menu renders, from the same declaration:
@@ -687,6 +852,7 @@ export function createCompactToolbar({
       // taxonomy's bands as anonymous hairlines while the menu bar announced
       // them by name would be two answers to one question.
       let group = null;
+      let toggles = null;
       for (const id of section.ids) {
         const command = commands.get(id);
         if (!command) continue;
@@ -694,30 +860,111 @@ export function createCompactToolbar({
           group = document.createElement("div");
           group.className = "menu-group";
           group.setAttribute("role", "group");
-          group.setAttribute("aria-label", t(section.nameKey));
+          nameFromKey(group, section.nameKey);
           group.dataset.group = section.nameKey;
           surface.appendChild(group);
         }
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "menu-item";
-        item.setAttribute("role", "menuitem");
-        item.dataset.commandId = id;
-        // The MENU label, not the palette's prefixed one: a row inside a menu
-        // called Table already has that noun in front of it.
-        item.textContent = entry.labels?.get(id) ?? command.label;
-        if (command.enabled === false) {
-          item.disabled = true;
-          // `title` and not only the disabled attribute: the reason is the
-          // sentence that turns a greyed row into an answer, and hover must not
-          // erase it (`109` HF-118).
-          item.title = command.disabledReason ?? "";
-        } else {
-          onButton(item, () => runCommand(id, item));
+        const state = SHEET_STATE[id];
+        const source = state && document.getElementById(state.from);
+        if (state?.strip && source) {
+          // Docs' toggle row: the band's character toggles side by side at the
+          // head of the band, each a `menuitemcheckbox` that lights up.
+          if (!toggles) {
+            toggles = document.createElement("div");
+            toggles.className = "menu-toggle-strip";
+            group.appendChild(toggles);
+          }
+          toggles.appendChild(toggleControl(command, state, pair));
+          continue;
         }
-        group.appendChild(item);
+        group.appendChild(menuRow(entry, command, state && source ? state : null, pair));
       }
     }
+    reflectSheetState(surface);
+    if (focusedId) {
+      surface.querySelector(`[data-command-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+    }
+  }
+
+  /** What a row does when chosen. A row that SETS STATE keeps its sheet open, so
+   *  the reader watches Bold light up and can take Italic next — Docs' Aa panel
+   *  stays up while you toggle, for that reason. Every other row is a command,
+   *  and a menu closes before its command runs: the app menu bar's `onRun`
+   *  already does exactly this, and these sheets did not. On a phone that was
+   *  the typed-blind comment (`109` HF-277) — Add comment focused the composer
+   *  under a + sheet that stayed open across it — and the same left a Text
+   *  color… picker or a dialog opening behind the sheet that launched it.
+   *
+   *  A command run from a closed sheet is anchored to the sheet's TRIGGER, which
+   *  is still on screen, rather than to the row that has just been hidden: a
+   *  popover anchored to a row with no box falls back to its own hidden ribbon
+   *  button and opens at the window's top-left. */
+  function activate(id, el, pair, keepsOpen) {
+    if (keepsOpen) {
+      runCommand(id, el);
+      return;
+    }
+    pair.popover?.close?.();
+    runCommand(id, pair.trigger);
+  }
+
+  function menuRow(entry, command, state, pair) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "menu-item";
+    item.dataset.commandId = command.id;
+    if (state) {
+      // A row with a state carries it twice: `aria-checked` for a screen reader
+      // and the chrome's one check mark (`.menu-check`, the language and spacing
+      // menus' tick) for everyone else.
+      item.setAttribute("role", state.radio ? "menuitemradio" : "menuitemcheckbox");
+      item.setAttribute("aria-checked", "false");
+      item.dataset.stateFrom = state.from;
+      const check = document.createElement("span");
+      check.className = "menu-check";
+      check.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.className = "menu-item-label";
+      label.textContent = entry.labels?.get(command.id) ?? command.label;
+      item.append(check, label);
+    } else {
+      item.setAttribute("role", "menuitem");
+      // The MENU label, not the palette's prefixed one: a row inside a menu
+      // called Table already has that noun in front of it.
+      item.textContent = entry.labels?.get(command.id) ?? command.label;
+    }
+    if (command.enabled === false) {
+      item.disabled = true;
+      // `title` and not only the disabled attribute: the reason is the
+      // sentence that turns a greyed row into an answer, and hover must not
+      // erase it (`109` HF-118).
+      item.title = command.disabledReason ?? "";
+    } else {
+      onButton(item, () => activate(command.id, item, pair, !!state));
+    }
+    return item;
+  }
+
+  function toggleControl(command, state, pair) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "ctool menu-toggle";
+    el.dataset.commandId = command.id;
+    el.dataset.stateFrom = state.from;
+    el.setAttribute("role", "menuitemcheckbox");
+    el.setAttribute("aria-checked", "false");
+    el.setAttribute("aria-label", command.label);
+    el.title = command.shortcut
+      ? localizeShortcut(`${command.label} (${command.shortcut})`)
+      : command.label;
+    el.appendChild(iconSpan(state.strip));
+    if (command.enabled === false) {
+      el.disabled = true;
+      el.title = command.disabledReason ?? el.title;
+    } else {
+      onButton(el, () => activate(command.id, el, pair, true));
+    }
+    return el;
   }
 
   // ---- The align dropdown --------------------------------------------------
@@ -909,7 +1156,8 @@ export function createCompactToolbar({
       el.className = "cgroup";
       el.dataset.group = group.group;
       el.setAttribute("role", "group");
-      el.setAttribute("aria-label", group.labelKey ? t(group.labelKey) : group.label);
+      if (group.labelKey) nameFromKey(el, group.labelKey);
+      else el.setAttribute("aria-label", group.label);
       if (group.divider) el.dataset.divider = "true";
       for (const entry of group.items) {
         if (entry.kind === "adopt") {
@@ -961,6 +1209,19 @@ export function createCompactToolbar({
   // save us: the bar stays exactly as wide as the window.)
   if (document.fonts?.ready) document.fonts.ready.then(scheduleReflow).catch(() => {});
 
+  // The compact chrome's OTHER phone surface: its menu bar, behind the header's
+  // menus button (`menu_sheet.mjs`, docs/148 §5.3b). It is the same `isPhone`
+  // this bar renders by, which is the reason it is wired here — the two halves
+  // of the phone's compact chrome answer one question about the rung. Built
+  // after `createMenuBar`, which `main.js` runs first, so the sheet's listener
+  // on the menu hears a click after the row's own has run the command.
+  const menuSheet = createMenuSheet({
+    trigger: document.getElementById("appMenusBtn"),
+    bar: document.getElementById("appMenuBar"),
+    popover: document.getElementById("appMenuPopover"),
+    isPhone,
+  });
+
   /** Shows or hides the contextual group(s). Called from the one toolbar sync,
    *  which already knows whether the caret is in a table; re-laying out only on
    *  a CHANGE keeps a caret move inside a table free. */
@@ -976,5 +1237,5 @@ export function createCompactToolbar({
     if (changed) scheduleReflow();
   }
 
-  return { render, release, reflectAlign, reflow, scheduleReflow, setTableContext };
+  return { render, release, reflectAlign, reflow, scheduleReflow, setTableContext, menuSheet };
 }

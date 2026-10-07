@@ -64,15 +64,23 @@ test("the touch-target floor the module publishes is the one the phone rung appl
   // `.rail-btn` used to be the second selector here. The rail is no longer
   // painted at this rung (§5.3a), so the floor is asserted on the two surfaces
   // a phone actually taps: the navigation axis and the docked command bar.
+  //
+  // The axis moved (§5.3b): its names are rows of the sheet the header's menus
+  // button opens, not a wrapped strip, so the selector follows them — and as
+  // FLOATING rows they sit above the floor (36px, 44px under a finger) rather
+  // than on it. So this asserts the floor as a minimum, not as one literal: a
+  // rule that drops below 24 still fails, and one that rises above it no longer
+  // reads as a regression.
   for (const selector of [
-    "body.phone-mode .app-menu-button",
+    "body.phone-mode .app-menu-bar.is-open .app-menu-button",
     "body.phone-mode .compact-toolbar .ctool",
   ]) {
-    const rule = rung.slice(rung.indexOf(selector));
-    assert.match(
-      rule.slice(0, 220),
-      new RegExp(`min-height: ${MIN_TOUCH_TARGET_PX}px|min-width: ${MIN_TOUCH_TARGET_PX}px`),
-      `${selector} must carry the ${MIN_TOUCH_TARGET_PX}px floor`,
+    const at = rung.indexOf(selector);
+    assert.ok(at >= 0, `${selector} is styled at the phone rung`);
+    const declared = rung.slice(at, at + 220).match(/min-(?:height|width): (\d+)px/);
+    assert.ok(
+      declared && Number(declared[1]) >= MIN_TOUCH_TARGET_PX,
+      `${selector} must carry at least the ${MIN_TOUCH_TARGET_PX}px floor (found ${declared?.[0] ?? "none"})`,
     );
   }
 });

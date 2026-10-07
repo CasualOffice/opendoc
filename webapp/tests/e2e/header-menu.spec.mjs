@@ -1,4 +1,13 @@
-import { clickIntoFirstPage, expect, gotoEditor, openAppMenu, stableBox, test, useCompactChrome } from "./fixtures.mjs";
+import {
+  appMenuButton,
+  clickIntoFirstPage,
+  expect,
+  gotoEditor,
+  openAppMenu,
+  stableBox,
+  test,
+  useCompactChrome,
+} from "./fixtures.mjs";
 
 // The menu bar is the COMPACT chrome's navigation axis, and its only one — the
 // ribbon tab strip is the ribbon chrome's (`109` UX-014, docs/122). Every test
@@ -121,8 +130,12 @@ test("application menus support keyboard traversal, disabled reasons, and real d
   await page.locator("#propertiesClose").click();
 
   // "Find a command" was a Help-menu row; Help is a File group now, which is
-  // where ONLYOFFICE keeps it too.
+  // where ONLYOFFICE keeps it too — one level in, behind File ▸ Help, so the
+  // File menu stays within `menu-submenus.spec.mjs`'s cap.
   await openAppMenu(page, "file");
+  const help = menu.locator(".app-menu-item-parent", { hasText: "Help" });
+  await help.click();
+  await expect(help).toHaveAttribute("aria-expanded", "true");
   await menu.locator('[data-command="help.commands"]').click();
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -152,7 +165,11 @@ test("the two-row header contains its width and keeps every menu reachable on a 
 
   // The LAST name in the bar, whichever it is: that is the one the scroll
   // affordance has to be able to reach. Naming Review rather than Help keeps the
-  // test about containment rather than about which menus exist.
+  // test about containment rather than about which menus exist. 480px is inside
+  // the phone rung, where the names sit in the header's menus sheet
+  // (docs/148 §5.3b) — opened first, so this still asks "is the last menu
+  // reachable" rather than "is it painted in the row".
+  await appMenuButton(page, "review");
   const last = page.locator(".app-menu-button").last();
   await expect(last).toHaveText("Review");
   await last.evaluate((button) => button.scrollIntoView({ inline: "nearest", block: "nearest" }));

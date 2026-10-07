@@ -62,6 +62,8 @@ pub mod paginate;
 pub mod quantity;
 // Own line (anti-conflict): what a reflowed column approximates in a document.
 mod reflow_report;
+// Own line (anti-conflict): per-table horizontal scrolling in a reflowed column.
+pub mod reflow_scroll;
 pub mod resolve;
 pub mod running;
 pub mod script;

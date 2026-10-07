@@ -54,6 +54,19 @@ from the no-horizontal-scroll rule (§7). **Opened:** 2026-09-30. **Decision:**
 >
 > What survives is most of it, listed explicitly in `154` §5.4: §4 entire, §4.4a,
 > §4.6, §5, §6.2's two numbers, §6.3, §6.4, §6.5 and §7.
+>
+> **CORRECTED, 2026-10-06 — the owner checked reflow against Google Docs' pageless
+> view and named four things; three of them were still wrong, and one of those had
+> been closed on the wrong axis.** Each is a new subsection, measured before it was
+> changed (1280×800, 1440×900 and 390×844, Chromium):
+>
+> | The owner's words | What we did, measured | Now | Where |
+> | --- | --- | --- | --- |
+> | "4 horizonal canvas connected … seemless and continues" | Tiles abutted in CSS px and still drew a **one-device-pixel hairline** across every vertical line at every cut, at a 2x backing store: border rows read dark, dark, LIGHT, dark. RFL-01 had made the surface one colour and said a seam was "unpaintable" — true of the *background*, false of anything drawn across a cut. | Tiles are placed on the raster's pixel grid, 1:1, each covering the previous tile's partial row | §4.4b |
+> | "images" | Already fitted (FID-R-13): a 9in picture is scaled into the column, both edges painted — **verified, not changed** | unchanged; now guarded at the paint tier in the browser too | §6.3b |
+> | "horizonal scroll on tables" | A 12in table was **squeezed** into the column (FID-R-13's fit): twelve 1in columns narrowed to ~0.4in, text wrapped to two lines per cell, `LASTCOL` overflowing its own cell. ADR-046 had decided a scroller; FID-R-13 shipped a fit and deferred the scroller as a spike | The table keeps its declared widths and scrolls sideways in a scroller of its own, as in Docs | §6.3d |
+> | "width of page is too small" | Default **Reading = 469px** at 1440px, **narrower than the 624px the same Letter document shows on paper** | Default **Wide** = the document's page width (816px on Letter at 100%), capped by the window; four other steps one click away | §6.2a |
+> | (found on the way, phone) | A **second** document opened while reflow was on — every file a phone reader opens after the startup sample — was laid out on **paper** (816px tiles in a 390px window) under a chrome that said reflow: `sync`'s "nothing moved" short-circuit compared measures across documents. Reproduced on `main` | The short-circuit is per document | §6.2 |
 
 ## 1. The problem, stated as a measurement
 
@@ -430,6 +443,90 @@ incremental *pagination* resume under reflow and re-tiles from the top. That is 
 `O(pages)` walk with no re-shaping; the galley cache still makes a keystroke
 `O(edit)` in shaping, which is ~99% of the cost.
 
+### 4.4b CORRECTION, 2026-10-06: abutting is not seamless — tiles must sit on the raster's pixel grid
+
+§4.4a made each tile exactly as tall as its content, and §6.2's `gap: 0` made the
+tiles abut. Both are true **in CSS px**, and a reader still saw a seam, because
+the trimmed height is not a whole number of device pixels and the engine does not
+rasterise a fraction: `render_page_inner` allocates
+`ceil(height_twip × dpi / 1440)` rows (`Twip::to_device_px`, f32). The browser was
+then asked to draw a 2,109-row raster into a 2,108.375-row box. It resampled every
+tile (soft text at every zoom whose tile height is not integral) and pushed the
+raster's last row — **the padding row past the content, background in all but the
+fraction the content reached** — onto the screen at the cut.
+
+Measured before the fix, `longtable` fixture (a bordered table crossing several
+cuts), 1440×900 at deviceScaleFactor 2, counting dark pixels per device row across
+a 40px clip centred on a cut: the table's horizontal border at the cut read rows
+`58, 59` dark, `60` **light**, `61, 62, 63` dark, and every vertical border column
+had one light pixel at row 58/59. Reading the rasters directly located it: tile 0's
+canvas had its border in rows `h-3, h-2` and **nothing but the vertical borders in
+row `h-1`**, its padding row.
+
+**The established pattern** is the one every tiled rasteriser uses — Chromium's
+compositor tiles, map tiles, Google Docs' own canvas tiles: put each tile on the
+device-pixel grid at exactly its raster's size, so it is blitted 1:1, and let the
+next tile start on the grid row that holds the previous tile's partial last row.
+`page_scroll.mjs`'s `buildPageBand` does exactly that when `pageBandPitch(true)`
+hands it the backing ratio:
+
+```text
+top(0) = 0,  top(i+1) = top(i) + floor(H(i)),  box(i) = ceil(H(i)) rows   (backing px)
+```
+
+where `H(i)` is the engine's own unrounded raster height, computed in f32 the way
+the engine computes it (`rasterExtent`; `Math.fround` after each operation is exact
+for `*` and `/` because 53 ≥ 2·24 + 2). Consecutive boxes therefore overlap by
+**exactly** the partial row — one row when the raster above ends on a fraction,
+none when it ends on a whole pixel — and never leave a gap; no partly-covered row
+is ever on screen; every tile is drawn 1:1; tops are whole rows, so no drift can
+accumulate. The canvas is `height: auto` in reflow, so even a box one row off its
+raster would not resample it. The price — a tile's content sits up to one backing
+pixel above an ideal continuous column, and the band is up to a row per tile
+shorter than the sum — is invisible and consistent, because `scaleOf` and
+`virtualPageRect` answer from the same band. **Paper is not snapped**: sheets are
+separated by a 22px desk and their geometry is pinned elsewhere.
+
+The ratio is `main.js`'s `backingDpr()` (`min(devicePixelRatio, 2)`), mirrored as
+`MAX_BACKING_RATIO` because `main.js` exports nothing; `page_scroll.test.mjs` reads
+the constant out of `main.js` so the two cannot drift. Above a ratio of 2 the
+backing store is upscaled anyway — that is a pre-existing choice — and the overlap
+rule still guarantees no gap row.
+
+**Guards**, each driven red: `page_scroll.test.mjs` asserts, at ratios 1, 1.25, 1.5
+and 2 and four zooms over real trimmed heights, that every box is its raster in
+whole pixels, every top is a whole pixel, and each tile covers exactly the partial
+row above it — reverting the snap fails `tile 0 box is not its 1055-row raster`,
+and covering nothing (`ceil` for `floor`) fails `tile 1 covers 0 rows of tile 0;
+its partial row is 1 — a partial row left on screen is the hairline seam`.
+`reflow-seams.spec.mjs` takes a SCREENSHOT across five real cuts on a real 2x
+screen — at least one of them a tile starting on an odd device row — and requires
+every vertical border of the long table to be unbroken there (on the original
+code: `cut 2: the vertical border at x=32 is broken at device rows 39 of 80`),
+plus the grid state itself (snap reverted: `a tile starts between two device
+pixels`).
+
+**Emulated ratios are not real ones.** The guard runs with
+`--force-device-scale-factor=2`, not Playwright's `deviceScaleFactor`, and that is
+measured, not a preference. The DevTools emulation that option (and Chrome's
+device toolbar) uses lays out and snaps every box to **whole CSS px**: a canvas
+whose box starts at 513.5px paints from device row 1028, not 1027; a 0.5px-tall
+div paints two device rows. A tile whose top falls on a half CSS px is then painted
+one device row low and can uncover the partial row of the tile above — a probe of
+a long table at 1440px read `dark, dark, LIGHT, dark` again at one cut in three.
+With the ratio forced the way Chromium models a HiDPI display, boxes snap to
+device pixels, as on a Retina screen, and the same probe found every tile painted
+on the row the band gave it and no light row at any cut. So the screenshot guard
+is only meaningful on a real ratio, and a faint line at some cuts in Chrome's
+device toolbar is the emulator, not the page. Making the band robust to whole-CSS
+snapping as well (one extra row of overlap, at the price of a one-row content
+shift at every cut on real screens) was considered and not done; RFL-07 records
+it. `phone-reflow-wide-table.spec.mjs` asserts the grid state in the
+phone project. A screenshot version was written there first and **deleted**: the
+2.625 screen upscales a 2x backing store, the resampling blurs a one-row hairline
+below any threshold an ordinary anti-aliased border does not also cross, and it
+stayed green with the whole fix reverted.
+
 ### 4.5 The engine work item list
 
 This is the list as designed, annotated with what was actually built. Four rows were
@@ -672,6 +769,18 @@ a paper edge across a sentence.
 > `webapp/tests/e2e/reflow.spec.mjs` (paint tier), each driven red by mutation
 > before being trusted.
 
+> **CORRECTED, 2026-10-06 — what the engine was told is a fact about ONE
+> document.** `sync` skips `setLayoutView` when the measure has not moved, and it
+> compared against the measure it had told the PREVIOUS document. A newly opened
+> document starts on its own paper, so opening a second file in reflow left it
+> laid out on paper under a chrome that said reflow was on — measured in a Pixel 7
+> emulation on `main`: tiles 816px wide, `#viewport.is-reflow` set, the page
+> panning sideways. On a phone that is every document after the startup sample.
+> `reflow_chrome.mjs` now remembers WHICH document it told (`appliedTo`) and
+> re-applies the view to a new one; `phone-reflow-wide-table.spec.mjs` opens a
+> second document and requires phone-wide tiles (dropping the line fails it with
+> `Expected: <= 390, Received: 816`).
+
 **Two numbers, and this section proposed one of them wrongly.** It said "the
 nearest 8px". What shipped is **16px, floored** (`REFLOW_QUANTUM_PX`), and both
 halves of that are corrections rather than preferences:
@@ -719,7 +828,52 @@ gives a table too wide to fit, and honest for the same reason. The
 no-horizontal-scroll guarantee is stated at the zoom a phone actually opens at,
 which `FIT_ON_OPEN_FLOOR` pins at 100%.
 
-### 6.3 Content too wide for the measure — CORRECTED, and now shipped as a fit
+### 6.2a CORRECTION, 2026-10-06: the default measure is the page, not 80 characters
+
+ADR-048 recorded the default step as the owner's call and shipped **Reading** (80
+characters, WCAG 2.1 SC 1.4.8). The owner has now made the call — *"at present
+width of page is too small"* — against Google Docs' pageless view, and the
+measurement agrees with the complaint in a way the WCAG argument did not anticipate:
+
+| 1440×900, `rich` and `wide` fixtures, outline open (`#viewport` 1,094px) | Column |
+| --- | --- |
+| Paper: the Letter text column | 624 px |
+| Reflow, Reading (the old default) | **469 px** — 80 characters |
+| Reflow, Wide (the new default) | **816 px** — the Letter page itself |
+
+Turning the pages off **narrowed** the text. Pageless exists for the opposite —
+Google's announcement says it adds *"more horizontal space for content like tables
+and images"* (`166` §5, first-party), and TechRepublic's walk-through that it
+removes *"the rigid page-based margins"* (`166` §7, secondary). So the new step
+**Wide** is the page with its margins
+taken away — `pageSetup().pageSize.widthTwips`, derived from the document like
+Paper is, inventing no constant — and it is the default. The other four steps are
+unchanged and one click away (View ▸ Text width, the View band popover, the
+palette), persisted per viewer under the same key; a stored choice is never
+reinterpreted. Full stays the window; Reading stays WCAG's 80 for a reader who
+wants it.
+
+**What Google documents and what could not be verified.** From Google's own help
+page (support.google.com/docs/answer/11528737), via indexed text — the page itself
+is refused by this environment's egress proxy, so it was not fetched: View ▸ Text
+width offers Narrow, Medium and Wide; *"your text width choice won't affect how
+collaborators see your docs"*; images adjust to the screen and wide tables scroll
+left and right. Secondary sources (TechRepublic, Android Police, How-To Geek, also
+indexed only) add a **Full** step and say the setting *"adapts when you modify the
+width of your browser window"*. **Not verified, and therefore not copied:** Google's
+DEFAULT step, and the pixel or character width of any step — no source states
+either, and one secondary snippet says the default is Narrow while others imply
+Medium. Wide is chosen on our own evidence (the table above) rather than as a
+claimed match for a Docs number.
+
+Guards: `reflow_view.test.mjs` — the default is `wide`, a stored `reading` still
+resolves to itself, and *"by default, turning the pages off never narrows the
+text"* at 934, 1,094, 1,248 and 1,408px (mutating the default back to `reading`
+fails it: `at a 934px viewport the default column is 468.27px, narrower than the
+624px it has on paper`); `reflow-pageless.spec.mjs` asserts the same in a browser
+and drives the choice from the palette and through a reload.
+
+### 6.3 Content too wide for the measure — CORRECTED twice: a fit (2026-10-05), then a scroller (2026-10-06)
 
 **This subsection described an intention and was read as behaviour, including by
 this document's own §4.5 row 6 ("untouched, as designed").** What shipped was
@@ -825,6 +979,12 @@ not made worse here, and it is not the same thing as dropping a column.
 
 #### 6.3c Why not the scroller, and what the spike inherits
 
+> **Superseded 2026-10-06 by §6.3d, which builds the scroller.** Kept as written
+> because its five interaction decisions are what §6.3d was built to, and its
+> four named costs are each answered there — two of them by NOT building the
+> thing named (no display-list clip primitive: the offset is written onto the
+> rows; no per-step raster: the compositor scrolls a strip rasterised once).
+
 **A per-element interactive scroll region over a canvas raster is a spike, not a
 task.** Our body is one `<canvas>` with no DOM node per table — and so is
 ONLYOFFICE's (`HtmlPage.paint`), which is *why* neither of us has a per-table
@@ -856,6 +1016,106 @@ it**, so the spike inherits decisions rather than re-making them:
 secondary source covers any of them, and ONLYOFFICE has no scroller to study. They
 are the owner's decisions, written down here rather than left in a brief so the
 spike cannot quietly choose otherwise.
+
+#### 6.3d What ships now: the table keeps its widths and scrolls sideways (`MeasureFit::Scroll`)
+
+**Built 2026-10-06, at the owner's request** — *"horizonal scroll on tables"*, with
+Google Docs' pageless view as the model. §6.3c called the scroller a spike and named
+four costs; each is answered below, and the five interaction decisions it recorded
+are honoured or explicitly left.
+
+**The layout half.** `MeasureFit` gains a third answer, `Scroll`, which
+`LayoutView::measure_fit` returns for reflow: an inline image is fitted exactly as
+under `Fit` (Google: *"images will adjust to your screen size"*), and a **top-level**
+body table keeps the width its document declares, as on paper. Every context with
+no scroller of its own takes `MeasureFit::without_scroll()` — a table nested in a
+cell (`table_depth > 0`), a text box, note bodies, positioned tables and their wrap
+rectangles — so nothing anywhere reverts to being laid out past a raster nobody can
+scroll. The approximations report says *"keeps the column widths the document
+declares and scrolls sideways"* for a scrolled table and keeps the *fitted*
+sentence for images and nested tables.
+
+**The offset — the "display-list clip primitive" cost, avoided.** The obvious build
+is a per-table translate-and-clip at paint time, and then the same transform in the
+hit test, the caret, the selection, the cell rects and the table chrome — 36
+call sites in the wasm facade read the painted layout (`painted_layout`,
+`painted_snapshot`, `body_page_at`, counted at the branch point), any one of which
+forgets it. The
+established pattern for a retained scene is to translate the subtree's GEOMETRY
+once, so `casual_doc_layout::reflow_scroll` writes the offset onto the placed rows
+themselves and every consumer is right by construction. It is **idempotent**: in a
+reflow layout every placed body fragment sits at the content area's left edge (one
+column, symmetric gutters — guarded by
+`every_placed_body_fragment_sits_at_the_content_left_edge`), so an offset is an
+ABSOLUTE position (`content_area.x − offset`) and there is no ledger to go stale.
+The wasm facade remembers the offset per table (`reflow_table_scroll`, a view like
+`layout_view`: no operation, no revision, invisible to export), writes it back after
+every relayout — fold, show changes, a width step, a font arriving, an edit — and
+resets it to zero before handing a layout to the incremental paginator, so a reused
+page never carries an offset into a resume decision. Leaving reflow forgets it.
+
+API: `reflowTableOverflows(tile)` (the band, scroll width, viewport and offset of
+each over-wide table on a tile), `setReflowTableScroll(tile, table, twip)` (clamped;
+`O(rows of the table)` — it walks only the contiguous tiles the table spans, never
+the document) and `renderReflowTableStrip(tile, table, dpi)`.
+
+**The scroller — the "overlay scroll region" cost, answered by the compositor.**
+Re-rasterising a tile per scroll step was measured before choosing and rejected:
+`renderPage` costs **70–150 ms for one 11in tile** in this build. So the table's band
+is rasterised ONCE at its full width, at offset zero, into a canvas inside a native
+`overflow-x: auto` box laid exactly over the band (`reflow_table_scroll.mjs`), and
+the browser scrolls it. A scroll step costs the compositor plus one
+`setReflowTableScroll`; an edit, which repaints its tile, re-rasterises the strip.
+The strip spans the whole tile, gutters included — CSS's own scroll-container
+semantics, where padding is inside the scrollport — and sits before the overlay, so
+the caret and the selection stay on top. The tile's overlay is clipped to the tile
+(plus at most 24px for the fold chevron), so a scrolled table's caret or selection
+can neither float in the margin nor widen `#viewport` into the horizontal scroll
+§7 retired.
+
+| # | Decision | As built |
+| --- | --- | --- |
+| A-1 | The caret drags the scroller with it | Built: when the caret is redrawn inside a strip's band and has MOVED in unscrolled terms, the strip scrolls just far enough to show it (24px from the edge). A caret that moved only because the table scrolled is not chased back — otherwise a table with the caret in it could not be scrolled away from |
+| A-2 | A selection dragged past the edge auto-scrolls | **Not built.** Recorded as an open row rather than half-built: it competes with the table chrome's own edge drags (column resize), and needs a hit test re-run while the pointer is still, which `main.js` owns |
+| A-3 | The scrollbar is visible whenever the table overflows | Built: an always-on overlay bar (6px, 14px press target) at the band's foot; the native bar is hidden because it would take its height out of the last row |
+| A-4 | `Home` returns the view to the left edge | Built, as a consequence of A-1 |
+| A-5 | The page does not scroll sideways over a table | Built by construction: the page has no horizontal scroll; a horizontal gesture over the strip is the strip's, a vertical one chains to the page because the strip cannot scroll vertically |
+
+**What it costs per interaction** (`docs/107` §4): a scroll event is one division,
+one `O(rows of the table)` engine call, and a scrollLeft write on the other strips
+of the same table in the DOM window. Mounting a tile's strips is one
+`O(fragments on the tile)` query plus one band raster per over-wide table. Nothing
+walks the document. Re-applying remembered offsets after a relayout is one pass over
+the placed fragments, only while some table is scrolled — a relayout in reflow
+already walks every tile (§4.4a).
+
+**The one hook outside the module.** After a table moves, the overlay (caret,
+selection, active-cell outline, table chrome) must be redrawn from the engine's new
+geometry. That is `main.js`'s `drawSelection`, and `main.js` exports nothing, so
+`createReflowChrome` takes an optional `redraw` dependency. Until the host passes
+it, the scroller falls back to `onChanged` — a full render — once the gesture
+settles (160ms): correct, heavier, and never a stale caret after the settle.
+
+**Guards**, each driven red by mutation and recorded on the test: engine —
+`a_wide_table_keeps_its_widths_in_reflow_and_its_tiles_still_trim`,
+`no_cell_of_a_table_wider_than_the_reading_column_is_unreachable` (now: every cell
+is reachable at SOME offset, and a click there lands in it),
+`scrolling_a_table_moves_its_rows_on_every_tile_and_nothing_else`,
+`remembered_offsets_are_written_back_and_reset_restores_the_built_layout`,
+`the_table_strip_is_the_table_at_offset_zero_and_nothing_else`; facade —
+`a_wide_table_scrolls_and_a_click_lands_where_it_is_painted`,
+`a_table_scroll_is_a_view_that_survives_relayout_and_is_forgotten_on_paper`;
+browser — `reflow-pageless.spec.mjs` scrolls a real 12in table with the wheel,
+requires the page not to scroll, finds the table's right edge on screen, clicks
+there and types, and requires the text to reach the LAST column's cell.
+
+**Not done, and why.** A-2 (above). A floating object anchored inside a scrolled
+table keeps its page-relative position and does not scroll with it (`§8` item 1's
+anchored-floats question, unchanged). Tables in note bodies, text boxes and cells
+are fitted, not scrolled. The tile under a strip is painted at the offset the
+engine held when the tile was last painted; it is never visible (the strip is
+opaque and covers the band) but a print or a thumbnail does not read it either —
+print forces `Paged`.
 
 ### 6.4 What the chrome does differently
 

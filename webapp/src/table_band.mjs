@@ -15,6 +15,22 @@
 // module does not know ships DISABLED rather than live-and-inert: "never a dead
 // control" (SKILL.md §10). `table_band.test.mjs` fails if the markup and these
 // tables disagree in either direction.
+import { t } from "./i18n.mjs";
+
+/** A table's size as a reader reads it: COLUMNS × ROWS, `"4 × 3 table"`.
+ *
+ *  Word's convention — its Insert Table grid reads "4x3 Table" for four columns
+ *  and three rows, and its dialog asks for columns before rows — and the one the
+ *  Insert grid here already used. The band's hint said `rows×columns` instead, so
+ *  the same freshly inserted table was "4 × 3" in the grid and "3×4 table" on the
+ *  Table tab one click later. One formatter, read by both, is what stops the two
+ *  surfaces disagreeing again; the order lives in the catalogue sentence, so a
+ *  language that writes it differently can say so.
+ *
+ *  Complexity: O(1). */
+export function tableSizeLabel(columns, rows) {
+  return t("table.size", { columns, rows });
+}
 
 /** Insert and delete, by `data-table-action`. Each entry takes the engine and the
  *  caret's node, so the table is data: nothing here closes over editor state. */
@@ -109,7 +125,8 @@ export function tableBandStates(root, context) {
 }
 
 /**
- * The band's context hint: `"3×3 table · row 1, column 2 · merged/spanned"`.
+ * The band's context hint: `"4 × 3 table · row 1, column 2 · merged/spanned"` —
+ * four columns, three rows, through `tableSizeLabel`.
  *
  * It lives here rather than in `main.js` because it is the band's own hint
  * (`#tableContext`) and the properties panel's, and because a sentence the chrome
@@ -125,7 +142,7 @@ export function tableBandStates(root, context) {
  *          regular: boolean}} info one `tableInfo`, already held by the caller.
  */
 export function tableContextLabel(info) {
-  return `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
+  return `${tableSizeLabel(info.columns, info.rows)} · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
 }
 
 /** Wires the band.

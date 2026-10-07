@@ -85,6 +85,7 @@ HLD
 HTML
 HTTP
 HarfBuzz
+HiDPI
 Hocuspocus
 Hotfix
 Hunspell
@@ -173,6 +174,7 @@ Prev
 ProseMirror
 README
 RFC
+RFL
 RGB
 RGBA
 RSS
@@ -510,7 +512,9 @@ rAF
 rPr
 radiogroup
 rastered
+rasterised
 rasteriser
+rasterises
 rasterization
 rasterized
 rasterizer
@@ -602,6 +606,7 @@ tombstoning
 toolchain
 tooltip
 tooltips
+trackpad
 trendline
 tri
 twip
@@ -627,6 +632,7 @@ unmerged
 unmodeled
 unmodelled
 unobservable
+unpaintable
 unpassworded
 unreferenced
 unrepresentable
