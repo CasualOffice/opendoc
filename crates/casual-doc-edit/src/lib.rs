@@ -11139,6 +11139,7 @@ mod tests {
             display_blanks_as: DisplayBlanks::default(),
             vary_colors: false,
             external_data: None,
+            dirty: false,
         };
         (node, projection)
     }

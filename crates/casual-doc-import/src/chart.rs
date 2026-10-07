@@ -1482,6 +1482,7 @@ impl Parser {
                 display_blanks_as: draft.display_blanks_as,
                 vary_colors: draft.vary_colors,
                 external_data: draft.external_data,
+                dirty: false,
             }),
             declined: None,
             unconsumed,

@@ -82,6 +82,8 @@ use crate::report::{Disposition, DocxExport, Reporter};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding imports here do not collide in one list.
 use crate::chart::{GeneratedChartPart, generate_chart_parts};
+// Own line (anti-conflict): the embedded workbook's content type.
+use crate::chart_workbook::WORKBOOK_CT;
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -1162,9 +1164,18 @@ pub fn export_package(
     // emitted from the node's verbatim relationship id by `embedded_rels`, so
     // only the part itself and its own `_rels` companion are added here; the
     // content-type `Override` went in with the manifest above.
+    // Retained parts a generated chart REPLACES (an edited imported chart and
+    // the workbook it names). Collected before the generated parts are moved.
+    let superseded: BTreeSet<String> = generated_charts
+        .iter()
+        .flat_map(|generated| generated.supersedes.iter().cloned())
+        .collect();
     for generated in generated_charts {
         if let Some((rels_name, rels_bytes)) = generated.rels {
             parts.push(rels_name, rels_bytes);
+        }
+        if let Some(workbook) = generated.workbook {
+            parts.push(workbook.part_name, workbook.bytes);
         }
         parts.push(generated.part_name, generated.bytes);
     }
@@ -1173,6 +1184,11 @@ pub fn export_package(
     // and root/document referencing relationships are merged into the generated
     // manifests above.
     for retained in &retained_parts.parts {
+        if superseded.contains(&retained.part_name) {
+            // Its replacement — and the replacement's own `_rels` — went in
+            // above. Writing this too would be a second entry under one name.
+            continue;
+        }
         if let Some(rels) = &retained.rels {
             parts.push(rels.part_name.clone(), rels.bytes.clone());
         }
@@ -1449,12 +1465,21 @@ fn content_types_xml(
     // Generated chart parts. A chart part has no extension `Default` to fall
     // back on (`.xml` maps to `application/xml`), so without this Override Word
     // reads the part as generic XML and reports the package as unreadable.
+    let mut superseded: BTreeSet<&str> = BTreeSet::new();
     for generated in generated_charts {
         let part_name = format!("/{}", generated.part_name);
         let mut over = start("Override");
         over.push_attribute(("PartName", part_name.as_str()));
         over.push_attribute(("ContentType", generated.content_type));
         w.write_event(Event::Empty(over)).map_err(pkg)?;
+        if let Some(workbook) = &generated.workbook {
+            let part_name = format!("/{}", workbook.part_name);
+            let mut over = start("Override");
+            over.push_attribute(("PartName", part_name.as_str()));
+            over.push_attribute(("ContentType", WORKBOOK_CT));
+            w.write_event(Event::Empty(over)).map_err(pkg)?;
+        }
+        superseded.extend(generated.supersedes.iter().map(String::as_str));
     }
     // Opaque preserved parts (P1F-2): merge each part's declared content type as
     // an `Override` so it re-imports to the same type. A part whose source type
@@ -1462,6 +1487,11 @@ fn content_types_xml(
     // A part with no declared type falls back to the extension `Default`s above
     // (e.g. `xml`, `rels`); it gets no `Override`.
     for retained in &retained_parts.parts {
+        // A replaced part's `Override` was written above; a second one for the
+        // same `PartName` is an invalid manifest.
+        if superseded.contains(retained.part_name.as_str()) {
+            continue;
+        }
         let Some(content_type) = &retained.content_type else {
             continue;
         };

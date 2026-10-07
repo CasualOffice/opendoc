@@ -191,6 +191,7 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
         display_blanks_as: DisplayBlanks::Gap,
         vary_colors: false,
         external_data: None,
+        dirty: false,
     }
 }
 
@@ -249,6 +250,88 @@ fn reopened_object(import: &casual_doc_import::Import) -> EmbeddedObject {
         .expect("the written chart reopens as an embedded object")
 }
 
+/// `chart` with the workbook binding the writer adds taken back off: the `c:f`
+/// formulas into `Sheet1` and the `c:externalData` pointer.
+///
+/// The writer binds every chart it regenerates to a values-only workbook so
+/// Word's *Edit Data* works (`chart_workbook`), so a written-and-reopened chart
+/// carries those references and the one that went in did not. Everything ELSE
+/// must come back unchanged, which is what comparing through this asserts —
+/// and [`assert_bound_to_a_workbook`] asserts the binding itself, so taking it
+/// off here cannot hide its absence.
+fn unbound(mut chart: Chart) -> Chart {
+    chart.external_data = None;
+    for group in &mut chart.plot_area.groups {
+        for series in &mut group.series {
+            series.values.formula = None;
+            if let Some(range) = series.categories.as_mut() {
+                range.formula = None;
+            }
+            if let Some(range) = series.x_values.as_mut() {
+                range.formula = None;
+            }
+            if let Some(name) = series.name.as_mut() {
+                name.formula = None;
+            }
+        }
+    }
+    chart
+}
+
+/// The reopened chart names a workbook the package contains, and its first
+/// series reads its numbers from column B of that workbook's `Sheet1`.
+fn assert_bound_to_a_workbook(written: &[u8], after: &Chart, rows: usize) {
+    let external = after
+        .external_data
+        .as_ref()
+        .expect("a written chart must name its embedded workbook, or Word's Edit Data fails");
+    let mut package =
+        DocxPackage::open(written, PackageLimits::default()).expect("the package opens");
+    let bytes = package
+        .read_part(&external.part_name)
+        .unwrap_or_else(|_| panic!("the workbook {} is not in the package", external.part_name));
+    assert!(
+        bytes.starts_with(b"PK"),
+        "the workbook part is not a ZIP package"
+    );
+    assert_eq!(
+        package.content_type(&external.part_name),
+        Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    );
+    let series = &after.plot_area.groups[0].series[0];
+    assert_eq!(
+        series.values.formula.as_deref(),
+        Some(format!("Sheet1!$B$2:$B${}", rows + 1).as_str()),
+        "the series must read its values from the workbook's column B"
+    );
+}
+
+/// The cells of `Sheet1` in a workbook, as `(reference, text)` in sheet order.
+fn workbook_cells(workbook: &[u8]) -> Vec<(String, String)> {
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(workbook)).expect("the workbook is a ZIP");
+    let mut sheet = String::new();
+    std::io::Read::read_to_string(
+        &mut archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .expect("the workbook has a sheet"),
+        &mut sheet,
+    )
+    .expect("the sheet is UTF-8");
+    let mut cells = Vec::new();
+    for chunk in sheet.split("<c r=\"").skip(1) {
+        let reference = chunk.split('"').next().unwrap_or_default().to_owned();
+        let text = chunk
+            .split_once("<v>")
+            .or_else(|| chunk.split_once("<t xml:space=\"preserve\">"))
+            .and_then(|(_, rest)| rest.split('<').next())
+            .unwrap_or_default()
+            .to_owned();
+        cells.push((reference, text));
+    }
+    cells
+}
+
 /// Every chart family the model can express, written and read back.
 ///
 /// Parameterised rather than six near-identical tests because the thing under
@@ -292,12 +375,18 @@ fn every_modeled_chart_family_writes_a_part_that_reads_back_as_the_same_chart() 
     for group in families {
         let before = projection(id(3), group);
         let document = document_with(before.clone());
-        let import = round_trip(&document);
+        let written = write_document(&document, &BTreeMap::new()).expect("the document writes");
+        let import = reopen(&written);
         let after = reopened_projection(&import);
+        assert_bound_to_a_workbook(&written, &after, 4);
         assert_eq!(
-            after, before,
+            unbound(after.clone()),
+            before,
             "a {group:?} chart did not survive the package round trip"
         );
+        // A chart this editor wrote must come back fully modelled, or reopening
+        // the file would make it read-only — a static chart one save later.
+        assert_eq!(after.coverage, ChartCoverage::Complete, "{group:?}");
         assert_eq!(
             reopened_object(&import).kind,
             EmbeddedKind::Chart,
@@ -430,7 +519,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
 
     let import = round_trip(&document_with(before.clone()));
     assert_eq!(
-        reopened_projection(&import),
+        unbound(reopened_projection(&import)),
         before,
         "a dressed chart lost something on the way through the package"
     );
@@ -675,10 +764,15 @@ fn the_chart_parts_own_rels_is_written_only_when_the_workbook_is_there() {
         },
     );
     with_workbook.external_data = Some(workbook.clone());
+    // A formula into a workbook this export did not write, so the writer cannot
+    // bind its own values-only one (`chart_workbook::bind` declines) and the
+    // pointer is left exactly as the model has it.
+    let mut foreign = with_workbook.clone();
+    foreign.plot_area.groups[0].series[0].values.formula = Some("Data!$C$2:$C$5".to_owned());
 
     // No retained workbook part: no rels part, and no `c:externalData` pointing
     // at one.
-    let written = write_document(&document_with(with_workbook.clone()), &BTreeMap::new())
+    let written = write_document(&document_with(foreign.clone()), &BTreeMap::new())
         .expect("the document writes");
     let mut package =
         DocxPackage::open(&written, PackageLimits::default()).expect("the package opens");
@@ -704,12 +798,9 @@ fn the_chart_parts_own_rels_is_written_only_when_the_workbook_is_there() {
         }],
         relationships: Vec::new(),
     };
-    let written = write_document_with_retained_parts(
-        &document_with(with_workbook),
-        &BTreeMap::new(),
-        &retained,
-    )
-    .expect("the document writes");
+    let written =
+        write_document_with_retained_parts(&document_with(foreign), &BTreeMap::new(), &retained)
+            .expect("the document writes");
     let mut package =
         DocxPackage::open(&written, PackageLimits::default()).expect("the package opens");
     let rels = String::from_utf8(
@@ -1282,17 +1373,26 @@ fn the_drawings_relationship_id_resolves_through_opc_to_the_generated_chart_part
          application/xml and Word refuses the package"
     );
 
-    // A chart with no workbook behind it needs no `_rels` of its own, and the
-    // package reader agrees rather than erroring: OPC requires no relationship
-    // for a chart part, and an empty one would be a part that says nothing.
-    // `the_chart_parts_own_rels_is_written_only_when_the_workbook_is_there`
-    // covers the case where there IS one.
+    // Link 5: the chart's own `_rels` names exactly one thing, the values-only
+    // workbook the writer bound it to, and that relationship resolves to a part
+    // the package contains — the same chain one level down, which is where
+    // Word's Edit Data goes.
+    let own = package
+        .part_relationships(&part_name)
+        .expect("the chart part's relationships resolve");
+    assert_eq!(
+        own.len(),
+        1,
+        "link 5: one workbook relationship, got {own:?}"
+    );
+    assert_eq!(own[0].relationship_type, PACKAGE_REL_TYPE, "link 5");
+    let workbook = own[0]
+        .resolved_part
+        .clone()
+        .expect("link 5: the workbook relationship must resolve inside the package");
     assert!(
-        package
-            .part_relationships(&part_name)
-            .expect("a chart part with no rels companion resolves to no relationships")
-            .is_empty(),
-        "a minted chart names nothing of its own, so its rels part is absent by design"
+        package.read_part(&workbook).is_ok(),
+        "link 5: {workbook} is named and not in the package"
     );
 }
 
@@ -1539,5 +1639,188 @@ fn an_orphan_projection_writes_no_part_and_the_package_still_reopens() {
         import.document.definitions().charts.is_empty(),
         "the orphan does not survive a save: it is a stale read index, and reopening \
          rebuilds the index from the parts that are actually there"
+    );
+}
+
+/// **The workbook holds exactly the chart's data, in Word's layout.**
+///
+/// Row 1 the series names, column A the categories, one column per series, each
+/// number in the same lexical form the cache holds — `3.50`, not `3.5`. A
+/// workbook that disagreed with the cache would be the divergence `docs/155`
+/// §5.3 exists to prevent: the page showing one number and Edit Data another.
+#[test]
+fn the_embedded_workbook_holds_the_chart_data_in_words_layout() {
+    let chart = projection(
+        id(3),
+        ChartGroupKind::Bar {
+            direction: BarDirection::Column,
+            grouping: BarGrouping::Clustered,
+            gap_width: 150,
+            overlap: -27,
+        },
+    );
+    let written =
+        write_document(&document_with(chart), &BTreeMap::new()).expect("the document writes");
+    let after = reopened_projection(&reopen(&written));
+    let mut package =
+        DocxPackage::open(&written, PackageLimits::default()).expect("the package opens");
+    let workbook = package
+        .read_part(&after.external_data.expect("a workbook").part_name)
+        .expect("the workbook reads");
+    assert_eq!(
+        workbook_cells(&workbook),
+        [
+            ("B1", "Series 1"),
+            ("A2", "1st Qtr"),
+            ("B2", "4.3"),
+            ("A3", "2nd Qtr"),
+            ("B3", "2.5"),
+            ("A4", "3rd Qtr"),
+            ("B4", "3.50"),
+            ("A5", "4th Qtr"),
+            ("B5", "4.5"),
+        ]
+        .map(|(r, t)| (r.to_owned(), t.to_owned()))
+        .to_vec()
+    );
+}
+
+/// **An EDITED imported chart is regenerated, and its source bytes are not
+/// written beside the regeneration.**
+///
+/// The other half of `a_retained_chart_part_is_copied_verbatim_and_not_regenerated`.
+/// Retention wins until an edit makes the projection the authority
+/// (`Chart::dirty`); after that, copying the source bytes back would throw the
+/// reader's edit away on save. And both may not be written: two ZIP entries
+/// under one name, or two `Override`s for one part, is a package no two readers
+/// agree about. The workbook the chart named is replaced in place, and the
+/// report says so.
+#[test]
+fn an_edited_imported_chart_is_regenerated_and_supersedes_its_source_bytes() {
+    let content_types = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>"#;
+    let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="304800"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+    let chart = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>4.30</c:v></c:pt></c:numLit></c:val></c:ser><c:gapWidth val="150"/><c:overlap val="-27"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="1"/></c:valAx></c:plotArea></c:chart><c:externalData r:id="rId1"><c:autoUpdate val="0"/></c:externalData></c:chartSpace>"#;
+    let chart_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/Microsoft_Excel_Worksheet.xlsx"/></Relationships>"#;
+    let old_workbook = b"PK-the-producer's-workbook-with-a-secret-second-sheet";
+    let source = zip_package(&[
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.as_slice()),
+        ("word/document.xml", document.as_slice()),
+        ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+        ("word/charts/chart1.xml", chart.as_slice()),
+        ("word/charts/_rels/chart1.xml.rels", chart_rels.as_slice()),
+        ("word/embeddings/Microsoft_Excel_Worksheet.xlsx", old_workbook.as_slice()),
+    ]);
+    let mut source_package =
+        DocxPackage::open(&source, PackageLimits::default()).expect("the source package opens");
+    let mut import = import_package(
+        &mut source_package,
+        ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        },
+    )
+    .expect("the source package imports");
+    let (chart_id, mut edited) = import
+        .document
+        .definitions()
+        .charts
+        .iter()
+        .map(|(id, chart)| (*id, chart.clone()))
+        .next()
+        .expect("the fixture projects");
+    assert_eq!(
+        edited.coverage,
+        ChartCoverage::Complete,
+        "the fixture must be editable"
+    );
+    assert!(
+        edited.external_data.is_some(),
+        "the fixture must name its workbook"
+    );
+    // What `setChartData` does: change the data, drop the source formulas, and
+    // mark the projection the authority.
+    edited.plot_area.groups[0].series[0].values = numbers(&["9.75"]);
+    edited.dirty = true;
+    let mut definitions = import.document.definitions().clone();
+    definitions.charts.insert(chart_id, edited);
+    import.document = Document::new(
+        import.document.id(),
+        import.document.body().to_vec(),
+        definitions,
+    )
+    .expect("the edited document is valid");
+
+    let export = casual_doc_export::export_document_with_retained_parts(
+        &import.document,
+        &BTreeMap::new(),
+        &import.retained_parts,
+    )
+    .expect("the edited document writes");
+    let written = export.bytes;
+
+    // One entry per name in the ZIP, and one Override per part in the manifest.
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&written)).expect("a ZIP");
+    let mut names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).expect("an entry").name().to_owned())
+        .collect();
+    let total = names.len();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), total, "a part was written twice: {names:?}");
+    let mut package =
+        DocxPackage::open(&written, PackageLimits::default()).expect("the package opens");
+    let manifest = String::from_utf8(package.read_part("[Content_Types].xml").expect("manifest"))
+        .expect("UTF-8");
+    assert_eq!(
+        manifest
+            .matches(r#"PartName="/word/charts/chart1.xml""#)
+            .count(),
+        1,
+        "the chart part is declared twice: {manifest}"
+    );
+
+    // The chart part is the regeneration, carrying the reader's number…
+    let chart_xml = String::from_utf8(package.read_part("word/charts/chart1.xml").expect("chart"))
+        .expect("UTF-8");
+    assert_ne!(
+        chart_xml.as_bytes(),
+        chart.as_slice(),
+        "the source bytes won over the edit"
+    );
+    assert!(
+        chart_xml.contains("<c:v>9.75</c:v>"),
+        "the edit is not in the part: {chart_xml}"
+    );
+    assert!(
+        chart_xml.contains("Sheet1!$B$2:$B$2"),
+        "the series is not bound to the workbook"
+    );
+    // …and the workbook it names, at the SAME name, holds that number and
+    // nothing of the producer's.
+    let workbook = package
+        .read_part("word/embeddings/Microsoft_Excel_Worksheet.xlsx")
+        .expect("the workbook is still at its name");
+    assert_ne!(
+        workbook.as_slice(),
+        old_workbook.as_slice(),
+        "the stale workbook survived"
+    );
+    assert!(workbook_cells(&workbook).contains(&("B2".to_owned(), "9.75".to_owned())));
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "docx.export.chart.workbook_replaced"),
+        "replacing the producer's workbook must be reported, not silent"
+    );
+
+    // And the file reopens with the edit in it.
+    let reopened = reopened_projection(&reopen(&written));
+    assert_eq!(
+        reopened.plot_area.groups[0].series[0].values.points,
+        vec![(0, ChartValue::Number("9.75".to_owned()))]
     );
 }

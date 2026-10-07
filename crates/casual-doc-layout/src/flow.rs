@@ -11416,6 +11416,7 @@ mod tests {
             display_blanks_as: DisplayBlanks::Gap,
             vary_colors: false,
             external_data: None,
+            dirty: false,
         }
     }
 

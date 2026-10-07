@@ -933,7 +933,7 @@ moves from out-of-scope to tier 1.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
-| Q-A | Should an **imported** chart's data become editable behind an explicit "this replaces the embedded workbook" confirmation? (§5.3) | Yes, after the values-only writer exists and the replacement can be named in the report. It destroys producer-authored content, so it is the owner's call. |
+| Q-A | Should an **imported** chart's data become editable behind an explicit "this replaces the embedded workbook" confirmation? (§5.3) | **Answered by building it, §16** — after the owner's "its static, how can i add data". The values-only writer exists, the replacement is named in the report, and the panel says it before the first change. Reversible in one line (`chart_authoring_refusal`) if the owner wants imported workbooks untouchable. |
 | Q-B | Does `PaintItem::Path` get an explicit `ArcTo`, or Bézier-only? (§7.4) | **Shipped Bézier-only**; the preference below still stands for when the model mirror can carry `a:arcTo` (§7.5 point 2). `ArcTo`, flattened in the backend. Their renderer keeps `arcTo` in the command vocabulary and expands it to per-quadrant cubics in **one** shared function (`ArcTo.js:216`), which is what stops every caller growing its own flattener (§3.3). |
 | Q-C | Floating (`wp:anchor`) charts: fix `EmbeddedObject`'s missing `DrawingAnchor` in this programme or as one row for charts + SmartArt + OLE together? | Together, separately. It is not a chart limit and scoping it here would hide it. |
 | Q-D | Do chart **theme** colours resolve against `Definitions::color_scheme`, or does a chart carry its own `colors1.xml` palette? | Resolve against the document theme, which already exists; treat `colors1.xml` as out of scope and preserved. Revisit if real files disagree. |
@@ -1154,3 +1154,75 @@ in its Notes cell.
 - **No data editing, no title, no chart-element gestures.** The sample projection
   carries Word's own Insert-Chart numbers and no title, because there is no
   title-editing gesture and two unchangeable words are worse than none.
+
+---
+
+## 16. Increment 8: chart data authoring, end to end (2026-10-08)
+
+The owner, on the inserted chart: *"its static how can i add data … what does
+adding static chart achieve"*. §15.3 had recorded "no data editing" as a
+deliberate gap; it is closed here across all four layers, because closing any
+one of them alone ships the same complaint one step later.
+
+### 16.1 The interaction, from the competitive standard
+
+Word answers "how do I put data in a chart" with *Chart Design ▸ Edit Data* (also
+on the right-click menu): a spreadsheet grid, row 1 series names, column A
+categories, edits applied as they are made. Docs' chart editor is a right-hand
+panel with a type gallery, the data range, the title and the legend. The panel
+(`webapp/src/chart_data.mjs`) is both: a right-hand side panel holding the type
+gallery, title, legend and Word's grid. Insert ▸ Chart opens it on the new chart
+with the first value focused, which is Word's sequence. It is reachable from the
+chart's chip, the object right-click menu (and therefore the palette) and a
+double-click — four surfaces, `SKILL` §10.
+
+Grid behaviour a spreadsheet user expects and gets: Enter commits and moves
+down (and adds a row on the last one), Tab across, arrows at the text edge,
+Escape abandons a pending entry and on an untouched cell closes the panel, and a
+tab-separated block pasted from Excel or Sheets fills from the cell it lands in,
+grows the grid to fit within the model's ceilings, undoes a displayed grouping
+comma (`1,200`) and never guesses at a decimal comma.
+
+### 16.2 One write, one undo step
+
+`setChartData` (`casual-doc-wasm/src/chart.rs`) is the only write. It carries the
+whole grid, the family, the title and the legend as one `SetChartDefinition`
+through `apply_group`, so protection, review mode and the windowed-layout gates
+apply and one undo takes one committed cell back. The patch is applied on top
+of the existing projection: fills, lines, data labels, axis bounds and number
+formats the grid does not show are carried across, not reset.
+
+### 16.3 `Chart::dirty` — §6.1's bit, finally settable
+
+§14.4 point 1 said nothing could mark a chart dirty. The data write now does,
+and the exporter honours it: a dirty projection is regenerated even when its
+part was retained, and the retained bytes it replaces are superseded — not
+written beside it (two ZIP entries or two `Override`s for one part are a package
+no two readers agree about; `an_edited_imported_chart_is_regenerated_and_supersedes_its_source_bytes`
+was mutation-checked against both). Without this, a chart authored here, saved
+and reopened came back as an import and was read-only: the "static chart" defect
+one save later. The authoring refusal therefore no longer asks where a chart
+came from; it refuses only a `Partial` projection and a combo chart.
+
+### 16.4 The values-only workbook (§5.3)
+
+`casual-doc-export/src/chart_workbook.rs` writes, for every chart the exporter
+regenerates, an embedded `.xlsx` holding exactly the cache in Word's layout, and
+binds the series to it with `c:f` references (`Sheet1!$B$2:$B$5`). A chart that
+already named a workbook keeps the part name and relationship id, so it is
+replaced in place and nothing is left pointing at the old one; replacing a
+RETAINED workbook is reported as `docx.export.chart.workbook_replaced`
+(`DegradedNotRetained`), because the producer's workbook may have held more than
+the chart showed. `bind` declines — leaving the chart cache-only exactly as
+before — for a combo chart, a range that already names a foreign formula, series
+that do not share one category column, or a name collision.
+
+### 16.5 What this still does not do
+
+Series colours and line styles, data labels, axis options and bounds, number
+formats, gridlines, chart styles, combo charts, secondary axes, trendlines and
+error bars are kept, drawn and saved, and not editable. Most charts Word writes
+project `Partial` (`c:spPr`/`c:txPr` are reported, not modelled — §14.5), so they
+open read-only with the reason; modelling chart formatting is what turns them
+editable, and is the next increment. The undo label is passed to `apply_group`
+directly ("Chart data") rather than through a `HistoryKind` variant.

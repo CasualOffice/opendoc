@@ -21,6 +21,8 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 mod chart;
+// Own line (anti-conflict): the values-only workbook a regenerated chart names.
+mod chart_workbook;
 mod report;
 mod semantic;
 pub use report::{
