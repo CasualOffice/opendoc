@@ -93,6 +93,7 @@ fn chart(kind: ChartGroupKind, values: &[&str]) -> Chart {
         display_blanks_as: DisplayBlanks::Gap,
         vary_colors: false,
         external_data: None,
+        dirty: false,
     }
 }
 

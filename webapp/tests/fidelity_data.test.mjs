@@ -665,6 +665,29 @@ test("every Charts grade is derived from the painter, the writer and the host su
       "a host surface now calls insertChart and the note still denies it",
     );
   }
+  // The data editor. `chart_data.mjs` is the surface that calls the engine's
+  // `setChartData`; while the host reaches it, the note may not say nothing
+  // changes a chart's data (the understatement this row carried after the
+  // editor shipped), and while it does not, the note may not claim it.
+  const editsData =
+    /js_name = setChartData/.test(read("casual-doc-wasm/src/chart.rs")) &&
+    readFileSync(new URL("../src/chart_data.mjs", import.meta.url), "utf8").includes("setChartData(") &&
+    host.includes("createChartDataPanel(");
+  if (editsData) {
+    assert.doesNotMatch(
+      charts.note,
+      /nothing changes a chart's data|no chart data editor/i,
+      "the chart panel edits a chart's data and the note still denies it",
+    );
+    assert.match(charts.note, /Edit Data/, "the note must say what the data editor is");
+    assert.notEqual(charts.editable, "full", "series formatting, axes and combos are not editable");
+  } else {
+    assert.doesNotMatch(
+      charts.note,
+      /opens the chart panel/,
+      "no host surface reaches setChartData, so the note may not claim a data editor",
+    );
+  }
   // And the other half of "partial": an existing chart is published as an
   // object with resize grips, so the grade may not be "none" either.
   const publishesChart = /kind: "chart"/.test(read("casual-doc-wasm/src/lib.rs"));
