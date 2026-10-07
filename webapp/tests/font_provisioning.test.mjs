@@ -174,6 +174,26 @@ test("the named faces go in as ONE batch and one repagination", async () => {
   for (const face of NAMED_WEB_FONT_FACES) assert.ok(h.released.includes(face.url));
 });
 
+test("script downloads start while named fonts are held, without early registration", async () => {
+  const engine = fakeEngine([0x3042, 0xac00]);
+  const fetcher = fakeFetcher({ hold: true });
+  const h = harness(engine, fetcher);
+  const done = h.provisioning.provisionOnOpen("sample.docx");
+  assert.ok(fetcher.started.includes(SCRIPT_FALLBACK_FONTS.jp.url));
+  assert.ok(fetcher.started.includes(SCRIPT_FALLBACK_FONTS.kr.url));
+  assert.equal(engine.namedBatches.length, 0);
+  assert.equal(engine.fallbacks.length, 0);
+  await h.provisioning.provisionForEdit("typing during load");
+  assert.equal(engine.fallbacks.length, 0);
+  fetcher.release();
+  assert.equal(await done, null);
+  assert.equal(engine.namedBatches.length, 1);
+  assert.equal(engine.fallbacks.length, 2);
+  for (const key of ["jp", "kr"]) {
+    assert.equal(fetcher.started.filter(url => url === SCRIPT_FALLBACK_FONTS[key].url).length, 1);
+  }
+});
+
 test("the coverage fetches run CONCURRENTLY and register in manifest order", async () => {
   // Three buckets for the default editor page's own scalars: Japanese
   // (14.27 MB), Korean (14.24 MB) and colour emoji (2.88 MB). Serially that is
