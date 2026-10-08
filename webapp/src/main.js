@@ -1,11 +1,11 @@
 // OpenDoc WASM viewer — P1G-001 harness.
 //
-// Loads the `casual-doc-wasm` module, opens a user-selected `.docx` fully
-// client-side, and blits each rendered page onto a canvas. This is the
+// Loads `casual-doc-wasm`, opens a local `.docx`, and paints pages on canvas: the
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
 import init, { open, beginVersionDiff, defaultDiffSlice, engineVersion } from "../pkg/casual_doc_wasm.js";
+import { toggleTextCheckboxAt } from "./text_checkbox.mjs";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
 // with nothing loaded — which is also why they are handed to
@@ -3740,7 +3740,7 @@ function toggleFormCheckboxAt(node, offset) {
   } catch {
     return false;
   }
-  if (!control) return false;
+  if (!control) return toggleTextCheckboxAt(doc, node, offset, runEdit);
   runEdit(() => doc.toggleFormCheckbox(control));
   return true;
 }
