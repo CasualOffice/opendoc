@@ -51,8 +51,8 @@
 
 use casual_doc_model::v1::{
     Axis, AxisKind, AxisOrientation, AxisPosition, BarDirection, BarGrouping, Chart, ChartGroup,
-    ChartGroupKind, ChartValue, Color, DataRange, DisplayBlanks, Grouping, LegendPosition,
-    ScatterStyle, Series, TickLabelPosition, TickMark,
+    ChartGroupKind, ChartValue, Color, DataLabelPosition, DataRange, DisplayBlanks, Grouping,
+    LegendPosition, ScatterStyle, Series, TickLabelPosition, TickMark,
 };
 
 // Own line (anti-conflict): the shared arc/sector geometry (`docs/155` §7.4).
@@ -344,7 +344,7 @@ pub fn compose_chart(
     let mut color = 0usize;
     // Gridlines first (behind the series), then the series, then the axes and
     // their labels on top — Word's own paint order.
-    draw_gridlines(chart, plot, &mut out);
+    draw_gridlines(chart, plot, categories, &mut out);
     for group in &chart.plot_area.groups {
         let count = group.series.len();
         if is_drawable(group.kind) {
@@ -745,39 +745,52 @@ fn axis_position(axis: &Axis) -> AxisPosition {
 }
 
 /// Paints the major gridlines of every non-deleted axis that declares them.
-fn draw_gridlines(chart: &Chart, plot: Rect, out: &mut Vec<ChartPrimitive>) {
+///
+/// A value axis draws one line per major tick. A category axis draws one at
+/// each category boundary, both outer edges included — Word's vertical
+/// gridlines on a column chart, its horizontal ones on a bar chart.
+///
+/// O(ticks + categories).
+fn draw_gridlines(chart: &Chart, plot: Rect, categories: usize, out: &mut Vec<ChartPrimitive>) {
+    let stroke = ChartStroke {
+        color: FURNITURE,
+        width: HAIRLINE,
+    };
     for axis in &chart.plot_area.axes {
-        if axis.deleted || !axis.major_gridlines || axis.kind != AxisKind::Value {
+        if axis.deleted || !axis.major_gridlines {
             continue;
         }
-        let scale = axis_scale(chart, axis);
         let vertical_axis = matches!(
             axis_position(axis),
             AxisPosition::Left | AxisPosition::Right
         );
-        for value in scale.ticks() {
-            let fraction = scale.fraction(value);
-            if vertical_axis {
+        let fractions: Vec<f64> = match axis.kind {
+            AxisKind::Value => {
+                let scale = axis_scale(chart, axis);
+                scale
+                    .ticks()
+                    .into_iter()
+                    .map(|value| scale.fraction(value))
+                    .collect()
+            }
+            AxisKind::Category | AxisKind::Date => {
+                if categories == 0 {
+                    continue;
+                }
+                (0..=categories)
+                    .map(|edge| edge as f64 / categories as f64)
+                    .collect()
+            }
+        };
+        for fraction in fractions {
+            let (from, to) = if vertical_axis {
                 let y = along(plot.bottom(), plot.origin.y, fraction);
-                out.push(ChartPrimitive::Line {
-                    from: Point::new(plot.origin.x, y),
-                    to: Point::new(plot.right(), y),
-                    stroke: ChartStroke {
-                        color: FURNITURE,
-                        width: HAIRLINE,
-                    },
-                });
+                (Point::new(plot.origin.x, y), Point::new(plot.right(), y))
             } else {
                 let x = along(plot.origin.x, plot.right(), fraction);
-                out.push(ChartPrimitive::Line {
-                    from: Point::new(x, plot.origin.y),
-                    to: Point::new(x, plot.bottom()),
-                    stroke: ChartStroke {
-                        color: FURNITURE,
-                        width: HAIRLINE,
-                    },
-                });
-            }
+                (Point::new(x, plot.origin.y), Point::new(x, plot.bottom()))
+            };
+            out.push(ChartPrimitive::Line { from, to, stroke });
         }
     }
 }
@@ -1134,6 +1147,9 @@ fn draw_pie(
                     &format_value(magnitude),
                     anchor,
                     false,
+                    // A slice label sits on the bisector at mid-radius, which is
+                    // already its center; the zero-size anchor centres it.
+                    Some(DataLabelPosition::Center),
                     paint.style,
                     shape,
                     out,
@@ -1270,6 +1286,7 @@ fn draw_bars(
                     &format_value(raw),
                     rect,
                     horizontal,
+                    label_position(series),
                     paint.style,
                     shape,
                     out,
@@ -1364,6 +1381,7 @@ fn draw_lines(
                     &format_value(raw),
                     Rect::new(Point::new(x, y), Size::new(Twip::ZERO, Twip::ZERO)),
                     false,
+                    label_position(series),
                     paint.style,
                     shape,
                     out,
@@ -1626,11 +1644,18 @@ fn scatter_x_scale(group: &ChartGroup) -> Scale {
     nice_scale(min, max, false)
 }
 
-/// A data label placed just outside its point's box.
+/// A data label placed where its series' `c:dLblPos` asks.
+///
+/// `anchor` is the bar's rectangle, or a zero-size rectangle at a line or
+/// scatter point. A bar honours Word's four bar positions — outside end (the
+/// default), inside end, center and inside base — measured along the bar's own
+/// direction; a point honours above (the default), below, left, right and
+/// center. Any other position, or none, is the default for the shape.
 fn draw_data_label(
     text: &str,
     anchor: Rect,
     horizontal: bool,
+    position: Option<DataLabelPosition>,
     style: &ChartStyle,
     shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
     out: &mut Vec<ChartPrimitive>,
@@ -1638,21 +1663,47 @@ fn draw_data_label(
     let Some(label) = shape_colored(text, style.text, shape) else {
         return;
     };
-    let (left, baseline) = if horizontal {
-        (
-            anchor.right() + LABEL_GAP,
-            Twip(
-                anchor.origin.y.raw() + anchor.size.height.raw() / 2 + label.ascent.raw()
-                    - label.height().raw() / 2,
-            ),
-        )
+    let (w, h, ascent) = (label.width.raw(), label.height().raw(), label.ascent.raw());
+    let gap = LABEL_GAP.raw();
+    let (x0, y0) = (anchor.origin.x.raw(), anchor.origin.y.raw());
+    let (aw, ah) = (anchor.size.width.raw(), anchor.size.height.raw());
+    let centre_x = x0 + aw / 2 - w / 2;
+    let centre_top = y0 + ah / 2 - h / 2;
+    let is_point = aw == 0 && ah == 0;
+    // (left, top) of the label box.
+    let (left, top) = if is_point {
+        match position {
+            Some(DataLabelPosition::Bottom) => (centre_x, y0 + gap),
+            Some(DataLabelPosition::Left) => (x0 - gap - w, centre_top),
+            Some(DataLabelPosition::Right) => (x0 + gap, centre_top),
+            Some(DataLabelPosition::Center) => (centre_x, centre_top),
+            _ => (centre_x, y0 - gap - h),
+        }
+    } else if horizontal {
+        // A horizontal bar grows rightwards from its base at `x0`.
+        let x = match position {
+            Some(DataLabelPosition::InsideEnd) => x0 + aw - gap - w,
+            Some(DataLabelPosition::Center) => x0 + aw / 2 - w / 2,
+            Some(DataLabelPosition::InsideBase) => x0 + gap,
+            _ => x0 + aw + gap,
+        };
+        (x, centre_top)
     } else {
-        (
-            Twip(anchor.origin.x.raw() + anchor.size.width.raw() / 2 - label.width.raw() / 2),
-            Twip(anchor.origin.y.raw() - LABEL_GAP.raw()),
-        )
+        // A column grows upwards from its base at `y0 + ah`.
+        let y = match position {
+            Some(DataLabelPosition::InsideEnd) => y0 + gap,
+            Some(DataLabelPosition::Center) => y0 + ah / 2 - h / 2,
+            Some(DataLabelPosition::InsideBase) => y0 + ah - gap - h,
+            _ => y0 - gap - h,
+        };
+        (centre_x, y)
     };
-    place_label(&label, left, baseline, out);
+    place_label(&label, Twip(left), Twip(top + ascent), out);
+}
+
+/// Where a series' labels sit, from its `c:dLbls`.
+fn label_position(series: &Series) -> Option<DataLabelPosition> {
+    series.data_labels.and_then(|labels| labels.position)
 }
 
 /// Whether a series' `c:dLbls` asks for its values to be printed.

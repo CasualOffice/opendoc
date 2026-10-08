@@ -63,6 +63,7 @@ test("the ribbon exposes File, Layout and References as real tabs, contextual ta
     "review",
     "view",
     "table",
+    "chart",
   ]);
 
   // ARIA: each tab must name a panel that actually exists, and selecting it must

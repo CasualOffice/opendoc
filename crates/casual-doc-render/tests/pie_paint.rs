@@ -51,12 +51,17 @@ fn node(id: u64) -> NodeId {
 /// A chart projection over `values`, in the requested family.
 fn chart(kind: ChartGroupKind, values: &[&str]) -> Chart {
     Chart {
+        chart_retained: Default::default(),
+        namespaces: Default::default(),
+        space_retained: Default::default(),
         object: node(901),
         coverage: ChartCoverage::Partial,
         title: None,
         auto_title_deleted: true,
         plot_area: PlotArea {
+            retained: Default::default(),
             groups: vec![ChartGroup {
+                retained: Default::default(),
                 kind,
                 series: vec![Series {
                     index: 0,

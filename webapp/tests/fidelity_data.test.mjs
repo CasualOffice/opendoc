@@ -669,10 +669,12 @@ test("every Charts grade is derived from the painter, the writer and the host su
   // `setChartData`; while the host reaches it, the note may not say nothing
   // changes a chart's data (the understatement this row carried after the
   // editor shipped), and while it does not, the note may not claim it.
+  // The seam is the bridge every chart surface shares (`chart_commands.mjs`),
+  // and the host reaches it through `createChartSurface`.
   const editsData =
     /js_name = setChartData/.test(read("casual-doc-wasm/src/chart.rs")) &&
-    readFileSync(new URL("../src/chart_data.mjs", import.meta.url), "utf8").includes("setChartData(") &&
-    host.includes("createChartDataPanel(");
+    readFileSync(new URL("../src/chart_commands.mjs", import.meta.url), "utf8").includes("setChartData(") &&
+    host.includes("createChartSurface(");
   if (editsData) {
     assert.doesNotMatch(
       charts.note,
@@ -684,7 +686,7 @@ test("every Charts grade is derived from the painter, the writer and the host su
   } else {
     assert.doesNotMatch(
       charts.note,
-      /opens the chart panel/,
+      /Chart Data window/,
       "no host surface reaches setChartData, so the note may not claim a data editor",
     );
   }

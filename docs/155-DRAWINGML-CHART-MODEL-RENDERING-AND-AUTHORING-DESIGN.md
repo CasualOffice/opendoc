@@ -1222,7 +1222,81 @@ that do not share one category column, or a name collision.
 Series colours and line styles, data labels, axis options and bounds, number
 formats, gridlines, chart styles, combo charts, secondary axes, trendlines and
 error bars are kept, drawn and saved, and not editable. Most charts Word writes
-project `Partial` (`c:spPr`/`c:txPr` are reported, not modelled — §14.5), so they
-open read-only with the reason; modelling chart formatting is what turns them
-editable, and is the next increment. The undo label is passed to `apply_group`
+projected `Partial` at the time of this increment, so they opened read-only —
+superseded by §17, which makes them editable. The undo label is passed to `apply_group`
 directly ("Chart data") rather than through a `HistoryKind` variant.
+
+---
+
+## 17. Verbatim carry: a Word chart is editable without losing what it holds (2026-10-08)
+
+Measured first: a chart exactly as Word 2016 writes one by default projected
+`Partial` on eleven constructs none of which its data depends on — the axis,
+legend, plot-area and chart-space `c:spPr`/`c:txPr`, `c:lang`, the style's
+`mc:AlternateContent`, `c:crosses`, `c:crossBetween`, `c:auto`, `c:lblAlgn`,
+`c:lblOffset`, a group-level `c:dLbls` and an empty `a:effectLst`. `Partial`
+forbids regeneration (§6.1), so every chart Word wrote opened read-only.
+
+**The named pattern is round-tripping unknown content**, the reason
+`Definitions::format_scheme_xml` exists. `v1::ChartXml { name, xml }` carries an
+element the projection does not model verbatim on the container it came from —
+`Chart::space_retained`, `chart_retained`, `PlotArea`, `ChartGroup`, `Series`,
+`Axis`, `Legend` and `ChartTitle` each have a `retained` list — and the root's
+namespace declarations travel in `Chart::namespaces`. Three rules keep it honest:
+
+1. **Schema order lives in the model.** `chart_child_order(ChartContainer)` is
+   the ECMA-376 child sequence of each container, per family and per axis kind.
+   The importer carries an element only when its container's sequence admits it
+   (a bar series' `c:explosion` has no place and stays a loss), and the writer's
+   `Carry` puts each fragment back at its rank. An independent copy of the
+   sequences in `chart_part_writer.rs` checks the written part.
+2. **Shadows.** Where the model holds an element's MEANING but not its
+   formatting — a series' `c:spPr` and `c:dLbls`, an axis's gridlines, a title's
+   rich text — the verbatim copy is kept only if something inside it went
+   unmodelled, and it replaces the generated element while the model says the
+   element is present. An edit to the modelled value drops it (a palette drops
+   the series `c:spPr`, a new title text drops `c:tx`), and turning gridlines off
+   removes them whatever was carried.
+3. **What cannot be put back is still a loss.** An element naming a relationship
+   (`c:userShapes`) would point at nothing in a regenerated part; an element no
+   sequence admits has no position. Both stay `Partial`. A fragment that reaches
+   the writer malformed (only possible by snapshot) is dropped and reported
+   (`docx.export.chart.fragment_dropped`); the model bounds the total at
+   `MAX_CHART_RETAINED_BYTES`.
+
+The import report is unchanged: a carried construct is still named, because it
+is still not drawn — "not modelled" and "lost" are now two facts, and only the
+second decides coverage. Mutation-checked: fragments written at the wrong rank, a
+shadow outliving its model value, no validation, and an importer that carries
+nothing each turn a guard red.
+
+## 18. The surfaces, from ONLYOFFICE (2026-10-08)
+
+ONLYOFFICE's document editor gives a selected chart a contextual Chart tab
+(`common/main/lib/view/ChartTab.js`: Chart Elements, Edit Data, chart type,
+styles, Advanced Settings), a right-hand chart panel
+(`documenteditor/main/app/template/ChartSettings.template`) and a data editor in
+its own window. This build has the same three, plus the right-click menu and the
+palette, all running ONE command tree (`chart_commands.mjs`):
+
+| Surface | Module | What it holds |
+| --- | --- | --- |
+| Chart tab (contextual, after Table) | `chart_surface.mjs`, `editor.html` `#panelChart` | Edit data, Type ▾, Elements ▾, the style gallery, Settings |
+| Chart settings panel | `chart_panel.mjs` | Type, Style, Elements (title, legend, labels, axes, gridlines), axis bounds and order, a data summary |
+| Chart Data window | `chart_data.mjs` | the grid; opens on Insert ▸ Chart and on double-click |
+| Right-click menu, palette | `object_context_menu.mjs` | the same tree |
+
+The engine side (`casual-doc-wasm/src/chart.rs`): seventeen type tokens
+(`CHART_GALLERY` — clustered, stacked and 100% stacked column, bar, line and
+area; line with markers; pie; doughnut; scatter, straight and smooth), and an
+optional `format` on the one write — title and legend overlay, data labels with
+the positions the family admits, each axis's visibility, bounds, order and
+gridlines, and a palette. The renderer gained what those controls need so none
+is dead: category-axis (vertical) gridlines, and label positions honoured. A
+document with no theme now draws a chart's theme colours in Word's default Office
+theme instead of black, and the panel's swatches show the document's own theme
+colours, resolved by the engine.
+
+Not yet, and named: an individual series' colour and line style, number formats,
+chart text fonts, axis titles, combination charts, secondary axes, trendlines and
+error bars — all kept, drawn where drawn, and saved.

@@ -61,6 +61,8 @@ use casual_doc_model::{IdGenerator, NodeId};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding model imports do not collide in one list.
 use casual_doc_model::v1::{BlockNode, ChartId, DefinitionMap, EmbeddedKind, InlineNode};
+// Own line: the verbatim-carry vocabulary (`docs/155` §17).
+use casual_doc_model::v1::{ChartContainer, ChartXml, MAX_CHART_RETAINED_BYTES, chart_child_rank};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -68,6 +70,12 @@ use crate::body::EmbeddedRel;
 use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{attribute_value, is_true, parse_rgb};
+
+/// The three namespaces the chart writer binds to `c`, `a` and `r`.
+const CHART_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const DRAWING_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const RELATIONSHIPS_NS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 /// Ceiling on distinct unconsumed construct names recorded for one chart part.
 ///
@@ -104,9 +112,11 @@ pub(crate) struct ChartRead {
     pub(crate) projection: Option<Chart>,
     /// Why no projection was built, when none was.
     pub(crate) declined: Option<ChartDecline>,
-    /// Local names of constructs inside the part the projection did not consume,
-    /// deduplicated and in a deterministic order. Non-empty implies
-    /// [`ChartCoverage::Partial`] on a projection that was built.
+    /// Local names of constructs inside the part the projection does not MODEL,
+    /// deduplicated and in a deterministic order — what the import report names.
+    /// Since `docs/155` §17 this is a superset of what is LOST: most of these
+    /// are carried verbatim and survive a regenerated save, and only the ones
+    /// that could not be carried make the projection [`ChartCoverage::Partial`].
     pub(crate) unconsumed: BTreeSet<String>,
 }
 
@@ -465,6 +475,76 @@ struct Parser {
     legend: Option<Legend>,
     /// The data labels being built, when inside a `c:dLbls`.
     data_labels: Option<DataLabels>,
+    /// Verbatim captures in progress, innermost last (`docs/155` §17).
+    captures: Vec<Capture>,
+    /// Bytes carried verbatim so far, against [`MAX_CHART_RETAINED_BYTES`].
+    retained_bytes: usize,
+    /// Names not modelled but carried verbatim: reported, not lost.
+    carried: BTreeSet<String>,
+    /// The prefix bound to the relationships namespace on the root, so a
+    /// fragment that names a relationship can be refused (its target would not
+    /// be in a regenerated part's `_rels`).
+    relationship_prefix: Option<String>,
+}
+
+/// Which container a verbatim fragment is carried on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CarryTarget {
+    Space,
+    Chart,
+    PlotArea,
+    Group,
+    Series,
+    Axis,
+    Legend,
+    Title,
+}
+
+impl CarryTarget {
+    /// The container a scope carries unmodelled children on, if it carries any.
+    const fn of(scope: Scope) -> Option<Self> {
+        Some(match scope {
+            Scope::ChartSpace => Self::Space,
+            Scope::Chart => Self::Chart,
+            Scope::PlotArea => Self::PlotArea,
+            Scope::Group => Self::Group,
+            Scope::Series => Self::Series,
+            Scope::Axis => Self::Axis,
+            Scope::Legend => Self::Legend,
+            Scope::Title => Self::Title,
+            _ => return None,
+        })
+    }
+}
+
+/// One element being captured verbatim.
+struct Capture {
+    /// Byte offset of its `<`.
+    start: usize,
+    /// Its local name.
+    name: String,
+    target: CarryTarget,
+    /// A SHADOW capture: the element is also parsed into the model, and the
+    /// verbatim copy keeps the formatting the model does not hold. Unconsumed
+    /// descendants are not losses while it is open, because the bytes keep them.
+    shadow: bool,
+    /// For a shadow: the scope-stack depth that closes it. For a skipped
+    /// subtree: unused (the skip depth closes it).
+    depth: usize,
+    /// For a shadow: whether anything inside it went unmodelled. A shadow that
+    /// lost nothing is dropped, because the writer regenerates it exactly.
+    lossy: bool,
+}
+
+/// Elements the projection models AND whose verbatim form is kept, because the
+/// model holds their meaning but not their formatting (`docs/155` §17).
+const fn shadowed(scope: Scope, local: &[u8]) -> bool {
+    matches!(
+        (scope, local),
+        (Scope::Series, b"spPr" | b"dLbls")
+            | (Scope::Axis, b"majorGridlines" | b"minorGridlines")
+            | (Scope::Title, b"tx")
+    )
 }
 
 /// The chart-space-level fields, accumulated before the `Chart` is assembled.
@@ -481,6 +561,10 @@ struct ChartDraft {
     external_data: Option<EmbeddedPart>,
     /// Whether a `c:plotArea` was seen at all.
     saw_plot_area: bool,
+    namespaces: Vec<(String, String)>,
+    space_retained: Vec<ChartXml>,
+    chart_retained: Vec<ChartXml>,
+    plot_retained: Vec<ChartXml>,
 }
 
 /// A chart group under construction: the family's own settings are collected as
@@ -488,6 +572,7 @@ struct ChartDraft {
 /// because `c:barDir` and `c:gapWidth` are siblings rather than attributes.
 struct GroupDraft {
     local: Vec<u8>,
+    retained: Vec<ChartXml>,
     series: Vec<Series>,
     axis_ids: Vec<u32>,
     vary_colors: bool,
@@ -506,6 +591,7 @@ impl GroupDraft {
     fn new(local: &[u8]) -> Self {
         Self {
             local: local.to_vec(),
+            retained: Vec::new(),
             series: Vec::new(),
             axis_ids: Vec::new(),
             vary_colors: false,
@@ -520,6 +606,12 @@ impl GroupDraft {
             hole_size: 10,
             scatter_style: ScatterStyle::LineMarker,
         }
+    }
+
+    /// The family a group element names, with default settings — enough to
+    /// choose its schema sequence while it is still being read.
+    fn family_of(local: &[u8]) -> Option<ChartGroupKind> {
+        Self::new(local).resolve().map(|group| group.kind)
     }
 
     /// Resolves the draft into a typed group, or `None` for a family this
@@ -552,6 +644,7 @@ impl GroupDraft {
             _ => return None,
         };
         Some(ChartGroup {
+            retained: self.retained,
             kind,
             series: self.series,
             axis_ids: self.axis_ids,
@@ -582,6 +675,10 @@ impl Parser {
             axis: None,
             legend: None,
             data_labels: None,
+            captures: Vec::new(),
+            retained_bytes: 0,
+            carried: BTreeSet::new(),
+            relationship_prefix: None,
         }
     }
 
@@ -601,9 +698,11 @@ impl Parser {
         let mut saw_root = false;
 
         loop {
+            let before = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
             let event = reader
                 .read_event_into(&mut buffer)
                 .map_err(|_| ChartDecline::Malformed)?;
+            let after = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
             match &event {
                 Event::Eof => break,
                 Event::DocType(_) => return Err(ChartDecline::Malformed),
@@ -623,18 +722,48 @@ impl Parser {
                             return Err(ChartDecline::Malformed);
                         }
                         saw_root = true;
+                        self.read_namespaces(element);
                         self.scopes.push(Scope::ChartSpace);
+                        buffer.clear();
                         continue;
                     }
                     if self.skip_depth > 0 {
                         self.skip_depth += 1;
+                        buffer.clear();
                         continue;
                     }
+                    let enclosing = self.scopes.last().copied().unwrap_or(Scope::ChartSpace);
+                    let local_name = String::from_utf8_lossy(local).into_owned();
                     match self.on_start(local, element, false, chart_rels)? {
-                        Step::Push(scope) => self.scopes.push(scope),
+                        Step::Push(scope) => {
+                            if shadowed(enclosing, local)
+                                && let Some(target) = CarryTarget::of(enclosing)
+                            {
+                                self.captures.push(Capture {
+                                    start: before,
+                                    name: local_name,
+                                    target,
+                                    shadow: true,
+                                    depth: self.scopes.len(),
+                                    lossy: false,
+                                });
+                            }
+                            self.scopes.push(scope);
+                        }
                         Step::Leaf => self.scopes.push(Scope::Transparent),
                         Step::Skip => {
-                            self.record_unconsumed(local);
+                            if let Some(target) = self.carry_target(enclosing, &local_name) {
+                                self.captures.push(Capture {
+                                    start: before,
+                                    name: local_name,
+                                    target,
+                                    shadow: false,
+                                    depth: 0,
+                                    lossy: false,
+                                });
+                            } else {
+                                self.record_unconsumed(local);
+                            }
                             self.skip_depth = 1;
                         }
                         Step::SilentSkip => self.skip_depth = 1,
@@ -656,12 +785,28 @@ impl Parser {
                         });
                     }
                     if self.skip_depth > 0 {
+                        buffer.clear();
                         continue;
                     }
                     // An empty element opens no subtree, so no `Step` has anything
-                    // to enter or skip — only `Skip`'s record stands.
+                    // to enter or skip — only `Skip`'s carry-or-record stands.
+                    let enclosing = self.scopes.last().copied().unwrap_or(Scope::ChartSpace);
                     if let Step::Skip = self.on_start(local, element, true, chart_rels)? {
-                        self.record_unconsumed(local);
+                        let name = String::from_utf8_lossy(local).into_owned();
+                        match self.carry_target(enclosing, &name) {
+                            Some(target) => {
+                                self.captures.push(Capture {
+                                    start: before,
+                                    name,
+                                    target,
+                                    shadow: false,
+                                    depth: 0,
+                                    lossy: false,
+                                });
+                                self.finish_capture(xml, after);
+                            }
+                            None => self.record_unconsumed(local),
+                        }
                     }
                 }
                 Event::Text(text) => {
@@ -686,10 +831,23 @@ impl Parser {
                     depth = depth.saturating_sub(1);
                     if self.skip_depth > 0 {
                         self.skip_depth -= 1;
+                        if self.skip_depth == 0
+                            && self.captures.last().is_some_and(|capture| !capture.shadow)
+                        {
+                            self.finish_capture(xml, after);
+                        }
+                        buffer.clear();
                         continue;
                     }
                     let local = element.local_name();
                     let local = local.as_ref();
+                    // A shadow closes BEFORE `on_end` commits its scope, so the
+                    // verbatim copy lands on the container that is still open.
+                    if self.captures.last().is_some_and(|capture| {
+                        capture.shadow && capture.depth + 1 == self.scopes.len()
+                    }) {
+                        self.finish_capture(xml, after);
+                    }
                     self.on_end(local)?;
                     self.scopes.pop();
                 }
@@ -1447,7 +1605,21 @@ impl Parser {
     }
 
     /// Records an unconsumed construct by local name, bounded.
+    ///
+    /// Not while a shadow capture is open: the verbatim bytes keep whatever
+    /// inside it the projection does not model, so naming it as a loss would
+    /// describe one that does not happen.
     fn record_unconsumed(&mut self, local: &[u8]) {
+        if let Some(shadow) = self
+            .captures
+            .iter_mut()
+            .rev()
+            .find(|capture| capture.shadow)
+        {
+            shadow.lossy = true;
+            self.record_carried(local);
+            return;
+        }
         if self.unconsumed.len() >= MAX_UNCONSUMED_NAMES {
             return;
         }
@@ -1455,13 +1627,164 @@ impl Parser {
             .insert(String::from_utf8_lossy(local).into_owned());
     }
 
+    /// Records a construct the projection does not model but carries verbatim:
+    /// still named in the report (it is not drawn), not a loss (it is saved).
+    fn record_carried(&mut self, local: &[u8]) {
+        if self.carried.len() < MAX_UNCONSUMED_NAMES {
+            self.carried
+                .insert(String::from_utf8_lossy(local).into_owned());
+        }
+    }
+
+    /// The `xmlns` declarations on the root, kept so carried fragments' prefixes
+    /// resolve when the part is regenerated.
+    fn read_namespaces(&mut self, element: &BytesStart<'_>) {
+        for attribute in element.attributes().flatten() {
+            let key = attribute.key.as_ref();
+            let prefix = if key == b"xmlns" {
+                String::new()
+            } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                String::from_utf8_lossy(prefix).into_owned()
+            } else {
+                continue;
+            };
+            let uri = String::from_utf8_lossy(&attribute.value).into_owned();
+            if uri == RELATIONSHIPS_NS {
+                self.relationship_prefix = Some(prefix.clone());
+            }
+            self.chart.namespaces.push((prefix, uri));
+        }
+    }
+
+    /// Where an unmodelled child of `scope` named `name` is carried, or `None`
+    /// when it cannot be: the scope carries nothing, its schema sequence does
+    /// not admit the name (so a writer could not put it back), a shadow is open
+    /// (its bytes already keep it), or the root binds one of the writer's own
+    /// prefixes to a different namespace (so a carried prefix would resolve to
+    /// the wrong one).
+    fn carry_target(&self, scope: Scope, name: &str) -> Option<CarryTarget> {
+        if self.captures.iter().any(|capture| capture.shadow) {
+            return None;
+        }
+        let target = CarryTarget::of(scope)?;
+        let container = self.container_of(target)?;
+        chart_child_rank(container, name)?;
+        let conflicting = self.chart.namespaces.iter().any(|(prefix, uri)| {
+            matches!(
+                (prefix.as_str(), uri.as_str()),
+                ("c", other) if other != CHART_NS
+            ) || matches!((prefix.as_str(), uri.as_str()), ("a", other) if other != DRAWING_NS)
+                || matches!((prefix.as_str(), uri.as_str()), ("r", other) if other != RELATIONSHIPS_NS)
+        });
+        (!conflicting).then_some(target)
+    }
+
+    /// The schema container a carry target writes into, which for a group, a
+    /// series or an axis depends on the family or kind being read.
+    fn container_of(&self, target: CarryTarget) -> Option<ChartContainer> {
+        let family = || {
+            self.group
+                .as_ref()
+                .and_then(|group| GroupDraft::family_of(&group.local))
+        };
+        Some(match target {
+            CarryTarget::Space => ChartContainer::Space,
+            CarryTarget::Chart => ChartContainer::Chart,
+            CarryTarget::PlotArea => ChartContainer::PlotArea,
+            CarryTarget::Group => ChartContainer::Group(family()?),
+            CarryTarget::Series => ChartContainer::Series(family()?),
+            CarryTarget::Axis => ChartContainer::Axis(self.axis.as_ref()?.kind),
+            CarryTarget::Legend => ChartContainer::Legend,
+            CarryTarget::Title => ChartContainer::Title,
+        })
+    }
+
+    /// Closes the innermost capture at byte `end` and carries it, or records it
+    /// as unconsumed when it cannot be carried: not UTF-8, naming a
+    /// relationship (its target would not be in a regenerated part's `_rels`),
+    /// or past [`MAX_CHART_RETAINED_BYTES`].
+    fn finish_capture(&mut self, xml: &[u8], end: usize) {
+        let Some(capture) = self.captures.pop() else {
+            return;
+        };
+        let carried = xml
+            .get(capture.start..end)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::trim)
+            .filter(|fragment| {
+                self.retained_bytes.saturating_add(fragment.len()) <= MAX_CHART_RETAINED_BYTES
+            })
+            .filter(|fragment| {
+                self.relationship_prefix.as_deref().is_none_or(|prefix| {
+                    !["id", "embed", "link", "pict"]
+                        .iter()
+                        .any(|attr| fragment.contains(&format!("{prefix}:{attr}=")))
+                })
+            })
+            .map(str::to_owned);
+        let Some(fragment) = carried else {
+            self.record_unconsumed(capture.name.as_bytes());
+            return;
+        };
+        // A shadow the model fully holds is regenerated exactly; keeping its
+        // bytes would only make every round trip carry a redundant copy. A
+        // title's rich text is the exception the scope walk cannot see: its run
+        // and paragraph properties are read as scaffolding, so its formatting
+        // is lost unless the bytes are kept.
+        let formatted_text = capture.name == "tx"
+            && ["rPr ", "rPr>", "pPr", "bodyPr "]
+                .iter()
+                .any(|marker| fragment.contains(marker));
+        if capture.shadow && !capture.lossy && !formatted_text {
+            return;
+        }
+        let size = fragment.len();
+        let item = ChartXml {
+            name: capture.name.clone(),
+            xml: fragment,
+        };
+        let slot = match capture.target {
+            CarryTarget::Space => Some(&mut self.chart.space_retained),
+            CarryTarget::Chart => Some(&mut self.chart.chart_retained),
+            CarryTarget::PlotArea => Some(&mut self.chart.plot_retained),
+            CarryTarget::Group => self.group.as_mut().map(|group| &mut group.retained),
+            CarryTarget::Series => self.series.as_mut().map(|series| &mut series.retained),
+            CarryTarget::Axis => self.axis.as_mut().map(|axis| &mut axis.retained),
+            CarryTarget::Legend => self.legend.as_mut().map(|legend| &mut legend.retained),
+            CarryTarget::Title => self.title.as_mut().map(|title| &mut title.retained),
+        };
+        match slot {
+            Some(slot) => {
+                slot.push(item);
+                self.retained_bytes += size;
+                if !capture.shadow {
+                    self.record_carried(capture.name.as_bytes());
+                }
+            }
+            None => self.record_unconsumed(capture.name.as_bytes()),
+        }
+    }
+
     /// Assembles the projection, or declines when there is nothing to project.
     fn finish(&mut self) -> ChartRead {
-        let unconsumed = std::mem::take(&mut self.unconsumed);
+        let lost = std::mem::take(&mut self.unconsumed);
+        // The writer binds `c`, `a` and `r` itself, and a chart that carries
+        // nothing needs no other prefix — so a plain chart round-trips equal.
+        if self.retained_bytes == 0 {
+            self.chart.namespaces.clear();
+        }
+        self.chart.namespaces.retain(|(prefix, uri)| {
+            !matches!(
+                (prefix.as_str(), uri.as_str()),
+                ("c", CHART_NS) | ("a", DRAWING_NS) | ("r", RELATIONSHIPS_NS)
+            )
+        });
+        let mut unconsumed = lost.clone();
+        unconsumed.extend(std::mem::take(&mut self.carried));
         if !self.chart.saw_plot_area || self.chart.groups.is_empty() {
             return ChartRead::decline(ChartDecline::NothingToProject, unconsumed);
         }
-        let coverage = if unconsumed.is_empty() {
+        let coverage = if lost.is_empty() {
             ChartCoverage::Complete
         } else {
             ChartCoverage::Partial
@@ -1469,11 +1792,15 @@ impl Parser {
         let draft = std::mem::take(&mut self.chart);
         ChartRead {
             projection: Some(Chart {
+                chart_retained: draft.chart_retained,
+                namespaces: draft.namespaces,
+                space_retained: draft.space_retained,
                 object: self.object,
                 coverage,
                 title: draft.title,
                 auto_title_deleted: draft.auto_title_deleted,
                 plot_area: PlotArea {
+                    retained: draft.plot_retained,
                     groups: draft.groups,
                     axes: draft.axes,
                 },
@@ -1587,6 +1914,106 @@ mod tests {
     /// A bar group with one series whose values are cached, spelled exactly as
     /// `fixtures/generated/chart.docx` spells them.
     const CACHED_BAR: &str = r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart>"#;
+
+    /// A chart as Word 2016 writes one by default (synthetic, written from the
+    /// schema — no customer file), and the three places it used to go wrong.
+    pub(crate) const WORD_DEFAULT_CHART: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:c16r2="http://schemas.microsoft.com/office/drawing/2015/06/chart" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><mc:AlternateContent><mc:Choice Requires="c14"><c14:style val="102"/></mc:Choice><mc:Fallback><c:style val="2"/></mc:Fallback></mc:AlternateContent><c:chart><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series 1</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:invertIfNegative val="0"/><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>Category 1</c:v></c:pt><c:pt idx="1"><c:v>Category 2</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>4.3</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val><c:extLst><c:ext uri="{C3380CC4-5D6E-409C-BE32-E72D297353CC}" xmlns:c16="http://schemas.microsoft.com/office/drawing/2014/chart"><c16:uniqueId val="{00000000-0001-0000-0000-000000000000}"/></c:ext></c:extLst></c:ser><c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls><c:gapWidth val="219"/><c:overlap val="-27"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:noFill/><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr rot="-60000000" spcFirstLastPara="1" vertOverflow="ellipsis" vert="horz" wrap="square" anchor="ctr" anchorCtr="1"/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900" b="0" i="0" u="none" strike="noStrike" kern="1200" baseline="0"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="65000"/><a:lumOff val="35000"/></a:schemeClr></a:solidFill><a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr><c:crossAx val="2"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr></c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr><c:crossAx val="1"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr><c:externalData r:id="rId3"><c:autoUpdate val="0"/></c:externalData></c:chartSpace>"#;
+
+    /// **A default Word chart is fully understood, and keeps its formatting.**
+    ///
+    /// Before `docs/155` §17 this chart projected `Partial` on eleven constructs
+    /// none of which its data depends on — axis and legend `c:spPr`/`c:txPr`,
+    /// `c:lang`, the style's `mc:AlternateContent`, `c:crosses`, `c:lblAlgn` —
+    /// and `Partial` forbids regeneration, so every chart Word wrote opened
+    /// read-only. Each is now carried verbatim on the container it came from.
+    #[test]
+    fn a_default_word_chart_is_complete_and_carries_what_it_does_not_model() {
+        let read = read(WORD_DEFAULT_CHART.as_bytes());
+        assert_eq!(
+            read.projection.as_ref().map(|chart| chart.coverage),
+            Some(ChartCoverage::Complete),
+            "a default Word chart must be fully carried: {:?}",
+            read.unconsumed
+        );
+        // Still NAMED — none of it is drawn — just no longer a loss.
+        assert!(read.unconsumed.contains("txPr") && read.unconsumed.contains("lang"));
+        let chart = read.projection.expect("a projection");
+        assert_eq!(chart.coverage, ChartCoverage::Complete);
+        fn names(fragments: &[ChartXml]) -> Vec<&str> {
+            fragments
+                .iter()
+                .map(|fragment| fragment.name.as_str())
+                .collect()
+        }
+        assert_eq!(
+            names(&chart.space_retained),
+            ["lang", "AlternateContent", "spPr", "txPr"]
+        );
+        assert_eq!(names(&chart.plot_area.retained), ["spPr"]);
+        let group = &chart.plot_area.groups[0];
+        assert_eq!(names(&group.retained), ["dLbls"]);
+        // The series' `c:spPr` is a SHADOW: its fill is modelled AND its bytes
+        // are kept, because the model does not hold `a:effectLst`.
+        assert_eq!(names(&group.series[0].retained), ["spPr"]);
+        assert!(
+            group.series[0].fill.is_some(),
+            "the shadowed fill was not also parsed"
+        );
+        assert_eq!(
+            names(&chart.plot_area.axes[0].retained),
+            ["spPr", "txPr", "crosses", "auto", "lblAlgn", "lblOffset"]
+        );
+        assert_eq!(
+            names(&chart.plot_area.axes[1].retained),
+            ["majorGridlines", "spPr", "txPr", "crosses", "crossBetween"]
+        );
+        assert!(chart.plot_area.axes[1].major_gridlines);
+        assert_eq!(
+            names(&chart.legend.expect("a legend").retained),
+            ["spPr", "txPr"]
+        );
+        // Verbatim means verbatim: the axis text size is still in the bytes.
+        assert!(
+            chart.plot_area.axes[0].retained[1]
+                .xml
+                .contains(r#"sz="900""#)
+        );
+        // And the root's prefixes travel with them, so `mc:` and `c14:` resolve.
+        assert!(chart.namespaces.iter().any(|(prefix, _)| prefix == "c14"));
+    }
+
+    /// **What cannot be put back is still a loss.** An element its container's
+    /// schema sequence does not admit has no position a writer could use, and
+    /// one naming a relationship would point at nothing in a regenerated part.
+    #[test]
+    fn an_unplaceable_or_relationship_bearing_element_is_still_unconsumed() {
+        let foreign = WORD_DEFAULT_CHART.replace(
+            "<c:plotVisOnly",
+            "<c:notInTheSchema val=\"1\"/><c:plotVisOnly",
+        );
+        let first = read(foreign.as_bytes());
+        assert!(
+            first.unconsumed.contains("notInTheSchema"),
+            "{:?}",
+            first.unconsumed
+        );
+        assert_eq!(
+            first.projection.expect("a projection").coverage,
+            ChartCoverage::Partial
+        );
+
+        let shapes = WORD_DEFAULT_CHART.replace(
+            "</c:chartSpace>",
+            r#"<c:userShapes r:id="rId9"/></c:chartSpace>"#,
+        );
+        let second = read(shapes.as_bytes());
+        assert!(
+            second.unconsumed.contains("userShapes"),
+            "{:?}",
+            second.unconsumed
+        );
+    }
 
     fn read(xml: &[u8]) -> ChartRead {
         read_chart_part(xml, anchor(), &BTreeMap::new(), ImportConfig::default())
@@ -1827,10 +2254,20 @@ mod tests {
                 "{expected} must be named as unconsumed; got {:?}",
                 read.unconsumed
             );
+            // Named (it is not modelled or drawn) but carried verbatim on the
+            // series, so a regenerated save keeps it: not a loss (§17) — unless
+            // the BAR series sequence has no place for it. `c:explosion` is a
+            // pie-slice setting; `CT_BarSer` does not admit it, so a writer
+            // could not put it back and it stays a loss, honestly.
+            let placeable = expected != "explosion";
             assert_eq!(
-                read.projection.expect("a projection").coverage,
-                ChartCoverage::Partial,
-                "{expected} is a construct the projection does not hold, so coverage is partial"
+                read.projection.as_ref().map(|chart| chart.coverage),
+                Some(if placeable {
+                    ChartCoverage::Complete
+                } else {
+                    ChartCoverage::Partial
+                }),
+                "{expected}"
             );
         }
         for (markup, expected) in [

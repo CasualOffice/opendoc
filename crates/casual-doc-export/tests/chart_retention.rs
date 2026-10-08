@@ -325,17 +325,29 @@ fn the_chart_projection_changes_no_byte_of_the_retained_part() {
         &casual_doc_model::v1::ChartValue::Number("4.30".to_owned()),
         "the cache is read verbatim"
     );
-    // The fixture carries an out-of-scope `c:trendline`, so the projection is
-    // partial and regeneration is refused (`docs/155` §6.1 consequence 1).
+    // The fixture carries an out-of-scope `c:trendline`. Since `docs/155` §17
+    // it is carried verbatim on its series, so it would survive a regenerated
+    // save and the projection is complete — but the chart is NOT dirty, so
+    // retention still wins and the closure must still come back byte-identical
+    // below. That second half is what this test is for.
     assert_eq!(
         chart.coverage,
-        casual_doc_model::v1::ChartCoverage::Partial,
-        "a chart carrying a construct the model does not hold is partial"
+        casual_doc_model::v1::ChartCoverage::Complete,
+        "a carried construct is not a loss"
     );
     assert!(
-        !chart.coverage.permits_regeneration(),
-        "a partially projected chart must not be regenerated from the model"
+        chart
+            .plot_area
+            .groups
+            .iter()
+            .flat_map(|group| &group.series)
+            .any(|series| series
+                .retained
+                .iter()
+                .any(|fragment| fragment.name == "trendline")),
+        "the trendline must be carried on its series"
     );
+    assert!(!chart.dirty, "an imported chart starts clean");
 
     // And every part of the closure still comes back byte-identical.
     let written = write_document_with_retained_parts(
