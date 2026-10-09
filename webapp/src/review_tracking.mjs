@@ -58,7 +58,11 @@ export function createReviewTracking() {
       // `seen` is NOT advanced here: the edit's own landing is what `follow`
       // sees, so a refused switch (a tracked-changes restriction locks the
       // setting) leaves nothing half-recorded.
-      void runEdit(() => doc.setTrackRevisions(wanted, caret?.node ?? "", caret?.offset ?? 0));
+      // `keepSelection`: a setting has no place in the text, so the reader's
+      // selection survives the switch — a word selected before choosing
+      // Suggesting is still selected after, and typing replaces it as a tracked
+      // replacement rather than inserting beside a collapsed caret.
+      void runEdit(() => doc.setTrackRevisions(wanted, caret?.node ?? "", caret?.offset ?? 0), { keepSelection: true });
     },
 
     /** After a landed edit: the mode to switch to when the edit changed the

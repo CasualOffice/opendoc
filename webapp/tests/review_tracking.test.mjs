@@ -22,7 +22,7 @@ function fakeDoc(tracks) {
     },
   };
 }
-const runEditInto = (ran) => (thunk) => ran.push(thunk());
+const runEditInto = (ran) => (thunk, options) => ran.push({ result: thunk(), options });
 
 test("a document whose file tracks changes opens in Suggesting, never stronger than the session allows", () => {
   assert.equal(createReviewTracking().openMode("editing", true), "suggesting");
@@ -42,6 +42,7 @@ test("the reader's own switch writes the setting, once, at the caret", () => {
     ["setTrackRevisions", true, "p1", 3],
   ]);
   assert.equal(ran.length, 1, "through the edit runner, so it is one undoable edit");
+  assert.deepEqual(ran[0].options, { keepSelection: true }, "and the reader's selection survives it");
 
   // Asking again for what the document already says writes nothing.
   tracking.apply({ doc, mode: "suggesting", byUser: true, caret: null, runEdit: runEditInto(ran) });
