@@ -11129,6 +11129,9 @@ mod tests {
             prog_id: None,
         }));
         let projection = Chart {
+            chart_retained: Default::default(),
+            namespaces: Default::default(),
+            space_retained: Default::default(),
             object,
             coverage: ChartCoverage::default(),
             title: None,

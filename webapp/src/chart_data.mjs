@@ -1,69 +1,35 @@
-// The chart panel: the data behind a chart, its type, its title and its legend.
+// The chart's data, as ONLYOFFICE and Word edit it: a sheet in its own window.
 //
-// `insertChart` put Word's sample data on the page and offered no way to change
-// any of it, so a chart was a picture of three made-up series. The engine half
-// (`casual-doc-wasm/src/chart.rs`) is one read, `chartData`, and one write,
-// `setChartData`; this module is the surface that reaches them.
+// ONLYOFFICE's Chart tab ▸ Edit Data opens a spreadsheet editor over the
+// document; Word's Chart Design ▸ Edit Data opens a data sheet. Both are a grid
+// of rows (categories) and columns (series) that the chart follows. This module
+// is that window — a modal Chart Data dialog — plus the grid arithmetic it runs
+// on. The chart's TYPE, elements, style and axes are not here: they are the
+// Chart tab's and the settings panel's (`chart_panel.mjs`), all reading one
+// command tree (`chart_commands.mjs`), which is ONLYOFFICE's own split.
 //
-// ## Designed from the competitive standard first
-//
-// | Word / Google Docs | Here |
+// | Word / ONLYOFFICE | Here |
 // | --- | --- |
-// | Insert ▸ Chart opens the data sheet straight away (Word); Docs' chart editor is a right-hand panel with Setup and Customize | Insert ▸ Chart selects the new chart and opens this right-hand panel on its grid |
-// | Data is a grid: row 1 series names, column A category names, the body numbers | the same grid, with the same orientation |
-// | Edits apply to the chart as they are made | each cell applies when it is committed (Enter, Tab, leaving it), one undo step per cell |
-// | Paste a block from Excel / Sheets into the sheet | a tab-separated paste fills from the cell it lands in and grows the grid to fit |
-// | Change chart type is a gallery | seven families as a radio group, enumerated by the ENGINE so the list cannot drift |
-// | Chart title and legend position on Customize / Chart Elements | a title field and a legend menu |
-// | Double-click a chart, or right-click ▸ Edit Data | double-click, and "Edit data" on the chart's chip |
+// | Insert ▸ Chart opens the data straight away | the dialog opens on the new chart, first value focused |
+// | row 1 series names, column A categories, the body numbers | the same grid |
+// | edits reach the chart as they are made | each committed cell is one undoable write; the chart repaints behind the dialog |
+// | paste a block from a spreadsheet | a tab-separated paste fills from the cell it lands in and grows the grid |
 //
-// Where the engine refuses (a chart using constructs this build does not
-// model, or a combination chart) the grid is still SHOWN, read-only, with the
-// reason above it — a control that vanishes cannot be told from a bug. A chart
-// imported from a file IS editable; when it names an embedded workbook the
-// panel says, before the first change, that saving replaces it.
+// A chart the engine will not let anyone change (one using constructs this
+// build cannot rewrite, or a combination chart) opens READ-ONLY with the reason
+// above the grid — a control that vanishes cannot be told from a bug.
 //
-// ## Cost
-//
-// Every read and write is O(series × rows) in the ONE chart named; nothing here
-// walks the document (`docs/107` §4). `sync` runs on repaint and costs one
-// `chartData` read and a string compare while the panel is open, nothing while
-// it is closed.
-import { editRefusalMessage } from "./edit_errors.mjs";
+// Cost: every read and write is O(series × rows) in the one chart; nothing
+// walks the document (`docs/107` §4).
 
-/** The icon each gallery family is drawn with, from the self-hosted Material
- *  Symbols font. A family the engine adds later falls back to `insert_chart`
- *  rather than to nothing. */
-const KIND_ICONS = Object.freeze({
-  column: "bar_chart",
-  bar: "align_horizontal_left",
-  line: "show_chart",
-  area: "area_chart",
-  pie: "pie_chart",
-  doughnut: "donut_large",
-  scatter: "scatter_plot",
-});
-
-/** Each family's name in the catalogue. Spelled out, never built from the
- *  token, so the locale extractor can see every key a translator must answer. */
-const KIND_LABEL_KEYS = Object.freeze({
-  column: "chart.kind.column",
-  bar: "chart.kind.bar",
-  line: "chart.kind.line",
-  area: "chart.kind.area",
-  pie: "chart.kind.pie",
-  doughnut: "chart.kind.doughnut",
-  scatter: "chart.kind.scatter",
-});
-
-/** Word's legend positions, in the order its Chart Elements flyout lists them,
- *  each with its catalogue key. */
-const LEGEND_LABEL_KEYS = Object.freeze({
+/** Legend positions in ONLYOFFICE's Chart Elements ▸ Legend order, each with
+ *  its catalogue key. Spelled out so the locale extractor sees every key. */
+export const LEGEND_LABEL_KEYS = Object.freeze({
   none: "chart.legend.none",
-  right: "chart.legend.right",
   top: "chart.legend.top",
-  left: "chart.legend.left",
   bottom: "chart.legend.bottom",
+  left: "chart.legend.left",
+  right: "chart.legend.right",
   topRight: "chart.legend.topRight",
 });
 export const LEGEND_CHOICES = Object.freeze(Object.keys(LEGEND_LABEL_KEYS));
@@ -120,7 +86,8 @@ function clonePatch(patch) {
   };
 }
 
-/** The write payload a view describes — the six fields `setChartData` reads. */
+/** The write payload a view describes — the six grid fields `setChartData`
+ *  reads. Formatting is sent separately, as `format`, only when it changes. */
 export function patchFromView(view) {
   return clonePatch({
     kind: view.kind,
@@ -208,46 +175,21 @@ export function pasteBlock(patch, row, column, block, limits, names) {
   return { patch: next, clipped };
 }
 
-/** Builds the chart panel. Every dependency is injected (`io`), so the panel
- *  never reaches into `main.js` state and the whole edit path is testable.
+/** The Chart Data dialog.
  *
  *  @param {object} io
- *  @param {() => any} io.doc                  the live document handle, or null
- *  @param {() => {node: string, kind: string} | null} io.selection
- *  @param {() => boolean} io.blocked          true (after telling the reader) when no edit may apply now
- *  @param {(result: unknown) => Promise<unknown>} io.apply   lands an EditResult
- *  @param {(text: string, kind?: string) => void} io.setStatus
+ *  @param {ReturnType<import("./chart_commands.mjs").createChartBridge>} io.bridge
+ *  @param {(element: HTMLElement, options: object) => {open: Function, close: Function, isOpen: boolean}} io.registerModal
  *  @param {(key: string, params?: object) => string} io.t
- *  @param {() => HTMLElement} [io.host]       where the panel mounts
+ *  @param {() => void} [io.fallbackFocus]
  */
-export function createChartDataPanel(io) {
+export function createChartDataDialog(io) {
   const t = io.t;
   let el = null;
+  let modal = null;
   let node = null;
   let view = null;
-  let lastJson = "";
-  let busy = false;
   const parts = {};
-
-  /** The sentence for a coded engine refusal, in the reader's language when the
-   *  code is one this panel can produce; the engine's own sentence otherwise. */
-  const REFUSAL_KEYS = {
-    "chart.partial-coverage": "chart.refused.partial",
-    "chart.many-groups": "chart.refused.combo",
-  };
-  const routeRefusal = (code) => (REFUSAL_KEYS[code] ? t(REFUSAL_KEYS[code]) : "");
-
-  function read(target) {
-    const doc = io.doc();
-    if (!doc || !target || typeof doc.chartData !== "function") return { json: "", view: null };
-    const json = doc.chartData(target) || "";
-    if (!json) return { json: "", view: null };
-    try {
-      return { json, view: JSON.parse(json) };
-    } catch {
-      return { json: "", view: null };
-    }
-  }
 
   function note(message, isError = false) {
     parts.note.textContent = message || "";
@@ -259,17 +201,11 @@ export function createChartDataPanel(io) {
     series: (n) => t("chart.newSeries", { n }),
   };
 
-  /** Everything the panel currently shows, as a write payload. Read from the
-   *  DOM so a value typed and not yet committed is part of the next write — a
-   *  structural edit made while a cell is mid-edit must not throw that cell
-   *  away. O(cells). */
+  /** The grid as a write payload, read from the DOM so a value typed and not
+   *  yet committed is part of the next write. O(cells). */
   function draft() {
     if (!view) return null;
     const patch = patchFromView(view);
-    patch.title = parts.title.value;
-    patch.legend = parts.legend.value;
-    const checked = parts.gallery.querySelector('[aria-checked="true"]');
-    if (checked) patch.kind = checked.dataset.kind;
     for (const input of parts.grid.querySelectorAll("input[data-row]")) {
       const r = Number(input.dataset.row);
       const c = Number(input.dataset.col);
@@ -299,21 +235,10 @@ export function createChartDataPanel(io) {
     return null;
   }
 
-  /** Applies `patch` as one undoable edit, then redraws the panel from what the
-   *  engine now holds — never from the patch, so the panel can only ever show
-   *  data the document actually has. `focus` names the cell to land on after. */
-  let queue = Promise.resolve(true);
-  function commit(patch, focus = null) {
-    // Serialised, never dropped: a cell committed on blur and the button click
-    // that caused the blur arrive together, and each payload is the WHOLE grid,
-    // so applying them in order is exactly right and skipping the second is not.
-    queue = queue.then(() => commitNow(patch, focus), () => commitNow(patch, focus));
-    return queue;
-  }
-
-  async function commitNow(patch, focus) {
-    const doc = io.doc();
-    if (!doc || !node || !view?.editable) return false;
+  /** Writes `patch` and redraws from what the engine NOW holds — never from the
+   *  patch, so the grid can only show data the document has. */
+  async function commit(patch, focus = null) {
+    if (!node || !view?.editable) return false;
     const bad = invalidCell(patch);
     if (bad) {
       note(bad.sentence, true);
@@ -322,30 +247,16 @@ export function createChartDataPanel(io) {
       cell?.focus();
       return false;
     }
-    if (io.blocked()) {
-      render(read(node), focus);
-      return false;
-    }
-    let result;
-    try {
-      result = doc.setChartData(node, JSON.stringify(patch));
-    } catch (err) {
-      // An unchanged grid is not a failure: a cell left without being retyped
-      // commits the same chart, and the engine declines to push an undo step
-      // that undoes nothing.
-      if (err?.code === "chart.unchanged") return false;
-      note(editRefusalMessage(err, { routeRefusal }), true);
-      return false;
-    }
-    busy = true;
-    try {
-      await io.apply(result);
-    } finally {
-      busy = false;
-    }
-    note("");
-    render(read(node), focus);
-    return true;
+    let refused = "";
+    const changed = await io.bridge.write(node, (current) => ({ ...patch, kind: current.kind, title: current.title, legend: current.legend }), {
+      onRefused: (sentence) => {
+        refused = sentence;
+      },
+    });
+    if (refused) note(refused, true);
+    else note("");
+    render(focus);
+    return changed;
   }
 
   function cellInput(r, c, value, label) {
@@ -364,7 +275,7 @@ export function createChartDataPanel(io) {
     } else if (view.titleLimit) {
       input.maxLength = view.titleLimit;
     }
-    input.disabled = !view.editable;
+    input.readOnly = !view.editable;
     return input;
   }
 
@@ -382,40 +293,6 @@ export function createChartDataPanel(io) {
     btn.disabled = !view.editable || !!disabledReason;
     btn.addEventListener("click", onClick);
     return btn;
-  }
-
-  function renderGallery() {
-    parts.gallery.replaceChildren();
-    for (const kind of view.kinds) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chart-kind";
-      btn.dataset.kind = kind;
-      btn.setAttribute("role", "radio");
-      const on = kind === view.kind;
-      btn.setAttribute("aria-checked", String(on));
-      btn.tabIndex = on ? 0 : -1;
-      btn.disabled = !view.editable;
-      const glyph = document.createElement("span");
-      glyph.className = "ms";
-      glyph.setAttribute("aria-hidden", "true");
-      glyph.textContent = KIND_ICONS[kind] ?? "insert_chart";
-      const text = document.createElement("span");
-      text.textContent = KIND_LABEL_KEYS[kind] ? t(KIND_LABEL_KEYS[kind]) : kind;
-      btn.append(glyph, text);
-      btn.addEventListener("click", () => chooseKind(kind));
-      parts.gallery.append(btn);
-    }
-  }
-
-  function chooseKind(kind) {
-    for (const btn of parts.gallery.querySelectorAll(".chart-kind")) {
-      const on = btn.dataset.kind === kind;
-      btn.setAttribute("aria-checked", String(on));
-      btn.tabIndex = on ? 0 : -1;
-    }
-    const patch = draft();
-    if (patch) void commit({ ...patch, kind }, { kind });
   }
 
   function renderGrid() {
@@ -484,43 +361,55 @@ export function createChartDataPanel(io) {
     parts.addSeries.title = fullSeries;
   }
 
-  function render({ json, view: next }, focus = null) {
-    if (!el) return;
+  function render(focus = null) {
+    if (!el || !node) return;
+    // A redraw replaces every input, so without this the cell being typed in
+    // vanishes from under the caret — and a late `change` from the replaced
+    // input (Chrome fires one on removal) redraws AGAIN with no target, which
+    // dropped focus onto <body>. The cell keeps focus unless told otherwise.
+    const active = document.activeElement;
+    if (!focus && active instanceof HTMLInputElement && parts.grid.contains(active)) {
+      focus = { row: Number(active.dataset.row), col: Number(active.dataset.col), keepCaret: true };
+    }
+    const next = io.bridge.view(node);
     if (!next) {
       close();
       return;
     }
     view = next;
-    lastJson = json;
-    // Read-only, with the reason — or editable, with the one consequence a
-    // reader must know BEFORE the first change: an imported chart's embedded
-    // workbook is replaced on save (`docs/155` §12 Q-A).
     const notice = !view.editable
-      ? routeRefusal(view.code) || view.reason
+      ? io.bridge.routeRefusal(view.code) || view.reason
       : view.replacesWorkbook
         ? t("chart.replacesWorkbook")
         : "";
     parts.reason.hidden = !notice;
     parts.reason.textContent = notice;
-    parts.title.value = view.title;
-    parts.title.disabled = !view.editable;
-    if (view.titleLimit) parts.title.maxLength = view.titleLimit;
-    parts.legend.value = view.legend;
-    parts.legend.disabled = !view.editable;
-    renderGallery();
+    parts.reason.classList.toggle("is-refusal", !view.editable);
     renderGrid();
     if (!focus) return;
-    if (focus.kind) parts.gallery.querySelector(`[data-kind="${focus.kind}"]`)?.focus();
-    else if (focus.field) parts[focus.field]?.focus();
-    else {
-      const cell = parts.grid.querySelector(`input[data-row="${focus.row}"][data-col="${focus.col}"]`);
-      cell?.focus();
-      cell?.select();
-    }
+    const cell = parts.grid.querySelector(`input[data-row="${focus.row}"][data-col="${focus.col}"]`);
+    cell?.focus();
+    if (!focus.keepCaret) cell?.select();
   }
 
-  /** Spreadsheet keys: Enter commits and moves down, Tab across, arrows move
-   *  when the caret is at the edge of the text, Escape abandons the cell. */
+  /** Abandons the entry in the focused cell, if it differs from the document's
+   *  value or was refused. True when there was one to abandon. */
+  function revertPendingCell() {
+    const input = document.activeElement;
+    if (!(input instanceof HTMLInputElement) || !parts.grid?.contains(input) || !view) return false;
+    const r = Number(input.dataset.row);
+    const c = Number(input.dataset.col);
+    const original = (r === -1 ? view.series[c] : c === -1 ? view.labels[r] : view.cells[r]?.[c]) ?? "";
+    if (input.value === original && !input.hasAttribute("aria-invalid")) return false;
+    input.value = original;
+    input.removeAttribute("aria-invalid");
+    note("");
+    return true;
+  }
+
+  /** Spreadsheet keys: Enter commits and moves down (adding a row on the last),
+   *  Tab across, arrows at the edge of the text. Escape is the modal's, which
+   *  asks `revertPendingCell` first. */
   function onGridKey(event) {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.dataset.row === undefined) return;
@@ -532,24 +421,11 @@ export function createChartDataPanel(io) {
     else if (event.key === "ArrowUp") to = { row: r - 1, col: c };
     else if (event.key === "ArrowRight" && input.selectionStart === input.value.length) to = { row: r, col: c + 1 };
     else if (event.key === "ArrowLeft" && input.selectionEnd === 0) to = { row: r, col: c - 1 };
-    else if (event.key === "Escape") {
-      // First Escape abandons a pending entry; on an untouched cell it falls
-      // through to the panel, which closes — a spreadsheet's two-step Escape.
-      const original = (r === -1 ? view.series[c] : c === -1 ? view.labels[r] : view.cells[r][c]) ?? "";
-      if (input.value === original && !input.hasAttribute("aria-invalid")) return;
-      event.preventDefault();
-      event.stopPropagation();
-      input.value = original;
-      input.removeAttribute("aria-invalid");
-      note("");
-      return;
-    }
     if (!to) return;
     event.preventDefault();
     const rows = view.labels.length;
     const columns = view.series.length;
-    // Enter on the last row adds a row, as typing down a spreadsheet column does.
-    if (event.key === "Enter" && to.row >= rows && rows < view.maxRows) {
+    if (event.key === "Enter" && to.row >= rows && rows < view.maxRows && view.editable) {
       const patch = draft();
       if (patch) void commit(insertRow(patch, rows - 1, names.row(rows + 1)), { row: rows, col: c });
       return;
@@ -572,9 +448,7 @@ export function createChartDataPanel(io) {
   function onGridPaste(event) {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.dataset.row === undefined || !view?.editable) return;
-    const text = event.clipboardData?.getData("text/plain") ?? "";
-    const block = parseClipboardGrid(text);
-    // A single value is an ordinary paste into the field the caret is in.
+    const block = parseClipboardGrid(event.clipboardData?.getData("text/plain") ?? "");
     if (block.length === 1 && block[0].length === 1) return;
     event.preventDefault();
     const patch = draft();
@@ -588,105 +462,44 @@ export function createChartDataPanel(io) {
   }
 
   function ensure() {
-    if (el) return el;
-    el = document.createElement("aside");
-    el.className = "side-panel properties-panel chart-data-panel";
-    el.id = "chartDataPanel";
+    if (el) return;
+    el = document.createElement("div");
+    el.id = "chartDataDialog";
+    el.className = "dialog-overlay chart-data-overlay";
     el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
     el.setAttribute("aria-labelledby", "chartDataTitle");
-    const headEl = document.createElement("header");
-    headEl.className = "panel-head properties-panel-head";
+    el.setAttribute("aria-describedby", "chartDataDescription");
+    const card = document.createElement("section");
+    card.className = "dialog-card chart-data-card";
+    const head = document.createElement("header");
+    head.className = "dialog-head";
     const heading = document.createElement("div");
-    heading.className = "properties-panel-heading";
-    const titleWrap = document.createElement("span");
-    const strong = document.createElement("strong");
-    strong.className = "panel-title";
-    strong.id = "chartDataTitle";
-    strong.textContent = t("chart.panelTitle");
-    const small = document.createElement("small");
-    small.textContent = t("chart.panelIntro");
-    titleWrap.append(strong, small);
-    heading.append(titleWrap);
+    heading.className = "dialog-heading";
+    const titles = document.createElement("div");
+    const h2 = document.createElement("h2");
+    h2.id = "chartDataTitle";
+    h2.textContent = t("chart.dataTitle");
+    const p = document.createElement("p");
+    p.id = "chartDataDescription";
+    p.textContent = t("chart.dataHint");
+    titles.append(h2, p);
+    heading.append(titles);
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
-    closeBtn.className = "panel-close";
-    closeBtn.setAttribute("aria-label", t("chart.close"));
-    closeBtn.title = t("chart.close");
+    closeBtn.className = "dialog-close";
+    closeBtn.title = t("chart.closeData");
+    closeBtn.setAttribute("aria-label", t("chart.closeData"));
     closeBtn.innerHTML = '<span class="ms" aria-hidden="true">close</span>';
     closeBtn.addEventListener("click", () => close());
-    headEl.append(heading, closeBtn);
+    head.append(heading, closeBtn);
 
     const body = document.createElement("div");
-    body.className = "panel-body properties-panel-body";
+    body.className = "dialog-body chart-data-body";
     parts.reason = document.createElement("p");
     parts.reason.className = "chart-data-reason";
     parts.reason.hidden = true;
-
-    const typeGroup = document.createElement("fieldset");
-    typeGroup.className = "dialog-group property-section";
-    const typeLegend = document.createElement("legend");
-    typeLegend.textContent = t("chart.typeHeading");
-    parts.gallery = document.createElement("div");
-    parts.gallery.className = "chart-kind-gallery";
-    parts.gallery.setAttribute("role", "radiogroup");
-    parts.gallery.setAttribute("aria-label", t("chart.typeHeading"));
-    parts.gallery.addEventListener("keydown", (event) => {
-      const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-      if (!(event.key in keys)) return;
-      event.preventDefault();
-      const buttons = [...parts.gallery.querySelectorAll(".chart-kind")];
-      const at = buttons.indexOf(document.activeElement);
-      const next = buttons[(at + keys[event.key] + buttons.length) % buttons.length];
-      if (next) chooseKind(next.dataset.kind);
-    });
-    typeGroup.append(typeLegend, parts.gallery);
-
-    const labelGroup = document.createElement("fieldset");
-    labelGroup.className = "dialog-group property-section";
-    const labelLegend = document.createElement("legend");
-    labelLegend.textContent = t("chart.labelsHeading");
-    const titleField = document.createElement("label");
-    titleField.className = "dialog-field";
-    titleField.append(t("chart.titleField"));
-    parts.title = document.createElement("input");
-    parts.title.type = "text";
-    parts.title.autocomplete = "off";
-    parts.title.placeholder = t("chart.titlePlaceholder");
-    parts.title.addEventListener("change", () => {
-      const patch = draft();
-      if (patch) void commit(patch, { field: "title" });
-    });
-    parts.title.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        parts.title.blur();
-      }
-    });
-    titleField.append(parts.title);
-    const legendField = document.createElement("label");
-    legendField.className = "dialog-field";
-    legendField.append(t("chart.legendField"));
-    parts.legend = document.createElement("select");
-    for (const choice of LEGEND_CHOICES) {
-      const option = document.createElement("option");
-      option.value = choice;
-      option.textContent = t(LEGEND_LABEL_KEYS[choice]);
-      parts.legend.append(option);
-    }
-    parts.legend.addEventListener("change", () => {
-      const patch = draft();
-      if (patch) void commit(patch, { field: "legend" });
-    });
-    legendField.append(parts.legend);
-    labelGroup.append(labelLegend, titleField, legendField);
-
-    const dataGroup = document.createElement("fieldset");
-    dataGroup.className = "dialog-group property-section chart-data-section";
-    const dataLegend = document.createElement("legend");
-    dataLegend.textContent = t("chart.dataHeading");
-    const hint = document.createElement("p");
-    hint.className = "chart-data-hint";
-    hint.textContent = t("chart.dataHint");
     parts.grid = document.createElement("div");
     parts.grid.className = "chart-grid-scroll";
     parts.grid.addEventListener("keydown", onGridKey);
@@ -721,81 +534,75 @@ export function createChartDataPanel(io) {
     parts.note.className = "chart-data-note";
     parts.note.setAttribute("role", "status");
     parts.note.setAttribute("aria-live", "polite");
-    dataGroup.append(dataLegend, hint, parts.grid, actions, parts.note);
+    body.append(parts.reason, parts.grid, actions, parts.note);
 
-    body.append(parts.reason, typeGroup, labelGroup, dataGroup);
-    el.append(headEl, body);
-    el.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !event.defaultPrevented) {
-        event.preventDefault();
-        close();
-      }
+    const foot = document.createElement("footer");
+    foot.className = "dialog-foot";
+    const hint = document.createElement("span");
+    hint.className = "dialog-note";
+    hint.textContent = t("chart.dataUndoNote");
+    const done = document.createElement("div");
+    done.className = "dialog-actions";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "dialog-button dialog-button-primary";
+    doneBtn.textContent = t("chart.done");
+    doneBtn.addEventListener("click", () => close());
+    done.append(doneBtn);
+    foot.append(hint, done);
+    card.append(head, body, foot);
+    el.append(card);
+    document.body.append(el);
+    modal = io.registerModal(el, {
+      initialFocus: () => parts.grid.querySelector('input[data-row="0"][data-col="0"]') ?? doneBtn,
+      // The spreadsheet's two-step Escape: the first abandons a pending entry,
+      // the next one closes the window.
+      escape: () => revertPendingCell(),
+      fallbackFocus: () => io.fallbackFocus?.(),
+      onClose: () => {
+        // A value typed and not yet committed is committed on the way out —
+        // closing the window is how a spreadsheet user says "done".
+        const patch = draft();
+        if (patch && JSON.stringify(patch) !== JSON.stringify(patchFromView(view)) && !invalidCell(patch)) {
+          void io.bridge.write(node, () => patch);
+        }
+        node = null;
+        view = null;
+      },
     });
-    // Inside `.workarea`, like every other side panel, so the page shifts aside
-    // for it rather than being covered.
-    (io.host?.() ?? document.querySelector(".workarea") ?? document.body).append(el);
-    return el;
   }
 
-  /** Opens the panel on the chart anchored at `target` (default: the selected
-   *  chart). Returns false — and says why on the status line — when there is no
-   *  chart to open. `focus` is "data" (the first cell) or "none". */
-  function open(target = io.selection()?.node, { focus = "data" } = {}) {
-    const result = read(target);
-    if (!result.view) {
-      io.setStatus(t("chart.noChartSelected"), "error");
-      return false;
-    }
+  /** Opens the dialog on the chart at `target`. False when it is not a chart. */
+  function open(target) {
+    if (!io.bridge.view(target)) return false;
     ensure();
     node = target;
-    el.hidden = false;
     note("");
-    render(result, focus === "data" ? { row: 0, col: 0 } : null);
+    render();
+    modal.open();
+    const first = parts.grid.querySelector('input[data-row="0"][data-col="0"]');
+    first?.focus();
+    first?.select();
     return true;
   }
 
   function close() {
-    if (!el || el.hidden) return;
-    const hadFocus = el.contains(document.activeElement);
-    el.hidden = true;
-    node = null;
-    view = null;
-    lastJson = "";
-    if (hadFocus) io.returnFocus?.();
+    if (modal?.isOpen) modal.close("done");
   }
 
-  /** Keeps an open panel honest after any repaint: follows the selection to
-   *  another chart, closes when its chart is gone, and redraws after an undo or
-   *  redo changed the data underneath it. A cell being typed in is left alone —
-   *  redrawing it would throw away what the reader is typing. */
+  /** Redraws after an undo or redo changed the data underneath an open dialog,
+   *  unless a cell is being typed in. */
   function sync() {
-    if (!el || el.hidden || busy) return;
-    const selected = io.selection();
-    if (selected?.kind === "chart" && selected.node !== node) {
-      const next = read(selected.node);
-      if (next.view) {
-        node = selected.node;
-        note("");
-        render(next);
-        return;
-      }
-    }
-    const current = read(node);
-    if (!current.view) {
+    if (!modal?.isOpen || !node) return;
+    const current = io.bridge.view(node);
+    if (!current) {
       close();
       return;
     }
-    if (current.json === lastJson) return;
-    const typing = el.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement;
-    if (typing) return;
-    render(current);
+    if (current.json === view?.json) return;
+    if (el.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement) return;
+    render();
   }
 
-  return {
-    open,
-    close,
-    sync,
-    isOpen: () => !!el && !el.hidden,
-    node: () => node,
-  };
+  return { open, close, sync, isOpen: () => !!modal?.isOpen, node: () => node };
 }

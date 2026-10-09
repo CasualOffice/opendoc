@@ -5820,12 +5820,17 @@ fn embedded_object_paragraph(
 /// A minimal projection of a one-series bar chart, anchored to `object`.
 fn chart_projection(object: NodeId) -> Chart {
     Chart {
+        chart_retained: Default::default(),
+        namespaces: Default::default(),
+        space_retained: Default::default(),
         object,
         coverage: ChartCoverage::Complete,
         title: None,
         auto_title_deleted: false,
         plot_area: PlotArea {
+            retained: Default::default(),
             groups: vec![ChartGroup {
+                retained: Default::default(),
                 kind: ChartGroupKind::Bar {
                     direction: BarDirection::Column,
                     grouping: BarGrouping::Clustered,

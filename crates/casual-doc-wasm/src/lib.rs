@@ -18459,28 +18459,56 @@ const EMBEDDED_CHART_RELATIONSHIP: &str =
 ///
 /// O(1).
 fn chart_group_for_kind(kind: &str) -> Option<ChartGroupKind> {
+    // Word's and ONLYOFFICE's chart-type picker: each family with its stacked
+    // and 100% stacked forms, a line with markers, a smoothed scatter. Stacked
+    // bars overlap fully (`c:overlap` 100), which is what stacking means for a
+    // bar and what Word writes for one.
+    let bar = |direction, grouping| {
+        let stacked = !matches!(grouping, BarGrouping::Clustered | BarGrouping::Standard);
+        ChartGroupKind::Bar {
+            direction,
+            grouping,
+            gap_width: 150,
+            overlap: if stacked { 100 } else { -27 },
+        }
+    };
     let group = match kind {
-        "bar" => ChartGroupKind::Bar {
-            direction: BarDirection::Bar,
-            grouping: BarGrouping::Clustered,
-            gap_width: 150,
-            overlap: -27,
-        },
-        "column" => ChartGroupKind::Bar {
-            direction: BarDirection::Column,
-            grouping: BarGrouping::Clustered,
-            gap_width: 150,
-            overlap: -27,
-        },
+        "column" => bar(BarDirection::Column, BarGrouping::Clustered),
+        "column-stacked" => bar(BarDirection::Column, BarGrouping::Stacked),
+        "column-percent" => bar(BarDirection::Column, BarGrouping::PercentStacked),
+        "bar" => bar(BarDirection::Bar, BarGrouping::Clustered),
+        "bar-stacked" => bar(BarDirection::Bar, BarGrouping::Stacked),
+        "bar-percent" => bar(BarDirection::Bar, BarGrouping::PercentStacked),
         "line" => ChartGroupKind::Line {
             grouping: Grouping::Standard,
+            marker: false,
+        },
+        "line-markers" => ChartGroupKind::Line {
+            grouping: Grouping::Standard,
+            marker: true,
+        },
+        "line-stacked" => ChartGroupKind::Line {
+            grouping: Grouping::Stacked,
+            marker: false,
+        },
+        "line-percent" => ChartGroupKind::Line {
+            grouping: Grouping::PercentStacked,
             marker: false,
         },
         "area" => ChartGroupKind::Area {
             grouping: Grouping::Standard,
         },
+        "area-stacked" => ChartGroupKind::Area {
+            grouping: Grouping::Stacked,
+        },
+        "area-percent" => ChartGroupKind::Area {
+            grouping: Grouping::PercentStacked,
+        },
         "scatter" => ChartGroupKind::Scatter {
             style: ScatterStyle::LineMarker,
+        },
+        "scatter-smooth" => ChartGroupKind::Scatter {
+            style: ScatterStyle::SmoothMarker,
         },
         "pie" => ChartGroupKind::Pie {
             first_slice_angle: 0,
@@ -18662,6 +18690,9 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         )
     };
     Chart {
+        chart_retained: Vec::new(),
+        namespaces: Vec::new(),
+        space_retained: Vec::new(),
         object,
         coverage: ChartCoverage::Complete,
         // No title and `autoTitleDeleted` unset: Word shows "Chart Title" as a
@@ -18671,7 +18702,9 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         title: None,
         auto_title_deleted: true,
         plot_area: PlotArea {
+            retained: Vec::new(),
             groups: vec![ChartGroup {
+                retained: Vec::new(),
                 kind: group,
                 series,
                 axis_ids,
@@ -18680,6 +18713,7 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
             axes,
         },
         legend: Some(Legend {
+            retained: Vec::new(),
             position: LegendPosition::Bottom,
             overlay: false,
         }),

@@ -3005,6 +3005,14 @@ fn check_chart(chart: &Chart) -> Result<(), ModelError> {
         chart.plot_area.groups.len() <= MAX_CHART_GROUPS,
         "chart.plotArea.groups",
     )?;
+    // The verbatim carry (`ChartXml`) is bounded in total, so a snapshot cannot
+    // make one chart hold unbounded bytes. Well-formedness is the writer's to
+    // check, where a bad fragment is dropped and reported rather than refused.
+    let carried = chart.carried_xml_bytes();
+    check_domain(
+        carried <= crate::v1::MAX_CHART_RETAINED_BYTES,
+        "chart.retained",
+    )?;
     check_domain(
         chart.plot_area.axes.len() <= MAX_CHART_AXES,
         "chart.plotArea.axes",

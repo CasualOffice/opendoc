@@ -676,12 +676,17 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
         document.definitions_mut().charts.insert(
             ChartId::new(NodeId::new(900_002).expect("non-zero")),
             Chart {
+                chart_retained: Default::default(),
+                namespaces: Default::default(),
+                space_retained: Default::default(),
                 object: object_id,
                 coverage: ChartCoverage::Complete,
                 title: None,
                 auto_title_deleted: false,
                 plot_area: PlotArea {
+                    retained: Default::default(),
                     groups: vec![ChartGroup {
+                        retained: Default::default(),
                         kind: ChartGroupKind::Bar {
                             direction: BarDirection::Column,
                             grouping: BarGrouping::Clustered,

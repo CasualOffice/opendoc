@@ -134,6 +134,10 @@ function installListeners() {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
+        // A dialog may spend Escape on something smaller first — a data grid
+        // abandons the entry being typed, as a spreadsheet does — and only an
+        // Escape it does not spend closes it.
+        if (entry.options.escape?.(event)) return;
         entry.controller.close("escape");
         return;
       }
@@ -210,6 +214,9 @@ function installListeners() {
  *    toggleChord(e)  — the chord that opened this surface, so pressing it again
  *                      closes it instead of being swallowed by the lock.
  *    onOpen()        — run after the element is shown and focused.
+ *    escape(event)   — return true to spend an Escape on something smaller
+ *                      than the dialog (a grid abandoning the entry being
+ *                      typed); only an Escape it does not spend closes it.
  *    onClose(reason) — run after the element is hidden, before focus is
  *                      restored. Reasons: "escape", "backdrop", or whatever the
  *                      caller passes to close().

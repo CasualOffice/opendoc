@@ -150,8 +150,8 @@ import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { createAccessChrome } from "./access_chrome.mjs";
 import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 import { insertChartAtCaret } from "./chart_insert.mjs";
-// Own line (anti-conflict): the chart data / type / title panel.
-import { createChartDataPanel } from "./chart_data.mjs";
+// Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
+import { createChartSurface } from "./chart_surface.mjs";
 import { newestObject, placedObjectIds } from "./placed_objects.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
@@ -4386,7 +4386,7 @@ const objectBar = createObjectBar({
   reflectInspector: () => objectInspector.reflect(),
   setWrap: (mode) => setObjectWrap(mode),
   openAltText: () => openAltTextDialog(),
-  openChartData: () => chartPanel.open(),
+  openChartData: () => chartSurface.openData(),
   enterCrop: () => enterCropMode(),
   deleteObject: () => deleteSelectedObject(),
   reflectShapeSwatches: () => reflectShapeSwatches(),
@@ -4396,25 +4396,24 @@ const objectBar = createObjectBar({
   arrangeButton: () => labelledObjectMenuButton(objectArrangeBtn),
   rotateButton: () => labelledObjectMenuButton(objectRotateBtn),
 });
-const updateObjectContextBar = () => (objectBar.update(), chartPanel.sync());
-/** The chart panel (`chart_data.mjs`): data grid, type, title, legend. */
-const chartPanel = createChartDataPanel({
+const updateObjectContextBar = () => (objectBar.update(), chartSurface.sync());
+/** The chart's Chart tab, settings panel, data dialog and command tree (`chart_surface.mjs`). */
+const chartSurface = createChartSurface({
   doc: () => doc,
   selection: () => objectSelection,
   blocked: () => objectEditBlocked(),
+  blockedReason: () => readOnlyReason || (reviewMode === "viewing" ? t("chart.reason.viewing") : reviewMode === "suggesting" ? t("chart.reason.suggesting") : ""),
   apply: (result) => applyEditResult(result, { keepView: true }),
   setStatus: (text, kind) => setStatus(text, kind),
   returnFocus: () => focusEditorSurface(),
+  registerModal,
+  showMenu: (button, commands) => { const box = button.getBoundingClientRect(); showContextMenu(box.left, box.bottom, { surface: "ribbon", commands }); },
+  reflectTab: (tab, state) => reflectEnablement(tab, state, EDITOR_KEYBOARD_PLATFORM),
+  selectTab: (name) => selectRibbonTab(name),
   t,
 });
-/** Insert ▸ Chart, as Word does it: the chart lands SELECTED with its data open. */
-function insertChartWithData() {
-  const before = placedObjectIds(doc);
-  return insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }).then((ok) => {
-    const chart = ok ? newestObject(doc, before, "chart") : null;
-    if (chart) selectObject(chart.node, chart.kind, null, chart.anchored, chart), chartPanel.open(chart.node);
-  });
-}
+/** Insert ▸ Chart, as ONLYOFFICE and Word do it: the chart lands SELECTED with its data open. */
+const insertChartWithData = () => chartSurface.insertAndOpen(() => insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }), (chart) => selectObject(chart.node, chart.kind, null, chart.anchored, chart));
 const positionObjectContextBar = () => objectBar.reposition();
 
 /** Every arrange fact about the selected object, gathered in ONE pass per
@@ -6497,7 +6496,7 @@ pagesEl.addEventListener("dblclick", (e) => {
     // cropping it. The direct-manipulation crop chrome was already right; only
     // its doorway was missing, so crop was reachable solely by finding the Crop
     // button. A second double-click applies it, as the button turns into Apply.
-    if (objectSelection?.kind === "chart" && chartPanel.open(objectSelection.node)) return e.preventDefault();
+    if (objectSelection?.kind === "chart" && chartSurface.openData(objectSelection.node)) return e.preventDefault();
     if (objectSelection?.canCrop && !objectSelection.canEditText) {
       enterCropMode();
       e.preventDefault();
@@ -7223,7 +7222,7 @@ const objectContextMenuHost = {
   documentRows: () => referenceObjectMenuRows(),
   setObjectWrap,
   openAltText: () => openAltTextDialog(),
-  openChartData: () => chartPanel.open(),
+  chartCommands: () => chartSurface.commandsFor(),
   applyShapeFill,
   applyShapeOutline,
   enterCrop: () => enterCropMode(),
@@ -7397,7 +7396,7 @@ function showContextMenu(clientX, clientY, context) {
   hideContextMenu();
   contextMenuReturnFocus =
     document.activeElement instanceof HTMLElement ? document.activeElement : pagesEl;
-  const entries = normalizeMenuEntries(buildContextCommands(context));
+  const entries = normalizeMenuEntries(context.commands ?? buildContextCommands(context));
   if (entries.length === 0) {
     contextMenuReturnFocus = null;
     if (context.surface === "object") {

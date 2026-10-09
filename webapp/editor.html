@@ -147,6 +147,11 @@
                between References and View, where it read as a permanent tab that
                happened to be greyed out. -->
           <button data-i18n="documentChrome.table" id="tabTable" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
+          <!-- Chart is contextual too, after Table: ONLYOFFICE's chart tab is the
+               same kind of tab (`ChartTab.js`, declared aux) and Word's Chart
+               Design sits in the same place. Disabled, with the reason, until a
+               chart is selected (`chart_surface.mjs`). -->
+          <button data-i18n="documentChrome.chart" id="tabChart" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="chart" role="tab" aria-controls="panelChart" aria-selected="false" tabindex="-1" disabled>Chart</button>
         </div>
           <!-- The collapse chevron is a sibling of the tab list, not a child of
                it: `role="tablist"` may only contain tabs, and the strip now
@@ -955,6 +960,38 @@
           </div>
           <div class="rgroup table-context-group" aria-live="polite">
             <span id="tableContext" class="rgroup-hint"></span>
+          </div>
+        </div>
+
+        <!-- The contextual Chart band — ONLYOFFICE's chart tab: Edit Data, the
+             chart type, Chart Elements, the style gallery and the settings. Each
+             control is a face of a `chart.*` command (`ribbon_faces.mjs`), the
+             same command the right-click menu and the palette run. -->
+        <div id="panelChart" class="ribbon-panel chart-ribbon" data-panel="chart" role="tabpanel" aria-labelledby="tabChart" hidden>
+          <div class="rgroup" data-group="chart-data">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelChart.editData.title" data-i18n-label="panelChart.editData.label" id="chartEditDataBtn" type="button" class="fmt fmt-big" title="Edit the chart's data" aria-label="Edit data" aria-haspopup="dialog"><span class="ms" aria-hidden="true">table_chart</span><span data-i18n="panelChart.editDataShort" class="fmt-big-label">Edit data</span></button>
+            </div>
+            <span data-i18n="panelChart.data" class="rgroup-label">Data</span>
+          </div>
+          <div class="rgroup" data-group="chart-layout">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelChart.changeType.title" data-i18n-label="panelChart.changeType.label" id="chartTypeBtn" type="button" class="fmt fmt-big" title="Change the chart type" aria-label="Change chart type" aria-haspopup="menu"><span class="ms" aria-hidden="true">bar_chart</span><span data-i18n="panelChart.type" class="fmt-big-label">Type</span></button>
+              <button data-i18n-title="panelChart.elements.title" data-i18n-label="panelChart.elements.label" id="chartElementsBtn" type="button" class="fmt fmt-big" title="Show or hide the title, legend, data labels, axes and gridlines" aria-label="Chart elements" aria-haspopup="menu"><span class="ms" aria-hidden="true">legend_toggle</span><span data-i18n="panelChart.elementsShort" class="fmt-big-label">Elements</span></button>
+            </div>
+            <span data-i18n="panelChart.layout" class="rgroup-label">Layout</span>
+          </div>
+          <div class="rgroup" data-group="chart-styles">
+            <div class="rgroup-ctl">
+              <div data-i18n-label="panelChart.styles.label" id="chartStyleGallery" class="chart-ribbon-styles" role="group" aria-label="Chart styles"></div>
+            </div>
+            <span data-i18n="panelChart.styles" class="rgroup-label">Chart styles</span>
+          </div>
+          <div class="rgroup" data-group="chart-settings">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelChart.settings.title" data-i18n-label="panelChart.settings.label" id="chartSettingsBtn" type="button" class="fmt fmt-big" title="Open the chart settings panel" aria-label="Chart settings" aria-haspopup="dialog"><span class="ms" aria-hidden="true">tune</span><span data-i18n="panelChart.settingsShort" class="fmt-big-label">Settings</span></button>
+            </div>
+            <span data-i18n="panelChart.settingsGroup" class="rgroup-label">Settings</span>
           </div>
         </div>
 

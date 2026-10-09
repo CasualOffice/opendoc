@@ -12328,19 +12328,59 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   display: none;
 }
 
-/* ---- Chart panel (`chart_data.mjs`) ---------------------------------------
- * Word's Edit Data sheet and Docs' chart editor in one right-hand panel: a
- * family gallery, the title and legend, and the data grid. Wider than a plain
- * properties panel because the grid is the point of it; the grid scrolls
- * inside its own box, so a twelve-series chart never widens the page. */
-.side-panel.chart-data-panel {
-  flex-basis: 360px;
-  width: 360px;
-  max-width: min(360px, calc(100vw - 52px));
+/* ---- Chart surfaces: the Chart Data dialog (`chart_data.mjs`), the Chart
+ * settings panel (`chart_panel.mjs`) and the Chart tab's style gallery
+ * (`chart_surface.mjs`). ONLYOFFICE's split: data in its own window, settings
+ * at the right, the style gallery on the tab. Every colour is a token; the
+ * swatch dots are the one exception, painted the document's own theme colours
+ * the engine resolved, because a swatch has to show what the chart will be. */
+.side-panel.chart-panel {
+  flex-basis: 320px;
+  width: 320px;
+  max-width: min(320px, calc(100vw - 52px));
+}
+
+.chart-panel-section select,
+.chart-panel-section input[type="text"] {
+  width: 100%;
+}
+
+.chart-panel-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.chart-panel-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.chart-panel-summary {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.chart-data-overlay .chart-data-card {
+  width: min(720px, calc(100vw - 32px));
+  max-width: none;
+}
+
+.chart-data-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .chart-data-reason {
-  margin: 0 0 var(--space-3);
+  margin: 0;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -12350,56 +12390,61 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   line-height: 1.45;
 }
 
-.chart-kind-gallery {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.chart-palette-grid,
+.chart-ribbon-styles {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
-.chart-kind {
-  display: flex;
-  flex-direction: column;
+.chart-ribbon-styles {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.chart-palette {
+  display: inline-flex;
   align-items: center;
   gap: 2px;
-  min-height: 52px;
-  padding: 6px 2px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 5px 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  color: var(--ink);
-  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
-.chart-kind .ms {
-  font-size: 22px;
-}
-
-.chart-kind:hover:not(:disabled) {
+.chart-palette:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: var(--bg-2);
 }
 
-.chart-kind[aria-checked="true"] {
+.chart-palette[aria-checked="true"] {
   border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.chart-kind:disabled {
+.chart-palette:disabled {
   cursor: default;
   opacity: 0.6;
 }
 
-.chart-data-hint {
-  margin: 0 0 var(--space-2);
-  color: var(--muted);
-  font-size: var(--fs-small);
-  line-height: 1.45;
+.chart-palette-dot {
+  display: inline-block;
+  width: 10px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.chart-palette-ribbon .chart-palette-dot {
+  width: 6px;
+  height: 18px;
 }
 
 .chart-grid-scroll {
-  max-height: 46vh;
+  max-height: 52vh;
   overflow: auto;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -12447,7 +12492,7 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
 }
 
 .chart-grid input {
-  width: 84px;
+  width: 96px;
   min-height: 28px;
   padding: 0 6px;
   border: 0;
@@ -12476,9 +12521,8 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   outline-offset: -2px;
 }
 
-.chart-grid input:disabled {
-  color: var(--ink);
-  opacity: 0.75;
+.chart-grid input:read-only {
+  color: var(--muted);
 }
 
 .chart-grid-head {
@@ -12521,12 +12565,11 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
 .chart-grid-actions {
   display: flex;
   gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .chart-data-note {
   min-height: 1.45em;
-  margin: var(--space-2) 0 0;
+  margin: 0;
   color: var(--muted);
   font-size: var(--fs-small);
   line-height: 1.45;

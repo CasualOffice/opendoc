@@ -4294,7 +4294,13 @@ fn chart_item<'a>(
     if !chart::has_drawable_content(chart) {
         return None;
     }
-    let style = chart_style(ctx.palette);
+    // A document that declares no theme still draws its chart in Word's default
+    // Office theme, which is what Word does and what `ChartStyle::default`
+    // already assumes for the accents. Without this, a chart coloured with a
+    // THEME slot (every palette the chart panel offers) resolved to black in a
+    // document with no `a:clrScheme` — every new blank document.
+    let chart_palette = ctx.palette.or(Some(&OFFICE_PALETTE));
+    let style = chart_style(chart_palette);
     // The label shaper resolves fonts through the document's own cascade, so chart
     // text uses the document's fonts rather than a hard-coded face. It is handed a
     // CLONE of the projection's text only; nothing in the closure touches the
@@ -4306,8 +4312,7 @@ fn chart_item<'a>(
     // Copied out before the shaping closure borrows `ctx` mutably: a chart's
     // authored colour may name a THEME slot, and `run_color` is the document's one
     // resolution of that — the chart module deliberately holds no second copy.
-    let palette = ctx.palette;
-    let colors = |color: Color| run_color(Some(color), palette);
+    let colors = |color: Color| run_color(Some(color), chart_palette);
     let primitives = {
         let mut shape_label = |text: &str| chart_label(text, &base, shaper, ctx);
         chart::compose_chart(chart, size, &style, &colors, &mut shape_label)
@@ -7536,6 +7541,37 @@ fn theme_slot_index(slot: ThemeColorRef) -> usize {
         ThemeColorRef::Hyperlink => 10,
         ThemeColorRef::FollowedHyperlink => 11,
     }
+}
+
+/// Word's default Office theme (2013 and later), slot for slot — what a chart
+/// is drawn in when its document declares no `a:clrScheme`.
+const OFFICE_PALETTE: ResolvedPalette = ResolvedPalette {
+    slots: [
+        [0x00, 0x00, 0x00, 0xFF],
+        [0xFF, 0xFF, 0xFF, 0xFF],
+        [0x44, 0x54, 0x6A, 0xFF],
+        [0xE7, 0xE6, 0xE6, 0xFF],
+        [0x44, 0x72, 0xC4, 0xFF],
+        [0xED, 0x7D, 0x31, 0xFF],
+        [0xA5, 0xA5, 0xA5, 0xFF],
+        [0xFF, 0xC0, 0x00, 0xFF],
+        [0x5B, 0x9B, 0xD5, 0xFF],
+        [0x70, 0xAD, 0x47, 0xFF],
+        [0x05, 0x63, 0xC1, 0xFF],
+        [0x95, 0x4F, 0x72, 0xFF],
+    ],
+};
+
+/// A chart colour as the page paints it: theme slots resolved against the
+/// document's theme, or Word's default Office theme when it declares none, with
+/// the colour's tint and shade applied.
+///
+/// For a host that has to SHOW a colour the engine will paint (a palette
+/// swatch) and must not guess it. O(1) after the theme is resolved.
+#[must_use]
+pub fn chart_color_rgba(definitions: &casual_doc_model::v1::Definitions, color: Color) -> [u8; 4] {
+    let resolved = definitions.color_scheme.as_ref().map(resolve_palette);
+    run_color(Some(color), resolved.as_ref().or(Some(&OFFICE_PALETTE)))
 }
 
 /// Resolves a document's [`ColorScheme`] to a [`ResolvedPalette`]: each slot's
@@ -11366,12 +11402,17 @@ mod tests {
             ChartGroup, ChartGroupKind, ChartValue, DataRange, DisplayBlanks, PlotArea, Series,
         };
         Chart {
+            chart_retained: Default::default(),
+            namespaces: Default::default(),
+            space_retained: Default::default(),
             object: NodeId::from_parts(1, 1).unwrap(),
             coverage: ChartCoverage::Partial,
             title: None,
             auto_title_deleted: true,
             plot_area: PlotArea {
+                retained: Default::default(),
                 groups: vec![ChartGroup {
+                    retained: Default::default(),
                     kind: ChartGroupKind::Bar {
                         direction: BarDirection::Column,
                         grouping: BarGrouping::Clustered,

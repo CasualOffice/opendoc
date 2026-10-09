@@ -54,6 +54,10 @@ pub const MAX_CHART_TEXT_BYTES: usize = 1_024;
 /// Byte ceiling on a verbatim `c:f` formula string — the same ceiling
 /// `EmbeddedKind::Other`'s uri already uses.
 pub const MAX_CHART_FORMULA_BYTES: usize = 2_048;
+/// Ceiling on the verbatim XML one chart carries in [`ChartXml`] fragments,
+/// summed over every container. A real Word chart carries a few kilobytes of
+/// formatting; this bounds what a hostile part can make the model hold.
+pub const MAX_CHART_RETAINED_BYTES: usize = 1_048_576;
 
 /// How much of the source chart part the projection captured.
 ///
@@ -176,6 +180,333 @@ pub struct ChartText {
     pub formula: Option<String>,
 }
 
+/// One chart element this projection does not model, carried **verbatim** on
+/// the container it was read from, so a regenerated part keeps it.
+///
+/// The named pattern is round-tripping unknown content (the same reason
+/// `Definitions::format_scheme_xml` exists): a typed projection that dropped
+/// whatever it did not model could never be the authority over a real file —
+/// a default Word chart carries axis and legend formatting (`c:spPr`,
+/// `c:txPr`), `c:lang`, `c:crosses`, `c:lblAlgn` and a style choice none of
+/// which the chart's DATA depends on, and refusing to rewrite the chart for
+/// their sake is what made every Word chart read-only (`docs/155` §17).
+///
+/// `name` is the element's local name, which is what a writer uses to put it
+/// back in its schema position. A fragment whose name is also one the
+/// projection models (`spPr` on a series, `majorGridlines` on an axis, `tx`
+/// on a title) **shadows** the generated element: the writer emits the
+/// verbatim one while the model still says the element is present, and an edit
+/// that changes the modelled value drops the fragment so the edit wins.
+///
+/// Prefixes inside `xml` resolve against [`Chart::namespaces`] or against
+/// declarations inside the fragment itself.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChartXml {
+    /// The element's local name (`spPr`, `txPr`, `crosses`, `AlternateContent`).
+    pub name: String,
+    /// The element, verbatim, from its `<` to its closing `>`.
+    pub xml: String,
+}
+
+/// A chart container whose children have a schema order, for placing a
+/// [`ChartXml`] fragment back where it came from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChartContainer {
+    /// `c:chartSpace` (`CT_ChartSpace`).
+    Space,
+    /// `c:chart` (`CT_Chart`).
+    Chart,
+    /// `c:plotArea` (`CT_PlotArea`).
+    PlotArea,
+    /// A chart group, by family (`CT_BarChart`, `CT_LineChart`, …).
+    Group(ChartGroupKind),
+    /// A series, by its group's family (`CT_BarSer`, `CT_LineSer`, …).
+    Series(ChartGroupKind),
+    /// An axis, by kind (`CT_CatAx`, `CT_ValAx`, `CT_DateAx`).
+    Axis(AxisKind),
+    /// `c:legend` (`CT_Legend`).
+    Legend,
+    /// `c:title` (`CT_Title`).
+    Title,
+}
+
+/// The ECMA-376 Part 1 child sequence of `container`, by local name.
+///
+/// This is the one place the order is written down: the importer carries only
+/// an element its container's sequence names (anything else stays an
+/// unconsumed construct), and the writer emits each carried element at its
+/// position in the same list — Word discards a chart part whose children are
+/// out of order, so a fragment written in the wrong place is silent data loss.
+///
+/// Two pseudo-names hold the plot area's lists: `*groups` and `*axes`.
+/// `AlternateContent` sits where `c:style` does, which is where Word writes
+/// the `mc:AlternateContent` that wraps it.
+///
+/// O(1).
+#[must_use]
+pub const fn chart_child_order(container: ChartContainer) -> &'static [&'static str] {
+    match container {
+        ChartContainer::Space => &[
+            "date1904",
+            "lang",
+            "roundedCorners",
+            "AlternateContent",
+            "style",
+            "clrMapOvr",
+            "pivotSource",
+            "protection",
+            "chart",
+            "spPr",
+            "txPr",
+            "externalData",
+            "printSettings",
+            "userShapes",
+            "extLst",
+        ],
+        ChartContainer::Chart => &[
+            "title",
+            "autoTitleDeleted",
+            "pivotFmts",
+            "view3D",
+            "floor",
+            "sideWall",
+            "backWall",
+            "plotArea",
+            "legend",
+            "plotVisOnly",
+            "dispBlanksAs",
+            "showDLblsOverMax",
+            "extLst",
+        ],
+        ChartContainer::PlotArea => &["layout", "*groups", "*axes", "dTable", "spPr", "extLst"],
+        ChartContainer::Group(kind) => match kind {
+            ChartGroupKind::Bar { .. } => &[
+                "barDir",
+                "grouping",
+                "varyColors",
+                "ser",
+                "dLbls",
+                "gapWidth",
+                "overlap",
+                "serLines",
+                "axId",
+                "extLst",
+            ],
+            ChartGroupKind::Line { .. } => &[
+                "grouping",
+                "varyColors",
+                "ser",
+                "dLbls",
+                "dropLines",
+                "hiLowLines",
+                "upDownBars",
+                "marker",
+                "smooth",
+                "axId",
+                "extLst",
+            ],
+            ChartGroupKind::Area { .. } => &[
+                "grouping",
+                "varyColors",
+                "ser",
+                "dLbls",
+                "dropLines",
+                "axId",
+                "extLst",
+            ],
+            ChartGroupKind::Pie { .. } => {
+                &["varyColors", "ser", "dLbls", "firstSliceAng", "extLst"]
+            }
+            ChartGroupKind::Doughnut { .. } => &[
+                "varyColors",
+                "ser",
+                "dLbls",
+                "firstSliceAng",
+                "holeSize",
+                "extLst",
+            ],
+            ChartGroupKind::Scatter { .. } => &[
+                "scatterStyle",
+                "varyColors",
+                "ser",
+                "dLbls",
+                "axId",
+                "extLst",
+            ],
+        },
+        ChartContainer::Series(kind) => match kind {
+            ChartGroupKind::Bar { .. } => &[
+                "idx",
+                "order",
+                "tx",
+                "spPr",
+                "invertIfNegative",
+                "pictureOptions",
+                "dPt",
+                "dLbls",
+                "trendline",
+                "errBars",
+                "cat",
+                "val",
+                "shape",
+                "extLst",
+            ],
+            ChartGroupKind::Line { .. } => &[
+                "idx",
+                "order",
+                "tx",
+                "spPr",
+                "marker",
+                "dPt",
+                "dLbls",
+                "trendline",
+                "errBars",
+                "cat",
+                "val",
+                "smooth",
+                "extLst",
+            ],
+            ChartGroupKind::Area { .. } => &[
+                "idx",
+                "order",
+                "tx",
+                "spPr",
+                "pictureOptions",
+                "dPt",
+                "dLbls",
+                "trendline",
+                "errBars",
+                "cat",
+                "val",
+                "extLst",
+            ],
+            ChartGroupKind::Pie { .. } | ChartGroupKind::Doughnut { .. } => &[
+                "idx",
+                "order",
+                "tx",
+                "spPr",
+                "explosion",
+                "dPt",
+                "dLbls",
+                "cat",
+                "val",
+                "extLst",
+            ],
+            ChartGroupKind::Scatter { .. } => &[
+                "idx",
+                "order",
+                "tx",
+                "spPr",
+                "marker",
+                "dPt",
+                "dLbls",
+                "trendline",
+                "errBars",
+                "xVal",
+                "yVal",
+                "smooth",
+                "extLst",
+            ],
+        },
+        ChartContainer::Axis(kind) => match kind {
+            AxisKind::Category => &[
+                "axId",
+                "scaling",
+                "delete",
+                "axPos",
+                "majorGridlines",
+                "minorGridlines",
+                "title",
+                "numFmt",
+                "majorTickMark",
+                "minorTickMark",
+                "tickLblPos",
+                "spPr",
+                "txPr",
+                "crossAx",
+                "crosses",
+                "crossesAt",
+                "auto",
+                "lblAlgn",
+                "lblOffset",
+                "tickLblSkip",
+                "tickMarkSkip",
+                "noMultiLvlLbl",
+                "extLst",
+            ],
+            AxisKind::Value => &[
+                "axId",
+                "scaling",
+                "delete",
+                "axPos",
+                "majorGridlines",
+                "minorGridlines",
+                "title",
+                "numFmt",
+                "majorTickMark",
+                "minorTickMark",
+                "tickLblPos",
+                "spPr",
+                "txPr",
+                "crossAx",
+                "crosses",
+                "crossesAt",
+                "crossBetween",
+                "majorUnit",
+                "minorUnit",
+                "dispUnits",
+                "extLst",
+            ],
+            AxisKind::Date => &[
+                "axId",
+                "scaling",
+                "delete",
+                "axPos",
+                "majorGridlines",
+                "minorGridlines",
+                "title",
+                "numFmt",
+                "majorTickMark",
+                "minorTickMark",
+                "tickLblPos",
+                "spPr",
+                "txPr",
+                "crossAx",
+                "crosses",
+                "crossesAt",
+                "auto",
+                "lblOffset",
+                "baseTimeUnit",
+                "majorUnit",
+                "majorTimeUnit",
+                "minorUnit",
+                "minorTimeUnit",
+                "extLst",
+            ],
+        },
+        ChartContainer::Legend => &[
+            "legendPos",
+            "legendEntry",
+            "layout",
+            "overlay",
+            "spPr",
+            "txPr",
+            "extLst",
+        ],
+        ChartContainer::Title => &["tx", "layout", "overlay", "spPr", "txPr", "extLst"],
+    }
+}
+
+/// `name`'s position in `container`'s sequence, or `None` when the container
+/// does not admit it. O(sequence length), at most 25.
+#[must_use]
+pub fn chart_child_rank(container: ChartContainer, name: &str) -> Option<usize> {
+    chart_child_order(container)
+        .iter()
+        .position(|child| *child == name)
+}
+
 /// A chart title (`c:title`).
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -188,6 +519,9 @@ pub struct ChartTitle {
     /// `c:overlay` — whether the title is drawn over the plot area.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub overlay: bool,
+    /// Children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// Where a legend sits relative to the plot area (`c:legendPos`).
@@ -217,6 +551,9 @@ pub struct Legend {
     /// `c:overlay` — whether the legend is drawn over the plot area.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub overlay: bool,
+    /// Children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// How blank cache entries are plotted (`c:dispBlanksAs`).
@@ -438,6 +775,9 @@ pub struct Series {
     /// `c:dLbls`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_labels: Option<DataLabels>,
+    /// Children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// A chart group: one plotting family and the series drawn with it (`docs/155`
@@ -458,6 +798,9 @@ pub struct ChartGroup {
     /// `c:varyColors` — colour each point rather than each series.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub vary_colors: bool,
+    /// Children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// Which kind of axis an [`Axis`] is.
@@ -577,6 +920,9 @@ pub struct Axis {
     /// `c:crossAx` — the axis this one crosses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_axis_id: Option<u32>,
+    /// Children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// The plot area (`c:plotArea`): a list of chart groups and a list of axes.
@@ -594,6 +940,9 @@ pub struct PlotArea {
     /// The axes, each with its own [`Axis::id`], in declaration order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub axes: Vec<Axis>,
+    /// Children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// A typed projection of one DrawingML chart part.
@@ -662,9 +1011,54 @@ pub struct Chart {
     /// longer describe it.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub dirty: bool,
+    /// The namespace declarations on the source `c:chartSpace`, as
+    /// `(prefix, uri)`, so the prefixes inside carried fragments resolve when
+    /// the part is regenerated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub namespaces: Vec<(String, String)>,
+    /// `c:chartSpace` children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub space_retained: Vec<ChartXml>,
+    /// `c:chart` children carried verbatim ([`ChartXml`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chart_retained: Vec<ChartXml>,
 }
 
 impl Chart {
+    /// Total bytes of every [`ChartXml`] fragment this chart carries, across
+    /// all its containers. O(fragments).
+    #[must_use]
+    pub fn carried_xml_bytes(&self) -> usize {
+        let sum = |fragments: &[ChartXml]| fragments.iter().map(|f| f.xml.len()).sum::<usize>();
+        sum(&self.space_retained)
+            + sum(&self.chart_retained)
+            + self.title.as_ref().map_or(0, |title| sum(&title.retained))
+            + self
+                .legend
+                .as_ref()
+                .map_or(0, |legend| sum(&legend.retained))
+            + sum(&self.plot_area.retained)
+            + self
+                .plot_area
+                .axes
+                .iter()
+                .map(|axis| sum(&axis.retained))
+                .sum::<usize>()
+            + self
+                .plot_area
+                .groups
+                .iter()
+                .map(|group| {
+                    sum(&group.retained)
+                        + group
+                            .series
+                            .iter()
+                            .map(|series| sum(&series.retained))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
     /// Every [`DataRange`] this chart holds, in a stable order.
     ///
     /// Exists so a bounds check or a consumer enumerates ranges in one place
