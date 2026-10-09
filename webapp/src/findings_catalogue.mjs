@@ -73,6 +73,9 @@ export const FEATURE_CATALOGUE = Object.freeze({
   // (`105` FID-R-05): they describe the document as it was opened.
   "docx.export.stale.thumbnail": entry("findings.feature.staleThumbnail", BOOKKEEPING),
   "docx.export.stale.styles_with_effects": entry("findings.feature.staleStylesWithEffects", BOOKKEEPING),
+  // `docProps/app.xml`'s page, word and character counts, left out of an edited
+  // save that still carries the opened file's values (`109` FID-AT-04).
+  "docx.export.stale.statistics": entry("findings.feature.staleStatistics", BOOKKEEPING),
   // Word 2013+'s per-paragraph and per-row identities (`w14:paraId`,
   // `w14:textId`) — the `rsid` family's sibling, one per paragraph, and the
   // reason a modern document would otherwise open with hundreds of findings.
@@ -115,6 +118,10 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "doNotAutoCompressPictures": entry("findings.feature.doNotCompressImages", CONTENT),
   "mathPr": entry("findings.feature.equationOptions", CONTENT),
   "shapeDefaults": entry("findings.feature.shapeDefaults", CONTENT),
+  // A retained `m:mathPr` or `w:shapeDefaults` fragment that failed the
+  // writer's well-formedness check and was left out rather than spliced in
+  // (`109` FID-AT-10). The report's location names which one.
+  "docx.export.settings.fragment_refused": entry("findings.feature.settingsFragmentRefused", CONTENT),
   "hdrShapeDefaults": entry("findings.feature.headerShapeDefaults", CONTENT),
   "useFELayout": entry("findings.feature.eastAsianLayout", CONTENT),
   "formProt": entry("findings.feature.formProtection", CONTENT),

@@ -123,6 +123,26 @@ test("the most frequent features of the committed corpus are named in words", ()
   assert.deepEqual(unnamed, []);
 });
 
+test("every finding a save of its own can raise is named in words", () => {
+  // A SAVE's report carries ids no import raises: the derived parts and
+  // statistics an edited save leaves out, and a retained settings fragment the
+  // writer refused (`casual-doc-export` `semantic.rs`, `109` FID-R-05, FID-AT-04,
+  // FID-AT-10). The engine lane added the last two after this catalogue was
+  // written, which is how an id reaches the panel as markup.
+  const SAVE_ONLY = [
+    ["docx.export.stale.thumbnail", "docProps/thumbnail.jpeg"],
+    ["docx.export.stale.styles_with_effects", "word/stylesWithEffects.xml"],
+    ["docx.export.stale.statistics", "docProps/app.xml"],
+    ["docx.export.settings.fragment_refused", "word/settings.xml"],
+  ];
+  const unnamed = SAVE_ONLY.filter(([feature, part]) => !describeFinding(finding(feature, 1, part)).known);
+  assert.deepEqual(unnamed, [], "these fell through to the fallback");
+  assert.equal(
+    words(finding("docx.export.settings.fragment_refused", 1, "word/settings.xml")),
+    "A document setting that could not be written back safely",
+  );
+});
+
 test("a numbered part and a family of ids answer one entry", () => {
   assert.equal(catalogueEntry("customXml/item7.xml").key, catalogueEntry("customXml/item1.xml").key);
   assert.equal(catalogueEntry("customXml/itemProps12.xml").key, "findings.feature.customXmlProperties");
@@ -143,6 +163,7 @@ test("Word's own bookkeeping is exactly this declared list", () => {
     "HyperlinksChanged",
     "docId",
     "docProps/thumbnail.*",
+    "docx.export.stale.statistics",
     "docx.export.stale.styles_with_effects",
     "docx.export.stale.thumbnail",
     "docx.rsid",
