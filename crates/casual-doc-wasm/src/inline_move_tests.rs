@@ -8,10 +8,10 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, CropRect, Definitions, Document, Drawing, DrawingHyperlink, Extent, ExternalTarget,
-    HeaderFooter, HeaderFooterId, Hyperlink, HyperlinkTarget, InlineNode, MediaId, MediaReference,
-    ObjectName, Paragraph, ParagraphProperties, Rgba, Run, RunProperties, ShapeStroke, Table,
-    TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties, TextBox,
-    TextBoxBodyProperties,
+    HeaderFooter, HeaderFooterId, Hyperlink, HyperlinkTarget, InlineNode, LockFlags, MediaId,
+    MediaReference, ObjectLocks, ObjectName, Paragraph, ParagraphProperties, Rgba, Run,
+    RunProperties, ShapeStroke, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+    TableRowProperties, TextBox, TextBoxBodyProperties,
 };
 
 use crate::WasmDocument;
@@ -186,12 +186,22 @@ fn fixture() -> (WasmDocument, Ids) {
         },
     );
     // A side-table entry keyed by the picture's id: a move that changed the id
-    // would orphan it and the picture would be renamed "Picture 1" on save.
+    // would orphan it, and the picture would be renamed "Picture 1" and lose the
+    // aspect lock its frame carries (Word's, `109` FID-AT-09) on save.
     definitions.object_names.insert(
         ids.picture,
         ObjectName {
             name: Some("Logo".to_owned()),
             title: Some("Company logo".to_owned()),
+            inner_name: Some("logo.png".to_owned()),
+            inner_title: None,
+            locks: ObjectLocks {
+                frame: LockFlags {
+                    no_change_aspect: true,
+                    ..LockFlags::default()
+                },
+                object: LockFlags::default(),
+            },
         },
     );
     definitions.headers.insert(
@@ -311,7 +321,7 @@ fn a_dragged_picture_lands_after_the_word_it_was_dropped_after_and_is_the_same_p
     assert_eq!(
         d.document.definitions().object_names.get(&p).cloned(),
         name,
-        "and its name, which a side table keys by that id"
+        "and its name, inner name and aspect lock, which a side table keys by that id"
     );
     assert_eq!(d.undo_label(), "Object move");
 }
