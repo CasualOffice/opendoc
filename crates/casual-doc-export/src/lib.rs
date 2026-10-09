@@ -1253,6 +1253,68 @@ mod semantic_tests {
         assert!(entry.locks.object.no_crop, "the lock it can carry is");
     }
 
+    /// Each section's `w:formProt` survives a save with its value, and a section
+    /// that states none still states none (`109` FID-AT-06).
+    ///
+    /// It was reported and dropped — the one remaining finding in every
+    /// LibreOffice-produced document of the corpus, as `w:val="false"`. That is
+    /// not a no-op: with `w:documentProtection w:edit="forms"` enforced, a
+    /// section without the element is protected and one stating `false` is not,
+    /// so dropping `false` locked a section the author had left editable.
+    #[test]
+    fn each_sections_form_protection_survives_a_save_and_absent_stays_absent() {
+        let document_xml = concat!(
+            r#"<w:document xmlns:w="urn:w"><w:body>"#,
+            r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:cols w:space="720"/><w:formProt w:val="false"/><w:titlePg/></w:sectPr></w:pPr><w:r><w:t>open</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:formProt/></w:sectPr></w:pPr><w:r><w:t>protected</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>says nothing</w:t></w:r></w:p>"#,
+            r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+            r#"</w:body></w:document>"#,
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let source = pack(document_xml.as_bytes(), document_rels);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(
+            !import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "formProt"),
+            "a carried setting is not a loss: {:?}",
+            import.report.entries
+        );
+        let m1 = import.document;
+        let defs = m1.definitions();
+        let sections: Vec<Option<bool>> = defs
+            .sections
+            .iter()
+            .map(|section| defs.section_form_protection(section.id))
+            .collect();
+        assert_eq!(
+            sections,
+            vec![Some(false), Some(true), None],
+            "false, true, and NOT stated are three different statements"
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let xml = String::from_utf8(written_package.read_part("word/document.xml").unwrap())
+            .expect("utf-8");
+        assert_eq!(
+            xml.matches("<w:formProt").count(),
+            2,
+            "only the two sections that stated it write it: {xml}"
+        );
+        assert!(
+            xml.contains(r#"<w:formProt w:val="false"/><w:titlePg/>"#),
+            "false is written, before w:titlePg as CT_SectPr orders it: {xml}"
+        );
+        assert!(xml.contains(r#"<w:formProt w:val="true"/>"#), "{xml}");
+        assert_eq!(m1, reopen(&written), "write -> reopen is a fixed point");
+    }
+
     /// A NESTED group's own `wpg:cNvPr` name lands on the nested group, not on
     /// the top-level frame, and an unnamed group saves to a fixed point
     /// (`109` FID-AT-08).

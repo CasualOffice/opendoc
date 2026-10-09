@@ -2114,6 +2114,7 @@ pub(crate) fn import_with_named_sources(
         format_scheme_xml: theme.format_scheme_xml,
         shape_styles: parsed_defs.shape_styles,
         object_names: parsed_defs.object_names,
+        form_protection: parsed_defs.form_protection,
         settings,
         people,
     };

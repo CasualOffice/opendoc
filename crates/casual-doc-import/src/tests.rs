@@ -10294,27 +10294,33 @@ fn the_corpus_reports_exactly_these_findings() {
         // stays: it IS information (an absent `w:formProt` means the section is
         // protected when forms protection is on) and the section model has no
         // field for it (`docs/165` M6).
+        //
+        // 1, then 0 with FID-AT-06, on EVERY real-producer document below: that
+        // one remaining finding was `w:formProt w:val="false"`, which is now
+        // modelled (`Definitions::form_protection`, keyed by section) and
+        // written back with its value — carried, not silenced. These documents
+        // now lose nothing and say so.
         (
             "real-producer-footnotes",
             include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
-            1,
+            0,
         ),
         (
             "real-producer-header-footer",
             include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
-            1,
+            0,
         ),
         // 2, then 1 with FID-AT-01: `w:view w:val="web"` is modeled and written
-        // back, so it is no longer lost. `w:formProt` remains, as above.
+        // back, so it is no longer lost. `w:formProt` remained until FID-AT-06, as above.
         (
             "real-producer-hyperlinks",
             include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
-            1,
+            0,
         ),
         (
             "real-producer-libreoffice",
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
-            1,
+            0,
         ),
         // 2 before FID-P-03's coverage guard, then 4. The two then-new ones are
         // REAL losses that were silent: `a:graphicFrameLocks noChangeAspect="1"`
@@ -10348,22 +10354,22 @@ fn the_corpus_reports_exactly_these_findings() {
         // (`a:graphicFrameLocks noChangeAspect="1"`, `a:picLocks
         // noChangeAspect="1" noChangeArrowheads="1"`) are modelled
         // (`ObjectName::locks`) and written back, so they are carried rather
-        // than lost. `w:formProt` remains, as above.
+        // than lost. `w:formProt` remained until FID-AT-06, as above.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            1,
+            0,
         ),
         // 2, then 1 with FID-AT-01 (`w:view`), each.
         (
             "real-producer-table-list",
             include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
-            1,
+            0,
         ),
         (
             "real-producer-table-merges",
             include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
-            1,
+            0,
         ),
         // A document that loses nothing, and says so.
         (

@@ -437,6 +437,11 @@ struct IdTokens {
     /// part written into the package are derived from the same computation and
     /// cannot name different relationships. See `watermark_plan`.
     watermark_headers: BTreeMap<SectionId, Vec<(HeaderFooterKind, String)>>,
+    /// Each section's `w:formProt` (`Definitions::form_protection`, `109`
+    /// FID-AT-06), here for the reason `watermark_headers` is: this is the one
+    /// per-section table already threaded to every depth a `w:sectPr` is written
+    /// from.
+    form_protection: BTreeMap<SectionId, bool>,
 }
 
 impl IdTokens {
@@ -472,7 +477,17 @@ impl IdTokens {
             comments: number(&defs.comments),
             bookmarks: number(&defs.bookmarks),
             watermark_headers,
+            form_protection: defs
+                .form_protection
+                .iter()
+                .map(|(id, protected)| (*id, *protected))
+                .collect(),
         }
+    }
+
+    /// `section`'s `w:formProt`, when its source stated one.
+    fn form_protection(&self, section: SectionId) -> Option<bool> {
+        self.form_protection.get(&section).copied()
     }
 
     /// The `(page type, relationship id)` pairs for the header parts synthesized to
@@ -4424,7 +4439,12 @@ fn document_xml(
     // The body-level section (the last, in the common single-section case). Its
     // header/footer references land in a later slice.
     if let Some(section) = document.definitions().sections.last() {
-        write_section_properties(&mut w, section, ctx.tokens.watermark_headers(section.id))?;
+        write_section_properties(
+            &mut w,
+            section,
+            ctx.tokens.watermark_headers(section.id),
+            ctx.tokens.form_protection(section.id),
+        )?;
     }
 
     w.write_event(Event::End(BytesEnd::new("w:body")))
@@ -4445,6 +4465,7 @@ fn write_section_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     section: &SectionBoundary,
     watermark_headers: &[(HeaderFooterKind, String)],
+    form_protection: Option<bool>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:sectPr")))
         .map_err(pkg)?;
@@ -4638,6 +4659,15 @@ fn write_section_properties(
         w.write_event(Event::End(BytesEnd::new("w:cols")))
             .map_err(pkg)?;
     }
+    // `w:formProt` sits between `w:cols` and `w:vAlign` in `CT_SectPr` (`109`
+    // FID-AT-06). Written with its value whichever it is: `false` is the
+    // statement LibreOffice makes in every document, and it is not what an
+    // absent element says.
+    if let Some(protected) = form_protection {
+        let mut el = start("w:formProt");
+        el.push_attribute(("w:val", if protected { "true" } else { "false" }));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(alignment) = section.vertical_alignment {
         let mut el = start("w:vAlign");
         el.push_attribute((
@@ -4712,7 +4742,9 @@ fn write_section_properties(
         // section properties were before a tracked format change, and a header part
         // synthesized by this export was not part of that history. Claiming it here
         // would fabricate a reference in a revision record.
-        write_section_properties(w, change.prior.as_ref(), &[])?;
+        // The prior snapshot is not a section of the document; its `w:formProt`
+        // is reported at import rather than carried.
+        write_section_properties(w, change.prior.as_ref(), &[], None)?;
         w.write_event(Event::End(BytesEnd::new("w:sectPrChange")))
             .map_err(pkg)?;
     }
@@ -6087,7 +6119,12 @@ fn write_paragraph_properties(
     // The section break precedes `w:pPrChange` in CT_PPr; it marks this paragraph
     // as a section's end.
     if let Some(section) = section {
-        write_section_properties(w, section, tokens.watermark_headers(section.id))?;
+        write_section_properties(
+            w,
+            section,
+            tokens.watermark_headers(section.id),
+            tokens.form_protection(section.id),
+        )?;
     }
     // `w:pPrChange` is the last child of `w:pPr` (after `w:sectPr`); its `w:pPr`
     // is the prior snapshot (CT_PPrBase — no mark rPr, sectPr, or nested change,

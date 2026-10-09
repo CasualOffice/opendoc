@@ -1647,6 +1647,27 @@ pub struct Definitions {
     /// serialize byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub object_names: DefinitionMap<NodeId, ObjectName>,
+    /// Each section's `w:formProt` — whether the section is protected when the
+    /// document's forms protection is in force — keyed by the section's id, for
+    /// the sections whose `w:sectPr` states it (`109` FID-AT-06).
+    ///
+    /// A side table rather than a field on `SectionBoundary`, for the reason
+    /// [`ObjectName`] gives: that struct has 78 literal construction sites
+    /// across eight crates, and a new field breaks every one with nothing for a
+    /// merge to conflict on (`SKILL` §5a shape 1). Read
+    /// [`Definitions::section_form_protection`]. An absent entry is an absent
+    /// element, which is NOT the same statement as `false`: with
+    /// `w:documentProtection w:edit="forms"` enforced, a section without
+    /// `w:formProt` is protected and one with `w:formProt w:val="false"` is not.
+    ///
+    /// Keys are not validated against `sections`: an edit that removes a
+    /// section does not know this table, and refusing the edited document over
+    /// an entry nothing reads would be worse than the entry. The writer looks
+    /// each section up, so an orphan is simply never written.
+    /// Additive: omitted when empty so existing snapshots serialize
+    /// byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub form_protection: DefinitionMap<SectionId, bool>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
@@ -1685,6 +1706,20 @@ impl Definitions {
         self.object_names
             .get(&id)
             .is_some_and(|entry| entry.locks.locks_aspect_ratio())
+    }
+
+    /// `section`'s `w:formProt` (`109` FID-AT-06): `Some(true)` or
+    /// `Some(false)` where the section states it, `None` where it does not.
+    ///
+    /// `None` is not `Some(false)`. With `w:documentProtection w:edit="forms"`
+    /// enforced, Word protects a section that states nothing and leaves one
+    /// stating `false` editable, so a forms-protection check (`docs/165` M6)
+    /// reads this per section rather than treating `forms` as document-wide.
+    ///
+    /// Complexity: one side-table lookup, O(log n) in sections.
+    #[must_use]
+    pub fn section_form_protection(&self, section: SectionId) -> Option<bool> {
+        self.form_protection.get(&section).copied()
     }
 
     /// Whether `style` is **locked** — `w:locked`, ECMA-376 §17.7.4.6 "Style

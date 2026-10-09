@@ -1048,6 +1048,10 @@ struct SectionAccumulator {
     /// its metadata plus the fully-built prior section snapshot. Attached to the
     /// built [`SectionBoundary`].
     section_change: Option<PropChange<SectionBoundary>>,
+    /// `w:formProt`: whether the section is protected under forms protection.
+    /// `None` is an absent element, which is not the same statement as `false`
+    /// (`109` FID-AT-06).
+    form_protection: Option<bool>,
 }
 
 /// Which per-section note-properties container (if any) is open, so its
@@ -1610,6 +1614,9 @@ pub(crate) struct ParsedDefinitions {
     /// Drawing object names and titles by node id (`docs/109` HF-267), a side
     /// table for the same reason.
     pub object_names: DefinitionMap<NodeId, ObjectName>,
+    /// Each section's `w:formProt` by section id (`109` FID-AT-06), a side table
+    /// because `SectionBoundary` has 78 literal sites across eight crates.
+    pub form_protection: DefinitionMap<SectionId, bool>,
 }
 
 impl ParsedDefinitions {
@@ -1620,6 +1627,7 @@ impl ParsedDefinitions {
             field_ranges: DefinitionMap::default(),
             shape_styles: DefinitionMap::default(),
             object_names: DefinitionMap::default(),
+            form_protection: DefinitionMap::default(),
         }
     }
 }
@@ -4097,6 +4105,16 @@ impl BodyParser<'_> {
                     section.title_page = Some(on);
                 }
             }
+            // `w:formProt` (`109` FID-AT-06): reported and dropped until it was
+            // modelled — in every LibreOffice-produced document of the corpus,
+            // as `w:val="false"`, which IS information: under enforced forms
+            // protection, a section without the element is protected.
+            b"formProt" if self.section.is_some() => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(section) = self.section.as_mut() {
+                    section.form_protection = Some(on);
+                }
+            }
             b"vAlign" if self.section.is_some() => {
                 let alignment = match attribute_value(element, b"val").as_deref() {
                     Some("top") => Some(PageVerticalAlignment::Top),
@@ -5174,6 +5192,12 @@ impl BodyParser<'_> {
             // mistaken for a real section.
             b"sectPr" if self.section_change_meta.is_some() && self.prior_section.is_none() => {
                 if let Some(prior_acc) = self.section.take() {
+                    // The prior snapshot is not a section of the document, so its
+                    // `w:formProt` has no section id to be filed under in the
+                    // side table: it is reported rather than dropped in silence.
+                    if prior_acc.form_protection.is_some() {
+                        self.reporter.report(b"formProt");
+                    }
                     self.prior_section = Some(self.build_section_boundary(prior_acc)?);
                 }
                 self.section = self.saved_section.take();
@@ -7014,8 +7038,12 @@ impl BodyParser<'_> {
     }
 
     fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<SectionId, ImportError> {
+        let form_protection = accumulator.form_protection;
         let boundary = self.build_section_boundary(accumulator)?;
         let id = boundary.id;
+        if let Some(protected) = form_protection {
+            self.parsed_defs.form_protection.insert(id, protected);
+        }
         self.sections.push(boundary);
         Ok(id)
     }
