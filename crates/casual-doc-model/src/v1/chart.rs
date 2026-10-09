@@ -646,6 +646,22 @@ pub struct Chart {
     /// Nothing in this crate or its consumers opens it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_data: Option<EmbeddedPart>,
+    /// Whether an edit has made this projection the AUTHORITY over the chart's
+    /// source part — `docs/155` §6.1's "a chart is dirty or it is not".
+    ///
+    /// `false` (every imported chart, until edited): export copies the retained
+    /// part bytes and this projection is only a read index over them. `true`:
+    /// export regenerates the part from this projection, and the retained bytes
+    /// for the part — and for the embedded workbook it names, which a values-only
+    /// workbook replaces — are superseded rather than written beside it. Only a
+    /// `Complete` projection may be dirty; a writer still consults
+    /// [`ChartCoverage::permits_regeneration`] and never trusts the bit alone.
+    ///
+    /// Provenance, not content: it is set by the data edit and cleared by
+    /// nothing, because once a reader has changed a chart the source bytes no
+    /// longer describe it.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub dirty: bool,
 }
 
 impl Chart {

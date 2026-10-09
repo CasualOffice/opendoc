@@ -190,6 +190,12 @@ mod collab;
 // a commit.
 mod presence;
 
+// Chart AUTHORING — the data behind a chart, its family, its title and its
+// legend (`docs/155`). Its own module for the same reason as `diff`: this file is
+// 26k lines and is owned by other lanes, and the whole feature is one read, one
+// write and the gate that decides when the write survives a save.
+mod chart;
+
 use window::BodyLayout;
 use window::WindowedBody;
 
@@ -18681,6 +18687,7 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         display_blanks_as: DisplayBlanks::Gap,
         vary_colors: chart_colors_by_point(group),
         external_data: None,
+        dirty: false,
     }
 }
 

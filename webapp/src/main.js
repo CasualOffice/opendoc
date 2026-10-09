@@ -1,11 +1,11 @@
 // OpenDoc WASM viewer — P1G-001 harness.
 //
-// Loads the `casual-doc-wasm` module, opens a user-selected `.docx` fully
-// client-side, and blits each rendered page onto a canvas. This is the
+// Loads `casual-doc-wasm`, opens a local `.docx`, and paints pages on canvas: the
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
 import init, { open, beginVersionDiff, defaultDiffSlice, engineVersion } from "../pkg/casual_doc_wasm.js";
+import { toggleTextCheckboxAt } from "./text_checkbox.mjs";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
 // with nothing loaded — which is also why they are handed to
@@ -150,6 +150,9 @@ import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { createAccessChrome } from "./access_chrome.mjs";
 import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 import { insertChartAtCaret } from "./chart_insert.mjs";
+// Own line (anti-conflict): the chart data / type / title panel.
+import { createChartDataPanel } from "./chart_data.mjs";
+import { newestObject, placedObjectIds } from "./placed_objects.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
@@ -3737,7 +3740,7 @@ function toggleFormCheckboxAt(node, offset) {
   } catch {
     return false;
   }
-  if (!control) return false;
+  if (!control) return toggleTextCheckboxAt(doc, node, offset, runEdit);
   runEdit(() => doc.toggleFormCheckbox(control));
   return true;
 }
@@ -4383,6 +4386,7 @@ const objectBar = createObjectBar({
   reflectInspector: () => objectInspector.reflect(),
   setWrap: (mode) => setObjectWrap(mode),
   openAltText: () => openAltTextDialog(),
+  openChartData: () => chartPanel.open(),
   enterCrop: () => enterCropMode(),
   deleteObject: () => deleteSelectedObject(),
   reflectShapeSwatches: () => reflectShapeSwatches(),
@@ -4392,7 +4396,25 @@ const objectBar = createObjectBar({
   arrangeButton: () => labelledObjectMenuButton(objectArrangeBtn),
   rotateButton: () => labelledObjectMenuButton(objectRotateBtn),
 });
-const updateObjectContextBar = () => objectBar.update();
+const updateObjectContextBar = () => (objectBar.update(), chartPanel.sync());
+/** The chart panel (`chart_data.mjs`): data grid, type, title, legend. */
+const chartPanel = createChartDataPanel({
+  doc: () => doc,
+  selection: () => objectSelection,
+  blocked: () => objectEditBlocked(),
+  apply: (result) => applyEditResult(result, { keepView: true }),
+  setStatus: (text, kind) => setStatus(text, kind),
+  returnFocus: () => focusEditorSurface(),
+  t,
+});
+/** Insert ▸ Chart, as Word does it: the chart lands SELECTED with its data open. */
+function insertChartWithData() {
+  const before = placedObjectIds(doc);
+  return insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }).then((ok) => {
+    const chart = ok ? newestObject(doc, before, "chart") : null;
+    if (chart) selectObject(chart.node, chart.kind, null, chart.anchored, chart), chartPanel.open(chart.node);
+  });
+}
 const positionObjectContextBar = () => objectBar.reposition();
 
 /** Every arrange fact about the selected object, gathered in ONE pass per
@@ -6475,6 +6497,7 @@ pagesEl.addEventListener("dblclick", (e) => {
     // cropping it. The direct-manipulation crop chrome was already right; only
     // its doorway was missing, so crop was reachable solely by finding the Crop
     // button. A second double-click applies it, as the button turns into Apply.
+    if (objectSelection?.kind === "chart" && chartPanel.open(objectSelection.node)) return e.preventDefault();
     if (objectSelection?.canCrop && !objectSelection.canEditText) {
       enterCropMode();
       e.preventDefault();
@@ -7200,6 +7223,7 @@ const objectContextMenuHost = {
   documentRows: () => referenceObjectMenuRows(),
   setObjectWrap,
   openAltText: () => openAltTextDialog(),
+  openChartData: () => chartPanel.open(),
   applyShapeFill,
   applyShapeOutline,
   enterCrop: () => enterCropMode(),
@@ -7670,7 +7694,7 @@ const INSERT_SURFACE = [
   // galleries), so wiring `activate` here too would open it on mousedown and
   // immediately close it again.
   { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
-  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
+  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartWithData() },
   { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
   { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
@@ -11677,7 +11701,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => dropCapDialog.open() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
     { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
-    { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!selection, disabledReason: t("paragraph.caretRequired"), run: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
+    { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!selection, disabledReason: t("paragraph.caretRequired"), run: () => void insertChartWithData() },
     { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
     { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: insertCommandEnabled("insert.symbol"), run: () => openSymbolPicker() },
     { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: insertCommandEnabled("insert.emoji"), run: () => openEmojiPicker() },
@@ -12399,7 +12423,7 @@ async function insertTextBoxObject() {
     setStatus("Inserting a text box cannot be tracked yet; switch to Editing", "error");
     return;
   }
-  const before = placedObjectIds();
+  const before = placedObjectIds(doc);
   let result;
   try {
     result = doc.insertTextBox(selection.focus.node, selection.focus.offset);
@@ -12410,37 +12434,13 @@ async function insertTextBoxObject() {
   await applyEditResult(result);
   // Land INSIDE the box through the SAME path a double-click uses, so entry can
   // never diverge between the two ways of getting there.
-  const box = newestObject(before, "textbox");
+  const box = newestObject(doc, before, "textbox");
   if (box) {
     selectObject(box.node, box.kind, null, box.anchored, box);
     enterObjectEditMode();
   }
   setStatus("Text box added — type its text");
   focusEditorSurface();
-}
-
-/** The object that appeared since `before` (a set of node ids), optionally of a
- *  given kind. Diffing the placed-object order is how a freshly inserted object
- *  is identified: the engine reports the caret, not the object it created. */
-function newestObject(before, kind) {
-  let objects;
-  try {
-    objects = JSON.parse(doc.objectOrder());
-  } catch {
-    return null;
-  }
-  return (
-    objects.find((entry) => !before.has(entry.node) && (!kind || entry.kind === kind)) ?? null
-  );
-}
-
-/** The node ids of every placed object right now — the "before" side of the diff. */
-function placedObjectIds() {
-  try {
-    return new Set(JSON.parse(doc.objectOrder()).map((entry) => entry.node));
-  } catch {
-    return new Set();
-  }
 }
 
 /** Word's Insert ▸ Shapes. Inserts a floating preset shape and leaves it
@@ -12458,7 +12458,7 @@ async function insertShapeObject(geometry, at = null) {
     setStatus("Inserting a shape cannot be tracked yet; switch to Editing", "error");
     return;
   }
-  const before = placedObjectIds();
+  const before = placedObjectIds(doc);
   let result;
   try {
     result = doc.insertShape(selection.focus.node, selection.focus.offset, geometry);
@@ -12469,7 +12469,7 @@ async function insertShapeObject(geometry, at = null) {
   await applyEditResult(result);
   // Word leaves a new shape SELECTED, not entered — which also puts Fill and
   // Outline within reach straight away.
-  const shape = newestObject(before, "shape");
+  const shape = newestObject(doc, before, "shape");
   if (shape) selectObject(shape.node, shape.kind, null, shape.anchored, shape);
   if (at && shape) {
     try {

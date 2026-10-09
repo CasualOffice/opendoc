@@ -403,6 +403,7 @@ goldens
 grapheme
 grep
 gridSpan
+gridlines
 gzip
 handoff
 hardcoded
@@ -608,6 +609,7 @@ tooltip
 tooltips
 trackpad
 trendline
+trendlines
 tri
 twip
 twips

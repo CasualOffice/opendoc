@@ -707,6 +707,7 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
                 display_blanks_as: DisplayBlanks::Gap,
                 vary_colors: false,
                 external_data: None,
+                dirty: false,
             },
         );
         document

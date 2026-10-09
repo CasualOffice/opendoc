@@ -11,10 +11,50 @@ changed" confusion). Run it after `./build.sh`:
 """
 import http.server
 import sys
+import gzip
+import io
+from functools import lru_cache
+from pathlib import Path
+
+
+@lru_cache(maxsize=2)
+def compressed_wasm(path, modified, size):
+    # Keyed by file metadata so a rebuilt engine never serves the old bytes.
+    return gzip.compress(Path(path).read_bytes(), compresslevel=6, mtime=0)
+
+
+def accepts_gzip(header):
+    for item in header.lower().split(","):
+        encoding, *parameters = item.strip().split(";")
+        if encoding != "gzip":
+            continue
+        try:
+            quality = next((float(p.strip()[2:]) for p in parameters
+                            if p.strip().startswith("q=")), 1.0)
+        except ValueError:
+            return False
+        return 0 < quality <= 1
+    return False
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    def send_head(self):
+        path = Path(self.translate_path(self.path))
+        gzip_allowed = accepts_gzip(self.headers.get("Accept-Encoding", ""))
+        if path.suffix != ".wasm" or not path.is_file() or not gzip_allowed:
+            return super().send_head()
+        stat = path.stat()
+        payload = compressed_wasm(str(path), stat.st_mtime_ns, stat.st_size)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/wasm")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        return io.BytesIO(payload)
+
     def end_headers(self):
+        if Path(self.translate_path(self.path)).suffix == ".wasm":
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")

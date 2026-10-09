@@ -222,16 +222,16 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
    *  got, returning the keys whose fetch failed. Fetches run together;
    *  registration stays in `keys` order so the fallback chain cannot depend on
    *  which request answered first. */
-  async function provisionFallbacks(label) {
+  async function provisionFallbacks(label, prefetched = new Map()) {
     const doc = engine();
     if (!doc) return [];
-    const keys = uncoveredKeys();
+    const keys = neededKeys().filter(key => prefetched.has(key) || (!provisioned.has(key) && !inFlight.has(key)));
     if (keys.length === 0) return [];
     progress(provisioningProgress(label, keys));
     for (const key of keys) inFlight.add(key);
     try {
       const settled = await Promise.allSettled(
-        keys.map((key) => fetchBytes(SCRIPT_FALLBACK_FONTS[key].url)),
+        keys.map((key) => prefetched.get(key) ?? fetchBytes(SCRIPT_FALLBACK_FONTS[key].url)),
       );
       const failed = [];
       for (const [index, result] of settled.entries()) {
@@ -269,6 +269,18 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
       if (!doc) return null;
       progress(provisioningProgress(label));
 
+      // Start the large script faces with the named faces, rather than after
+      // them. Registration still happens below in its original stable order.
+      const prefetched = new Map();
+      for (const key of uncoveredKeys()) {
+        inFlight.add(key);
+        const pending = fetchBytes(SCRIPT_FALLBACK_FONTS[key].url);
+        // A fallback may fail before the named batch finishes; its failure is
+        // consumed and reported by provisionFallbacks, never left unhandled.
+        void pending.catch(() => {});
+        prefetched.set(key, pending);
+      }
+
       const named = await Promise.allSettled(
         NAMED_WEB_FONT_FACES.map((face) => fetchBytes(face.url)),
       );
@@ -288,7 +300,7 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
         failedNamedFamilies.push(face.family);
       }
 
-      const failedFallbackKeys = await provisionFallbacks(label);
+      const failedFallbackKeys = await provisionFallbacks(label, prefetched);
       progress("");
       return fontLossReport({
         failedNamedFamilies,

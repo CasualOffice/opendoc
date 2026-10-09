@@ -65,6 +65,7 @@ use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesText, Event};
 
 use crate::ExportError;
+use crate::chart_workbook::{self, GeneratedWorkbook};
 use crate::report::{Disposition, Reporter};
 use crate::semantic::{finish, new_writer, pkg, start};
 
@@ -98,6 +99,14 @@ pub(crate) struct GeneratedChartPart {
     /// The chart part's own relationships part — `(part name, bytes)` — when the
     /// chart references something of its own. See [`chart_part_rels`].
     pub(crate) rels: Option<(String, Vec<u8>)>,
+    /// The values-only workbook the part names, when one was written
+    /// (`chart_workbook`).
+    pub(crate) workbook: Option<GeneratedWorkbook>,
+    /// Retained part names this generated output REPLACES: the chart part itself
+    /// when an edit made a retained chart dirty, and the workbook replaced in
+    /// place. The package writer skips them, because writing both would put two
+    /// ZIP entries under one name — a package no reader agrees about.
+    pub(crate) supersedes: Vec<String>,
 }
 
 /// Every chart part this export must generate rather than copy.
@@ -175,25 +184,28 @@ pub(crate) fn generate_chart_parts(
             // wins, deterministically, because the walk order above is fixed.
             continue;
         }
-        if retained_parts
+        let retained = retained_parts
             .parts
             .iter()
-            .any(|part| part.part_name == object.part.part_name)
-        {
-            // Retention wins: the source bytes are the authority and the
-            // projection is only a read index over them (`docs/155` §6.1).
-            continue;
-        }
+            .any(|part| part.part_name == object.part.part_name);
         let Some(chart) = by_anchor.get(&object.id) else {
             // A chart object with neither retained bytes nor a projection. There
             // is nothing to write from; the caller's
             // `docx.export.embedded_object.missing_part` finding already names it.
             continue;
         };
+        if retained && !chart.dirty {
+            // Retention wins: the source bytes are the authority and the
+            // projection is only a read index over them (`docs/155` §6.1) —
+            // until an edit makes the projection the authority (`Chart::dirty`).
+            continue;
+        }
         if !chart.coverage.permits_regeneration() {
             // The gate, not an assumption. Reported under its own id because
             // "we understood the part only partly" is a different fact for the
-            // reader than "the part is missing".
+            // reader than "the part is missing". A dirty chart that fails it
+            // keeps its retained bytes: the edit is lost, and said so, rather
+            // than the part being rewritten without what it did not model.
             reporter.record_part(
                 "docx.export.chart.partial_coverage_not_regenerated",
                 &object.part.part_name,
@@ -201,14 +213,46 @@ pub(crate) fn generate_chart_parts(
             );
             continue;
         }
-        let bytes = write_chart_part(chart)?;
-        let rels = chart_part_rels(chart, retained_parts)?
-            .map(|bytes| (rels_part_name(&object.part.part_name), bytes));
+        let (chart, workbook) =
+            match chart_workbook::bind(chart, &object.part.part_name, retained_parts)? {
+                Some((bound, workbook)) => (bound, Some(workbook)),
+                None => ((*chart).clone(), None),
+            };
+        let mut supersedes = Vec::new();
+        if retained {
+            supersedes.push(object.part.part_name.clone());
+        }
+        if let Some(workbook) = workbook
+            .as_ref()
+            .filter(|workbook| workbook.replaces_retained)
+        {
+            // The producer's workbook may have held formulas, formatting or
+            // other sheets the chart never showed; the replacement holds exactly
+            // the chart's data. That is the reader's edit taking effect, and it
+            // is named rather than silent.
+            reporter.record_part(
+                "docx.export.chart.workbook_replaced",
+                &workbook.part_name,
+                Disposition::DegradedNotRetained,
+            );
+            supersedes.push(workbook.part_name.clone());
+        }
+        let bytes = write_chart_part(&chart)?;
+        let rels = chart_part_rels(
+            &chart,
+            retained_parts,
+            workbook
+                .as_ref()
+                .map(|workbook| workbook.part_name.as_str()),
+        )?
+        .map(|bytes| (rels_part_name(&object.part.part_name), bytes));
         generated.push(GeneratedChartPart {
             part_name: object.part.part_name.clone(),
             content_type: CHART_PART_CT,
             bytes,
             rels,
+            workbook,
+            supersedes,
         });
     }
     Ok(generated)
@@ -344,14 +388,16 @@ pub(crate) fn write_chart_part(chart: &Chart) -> Result<Vec<u8>, ExportError> {
 fn chart_part_rels(
     chart: &Chart,
     retained_parts: &RetainedParts,
+    generated_workbook: Option<&str>,
 ) -> Result<Option<Vec<u8>>, ExportError> {
     let Some(external) = &chart.external_data else {
         return Ok(None);
     };
-    if !retained_parts
-        .parts
-        .iter()
-        .any(|part| part.part_name == external.part_name)
+    if generated_workbook != Some(external.part_name.as_str())
+        && !retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == external.part_name)
     {
         return Ok(None);
     }

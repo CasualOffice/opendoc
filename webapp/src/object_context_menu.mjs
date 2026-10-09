@@ -41,6 +41,7 @@
 //                          that also makes the ribbon button and the palette row
 //   `setObjectWrap(v)`     apply a wrap mode
 //   `openAltText()`        open the alt-text dialog
+//   `openChartData()`      open the chart panel on the selected chart
 //   `applyShapeFill(hex)`  `null` clears the fill
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
@@ -186,6 +187,19 @@ export function buildObjectContextCommands(context, io) {
       enabled: mutationEnabled,
       disabledReason: mutationReason,
       run: () => io.addText(),
+    });
+  }
+
+  // Edit data — Word's right-click ▸ Edit Data on a chart. Not gated: the panel
+  // shows the data read-only in Viewing and says why, and refuses the write.
+  if (context.kind === "chart") {
+    commands.push({
+      id: "object.chartData",
+      label: io.text("chart.editData"),
+      group: "arrange",
+      icon: "tableLayout",
+      enabled: true,
+      run: () => io.openChartData(),
     });
   }
 

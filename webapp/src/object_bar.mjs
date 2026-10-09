@@ -141,6 +141,11 @@ export function createObjectBar(io) {
       actions.appendChild(io.arrangeButton());
       actions.appendChild(io.rotateButton());
     }
+    if (selection.kind === "chart") {
+      // Word's Chart Design ▸ Edit Data, on the chip because that is where Docs
+      // puts a selected object's own actions.
+      actions.appendChild(objectBarButton("table_chart", io.t("chart.editData"), io.t("chart.editDataTitle"), io.openChartData));
+    }
     if (selection.canAltText) {
       actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", io.openAltText));
     }
