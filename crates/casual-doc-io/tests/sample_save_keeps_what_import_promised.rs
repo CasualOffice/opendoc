@@ -235,7 +235,11 @@ const TABLE: &[Row] = &[
                 edited,
                 "word/settings.xml",
                 r#"<o:shapedefaults v:ext="edit" spidmax="1027"/>"#,
-            ) && part_contains(edited, "word/settings.xml", r#"<o:idmap v:ext="edit" data="1"/>"#)
+            ) && part_contains(
+                edited,
+                "word/settings.xml",
+                r#"<o:idmap v:ext="edit" data="1"/>"#,
+            )
         },
     },
     Row {
@@ -323,7 +327,11 @@ fn an_unchanged_save_is_the_source_file() {
         saved.0 == SAMPLE,
         "an unchanged save returns the original bytes, so it keeps every finding"
     );
-    assert!(saved.1.entries.is_empty(), "and loses nothing: {:?}", saved.1);
+    assert!(
+        saved.1.entries.is_empty(),
+        "and loses nothing: {:?}",
+        saved.1
+    );
 }
 
 #[test]

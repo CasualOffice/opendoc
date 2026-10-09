@@ -1069,7 +1069,10 @@ mod semantic_tests {
             .expect("written main document");
         let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
         for (what, needle) in [
-            ("the frame's generic name", r#"<wp:docPr id="1" name="Picture 1""#),
+            (
+                "the frame's generic name",
+                r#"<wp:docPr id="1" name="Picture 1""#,
+            ),
             (
                 "the picture's own name and title",
                 r#"<pic:cNvPr id="1" name="diagram.png" title="Pipeline, as drawn"/>"#,
@@ -1189,7 +1192,10 @@ mod semantic_tests {
         );
         assert!(locks(group.id).frame.no_move);
         assert!(locks(group.id).object.no_ungrp);
-        assert!(!defs.locks_aspect_ratio(group.id), "the group's aspect is free");
+        assert!(
+            !defs.locks_aspect_ratio(group.id),
+            "the group's aspect is free"
+        );
         assert!(locks(shape).object.no_text_edit && locks(shape).object.no_rot);
         assert!(locks(child_picture).object.no_crop);
         assert!(locks(text_box.id).frame.no_change_aspect);
@@ -1379,9 +1385,15 @@ mod semantic_tests {
         assert_eq!(nested_name.name.as_deref(), Some("Board"));
         assert_eq!(nested_name.title.as_deref(), Some("The board"));
         let (unnamed_top, unnamed_nested) = top_and_nested(1);
-        assert_eq!(names.get(&unnamed_top), None, "an unnamed frame says nothing");
         assert_eq!(
-            names.get(&unnamed_nested).and_then(|name| name.name.as_deref()),
+            names.get(&unnamed_top),
+            None,
+            "an unnamed frame says nothing"
+        );
+        assert_eq!(
+            names
+                .get(&unnamed_nested)
+                .and_then(|name| name.name.as_deref()),
             Some("Board")
         );
 
@@ -5450,12 +5462,9 @@ mod semantic_tests {
             "the rest of the part is written: {written}"
         );
         assert!(
-            export
-                .report
-                .entries
-                .iter()
-                .any(|entry| entry.feature == "docx.export.settings.fragment_refused"
-                    && entry.location.element.as_deref() == Some("mathPr")),
+            export.report.entries.iter().any(|entry| entry.feature
+                == "docx.export.settings.fragment_refused"
+                && entry.location.element.as_deref() == Some("mathPr")),
             "the refusal is named: {:?}",
             export.report.entries
         );
@@ -5523,7 +5532,12 @@ mod semantic_tests {
             .iter()
             .map(|entry| entry.feature.as_str())
             .collect();
-        for expected in ["theme/@name", "fontScheme/@name", "objectDefaults", "custClrLst"] {
+        for expected in [
+            "theme/@name",
+            "fontScheme/@name",
+            "objectDefaults",
+            "custClrLst",
+        ] {
             assert!(
                 features.contains(&expected),
                 "{expected} is still a finding — the model does not carry it: {features:?}"
@@ -5583,8 +5597,7 @@ mod semantic_tests {
             &import.retained_parts,
         )
         .unwrap();
-        let mut written =
-            DocxPackage::open(&regenerated.bytes, PackageLimits::default()).unwrap();
+        let mut written = DocxPackage::open(&regenerated.bytes, PackageLimits::default()).unwrap();
         let theme = String::from_utf8(written.read_part("word/theme/theme1.xml").unwrap()).unwrap();
         assert!(
             theme.contains("FF0000") && !theme.contains("90C226"),
@@ -5597,7 +5610,12 @@ mod semantic_tests {
             .filter(|entry| entry.retention_outcome() == ImportRetention::NotRetained)
             .map(|entry| entry.feature.as_str())
             .collect();
-        for expected in ["theme/@name", "fontScheme/@name", "objectDefaults", "custClrLst"] {
+        for expected in [
+            "theme/@name",
+            "fontScheme/@name",
+            "objectDefaults",
+            "custClrLst",
+        ] {
             assert!(
                 named.contains(&expected),
                 "the regenerating save names {expected}: {named:?}"

@@ -133,9 +133,11 @@ pub(crate) fn parse(
                         capture = Some(open);
                     }
                     _ => on_setting(
-                        level,
-                        in_compat,
-                        note_scope,
+                        Position {
+                            level,
+                            in_compat,
+                            note_scope,
+                        },
                         &element,
                         false,
                         &bindings,
@@ -154,9 +156,11 @@ pub(crate) fn parse(
                         open.finish(&mut settings, reporter);
                     }
                     _ => on_setting(
-                        depth,
-                        in_compat,
-                        note_scope,
+                        Position {
+                            level: depth,
+                            in_compat,
+                            note_scope,
+                        },
                         &element,
                         true,
                         &bindings,
@@ -258,9 +262,7 @@ impl Fragment {
         let uri = bindings.uri_of(element);
         match element.local_name().as_ref() {
             b"mathPr" if uri == Some(FRAGMENT_NAMESPACES[1].1) => Some(Self::MathProperties),
-            b"shapeDefaults" if uri == Some(FRAGMENT_NAMESPACES[0].1) => {
-                Some(Self::ShapeDefaults)
-            }
+            b"shapeDefaults" if uri == Some(FRAGMENT_NAMESPACES[0].1) => Some(Self::ShapeDefaults),
             _ => None,
         }
     }
@@ -381,6 +383,19 @@ impl Capture {
     }
 }
 
+/// Where in the part an element's event fired: its nesting level, and the
+/// container it sits in.
+#[derive(Clone, Copy)]
+struct Position {
+    /// The root `w:settings` is level 0, a setting level 1, a child of
+    /// `w:compat` or of a note container level 2.
+    level: u64,
+    /// Whether `w:compat` is open.
+    in_compat: bool,
+    /// Which document-default note container is open, if any.
+    note_scope: Option<NoteScope>,
+}
+
 /// Which document-default note container is currently open.
 #[derive(Clone, Copy)]
 enum NoteScope {
@@ -392,15 +407,18 @@ enum NoteScope {
 /// level 2 while `in_compat` is a `w:compat` child. Recognized settings mutate
 /// `settings`; everything else is reported.
 fn on_setting(
-    level: u64,
-    in_compat: bool,
-    note_scope: Option<NoteScope>,
+    position: Position,
     element: &BytesStart<'_>,
     self_closing: bool,
     bindings: &Bindings,
     settings: &mut DocumentSettings,
     reporter: &mut Reporter,
 ) {
+    let Position {
+        level,
+        in_compat,
+        note_scope,
+    } = position;
     let local = element.local_name();
     let local = local.as_ref();
     if in_compat && level == 2 {
@@ -685,8 +703,8 @@ fn apply_setting(
         b"savePreviewPicture" => settings.save_preview_picture = on_off(element),
         b"doNotAutoCompressPictures" => settings.do_not_auto_compress_pictures = on_off(element),
         b"decimalSymbol" | b"listSeparator" => {
-            let Some(token) =
-                attribute_value(element, b"val").filter(|value| DocumentSettings::is_valid_token(value))
+            let Some(token) = attribute_value(element, b"val")
+                .filter(|value| DocumentSettings::is_valid_token(value))
             else {
                 return false;
             };

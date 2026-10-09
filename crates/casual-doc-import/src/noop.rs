@@ -363,11 +363,7 @@ mod tests {
                 "a:picLocks",
                 r#"a:picLocks noChangeAspect="1" noChangeArrowheads="1""#,
             ),
-            (
-                b"grpSpLocks",
-                "a:grpSpLocks",
-                r#"a:grpSpLocks noUngrp="1""#,
-            ),
+            (b"grpSpLocks", "a:grpSpLocks", r#"a:grpSpLocks noUngrp="1""#),
             (
                 b"effectExtent",
                 r#"wp:effectExtent l="0" t="0" r="0" b="0""#,

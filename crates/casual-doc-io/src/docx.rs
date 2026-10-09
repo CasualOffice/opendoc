@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
-use casual_doc_export::{DocumentStatistics, ExportOptions, PackageKind, export_package_with_options};
+use casual_doc_export::{
+    DocumentStatistics, ExportOptions, PackageKind, export_package_with_options,
+};
 use casual_doc_import::{
     FeatureLocation as DocxFeatureLocation, ImportConfig, ImportMode,
     ModelOutcome as DocxModelOutcome, RetainedParts, RetentionOutcome as DocxRetentionOutcome,
@@ -1474,7 +1476,10 @@ mod tests {
         let unedited = save(&imported.document, true);
         let written = app_xml(&unedited.bytes);
         for statistic in statistics {
-            assert!(written.contains(statistic), "an unedited save keeps {statistic}");
+            assert!(
+                written.contains(statistic),
+                "an unedited save keeps {statistic}"
+            );
         }
         assert!(!names_stale(&unedited.report));
 

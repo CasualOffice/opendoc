@@ -38,13 +38,13 @@ use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::ObjectName;
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
-use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
 use casual_doc_model::v1::PageSize;
 use casual_doc_model::v1::SectionId;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::WatermarkContent;
 use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
+use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 // Own line (anti-conflict): `w:view`, FID-AT-01.
@@ -1881,8 +1881,7 @@ fn app_properties_xml(
     let pages = current(app.pages, stale.pages);
     let words = current(app.words, stale.words);
     let characters = current(app.characters, stale.characters);
-    let characters_with_spaces =
-        current(app.characters_with_spaces, stale.characters_with_spaces);
+    let characters_with_spaces = current(app.characters_with_spaces, stale.characters_with_spaces);
     let lines = current(app.lines, stale.lines);
     let paragraphs = current(app.paragraphs, stale.paragraphs);
     let dropped = [
@@ -3927,9 +3926,7 @@ fn settings_xml(
     }
     write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
     write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
-    if settings.adjust_line_height_in_table
-        || settings.use_fe_layout
-        || !settings.compat.is_empty()
+    if settings.adjust_line_height_in_table || settings.use_fe_layout || !settings.compat.is_empty()
     {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
@@ -4054,7 +4051,10 @@ fn settings_fragment_is_well_formed(xml: &str, local: &[u8]) -> bool {
             .any(|(allowed, _)| *allowed == prefix)
     };
     let names_resolve = |element: &BytesStart<'_>| {
-        element.name().prefix().is_some_and(|p| resolves(p.as_ref()))
+        element
+            .name()
+            .prefix()
+            .is_some_and(|p| resolves(p.as_ref()))
             && element.attributes().all(|attribute| {
                 let Ok(attribute) = attribute else {
                     return false;
@@ -7542,7 +7542,12 @@ fn write_group(
             anchor.wrap,
             anchor.wrap_text,
             anchor.wrap_polygon.as_deref(),
-            ObjectLabel::frame(ctx.defs, ctx.doc_pr_ids, group.id, ObjectName::GENERIC_GROUP),
+            ObjectLabel::frame(
+                ctx.defs,
+                ctx.doc_pr_ids,
+                group.id,
+                ObjectName::GENERIC_GROUP,
+            ),
         )?;
     } else {
         write_extent_only(w, group)?;

@@ -8882,7 +8882,11 @@ fn a_retention_mode_equation_the_model_carries_is_not_lost_by_a_regenerating_sav
         .expect("the unprojected equation is reported");
     let record = import
         .ledger
-        .get(equation.ledger_id.expect("a preserved finding cites a record"))
+        .get(
+            equation
+                .ledger_id
+                .expect("a preserved finding cites a record"),
+        )
         .expect("the cited record exists");
     assert_eq!(
         record.kind,

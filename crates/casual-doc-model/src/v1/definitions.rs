@@ -1460,12 +1460,9 @@ impl DocumentSettings {
         };
         let groups: Vec<&str> = inner.split('-').collect();
         groups.len() == 5
-            && groups
-                .iter()
-                .zip([8, 4, 4, 4, 12])
-                .all(|(group, length)| {
-                    group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
-                })
+            && groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, length)| {
+                group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
     }
 
     /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=10,000.
