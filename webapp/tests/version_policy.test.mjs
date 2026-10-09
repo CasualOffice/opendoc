@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EN_STRINGS } from "../src/en_strings.mjs";
-import { resetI18n, setCatalogue, setLocale } from "../src/i18n.mjs";
+import { resetI18n, setCatalogue, setLocale, t } from "../src/i18n.mjs";
 import {
   HISTORY_STATUS,
   VERSION_KIND,
@@ -33,6 +33,7 @@ import {
   historyUnavailableReason,
   retentionSummary,
   versionKindLabel,
+  versionChangeText,
   versionRowDeltas,
   versionRowText,
 } from "../src/version_policy.mjs";
@@ -336,4 +337,26 @@ test("a twin is named by CONTENT, so two byte layouts of one document still read
     { versionId: "ver-1", createdAt: 1000, checkpointId: "sha256-one", name: "first" },
   ]);
   assert.equal(legacy.get("ver-2").sameAs, "first");
+});
+
+test("a row says how many words it added or removed, not a file size", () => {
+  // The size delta ("1.2 KB larger") was the compressed file's, which a reader
+  // cannot act on and which can say "smaller" for a version that gained text.
+  // The word count is what the status bar already shows, recorded at capture.
+  const deltas = versionRowDeltas([
+    { versionId: "v3", createdAt: 3000, words: 40, revision: 9 },
+    { versionId: "v2", createdAt: 2000, words: 52, revision: 7 },
+    { versionId: "v1", createdAt: 1000, words: 50, revision: 2 },
+  ]);
+  assert.equal(versionChangeText(deltas.get("v2")), t("versionHistory.row.wordsAdded", { count: "2" }));
+  assert.equal(versionChangeText(deltas.get("v3")), t("versionHistory.row.wordsRemoved", { count: "12" }));
+  assert.doesNotMatch(versionChangeText(deltas.get("v3")), /KB|bytes|larger|smaller/);
+  // A row captured before words were recorded falls back to the edit count
+  // rather than inventing a word change.
+  const legacy = versionRowDeltas([
+    { versionId: "v2", createdAt: 2000, revision: 7 },
+    { versionId: "v1", createdAt: 1000, words: 50, revision: 2 },
+  ]);
+  assert.equal(legacy.get("v2").words, null);
+  assert.equal(versionChangeText(legacy.get("v2")), t("versionHistory.row.edits", { count: 5 }));
 });

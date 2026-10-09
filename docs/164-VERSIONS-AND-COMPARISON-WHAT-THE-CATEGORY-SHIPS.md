@@ -791,6 +791,13 @@ projection, which is what both web competitors do and what `139` §9.4 already s
 Each row names the competitive behaviour it violates and a one-line fix. **No code here**; these are
 work items for other lanes, and `109` is where they are queued.
 
+**Status, 2026-10-09 (ADR-065, `109` UX-047):** rows 2 and 5 are fixed — a version preview is the
+version with its changes against its predecessor painted in place (a read-only redline, Google's
+model), and every Compare entry takes the reader to its change in document order. Row 3 was fixed by
+ADR-064 and stays fixed: neither route writes into the reader's document until Compare's explicit
+**Keep as tracked changes**. Row 6 is narrowed rather than closed: viewing a comparison no longer
+refuses a document with suggestions; only Keep does.
+
 | # | Defect | Measured at | Competitive behaviour violated | One-line fix |
 | --- | --- | --- | --- | --- |
 | 1 | **"Show changes" on a selected version reports "No differences", always.** Clicking a row opens a preview, the preview replaces the live document, and the comparison runs that version against itself. | `version_panel.mjs:501-505`, `main.js:15758`, `main.js:10533`, `casual-doc-wasm/src/lib.rs:991`, `casual-doc-io/src/docx.rs:247` | Google: selecting a timestamp shows that version *with its edits in author colour*. ONLYOFFICE: selecting an entry replays that version's changes as coloured marks. Neither can return "nothing changed". | Compare the selected version against its **predecessor**, not against `doc`; capture the comparison's right-hand side before the preview swap. |

@@ -426,8 +426,14 @@ const SRC = new URL("../src/", import.meta.url);
  *  Change cannot accept different files), by folding the crop session's
  *  Enter/Escape block into `handleCropKey`, and by replacing the right-click
  *  menu's hand-copied selected-object context with `selectedObjectContext()`.
- *  MEASURED with `wc -l` on this branch; re-measure after any rebase. */
-const MAIN_JS_LINE_CEILING = 16047;
+ *  MEASURED with `wc -l` on this branch; re-measure after any rebase.
+ *
+ *  16,047 -> 16,044 (ADR-065, the diff canvas): the redline seams — a preview
+ *  that carries its markup, the step-to-a-change navigation, Compare's view and
+ *  the version panel's redline — cost eleven lines, and were paid for by
+ *  folding the comparison panel's comment block and two of the preview swap's
+ *  comments, so the file shrank while it gained a feature. */
+const MAIN_JS_LINE_CEILING = 16044;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
