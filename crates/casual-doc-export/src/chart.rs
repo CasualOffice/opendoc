@@ -66,8 +66,10 @@ use quick_xml::events::{BytesEnd, BytesText, Event};
 
 use crate::ExportError;
 use crate::chart_workbook::{self, GeneratedWorkbook};
+// Own line: the verbatim-carry vocabulary (`docs/155` §17).
 use crate::report::{Disposition, Reporter};
 use crate::semantic::{finish, new_writer, pkg, start};
+use casual_doc_model::v1::{ChartContainer, ChartXml, chart_child_rank};
 
 /// The content type of a `word/charts/chartN.xml` part.
 pub(crate) const CHART_PART_CT: &str =
@@ -237,7 +239,17 @@ pub(crate) fn generate_chart_parts(
             );
             supersedes.push(workbook.part_name.clone());
         }
-        let bytes = write_chart_part(&chart)?;
+        let (bytes, dropped) = write_chart_part(&chart)?;
+        if dropped > 0 {
+            // A carried fragment that was not one well-formed element of its
+            // declared name, or that its container cannot hold — reachable only
+            // through a hand-built snapshot. Left out, and said so.
+            reporter.record_part(
+                "docx.export.chart.fragment_dropped",
+                &object.part.part_name,
+                Disposition::DegradedNotRetained,
+            );
+        }
         let rels = chart_part_rels(
             &chart,
             retained_parts,
@@ -348,27 +360,194 @@ fn collect_chart_objects_in_group<'a>(
     }
 }
 
+/// The [`ChartXml`] fragments of one container, put back at their schema rank
+/// as the writer walks the container's sequence (`docs/155` §17).
+///
+/// The writer calls [`Carry::before`] with the name of each element it is about
+/// to generate; every fragment ranked earlier is written first, so generated and
+/// carried children interleave in ECMA-376 order. A name in `shadows` is one the
+/// writer also generates: such a fragment is written only through
+/// [`Carry::shadow`], in place of the generated element, and only while the
+/// model still says the element is present — so turning gridlines off removes
+/// the verbatim gridlines too.
+///
+/// A fragment that is not one well-formed element of its declared name, or that
+/// its container's sequence does not admit, is dropped and counted: the model
+/// can arrive by snapshot, and one malformed fragment would make the whole part
+/// unreadable.
+///
+/// Complexity: O(fragments × log fragments) to order, O(fragment bytes) to
+/// validate and write, once per export.
+struct Carry<'a> {
+    container: ChartContainer,
+    pending: Vec<(usize, &'a ChartXml)>,
+    next: usize,
+    shadows: &'static [&'static str],
+}
+
+impl<'a> Carry<'a> {
+    fn new(
+        container: ChartContainer,
+        fragments: &'a [ChartXml],
+        shadows: &'static [&'static str],
+        dropped: &mut usize,
+    ) -> Self {
+        let mut pending: Vec<(usize, &ChartXml)> = Vec::with_capacity(fragments.len());
+        for fragment in fragments {
+            match chart_child_rank(container, &fragment.name) {
+                Some(rank) if is_one_element(&fragment.xml, &fragment.name) => {
+                    pending.push((rank, fragment));
+                }
+                _ => *dropped += 1,
+            }
+        }
+        // Stable: two fragments of one rank (`c:dPt` repeats) keep source order.
+        pending.sort_by_key(|(rank, _)| *rank);
+        Self {
+            container,
+            pending,
+            next: 0,
+            shadows,
+        }
+    }
+
+    /// Writes every non-shadow fragment ranked before `name`.
+    fn before(&mut self, w: &mut Writer<Cursor<Vec<u8>>>, name: &str) -> Result<(), ExportError> {
+        let rank = chart_child_rank(self.container, name).unwrap_or(usize::MAX);
+        while let Some((at, fragment)) = self.pending.get(self.next) {
+            if *at >= rank {
+                break;
+            }
+            if !self.shadows.contains(&fragment.name.as_str()) {
+                raw(w, &fragment.xml)?;
+            }
+            self.next += 1;
+        }
+        Ok(())
+    }
+
+    /// The verbatim form of a generated element, when one was carried.
+    fn shadow(&self, name: &str) -> Option<&'a ChartXml> {
+        self.pending
+            .iter()
+            .map(|(_, fragment)| *fragment)
+            .find(|fragment| fragment.name == name)
+    }
+
+    /// Writes every remaining non-shadow fragment.
+    fn rest(&mut self, w: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError> {
+        self.before(w, "\u{0}")
+    }
+}
+
+/// Writes `xml` into the part as-is.
+fn raw(w: &mut Writer<Cursor<Vec<u8>>>, xml: &str) -> Result<(), ExportError> {
+    std::io::Write::write_all(w.get_mut(), xml.as_bytes()).map_err(pkg)
+}
+
+/// Whether `xml` is exactly one well-formed element whose local name is
+/// `name`, with no DTD and no processing instruction. O(bytes).
+fn is_one_element(xml: &str, name: &str) -> bool {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth = 0_usize;
+    let mut seen = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) => {
+                if depth == 0 {
+                    if seen || element.local_name().as_ref() != name.as_bytes() {
+                        return false;
+                    }
+                    seen = true;
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(element)) => {
+                if depth == 0 {
+                    if seen || element.local_name().as_ref() != name.as_bytes() {
+                        return false;
+                    }
+                    seen = true;
+                }
+            }
+            Ok(Event::End(_)) => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            Ok(Event::Text(text)) => {
+                if depth == 0 && !text.iter().all(u8::is_ascii_whitespace) {
+                    return false;
+                }
+            }
+            Ok(Event::Eof) => return seen && depth == 0,
+            Ok(Event::DocType(_) | Event::PI(_) | Event::Decl(_)) | Err(_) => return false,
+            Ok(_) => {}
+        }
+    }
+}
+
 /// Serializes one projection as a `c:chartSpace` part.
 ///
 /// `CT_ChartSpace` sequence: `date1904?`, `lang?`, `roundedCorners?`, `style?`,
 /// `clrMapOvr?`, `pivotSource?`, `protection?`, **`chart`**, `spPr?`, `txPr?`,
 /// `externalData?`, `printSettings?`, `userShapes?`, `extLst?`.
 ///
+/// Returns the part and how many carried fragments were dropped as malformed
+/// or unplaceable, which the caller reports.
+///
 /// Complexity: O(points in the chart).
-pub(crate) fn write_chart_part(chart: &Chart) -> Result<Vec<u8>, ExportError> {
+pub(crate) fn write_chart_part(chart: &Chart) -> Result<(Vec<u8>, usize), ExportError> {
+    let mut dropped = 0_usize;
     let mut w = new_writer();
     let mut space = start("c:chartSpace");
     space.push_attribute(("xmlns:c", CHART_NS));
     space.push_attribute(("xmlns:a", DRAWING_NS));
     space.push_attribute(("xmlns:r", RELATIONSHIP_NS));
+    // The source root's other prefixes, so carried fragments resolve. The
+    // writer's own three are never rebound: the importer refuses to carry from
+    // a part that bound them differently.
+    let extra: Vec<(String, &str)> = chart
+        .namespaces
+        .iter()
+        .filter(|(prefix, _)| !matches!(prefix.as_str(), "c" | "a" | "r"))
+        .filter(|(prefix, _)| {
+            prefix
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+        })
+        .map(|(prefix, uri)| {
+            (
+                if prefix.is_empty() {
+                    "xmlns".to_owned()
+                } else {
+                    format!("xmlns:{prefix}")
+                },
+                uri.as_str(),
+            )
+        })
+        .collect();
+    for (key, uri) in &extra {
+        space.push_attribute((key.as_str(), *uri));
+    }
     w.write_event(Event::Start(space)).map_err(pkg)?;
-    write_chart(&mut w, chart)?;
+    let mut carry = Carry::new(
+        ChartContainer::Space,
+        &chart.space_retained,
+        &[],
+        &mut dropped,
+    );
+    carry.before(&mut w, "chart")?;
+    write_chart(&mut w, chart, &mut dropped)?;
+    carry.before(&mut w, "externalData")?;
     if let Some(external) = &chart.external_data {
         write_external_data(&mut w, external)?;
     }
+    carry.rest(&mut w)?;
     w.write_event(Event::End(BytesEnd::new("c:chartSpace")))
         .map_err(pkg)?;
-    Ok(finish(w))
+    Ok((finish(w), dropped))
 }
 
 /// The chart part's own relationships, when it has any.
@@ -440,18 +619,28 @@ fn chart_relative_target(part_name: &str) -> String {
 /// `CT_Chart` sequence: `title?`, `autoTitleDeleted?`, `pivotFmts?`, `view3D?`,
 /// `floor?`, `sideWall?`, `backWall?`, **`plotArea`**, `legend?`,
 /// `plotVisOnly?`, `dispBlanksAs?`, `showDLblsOverMax?`, `extLst?`.
-fn write_chart(w: &mut Writer<Cursor<Vec<u8>>>, chart: &Chart) -> Result<(), ExportError> {
+fn write_chart(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    chart: &Chart,
+    dropped: &mut usize,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:chart"))).map_err(pkg)?;
+    let mut carry = Carry::new(ChartContainer::Chart, &chart.chart_retained, &[], dropped);
+    carry.before(w, "title")?;
     if let Some(title) = &chart.title {
-        write_title(w, title)?;
+        write_title(w, title, dropped)?;
     }
+    carry.before(w, "autoTitleDeleted")?;
     if chart.auto_title_deleted {
         write_val(w, "c:autoTitleDeleted", "1")?;
     }
-    write_plot_area(w, &chart.plot_area)?;
+    carry.before(w, "plotArea")?;
+    write_plot_area(w, &chart.plot_area, dropped)?;
+    carry.before(w, "legend")?;
     if let Some(legend) = &chart.legend {
-        write_legend(w, legend)?;
+        write_legend(w, legend, dropped)?;
     }
+    carry.before(w, "plotVisOnly")?;
     // Both written unconditionally rather than only when true. Their SCHEMA
     // defaults are not the model's defaults (`c:plotVisOnly` defaults to 1 in
     // ECMA-376 and to `false` in a Rust `bool`), so omitting a false value would
@@ -466,6 +655,7 @@ fn write_chart(w: &mut Writer<Cursor<Vec<u8>>>, chart: &Chart) -> Result<(), Exp
             DisplayBlanks::Span => "span",
         },
     )?;
+    carry.rest(w)?;
     // `Chart::vary_colors` is deliberately NOT written: `CT_Chart` has no
     // `c:varyColors` child in ECMA-376 — the element only exists on a chart
     // GROUP, and that is where `ChartGroup::vary_colors` writes it. The chart-
@@ -477,9 +667,21 @@ fn write_chart(w: &mut Writer<Cursor<Vec<u8>>>, chart: &Chart) -> Result<(), Exp
 }
 
 /// `CT_Title` sequence: `tx?`, `layout?`, `overlay?`, `spPr?`, `txPr?`.
-fn write_title(w: &mut Writer<Cursor<Vec<u8>>>, title: &ChartTitle) -> Result<(), ExportError> {
+fn write_title(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    title: &ChartTitle,
+    dropped: &mut usize,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:title"))).map_err(pkg)?;
-    if let Some(text) = &title.text {
+    let mut carry = Carry::new(ChartContainer::Title, &title.retained, &["tx"], dropped);
+    carry.before(w, "tx")?;
+    let verbatim = title.text.as_ref().and(carry.shadow("tx"));
+    if let Some(fragment) = verbatim {
+        // The title's own rich text — its font, size and colour — exactly as it
+        // was read. An edit to the text drops this fragment, so it can only be
+        // the text the model holds.
+        raw(w, &fragment.xml)?;
+    } else if let Some(text) = &title.text {
         w.write_event(Event::Start(start("c:tx"))).map_err(pkg)?;
         match &text.formula {
             // A cached reference: the formula plus the one-cell cache it
@@ -494,7 +696,9 @@ fn write_title(w: &mut Writer<Cursor<Vec<u8>>>, title: &ChartTitle) -> Result<()
         w.write_event(Event::End(BytesEnd::new("c:tx")))
             .map_err(pkg)?;
     }
+    carry.before(w, "overlay")?;
     write_val(w, "c:overlay", bool_val(title.overlay))?;
+    carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new("c:title")))
         .map_err(pkg)
 }
@@ -527,19 +731,37 @@ fn write_rich_text(w: &mut Writer<Cursor<Vec<u8>>>, text: &str) -> Result<(), Ex
 /// modeling decision of `docs/155` §4.2 surviving into the writer: a combo chart
 /// is more than one group and a secondary axis is one more axis a group names, so
 /// neither needs a special case here.
-fn write_plot_area(w: &mut Writer<Cursor<Vec<u8>>>, plot: &PlotArea) -> Result<(), ExportError> {
+fn write_plot_area(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    plot: &PlotArea,
+    dropped: &mut usize,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:plotArea")))
         .map_err(pkg)?;
-    // Empty = automatic layout, which is what the projection means by holding no
-    // manual one (`chart_noop` reads it the same way).
-    w.write_event(Event::Empty(start("c:layout")))
-        .map_err(pkg)?;
+    let mut carry = Carry::new(
+        ChartContainer::PlotArea,
+        &plot.retained,
+        &["layout"],
+        dropped,
+    );
+    match carry.shadow("layout") {
+        // A manual layout, verbatim.
+        Some(fragment) => raw(w, &fragment.xml)?,
+        // Empty = automatic layout, which is what the projection means by
+        // holding no manual one (`chart_noop` reads it the same way).
+        None => w
+            .write_event(Event::Empty(start("c:layout")))
+            .map_err(pkg)?,
+    }
+    carry.before(w, "*groups")?;
     for group in &plot.groups {
-        write_group(w, group)?;
+        write_group(w, group, dropped)?;
     }
+    carry.before(w, "*axes")?;
     for axis in &plot.axes {
-        write_axis(w, axis, plot)?;
+        write_axis(w, axis, plot, dropped)?;
     }
+    carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new("c:plotArea")))
         .map_err(pkg)
 }
@@ -550,9 +772,19 @@ fn write_plot_area(w: &mut Writer<Cursor<Vec<u8>>>, plot: &PlotArea) -> Result<(
 /// set [`ChartGroupKind`] represents are the same set — which is the property the
 /// no-dead-control guard checks: a family the editor can insert is a family the
 /// package writer can save.
-fn write_group(w: &mut Writer<Cursor<Vec<u8>>>, group: &ChartGroup) -> Result<(), ExportError> {
+fn write_group(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    group: &ChartGroup,
+    dropped: &mut usize,
+) -> Result<(), ExportError> {
     let element = group_element(group.kind);
     w.write_event(Event::Start(start(element))).map_err(pkg)?;
+    let mut carry = Carry::new(
+        ChartContainer::Group(group.kind),
+        &group.retained,
+        &[],
+        dropped,
+    );
     // The leading, family-specific children.
     match group.kind {
         // `CT_BarChart`: barDir, grouping?, varyColors?, ser*, dLbls?, gapWidth?,
@@ -603,29 +835,37 @@ fn write_group(w: &mut Writer<Cursor<Vec<u8>>>, group: &ChartGroup) -> Result<()
         // `CT_PieChart`/`CT_DoughnutChart` open with varyColors?.
         ChartGroupKind::Pie { .. } | ChartGroupKind::Doughnut { .. } => {}
     }
+    carry.before(w, "varyColors")?;
     write_val(w, "c:varyColors", bool_val(group.vary_colors))?;
+    carry.before(w, "ser")?;
     for series in &group.series {
-        write_series(w, series, group.kind)?;
+        write_series(w, series, group.kind, dropped)?;
     }
     // The trailing, family-specific children, after the series in every sequence.
     match group.kind {
         ChartGroupKind::Bar {
             gap_width, overlap, ..
         } => {
+            carry.before(w, "gapWidth")?;
             write_val(w, "c:gapWidth", &gap_width.to_string())?;
+            carry.before(w, "overlap")?;
             write_val(w, "c:overlap", &overlap.to_string())?;
         }
         ChartGroupKind::Line { marker, .. } => {
+            carry.before(w, "marker")?;
             write_val(w, "c:marker", bool_val(marker))?;
         }
         ChartGroupKind::Pie { first_slice_angle } => {
+            carry.before(w, "firstSliceAng")?;
             write_val(w, "c:firstSliceAng", &first_slice_angle.to_string())?;
         }
         ChartGroupKind::Doughnut {
             first_slice_angle,
             hole_size,
         } => {
+            carry.before(w, "firstSliceAng")?;
             write_val(w, "c:firstSliceAng", &first_slice_angle.to_string())?;
+            carry.before(w, "holeSize")?;
             write_val(w, "c:holeSize", &hole_size.to_string())?;
         }
         ChartGroupKind::Area { .. } | ChartGroupKind::Scatter { .. } => {}
@@ -634,10 +874,12 @@ fn write_group(w: &mut Writer<Cursor<Vec<u8>>>, group: &ChartGroup) -> Result<()
     // all, which is why nothing is written for them: `CT_PieChart` has no `axId`
     // child, and emitting one would make Word repair the part.
     if group_takes_axes(group.kind) {
+        carry.before(w, "axId")?;
         for id in &group.axis_ids {
             write_val(w, "c:axId", &id.to_string())?;
         }
     }
+    carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new(element)))
         .map_err(pkg)
 }
@@ -685,18 +927,38 @@ fn write_series(
     w: &mut Writer<Cursor<Vec<u8>>>,
     series: &Series,
     kind: ChartGroupKind,
+    dropped: &mut usize,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:ser"))).map_err(pkg)?;
+    let mut carry = Carry::new(
+        ChartContainer::Series(kind),
+        &series.retained,
+        &["spPr", "dLbls"],
+        dropped,
+    );
     write_val(w, "c:idx", &series.index.to_string())?;
     write_val(w, "c:order", &series.order.to_string())?;
+    carry.before(w, "tx")?;
     if let Some(name) = &series.name {
         write_series_name(w, name)?;
     }
-    write_shape_properties(w, series.fill.as_ref(), series.line.as_ref())?;
+    carry.before(w, "spPr")?;
+    // The verbatim `c:spPr` keeps what the model does not (effects, gradients'
+    // stops, colour transforms). Editing the fill or line drops it, so while it
+    // is here it agrees with the model.
+    match carry.shadow("spPr") {
+        Some(fragment) => raw(w, &fragment.xml)?,
+        None => write_shape_properties(w, series.fill.as_ref(), series.line.as_ref())?,
+    }
+    carry.before(w, "dLbls")?;
     if let Some(labels) = &series.data_labels {
-        write_data_labels(w, labels)?;
+        match carry.shadow("dLbls") {
+            Some(fragment) => raw(w, &fragment.xml)?,
+            None => write_data_labels(w, labels)?,
+        }
     }
     let scatter = matches!(kind, ChartGroupKind::Scatter { .. });
+    carry.before(w, if scatter { "xVal" } else { "cat" })?;
     if scatter {
         // `CT_ScatterSer`: xVal?, yVal?. The model keeps the x values in their own
         // field precisely so this is a field read and not a reinterpretation of
@@ -714,9 +976,14 @@ fn write_series(
     // `c:smooth` is in `CT_LineSer` and `CT_ScatterSer` only. A bar, area or pie
     // series carrying `smooth` describes nothing those families draw, so it is
     // dropped rather than written somewhere the schema does not admit it.
-    if series.smooth && (scatter || matches!(kind, ChartGroupKind::Line { .. })) {
+    let smooth_admitted = scatter || matches!(kind, ChartGroupKind::Line { .. });
+    if smooth_admitted {
+        carry.before(w, "smooth")?;
+    }
+    if series.smooth && smooth_admitted {
         write_val(w, "c:smooth", "1")?;
     }
+    carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new("c:ser")))
         .map_err(pkg)
 }
@@ -903,9 +1170,14 @@ fn write_data_labels(
 
 /// `CT_Legend` sequence: `legendPos?`, `legendEntry*`, `layout?`, `overlay?`,
 /// `spPr?`, `txPr?`.
-fn write_legend(w: &mut Writer<Cursor<Vec<u8>>>, legend: &Legend) -> Result<(), ExportError> {
+fn write_legend(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    legend: &Legend,
+    dropped: &mut usize,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:legend")))
         .map_err(pkg)?;
+    let mut carry = Carry::new(ChartContainer::Legend, &legend.retained, &[], dropped);
     write_val(
         w,
         "c:legendPos",
@@ -917,7 +1189,9 @@ fn write_legend(w: &mut Writer<Cursor<Vec<u8>>>, legend: &Legend) -> Result<(), 
             LegendPosition::TopRight => "tr",
         },
     )?;
+    carry.before(w, "overlay")?;
     write_val(w, "c:overlay", bool_val(legend.overlay))?;
+    carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new("c:legend")))
         .map_err(pkg)
 }
@@ -937,7 +1211,14 @@ fn write_axis(
     w: &mut Writer<Cursor<Vec<u8>>>,
     axis: &Axis,
     plot: &PlotArea,
+    dropped: &mut usize,
 ) -> Result<(), ExportError> {
+    let mut carry = Carry::new(
+        ChartContainer::Axis(axis.kind),
+        &axis.retained,
+        &["majorGridlines", "minorGridlines"],
+        dropped,
+    );
     let element = match axis.kind {
         AxisKind::Category => "c:catAx",
         AxisKind::Value => "c:valAx",
@@ -983,14 +1264,25 @@ fn write_axis(
             },
         },
     )?;
+    // Present or absent by the MODEL; verbatim (their line colour and width)
+    // when the source carried them — so "gridlines off" removes both.
     if axis.major_gridlines {
-        w.write_event(Event::Empty(start("c:majorGridlines")))
-            .map_err(pkg)?;
+        match carry.shadow("majorGridlines") {
+            Some(fragment) => raw(w, &fragment.xml)?,
+            None => w
+                .write_event(Event::Empty(start("c:majorGridlines")))
+                .map_err(pkg)?,
+        }
     }
     if axis.minor_gridlines {
-        w.write_event(Event::Empty(start("c:minorGridlines")))
-            .map_err(pkg)?;
+        match carry.shadow("minorGridlines") {
+            Some(fragment) => raw(w, &fragment.xml)?,
+            None => w
+                .write_event(Event::Empty(start("c:minorGridlines")))
+                .map_err(pkg)?,
+        }
     }
+    carry.before(w, "numFmt")?;
     if let Some(format) = &axis.number_format {
         let mut element = start("c:numFmt");
         let code = strip_xml_forbidden(format);
@@ -1001,6 +1293,7 @@ fn write_axis(
         element.push_attribute(("sourceLinked", "0"));
         w.write_event(Event::Empty(element)).map_err(pkg)?;
     }
+    carry.before(w, "majorTickMark")?;
     write_val(w, "c:majorTickMark", tick_mark_str(axis.major_tick_mark))?;
     write_val(w, "c:minorTickMark", tick_mark_str(axis.minor_tick_mark))?;
     write_val(
@@ -1023,7 +1316,9 @@ fn write_axis(
             .find(|other| other.id != axis.id)
             .map_or(axis.id, |other| other.id)
     });
+    carry.before(w, "crossAx")?;
     write_val(w, "c:crossAx", &cross.to_string())?;
+    carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new(element)))
         .map_err(pkg)
 }

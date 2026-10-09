@@ -204,11 +204,24 @@ export const TABLE_FACES = Object.freeze([
   chooser("#tableStyleBtn", "table.style."),
 ]);
 
+/** The contextual Chart band (`chart_surface.mjs`). Edit Data and Chart
+ *  settings run one command each; Type and Elements open choosers over the
+ *  `chart.type.*` and `chart.elements` families, the same command tree the
+ *  right-click menu shows. The style swatches are built at run time and carry
+ *  their own `data-command` (`chart.style.*`). */
+export const CHART_FACES = Object.freeze([
+  face("#chartEditDataBtn", "chart.editData"),
+  face("#chartSettingsBtn", "chart.settings"),
+  chooser("#chartTypeBtn", "chart.type."),
+  chooser("#chartElementsBtn", "chart."),
+]);
+
 /** Every band this module speaks for, by ribbon panel id. */
 export const RIBBON_FACES = Object.freeze({
   panelHome: HOME_FACES,
   panelView: VIEW_FACES,
   panelTable: TABLE_FACES,
+  panelChart: CHART_FACES,
 });
 
 /** Stamps the declarations onto the live controls.

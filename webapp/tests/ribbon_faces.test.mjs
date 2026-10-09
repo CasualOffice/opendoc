@@ -43,7 +43,9 @@ function panel(id, nextId) {
 const PANELS = {
   panelHome: () => panel("panelHome", "panelInsert"),
   panelView: () => panel("panelView", "panelReview"),
-  panelTable: () => panel("panelTable", "panelView"),
+  panelTable: () => panel("panelTable", "panelChart"),
+  // The contextual Chart band follows Table, as Word and ONLYOFFICE place it.
+  panelChart: () => panel("panelChart", "panelView"),
 };
 
 /** Every control in a band's markup, as the selector a face would name it by.

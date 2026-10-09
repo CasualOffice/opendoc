@@ -41,7 +41,7 @@
 //                          that also makes the ribbon button and the palette row
 //   `setObjectWrap(v)`     apply a wrap mode
 //   `openAltText()`        open the alt-text dialog
-//   `openChartData()`      open the chart panel on the selected chart
+//   `chartCommands()`      the selected chart's command tree (`chart_commands.mjs`)
 //   `applyShapeFill(hex)`  `null` clears the fill
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
@@ -191,17 +191,13 @@ export function buildObjectContextCommands(context, io) {
     });
   }
 
-  // Edit data — Word's right-click ▸ Edit Data on a chart. Not gated: the panel
-  // shows the data read-only in Viewing and says why, and refuses the write.
+  // A chart's own commands — Edit data, Type, Elements, Style, Settings — the
+  // SAME tree the contextual Chart tab and the settings panel run
+  // (`chart_commands.mjs`), so the right-click menu and the ribbon cannot drift.
+  // Each row carries its own enablement and reason: the data is readable in
+  // Viewing even though nothing in it can change.
   if (context.kind === "chart") {
-    commands.push({
-      id: "object.chartData",
-      label: io.text("chart.editData"),
-      group: "arrange",
-      icon: "tableLayout",
-      enabled: true,
-      run: () => io.openChartData(),
-    });
+    commands.push(...(io.chartCommands?.() ?? []));
   }
 
   // Alt text — opens the shared alt-text dialog (its Apply pre-checks the gate).

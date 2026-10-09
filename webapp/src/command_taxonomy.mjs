@@ -157,6 +157,9 @@ export const RIBBON_TABS = [
   { tab: "review", label: "Review" },
   { tab: "view", label: "View" },
   { tab: "table", label: "Table", contextual: true },
+  // Named in the markup (`documentChrome.chart`), which is the label a reader
+  // sees in every locale; nothing reads a label here.
+  { tab: "chart", contextual: true },
 ];
 
 /** The File roster as named bands, the shape both menu renderers take. */

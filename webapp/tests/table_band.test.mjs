@@ -35,7 +35,8 @@ const html = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
 function tablePanel() {
   const start = html.indexOf('id="panelTable"');
   assert.ok(start > 0, "the Table panel must exist in editor.html");
-  const end = html.indexOf('id="panelView"', start);
+  // The contextual Chart band follows Table, so Table ends where it begins.
+  const end = html.indexOf('id="panelChart"', start);
   assert.ok(end > start, "the View panel must follow the Table panel");
   return html.slice(start, end);
 }

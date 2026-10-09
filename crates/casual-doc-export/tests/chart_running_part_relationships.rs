@@ -128,12 +128,17 @@ fn chart_paragraph(seed: u64, extra: Vec<InlineNode>) -> BlockNode {
 /// for ("its type, series, categories, title and legend intact").
 fn projection(object: NodeId, coverage: ChartCoverage) -> Chart {
     Chart {
+        chart_retained: Default::default(),
+        namespaces: Default::default(),
+        space_retained: Default::default(),
         object,
         coverage,
         title: None,
         auto_title_deleted: true,
         plot_area: PlotArea {
+            retained: Default::default(),
             groups: vec![ChartGroup {
+                retained: Default::default(),
                 kind: ChartGroupKind::Bar {
                     direction: BarDirection::Column,
                     grouping: BarGrouping::Clustered,
@@ -188,6 +193,7 @@ fn projection(object: NodeId, coverage: ChartCoverage) -> Chart {
             ],
         },
         legend: Some(Legend {
+            retained: Default::default(),
             position: LegendPosition::Bottom,
             overlay: false,
         }),

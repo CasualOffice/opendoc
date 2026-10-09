@@ -11255,14 +11255,21 @@ fn a_partly_projected_chart_is_enumerated_by_construct() {
     let import = import_with_chart(MIXED_CHART);
     let charts = &import.document.definitions().charts;
     let (_, chart) = charts.iter().next().expect("a projection");
+    // `docs/155` §17: an unmodelled construct the schema can place is CARRIED
+    // verbatim, so it survives a regenerated save and no longer forbids one.
+    // It is still named below — it is not drawn — which is the half of the old
+    // rule that was about telling the reader, and that half stands.
     assert_eq!(
         chart.coverage,
-        casual_doc_model::v1::ChartCoverage::Partial,
-        "an unmodelled construct makes the projection partial"
+        casual_doc_model::v1::ChartCoverage::Complete,
+        "a carried construct is not a loss, so the projection is complete"
     );
     assert!(
-        !chart.coverage.permits_regeneration(),
-        "a partial projection must not license regeneration (docs/155 §6.1)"
+        chart.plot_area.groups[0].series[0]
+            .retained
+            .iter()
+            .any(|fragment| fragment.name == "trendline" && fragment.xml.contains("trendlineType")),
+        "the trendline must be carried verbatim on its series"
     );
 
     let trendline = import

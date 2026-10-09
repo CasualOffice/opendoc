@@ -151,12 +151,17 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
     );
     let scatter = matches!(group, ChartGroupKind::Scatter { .. });
     Chart {
+        chart_retained: Default::default(),
+        namespaces: Default::default(),
+        space_retained: Default::default(),
         object,
         coverage: ChartCoverage::Complete,
         title: None,
         auto_title_deleted: true,
         plot_area: PlotArea {
+            retained: Default::default(),
             groups: vec![ChartGroup {
+                retained: Default::default(),
                 kind: group,
                 series: vec![Series {
                     index: 0,
@@ -184,6 +189,7 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
             axes: if pie { Vec::new() } else { axes() },
         },
         legend: Some(Legend {
+            retained: Default::default(),
             position: LegendPosition::Bottom,
             overlay: false,
         }),
@@ -472,6 +478,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
         },
     );
     before.title = Some(ChartTitle {
+        retained: Default::default(),
         text: Some(ChartText {
             text: "Quarterly revenue".to_owned(),
             formula: None,
@@ -482,6 +489,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
     before.plot_visible_only = false;
     before.display_blanks_as = DisplayBlanks::Span;
     before.legend = Some(Legend {
+        retained: Default::default(),
         position: LegendPosition::TopRight,
         overlay: true,
     });
@@ -1217,6 +1225,7 @@ fn every_generated_chart_part_is_in_ecma_376_child_order() {
         // a guard over the bare projection would only ever see five elements.
         let mut chart = projection(id(3), group);
         chart.title = Some(ChartTitle {
+            retained: Default::default(),
             text: Some(ChartText {
                 text: "Revenue".to_owned(),
                 formula: None,
@@ -1822,5 +1831,356 @@ fn an_edited_imported_chart_is_regenerated_and_supersedes_its_source_bytes() {
     assert_eq!(
         reopened.plot_area.groups[0].series[0].values.points,
         vec![(0, ChartValue::Number("9.75".to_owned()))]
+    );
+}
+
+/// A chart exactly as Word 2016 writes one by default — synthetic, written from
+/// the schema, no customer file — minus its workbook pointer. The same text as
+/// `casual-doc-import`'s `WORD_DEFAULT_CHART`.
+const WORD_DEFAULT_CHART: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:c16r2="http://schemas.microsoft.com/office/drawing/2015/06/chart" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><mc:AlternateContent><mc:Choice Requires="c14"><c14:style val="102"/></mc:Choice><mc:Fallback><c:style val="2"/></mc:Fallback></mc:AlternateContent><c:chart><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series 1</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:invertIfNegative val="0"/><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>Category 1</c:v></c:pt><c:pt idx="1"><c:v>Category 2</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>4.3</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val><c:extLst><c:ext uri="{C3380CC4-5D6E-409C-BE32-E72D297353CC}" xmlns:c16="http://schemas.microsoft.com/office/drawing/2014/chart"><c16:uniqueId val="{00000000-0001-0000-0000-000000000000}"/></c:ext></c:extLst></c:ser><c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls><c:gapWidth val="219"/><c:overlap val="-27"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:noFill/><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr rot="-60000000" spcFirstLastPara="1" vertOverflow="ellipsis" vert="horz" wrap="square" anchor="ctr" anchorCtr="1"/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900" b="0" i="0" u="none" strike="noStrike" kern="1200" baseline="0"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="65000"/><a:lumOff val="35000"/></a:schemeClr></a:solidFill><a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr><c:crossAx val="2"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr></c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr><c:crossAx val="1"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr></c:chartSpace>"#;
+
+/// The FULL ECMA-376 child sequence of every chart container a carried fragment
+/// can land in. Written out here independently of the model's
+/// `chart_child_order`, so a mistake there is not copied into the check.
+const CONTAINER_ORDER: &[(&str, &[&str])] = &[
+    (
+        "chartSpace",
+        &[
+            "date1904",
+            "lang",
+            "roundedCorners",
+            "AlternateContent",
+            "style",
+            "clrMapOvr",
+            "pivotSource",
+            "protection",
+            "chart",
+            "spPr",
+            "txPr",
+            "externalData",
+            "printSettings",
+            "userShapes",
+            "extLst",
+        ],
+    ),
+    (
+        "chart",
+        &[
+            "title",
+            "autoTitleDeleted",
+            "pivotFmts",
+            "view3D",
+            "floor",
+            "sideWall",
+            "backWall",
+            "plotArea",
+            "legend",
+            "plotVisOnly",
+            "dispBlanksAs",
+            "showDLblsOverMax",
+            "extLst",
+        ],
+    ),
+    (
+        "plotArea",
+        &[
+            "layout", "barChart", "catAx", "valAx", "dTable", "spPr", "extLst",
+        ],
+    ),
+    (
+        "barChart",
+        &[
+            "barDir",
+            "grouping",
+            "varyColors",
+            "ser",
+            "dLbls",
+            "gapWidth",
+            "overlap",
+            "serLines",
+            "axId",
+            "extLst",
+        ],
+    ),
+    (
+        "catAx",
+        &[
+            "axId",
+            "scaling",
+            "delete",
+            "axPos",
+            "majorGridlines",
+            "minorGridlines",
+            "title",
+            "numFmt",
+            "majorTickMark",
+            "minorTickMark",
+            "tickLblPos",
+            "spPr",
+            "txPr",
+            "crossAx",
+            "crosses",
+            "crossesAt",
+            "auto",
+            "lblAlgn",
+            "lblOffset",
+            "tickLblSkip",
+            "tickMarkSkip",
+            "noMultiLvlLbl",
+            "extLst",
+        ],
+    ),
+    (
+        "valAx",
+        &[
+            "axId",
+            "scaling",
+            "delete",
+            "axPos",
+            "majorGridlines",
+            "minorGridlines",
+            "title",
+            "numFmt",
+            "majorTickMark",
+            "minorTickMark",
+            "tickLblPos",
+            "spPr",
+            "txPr",
+            "crossAx",
+            "crosses",
+            "crossesAt",
+            "crossBetween",
+            "majorUnit",
+            "minorUnit",
+            "dispUnits",
+            "extLst",
+        ],
+    ),
+    (
+        "legend",
+        &[
+            "legendPos",
+            "legendEntry",
+            "layout",
+            "overlay",
+            "spPr",
+            "txPr",
+            "extLst",
+        ],
+    ),
+];
+
+/// Every child of a chart container sits at or after its previous sibling in
+/// the container's full sequence, and every child is one it admits. Children of
+/// anything else (a carried `c:txPr`'s DrawingML body) are not this check's
+/// business and are walked past.
+fn assert_containers_in_order(xml: &[u8]) {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut stack: Vec<(String, usize)> = Vec::new();
+    loop {
+        let event = reader.read_event_into(&mut buffer).expect("well-formed");
+        let (name, opens) = match &event {
+            Event::Eof => break,
+            Event::Start(element) => (element.local_name(), true),
+            Event::Empty(element) => (element.local_name(), false),
+            Event::End(_) => {
+                stack.pop();
+                buffer.clear();
+                continue;
+            }
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        let name = String::from_utf8(name.as_ref().to_vec()).expect("ASCII");
+        if let Some((parent, highest)) = stack.last_mut()
+            && let Some((_, sequence)) = CONTAINER_ORDER.iter().find(|(ct, _)| ct == parent)
+        {
+            let position = sequence
+                .iter()
+                .position(|child| *child == name)
+                .unwrap_or_else(|| panic!("<{name}> is not a child <{parent}> admits"));
+            assert!(
+                position >= *highest,
+                "<{name}> is out of sequence inside <{parent}>"
+            );
+            *highest = position;
+        }
+        if opens {
+            stack.push((name, 0));
+        }
+        buffer.clear();
+    }
+}
+
+/// A one-chart package around `chart`, as Word lays it out.
+fn word_package(chart: &str) -> Vec<u8> {
+    let content_types = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>"#;
+    let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="304800"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+    zip_package(&[
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.as_slice()),
+        ("word/document.xml", document.as_slice()),
+        ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+        ("word/charts/chart1.xml", chart.as_bytes()),
+    ])
+}
+
+/// Imports `package`, applies `edit` to its one chart (marked dirty, as
+/// `setChartData` does), and returns the written chart part and the reopened
+/// projection.
+fn edit_and_save(package: &[u8], edit: impl FnOnce(&mut Chart)) -> (String, Chart) {
+    let mut source = DocxPackage::open(package, PackageLimits::default()).expect("opens");
+    let mut import = import_package(
+        &mut source,
+        ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        },
+    )
+    .expect("imports");
+    let (chart_id, mut chart) = import
+        .document
+        .definitions()
+        .charts
+        .iter()
+        .map(|(id, chart)| (*id, chart.clone()))
+        .next()
+        .expect("the chart projects");
+    edit(&mut chart);
+    chart.dirty = true;
+    let mut definitions = import.document.definitions().clone();
+    definitions.charts.insert(chart_id, chart);
+    import.document = Document::new(
+        import.document.id(),
+        import.document.body().to_vec(),
+        definitions,
+    )
+    .expect("valid");
+    let written = write_document_with_retained_parts(
+        &import.document,
+        &BTreeMap::new(),
+        &import.retained_parts,
+    )
+    .expect("writes");
+    let mut package = DocxPackage::open(&written, PackageLimits::default()).expect("reopens");
+    let xml = String::from_utf8(package.read_part("word/charts/chart1.xml").expect("chart"))
+        .expect("UTF-8");
+    (xml, reopened_projection(&reopen(&written)))
+}
+
+/// **A Word chart whose data was edited keeps everything Word put in it.**
+///
+/// The whole point of `docs/155` §17: the chart is regenerated (it is dirty),
+/// and the axis fonts, gridline colours, legend formatting, language, style and
+/// axis-crossing settings Word wrote all come back — in schema order, or Word
+/// would discard the chart — and the file reopens with the chart still fully
+/// modelled, so it is still editable.
+#[test]
+fn an_edited_word_chart_keeps_its_formatting_in_schema_order() {
+    let (xml, reopened) = edit_and_save(&word_package(WORD_DEFAULT_CHART), |chart| {
+        let series = &mut chart.plot_area.groups[0].series[0];
+        series.values = numbers(&["9.75", "1.5"]);
+    });
+    assert!(
+        xml.contains("<c:v>9.75</c:v>"),
+        "the edit is not in the part"
+    );
+    for kept in [
+        r#"<c:lang val="en-US"/>"#,
+        r#"<c14:style val="102"/>"#,
+        r#"xmlns:c14="#,
+        r#"<c:crosses val="autoZero"/>"#,
+        r#"<c:lblAlgn val="ctr"/>"#,
+        r#"<c:crossBetween val="between"/>"#,
+        r#"sz="900""#,
+        r#"<a:lumMod val="15000"/>"#,
+        r#"<a:effectLst/>"#,
+    ] {
+        assert!(xml.contains(kept), "{kept} was lost on save:\n{xml}");
+    }
+    assert_containers_in_order(xml.as_bytes());
+    assert_eq!(
+        reopened.coverage,
+        ChartCoverage::Complete,
+        "it must reopen editable"
+    );
+    assert_eq!(
+        reopened.plot_area.groups[0].series[0].values.points[0].1,
+        ChartValue::Number("9.75".to_owned())
+    );
+    assert!(
+        reopened.plot_area.axes[0]
+            .retained
+            .iter()
+            .any(|fragment| fragment.name == "txPr" && fragment.xml.contains(r#"sz="900""#)),
+        "the axis text formatting must survive a SECOND round trip too"
+    );
+}
+
+/// **The model still decides presence.** Turning the gridlines off removes the
+/// verbatim gridlines (with their colour) too — a shadow can never keep alive
+/// an element the reader removed.
+#[test]
+fn turning_gridlines_off_removes_the_carried_gridlines() {
+    let (xml, reopened) = edit_and_save(&word_package(WORD_DEFAULT_CHART), |chart| {
+        chart.plot_area.axes[1].major_gridlines = false;
+    });
+    assert!(
+        !xml.contains("majorGridlines"),
+        "the carried gridlines survived:\n{xml}"
+    );
+    assert!(!reopened.plot_area.axes[1].major_gridlines);
+}
+
+/// **A fragment that is not one well-formed element is left out, and said
+/// so** — a hand-built snapshot is the only way to make one, and one bad
+/// fragment would otherwise make the whole part unreadable.
+#[test]
+fn a_malformed_carried_fragment_is_dropped_and_reported() {
+    let mut chart = projection(
+        id(3),
+        ChartGroupKind::Bar {
+            direction: BarDirection::Column,
+            grouping: BarGrouping::Clustered,
+            gap_width: 150,
+            overlap: -27,
+        },
+    );
+    chart.plot_area.axes[0].retained = vec![
+        casual_doc_model::v1::ChartXml {
+            name: "crosses".to_owned(),
+            xml: r#"<c:crosses val="autoZero"/></c:catAx><c:evil/>"#.to_owned(),
+        },
+        casual_doc_model::v1::ChartXml {
+            name: "lblAlgn".to_owned(),
+            xml: r#"<c:lblAlgn val="ctr"/>"#.to_owned(),
+        },
+    ];
+    let export = export_document(&document_with(chart), &BTreeMap::new()).expect("writes");
+    let mut package = DocxPackage::open(&export.bytes, PackageLimits::default()).expect("opens");
+    let xml = String::from_utf8(package.read_part(CHART_PART).expect("chart")).expect("UTF-8");
+    assert!(
+        !xml.contains("evil"),
+        "an injected element reached the part"
+    );
+    assert!(
+        xml.contains(r#"<c:lblAlgn val="ctr"/>"#),
+        "the good fragment was lost"
+    );
+    assert_containers_in_order(xml.as_bytes());
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "docx.export.chart.fragment_dropped"),
+        "the dropped fragment was not reported"
     );
 }
