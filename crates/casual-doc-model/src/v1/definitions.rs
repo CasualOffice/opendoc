@@ -1293,7 +1293,9 @@ pub struct DocumentSettings {
     /// `w:mirrorMargins` — mirror inner/outer margins for two-sided printing.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub mirror_margins: bool,
-    /// `w:trackChanges` — revision tracking is on.
+    /// `w:trackRevisions` — revision tracking is on. (The field keeps its
+    /// snapshot name; the importer read a `w:trackChanges` element that is not
+    /// in the schema until `109` FID-AT-11.)
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub track_changes: bool,
     /// `w:updateFields` — recalculate all fields (TOC, page numbers, refs) when
@@ -1362,13 +1364,114 @@ pub struct DocumentSettings {
     /// Additive: omitted when no language is stated.
     #[serde(default, skip_serializing_if = "ThemeFontLanguages::is_empty")]
     pub theme_font_languages: ThemeFontLanguages,
+    /// `w:savePreviewPicture` — store a picture of the first page with the
+    /// document, for file browsers. Additive (`109` FID-AT-10).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub save_preview_picture: bool,
+    /// `w:compat/w:useFELayout` — lay out East Asian text with Word's
+    /// East Asian rules regardless of the run's language. Additive.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub use_fe_layout: bool,
+    /// `w:doNotAutoCompressPictures` — do not recompress pictures on save.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub do_not_auto_compress_pictures: bool,
+    /// `w:decimalSymbol` — the decimal separator field codes and table
+    /// formulas use (`.` in `en-US`, `,` in most of Europe). Non-empty and
+    /// bounded to [`MAX_SETTINGS_TOKEN_BYTES`]. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimal_symbol: Option<String>,
+    /// `w:listSeparator` — the list separator field codes and table formulas
+    /// use (`,` in `en-US`, `;` where the decimal symbol is `,`). Non-empty and
+    /// bounded to [`MAX_SETTINGS_TOKEN_BYTES`]. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_separator: Option<String>,
+    /// `w14:docId` — the document's Word 2010 identity, eight hexadecimal
+    /// digits (`ST_LongHexNumber`). Word keeps it across saves; a save that
+    /// dropped it made the edited file a different document to Word. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id_w14: Option<String>,
+    /// `w15:docId` — the document's Word 2013 identity, a braced GUID.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id_w15: Option<String>,
+    /// `w14:defaultImageDpi` — the resolution pictures are compressed to when
+    /// they are compressed (`220`, `150`, `96`, …), bounded 1..=10,000.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_image_dpi: Option<u32>,
+    /// `m:mathPr` — the document's equation defaults (math font, break rules,
+    /// margins, limit placement), retained VERBATIM as one serialized element.
+    ///
+    /// Verbatim rather than typed because nothing in this engine consumes it
+    /// yet and fourteen typed fields would be modelling for its own sake; the
+    /// one thing that matters is that a save keeps it. Written back between
+    /// `w:compat` and `w:themeFontLang`, where `CT_Settings` puts it. Bounded to
+    /// [`MAX_SETTINGS_FRAGMENT_BYTES`] and checked again by the writer, which
+    /// refuses a fragment that is not one well-formed `m:mathPr` element in
+    /// the four namespaces it declares. Additive (`109` FID-AT-10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub math_properties_xml: Option<String>,
+    /// `w:shapeDefaults` — the VML defaults for new shapes (`o:shapedefaults`,
+    /// `o:shapelayout`), retained VERBATIM as one serialized element, for the
+    /// reason and under the bounds [`DocumentSettings::math_properties_xml`]
+    /// states. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape_defaults_xml: Option<String>,
 }
+
+/// Maximum UTF-8 length of a settings token (`w:decimalSymbol`,
+/// `w:listSeparator`).
+pub const MAX_SETTINGS_TOKEN_BYTES: usize = 255;
+
+/// Maximum UTF-8 length of a verbatim settings fragment
+/// ([`DocumentSettings::math_properties_xml`],
+/// [`DocumentSettings::shape_defaults_xml`]). Word's own are a few hundred
+/// bytes; this bounds a hostile snapshot.
+pub const MAX_SETTINGS_FRAGMENT_BYTES: usize = 64 * 1024;
 
 impl DocumentSettings {
     /// True when no setting departs from the default (so the part is omitted).
     #[must_use]
     pub fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Whether `token` is a storable `w:decimalSymbol`/`w:listSeparator`
+    /// value: non-empty and within [`MAX_SETTINGS_TOKEN_BYTES`].
+    #[must_use]
+    pub fn is_valid_token(token: &str) -> bool {
+        !token.is_empty() && token.len() <= MAX_SETTINGS_TOKEN_BYTES
+    }
+
+    /// Whether `id` is a `w14:docId` value: `ST_LongHexNumber`, one to eight
+    /// hexadecimal digits (Word writes eight).
+    #[must_use]
+    pub fn is_valid_document_id_w14(id: &str) -> bool {
+        (1..=8).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
+    /// Whether `id` is a `w15:docId` value: a braced GUID,
+    /// `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`.
+    #[must_use]
+    pub fn is_valid_document_id_w15(id: &str) -> bool {
+        let Some(inner) = id.strip_prefix('{').and_then(|rest| rest.strip_suffix('}')) else {
+            return false;
+        };
+        let groups: Vec<&str> = inner.split('-').collect();
+        groups.len() == 5
+            && groups
+                .iter()
+                .zip([8, 4, 4, 4, 12])
+                .all(|(group, length)| {
+                    group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+    }
+
+    /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=10,000.
+    #[must_use]
+    pub const fn is_valid_image_dpi(dpi: u32) -> bool {
+        dpi >= 1 && dpi <= 10_000
     }
 }
 

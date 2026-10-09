@@ -736,7 +736,7 @@ pub fn export_package(
             SETTINGS_CT,
             SETTINGS_REL_TYPE,
             "settings.xml",
-            settings_xml(&definitions.settings)?,
+            settings_xml(&definitions.settings, &mut reporter)?,
         ));
     }
     if !definitions.styles.is_empty()
@@ -1767,6 +1767,11 @@ fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
     }
     if let Some(value) = &app.hyperlink_base {
         write_text_element(&mut w, "HyperlinkBase", value)?;
+    }
+    // `109` FID-AT-10. After `HyperlinkBase`, where Word writes it; the schema's
+    // `CT_Properties` is an `xsd:all`, so the order is Word's, not a rule.
+    if let Some(value) = app.hyperlinks_changed {
+        write_text_element(&mut w, "HyperlinksChanged", bool_token(value))?;
     }
     if let Some(value) = &app.application {
         write_text_element(&mut w, "Application", value)?;
@@ -3527,10 +3532,57 @@ fn table_style_region_token(region: TableStyleRegion) -> &'static str {
 /// it departs from the default, and the importer reads the same shapes back — so
 /// the round trip is a fixed point. Emitted only when `settings.is_default()` is
 /// false, matching the importer.
-fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
+///
+/// The root declares a namespace only when an element in it is written, so a
+/// document with none of the `109` FID-AT-10 settings writes the bytes it always
+/// did. The two verbatim fragments (`m:mathPr`, `w:shapeDefaults`) are checked
+/// before they are written ([`settings_fragment_is_writable`]): a snapshot is
+/// untrusted input, and raw bytes spliced into a part are the one place a model
+/// string could end the element it sits in. A fragment that fails is not
+/// written and is named in `reporter`.
+///
+/// Complexity: O(settings), plus one parse of each fragment.
+fn settings_xml(
+    settings: &DocumentSettings,
+    reporter: &mut Reporter,
+) -> Result<Vec<u8>, ExportError> {
+    let math_properties = settings
+        .math_properties_xml
+        .as_deref()
+        .filter(|xml| settings_fragment_is_writable(xml, "mathPr", reporter));
+    let shape_defaults = settings
+        .shape_defaults_xml
+        .as_deref()
+        .filter(|xml| settings_fragment_is_writable(xml, "shapeDefaults", reporter));
+    let w14 = settings.document_id_w14.is_some() || settings.default_image_dpi.is_some();
+    let w15 = settings.document_id_w15.is_some();
     let mut w = new_writer();
     let mut root = start("w:settings");
     root.push_attribute(("xmlns:w", W_NS));
+    if math_properties.is_some() {
+        root.push_attribute(("xmlns:m", M_NS));
+    }
+    if shape_defaults.is_some() {
+        root.push_attribute(("xmlns:o", O_NS));
+        root.push_attribute(("xmlns:v", V_NS));
+    }
+    if w14 || w15 {
+        // Both are Office extensions a strict ECMA-376 consumer does not know,
+        // so they are declared ignorable, exactly as Word declares them.
+        root.push_attribute(("xmlns:mc", MC_NS));
+        if w14 {
+            root.push_attribute(("xmlns:w14", W14_NS));
+        }
+        if w15 {
+            root.push_attribute(("xmlns:w15", W15_NS));
+        }
+        let ignorable = match (w14, w15) {
+            (true, true) => "w14 w15",
+            (true, false) => "w14",
+            _ => "w15",
+        };
+        root.push_attribute(("mc:Ignorable", ignorable));
+    }
     w.write_event(Event::Start(root)).map_err(pkg)?;
     if let Some(protection) = &settings.write_protection {
         let mut el = start("w:writeProtection");
@@ -3575,8 +3627,11 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:trackRevisions` (ECMA-376 §17.15.1.89). This wrote `w:trackChanges`,
+    // which is in no schema, until `109` FID-AT-11: a strict consumer refuses
+    // an unknown element in the main namespace, and Word ignored it.
     if settings.track_changes {
-        w.write_event(Event::Empty(start("w:trackChanges")))
+        w.write_event(Event::Empty(start("w:trackRevisions")))
             .map_err(pkg)?;
     }
     if let Some(protection) = &settings.document_protection {
@@ -3625,26 +3680,44 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::Empty(start("w:doNotHyphenateCaps")))
             .map_err(pkg)?;
     }
+    // `CT_Settings` order: `w:defaultTableStyle`, `w:evenAndOddHeaders`, …,
+    // `w:savePreviewPicture`, …, `w:updateFields`. This wrote
+    // `w:evenAndOddHeaders`, `w:updateFields`, `w:defaultTableStyle` until `109`
+    // FID-AT-10 put the sequence right, which a schema-validating consumer
+    // refuses whenever two of the three are present.
+    if let Some(style) = &settings.default_table_style {
+        let mut el = start("w:defaultTableStyle");
+        el.push_attribute(("w:val", style.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if settings.even_and_odd_headers {
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
+            .map_err(pkg)?;
+    }
+    if settings.save_preview_picture {
+        w.write_event(Event::Empty(start("w:savePreviewPicture")))
             .map_err(pkg)?;
     }
     if settings.update_fields {
         w.write_event(Event::Empty(start("w:updateFields")))
             .map_err(pkg)?;
     }
-    if let Some(style) = &settings.default_table_style {
-        let mut el = start("w:defaultTableStyle");
-        el.push_attribute(("w:val", style.as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
-    }
     write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
     write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
-    if settings.adjust_line_height_in_table || !settings.compat.is_empty() {
+    if settings.adjust_line_height_in_table
+        || settings.use_fe_layout
+        || !settings.compat.is_empty()
+    {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
+        // `CT_Compat` order: `w:adjustLineHeightInTable`, …, `w:useFELayout`,
+        // …, then the `w:compatSetting` triples last.
         if settings.adjust_line_height_in_table {
             w.write_event(Event::Empty(start("w:adjustLineHeightInTable")))
+                .map_err(pkg)?;
+        }
+        if settings.use_fe_layout {
+            w.write_event(Event::Empty(start("w:useFELayout")))
                 .map_err(pkg)?;
         }
         for setting in &settings.compat {
@@ -3657,8 +3730,13 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::End(BytesEnd::new("w:compat")))
             .map_err(pkg)?;
     }
-    // `w:themeFontLang` follows `w:compat` (and the `w:docVars`/`w:rsids`/
-    // `w:mathPr`/`w:attachedSchema` this writer does not emit) in CT_Settings.
+    // `m:mathPr` follows `w:compat` (and the `w:docVars`/`w:rsids` this writer
+    // does not emit), and precedes `w:themeFontLang`. Verbatim, already checked.
+    if let Some(xml) = math_properties {
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
+    // `w:themeFontLang` follows `m:mathPr` (and the `w:attachedSchema` this
+    // writer does not emit) in CT_Settings.
     let languages = &settings.theme_font_languages;
     if !languages.is_empty() {
         let mut el = start("w:themeFontLang");
@@ -3673,9 +3751,144 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // The tail of CT_Settings, in its order: `w:doNotAutoCompressPictures`,
+    // `w:shapeDefaults`, `w:decimalSymbol`, `w:listSeparator`, then the Office
+    // extensions in the order Word writes them (`w14:docId`,
+    // `w14:defaultImageDpi`, `w15:docId`). `109` FID-AT-10.
+    if settings.do_not_auto_compress_pictures {
+        w.write_event(Event::Empty(start("w:doNotAutoCompressPictures")))
+            .map_err(pkg)?;
+    }
+    if let Some(xml) = shape_defaults {
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
+    for (name, value) in [
+        ("w:decimalSymbol", &settings.decimal_symbol),
+        ("w:listSeparator", &settings.list_separator),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if let Some(id) = &settings.document_id_w14 {
+        let mut el = start("w14:docId");
+        el.push_attribute(("w14:val", id.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(dpi) = settings.default_image_dpi {
+        let mut el = start("w14:defaultImageDpi");
+        el.push_attribute(("w14:val", dpi.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(id) = &settings.document_id_w15 {
+        let mut el = start("w15:docId");
+        el.push_attribute(("w15:val", id.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:settings")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The prefixes a verbatim settings fragment may use, with the URI
+/// [`settings_xml`] declares for each — the same four the importer accepts a
+/// fragment in (`casual-doc-import` `settings::FRAGMENT_NAMESPACES`).
+const SETTINGS_FRAGMENT_NAMESPACES: [(&[u8], &str); 4] =
+    [(b"w", W_NS), (b"m", M_NS), (b"o", O_NS), (b"v", V_NS)];
+
+/// Whether a verbatim settings fragment (`m:mathPr`, `w:shapeDefaults`) may be
+/// spliced into `word/settings.xml` as it is: exactly one well-formed element,
+/// named `local` in the namespace the writer binds its prefix to, every name in
+/// it in one of [`SETTINGS_FRAGMENT_NAMESPACES`], and nothing after it.
+///
+/// A fragment the importer captured always passes. One that does not came from
+/// somewhere else — a snapshot is untrusted input — and raw bytes are the one
+/// place a model string could close the element it sits in, so it is refused,
+/// left out of the part, and named in `reporter` as not retained.
+///
+/// Complexity: O(fragment bytes), one streaming parse.
+fn settings_fragment_is_writable(xml: &str, local: &'static str, reporter: &mut Reporter) -> bool {
+    let writable = settings_fragment_is_well_formed(xml, local.as_bytes());
+    if !writable {
+        reporter.record_construct(
+            "docx.export.settings.fragment_refused",
+            "word/settings.xml",
+            local,
+            None,
+            Disposition::OmittedNotRetained,
+        );
+    }
+    writable
+}
+
+/// The structural half of [`settings_fragment_is_writable`].
+fn settings_fragment_is_well_formed(xml: &str, local: &[u8]) -> bool {
+    let resolves = |prefix: &[u8]| {
+        SETTINGS_FRAGMENT_NAMESPACES
+            .iter()
+            .any(|(allowed, _)| *allowed == prefix)
+    };
+    let names_resolve = |element: &BytesStart<'_>| {
+        element.name().prefix().is_some_and(|p| resolves(p.as_ref()))
+            && element.attributes().all(|attribute| {
+                let Ok(attribute) = attribute else {
+                    return false;
+                };
+                let key = attribute.key.as_ref();
+                if key == b"xmlns" {
+                    return false;
+                }
+                if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                    // A declaration inside the fragment must agree with the one
+                    // the writer puts on the root.
+                    return SETTINGS_FRAGMENT_NAMESPACES.iter().any(|(allowed, uri)| {
+                        *allowed == prefix && attribute.value.as_ref() == uri.as_bytes()
+                    });
+                }
+                attribute.key.prefix().is_none_or(|p| resolves(p.as_ref()))
+            })
+    };
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth = 0_u32;
+    let mut closed = false;
+    loop {
+        let Ok(event) = reader.read_event() else {
+            return false;
+        };
+        match event {
+            Event::Eof => return closed,
+            _ if closed => return false,
+            Event::Start(element) | Event::Empty(element)
+                if depth == 0 && element.local_name().as_ref() != local =>
+            {
+                return false;
+            }
+            Event::Start(element) => {
+                if !names_resolve(&element) {
+                    return false;
+                }
+                depth += 1;
+            }
+            Event::Empty(element) => {
+                if !names_resolve(&element) {
+                    return false;
+                }
+                closed = depth == 0;
+            }
+            Event::End(_) => {
+                let Some(open) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = open;
+                closed = depth == 0;
+            }
+            Event::Text(_) | Event::GeneralRef(_) | Event::CData(_) | Event::Comment(_)
+                if depth > 0 => {}
+            _ => return false,
+        }
+    }
 }
 
 /// The `ST_View` token for a view.

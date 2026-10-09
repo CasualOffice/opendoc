@@ -4997,6 +4997,241 @@ mod semantic_tests {
         );
     }
 
+    /// The `w:settings` root Word writes, with every namespace the settings
+    /// below use bound to its real URI.
+    const WORD_SETTINGS_ROOT: &str = concat!(
+        r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+        r#" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#,
+        r#" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml""#,
+        r#" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#,
+        r#" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml""#,
+        r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15">"#,
+    );
+
+    /// The settings Word writes into every document it saves were reported and
+    /// dropped by every edited save (`109` FID-AT-10, found on `sample.docx`);
+    /// Track Changes was read from an element that is in no schema and written
+    /// back as one (FID-AT-11). All of them now survive a save, are written in
+    /// `CT_Settings` order, and raise no finding.
+    ///
+    /// The order is asserted because it is part of the format: a
+    /// schema-validating consumer refuses a settings part out of sequence, and
+    /// the writer had `w:updateFields` and `w:evenAndOddHeaders` before
+    /// `w:defaultTableStyle` until this change.
+    #[test]
+    fn the_settings_word_writes_into_every_document_survive_a_save_in_schema_order() {
+        let settings = format!(
+            "{WORD_SETTINGS_ROOT}{}</w:settings>",
+            concat!(
+                r#"<w:trackRevisions/><w:defaultTabStop w:val="720"/>"#,
+                r#"<w:defaultTableStyle w:val="Grid"/><w:evenAndOddHeaders/>"#,
+                r#"<w:savePreviewPicture/><w:updateFields w:val="true"/>"#,
+                r#"<w:compat><w:useFELayout/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
+                r#"<m:mathPr><m:mathFont m:val="Cambria Math"/><m:dispDef/><m:wrapIndent m:val="1440"/></m:mathPr>"#,
+                r#"<w:themeFontLang w:val="en-US"/><w:doNotAutoCompressPictures/>"#,
+                r#"<w:shapeDefaults><o:shapedefaults v:ext="edit" spidmax="2049"/><o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="1"/></o:shapelayout></w:shapeDefaults>"#,
+                r#"<w:decimalSymbol w:val=","/><w:listSeparator w:val=";"/>"#,
+                r#"<w14:docId w14:val="1A2B3C4D"/><w14:defaultImageDpi w14:val="220"/>"#,
+                r#"<w15:docId w15:val="{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}"/>"#,
+            )
+        );
+        let source = package_with_settings(settings.as_bytes());
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let settings = &import.document.definitions().settings;
+        assert!(settings.track_changes, "w:trackRevisions is read");
+        assert!(settings.save_preview_picture);
+        assert!(settings.use_fe_layout);
+        assert!(settings.do_not_auto_compress_pictures);
+        assert_eq!(settings.decimal_symbol.as_deref(), Some(","));
+        assert_eq!(settings.list_separator.as_deref(), Some(";"));
+        assert_eq!(settings.document_id_w14.as_deref(), Some("1A2B3C4D"));
+        assert_eq!(
+            settings.document_id_w15.as_deref(),
+            Some("{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}")
+        );
+        assert_eq!(settings.default_image_dpi, Some(220));
+        assert_eq!(
+            settings.math_properties_xml.as_deref(),
+            Some(
+                r#"<m:mathPr><m:mathFont m:val="Cambria Math"/><m:dispDef/><m:wrapIndent m:val="1440"/></m:mathPr>"#
+            )
+        );
+        assert!(
+            settings
+                .shape_defaults_xml
+                .as_deref()
+                .is_some_and(|xml| xml.contains(r#"spidmax="2049""#)),
+            "w:shapeDefaults is retained: {:?}",
+            settings.shape_defaults_xml
+        );
+        assert!(
+            import.report.entries.is_empty(),
+            "everything here is carried, so nothing is a loss: {:?}",
+            import
+                .report
+                .entries
+                .iter()
+                .map(|entry| entry.feature.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/settings.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        // CT_Settings order, restricted to what this document carries; the
+        // Office extensions in the order Word writes them.
+        let sequence = [
+            "<w:trackRevisions/>",
+            "<w:defaultTabStop ",
+            "<w:defaultTableStyle ",
+            "<w:evenAndOddHeaders/>",
+            "<w:savePreviewPicture/>",
+            "<w:updateFields/>",
+            "<w:compat><w:useFELayout/><w:compatSetting ",
+            r#"<m:mathPr><m:mathFont m:val="Cambria Math"/>"#,
+            "<w:themeFontLang ",
+            "<w:doNotAutoCompressPictures/>",
+            r#"<w:shapeDefaults><o:shapedefaults v:ext="edit" spidmax="2049"/>"#,
+            r#"<w:decimalSymbol w:val=","/>"#,
+            r#"<w:listSeparator w:val=";"/>"#,
+            r#"<w14:docId w14:val="1A2B3C4D"/>"#,
+            r#"<w14:defaultImageDpi w14:val="220"/>"#,
+            r#"<w15:docId w15:val="{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}"/>"#,
+        ];
+        let positions: Vec<usize> = sequence
+            .iter()
+            .map(|needle| {
+                written
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("{needle} is written: {written}"))
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "written in CT_Settings order {sequence:?}: {written}"
+        );
+        for declaration in [
+            r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#,
+            r#"xmlns:o="urn:schemas-microsoft-com:office:office""#,
+            r#"xmlns:v="urn:schemas-microsoft-com:vml""#,
+            r#"xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#,
+            r#"xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml""#,
+            r#"mc:Ignorable="w14 w15""#,
+        ] {
+            assert!(
+                written.contains(declaration),
+                "the root declares {declaration}: {written}"
+            );
+        }
+        assert_eq!(
+            reopen(&bytes),
+            import.document,
+            "the settings survive write -> reopen"
+        );
+    }
+
+    /// A verbatim settings fragment is retained only when it would mean the
+    /// same thing written under the writer's own declarations (`109` FID-AT-10).
+    /// One that names an element in a namespace the writer does not declare is
+    /// reported, as it always was, rather than written back unbound — and a
+    /// `mathPr` whose prefix is not the math namespace is not a `m:mathPr` at
+    /// all.
+    #[test]
+    fn a_settings_fragment_in_a_namespace_the_writer_does_not_declare_is_reported() {
+        let foreign = format!(
+            "{WORD_SETTINGS_ROOT}{}</w:settings>",
+            r#"<m:mathPr><m:mathFont m:val="Cambria Math"/><x:extra xmlns:x="urn:x"/></m:mathPr>"#,
+        );
+        let source = package_with_settings(foreign.as_bytes());
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert_eq!(
+            import.document.definitions().settings.math_properties_xml,
+            None,
+            "a fragment naming an undeclared namespace is not retained"
+        );
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "mathPr"),
+            "it is reported instead"
+        );
+
+        let impostor = concat!(
+            r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="urn:not-math">"#,
+            r#"<m:mathPr><m:mathFont m:val="Cambria Math"/></m:mathPr></w:settings>"#,
+        );
+        let source = package_with_settings(impostor.as_bytes());
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert_eq!(
+            import.document.definitions().settings.math_properties_xml,
+            None
+        );
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "mathPr"),
+            "an element merely CALLED mathPr is reported as it always was"
+        );
+    }
+
+    /// The writer splices a verbatim fragment into the part as raw bytes, so it
+    /// re-checks one it did not capture: a snapshot is untrusted input, and a
+    /// string that closes the element it sits in would rewrite the part. Refused,
+    /// left out, and named (`109` FID-AT-10).
+    #[test]
+    fn a_settings_fragment_that_would_escape_its_element_is_refused_and_named() {
+        let source = package_with_settings(
+            format!("{WORD_SETTINGS_ROOT}<w:decimalSymbol w:val=\".\"/></w:settings>").as_bytes(),
+        );
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let mut document = import_package(&mut package, ImportConfig::default())
+            .unwrap()
+            .document;
+        document.definitions_mut().settings.math_properties_xml =
+            Some(r#"<m:mathPr/></w:settings><w:injected/><w:settings>"#.to_owned());
+        document
+            .validate()
+            .expect("the model's own check is a bound, not a parser");
+        let export = crate::export_document(&document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&export.bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/settings.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !written.contains("injected") && !written.contains("mathPr"),
+            "the fragment is not spliced in: {written}"
+        );
+        assert!(
+            written.contains(r#"<w:decimalSymbol w:val="."/>"#),
+            "the rest of the part is written: {written}"
+        );
+        assert!(
+            export
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "docx.export.settings.fragment_refused"
+                    && entry.location.element.as_deref() == Some("mathPr")),
+            "the refusal is named: {:?}",
+            export.report.entries
+        );
+    }
+
     /// LibreOffice writes `<w:themeFontLang w:val="" w:eastAsia="" w:bidi=""/>`
     /// into every document: three empty languages, which state exactly what an
     /// absent element states. It was reported as a lost setting in 3 of the 37

@@ -365,6 +365,53 @@ impl Document {
                 check_domain(!language.is_empty() && language.len() <= 255, property)?;
             }
         }
+        // `109` FID-AT-10. The importer reads these through the same predicates,
+        // so a value that validates here is one the importer could have read.
+        for (token, property) in [
+            (&settings.decimal_symbol, "settings.decimalSymbol"),
+            (&settings.list_separator, "settings.listSeparator"),
+        ] {
+            if let Some(token) = token {
+                check_domain(DocumentSettings::is_valid_token(token), property)?;
+            }
+        }
+        if let Some(id) = &settings.document_id_w14 {
+            check_domain(
+                DocumentSettings::is_valid_document_id_w14(id),
+                "settings.docId.w14",
+            )?;
+        }
+        if let Some(id) = &settings.document_id_w15 {
+            check_domain(
+                DocumentSettings::is_valid_document_id_w15(id),
+                "settings.docId.w15",
+            )?;
+        }
+        if let Some(dpi) = settings.default_image_dpi {
+            check_domain(
+                DocumentSettings::is_valid_image_dpi(dpi),
+                "settings.defaultImageDpi",
+            )?;
+        }
+        for (fragment, root, property) in [
+            (
+                &settings.math_properties_xml,
+                "<m:mathPr",
+                "settings.mathPr",
+            ),
+            (
+                &settings.shape_defaults_xml,
+                "<w:shapeDefaults",
+                "settings.shapeDefaults",
+            ),
+        ] {
+            if let Some(fragment) = fragment {
+                check_domain(
+                    fragment.len() <= MAX_SETTINGS_FRAGMENT_BYTES && fragment.starts_with(root),
+                    property,
+                )?;
+            }
+        }
         Ok(())
     }
 

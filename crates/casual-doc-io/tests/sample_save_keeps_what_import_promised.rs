@@ -126,10 +126,11 @@ const TABLE: &[Row] = &[
             ) == 2
         },
     },
+    // `docProps/app.xml`'s `HyperlinksChanged`: `AppProperties`, FID-AT-10.
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "HyperlinksChanged",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -138,10 +139,13 @@ const TABLE: &[Row] = &[
             )
         },
     },
+    // `word/settings.xml` children Word writes into every document it saves:
+    // typed settings, and `m:mathPr`/`w:shapeDefaults` retained verbatim
+    // (FID-AT-10).
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "decimalSymbol",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -151,9 +155,9 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "listSeparator",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -163,9 +167,9 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "defaultImageDpi",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -175,9 +179,9 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "doNotAutoCompressPictures",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -187,9 +191,9 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "docId",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -199,9 +203,9 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "mathPr",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -215,15 +219,15 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "savePreviewPicture",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| part_contains(edited, "word/settings.xml", "<w:savePreviewPicture/>"),
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "shapeDefaults",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             part_contains(
                 edited,
@@ -233,9 +237,9 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "useFELayout",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| part_contains(edited, "word/settings.xml", "<w:useFELayout/>"),
     },
     Row {
