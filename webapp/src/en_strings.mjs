@@ -1193,6 +1193,23 @@ export const EN_STRINGS = Object.freeze({
   // not reachable.
   "object.addText": "Add text",
   "object.addText.notAShape": "Only a shape can hold text this way",
+  // Word's Change Picture (`docs/109` HF-252). The status line says what was
+  // KEPT, and asks for the one check a person must make: alt text written for
+  // the old picture may not describe the new one.
+  "object.changePicture": "Change picture",
+  "object.changePicture.menu": "Change picture…",
+  "object.changePicture.unsupported": "That file can’t be used as a picture. Choose a PNG, JPEG, GIF, BMP, TIFF or WebP image.",
+  "object.changePicture.unreadable": "Could not read that image",
+  "object.changePicture.done": "Picture changed — its size, position, wrap and border were kept",
+  "object.changePicture.doneAltText": "Picture changed — check that its alt text still describes the new picture",
+  // Word's Picture Border: a picture's outline, under Word's name for it (HF-254).
+  "object.pictureBorder": "Picture border",
+  "object.pictureBorder.short": "Border",
+  // Crop mode's arrows move the kept area; with nothing cropped there is nothing
+  // to move, and the key says so rather than doing nothing (`docs/104` HF-106).
+  "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",
+  // The text box body's Apply refuses a bad inset rather than doing nothing (HF-253).
+  "object.textBoxBody.invalid": "Each inset must be a number of inches, 0 or more",
   // The gutter's REORDER gesture (`docs/141` §4.2.3). The tooltip is on the band
   // once it is the selection — the moment it becomes a handle — and the two
   // announcements name both ends of the move, because the live region is the
