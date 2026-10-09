@@ -1076,6 +1076,57 @@ mod tests {
         );
     }
 
+    /// The part a finding came from survives the lift into the format-neutral
+    /// report, which is what every host — and the webapp's findings dialog, via
+    /// `importReportJson` — reads (`109` HF-047). The importer splitting a count
+    /// by part is worth nothing if this boundary collapses or blanks it.
+    #[test]
+    fn a_findings_part_survives_the_adapter_boundary() {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let lost = r#"<w:r><w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rIdGone"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let ns = r#"xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic""#;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = format!(
+            r#"<w:document {ns}><w:body><w:p>{lost}</w:p><w:p>{lost}</w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr></w:body></w:document>"#
+        );
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+        let header = format!(r#"<w:hdr {ns}><w:p>{lost}</w:p></w:hdr>"#);
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("word/header1.xml", header.as_bytes()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let imported = import_docx(&zw.finish().unwrap().into_inner());
+        let mut drawings: Vec<(Option<String>, u32)> = imported
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.feature == "drawing")
+            .map(|entry| (entry.location.part_name.clone(), entry.occurrences))
+            .collect();
+        drawings.sort();
+        assert_eq!(
+            drawings,
+            vec![
+                (Some("word/document.xml".to_owned()), 2),
+                (Some("word/header1.xml".to_owned()), 1),
+            ],
+            "each part's count, named by part, at the boundary hosts read"
+        );
+    }
+
     /// A retained part DERIVED from the content is left behind once the content
     /// changes, and the loss is named; an independent one is still carried
     /// (`105` FID-R-05).
