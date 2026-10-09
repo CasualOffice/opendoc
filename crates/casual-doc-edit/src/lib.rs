@@ -1377,6 +1377,17 @@ pub enum EditError {
     /// selection yet" is actively wrong about this one: the selection is fine,
     /// the CONTENT is a calculated value.
     FieldResult(FieldRefusal),
+    /// The edit would remove one end of a paragraph-spanning field — a table of
+    /// contents is the common one — and leave the other behind, or would add an
+    /// end without its partner (`109` HF-270).
+    ///
+    /// Refused rather than repaired, because there is no repair that is not a
+    /// guess. Dropping the orphaned end turns the rest of the field into plain
+    /// text the reader did not ask for; keeping it leaves a `fldChar begin` with
+    /// no `end`, which the model rejects, and which Word reads as instruction
+    /// text to the end of the document. Word's own answer is the same refusal in
+    /// another form: its first Delete next to a field selects the whole field.
+    SplitsFieldRange,
 }
 
 impl EditError {
@@ -1393,6 +1404,12 @@ impl EditError {
     pub const fn reason(self) -> Option<&'static str> {
         match self {
             Self::FieldResult(refusal) => Some(refusal.reason()),
+            Self::SplitsFieldRange => Some(refused!(
+                "field.range-split",
+                "That would delete one end of a table of contents or another field that \
+                 spans paragraphs and leave the other end behind — select the whole field \
+                 to delete it."
+            )),
             _ => None,
         }
     }
@@ -1866,6 +1883,9 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
         }
         Operation::SetInlines { node, inlines } => {
             let para = doc.paragraph_mut(*node).ok_or(EditError::NodeNotFound)?;
+            if !replacement_keeps_field_ranges_whole(&para.inlines, inlines) {
+                return Err(EditError::SplitsFieldRange);
+            }
             let previous = std::mem::replace(&mut para.inlines, inlines.clone());
             Ok(Operation::SetInlines {
                 node: *node,
@@ -2009,6 +2029,20 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             if idx > blocks.len() {
                 return Err(EditError::OffsetOutOfRange);
             }
+            // Blocks carrying field markers land only as whole ranges, and only
+            // between ranges: inside an open one they would nest, which the model
+            // rejects as firmly as a lone end. The prefix walk runs only when the
+            // inserted blocks carry a marker, which in practice is the undo of a
+            // `DeleteBlocks` that removed a whole range (a paste drops markers,
+            // `clone.rs`).
+            let mut inserted = Vec::new();
+            push_block_field_range_markers(to_insert, &mut inserted);
+            let lands_whole = inserted.is_empty()
+                || (blocks_hold_whole_field_ranges(to_insert)
+                    && blocks_hold_whole_field_ranges(&blocks[..idx]));
+            if !lands_whole {
+                return Err(EditError::SplitsFieldRange);
+            }
             for (offset, block) in to_insert.iter().enumerate() {
                 blocks.insert(idx + offset, block.clone());
             }
@@ -2040,6 +2074,9 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             // A cell / SDT container's block list must stay non-empty.
             if container.is_some() && count >= blocks.len() {
                 return Err(EditError::Unsupported);
+            }
+            if !blocks_hold_whole_field_ranges(&blocks[idx..idx + count]) {
+                return Err(EditError::SplitsFieldRange);
             }
             let removed: Vec<BlockNode> = blocks
                 .splice(idx..idx + count, std::iter::empty())
@@ -7600,6 +7637,101 @@ fn locate_inline_object(
     None
 }
 
+/// The paragraph-spanning field markers in `inlines`, in order, as `(marker,
+/// field, is_start)`.
+///
+/// Descends into the wrappers the model's balance check descends into
+/// (hyperlinks, revisions, inline content controls) and not into a text box or
+/// a group, each of which is a container of its own and balanced on its own.
+/// O(inlines).
+fn push_field_range_markers(inlines: &[InlineNode], out: &mut Vec<(NodeId, FieldRangeId, bool)>) {
+    // container-set: the model's balance check's own three of six.
+    // `Hyperlink`, `Revision` and `Sdt` are transparent range wrappers and are
+    // entered; `TextBox` and `Group` are containers of their own, balanced on
+    // their own, so their markers never pair with this list's; `Field` holds a
+    // leaf-only cached result, which cannot hold a marker.
+    for inline in inlines {
+        match inline {
+            InlineNode::FieldRangeStart(marker) => out.push((marker.id, marker.field, true)),
+            InlineNode::FieldRangeEnd(marker) => out.push((marker.id, marker.field, false)),
+            InlineNode::Hyperlink(link) => push_field_range_markers(&link.inlines, out),
+            InlineNode::Revision(revision) => push_field_range_markers(&revision.inlines, out),
+            InlineNode::Sdt(sdt) => push_field_range_markers(&sdt.inlines, out),
+            _ => {}
+        }
+    }
+}
+
+/// [`push_field_range_markers`] over a run of blocks in one container. A block
+/// content control's blocks belong to the enclosing container; a table's cells
+/// are containers of their own, so a range inside one is whole by validation
+/// and removing the table removes all of it.
+fn push_block_field_range_markers(
+    blocks: &[BlockNode],
+    out: &mut Vec<(NodeId, FieldRangeId, bool)>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => push_field_range_markers(&paragraph.inlines, out),
+            BlockNode::Sdt(sdt) => push_block_field_range_markers(&sdt.blocks, out),
+            BlockNode::Table(_) | BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// Whether `markers`, in order, are whole ranges: each start is followed by its
+/// own end before anything else opens or closes. Removing — or adding — such a
+/// run from a balanced container leaves it balanced, because ranges in one
+/// container neither nest nor cross (`docs/128` §3). O(markers).
+fn whole_field_ranges(markers: impl IntoIterator<Item = (FieldRangeId, bool)>) -> bool {
+    let mut open = None;
+    for (field, is_start) in markers {
+        match (is_start, open) {
+            (true, None) => open = Some(field),
+            (false, Some(current)) if current == field => open = None,
+            _ => return false,
+        }
+    }
+    open.is_none()
+}
+
+/// Whether removing or inserting `blocks` as one span keeps every field range
+/// in their container whole (`109` HF-270). O(the span's inlines).
+fn blocks_hold_whole_field_ranges(blocks: &[BlockNode]) -> bool {
+    let mut markers = Vec::new();
+    push_block_field_range_markers(blocks, &mut markers);
+    whole_field_ranges(
+        markers
+            .into_iter()
+            .map(|(_, field, is_start)| (field, is_start)),
+    )
+}
+
+/// Whether replacing a paragraph's `old` inlines with `new` keeps every field
+/// range whole: the markers it drops are whole ranges, the markers it adds are
+/// whole ranges, and the markers it keeps stay in the same order.
+///
+/// `SetInlines` is the inverse vehicle for most structural edits, so this is on
+/// the formatting path. It is O(paragraph), and the common case — the same
+/// markers in the same order, usually none — returns after one comparison.
+fn replacement_keeps_field_ranges_whole(old: &[InlineNode], new: &[InlineNode]) -> bool {
+    let (mut before, mut after) = (Vec::new(), Vec::new());
+    push_field_range_markers(old, &mut before);
+    push_field_range_markers(new, &mut after);
+    if before == after {
+        return true;
+    }
+    let kept_before: HashSet<NodeId> = before.iter().map(|m| m.0).collect();
+    let kept_after: HashSet<NodeId> = after.iter().map(|m| m.0).collect();
+    let dropped = before.iter().filter(|m| !kept_after.contains(&m.0));
+    let added = after.iter().filter(|m| !kept_before.contains(&m.0));
+    let kept_old = before.iter().filter(|m| kept_after.contains(&m.0));
+    let kept_new = after.iter().filter(|m| kept_before.contains(&m.0));
+    whole_field_ranges(dropped.map(|m| (m.1, m.2)))
+        && whole_field_ranges(added.map(|m| (m.1, m.2)))
+        && kept_old.eq(kept_new)
+}
+
 /// The inclusive body block index range a paragraph-spanning field range covers:
 /// the block holding its `FieldRangeStart` and the block holding its
 /// `FieldRangeEnd`.
@@ -12592,6 +12724,222 @@ mod tests {
         );
         assert_eq!(d.body().len(), 3, "and nothing was removed");
         assert!(d.definitions().field_ranges.contains_key(&field));
+    }
+
+    /// `Body`, then the two-paragraph contents range from [`contents_blocks`],
+    /// with its definition: body ids `2`, `40` (start marker), `43` (end marker).
+    fn document_with_contents(field: FieldRangeId) -> Document {
+        let mut d = doc(vec![para(2, vec![run(10, "Body")])]);
+        d.definitions_mut()
+            .field_ranges
+            .insert(field, *contents_definition());
+        for block in contents_blocks(field) {
+            d.body_mut().push(block);
+        }
+        d.validate().expect("the fixture is a valid document");
+        d
+    }
+
+    #[test]
+    fn deleting_one_end_of_a_field_range_is_refused_and_changes_nothing() {
+        // `109` HF-270, measured: removing the block that holds the end marker
+        // used to succeed, leave the document failing `validate` with
+        // `UnbalancedFieldRange`, and get the next unrelated edit refused.
+        let field = FieldRangeId::new(n(39));
+        let mut d = document_with_contents(field);
+        let mut ids = IdGenerator::new(80);
+        for (index, count, which) in [(2, 1, "the end"), (0, 2, "the start")] {
+            assert_eq!(
+                apply(
+                    &mut d,
+                    &mut ids,
+                    &Operation::DeleteBlocks {
+                        container: None,
+                        index,
+                        count,
+                    },
+                ),
+                Err(EditError::SplitsFieldRange),
+                "removing {which} alone is refused"
+            );
+            assert_eq!(d.body().len(), 3, "and nothing was removed");
+            d.validate().expect("the document is still valid");
+        }
+        assert!(
+            EditError::SplitsFieldRange
+                .reason()
+                .is_some_and(|reason| reason.contains("select the whole field")),
+            "the refusal says what to do instead"
+        );
+    }
+
+    #[test]
+    fn deleting_a_whole_field_range_as_blocks_is_allowed_and_undo_restores_it() {
+        let field = FieldRangeId::new(n(39));
+        let mut d = document_with_contents(field);
+        let mut ids = IdGenerator::new(80);
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteBlocks {
+                container: None,
+                index: 1,
+                count: 2,
+            },
+        )
+        .expect("both ends go together");
+        assert_eq!(d.body().len(), 1);
+        d.validate().expect("valid with the whole range gone");
+
+        apply(&mut d, &mut ids, &inverse).expect("undo puts the whole range back");
+        assert_eq!(d.body().len(), 3);
+        d.validate().expect("valid with the range restored");
+    }
+
+    #[test]
+    fn a_lone_field_marker_cannot_be_inserted_or_land_inside_a_range() {
+        use casual_doc_model::v1::{FieldRangeEnd, FieldRangeStart};
+
+        let field = FieldRangeId::new(n(39));
+        let mut d = document_with_contents(field);
+        let mut ids = IdGenerator::new(80);
+        let lone_end = para(
+            50,
+            vec![InlineNode::FieldRangeEnd(FieldRangeEnd {
+                id: n(51),
+                field,
+            })],
+        );
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertBlocks {
+                    container: None,
+                    index: 3,
+                    blocks: vec![lone_end],
+                },
+            ),
+            Err(EditError::SplitsFieldRange),
+        );
+        // A whole range dropped between the two ends of another would nest.
+        let other = FieldRangeId::new(n(60));
+        d.definitions_mut()
+            .field_ranges
+            .insert(other, *contents_definition());
+        let nested = vec![
+            para(
+                100,
+                vec![
+                    InlineNode::FieldRangeStart(FieldRangeStart {
+                        id: n(101),
+                        field: other,
+                    }),
+                    run(102, "Other"),
+                ],
+            ),
+            para(
+                103,
+                vec![
+                    run(104, "Other end"),
+                    InlineNode::FieldRangeEnd(FieldRangeEnd {
+                        id: n(105),
+                        field: other,
+                    }),
+                ],
+            ),
+        ];
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertBlocks {
+                    container: None,
+                    index: 2,
+                    blocks: nested.clone(),
+                },
+            ),
+            Err(EditError::SplitsFieldRange),
+            "inside the open range is refused"
+        );
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertBlocks {
+                container: None,
+                index: 3,
+                blocks: nested,
+            },
+        )
+        .expect("after the range's end is between ranges, and lands");
+        d.validate().expect("two whole ranges, one after the other");
+        assert_eq!(d.body().len(), 3 + 2);
+    }
+
+    #[test]
+    fn replacing_a_paragraphs_inlines_keeps_its_field_marker() {
+        use casual_doc_model::v1::FieldRangeStart;
+
+        let field = FieldRangeId::new(n(39));
+        let mut d = document_with_contents(field);
+        let mut ids = IdGenerator::new(80);
+        // Dropping the start marker with the rest of the paragraph's content.
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetInlines {
+                    node: n(40),
+                    inlines: vec![run(42, "First")],
+                },
+            ),
+            Err(EditError::SplitsFieldRange),
+        );
+        d.validate().expect("refused before it changed anything");
+        // A replacement that keeps the marker where it was — the shape every
+        // formatting edit's inverse has — is untouched by the guard.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetInlines {
+                node: n(40),
+                inlines: vec![
+                    InlineNode::FieldRangeStart(FieldRangeStart { id: n(41), field }),
+                    run(42, "First entry"),
+                ],
+            },
+        )
+        .expect("the marker stays, so the replacement lands");
+        d.validate().expect("still valid");
+    }
+
+    #[test]
+    fn a_text_delete_never_removes_a_field_marker() {
+        // Why `DeleteText` needs no guard: a marker is zero-width, and
+        // `remove_covered_range` leaves zero-width inlines alone. The facade's
+        // selection delete is `DeleteText` per paragraph plus `JoinParagraphs`,
+        // so a selection across a contents boundary keeps both ends.
+        let field = FieldRangeId::new(n(39));
+        let mut d = document_with_contents(field);
+        let mut ids = IdGenerator::new(80);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(n(40), 0),
+                    end: Pos::new(n(40), 5),
+                },
+            },
+        )
+        .expect("the entry's text goes");
+        assert!(
+            inlines_of(&d, n(40))
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::FieldRangeStart(_))),
+            "and its marker stays"
+        );
+        d.validate().expect("still valid");
     }
 
     #[test]
