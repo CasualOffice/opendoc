@@ -165,6 +165,7 @@ PNGs
 POS
 PPTX
 PRD
+PRES
 PRs
 PTS
 PUA
@@ -633,6 +634,7 @@ undoable
 undos
 unexpressible
 ungated
+ungroup
 unicode
 unlink
 unlinked

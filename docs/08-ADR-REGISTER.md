@@ -3229,8 +3229,8 @@ flight.
    would end it.
 
 **Why additive rather than a unified model.** A `DocumentClass` discriminator inside `v1::Document`
-would put a presentation's shape tree in the same type the DOCX editor, exporter, 58 edit
-operations and five exhaustive `transform` matches all pattern-match on — so every presentation
+would put a presentation's shape tree in the same type the DOCX editor, exporter, every edit
+operation and every exhaustive `transform` match all pattern-match on — so every presentation
 increment would be a breaking change to the shipped product. It would also be the **one-way**
 choice: a sibling type can move to another repository if `106` §1's "future sibling" answer stands,
 whereas a modified `Document` cannot be un-modified.
@@ -4208,3 +4208,100 @@ contents line and a header line — and keeps the default grid elsewhere, report
   text.
 - **Chart labels as glyph outlines** (the page's shaped glyphs as paths). Exact placement, but
   the labels stop being text; the estimate is a few percent off and the text stays text.
+
+## ADR-067 — A slide edit is a second closed operation set over the presentation, carried by the document editor's own transaction envelope
+
+**Status:** proposed, for the owner's review; no editing code is written until it is accepted.
+Asked for by the owner ("fidelity + editing design"), as `168` lane D1. Design: `docs/169`.
+Tracker: `109` PRES-02.
+
+### The decision
+
+A change to a deck is a `SlideOperation`, a closed enum in a new crate `casual-pres-edit`,
+applied to `casual_pres_model::Presentation`. `v1::Document` is never widened (ADR-055).
+The operation set covers:
+
+- slides: insert, duplicate, delete, move, hide, re-layout;
+- shapes: insert, delete, z-order, transform, paint, geometry, description;
+- the text operations, addressed exactly as the document editor's are: a paragraph `NodeId`
+  plus a UTF-8 byte offset (`Pos`), which is already the anchor the slide layout's glyph
+  clusters carry.
+
+The operations travel in the **same** `Transaction`, through the **same** `RevisionLog`,
+undo projection, coalescing, frame codec and OT pipeline as the document editor's. To make
+that possible, `casual-doc-transaction` is made generic over an `OperationSet` trait **in
+place**, with the document class as every type's default argument. No DOCX call site,
+literal or behaviour changes, and the change that publishes the seam must prove
+`casual_doc_wasm`'s code section is byte-identical.
+
+**Shared verbatim, because they are about positions and identity, not about a document's
+shape:**
+
+- `Mint` and `IdSpace`;
+- `Pos`, `Range`, `Affinity` and `PositionMap`;
+- the `Intent` anchor;
+- the positional rebase kernel.
+
+**Written per class, because a DrawingML run is not a `w:r`:**
+
+- the apply kernels and their inverses;
+- the eleven exhaustive classifications;
+- access admission.
+
+A shared property test drives one edit script through both text kernels and requires the
+same text and the same position map.
+
+**Rules that hold from the first commit:**
+
+- **One choke point.** `casual-pres-wasm` gets one `apply_group`, held by a source guard
+  mirroring `every_document_mutation_is_a_transaction`. `Presentation::slides_mut` and
+  `definitions_mut` stop being public.
+- **Paint is one operation.** A shape's fill and outline are written to the drawing and to the
+  `SlidePaint` wrapper in one operation, never one side alone.
+- **Typing into an empty placeholder materialises the slide's own copy,** as PowerPoint and
+  Google Slides do: `InsertShape` plus `InsertText`, in one transaction.
+- **The authored `p:cNvPr@id` is kept** before any shape can be edited, so retained `p:timing`
+  targets survive a save.
+- **A keystroke is O(1) in deck size,** and the slide is the invalidation unit (`107` §4,
+  B1 and B6).
+
+Phases are in `169` §12:
+
+- **0:** the seam, the empty set, the choke point and the shape ids;
+- **1:** a usable editor;
+- **2:** formatting and inserts;
+- **3:** tables, grouping, paste;
+- **4:** co-editing.
+
+Every slide operation is OT-classified from its first commit, because ADR-033 makes an
+unclassified operation a build failure. The relay's class tag and the TP1 property tests
+wait for phase 4.
+
+### Alternatives rejected
+
+- **Slide arms inside `casual_doc_edit::Operation`, resolved through a new `Surface` arm**
+  (`156` §3.3's sketch, superseded here). Every exhaustive match on the DOCX path would grow,
+  `v1::Document` would have to hold a deck, and the DOCX protocol would bump with each slide
+  increment. ADR-055 rejects it.
+- **A `casual-pres-transaction` with its own envelope, log and undo.** This is the second
+  copy `168` exists to prevent: two logs, two answers to what undo undoes.
+- **Slide text mapped onto `v1::Paragraph` to borrow the document kernels.** The mapping is
+  lossy (DrawingML sizes, `a:latin`/`a:ea`/`a:cs`/`a:sym`, typed fields). Per edit, it is
+  either a conversion that breaks B1 or a shadow model: two sources of truth.
+- **Editing slide text in the DOM over the canvas.** It violates ADR-005 and makes the DOM the
+  source of truth for formatting.
+- **Index-addressed slide order and z-order.** Concurrent reorders land on the wrong slide;
+  ADR-056 already moved anchors onto the envelope for this reason.
+- **A CRDT for decks.** ADR-033 closed this for both classes.
+
+### Consequences
+
+- `casual-doc-transaction` carries one generic parameter it did not need for one class. The
+  proof that it costs the document editor nothing is the identical code section, the full
+  test suite and the full browser suite, all required of the seam's own change.
+- Slide text input should reuse the document editor's input host (hidden field, IME,
+  `beforeinput`). That host is inside `main.js`, so phase 1 waits on an HF-109 increment
+  that lifts it out, unless the owner chooses a second host (`169` §14 Q3).
+- ADR-055's rationale and `168` lane D1 had cited fixed operation and match counts that the
+  set had outgrown. Both are reworded here to name no number;
+  `crates/casual-doc-edit/tests/operation_count.rs` is where the size is derived.

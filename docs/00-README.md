@@ -196,6 +196,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 - `166-PAGELESS-SURFACE-AND-MODE-SWITCH-COMPETITIVE-STUDY.md` — the pageless surface and the mode switch, compared with Google Docs' pageless view.
 - `167-HTML-EXPORT-FIDELITY.md` — HTML export resolved the way the page is: styles, tables, lists, headers and footers, contents lines, drawings, and charts (ADR-066).
 - `168-SLIDE-FIDELITY-TO-DOCUMENT-LEVEL.md` — the presentation work measured against the document engine: what a real deck still loses, what the slide path reuses, and the lanes that close the gap.
+- `169-SLIDE-EDITING-OPERATION-SET-DESIGN.md` — how a change to a deck is expressed: the slide operation set, the transaction envelope it shares with the document editor, and the phases it is built in (ADR-067, proposed).
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 

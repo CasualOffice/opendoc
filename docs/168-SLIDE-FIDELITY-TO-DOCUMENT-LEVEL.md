@@ -26,7 +26,7 @@ crate itself rather than carrying a copy.
 | Layout | `casual-doc-layout` | 63,440 | `casual-pres-layout` is 4,416 lines **because** it consumes the shared walk, shaper, display list and table path | partial |
 | Raster / PDF | `casual-doc-render`, `-pdf` | 4,899 | shared outright — a slide composes into the same `DisplayList` | at bar |
 | Export | `casual-doc-export` | 19,035 | `casual-pres-export` plus verbatim retention of unmodelled parts | partial |
-| Transactions | `casual-doc-transaction` | 15,679 | nothing | blocked on an ADR |
+| Transactions | `casual-doc-transaction` | 15,679 | nothing | ADR-067 proposed (`169`) |
 | Editing ops | `casual-doc-edit` | 20,697 | nothing | blocked on the above |
 | Diff | `casual-doc-diff` | 5,109 | nothing | not started |
 | Selection | `casual-doc-selection` | — | nothing | not started |
@@ -106,7 +106,7 @@ Parallel, scoped by file domain so they cannot collide (`SKILL` §7).
 | **E4** notes | `casual-pres-*/**` | `p:notesSlide`, `p:notesMaster` — model, reader, writer | the three-tier cascade already built |
 | **W1** webapp | `webapp/**` | Notes pane under the stage | `.side-panel`, `.panel-head`, the rail |
 | **W2** webapp | `webapp/**` | Slide show / present mode | `modal.mjs`, the existing full-surface render path |
-| **D1** design | `docs/**` | An ADR for the slide operation set inside `casual-doc-transaction` | ADR-005, ADR-043, the 47 document operations as the shape |
+| **D1** design | `docs/**` | An ADR for the slide operation set inside `casual-doc-transaction` — **proposed as ADR-067, designed in `169`** | ADR-005, ADR-043, the document editor's closed operation set as the shape |
 
 E2 touches the shipped DOCX editor, so it carries the editor's full browser suite as a
 gate. E1 touches neither shared crate nor `webapp/`, which is why it goes first.
@@ -153,7 +153,8 @@ choose until the slide operation set (lane D1 above) exists.
 **Editing.** No slide operation set, no transaction envelope. A surface that mutated a deck
 without routing through `casual-doc-transaction` would repeat the defect `105` CQ-002
 records on the document path, where ADR-005 came to be honoured nowhere. D1 produces the
-ADR; implementation is a separate programme.
+ADR — ADR-067, designed in `169` — and implementation is a separate programme that starts
+only when the owner accepts it.
 
 **Master and layout editing.** Out of v1 scope on the competitive evidence: neither web
 client edits masters, and a layout *picker* is the table-stakes item.
