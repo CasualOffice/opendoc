@@ -1,5 +1,5 @@
 // The document's Track Changes setting and the review mode (`review_tracking.mjs`,
-// `docs/109` HF-282): open honours it, the reader's own switch writes it, and an
+// `docs/109` HF-283): open honours it, the reader's own switch writes it, and an
 // edit that changes it moves the mode — only on a change.
 import assert from "node:assert/strict";
 import test from "node:test";

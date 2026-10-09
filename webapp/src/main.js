@@ -1261,7 +1261,7 @@ function chromeShows(region) {
  *  is correct — no host has been handed the session yet. */
 let hostSession = null;
 let reviewMode = HOST_MODE;
-const reviewTracking = createReviewTracking(); // the document's Track Changes setting and the mode (HF-282)
+const reviewTracking = createReviewTracking(); // the document's Track Changes setting and the mode (HF-283)
 /** Why this DOCUMENT cannot be edited at all, or "" when it can be.
  *
  *  The engine answers this (`editingUnavailableReason`), and exactly one
@@ -1519,7 +1519,7 @@ function setReviewMode(mode, { restoreFocus = true } = {}) {
   if (reviewMode === "suggesting" && !showingChanges) {
     void setShowingChanges(true);
   }
-  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus, caret: selection?.focus, runEdit }); // HF-131; HF-282
+  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus, caret: selection?.focus, runEdit }); // HF-131; HF-283
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
@@ -8212,7 +8212,7 @@ function noteDocumentEdited(revision) {
   spellChecker.noteEdited();
   // And the host's, under the same constraint: one revision integer, one boolean.
   hostSession?.noteChange();
-  // An edit that changed the document's Track Changes setting — an Undo, a co-author — moves the mode with it (HF-282).
+  // An edit that changed the document's Track Changes setting — an Undo, a co-author — moves the mode with it (HF-283).
   reviewTracking.follow(doc?.trackRevisions, reviewMode, (mode) => SESSION.modeAuthority?.allows(mode).allowed !== false && setReviewMode(mode, { restoreFocus: false }));
 }
 
@@ -8333,7 +8333,7 @@ async function applyEditResult(res, { keepView = false, keepSelection = false } 
   // positions coincide.
   implicitCaretAt = null;
   verticalGoal.clear(); // an edit ends a run of vertical moves (HF-164)
-  if (!keepSelection || !selection) selection = adoptEditPosition(node, offset); // a setting keeps the reader's selection (HF-282)
+  if (!keepSelection || !selection) selection = adoptEditPosition(node, offset); // a setting keeps the reader's selection (HF-283)
   // A content mutation invalidates a row/column/table selection the same way it
   // invalidates an object selection. Without this the accent fill survives
   // typing, deleting, undo and arrow keys, so the editor claims a whole table is

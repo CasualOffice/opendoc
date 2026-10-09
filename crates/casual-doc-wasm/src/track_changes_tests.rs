@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The document's Track Changes setting (`w:trackRevisions`, `docs/165` M7,
-//! `docs/109` HF-282): read from the file so the host can open the document in
+//! `docs/109` HF-283): read from the file so the host can open the document in
 //! Suggesting, written by one undoable edit when the reader switches, and saved
 //! with the document — so a reopen honours it.
 

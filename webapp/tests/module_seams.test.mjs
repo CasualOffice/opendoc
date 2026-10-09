@@ -469,7 +469,7 @@ const PURE_MODULES = [
   // Holds the vertical goal column and nothing else: no DOM and no engine, so
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",
-  // The document's Track Changes setting and the review mode (HF-282): the
+  // The document's Track Changes setting and the review mode (HF-283): the
   // engine and the edit runner are passed in, so the open/switch/follow rules
   // are plain functions a unit test drives.
   "review_tracking.mjs",
