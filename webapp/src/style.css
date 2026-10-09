@@ -1036,8 +1036,18 @@ button.compatibility-status:hover {
   padding: 2px 0;
 }
 
+/* What the finding IS, in words (`109` FID-AT-05) — the row's primary text. */
+.findings-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The engine's stable id, kept for support and read last: muted and smaller,
+   so it is findable without competing with the words. */
 .findings-feature {
   min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
   overflow-wrap: anywhere;
 }
 
@@ -1050,6 +1060,76 @@ button.compatibility-status:hover {
 
 .findings-where {
   overflow-wrap: anywhere;
+}
+
+.findings-note {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+/* Word's own bookkeeping: a real disclosure inside its kind group, collapsed
+   until asked. A full-width row so the whole line is the target; 44px under a
+   coarse pointer, the touch floor every other row in this editor keeps. */
+.findings-bookkeeping {
+  margin-top: var(--space-2);
+}
+
+.findings-disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 28px;
+  padding: 2px var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.findings-disclosure:hover {
+  background: var(--accent-soft);
+}
+
+.findings-disclosure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.findings-disclosure .ms {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* `chevron_right` points the way the row reads; in a right-to-left locale that
+   is left. */
+.findings-disclosure:dir(rtl)[aria-expanded="false"] .ms {
+  transform: scaleX(-1);
+}
+
+.findings-bookkeeping-total {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-bookkeeping-panel {
+  padding-inline-start: calc(18px + var(--space-2) + var(--space-1));
+}
+
+.findings-bookkeeping-panel[hidden] {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .findings-disclosure {
+    min-height: 44px;
+  }
 }
 
 .file {
