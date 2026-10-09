@@ -1669,6 +1669,24 @@ impl Definitions {
         NumberingResolver::new(&self.styles, &self.numbering, &self.abstract_numbering)
     }
 
+    /// Whether a resize of drawing object `id` must keep its aspect ratio —
+    /// DrawingML's `noChangeAspect`, on the object's frame or on the object
+    /// itself (`ObjectLocks::locks_aspect_ratio`, `109` FID-AT-09).
+    ///
+    /// This is the flag Word uses to make a corner drag of a picture
+    /// proportional; Word writes it on every picture it inserts. `id` is the
+    /// drawing node's id (`Drawing::id`, `AnchoredDrawing::id`, a group's or a
+    /// group child's id). An object with no recorded locks is unlocked.
+    ///
+    /// Complexity: one side-table lookup, O(log n) in named or locked objects —
+    /// fit for a per-interaction call.
+    #[must_use]
+    pub fn locks_aspect_ratio(&self, id: NodeId) -> bool {
+        self.object_names
+            .get(&id)
+            .is_some_and(|entry| entry.locks.locks_aspect_ratio())
+    }
+
     /// Whether `style` is **locked** — `w:locked`, ECMA-376 §17.7.4.6 "Style
     /// Cannot Be Applied".
     ///

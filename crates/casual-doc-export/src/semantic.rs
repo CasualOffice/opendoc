@@ -37,6 +37,8 @@ use casual_doc_model::v1::BookmarkId;
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::ObjectName;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
 use casual_doc_model::v1::PageSize;
 use casual_doc_model::v1::SectionId;
 use casual_doc_model::v1::Watermark;
@@ -6760,6 +6762,8 @@ struct ObjectLabel<'a> {
     inner_name: Option<&'a str>,
     /// The inner element's own title where it differs from the frame's.
     inner_title: Option<&'a str>,
+    /// The object's DrawingML locks (`ObjectName::locks`, `109` FID-AT-09).
+    locks: ObjectLocks,
 }
 
 impl<'a> ObjectLabel<'a> {
@@ -6775,7 +6779,46 @@ impl<'a> ObjectLabel<'a> {
             title: entry.and_then(|entry| entry.title.as_deref()),
             inner_name: entry.and_then(|entry| entry.inner_name.as_deref()),
             inner_title: entry.and_then(|entry| entry.inner_title.as_deref()),
+            locks: entry.map(|entry| entry.locks).unwrap_or_default(),
         }
+    }
+
+    /// Writes the frame's `wp:cNvGraphicFramePr`, which sits between
+    /// `wp:docPr` and `a:graphic` in `CT_Inline` and `CT_Anchor` — only when the
+    /// frame is locked, since an empty one states nothing and the writer never
+    /// emitted it.
+    fn write_frame_locks(self, w: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError> {
+        let Some(locks) = lock_element(self.locks.frame, LockElement::Frame) else {
+            return Ok(());
+        };
+        w.write_event(Event::Start(start("wp:cNvGraphicFramePr")))
+            .map_err(pkg)?;
+        w.write_event(Event::Empty(locks)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("wp:cNvGraphicFramePr")))
+            .map_err(pkg)?;
+        Ok(())
+    }
+
+    /// Writes the object's own non-visual drawing properties element
+    /// (`pic:cNvPicPr`, `wps:cNvSpPr`, `wpg:cNvGrpSpPr`), holding its lock
+    /// element when the object is locked and empty otherwise — exactly what it
+    /// wrote before the locks were modelled.
+    fn write_object_locks(
+        self,
+        w: &mut Writer<Cursor<Vec<u8>>>,
+        wrapper: &str,
+        kind: LockElement,
+    ) -> Result<(), ExportError> {
+        match lock_element(self.locks.object, kind) {
+            Some(locks) => {
+                w.write_event(Event::Start(start(wrapper))).map_err(pkg)?;
+                w.write_event(Event::Empty(locks)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new(wrapper)))
+                    .map_err(pkg)?;
+            }
+            None => w.write_event(Event::Empty(start(wrapper))).map_err(pkg)?,
+        }
+        Ok(())
     }
 
     /// Writes `@name`, in the position the schema lists it.
@@ -6804,6 +6847,25 @@ impl<'a> ObjectLabel<'a> {
             element.push_attribute(("title", title));
         }
     }
+}
+
+/// The lock element `kind` holding `flags`, or `None` when it would lock
+/// nothing (`109` FID-AT-09).
+///
+/// Only the attributes `kind`'s schema type lists are written
+/// (`LockElement::carries`). The importer stores only those, so a flag outside
+/// them can reach here only from a constructed model, and writing it would make
+/// the part schema-invalid.
+fn lock_element(flags: LockFlags, kind: LockElement) -> Option<BytesStart<'static>> {
+    let mut element = start(kind.qualified_name());
+    let mut any = false;
+    for (name, on) in flags.attributes() {
+        if on && kind.carries(name.as_bytes()) {
+            element.push_attribute((name, "1"));
+            any = true;
+        }
+    }
+    any.then_some(element)
 }
 
 fn write_drawing(
@@ -6838,6 +6900,7 @@ fn write_drawing(
     }
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     write_pic_graphic(w, embed, cx, cy, label, look, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
@@ -6990,8 +7053,7 @@ fn write_pic_graphic(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("pic:cNvPicPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "pic:cNvPicPr", LockElement::Picture)?;
     w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:blipFill")))
@@ -7120,6 +7182,7 @@ fn write_anchored_drawing(
     }
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     write_pic_graphic(
         w,
         embed,
@@ -7248,6 +7311,7 @@ fn write_wrap_after_extent(
     label.push_name(&mut doc_pr);
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     Ok(())
 }
 
@@ -7282,6 +7346,9 @@ fn write_wgp(
     w.write_event(Event::Start(start(tag))).map_err(pkg)?;
     let mut c_nv_pr = start("wpg:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
+    // The group's own locks do not depend on which generic name it falls back
+    // to, so either label carries them.
+    let locks_label = ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_GROUP);
     if tag == "wpg:wgp" {
         // The top-level group's `wpg:cNvPr` is the inner statement of the name
         // its frame (`wp:docPr`) carries, so an unnamed group writes the frame's
@@ -7297,8 +7364,7 @@ fn write_wgp(
         label.push_title(&mut c_nv_pr);
     }
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
-    w.write_event(Event::Empty(start("wpg:cNvGrpSpPr")))
-        .map_err(pkg)?;
+    locks_label.write_object_locks(w, "wpg:cNvGrpSpPr", LockElement::Group)?;
     w.write_event(Event::Start(start("wpg:grpSpPr")))
         .map_err(pkg)?;
     write_group_xfrm(w, &group.transform)?;
@@ -7435,8 +7501,7 @@ fn write_group_picture(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("pic:cNvPicPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "pic:cNvPicPr", LockElement::Picture)?;
     w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:blipFill")))
@@ -7500,8 +7565,7 @@ fn write_group_shape(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("wps:cNvSpPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "wps:cNvSpPr", LockElement::Shape)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(
@@ -7565,8 +7629,7 @@ fn write_group_text_box(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("wps:cNvSpPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "wps:cNvSpPr", LockElement::Shape)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(
@@ -8376,6 +8439,7 @@ fn write_graphic_object(
     label.push_name(&mut doc_pr);
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
     let mut graphic_data = start("a:graphicData");
@@ -8518,6 +8582,7 @@ fn write_text_box(
     label.push_name(&mut doc_pr);
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
     let mut graphic_data = start("a:graphicData");
@@ -8529,8 +8594,7 @@ fn write_text_box(
     label.push_inner_name(&mut c_nv_pr);
     label.push_inner_title(&mut c_nv_pr);
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
-    w.write_event(Event::Empty(start("wps:cNvSpPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "wps:cNvSpPr", LockElement::Shape)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(

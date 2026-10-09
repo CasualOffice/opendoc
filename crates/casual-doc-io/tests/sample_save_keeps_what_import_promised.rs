@@ -114,10 +114,12 @@ const TABLE: &[Row] = &[
             ) == 2
         },
     },
+    // `noChangeAspect` on each picture's frame: `ObjectName::locks`,
+    // FID-AT-09 — what keeps a corner drag proportional.
     Row {
-        at_import: Reported,
+        at_import: Modelled,
         feature: "graphicFrameLocks",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             count(
                 edited,

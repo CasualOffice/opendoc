@@ -9631,6 +9631,8 @@ fn a_drawing_objects_name_and_title_land_on_its_own_node() {
             // not to the frame, so the frame has no inner statement here.
             inner_name: None,
             inner_title: None,
+            // The fixture states no lock.
+            locks: casual_doc_model::v1::ObjectLocks::default(),
         })
     );
     assert_eq!(
@@ -10140,9 +10142,11 @@ fn the_same_markup_carrying_something_is_still_reported() {
             r#"<a:effectLst><a:outerShdw blurRad="50800"/></a:effectLst>"#,
             "effectLst",
         ),
-        // A lock that locks something is a restriction the document asked for
-        // and did not get.
-        ("<a:spLocks/>", r#"<a:spLocks noResize="1"/>"#, "spLocks"),
+        // (A lock that locks something used to be a row here. Since `109`
+        // FID-AT-09 it is modelled and written back, so it is carried rather
+        // than reported, and `a_drawing_objects_locks_survive_a_save_on_every_kind`
+        // in `casual-doc-export` holds that instead.)
+        //
         // `val="1"` asks for the picture to be rescaled to the authoring DPI.
         (
             r#"<a14:useLocalDpi val="0"/>"#,
@@ -10339,10 +10343,16 @@ fn the_corpus_reports_exactly_these_findings() {
         // the model carries the drawing names (`Definitions::object_names`), so
         // both name findings are gone because nothing is lost — the name
         // round-trips — not because anything was silenced.
+        //
+        // 3, then 1 with FID-AT-09: the two locks FID-P-03 surfaced
+        // (`a:graphicFrameLocks noChangeAspect="1"`, `a:picLocks
+        // noChangeAspect="1" noChangeArrowheads="1"`) are modelled
+        // (`ObjectName::locks`) and written back, so they are carried rather
+        // than lost. `w:formProt` remains, as above.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            3,
+            1,
         ),
         // 2, then 1 with FID-AT-01 (`w:view`), each.
         (

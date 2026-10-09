@@ -957,6 +957,8 @@ mod semantic_tests {
             title: title.map(str::to_owned),
             inner_name: None,
             inner_title: None,
+            // The fixture states no lock.
+            locks: casual_doc_model::v1::ObjectLocks::default(),
         };
         let BlockNode::Paragraph(first) = &m1.body()[0] else {
             panic!("expected a paragraph");
@@ -1084,6 +1086,167 @@ mod semantic_tests {
             reopen(&written),
             "both names survive write -> reopen on the same nodes"
         );
+    }
+
+    /// A drawing object's DrawingML locks survive a save on every kind of object
+    /// that carries them — the frame's `a:graphicFrameLocks` and the object's
+    /// own `a:picLocks`/`a:spLocks`/`a:grpSpLocks` — and raise no finding
+    /// (`109` FID-AT-09).
+    ///
+    /// They were reported and dropped. `noChangeAspect` is on every picture Word
+    /// inserts and is what makes a corner drag proportional, so an edited save
+    /// turned every picture into one a corner drag distorts. The model exposes it
+    /// as `Definitions::locks_aspect_ratio`, which is asserted here because it is
+    /// the read a resize handle makes.
+    #[test]
+    fn a_drawing_objects_locks_survive_a_save_on_every_kind() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        let document_xml = concat!(
+            r#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body>"#,
+            // An inline picture: Word's own shape, both locks.
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Logo"/>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Logo"/>"#,
+            r#"<pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr>"#,
+            r#"<pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            // A floating group: the frame, the group, a shape child and a picture child.
+            r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="5" simplePos="0"><wp:simplePos x="0" y="0"/>"#,
+            r#"<wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="2" name="Org chart"/>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noMove="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:cNvPr id="2" name="Org chart"/>"#,
+            r#"<wpg:cNvGrpSpPr><a:grpSpLocks noUngrp="1"/></wpg:cNvGrpSpPr>"#,
+            r#"<wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr>"#,
+            r#"<wps:wsp><wps:cNvPr id="3" name="Box"/><wps:cNvSpPr><a:spLocks noTextEdit="1" noRot="1"/></wps:cNvSpPr>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>"#,
+            r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="4" name="Photo"/><pic:cNvPicPr><a:picLocks noCrop="1"/></pic:cNvPicPr></pic:nvPicPr>"#,
+            r#"<pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="457200" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
+            r#"</wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#,
+            // A lone text box: the frame and the shape.
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="5" name="Sidebar"/>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="6" name="Sidebar"/><wps:cNvSpPr><a:spLocks noSelect="1"/></wps:cNvSpPr>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>"#,
+            r#"<wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>"#,
+            r#"</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            r#"</w:body></w:document>"#,
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let source = pack(document_xml.as_bytes(), document_rels);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let lock_findings: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .filter(|feature| feature.contains("Locks"))
+            .collect();
+        assert!(
+            lock_findings.is_empty(),
+            "a carried lock is not a loss: {lock_findings:?}"
+        );
+        let m1 = import.document;
+
+        let inline = |index: usize| {
+            let BlockNode::Paragraph(paragraph) = &m1.body()[index] else {
+                panic!("expected a paragraph");
+            };
+            paragraph.inlines[0].clone()
+        };
+        let InlineNode::Drawing(picture) = inline(0) else {
+            panic!("expected an inline picture");
+        };
+        let InlineNode::Group(group) = inline(1) else {
+            panic!("expected a group");
+        };
+        let InlineNode::TextBox(text_box) = inline(2) else {
+            panic!("expected a text box");
+        };
+        let (shape, child_picture) = match (&group.children[0], &group.children[1]) {
+            (GroupChild::Shape(shape), GroupChild::Picture(picture)) => (shape.id, picture.id),
+            other => panic!("expected a shape and a picture, got {other:?}"),
+        };
+        let defs = m1.definitions();
+        let locks = |id| {
+            defs.object_names
+                .get(&id)
+                .map(|entry| entry.locks)
+                .unwrap_or_default()
+        };
+        assert!(locks(picture.id).frame.no_change_aspect);
+        assert!(locks(picture.id).object.no_change_aspect);
+        assert!(locks(picture.id).object.no_change_arrowheads);
+        assert!(
+            defs.locks_aspect_ratio(picture.id),
+            "the resize handle's read: a corner drag keeps the picture's proportions"
+        );
+        assert!(locks(group.id).frame.no_move);
+        assert!(locks(group.id).object.no_ungrp);
+        assert!(!defs.locks_aspect_ratio(group.id), "the group's aspect is free");
+        assert!(locks(shape).object.no_text_edit && locks(shape).object.no_rot);
+        assert!(locks(child_picture).object.no_crop);
+        assert!(locks(text_box.id).frame.no_change_aspect);
+        assert!(locks(text_box.id).object.no_select);
+
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        for needle in [
+            r#"<wp:docPr id="1" name="Logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic>"#,
+            r#"<pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noMove="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<wpg:cNvGrpSpPr><a:grpSpLocks noUngrp="1"/></wpg:cNvGrpSpPr>"#,
+            r#"<wps:cNvSpPr><a:spLocks noRot="1" noTextEdit="1"/></wps:cNvSpPr>"#,
+            r#"<pic:cNvPicPr><a:picLocks noCrop="1"/></pic:cNvPicPr>"#,
+            r#"<wps:cNvSpPr><a:spLocks noSelect="1"/></wps:cNvSpPr>"#,
+        ] {
+            assert!(
+                written_xml.contains(needle),
+                "the writer keeps {needle}: {written_xml}"
+            );
+        }
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "every lock survives write -> reopen on the same node"
+        );
+    }
+
+    /// A lock attribute the element's schema type does not list is reported
+    /// rather than stored, so the writer is never handed a flag the element it
+    /// writes cannot carry (`109` FID-AT-09).
+    #[test]
+    fn a_lock_the_element_cannot_carry_is_reported_not_stored() {
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Logo"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Logo"/><pic:cNvPicPr><a:picLocks noTextEdit="1" noCrop="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let source = pack(document_xml, document_rels);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "picLocks/@noTextEdit"),
+            "a shape-only lock on a picture is named: {:?}",
+            import.report.entries
+        );
+        let (_, entry) = import
+            .document
+            .definitions()
+            .object_names
+            .iter()
+            .next()
+            .expect("the picture is recorded");
+        assert!(!entry.locks.object.no_text_edit, "and not stored");
+        assert!(entry.locks.object.no_crop, "the lock it can carry is");
     }
 
     /// A NESTED group's own `wpg:cNvPr` name lands on the nested group, not on
