@@ -7858,7 +7858,10 @@ fn sdt_property_long_tail_is_reported_and_rpr_does_not_leak() {
     // The control's own `w:rPr` is modeled since `109` FID-AT-19 — on the
     // CONTROL, which is the point of not leaking it onto the run above.
     assert_eq!(
-        sdt.properties.run_properties.as_ref().and_then(|run| run.bold),
+        sdt.properties
+            .run_properties
+            .as_ref()
+            .and_then(|run| run.bold),
         Some(true)
     );
     assert!(!reported.contains(&"rPr"), "{reported:?}");
