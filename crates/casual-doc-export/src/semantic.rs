@@ -9147,6 +9147,14 @@ fn write_sdt_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:sdtPr"))).map_err(pkg)?;
+    // `CT_SdtPr` opens with the control's own run formatting (`109` FID-AT-19).
+    if let Some(run) = &properties.run_properties {
+        if *run == RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, run)?;
+        }
+    }
     for (value, name) in [
         (&properties.alias, "w:alias"),
         (&properties.tag, "w:tag"),
@@ -9155,6 +9163,13 @@ fn write_sdt_properties(
         if let Some(value) = value {
             write_val_element(w, name, value)?;
         }
+    }
+    // `w15:color`, where Word writes it: after the id, before the lock. The
+    // part roots declare `w15` (`declare_fold_namespaces`).
+    if let Some(color) = &properties.color {
+        let mut el = start("w15:color");
+        el.push_attribute(("w:val", color.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(lock) = properties.lock {
         write_val_element(w, "w:lock", sdt_lock_token(lock))?;
@@ -9226,7 +9241,10 @@ fn write_sdt_control(
         }
         SdtControlKind::BuildingBlockGallery => {
             let element = sdt_kind_element(kind);
-            if properties.gallery.is_none() && properties.category.is_none() {
+            if properties.gallery.is_none()
+                && properties.category.is_none()
+                && !properties.doc_part_unique
+            {
                 w.write_event(Event::Empty(start(element))).map_err(pkg)?;
             } else {
                 w.write_event(Event::Start(start(element))).map_err(pkg)?;
@@ -9235,6 +9253,10 @@ fn write_sdt_control(
                 }
                 if let Some(category) = &properties.category {
                     write_val_element(w, "w:docPartCategory", category)?;
+                }
+                if properties.doc_part_unique {
+                    w.write_event(Event::Empty(start("w:docPartUnique")))
+                        .map_err(pkg)?;
                 }
                 w.write_event(Event::End(BytesEnd::new(element)))
                     .map_err(pkg)?;

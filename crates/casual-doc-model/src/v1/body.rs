@@ -2565,6 +2565,29 @@ pub struct SdtProperties {
     /// [`SdtControlKind::BuildingBlockGallery`] control. Non-empty, <= 255 bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// `w:docPartObj/w:docPartUnique`: the building block may appear only once
+    /// in the document (Word's page-number and cover-page galleries set it).
+    /// Additive (`109` FID-AT-19).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub doc_part_unique: bool,
+    /// The control's own run formatting (`w:sdtPr/w:rPr`): what its
+    /// placeholder, and text typed into an emptied control, is formatted with.
+    /// Additive (`109` FID-AT-19).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_properties: Option<RunProperties>,
+    /// The colour Word 2013 and later draw the control's boundary and title in
+    /// (`w15:color/@w:val`): six hexadecimal digits or `auto`. Additive (`109`
+    /// FID-AT-19).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+impl SdtProperties {
+    /// Whether `value` is a storable `w15:color`: `auto` or six hex digits.
+    #[must_use]
+    pub fn is_valid_color(value: &str) -> bool {
+        value == "auto" || (value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    }
 }
 
 /// The edit-lock behaviour of a content control (`w:lock@w:val`, `ST_Lock`).

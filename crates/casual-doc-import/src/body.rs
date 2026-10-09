@@ -1339,6 +1339,14 @@ struct BodyParser<'a> {
     /// Depth inside a `w:sdtPr`/`w:sdtEndPr` subtree, so its property children
     /// (and any `w:rPr`) are captured or reported, never leaked into run flow.
     sdt_prop_depth: u32,
+    /// Whether the open property subtree is `w:sdtEndPr` (the end mark's
+    /// formatting, still reported) rather than `w:sdtPr`.
+    in_sdt_end_pr: bool,
+    /// Depth inside `w:sdtPr/w:rPr`, the control's own run formatting, which
+    /// is accumulated into `sdt_run_properties` (`109` FID-AT-19).
+    sdt_rpr_depth: u32,
+    /// The `w:sdtPr/w:rPr` being read.
+    sdt_run_properties: RunProperties,
     /// Content-control nesting depth (a `w:sdt` inside a `w:sdt`); a true path
     /// counter for the `MAX_SDT_DEPTH` guard, NOT suspended in a frame so it
     /// matches the model (a text box does not reset it).
@@ -1412,6 +1420,13 @@ struct BodyParser<'a> {
     /// across paragraphs. Part-scoped (NOT swapped in `ContentFrame`): a bookmark
     /// opened in body flow and closed inside a text box still pairs.
     bookmark_ids: BTreeMap<String, BookmarkId>,
+    /// Bookmark ends met BETWEEN paragraphs (`w:body/w:bookmarkEnd`, or between
+    /// two `w:tr` of a table), waiting for the next paragraph to open, where
+    /// they become its first markers (`109` FID-AT-19). A range that ends after
+    /// one paragraph's mark ends before the next paragraph's first character, so
+    /// the position is the same; Word writes the block-level form when a
+    /// bookmark ends at a block boundary. Part-scoped like `bookmark_ids`.
+    pending_bookmark_ends: Vec<BookmarkId>,
     /// Nesting depth inside an OMML math subtree (`m:oMath`/`m:oMathPara`); 0 when
     /// not capturing. While non-zero, every event is buffered verbatim into
     /// `math_writer` and NOT dispatched to the `w:`-namespace handlers, so a math
@@ -1562,6 +1577,9 @@ impl<'a> BodyParser<'a> {
             sdt_scopes: Vec::new(),
             pending_block_sdt_props: Vec::new(),
             sdt_prop_depth: 0,
+            in_sdt_end_pr: false,
+            sdt_rpr_depth: 0,
+            sdt_run_properties: RunProperties::default(),
             sdt_depth: 0,
             open_textboxes: 0,
             segments: Vec::new(),
@@ -1589,6 +1607,7 @@ impl<'a> BodyParser<'a> {
             comment_ids: inputs.comment_ids,
             parsed_defs,
             bookmark_ids: BTreeMap::new(),
+            pending_bookmark_ends: Vec::new(),
             math_depth: 0,
             math_writer: None,
             math_text: String::new(),
@@ -2111,6 +2130,11 @@ impl BodyParser<'_> {
                 _ => {}
             }
             buffer.clear();
+        }
+        // A block-level bookmark end with no paragraph after it in this part has
+        // nowhere to land; it is a loss, and says so.
+        for _ in std::mem::take(&mut self.pending_bookmark_ends) {
+            self.reporter.report(b"bookmarkEnd");
         }
         Ok(())
     }
@@ -2659,6 +2683,11 @@ impl BodyParser<'_> {
                 self.pending_num_id = None;
                 self.pending_ilvl = 0;
                 self.segments.clear();
+                // A bookmark that ended at the block boundary before this
+                // paragraph ends at its start (`109` FID-AT-19).
+                for bookmark in std::mem::take(&mut self.pending_bookmark_ends) {
+                    self.push_segment(Segment::BookmarkEnd { bookmark });
+                }
             }
             b"pPr" if self.paragraph_open && !self.run_open => self.ppr_depth += 1,
             b"pStyle" if self.ppr_depth > 0 => {
@@ -2691,6 +2720,18 @@ impl BodyParser<'_> {
             b"rStyle" if self.rpr_depth > 0 => {
                 match self.resolve_style(element, StyleKind::Character) {
                     Some(style) => self.run_properties.style_ref = Some(style),
+                    None => self.reporter.report(local),
+                }
+            }
+            // The paragraph MARK's character style (`w:pPr/w:rPr/w:rStyle`): the
+            // pilcrow's own formatting, which Word gives the next paragraph's
+            // text when Enter is pressed at the end of this one. It fell through
+            // to `apply_run_property`, which cannot resolve a style, and was
+            // reported and dropped (`109` FID-AT-19; five in each of the owner's
+            // loan agreement and incident form).
+            b"rStyle" if self.mark_rpr_depth > 0 && self.sdt_prop_depth == 0 => {
+                match self.resolve_style(element, StyleKind::Character) {
+                    Some(style) => self.mark_run_properties.style_ref = Some(style),
                     None => self.reporter.report(local),
                 }
             }
@@ -2827,6 +2868,21 @@ impl BodyParser<'_> {
                     .and_then(|source| self.bookmark_ids.remove(&source))
                 {
                     Some(bookmark) => self.push_segment(Segment::BookmarkEnd { bookmark }),
+                    None => self.reporter.report(b"bookmarkEnd"),
+                }
+            }
+            // The same marker BETWEEN paragraphs — a child of `w:body`, of a
+            // table between its rows, or of a cell between its paragraphs. Word
+            // writes it there when a bookmark ends at a block boundary; it was
+            // reported and dropped, so the bookmark lost its end on every edited
+            // save (seven in the owner's loan agreement). It is held and becomes
+            // the first marker of the next paragraph, which is the same position
+            // (`109` FID-AT-19); one left over when the part ends is reported.
+            b"bookmarkEnd" if !self.paragraph_open && self.in_body => {
+                match attribute_value(element, b"id")
+                    .and_then(|source| self.bookmark_ids.remove(&source))
+                {
+                    Some(bookmark) => self.pending_bookmark_ends.push(bookmark),
                     None => self.reporter.report(b"bookmarkEnd"),
                 }
             }
@@ -4715,7 +4771,62 @@ impl BodyParser<'_> {
             }
             // A `w:sdtPr`/`w:sdtEndPr` property subtree: guard its children so a
             // nested `w:rPr` cannot leak into run flow.
-            b"sdtPr" | b"sdtEndPr" if !self.sdt_scopes.is_empty() => self.sdt_prop_depth += 1,
+            b"sdtPr" | b"sdtEndPr" if !self.sdt_scopes.is_empty() => {
+                self.sdt_prop_depth += 1;
+                self.in_sdt_end_pr = local == b"sdtEndPr";
+            }
+            // The control's own run formatting (`w:sdtPr/w:rPr`), what its
+            // placeholder and an emptied control are typed in. It was the
+            // reported long tail — one `rPr` plus each child (`color`, `sz`,
+            // `szCs`) eight times over in the owner's incident form — and is
+            // modeled since `109` FID-AT-19. `w:sdtEndPr`'s is still reported.
+            b"rPr" if self.sdt_prop_depth > 0 && !self.in_sdt_end_pr && self.sdt_rpr_depth == 0 => {
+                if self_closing {
+                    // `<w:rPr/>`: present and empty, with no close to wait for.
+                    if let Some(properties) = self.current_sdt_properties() {
+                        properties.run_properties = Some(RunProperties::default());
+                    }
+                } else {
+                    self.sdt_rpr_depth = 1;
+                    self.sdt_run_properties = RunProperties::default();
+                }
+            }
+            b"rStyle" if self.sdt_rpr_depth > 0 => {
+                match self.resolve_style(element, StyleKind::Character) {
+                    Some(style) => self.sdt_run_properties.style_ref = Some(style),
+                    None => self.reporter.report(local),
+                }
+            }
+            _ if self.sdt_rpr_depth > 0 => {
+                // A nested `w:rPr` (a `w:rPrChange`'s) is counted so its close
+                // cannot end the control's own early.
+                if local == b"rPr" && !self_closing {
+                    self.sdt_rpr_depth += 1;
+                }
+                if !apply_run_property(&mut self.sdt_run_properties, local, element) {
+                    self.reporter.report_element(local, element, self_closing);
+                }
+            }
+            // `w15:color`, the colour Word 2013+ draws the control in.
+            b"color" if self.sdt_prop_depth > 0 && !self.in_sdt_end_pr => {
+                match attribute_value(element, b"val")
+                    .filter(|value| SdtProperties::is_valid_color(value))
+                {
+                    Some(value) => {
+                        if let Some(properties) = self.current_sdt_properties() {
+                            properties.color = Some(value);
+                        }
+                    }
+                    None => self.reporter.report(local),
+                }
+            }
+            // `w:docPartObj/w:docPartUnique`: the gallery entry may appear once.
+            b"docPartUnique" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.doc_part_unique = on;
+                }
+            }
             // The block control's content opens a fresh suspended frame; an inline
             // control's content is inert (its segments route via `wrapper_order`).
             b"sdtContent" => {
@@ -5086,7 +5197,10 @@ impl BodyParser<'_> {
                     self.exit_frame()?;
                 }
             }
-            b"sdtPr" | b"sdtEndPr" => self.sdt_prop_depth = self.sdt_prop_depth.saturating_sub(1),
+            b"sdtPr" | b"sdtEndPr" => {
+                self.sdt_prop_depth = self.sdt_prop_depth.saturating_sub(1);
+                self.in_sdt_end_pr = false;
+            }
             // A content control closes: pop its scope, and (inline) commit its
             // accumulated segments as an `InlineSdt`.
             b"sdt" => match self.sdt_scopes.pop() {
@@ -5152,6 +5266,16 @@ impl BodyParser<'_> {
             b"r" => {
                 self.run_open = false;
                 self.rpr_depth = 0;
+            }
+            // The control's own `w:sdtPr/w:rPr` closes: it is the open control's.
+            b"rPr" if self.sdt_rpr_depth > 0 => {
+                self.sdt_rpr_depth -= 1;
+                if self.sdt_rpr_depth == 0 {
+                    let properties = std::mem::take(&mut self.sdt_run_properties);
+                    if let Some(open) = self.current_sdt_properties() {
+                        open.run_properties = Some(properties);
+                    }
+                }
             }
             b"rPr" => {
                 // Key the close on `run_open`: a `w:rPr` closing while a run is

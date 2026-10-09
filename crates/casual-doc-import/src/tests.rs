@@ -7394,6 +7394,67 @@ fn reused_bookmark_id_after_close_models_both_ranges_without_a_phantom_end() {
     assert!(import.document.validate().is_ok());
 }
 
+/// A bookmark that ends BETWEEN paragraphs — a `w:bookmarkEnd` child of
+/// `w:body`, or of a table between two rows — keeps its end: it becomes the
+/// first marker of the next paragraph, which is the same position (`109`
+/// FID-AT-19). Both were reported and dropped, so the bookmark lost its end on
+/// every edited save (seven in the owner's loan agreement, six between rows).
+///
+/// MUTATION: the block-level arm reporting instead of holding fails with
+/// `no end is lost: ["bookmarkEnd", "bookmarkStart"]`.
+#[test]
+fn a_bookmark_that_ends_between_blocks_ends_at_the_next_paragraph() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:bookmarkStart w:id="1" w:name="whole"/><w:r><w:t>First</w:t></w:r></w:p>
+        <w:bookmarkEnd w:id="1"/>
+        <w:tbl><w:tr><w:tc><w:p><w:bookmarkStart w:id="2" w:name="row"/><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>
+            <w:bookmarkEnd w:id="2"/>
+            <w:tr><w:tc><w:p><w:r><w:t>Next</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        <w:p><w:r><w:t>Last</w:t></w:r></w:p>
+        <w:bookmarkStart w:id="3" w:name="dangling"/>
+    </w:body></w:document>"#;
+    let import = import(document);
+    assert!(
+        !features(&import).contains(&"bookmarkEnd"),
+        "no end is lost: {:?}",
+        features(&import)
+    );
+    let mut texts = Vec::new();
+    collect_block_texts(import.document.body(), &mut texts);
+    assert_eq!(texts, ["First", "Cell", "Next", "Last"]);
+
+    // The first end opens the table's first paragraph; the second opens the
+    // second row's paragraph.
+    fn first_marker_is_an_end(blocks: &[BlockNode], out: &mut Vec<bool>) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    out.push(matches!(
+                        paragraph.inlines.first(),
+                        Some(InlineNode::BookmarkEnd(_))
+                    ));
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            first_marker_is_an_end(&cell.blocks, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut opens_with_end = Vec::new();
+    first_marker_is_an_end(import.document.body(), &mut opens_with_end);
+    assert_eq!(
+        opens_with_end,
+        [false, true, true, false],
+        "every block-level end lands at the start of the paragraph after it"
+    );
+    assert!(import.document.validate().is_ok(), "every marker pairs");
+}
+
 #[test]
 fn column_bookmark_is_modeled_by_name_and_reported() {
     // The column span (`w:colFirst`/`w:colLast`) is dropped but the bookmark is
@@ -7790,11 +7851,17 @@ fn sdt_property_long_tail_is_reported_and_rpr_does_not_leak() {
     assert_eq!(sdt.properties.lock, Some(SdtLock::SdtLocked));
     assert_eq!(sdt.properties.placeholder.as_deref(), Some("Default"));
     // A dataBinding without the required `w:xpath` is meaningless: reported and
-    // dropped. The end-mark `w:rPr` remains the reported long tail.
+    // dropped.
     assert!(sdt.properties.data_binding.is_none());
     let reported = features(&import);
     assert!(reported.contains(&"dataBinding"));
-    assert!(reported.contains(&"rPr"));
+    // The control's own `w:rPr` is modeled since `109` FID-AT-19 — on the
+    // CONTROL, which is the point of not leaking it onto the run above.
+    assert_eq!(
+        sdt.properties.run_properties.as_ref().and_then(|run| run.bold),
+        Some(true)
+    );
+    assert!(!reported.contains(&"rPr"), "{reported:?}");
 }
 
 #[test]

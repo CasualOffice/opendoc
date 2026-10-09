@@ -5249,6 +5249,120 @@ mod semantic_tests {
         r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15">"#,
     );
 
+    /// A content control's own run formatting (`w:sdtPr/w:rPr`), its Word
+    /// 2013 colour (`w15:color`) and a building block's `w:docPartUnique`
+    /// survive an edited save (`109` FID-AT-19). The shapes are the owner's: an
+    /// incident form's checkbox controls (blue 16 pt, a teal boundary) and a
+    /// loan agreement's "Page Numbers (Bottom of Page)" footer gallery. Each was
+    /// reported and dropped — the `rPr` and each of its children separately.
+    ///
+    /// MUTATION: the importer's `w:sdtPr/w:rPr` arm removed fails with
+    /// `nothing about the controls is lost: ["rPr", "sz", "szCs"]`.
+    #[test]
+    fn a_content_controls_formatting_colour_and_unique_flag_survive_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w:body>
+            <w:p><w:sdt><w:sdtPr><w:rPr><w:color w:val="1F4E79"/><w:sz w:val="32"/><w:szCs w:val="28"/></w:rPr><w:id w:val="1613008741"/><w15:color w:val="33CCCC"/><w14:checkbox><w14:checked w14:val="0"/><w14:checkedState w14:val="0052" w14:font="Wingdings 2"/><w14:uncheckedState w14:val="00A3" w14:font="Wingdings 2"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>x</w:t></w:r></w:sdtContent></w:sdt></w:p>
+            <w:sdt><w:sdtPr><w:id w:val="1051663145"/><w:docPartObj><w:docPartGallery w:val="Page Numbers (Bottom of Page)"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:r><w:t>1</w:t></w:r></w:p></w:sdtContent></w:sdt>
+        </w:body></w:document>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+        ]);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let reported: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            reported.is_empty(),
+            "nothing about the controls is lost: {reported:?}"
+        );
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/document.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        for needle in [
+            r#"<w:sdtPr><w:rPr><w:color w:val="1F4E79"/><w:sz w:val="32"/><w:szCs w:val="28"/></w:rPr><w:id w:val="1613008741"/><w15:color w:val="33CCCC"/>"#,
+            r#"<w:docPartGallery w:val="Page Numbers (Bottom of Page)"/><w:docPartUnique/></w:docPartObj>"#,
+        ] {
+            assert!(
+                written.contains(needle),
+                "{needle} is written back: {written}"
+            );
+        }
+        let reopened = reopen(&bytes);
+        assert_eq!(
+            reopened.body(),
+            import.document.body(),
+            "the controls reopen exactly"
+        );
+    }
+
+    /// A paragraph mark's character style (`w:pPr/w:rPr/w:rStyle`) survives an
+    /// edited save (`109` FID-AT-19). It fell through to the generic run
+    /// property reader, which cannot resolve a style, and was reported and
+    /// dropped — five in each of two of the owner's documents.
+    ///
+    /// MUTATION: the importer's mark-`rStyle` arm removed fails with
+    /// `nothing about the mark is lost: ["rStyle"]`.
+    #[test]
+    fn a_paragraph_marks_character_style_survives_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="character" w:styleId="Strong"><w:name w:val="Strong"/><w:rPr><w:b/></w:rPr></w:style></w:styles>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:rPr><w:rStyle w:val="Strong"/></w:rPr></w:pPr><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+            ("word/document.xml", document),
+        ]);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let reported: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            reported.is_empty(),
+            "nothing about the mark is lost: {reported:?}"
+        );
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        // Style ids are re-minted on save, so the question is asked of the
+        // reopened document: the mark still names the style called "Strong".
+        let reopened = reopen(&bytes);
+        let Some(casual_doc_model::v1::BlockNode::Paragraph(paragraph)) = reopened.body().first()
+        else {
+            panic!("the paragraph reopens");
+        };
+        let style = paragraph
+            .properties
+            .mark_run
+            .as_ref()
+            .and_then(|mark| mark.style_ref)
+            .and_then(|id| reopened.definitions().styles.get(&id))
+            .and_then(|style| style.name.clone());
+        assert_eq!(
+            style.as_deref(),
+            Some("Strong"),
+            "the mark keeps its character style"
+        );
+    }
+
     /// A list level keeps its List Library key (`w:tplc`) and Word's placeholder
     /// flag (`w:tentative`) through a save (`109` FID-AT-16). The owner's loan
     /// agreement carried 54 and 48 of them; every edited save dropped them, so

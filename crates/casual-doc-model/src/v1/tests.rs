@@ -4005,6 +4005,9 @@ fn full_sdt_props() -> SdtProperties {
         data: None,
         gallery: None,
         category: None,
+        doc_part_unique: true,
+        run_properties: Some(RunProperties::default()),
+        color: Some("33CCCC".to_owned()),
     }
 }
 
