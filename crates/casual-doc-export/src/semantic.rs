@@ -7147,6 +7147,11 @@ fn write_ext(w: &mut Writer<Cursor<Vec<u8>>>, tag: &str, ext: Extent) -> Result<
 }
 
 /// Emits a group child `pic:pic` positioned at `offset`, sized `extent`.
+///
+/// Eight arguments since the object's name/title (`label`, HF-267) and its alt
+/// text (`descr`, HF-214) both reach `pic:cNvPr` here — the same pair
+/// `write_drawing` takes separately for `wp:docPr`.
+#[allow(clippy::too_many_arguments)]
 fn write_group_picture(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
