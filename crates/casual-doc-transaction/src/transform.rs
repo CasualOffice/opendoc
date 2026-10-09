@@ -760,7 +760,8 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetObjectDescr { object, .. }
         | Operation::DeleteObject { object }
         | Operation::RemoveInlineObject { object }
-        | Operation::SetTextBoxBody { object, .. } => out.push(*object),
+        | Operation::SetTextBoxBody { object, .. }
+        | Operation::SetObjectLocks { object, .. } => out.push(*object),
         Operation::InsertObjectNode { owner, .. } => out.push(*owner),
         Operation::SetTableCellProperties { cell, .. } => out.push(*cell),
         Operation::UpdateReviewState { paragraphs, .. } => {
@@ -876,7 +877,8 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetEvenAndOddHeaders { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => None,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. } => None,
     }
 }
 
@@ -1691,6 +1693,7 @@ impl Aspects {
     const MEDIA_REFERENCE: Self = Self(1 << 23);
     const DOCUMENT_PROTECTION: Self = Self(1 << 24);
     const CHART_DEFINITION: Self = Self(1 << 25);
+    const OBJECT_LOCKS: Self = Self(1 << 26);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1729,6 +1732,11 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         Operation::SetShapeStroke { shape, .. } => Some((Target::Node(*shape), Aspects::STROKE)),
         Operation::SetTextBoxBody { object, .. } => {
             Some((Target::Node(*object), Aspects::TEXT_BOX_BODY))
+        }
+        // One aspect for the whole lock set: the flags are written together, as the
+        // two lock elements Word writes are one record of what an editor must honour.
+        Operation::SetObjectLocks { object, .. } => {
+            Some((Target::Node(*object), Aspects::OBJECT_LOCKS))
         }
         Operation::SetCoreProperties { .. } => {
             Some((Target::CoreProperties, Aspects::CORE_PROPERTIES))

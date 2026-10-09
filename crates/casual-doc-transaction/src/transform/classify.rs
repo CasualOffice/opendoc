@@ -83,7 +83,8 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::RemoveNote { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => Tier::NodeAddressed,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. } => Tier::NodeAddressed,
 
         Operation::SetCoreProperties { .. }
         | Operation::SetSectionGeometry { .. }
@@ -180,6 +181,7 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetShapeFill { .. } => "SetShapeFill",
         Operation::SetShapeStroke { .. } => "SetShapeStroke",
         Operation::SetTextBoxBody { .. } => "SetTextBoxBody",
+        Operation::SetObjectLocks { .. } => "SetObjectLocks",
     }
 }
 
@@ -328,7 +330,8 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetDocumentProtection { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => Coordinates::None,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. } => Coordinates::None,
     }
 }
 

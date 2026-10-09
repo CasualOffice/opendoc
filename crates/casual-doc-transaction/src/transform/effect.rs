@@ -338,7 +338,8 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             | Operation::SetDocumentProtection { .. }
             | Operation::SetShapeFill { .. }
             | Operation::SetShapeStroke { .. }
-            | Operation::SetTextBoxBody { .. },
+            | Operation::SetTextBoxBody { .. }
+            | Operation::SetObjectLocks { .. },
             _,
         ) => Effect::Inert,
     })

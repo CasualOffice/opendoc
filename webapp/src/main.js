@@ -4533,8 +4533,8 @@ const OBJECT_CAPABILITY_KEYS = [
  *  is freed. JSON object-order entries use the same camelCase field names. */
 function objectCapabilities(source) {
   if (source && OBJECT_CAPABILITY_KEYS.some((key) => key in source)) {
-    // The engine's reason for every `false` travels with the bits (HF-259).
-    const reasons = { capabilityReasons: readCapabilityReasons(source) };
+    // The engine's reason for every `false` travels with the bits (HF-259), and so does the file's aspect lock (FID-AT-09).
+    const reasons = { capabilityReasons: readCapabilityReasons(source), locksAspectRatio: source.locksAspectRatio === true };
     return Object.assign(Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true])), reasons);
   }
   // A missing or stale engine payload must never make an unsupported mutation

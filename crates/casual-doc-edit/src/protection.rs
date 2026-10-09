@@ -389,7 +389,10 @@ fn refuse_if_formatting_locked(
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
-        | Operation::SetTextBoxBody { .. } => Ok(()),
+        | Operation::SetTextBoxBody { .. }
+        // A lock is a restriction on later edits, not formatting of the object, like
+        // its alt text beside it in the same non-visual properties.
+        | Operation::SetObjectLocks { .. } => Ok(()),
     }
 }
 
@@ -581,7 +584,8 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetEvenAndOddHeaders { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => false,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. } => false,
     }
 }
 

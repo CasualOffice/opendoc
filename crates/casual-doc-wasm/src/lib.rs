@@ -162,6 +162,10 @@ mod objects;
 // is one command composed from two existing operations.
 mod inline_move;
 
+// Word's "Lock aspect ratio" as the selection publishes it (`docs/109` FID-AT-09).
+#[cfg(test)]
+mod object_locks_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -892,6 +896,8 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
         Operation::SetTextBoxBody { .. } => HistoryKind::ObjectResize,
+        // Word's "Lock aspect ratio" sits in the Size tab, beside the size it governs.
+        Operation::SetObjectLocks { .. } => HistoryKind::ObjectResize,
         Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
             HistoryKind::ObjectDelete
         }
@@ -2122,16 +2128,7 @@ impl WasmDocument {
             .into_iter()
             .rev()
             .find(|obj| obj.page == page && obj.rect.contains(point))
-            .map(|obj| ObjectHitPayload {
-                root: obj.root.to_string(),
-                subject: obj.subject.to_string(),
-                path: obj.path,
-                kind: obj.kind,
-                page: obj.page,
-                rect: flat_rect(obj.page, obj.rect),
-                anchored: obj.anchored,
-                capabilities: obj.capabilities,
-            })
+            .map(|obj| object_hit_payload(obj, self.document.definitions(), true))
     }
 
     /// Resolves the deepest painted descendant of multi-child group `root` at a
@@ -2158,7 +2155,7 @@ impl WasmDocument {
                     && object.page == page
                     && object.rect.contains(point)
             })
-            .map(object_hit_payload)
+            .map(|object| object_hit_payload(object, self.document.definitions(), false))
     }
 
     /// The paint-ordered leaf references inside multi-child group `root`, as
@@ -2174,7 +2171,7 @@ impl WasmDocument {
             .object_boxes_including_group_children()
             .into_iter()
             .filter(|object| object.root == root && object.subject != root)
-            .map(object_order_entry)
+            .map(|object| object_order_entry(object, self.document.definitions(), false))
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -2198,7 +2195,7 @@ impl WasmDocument {
         let objects: Vec<ObjectOrderEntryJson> = self
             .object_boxes()
             .into_iter()
-            .map(object_order_entry)
+            .map(|object| object_order_entry(object, self.document.definitions(), true))
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -2928,7 +2925,9 @@ impl WasmDocument {
         height_emu: f64,
         mime: String,
     ) -> Result<EditResult, JsValue> {
-        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
+        use casual_doc_model::v1::{
+            Drawing, Extent, LockFlags, MediaId, MediaReference, ObjectLocks,
+        };
         let Some((media_type, ext)) = image_part_type(&mime) else {
             return Err(to_js(format!("unsupported image type {mime:?}")));
         };
@@ -2985,7 +2984,19 @@ impl WasmDocument {
             flip_v: false,
             rotation: None,
         };
-        self.apply_action_as(
+        // Word writes `a:graphicFrameLocks noChangeAspect="1"` on the frame of every
+        // picture it inserts, and that flag is what makes a corner drag of the picture
+        // proportional — in Word, and here (`Definitions::locks_aspect_ratio`, read by
+        // the resize grips). A picture inserted here carries the same lock, so it keeps
+        // its proportions on a corner drag in this editor and in Word after a save.
+        let word_picture_locks = ObjectLocks {
+            frame: LockFlags {
+                no_change_aspect: true,
+                ..LockFlags::default()
+            },
+            object: LockFlags::default(),
+        };
+        self.apply_action_caret_as(
             vec![
                 // Registration first: the drawing that follows names this media id, and an
                 // operation must never be ordered before the thing it references.
@@ -2997,7 +3008,14 @@ impl WasmDocument {
                     at: Pos::new(owner, offset),
                     node: Box::new(InlineNode::Drawing(Box::new(drawing))),
                 },
+                // After the drawing: the lock names it.
+                Operation::SetObjectLocks {
+                    object: drawing_id,
+                    locks: word_picture_locks,
+                },
             ],
+            // Where `InsertInlineObject` alone left the caret: at the insertion point.
+            Pos::new(owner, offset),
             HistoryKind::ObjectInsert,
         )
         .map_err(to_js)
@@ -19851,6 +19869,10 @@ struct ObjectOrderEntryJson {
     /// Absent when every capability is available.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     capability_reasons: BTreeMap<String, String>,
+    /// Whether a resize of `root` must keep its aspect ratio — the file's
+    /// `noChangeAspect` (`Definitions::locks_aspect_ratio`). The same answer
+    /// [`ObjectHitPayload::locks_aspect_ratio`] gives.
+    locks_aspect_ratio: bool,
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -23911,8 +23933,41 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     ]
 }
 
-fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
+/// Whether a resize of `object` must keep its aspect ratio — Word's "Lock aspect
+/// ratio", DrawingML's `noChangeAspect` (`Definitions::locks_aspect_ratio`,
+/// `docs/109` FID-AT-09). An absent flag is unlocked, whatever the kind, because
+/// that is how Word reads the same file.
+///
+/// A resize acts on the ROOT, so the root's lock decides. One more place states
+/// it: a lone shape is modelled as a group of one, and its file writes the lock
+/// on the shape (`a:spLocks` in `wps:cNvSpPr`), which the importer keys by the
+/// shape — the box's subject. For a TOP-LEVEL selection, where the subject of a
+/// group of one is the very object the reader sees, that lock counts too. A
+/// member picked out of a many-member group (`top_level` false) does not lend the
+/// group its lock: the group is what a drag would resize.
+///
+/// Two side-table lookups, O(log n) each.
+fn object_locks_aspect_ratio(
+    object: &ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> bool {
+    definitions.locks_aspect_ratio(object.root)
+        || (top_level
+            && object.subject != object.root
+            && definitions.locks_aspect_ratio(object.subject))
+}
+
+/// `object`'s hit payload. `definitions` answers the one thing the placed box does
+/// not carry, [`object_locks_aspect_ratio`]; `top_level` says whether the box is a
+/// whole-object selection (`objectAt`) or a group member (`objectDescendantAt`).
+fn object_hit_payload(
+    object: ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> ObjectHitPayload {
     ObjectHitPayload {
+        locks_aspect_ratio: object_locks_aspect_ratio(&object, definitions, top_level),
         root: object.root.to_string(),
         subject: object.subject.to_string(),
         path: object.path,
@@ -23924,13 +23979,20 @@ fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
     }
 }
 
-fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
+/// `object`'s `objectOrder` entry; `definitions` and `top_level` as
+/// [`object_hit_payload`] uses them.
+fn object_order_entry(
+    object: ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> ObjectOrderEntryJson {
     let capability_reasons = capability_refusals(object.kind, object.anchored, object.capabilities)
         .into_iter()
         .map(|(name, reason)| (name.to_owned(), reason.to_owned()))
         .collect();
     ObjectOrderEntryJson {
         capability_reasons,
+        locks_aspect_ratio: object_locks_aspect_ratio(&object, definitions, top_level),
         node: object.subject.to_string(),
         surface: "body".to_owned(),
         root: object.root.to_string(),
@@ -25860,10 +25922,27 @@ pub struct ObjectHitPayload {
     rect: [i32; 5],
     anchored: bool,
     capabilities: ObjectCapabilities,
+    locks_aspect_ratio: bool,
 }
 
 #[wasm_bindgen]
 impl ObjectHitPayload {
+    /// Whether a resize of this reference's root must keep its aspect ratio:
+    /// DrawingML's `noChangeAspect` on the object's frame or on the object, as
+    /// the file (or this editor's own insert, which writes Word's lock) states it
+    /// (`Definitions::locks_aspect_ratio`, `docs/109` FID-AT-09).
+    ///
+    /// This is Word's "Lock aspect ratio", and Word honours it both ways: a
+    /// corner drag of a locked object keeps its proportions, and a corner drag of
+    /// an unlocked one — a picture whose file states no lock included — does not
+    /// unless Shift is held. An ABSENT flag is therefore unlocked, whatever the
+    /// kind: that is how Word reads the same file.
+    #[wasm_bindgen(getter, js_name = locksAspectRatio)]
+    #[must_use]
+    pub fn locks_aspect_ratio(&self) -> bool {
+        self.locks_aspect_ratio
+    }
+
     /// Compatibility alias for [`subject`](Self::subject).
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -28497,7 +28576,8 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         | Operation::SetGroupGeometry { object, .. }
         | Operation::SetAnchor { object, .. }
         | Operation::SetImageCrop { object, .. }
-        | Operation::SetObjectDescr { object, .. } => Pos::new(*object, 0),
+        | Operation::SetObjectDescr { object, .. }
+        | Operation::SetObjectLocks { object, .. } => Pos::new(*object, 0),
         // Deleting an object removes it, so its own id is a neutral placeholder (the
         // host re-selects after the delete); its inverse re-inserts into `owner`.
         Operation::DeleteObject { object } => Pos::new(*object, 0),

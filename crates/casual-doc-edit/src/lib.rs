@@ -66,6 +66,9 @@ use casual_doc_model::v1::DocumentProtection;
 // The typed chart projection `SetChartDefinition` installs or removes (`docs/155`).
 // Its own `use` line, per the parallel-lane rule above.
 use casual_doc_model::v1::{Chart, ChartId};
+// A drawing object's DrawingML locks, which `SetObjectLocks` replaces (`109` FID-AT-09).
+// Its own `use` line, per the parallel-lane rule above.
+use casual_doc_model::v1::{ObjectLocks, ObjectName};
 
 // Captions and cross-references: the OOXML field markup (`SEQ`, `REF`, `PAGEREF`,
 // `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005). Its own module
@@ -1278,6 +1281,26 @@ pub enum Operation {
         object: NodeId,
         /// The complete replacement body-property value.
         properties: TextBoxBodyProperties,
+    },
+    /// Replace a drawing object's DrawingML locks — Word's "Lock aspect ratio" and
+    /// its siblings, held beside the object's name in `Definitions::object_names`
+    /// (`109` FID-AT-09). Self-inverse, carrying the previous locks (the
+    /// retained-value pattern).
+    ///
+    /// The side-table entry is created when the object had none and removed when it
+    /// ends up stating nothing (no name, no title, no lock) — the model keeps no
+    /// empty entry — so undoing the lock a fresh picture was inserted with leaves the
+    /// table exactly as it was. Rejected with [`EditError::NodeNotFound`] unless
+    /// `object` names a drawing object in some story's text: any surface, inside a
+    /// wrapper, a table cell or a text box's own text. A group's members keep the
+    /// locks their file gave them and are not addressed here.
+    ///
+    /// O(document): one walk to find the object, then one side-table write.
+    SetObjectLocks {
+        /// The drawing object whose locks are replaced.
+        object: NodeId,
+        /// The complete replacement locks.
+        locks: ObjectLocks,
     },
 }
 
@@ -2862,6 +2885,26 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 properties: previous,
             })
         }
+        Operation::SetObjectLocks { object, locks } => {
+            if !drawing_object_exists(doc, *object) {
+                return Err(EditError::NodeNotFound);
+            }
+            let names = &mut doc.definitions_mut().object_names;
+            let mut entry: ObjectName = names.get(object).cloned().unwrap_or_default();
+            let previous = core::mem::replace(&mut entry.locks, *locks);
+            // An entry that says nothing is not kept (`ObjectName::is_empty`, and
+            // `Document::validate` refuses one), so a lock cleared from an unnamed
+            // object takes its entry with it.
+            if entry.is_empty() {
+                names.remove(object);
+            } else {
+                names.insert(*object, entry);
+            }
+            Ok(Operation::SetObjectLocks {
+                object: *object,
+                locks: previous,
+            })
+        }
         Operation::SetSectionTitlePage {
             section,
             title_page,
@@ -4360,6 +4403,36 @@ fn is_object_node(node: &InlineNode) -> bool {
             | InlineNode::Group(_)
             | InlineNode::EmbeddedObject(_)
     )
+}
+
+/// Whether `object` names a drawing object (`is_object_node`) in some story's text:
+/// any surface, a table cell, a text box's own text, or inside a wrapper (a link, a
+/// field result, a content control, a tracked change) — [`Operation::SetObjectLocks`]'
+/// target. Group members are not inline nodes and are not found.
+///
+/// **O(document)**: one walk over every surface, stopping at the object.
+fn drawing_object_exists(document: &Document, object: NodeId) -> bool {
+    fn in_blocks(blocks: &[BlockNode], object: NodeId) -> bool {
+        blocks.iter().any(|block| match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+            BlockNode::Table(table) => table
+                .rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| in_blocks(&cell.blocks, object))),
+            BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+            BlockNode::AltChunk(_) => false,
+        })
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> bool {
+        inlines.iter().any(|inline| {
+            (inline.id() == object && is_object_node(inline))
+                || contained_inlines(inline).is_some_and(|nested| in_inlines(nested, object))
+        })
+    }
+    // `surface_block_lists` already lists every text box's own text as a story.
+    surface_block_lists(document)
+        .into_iter()
+        .any(|blocks| in_blocks(blocks, object))
 }
 
 /// Removes the object `object` from its inline container, searched the same way as
@@ -8365,6 +8438,113 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         ));
+    }
+
+    /// `SetObjectLocks` (`109` FID-AT-09): the lock lands in the object-name side
+    /// table, its inverse puts back exactly what was there — including NO entry,
+    /// which the model requires of an unnamed, unlocked object — a named object
+    /// keeps its name when its lock is cleared, and a node that is not a drawing
+    /// object is refused rather than given an orphan entry.
+    #[test]
+    fn set_object_locks_writes_the_side_table_and_its_inverse_restores_it_exactly() {
+        use casual_doc_model::v1::{LockFlags, MediaId};
+        let media = MediaId::new(NodeId::from_parts(7, 902).unwrap());
+        let picture = n(50);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(2, vec![drawing(50, media, None, None)])],
+            media_defs(media),
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+        let word = ObjectLocks {
+            frame: LockFlags {
+                no_change_aspect: true,
+                ..LockFlags::default()
+            },
+            object: LockFlags::default(),
+        };
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectLocks {
+                object: picture,
+                locks: word,
+            },
+        )
+        .expect("lock the picture's aspect ratio");
+        assert!(
+            d.definitions().locks_aspect_ratio(picture),
+            "the lock is what the resize grips read"
+        );
+        assert_eq!(
+            inverse,
+            Operation::SetObjectLocks {
+                object: picture,
+                locks: ObjectLocks::default(),
+            }
+        );
+        d.validate()
+            .expect("the entry the lock created is a valid one");
+
+        // Undo: the picture had no entry at all, and has none again — an empty
+        // entry is not a state the model admits.
+        apply(&mut d, &mut ids, &inverse).expect("undo the lock");
+        assert!(!d.definitions().locks_aspect_ratio(picture));
+        assert!(
+            d.definitions().object_names.get(&picture).is_none(),
+            "no empty entry is left behind"
+        );
+        d.validate().expect("valid after the undo");
+
+        // A NAMED object keeps its name when its lock is cleared.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectLocks {
+                object: picture,
+                locks: word,
+            },
+        )
+        .expect("lock again");
+        d.definitions_mut()
+            .object_names
+            .get_mut(&picture)
+            .expect("the entry")
+            .name = Some("Logo".to_owned());
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectLocks {
+                object: picture,
+                locks: ObjectLocks::default(),
+            },
+        )
+        .expect("clear the lock");
+        assert_eq!(
+            d.definitions()
+                .object_names
+                .get(&picture)
+                .and_then(|entry| entry.name.clone()),
+            Some("Logo".to_owned())
+        );
+
+        // Not a drawing object: the paragraph, and an id nothing carries.
+        for stranger in [n(2), n(4040)] {
+            assert_eq!(
+                apply(
+                    &mut d,
+                    &mut ids,
+                    &Operation::SetObjectLocks {
+                        object: stranger,
+                        locks: word,
+                    },
+                ),
+                Err(EditError::NodeNotFound)
+            );
+            assert!(d.definitions().object_names.get(&stranger).is_none());
+        }
     }
 
     #[test]
