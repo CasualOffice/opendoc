@@ -415,7 +415,10 @@ impl WireOperation {
             | Operation::SetEvenAndOddHeaders { .. }
             | Operation::SetShapeFill { .. }
             | Operation::SetShapeStroke { .. }
-            | Operation::SetTextBoxBody { .. } => 0,
+            | Operation::SetTextBoxBody { .. }
+            | Operation::SetObjectLocks { .. }
+            | Operation::SetTrackRevisions { .. }
+            | Operation::SetSectionFormProtection { .. } => 0,
         };
         PER_ITEM + ids + payload
     }
@@ -525,7 +528,10 @@ impl WireOperation {
             | Operation::SetEvenAndOddHeaders { .. }
             | Operation::SetShapeFill { .. }
             | Operation::SetShapeStroke { .. }
-            | Operation::SetTextBoxBody { .. } => Vec::new(),
+            | Operation::SetTextBoxBody { .. }
+            | Operation::SetObjectLocks { .. }
+            | Operation::SetTrackRevisions { .. }
+            | Operation::SetSectionFormProtection { .. } => Vec::new(),
         }
     }
 }

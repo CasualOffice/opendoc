@@ -162,6 +162,26 @@ mod objects;
 // is one command composed from two existing operations.
 mod inline_move;
 
+// Word's "Lock aspect ratio" as the selection publishes it (`docs/109` FID-AT-09).
+#[cfg(test)]
+#[path = "object_locks_tests.rs"]
+mod object_locks_tests;
+
+// An edited save states the current `app.xml` counts (`docs/109` FID-AT-04).
+#[cfg(test)]
+#[path = "save_statistics_tests.rs"]
+mod save_statistics_tests;
+
+// The document's Track Changes setting (`docs/165` M7, `docs/109` HF-283).
+#[cfg(test)]
+#[path = "track_changes_tests.rs"]
+mod track_changes_tests;
+
+// Forms protection per section (`docs/165` M6, `docs/109` FID-AT-06).
+#[cfg(test)]
+#[path = "forms_protection_tests.rs"]
+mod forms_protection_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -825,6 +845,8 @@ enum HistoryKind {
     NoteChange,
     Review,
     ReviewTyping,
+    /// The document's Track Changes setting (`SetTrackRevisions`).
+    TrackChanges,
 }
 
 impl HistoryKind {
@@ -865,6 +887,7 @@ impl HistoryKind {
             Self::NoteChange => "Note change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
+            Self::TrackChanges => "Track changes",
         }
     }
 }
@@ -898,6 +921,8 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
         Operation::SetTextBoxBody { .. } => HistoryKind::ObjectResize,
+        // Word's "Lock aspect ratio" sits in the Size tab, beside the size it governs.
+        Operation::SetObjectLocks { .. } => HistoryKind::ObjectResize,
         Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
             HistoryKind::ObjectDelete
         }
@@ -953,6 +978,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. } => HistoryKind::Edit,
+        Operation::SetTrackRevisions { .. } => HistoryKind::TrackChanges,
+        // Leads no user action of its own: a section break carries it.
+        Operation::SetSectionFormProtection { .. } => HistoryKind::SectionBreak,
         // Shape fill and outline are formatting, exactly as Word groups them.
         Operation::SetShapeFill { .. } | Operation::SetShapeStroke { .. } => {
             HistoryKind::Formatting
@@ -1010,9 +1038,117 @@ pub fn open_as(bytes: &[u8], format_id: &str) -> Result<WasmDocument, JsValue> {
 
 #[wasm_bindgen]
 impl WasmDocument {
+    /// The `docProps/app.xml` statistics as they are NOW (`109` FID-AT-04), each
+    /// `None` where the editor cannot say.
+    ///
+    /// Words, characters (without and with spaces) and paragraphs are
+    /// [`document_stats`](Self::document_stats)' — the counts the status bar
+    /// shows, which take in every story's text (headers, footers, notes, text
+    /// boxes); Word's own definitions are not reproduced, so a count can differ
+    /// from the one Word would write for the same text. Pages and lines come from
+    /// this session's own pagination and only when it is whole and exact: a
+    /// windowed body has measured a prefix, and a count of a prefix is not the
+    /// document's — that statistic is left as it was, so the save leaves it out
+    /// as stale and says so rather than writing a guess.
+    ///
+    /// **O(document)**: one text walk and, for lines, one pass over the placed
+    /// pages. Called once per regenerating save, which is O(document) anyway.
+    fn current_statistics(&self) -> [Option<i64>; 6] {
+        let stats = self.document_stats();
+        // The page count is the document's once measuring has reached the end,
+        // windowed or not; a line count needs every page laid out, which only a
+        // whole body has.
+        let pages = self
+            .layout
+            .page_count_is_exact()
+            .then(|| i64::try_from(self.layout.page_count()).unwrap_or(i64::MAX));
+        let lines = (!self.layout.is_windowed()).then(|| {
+            let lines: usize = self
+                .layout
+                .resident()
+                .pages
+                .iter()
+                .map(|page| {
+                    placed_paragraphs(&page.placed)
+                        .iter()
+                        .map(|paragraph| paragraph.lines.lines.len())
+                        .sum::<usize>()
+                })
+                .sum();
+            i64::try_from(lines).unwrap_or(i64::MAX)
+        });
+        [
+            pages,
+            Some(i64::from(stats.words)),
+            Some(i64::from(stats.characters)),
+            Some(i64::from(stats.characters_with_spaces)),
+            lines,
+            Some(i64::from(stats.paragraphs)),
+        ]
+    }
+
+    /// Runs `export` over the document with `statistics` written into its
+    /// `docProps/app.xml` properties, then puts back what was there — so the
+    /// save carries current counts and the document the session goes on editing
+    /// is exactly what it was. `None` when there is nothing to write (no
+    /// statistics asked for, or a document that carries no application
+    /// properties at all, where inventing an `app.xml` is not this save's call).
+    ///
+    /// A statistic given as `None` is left as the document holds it.
+    /// `source_unchanged` is false for the callback by construction: statistics
+    /// are only refreshed for an edited document.
+    fn with_current_statistics<T>(
+        &mut self,
+        statistics: Option<[Option<i64>; 6]>,
+        export: impl FnOnce(&Document, &DocumentResources, Option<&SourceEnvelope>) -> T,
+    ) -> Option<T> {
+        let statistics = statistics?;
+        self.document.properties()?;
+        let app = &mut self.document.properties_mut().app;
+        let slots = [
+            &mut app.pages,
+            &mut app.words,
+            &mut app.characters,
+            &mut app.characters_with_spaces,
+            &mut app.lines,
+            &mut app.paragraphs,
+        ];
+        let mut previous = [None; 6];
+        for ((slot, current), kept) in slots.into_iter().zip(statistics).zip(&mut previous) {
+            *kept = *slot;
+            if let Some(current) = current {
+                *slot = Some(current);
+            }
+        }
+        let result = export(
+            &self.document,
+            &self.resources,
+            self.format_state.source.as_ref(),
+        );
+        let app = &mut self.document.properties_mut().app;
+        for (slot, kept) in [
+            &mut app.pages,
+            &mut app.words,
+            &mut app.characters,
+            &mut app.characters_with_spaces,
+            &mut app.lines,
+            &mut app.paragraphs,
+        ]
+        .into_iter()
+        .zip(previous)
+        {
+            *slot = kept;
+        }
+        Some(result)
+    }
+
     /// See [`WasmDocument::export_as`]. Kept free of `JsValue` so native tests
     /// exercise the same registry dispatch and compatibility reporting as WASM.
-    fn export_as_inner(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, String> {
+    fn export_as_inner(
+        &mut self,
+        format_id: &str,
+        mode: &str,
+    ) -> Result<WasmExportArtifact, String> {
         let format = FormatId::new(format_id)
             .map_err(|error| format!("invalid format identifier: {error}"))?;
         let mode = match mode {
@@ -1027,17 +1163,41 @@ impl WasmDocument {
             }
         };
         let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
-        let artifact = registry
-            .export(
-                &format,
-                ExportRequest {
-                    document: &self.document,
-                    resources: &self.resources,
-                    source: self.format_state.source.as_ref(),
-                    source_unchanged: self.revision == 0,
-                    mode,
-                },
-            )
+        // An EDITED document's `docProps/app.xml` statistics are the counts it had
+        // when it was opened; the io adapter leaves out each one still holding the
+        // source's value (`109` FID-AT-04). The editor knows the current counts, so
+        // a regenerating DOCX save writes them instead — for the duration of the
+        // export only (`with_current_statistics`), so saving changes nothing in the
+        // document the session goes on editing.
+        let refresh = format.as_str() == casual_doc_io::formats::DOCX
+            && !matches!(mode, ExportMode::ExactIfUnchanged)
+            && self.revision != 0;
+        let statistics = refresh.then(|| self.current_statistics());
+        let artifact = self
+            .with_current_statistics(statistics, |document, resources, source| {
+                registry.export(
+                    &format,
+                    ExportRequest {
+                        document,
+                        resources,
+                        source,
+                        source_unchanged: false,
+                        mode,
+                    },
+                )
+            })
+            .unwrap_or_else(|| {
+                registry.export(
+                    &format,
+                    ExportRequest {
+                        document: &self.document,
+                        resources: &self.resources,
+                        source: self.format_state.source.as_ref(),
+                        source_unchanged: self.revision == 0,
+                        mode,
+                    },
+                )
+            })
             .map_err(|error| format!("export {format}: {error}"))?;
         let report_json = compatibility_report_json(&artifact.report)?;
 
@@ -2128,16 +2288,7 @@ impl WasmDocument {
             .into_iter()
             .rev()
             .find(|obj| obj.page == page && obj.rect.contains(point))
-            .map(|obj| ObjectHitPayload {
-                root: obj.root.to_string(),
-                subject: obj.subject.to_string(),
-                path: obj.path,
-                kind: obj.kind,
-                page: obj.page,
-                rect: flat_rect(obj.page, obj.rect),
-                anchored: obj.anchored,
-                capabilities: obj.capabilities,
-            })
+            .map(|obj| object_hit_payload(obj, self.document.definitions(), true))
     }
 
     /// Resolves the deepest painted descendant of multi-child group `root` at a
@@ -2164,7 +2315,7 @@ impl WasmDocument {
                     && object.page == page
                     && object.rect.contains(point)
             })
-            .map(object_hit_payload)
+            .map(|object| object_hit_payload(object, self.document.definitions(), false))
     }
 
     /// The paint-ordered leaf references inside multi-child group `root`, as
@@ -2180,7 +2331,7 @@ impl WasmDocument {
             .object_boxes_including_group_children()
             .into_iter()
             .filter(|object| object.root == root && object.subject != root)
-            .map(object_order_entry)
+            .map(|object| object_order_entry(object, self.document.definitions(), false))
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -2204,7 +2355,7 @@ impl WasmDocument {
         let objects: Vec<ObjectOrderEntryJson> = self
             .object_boxes()
             .into_iter()
-            .map(object_order_entry)
+            .map(|object| object_order_entry(object, self.document.definitions(), true))
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -2934,7 +3085,9 @@ impl WasmDocument {
         height_emu: f64,
         mime: String,
     ) -> Result<EditResult, JsValue> {
-        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
+        use casual_doc_model::v1::{
+            Drawing, Extent, LockFlags, MediaId, MediaReference, ObjectLocks,
+        };
         let Some((media_type, ext)) = image_part_type(&mime) else {
             return Err(to_js(format!("unsupported image type {mime:?}")));
         };
@@ -2991,7 +3144,19 @@ impl WasmDocument {
             flip_v: false,
             rotation: None,
         };
-        self.apply_action_as(
+        // Word writes `a:graphicFrameLocks noChangeAspect="1"` on the frame of every
+        // picture it inserts, and that flag is what makes a corner drag of the picture
+        // proportional — in Word, and here (`Definitions::locks_aspect_ratio`, read by
+        // the resize grips). A picture inserted here carries the same lock, so it keeps
+        // its proportions on a corner drag in this editor and in Word after a save.
+        let word_picture_locks = ObjectLocks {
+            frame: LockFlags {
+                no_change_aspect: true,
+                ..LockFlags::default()
+            },
+            object: LockFlags::default(),
+        };
+        self.apply_action_caret_as(
             vec![
                 // Registration first: the drawing that follows names this media id, and an
                 // operation must never be ordered before the thing it references.
@@ -3003,7 +3168,14 @@ impl WasmDocument {
                     at: Pos::new(owner, offset),
                     node: Box::new(InlineNode::Drawing(Box::new(drawing))),
                 },
+                // After the drawing: the lock names it.
+                Operation::SetObjectLocks {
+                    object: drawing_id,
+                    locks: word_picture_locks,
+                },
             ],
+            // Where `InsertInlineObject` alone left the caret: at the insertion point.
+            Pos::new(owner, offset),
             HistoryKind::ObjectInsert,
         )
         .map_err(to_js)
@@ -4383,6 +4555,73 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Whether the document's Track Changes setting is on (`w:trackRevisions`,
+    /// `docs/165` M7): the flag Word saves a document with while tracking is on,
+    /// and opens it with. The host opens such a document in Suggesting mode. O(1).
+    #[wasm_bindgen(getter, js_name = trackRevisions)]
+    #[must_use]
+    pub fn track_revisions(&self) -> bool {
+        self.document.definitions().settings.track_changes
+    }
+
+    /// Turns the document's Track Changes setting on or off as one undoable edit
+    /// (`SetTrackRevisions`), so a save writes it and a reopen honours it. The
+    /// host calls it when the reader switches between Editing and Suggesting.
+    ///
+    /// `(node, offset)` is the caret to keep: a setting has no place in the text,
+    /// and moving the reader's caret because they changed mode would be a defect.
+    /// A request for the value the document already has is reported UNCHANGED —
+    /// same revision, nothing on the undo stack — rather than as an empty edit.
+    ///
+    /// # Errors
+    ///
+    /// A refusal when the choke point refuses the operation — a `trackedChanges`
+    /// restriction locks Track Changes, as Word does — or `node` is not an id.
+    #[wasm_bindgen(js_name = setTrackRevisions)]
+    pub fn set_track_revisions(
+        &mut self,
+        enabled: bool,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.set_track_revisions_inner(enabled, node, offset)
+            .map_err(to_js)
+    }
+
+    /// [`set_track_revisions`](Self::set_track_revisions) with a `String` error,
+    /// so a native test can read a refusal.
+    fn set_track_revisions_inner(
+        &mut self,
+        enabled: bool,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, String> {
+        // No caret yet (a document nobody has clicked into): the document root,
+        // which the host resolves to its first position, as for any setting.
+        let anchor = if node.is_empty() {
+            self.document.id()
+        } else {
+            node_id_msg(node)?
+        };
+        let caret = Pos::new(anchor, offset);
+        if self.track_revisions() == enabled {
+            return Ok(EditResult {
+                node: caret.node.to_string(),
+                offset,
+                revision: self.revision,
+                page_count: self.page_count(),
+                dirty: Vec::new(),
+                paste_loss: Vec::new(),
+                placed_object: String::new(),
+            });
+        }
+        self.apply_action_caret_as(
+            vec![Operation::SetTrackRevisions { enabled }],
+            caret,
+            HistoryKind::TrackChanges,
+        )
+    }
+
     /// The document's editing restriction (`w:documentProtection`), for the host's
     /// Restrict Editing surface, as JSON.
     ///
@@ -5023,7 +5262,7 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| "id space exhausted".to_owned())?;
-        let ops = section_break_ops(
+        let mut ops = section_break_ops(
             Pos::new(nid, offset),
             &split,
             &inherited,
@@ -5031,6 +5270,20 @@ impl WasmDocument {
             new_paragraph,
             start,
         );
+        // Word copies the split section's `w:sectPr` to the new break, `w:formProt`
+        // included; the model keeps that one flag in a side table keyed by section
+        // (`109` FID-AT-06), so it travels as its own operation, after the boundary
+        // it names exists.
+        if let Some(protected) = self
+            .document
+            .definitions()
+            .section_form_protection(split.current)
+        {
+            ops.push(Operation::SetSectionFormProtection {
+                section: new_section,
+                protected: Some(protected),
+            });
+        }
         self.apply_action_caret_as(ops, Pos::new(new_paragraph, 0), HistoryKind::SectionBreak)
     }
 
@@ -13976,7 +14229,11 @@ impl WasmDocument {
     /// Accepted modes are `semantic`, `preserve_when_safe`, and
     /// `exact_if_unchanged`.
     #[wasm_bindgen(js_name = exportAs)]
-    pub fn export_as(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, JsValue> {
+    pub fn export_as(
+        &mut self,
+        format_id: &str,
+        mode: &str,
+    ) -> Result<WasmExportArtifact, JsValue> {
         self.export_as_inner(format_id, mode).map_err(to_js)
     }
 }
@@ -15144,6 +15401,12 @@ impl WasmDocument {
             if casual_doc_edit::protection::exempt_from_protection(op, self.capabilities) {
                 continue;
             }
+            // `forms` protects only the sections that do not say `w:formProt="false"`
+            // (ECMA-376 §17.18.29: "no restrictions in sections where `formProt` is
+            // false"; `docs/165` M6, `109` FID-AT-06).
+            if self.forms_leave_open(op) {
+                continue;
+            }
             if !self.op_is_inside_a_form_field(op) {
                 return Err(refused!(
                     "document.protected-forms-only",
@@ -15153,6 +15416,38 @@ impl WasmDocument {
             }
         }
         Ok(())
+    }
+
+    /// Whether forms protection leaves every paragraph `op` writes in OPEN: each
+    /// one is in the body, in a section whose `w:formProt` is `false`
+    /// (`Definitions::section_form_protection`, `109` FID-AT-06). A section that
+    /// states nothing, or `true`, is protected — `None` is not `Some(false)`.
+    ///
+    /// Only paragraph-addressed operations can be placed in a section here
+    /// ([`operation_paragraphs`]); anything else stays under the form-field rule,
+    /// which refuses it — a table or block insertion in an open section included
+    /// (`109` FID-AT-13). Headers, footers, notes and text boxes are not in a
+    /// section's body and stay protected, as in Word.
+    ///
+    /// **Complexity.** O(sections) and nothing more for every document whose
+    /// sections leave none open — which is every document but a mixed one. A
+    /// mixed one pays one pass over the top-level body per paragraph named,
+    /// stopping at the next section break: O(top-level body blocks).
+    fn forms_leave_open(&self, op: &Operation) -> bool {
+        let definitions = self.document.definitions();
+        let open = |section: SectionId| definitions.section_form_protection(section) == Some(false);
+        if !definitions
+            .sections
+            .iter()
+            .any(|boundary| open(boundary.id))
+        {
+            return false;
+        }
+        operation_paragraphs(op).is_some_and(|paragraphs| {
+            paragraphs
+                .iter()
+                .all(|paragraph| body_section_of(&self.document, *paragraph).is_some_and(open))
+        })
     }
 
     /// Whether an operation writes inside an ENABLED text form field's result.
@@ -18295,6 +18590,66 @@ fn damage_of(ops: &[Operation]) -> DirtySet {
     DirtySet::complete(nodes)
 }
 
+/// The paragraphs `op` writes in, for the per-section forms rule
+/// (`WasmDocument::forms_leave_open`), or `None` when it is not addressed to
+/// paragraphs. Both ends of a range: a range that crosses into a protected
+/// section is not open. O(1).
+fn operation_paragraphs(op: &Operation) -> Option<Vec<NodeId>> {
+    match op {
+        Operation::InsertText { at, .. }
+        | Operation::SplitParagraph { at, .. }
+        | Operation::InsertInlineObject { at, .. } => Some(vec![at.node]),
+        Operation::DeleteText { range }
+        | Operation::FormatText { range, .. }
+        | Operation::ClearFormatting { range }
+        | Operation::SetHyperlink { range, .. } => Some(vec![range.start.node, range.end.node]),
+        Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
+            Some(vec![*node])
+        }
+        Operation::JoinParagraphs { first, second, .. } => Some(vec![*first, *second]),
+        _ => None,
+    }
+}
+
+/// The section a BODY paragraph sits in — in a table cell or a content control
+/// too — or `None` when `paragraph` is not in the body.
+///
+/// `ParagraphProperties::section_break` names the section a top-level paragraph
+/// ENDS, and the final section is the trailing entry no paragraph names, so the
+/// paragraph's section is the one named by the first top-level paragraph at or
+/// after its block that carries a break (`casual_doc_edit::section_split_site`'s
+/// rule). **O(top-level body blocks)**: one pass to find the block, which
+/// continues forward to the break.
+fn body_section_of(document: &Document, paragraph: NodeId) -> Option<SectionId> {
+    fn holds(block: &BlockNode, paragraph: NodeId) -> bool {
+        match block {
+            BlockNode::Paragraph(candidate) => candidate.id == paragraph,
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| cell.blocks.iter().any(|block| holds(block, paragraph)))
+            }),
+            BlockNode::Sdt(sdt) => sdt.blocks.iter().any(|block| holds(block, paragraph)),
+            BlockNode::AltChunk(_) => false,
+        }
+    }
+    let body = document.body();
+    let index = body.iter().position(|block| holds(block, paragraph))?;
+    body[index..]
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Paragraph(candidate) => candidate.properties.section_break,
+            _ => None,
+        })
+        .or_else(|| {
+            document
+                .definitions()
+                .sections
+                .last()
+                .map(|boundary| boundary.id)
+        })
+}
+
 fn operation_write_position(op: &Operation) -> Option<(NodeId, u32)> {
     match op {
         Operation::InsertText { at, .. } => Some((at.node, at.offset)),
@@ -19857,6 +20212,10 @@ struct ObjectOrderEntryJson {
     /// Absent when every capability is available.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     capability_reasons: BTreeMap<String, String>,
+    /// Whether a resize of `root` must keep its aspect ratio — the file's
+    /// `noChangeAspect` (`Definitions::locks_aspect_ratio`). The same answer
+    /// [`ObjectHitPayload::locks_aspect_ratio`] gives.
+    locks_aspect_ratio: bool,
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -23917,8 +24276,41 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     ]
 }
 
-fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
+/// Whether a resize of `object` must keep its aspect ratio — Word's "Lock aspect
+/// ratio", DrawingML's `noChangeAspect` (`Definitions::locks_aspect_ratio`,
+/// `docs/109` FID-AT-09). An absent flag is unlocked, whatever the kind, because
+/// that is how Word reads the same file.
+///
+/// A resize acts on the ROOT, so the root's lock decides. One more place states
+/// it: a lone shape is modelled as a group of one, and its file writes the lock
+/// on the shape (`a:spLocks` in `wps:cNvSpPr`), which the importer keys by the
+/// shape — the box's subject. For a TOP-LEVEL selection, where the subject of a
+/// group of one is the very object the reader sees, that lock counts too. A
+/// member picked out of a many-member group (`top_level` false) does not lend the
+/// group its lock: the group is what a drag would resize.
+///
+/// Two side-table lookups, O(log n) each.
+fn object_locks_aspect_ratio(
+    object: &ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> bool {
+    definitions.locks_aspect_ratio(object.root)
+        || (top_level
+            && object.subject != object.root
+            && definitions.locks_aspect_ratio(object.subject))
+}
+
+/// `object`'s hit payload. `definitions` answers the one thing the placed box does
+/// not carry, [`object_locks_aspect_ratio`]; `top_level` says whether the box is a
+/// whole-object selection (`objectAt`) or a group member (`objectDescendantAt`).
+fn object_hit_payload(
+    object: ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> ObjectHitPayload {
     ObjectHitPayload {
+        locks_aspect_ratio: object_locks_aspect_ratio(&object, definitions, top_level),
         root: object.root.to_string(),
         subject: object.subject.to_string(),
         path: object.path,
@@ -23930,13 +24322,20 @@ fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
     }
 }
 
-fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
+/// `object`'s `objectOrder` entry; `definitions` and `top_level` as
+/// [`object_hit_payload`] uses them.
+fn object_order_entry(
+    object: ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> ObjectOrderEntryJson {
     let capability_reasons = capability_refusals(object.kind, object.anchored, object.capabilities)
         .into_iter()
         .map(|(name, reason)| (name.to_owned(), reason.to_owned()))
         .collect();
     ObjectOrderEntryJson {
         capability_reasons,
+        locks_aspect_ratio: object_locks_aspect_ratio(&object, definitions, top_level),
         node: object.subject.to_string(),
         surface: "body".to_owned(),
         root: object.root.to_string(),
@@ -25866,10 +26265,27 @@ pub struct ObjectHitPayload {
     rect: [i32; 5],
     anchored: bool,
     capabilities: ObjectCapabilities,
+    locks_aspect_ratio: bool,
 }
 
 #[wasm_bindgen]
 impl ObjectHitPayload {
+    /// Whether a resize of this reference's root must keep its aspect ratio:
+    /// DrawingML's `noChangeAspect` on the object's frame or on the object, as
+    /// the file (or this editor's own insert, which writes Word's lock) states it
+    /// (`Definitions::locks_aspect_ratio`, `docs/109` FID-AT-09).
+    ///
+    /// This is Word's "Lock aspect ratio", and Word honours it both ways: a
+    /// corner drag of a locked object keeps its proportions, and a corner drag of
+    /// an unlocked one — a picture whose file states no lock included — does not
+    /// unless Shift is held. An ABSENT flag is therefore unlocked, whatever the
+    /// kind: that is how Word reads the same file.
+    #[wasm_bindgen(getter, js_name = locksAspectRatio)]
+    #[must_use]
+    pub fn locks_aspect_ratio(&self) -> bool {
+        self.locks_aspect_ratio
+    }
+
     /// Compatibility alias for [`subject`](Self::subject).
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -28503,7 +28919,8 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         | Operation::SetGroupGeometry { object, .. }
         | Operation::SetAnchor { object, .. }
         | Operation::SetImageCrop { object, .. }
-        | Operation::SetObjectDescr { object, .. } => Pos::new(*object, 0),
+        | Operation::SetObjectDescr { object, .. }
+        | Operation::SetObjectLocks { object, .. } => Pos::new(*object, 0),
         // Deleting an object removes it, so its own id is a neutral placeholder (the
         // host re-selects after the delete); its inverse re-inserts into `owner`.
         Operation::DeleteObject { object } => Pos::new(*object, 0),
@@ -28618,6 +29035,11 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        // A setting has no place in the text; `set_track_revisions` keeps the
+        // caller's caret through `apply_action_caret_as`.
+        | Operation::SetTrackRevisions { .. }
+        // Carried by a section break, which supplies its own caret.
+        | Operation::SetSectionFormProtection { .. }
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
@@ -30713,7 +31135,7 @@ mod tests {
 
     #[test]
     fn format_neutral_host_opens_text_and_round_trips_through_odt() {
-        let doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
+        let mut doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
         assert_eq!(doc.source_format(), formats::TEXT);
         assert_eq!(doc.import_report_json(), "{\"entries\":[]}");
         assert_eq!(
@@ -30789,7 +31211,7 @@ mod tests {
 
     #[test]
     fn generic_export_surfaces_cross_format_compatibility_findings() {
-        let doc = open_document(RICH_DOCX).expect("open rich DOCX");
+        let mut doc = open_document(RICH_DOCX).expect("open rich DOCX");
         let artifact = doc
             .export_as_inner(formats::ODT, "semantic")
             .expect("export bounded ODT projection");

@@ -142,6 +142,9 @@ export function createObjectResizeDrag(io) {
       degrees,
       anchored: io.selection().anchored === true,
       kind: io.selection().kind,
+      // The file's "Lock aspect ratio", read once at pointer-down: the engine
+      // publishes it with the selection (`locksAspectRatio`, FID-AT-09).
+      locksAspect: io.selection().locksAspectRatio === true,
       lastX: x,
       lastY: y,
       lastW: w,
@@ -157,8 +160,8 @@ export function createObjectResizeDrag(io) {
   /** Updates the resize preview from the pointer delta. Per-handle signs decide
    *  which edges grow (corners = both axes, N/S = height, E/W = width); Shift
    *  constrains a corner to the original aspect and Ctrl/Cmd resizes about the
-   *  centre. Both rules, and which kinds constrain by default, are
-   *  `resizeRulesFor` (docs/85 §10.3). */
+   *  centre. Both rules, and which objects constrain without Shift (those whose
+   *  file locks the aspect ratio), are `resizeRulesFor` (docs/85 §10.3). */
   function update(event) {
     if (!drag) return;
     const { sx, sy } = io.scaleOf(drag.page);
@@ -177,7 +180,7 @@ export function createObjectResizeDrag(io) {
     const dxTwip = Math.round(local.dx);
     const dyTwip = Math.round(local.dy);
     const { shiftKey, ctrlKey, metaKey } = event;
-    const modifiers = { kind: drag.kind, shiftKey, ctrlKey, metaKey };
+    const modifiers = { kind: drag.kind, locksAspect: drag.locksAspect, shiftKey, ctrlKey, metaKey };
     const box = resizeFromDrag(
       { x: drag.startX, y: drag.startY, w: drag.startW, h: drag.startH, aspect: drag.aspect },
       drag.handleKind,

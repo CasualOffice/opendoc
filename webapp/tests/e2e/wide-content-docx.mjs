@@ -55,7 +55,7 @@ export const IMAGE_RIGHT_RGB = [220, 30, 30];
 
 /** An RGB PNG: green on its left 6%, red on its right 6%, blue between — so a
  *  crop is visible as a missing colour, not as a plausible-looking picture. */
-function stripedPng(width, height) {
+export function stripedPng(width, height) {
   const rows = [];
   for (let y = 0; y < height; y++) {
     const row = Buffer.alloc(1 + width * 3);
