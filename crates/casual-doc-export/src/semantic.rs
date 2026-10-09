@@ -6542,6 +6542,11 @@ fn write_inline(
 struct ObjectLabel<'a> {
     name: &'a str,
     title: Option<&'a str>,
+    /// The inner element's own name where it differs from the frame's
+    /// (`ObjectName::inner_name`, `109` FID-AT-08).
+    inner_name: Option<&'a str>,
+    /// The inner element's own title where it differs from the frame's.
+    inner_title: Option<&'a str>,
 }
 
 impl<'a> ObjectLabel<'a> {
@@ -6555,6 +6560,8 @@ impl<'a> ObjectLabel<'a> {
                 .and_then(|entry| entry.name.as_deref())
                 .unwrap_or(fallback),
             title: entry.and_then(|entry| entry.title.as_deref()),
+            inner_name: entry.and_then(|entry| entry.inner_name.as_deref()),
+            inner_title: entry.and_then(|entry| entry.inner_title.as_deref()),
         }
     }
 
@@ -6566,6 +6573,21 @@ impl<'a> ObjectLabel<'a> {
     /// Writes `@title`, if the object has one.
     fn push_title(self, element: &mut BytesStart<'_>) {
         if let Some(title) = self.title {
+            element.push_attribute(("title", title));
+        }
+    }
+
+    /// Writes the INNER element's `@name` (`pic:cNvPr`, `wps:cNvPr` of a lone
+    /// picture or text box): its own where the source gave it one that differs
+    /// from the frame's, otherwise the frame's — Word's own shape.
+    fn push_inner_name(self, element: &mut BytesStart<'_>) {
+        element.push_attribute(("name", self.inner_name.unwrap_or(self.name)));
+    }
+
+    /// Writes the inner element's own `@title`, where it has one that differs
+    /// from the frame's. Nothing otherwise: the frame carries the title.
+    fn push_inner_title(self, element: &mut BytesStart<'_>) {
+        if let Some(title) = self.inner_title {
             element.push_attribute(("title", title));
         }
     }
@@ -6742,7 +6764,8 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
-    label.push_name(&mut c_nv_pr);
+    label.push_inner_name(&mut c_nv_pr);
+    label.push_inner_title(&mut c_nv_pr);
     match look.hlink {
         // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
         // self-closing.
@@ -7046,7 +7069,20 @@ fn write_wgp(
     w.write_event(Event::Start(start(tag))).map_err(pkg)?;
     let mut c_nv_pr = start("wpg:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_CHILD_GROUP).push_name(&mut c_nv_pr);
+    if tag == "wpg:wgp" {
+        // The top-level group's `wpg:cNvPr` is the inner statement of the name
+        // its frame (`wp:docPr`) carries, so an unnamed group writes the frame's
+        // `Group 1` in both — writing the nested-group default `Group` here made
+        // every reopen see two names that disagree (`109` FID-AT-08).
+        let label = ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_GROUP);
+        label.push_inner_name(&mut c_nv_pr);
+        label.push_inner_title(&mut c_nv_pr);
+    } else {
+        // A nested group has no frame: this is its only name.
+        let label = ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_CHILD_GROUP);
+        label.push_name(&mut c_nv_pr);
+        label.push_title(&mut c_nv_pr);
+    }
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
     w.write_event(Event::Empty(start("wpg:cNvGrpSpPr")))
         .map_err(pkg)?;
@@ -8277,7 +8313,8 @@ fn write_text_box(
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", label.name));
+    label.push_inner_name(&mut c_nv_pr);
+    label.push_inner_title(&mut c_nv_pr);
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
     w.write_event(Event::Empty(start("wps:cNvSpPr")))
         .map_err(pkg)?;

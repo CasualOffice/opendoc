@@ -950,9 +950,13 @@ mod semantic_tests {
         let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
         let m1 = reopen(&pack(document_xml, document_rels));
 
+        // Both statements of each name agree here (Word's own shape), so no
+        // inner name is kept: that is the empty state FID-AT-08 defines.
         let named = |name: &str, title: Option<&str>| ObjectName {
             name: Some(name.to_owned()),
             title: title.map(str::to_owned),
+            inner_name: None,
+            inner_title: None,
         };
         let BlockNode::Paragraph(first) = &m1.body()[0] else {
             panic!("expected a paragraph");
@@ -1003,6 +1007,174 @@ mod semantic_tests {
             m1,
             reopen(&written),
             "names survive write -> reopen on the same nodes"
+        );
+    }
+
+    /// A lone picture or text box whose inner element names it differently from
+    /// its frame keeps BOTH names through a save (`109` FID-AT-08).
+    ///
+    /// The picture is python-docx's shape, which `sample.docx` carries twice: the
+    /// frame is `Picture 1` — the writer's generic name, so the model's empty
+    /// state — and `pic:cNvPr` is the image FILE name. Before the model could
+    /// hold the second name it was reported and every save wrote `Picture 1`
+    /// into both elements. The title pair proves the other attribute, and the
+    /// text box proves the `wps:cNvPr` writer as well as the `pic:cNvPr` one.
+    #[test]
+    fn an_inner_name_that_differs_from_the_frames_survives_the_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Picture 1" title="Pipeline"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="diagram.png" title="Pipeline, as drawn"/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="2" name="Sidebar"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="3" name="Text Box 7"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        let BlockNode::Paragraph(first) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(picture) = &first.inlines[0] else {
+            panic!("expected an inline picture, got {:?}", first.inlines[0]);
+        };
+        let BlockNode::Paragraph(second) = &m1.body()[1] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::TextBox(text_box) = &second.inlines[0] else {
+            panic!("expected a text box, got {:?}", second.inlines[0]);
+        };
+        let names = &m1.definitions().object_names;
+        let picture_name = names.get(&picture.id).expect("the picture is named");
+        assert_eq!(
+            picture_name.name, None,
+            "`Picture 1` is the writer's generic name, so it is not stored"
+        );
+        assert_eq!(picture_name.inner_name.as_deref(), Some("diagram.png"));
+        assert_eq!(picture_name.title.as_deref(), Some("Pipeline"));
+        assert_eq!(
+            picture_name.inner_title.as_deref(),
+            Some("Pipeline, as drawn")
+        );
+        let box_name = names.get(&text_box.id).expect("the text box is named");
+        assert_eq!(box_name.name.as_deref(), Some("Sidebar"));
+        assert_eq!(box_name.inner_name.as_deref(), Some("Text Box 7"));
+
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        for (what, needle) in [
+            ("the frame's generic name", r#"<wp:docPr id="1" name="Picture 1""#),
+            (
+                "the picture's own name and title",
+                r#"<pic:cNvPr id="1" name="diagram.png" title="Pipeline, as drawn"/>"#,
+            ),
+            ("the text box frame's name", r#"name="Sidebar""#),
+            (
+                "the text box's own name",
+                r#"<wps:cNvPr id="0" name="Text Box 7"/>"#,
+            ),
+        ] {
+            assert!(
+                written_xml.contains(needle),
+                "the writer keeps {what} ({needle}): {written_xml}"
+            );
+        }
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "both names survive write -> reopen on the same nodes"
+        );
+    }
+
+    /// A NESTED group's own `wpg:cNvPr` name lands on the nested group, not on
+    /// the top-level frame, and an unnamed group saves to a fixed point
+    /// (`109` FID-AT-08).
+    ///
+    /// Before, every `cNvPr` inside a drawing with no group child open was
+    /// merged into the frame's name: a nested group's name became the frame's
+    /// when the frame had none, and was reported as a disagreement when it had
+    /// one. The writer also wrote the top-level `wpg:cNvPr` as `Group` beside a
+    /// `Group 1` frame, which only stayed a fixed point because the second name
+    /// was thrown away on reopen.
+    #[test]
+    fn a_nested_group_keeps_its_own_name_and_an_unnamed_group_is_a_fixed_point() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        let shape = |id: u32| {
+            format!(
+                r#"<wps:wsp><wps:cNvPr id="{id}" name="Box {id}"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>"#
+            )
+        };
+        let group = |frame: &str, own: &str| {
+            format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="5" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" {frame}/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:cNvPr id="2" {own}/><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr>{first}<wpg:grpSp><wpg:cNvPr id="4" name="Board" title="The board"/><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="457200"/><a:ext cx="457200" cy="457200"/><a:chOff x="0" y="0"/><a:chExt cx="457200" cy="457200"/></a:xfrm></wpg:grpSpPr>{second}</wpg:grpSp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#,
+                first = shape(3),
+                second = shape(5),
+            )
+        };
+        let document_xml = format!(
+            r#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body>{}{}</w:body></w:document>"#,
+            group(r#"name="Org chart""#, r#"name="Org chart""#),
+            // No name anywhere: the model's empty state.
+            group("", ""),
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let m1 = reopen(&pack(document_xml.as_bytes(), document_rels));
+
+        let top_and_nested = |index: usize| {
+            let BlockNode::Paragraph(paragraph) = &m1.body()[index] else {
+                panic!("expected a paragraph");
+            };
+            let InlineNode::Group(top) = &paragraph.inlines[0] else {
+                panic!("expected a group, got {:?}", paragraph.inlines[0]);
+            };
+            let nested = top
+                .children
+                .iter()
+                .find_map(|child| match child {
+                    GroupChild::Group(nested) => Some(nested.id),
+                    _ => None,
+                })
+                .expect("a nested group");
+            (top.id, nested)
+        };
+        let names = &m1.definitions().object_names;
+        let (top, nested) = top_and_nested(0);
+        let top_name = names.get(&top).expect("the frame is named");
+        assert_eq!(top_name.name.as_deref(), Some("Org chart"));
+        assert_eq!(
+            top_name.inner_name, None,
+            "the nested group's name is not the frame's inner statement"
+        );
+        let nested_name = names.get(&nested).expect("the nested group is named");
+        assert_eq!(nested_name.name.as_deref(), Some("Board"));
+        assert_eq!(nested_name.title.as_deref(), Some("The board"));
+        let (unnamed_top, unnamed_nested) = top_and_nested(1);
+        assert_eq!(names.get(&unnamed_top), None, "an unnamed frame says nothing");
+        assert_eq!(
+            names.get(&unnamed_nested).and_then(|name| name.name.as_deref()),
+            Some("Board")
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        assert!(
+            written_xml.contains(r#"<wpg:cNvPr id="0" name="Board" title="The board"/>"#),
+            "the nested group's own name and title are written: {written_xml}"
+        );
+        assert!(
+            written_xml.contains(r#"<wpg:wgp><wpg:cNvPr id="0" name="Group 1"/>"#),
+            "an unnamed group's inner statement is its frame's name: {written_xml}"
+        );
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "group names survive write -> reopen on the same nodes"
         );
     }
 

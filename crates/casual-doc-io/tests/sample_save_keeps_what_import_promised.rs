@@ -56,11 +56,24 @@ const SAMPLE: &[u8] = include_bytes!("../../../sample.docx");
 /// A package as part name to bytes.
 type Package = BTreeMap<String, Vec<u8>>;
 
-/// One finding `sample.docx` raises at import, and what an edited save does
-/// with it.
+/// What the import report says about a construct.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AtImport {
+    /// A finding, which under `retain_source` resolves to `preserved`.
+    Reported,
+    /// Carried by the model, so not a finding at all. A row that was `Reported`
+    /// becomes this when the model learns the construct: the row stays, so the
+    /// table keeps saying what an edited save does with it.
+    Modelled,
+}
+
+/// One construct `sample.docx` carries that the import report has named, and
+/// what an edited save does with it.
 struct Row {
     /// The import report's feature identifier.
     feature: &'static str,
+    /// What the import report says about it today.
+    at_import: AtImport,
     /// Whether the edited save carries it. `false` means the edited save's own
     /// report must name it `not-retained` — invariant 2 holds either way.
     kept_by_an_edited_save: bool,
@@ -68,22 +81,31 @@ struct Row {
     probe: fn(&Package, &Package) -> bool,
 }
 
-/// Every finding `sample.docx` raises when opened as the webapp opens it.
+use AtImport::{Modelled, Reported};
+
+/// Every construct `sample.docx` raised a finding for when the owner opened it
+/// as the webapp opens it (`retain_source`).
 ///
-/// The second column is the honesty table's "present in an edited save?"
-/// column. The import verdict is `preserved` for every row (the byte floor), and
-/// an unchanged save is the source file, so it keeps every row.
+/// The columns are the honesty table: the import verdict (`Reported` is
+/// `preserved` under the byte floor; `Modelled` is no finding), and "present in
+/// an edited save?". An unchanged save is the source file, so it keeps every
+/// row.
 const TABLE: &[Row] = &[
     // Revision-save ids: Word bookkeeping for compare/merge, deliberately not
     // modelled (`35-DISPOSITION-TAXONOMY.md`). Reported by the edited save.
     Row {
+        at_import: Reported,
         feature: "docx.rsid",
         kept_by_an_edited_save: false,
         probe: |edited, _| part_contains(edited, "word/document.xml", "w:rsidR="),
     },
+    // The picture's own name, `opendoc_rendering_pipeline.png`, beside the
+    // frame's `Picture 1` (python-docx's shape): `ObjectName::inner_name`,
+    // FID-AT-08.
     Row {
+        at_import: Modelled,
         feature: "cNvPr/@name",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, _| {
             count(
                 edited,
@@ -93,6 +115,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "graphicFrameLocks",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -104,6 +127,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "HyperlinksChanged",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -115,6 +139,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "decimalSymbol",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -126,6 +151,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "listSeparator",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -137,6 +163,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "defaultImageDpi",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -148,6 +175,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "doNotAutoCompressPictures",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -159,6 +187,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "docId",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -170,6 +199,7 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "mathPr",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -185,11 +215,13 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "savePreviewPicture",
         kept_by_an_edited_save: false,
         probe: |edited, _| part_contains(edited, "word/settings.xml", "<w:savePreviewPicture/>"),
     },
     Row {
+        at_import: Reported,
         feature: "shapeDefaults",
         kept_by_an_edited_save: false,
         probe: |edited, _| {
@@ -201,21 +233,25 @@ const TABLE: &[Row] = &[
         },
     },
     Row {
+        at_import: Reported,
         feature: "useFELayout",
         kept_by_an_edited_save: false,
         probe: |edited, _| part_contains(edited, "word/settings.xml", "<w:useFELayout/>"),
     },
     Row {
+        at_import: Reported,
         feature: "fontScheme/@name",
         kept_by_an_edited_save: false,
         probe: same_theme_part,
     },
     Row {
+        at_import: Reported,
         feature: "theme/@name",
         kept_by_an_edited_save: false,
         probe: same_theme_part,
     },
     Row {
+        at_import: Reported,
         feature: "objectDefaults",
         kept_by_an_edited_save: false,
         probe: |edited, source| {
@@ -225,16 +261,19 @@ const TABLE: &[Row] = &[
     },
     // Whole parts the opaque side-table carries verbatim through any save.
     Row {
+        at_import: Reported,
         feature: "customXml/item1.xml",
         kept_by_an_edited_save: true,
         probe: |edited, source| same_part(edited, source, "customXml/item1.xml"),
     },
     Row {
+        at_import: Reported,
         feature: "customXml/itemProps1.xml",
         kept_by_an_edited_save: true,
         probe: |edited, source| same_part(edited, source, "customXml/itemProps1.xml"),
     },
     Row {
+        at_import: Reported,
         feature: "word/webSettings.xml",
         kept_by_an_edited_save: true,
         probe: |edited, source| same_part(edited, source, "word/webSettings.xml"),
@@ -242,11 +281,13 @@ const TABLE: &[Row] = &[
     // Derived from the content, so an edit makes them stale: left behind and
     // named by the edited save (`105` FID-R-05), kept by an unchanged one.
     Row {
+        at_import: Reported,
         feature: "docProps/thumbnail.jpeg",
         kept_by_an_edited_save: false,
         probe: |edited, source| same_part(edited, source, "docProps/thumbnail.jpeg"),
     },
     Row {
+        at_import: Reported,
         feature: "word/stylesWithEffects.xml",
         kept_by_an_edited_save: false,
         probe: |edited, source| same_part(edited, source, "word/stylesWithEffects.xml"),
@@ -318,11 +359,16 @@ fn the_table_is_what_an_edited_save_of_sample_docx_does() {
         .map(|entry| entry.feature.as_str())
         .collect();
     in_report.sort_unstable();
-    let mut in_table: Vec<&str> = TABLE.iter().map(|row| row.feature).collect();
+    let mut in_table: Vec<&str> = TABLE
+        .iter()
+        .filter(|row| row.at_import == Reported)
+        .map(|row| row.feature)
+        .collect();
     in_table.sort_unstable();
     assert_eq!(
         in_report, in_table,
-        "every finding sample.docx raises has a row, and every row is a finding"
+        "every finding sample.docx raises has a `Reported` row, and every `Reported` \
+         row is a finding"
     );
     for entry in &imported.report.entries {
         assert_eq!(

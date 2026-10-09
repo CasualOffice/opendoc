@@ -9627,6 +9627,10 @@ fn a_drawing_objects_name_and_title_land_on_its_own_node() {
         Some(&ObjectName {
             name: Some("Arrow: to the appendix".to_owned()),
             title: Some("Go to the appendix".to_owned()),
+            // A lone SHAPE's `wps:cNvPr` belongs to the group child it becomes,
+            // not to the frame, so the frame has no inner statement here.
+            inner_name: None,
+            inner_title: None,
         })
     );
     assert_eq!(
@@ -9644,12 +9648,13 @@ fn a_drawing_objects_name_and_title_land_on_its_own_node() {
 }
 
 /// One node, two statements of its name — a lone text box's `wp:docPr` and its
-/// own `wps:cNvPr` — that DISAGREE. The model holds one name per object, so the
-/// docPr's is kept and the other is the one value lost; it is reported rather
-/// than silently dropped, which is the half of the change a guard on the kept
-/// name alone could not see.
+/// own `wps:cNvPr` — that DISAGREE. The docPr's is the object's name, and the
+/// other is kept as the inner element's own (`ObjectName::inner_name`, `109`
+/// FID-AT-08) instead of being reported and dropped, which is what this test
+/// asserted before the model could hold it. The report half matters as much as
+/// the model half: a kept value that is still reported is a false loss.
 #[test]
-fn a_second_name_that_disagrees_on_the_same_node_is_reported() {
+fn a_second_name_that_disagrees_on_the_same_node_is_kept_as_the_inner_name() {
     let document = concat!(
         r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r>"#,
         r#"<w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/>"#,
@@ -9666,19 +9671,27 @@ fn a_second_name_that_disagrees_on_the_same_node_is_reported() {
             paragraph(&import, 0).inlines
         );
     };
+    let name = import
+        .document
+        .definitions()
+        .object_names
+        .get(&text_box.id)
+        .expect("the text box is named");
     assert_eq!(
-        import
-            .document
-            .definitions()
-            .object_names
-            .get(&text_box.id)
-            .and_then(|name| name.name.as_deref()),
+        name.name.as_deref(),
         Some("Sidebar"),
         "the docPr's name is the object's"
     );
+    assert_eq!(
+        name.inner_name.as_deref(),
+        Some("Text Box 7"),
+        "the disagreeing second name is the inner element's own"
+    );
     assert!(
-        features(&import).contains(&"cNvPr/@name"),
-        "the disagreeing second name is reported: {:?}",
+        !features(&import)
+            .iter()
+            .any(|feature| feature.starts_with("cNvPr/")),
+        "a kept name is not a loss: {:?}",
         features(&import)
     );
 }

@@ -345,6 +345,10 @@ struct GroupBuilder {
     anchor: Option<(DrawingAnchor, Extent, Option<u32>)>,
     transform: GroupTransform,
     children: Vec<GroupChild>,
+    /// A NESTED group's own `wpg:cNvPr` name and title. A top-level group's
+    /// `wpg:cNvPr` is instead the inner statement of its frame's name, merged
+    /// into the frame's (`merge_object_name`).
+    object_name: ObjectName,
 }
 
 /// A `pic:pic` or `wps:wsp`/`wps:cxnSp` shape being accumulated inside a group (or
@@ -3410,6 +3414,7 @@ impl BodyParser<'_> {
                         rotation: None,
                     },
                     children: Vec::new(),
+                    object_name: ObjectName::default(),
                 });
             }
             // The group transform container: its `a:xfrm` off/ext/chOff/chExt route
@@ -3889,18 +3894,33 @@ impl BodyParser<'_> {
             // this runs the preferred source has already been read — which is
             // what makes "only when nothing was captured" an ordering-safe test
             // rather than a race.
+            // A NESTED group's `wpg:cNvPr` (inside a `wpg:grpSp`, with no group
+            // child open) names that nested group, which is a node of its own.
+            // It used to fall to the arm below and be merged into the TOP-LEVEL
+            // frame's name — taken as the frame's name when the frame had none,
+            // and reported as a disagreement when it had one — so a nested
+            // group's name was never on its own node (`109` FID-AT-08).
+            b"cNvPr" if self.drawing_depth > 0 && self.group_stack.len() > 1 => {
+                self.nvpr_depth = self.nvpr_depth.saturating_add(1);
+                let name = self.read_object_name(element, b"cNvPr");
+                if let Some(group) = self.group_stack.last_mut() {
+                    group.object_name = name;
+                }
+            }
             b"cNvPr" if self.drawing_depth > 0 => {
                 self.nvpr_depth = self.nvpr_depth.saturating_add(1);
                 if !self.drawing_descr_captured() {
                     self.capture_drawing_descr(element);
                 }
-                // A lone picture's `pic:cNvPr` names the SAME object `wp:docPr`
-                // did, and Word writes the same name in both; it is a fallback,
-                // and a value that DIFFERS from the docPr's is the one case still
-                // lost, so it is the one case still reported.
+                // A lone picture's `pic:cNvPr`, a lone text box's `wps:cNvPr` or
+                // a top-level group's `wpg:cNvPr` names the SAME object
+                // `wp:docPr` did, and Word writes the same name in both; it is a
+                // fallback where the docPr has none, and the inner element's own
+                // name where it DIFFERS (`ObjectName::inner_name`, `109`
+                // FID-AT-08).
                 let name = self.read_object_name(element, b"cNvPr");
                 let first = self.pending_object_name.take();
-                let merged = self.merge_object_name(first, name);
+                let merged = Self::merge_object_name(first, name);
                 self.pending_object_name = Some(merged);
             }
             // A legacy VML picture (`w:pict`) carries its image as
@@ -6070,7 +6090,7 @@ impl BodyParser<'_> {
         }
         let docpr = self.pending_object_name.take();
         let own = core::mem::take(&mut shape.object_name);
-        let name = self.merge_object_name(docpr, own);
+        let name = Self::merge_object_name(docpr, own);
         self.record_object_name(shape.id, Some(name), ObjectName::GENERIC_TEXT_BOX);
         match self.pending_anchor.take() {
             Some(pending) => {
@@ -6236,6 +6256,11 @@ impl BodyParser<'_> {
                 };
                 if let Some(parent) = self.group_stack.last_mut() {
                     parent.children.push(GroupChild::Group(Box::new(nested)));
+                    self.record_object_name(
+                        builder.id,
+                        Some(builder.object_name),
+                        ObjectName::GENERIC_CHILD_GROUP,
+                    );
                 } else {
                     self.reporter.report(b"grpSp");
                 }
@@ -8202,27 +8227,36 @@ impl BodyParser<'_> {
             }
             None => None,
         };
+        // One element states one name; whether it is the frame's or an inner
+        // element's own is decided by `merge_object_name`, which sees both.
         ObjectName {
             name: read(b"name"),
             title: read(b"title"),
+            inner_name: None,
+            inner_title: None,
         }
     }
 
     /// Merges a second statement of an object's name (a lone shape's or
     /// picture's `cNvPr`) into the first (`wp:docPr`): a part the first lacks is
-    /// taken, and a part that DISAGREES with it is reported, since the model holds
-    /// one name per object and the second value is the one not kept.
-    fn merge_object_name(&mut self, first: Option<ObjectName>, second: ObjectName) -> ObjectName {
+    /// taken, and a part that DISAGREES with it is kept as the inner element's
+    /// own (`ObjectName::inner_name` / `inner_title`, `109` FID-AT-08), which the
+    /// writer puts back on that element. It used to be reported and dropped,
+    /// because the model held one name per object; python-docx writes the image
+    /// FILE name there on every picture it generates.
+    ///
+    /// The comparison is with the frame's name as WRITTEN in the source, before
+    /// `record_object_name` drops a generic one, because that is what the inner
+    /// name is the same as or different from.
+    fn merge_object_name(first: Option<ObjectName>, second: ObjectName) -> ObjectName {
         let mut merged = first.unwrap_or_default();
-        for (kept, other, attribute) in [
-            (&mut merged.name, second.name, &b"name"[..]),
-            (&mut merged.title, second.title, &b"title"[..]),
+        for (kept, inner, other) in [
+            (&mut merged.name, &mut merged.inner_name, second.name),
+            (&mut merged.title, &mut merged.inner_title, second.title),
         ] {
             match (kept.as_ref(), other) {
                 (None, other) => *kept = other,
-                (Some(kept), Some(other)) if *kept != other => {
-                    self.reporter.report_attribute(b"cNvPr", attribute);
-                }
+                (Some(kept), Some(other)) if *kept != other => *inner = Some(other),
                 _ => {}
             }
         }

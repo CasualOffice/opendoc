@@ -840,6 +840,20 @@ pub const MAX_OBJECT_NAME_BYTES: usize = 1024;
 /// The cost of the side table is the one it always has: an object duplicated by
 /// an edit gets a new id and starts unnamed, and Word then names it on save the
 /// way it names any new object. Recorded rather than hidden.
+///
+/// # Two statements of one object's name
+///
+/// A lone picture or text box is named twice: once on its frame (`wp:docPr`)
+/// and once on the object inside the frame (`pic:cNvPr`, `wps:cNvPr`). Word
+/// writes the same name in both; other producers do not — python-docx, which
+/// generates a great many real documents, names the frame `Picture 1` and the
+/// picture after the image FILE (`diagram.png`). The inner name is what a
+/// reader of the picture's own properties sees, so it is kept as
+/// [`ObjectName::inner_name`] / [`ObjectName::inner_title`] whenever it
+/// DIFFERS from the frame's, and written back to the inner element (`109`
+/// FID-AT-08). Equal to the frame's — Word's case — it is the empty state: the
+/// writer puts the frame's name on both elements, so storing it would change
+/// nothing and would stop write-then-reopen being a fixed point.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ObjectName {
@@ -849,6 +863,14 @@ pub struct ObjectName {
     /// `@title` — the accessible title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The inner element's `@name` (`pic:cNvPr`, `wps:cNvPr`) where it differs
+    /// from the frame's (`wp:docPr`) — see the type's documentation. `None`
+    /// means "the same as the frame's", which is how the writer emits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner_name: Option<String>,
+    /// The inner element's `@title` where it differs from the frame's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner_title: Option<String>,
 }
 
 impl ObjectName {
@@ -868,10 +890,13 @@ impl ObjectName {
     /// The `wpg:cNvPr` name for an unnamed nested group.
     pub const GENERIC_CHILD_GROUP: &'static str = "Group";
 
-    /// Whether neither part is set — an entry that says nothing and is not kept.
+    /// Whether no part is set — an entry that says nothing and is not kept.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.name.is_none() && self.title.is_none()
+        self.name.is_none()
+            && self.title.is_none()
+            && self.inner_name.is_none()
+            && self.inner_title.is_none()
     }
 
     /// `self` with a name equal to `generic` dropped.

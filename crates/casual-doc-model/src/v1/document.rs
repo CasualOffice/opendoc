@@ -301,7 +301,15 @@ impl Document {
     fn validate_object_names(&self) -> Result<(), ModelError> {
         for (_, object) in self.definitions.object_names.iter() {
             check_domain(!object.is_empty(), "objectNames.entry")?;
-            for part in [&object.name, &object.title].into_iter().flatten() {
+            for part in [
+                &object.name,
+                &object.title,
+                &object.inner_name,
+                &object.inner_title,
+            ]
+            .into_iter()
+            .flatten()
+            {
                 check_domain(
                     !part.is_empty() && part.len() <= MAX_OBJECT_NAME_BYTES,
                     "objectNames.name",
