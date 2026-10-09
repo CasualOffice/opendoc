@@ -8318,7 +8318,7 @@ async function paintArrival({ dirty = [], pageCount, viewRevision }) {
   scheduleChromeRefresh({ stats: true, outline: true });
 }
 
-async function applyEditResult(res, { keepView = false } = {}) {
+async function applyEditResult(res, { keepView = false, keepSelection = false } = {}) {
   const node = res.node;
   const offset = res.offset;
   const dirty = res.dirtyPages;
@@ -8333,7 +8333,7 @@ async function applyEditResult(res, { keepView = false } = {}) {
   // positions coincide.
   implicitCaretAt = null;
   verticalGoal.clear(); // an edit ends a run of vertical moves (HF-164)
-  selection = adoptEditPosition(node, offset);
+  if (!keepSelection || !selection) selection = adoptEditPosition(node, offset); // a setting keeps the reader's selection (HF-282)
   // A content mutation invalidates a row/column/table selection the same way it
   // invalidates an object selection. Without this the accent fill survives
   // typing, deleting, undo and arrow keys, so the editor claims a whole table is
@@ -8499,7 +8499,7 @@ function blockMutationInViewing() {
  *
  *  Returns whether the edit actually landed, so a caller chaining several edits
  *  can stop instead of continuing against a document that never changed. */
-async function runEdit(thunk, { typing = false, gate = false, keepView = false } = {}) {
+async function runEdit(thunk, { typing = false, gate = false, keepView = false, keepSelection = false } = {}) {
   if (blockMutationInViewing()) return false;
   if (!typing) breakTypingSession();
   if (gate && blockUntrackedInSuggesting()) return false;
@@ -8522,7 +8522,7 @@ async function runEdit(thunk, { typing = false, gate = false, keepView = false }
     setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason, routeRefusal: SESSION.sentenceFor }), "error");
     return false;
   }
-  await applyEditResult(res, { keepView });
+  await applyEditResult(res, { keepView, keepSelection });
   return true;
 }
 
