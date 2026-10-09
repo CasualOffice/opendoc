@@ -11258,3 +11258,29 @@ fn an_xml_only_import_invents_no_part_name() {
         );
     }
 }
+
+/// Word's stock theme writes `<a:objectDefaults/>` and `<a:extraClrSchemeLst/>`
+/// into every document: no new-object defaults, no extra colour schemes. The
+/// regenerated theme omits both and nothing is lost, so nothing is reported —
+/// while the POPULATED forms in
+/// `theme_children_the_writer_regenerates_away_are_each_reported_once` still are.
+#[test]
+fn the_empty_theme_lists_word_writes_everywhere_are_not_losses() {
+    let theme = br#"<a:theme xmlns:a="urn:a">
+        <a:themeElements>
+            <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1></a:clrScheme>
+            <a:fontScheme><a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
+        </a:themeElements>
+        <a:objectDefaults/>
+        <a:extraClrSchemeLst/>
+    </a:theme>"#;
+    let import = import_with_theme(PLAIN_BODY, theme);
+    for feature in ["objectDefaults", "extraClrSchemeLst"] {
+        assert_eq!(
+            occurrences(&import, feature),
+            0,
+            "an empty {feature} states nothing and must not be reported: {:?}",
+            features(&import)
+        );
+    }
+}
