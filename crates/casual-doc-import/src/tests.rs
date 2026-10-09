@@ -8848,6 +8848,62 @@ fn a_comment_paragraph_identity_is_not_reported_as_lost() {
     );
 }
 
+/// Under the `Retention` byte floor, an equation the MODEL carries still cites
+/// its own model record, and so is not among the findings a regenerating save
+/// loses (`109` FID-AT-07).
+///
+/// The byte floor keeps everything for an unchanged save; the model keeps the
+/// raw OMML through every save. Citing the snapshot for it — which is what the
+/// resolution did before — would put an equation the saved file contains on the
+/// list of things an edited save drops, and the reader would be told it was lost.
+/// The second half is the other direction: a construct ONLY the snapshot holds is
+/// on that list.
+#[test]
+fn a_retention_mode_equation_the_model_carries_is_not_lost_by_a_regenerating_save() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>
+        <w:p><m:oMath><m:phant><m:e><m:r><m:t>x</m:t></m:r></m:e></m:phant></m:oMath></w:p>
+        <w:tbl><w:tblPr><w:tblStyle w:val="Grid"/></w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import_main_document_xml(
+        document,
+        ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        },
+    )
+    .unwrap();
+    let equation = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "oMath")
+        .expect("the unprojected equation is reported");
+    let record = import
+        .ledger
+        .get(equation.ledger_id.expect("a preserved finding cites a record"))
+        .expect("the cited record exists");
+    assert_eq!(
+        record.kind,
+        crate::PreservationKind::ModelSubtree,
+        "the model carries the OMML through every save, so that is the record"
+    );
+    let lost: Vec<&str> = import
+        .report
+        .held_only_by_source_snapshot(&import.ledger)
+        .map(|entry| entry.feature.as_str())
+        .collect();
+    assert!(
+        !lost.contains(&"oMath"),
+        "an equation the model carries is not lost by a regenerating save: {lost:?}"
+    );
+    assert!(
+        lost.contains(&"tblStyle"),
+        "a construct only the snapshot holds IS lost by one: {lost:?}"
+    );
+}
+
 /// An equation whose structure has no typed projection is `omitted` from the
 /// model as mathematics but its OMML is retained verbatim **inside** the model and
 /// re-emitted on save — so it is `omitted` + `preserved`, with a ledger record of

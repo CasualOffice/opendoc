@@ -553,6 +553,42 @@ impl CompatibilityReport {
         Ok(())
     }
 
+    /// The entries whose `preserved` claim only the verbatim source snapshot
+    /// licenses — `Retention` mode's byte floor, and nothing else.
+    ///
+    /// # Why a caller needs this (`109` FID-AT-07)
+    ///
+    /// The snapshot reproduces the source **only when the file is saved
+    /// unchanged**, byte for byte. Every other save regenerates the parts the
+    /// model consumes — the body, the settings, the theme, the document
+    /// properties — from the model, and the detail the model does not carry is
+    /// not in the result. In `Retention` mode the import report nevertheless
+    /// says `preserved` for that detail, because at the moment of import the
+    /// claim is true: an unchanged save keeps it. It stops being true the moment
+    /// the reader edits and saves, and before this nothing said so. The owner
+    /// opened `sample.docx`, read "kept in the file" against every finding, made
+    /// one edit, saved — and the saved file had lost the settings, the theme's
+    /// names, the picture names and locks and every revision-save id without a
+    /// word, because the save's own report was empty.
+    ///
+    /// The entries this returns are exactly the ones a regenerating save drops:
+    /// a construct retained inside the model cites its own
+    /// [`PreservationKind::ModelSubtree`] record, and a part the side-table
+    /// carries cites its [`PreservationKind::OpaquePart`] record, so neither is
+    /// here. A save that regenerates names these as `not-retained` in its own
+    /// report; an exact save of an unchanged document loses none of them.
+    ///
+    /// Complexity: O(entries), once per import.
+    pub fn held_only_by_source_snapshot<'a>(
+        &'a self,
+        ledger: &PreservationLedger,
+    ) -> impl Iterator<Item = &'a CompatibilityEntry> + 'a {
+        let snapshot = ledger.source_snapshot();
+        self.entries
+            .iter()
+            .filter(move |entry| snapshot.is_some() && entry.ledger_id == snapshot)
+    }
+
     /// Folds a second report's entries (e.g. unmapped `docProps` fields
     /// discovered after the main body pass, which is parsed separately because
     /// the property parts hang off the package root, not the main document)
@@ -986,12 +1022,21 @@ impl Reporter {
             // A preserved finding cites the record that licenses the claim: the
             // snapshot when the byte floor covers the source, otherwise the
             // in-model subtree record this finding is the reason for.
+            //
+            // A subtree retained INSIDE the model cites its own record even under
+            // the byte floor. The snapshot reproduces the source only when the
+            // whole file is saved unchanged; the model carries the subtree through
+            // every save, edited or not. Citing the snapshot would make the claim
+            // look exactly as fragile as one only the snapshot holds, and
+            // [`CompatibilityReport::held_only_by_source_snapshot`] — which tells a
+            // regenerating save what it does not deliver — would then name an
+            // equation that is in the saved file.
             let ledger_id = if disposition.claims_preservation() {
                 match (retention, key) {
-                    (SourceRetention::Snapshot, _) => snapshot,
-                    (SourceRetention::Regenerated, FindingKey::RetainedInModel) => {
+                    (_, FindingKey::RetainedInModel) => {
                         Some(ledger.record_model_subtree(&feature, pending.retained_bytes))
                     }
+                    (SourceRetention::Snapshot, _) => snapshot,
                     (SourceRetention::Regenerated, _) => None,
                 }
             } else {

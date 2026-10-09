@@ -31,6 +31,16 @@ const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordproce
 struct DocxSourceState {
     original_bytes: Option<Vec<u8>>,
     retained_parts: RetainedParts,
+    /// The import findings whose `preserved` claim only the verbatim source
+    /// snapshot licensed, restated as what a regenerating save does to them:
+    /// `not-retained` (`109` FID-AT-07).
+    ///
+    /// The import report says `preserved` for these because an unchanged file
+    /// saved exactly keeps them. A save that regenerates the parts from the
+    /// model — every save except [`ExportMode::ExactIfUnchanged`] — does not,
+    /// so that save's report names each one. Empty for a semantic import, whose
+    /// report already says `not-retained` for the same detail.
+    lost_on_regeneration: Vec<CompatibilityEntry>,
 }
 
 /// Built-in adapter that delegates to the existing bounded DOCX pipeline.
@@ -231,12 +241,14 @@ impl FormatImporter for DocxAdapter {
             });
         }
         report.sort();
+        let lost_on_regeneration = lost_on_regeneration(&imported.report, &imported.ledger);
         let source = SourceEnvelope::new(
             self.descriptor.id.clone(),
             env!("CARGO_PKG_VERSION").to_owned(),
             DocxSourceState {
                 original_bytes: request.retain_source.then(|| request.bytes.to_vec()),
                 retained_parts: imported.retained_parts,
+                lost_on_regeneration,
             },
         );
         Ok(ImportArtifact {
@@ -288,6 +300,11 @@ impl FormatExporter for DocxAdapter {
                         retention_outcome: RetentionOutcome::NotRetained,
                     });
                 }
+                if let Some(source) = matching_source {
+                    report
+                        .entries
+                        .extend(source.lost_on_regeneration.iter().cloned());
+                }
                 (exported.bytes, report)
             }
             ExportMode::PreserveWhenSafe => {
@@ -326,6 +343,17 @@ impl FormatExporter for DocxAdapter {
                         model_outcome: ModelOutcome::Omitted,
                         retention_outcome: RetentionOutcome::NotRetained,
                     });
+                }
+                // This save regenerated every consumed part from the model, so
+                // the detail only the source snapshot held is not in it — edited
+                // or not, because `source_unchanged` decides which DERIVED parts
+                // travel, not whether the body is regenerated. The import report
+                // called that detail `preserved`; this is where the reader learns
+                // it was not (`109` FID-AT-07).
+                if let Some(source) = matching_source {
+                    report
+                        .entries
+                        .extend(source.lost_on_regeneration.iter().cloned());
                 }
                 if request.source.is_some() && matching_source.is_none() {
                     report.entries.push(CompatibilityEntry {
@@ -537,6 +565,32 @@ pub(crate) fn convert_export_report(
     };
     converted.sort();
     converted
+}
+
+/// The import findings a save that regenerates the package from the model does
+/// not deliver, as that save reports them (`109` FID-AT-07).
+///
+/// Exactly the entries [`casual_doc_import::CompatibilityReport::held_only_by_source_snapshot`]
+/// returns, with the model outcome the import stated and the retention outcome
+/// the save produces. The feature identifier and the location are the import's
+/// own, so a host that already describes a finding in words describes the save's
+/// statement of it the same way.
+///
+/// Complexity: O(import entries), once per import.
+fn lost_on_regeneration(
+    report: &casual_doc_import::CompatibilityReport,
+    ledger: &casual_doc_import::PreservationLedger,
+) -> Vec<CompatibilityEntry> {
+    report
+        .held_only_by_source_snapshot(ledger)
+        .map(|entry| CompatibilityEntry {
+            feature: entry.feature.clone(),
+            occurrences: entry.occurrences,
+            location: convert_location(&entry.location, None),
+            model_outcome: convert_model_outcome(entry.model_outcome()),
+            retention_outcome: RetentionOutcome::NotRetained,
+        })
+        .collect()
 }
 
 fn convert_report(report: &casual_doc_import::CompatibilityReport) -> CompatibilityReport {

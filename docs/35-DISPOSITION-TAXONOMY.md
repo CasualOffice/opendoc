@@ -438,6 +438,24 @@ per-construct taxonomy.
     semantic writer via the side-table;
   - `model-subtree` — a source subtree retained inside the model and re-emitted
     verbatim on save (an OMML equation with no typed projection, for example).
+    A construct the model carries cites this record **even under the byte
+    floor**, because the model carries it through every save and the snapshot
+    only through an unchanged one.
+- **A `source-snapshot` claim is conditional, and a save that breaks the
+  condition says so** (`109` FID-AT-07). The snapshot reproduces the source only
+  when the file is saved unchanged, byte for byte. Every other save — an edited
+  one, and also a `preserve_when_safe` save of an unchanged one — regenerates
+  the parts the model consumes, and the detail only the snapshot held is not in
+  the result. The import report cannot know which save will follow, so it says
+  `preserved`; the save that regenerates names every such finding in its own
+  report as `not-retained`, under the import's own feature identifier and
+  location (`CompatibilityReport::held_only_by_source_snapshot` selects them;
+  `casual-doc-io` restates them). Before this, the owner's `sample.docx` opened
+  with every finding marked "kept in the file", and one edit and a save later
+  the settings, the theme's names, two pictures' names and locks and 165
+  revision-save ids were gone with an empty save report.
+  `crates/casual-doc-io/tests/sample_save_keeps_what_import_promised.rs` pins,
+  finding by finding, what an edited save of that file keeps.
 - **Validation fails the import.** A `preserved` entry with no record, a dangling
   record reference, a record that retains nothing, or a record reference on an
   entry that does not claim preservation is an internal error, and the import
@@ -496,7 +514,7 @@ constructed today:
 | `omitted` | Any element the model does not represent — the common case. |
 | `degraded` | An attribute of a modeled element whose meaning is not carried (`a:theme/@name`, `a:fontScheme/@name`, `w:p/@w14:paraId`, `w:p/@w14:textId`, `w:tr/@w14:paraId`), a modeled value clamped to the model's bounds (`wp:anchor/@distT` and its siblings), and a font-table value the model cannot hold (`w:family/@val`, `w:pitch/@val`, `w:altName/@val`, `w:panose1/@val`, `w:charset/@val`, `w:sig/@usb0…csb1`) — added with FID-R-04, since `word/fontTable.xml` is regenerated on every semantic save and had no report sites at all. |
 | `mapped` | Nothing, by construction — see "What the report enumerates". |
-| `preserved` | The retention byte floor (every finding, citing the source-snapshot record); an opaque side-table part (citing its own record); an OMML equation with no typed projection (citing its model-subtree record) — the last of these on the **semantic** path, which is the case a per-mode constant could not reach. |
+| `preserved` | The retention byte floor (every finding the model does not otherwise carry, citing the source-snapshot record — conditional on an unchanged save, and restated as `not-retained` by any save that regenerates); an opaque side-table part (citing its own record); an OMML equation with no typed projection (citing its model-subtree record, in both modes) — the last of these on the **semantic** path, which is the case a per-mode constant could not reach. |
 | `not-retained` | A regenerated part's unmapped element on the semantic path. |
 | `blocked` | A digital-signature part on the semantic path: retention is refused because a signature over regenerated content would assert an integrity nobody verified. "Nothing is trusted or stored" is the distinction from `not-retained`. |
 | `rejected` | A structurally unusable construct: a `w15:commentEx` with no `paraId` to join on, a `w16cid:commentId` missing half its pair, a `w15:person` with no author, a `w15:presenceInfo` with no person, a `w:font` with no usable `@w:name` (a table keyed by name has nothing to key it by), and a `w:embed*` face whose `r:id` or `w:fontKey` resolves to nothing to decrypt. |
