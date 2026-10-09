@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { FINDING_KINDS, findingKind, groupFindings } from "../src/compat_findings.mjs";
+import { FINDING_KINDS, findingKind, findingTotals, groupFindings } from "../src/compat_findings.mjs";
 import { EN_STRINGS } from "../src/en_strings.mjs";
 
 const entry = (feature, modelOutcome, retentionOutcome, occurrences = 1) => ({
@@ -57,6 +57,33 @@ test("groups come most-serious first, carry their totals, and leave nothing out"
 test("no report, or an empty one, is no groups — not an error", () => {
   assert.deepEqual(groupFindings(""), []);
   assert.deepEqual(groupFindings(JSON.stringify({ entries: [] })), []);
+  assert.deepEqual(findingTotals(""), { headline: 0, bookkeeping: 0, entries: 0 });
+});
+
+test("a report with no entries array is a defect, never a clean document", () => {
+  // The chip's count. "0 findings" for a malformed report would claim a clean
+  // import — the worst answer available (`format_io.mjs`'s `importFindingCount`).
+  assert.throws(() => findingTotals(JSON.stringify({ findings: [] })), /no entries array/);
+});
+
+test("the chip counts content, opens on bookkeeping alone, and every entry is in one group", () => {
+  const report = JSON.stringify({
+    entries: [
+      entry("docx.rsid", "omitted", "preserved", 120),
+      entry("docProps/thumbnail.jpeg", "omitted", "preserved", 1),
+      entry("formProt", "omitted", "preserved", 2),
+    ],
+  });
+  assert.deepEqual(findingTotals(report), { headline: 2, bookkeeping: 121, entries: 3 });
+  const [kept] = groupFindings(report);
+  assert.equal(kept.id, "preserved");
+  assert.deepEqual(kept.entries.map((e) => e.feature), ["formProt"]);
+  assert.deepEqual(kept.bookkeeping.entries.map((e) => e.feature), ["docx.rsid", "docProps/thumbnail.jpeg"]);
+
+  // Bookkeeping alone: nothing for the chip to say, and still something to open.
+  const onlyBookkeeping = JSON.stringify({ entries: [entry("docx.rsid", "omitted", "preserved", 120)] });
+  assert.deepEqual(findingTotals(onlyBookkeeping), { headline: 0, bookkeeping: 120, entries: 1 });
+  assert.equal(groupFindings(onlyBookkeeping).length, 1, "the group is kept for the entry it holds");
 });
 
 test("every group has a sentence in the catalogue", () => {
