@@ -502,3 +502,31 @@ fn a_cells_text_is_the_same_drawingml_text_body_a_shape_carries() {
         "and its a:t arrives verbatim rather than through a second reader"
     );
 }
+
+/// A `tableStyles.xml` that is nothing but its self-closing document element —
+/// what PowerPoint, python-pptx and every deck with no inserted table carry —
+/// opens, and its `@def` is read.
+///
+/// The part used to refuse the WHOLE deck as malformed: `Cursor::root` accepted
+/// the self-closing element, and the reader's `children` call then read on to the
+/// end of the part looking for a closing tag that was never written. Every one of
+/// the importer's eight part readers had the same exposure, so the guard is on
+/// the cursor rather than on this reader.
+#[test]
+fn a_self_closing_table_styles_part_opens_and_keeps_its_default() {
+    const DEFAULT: &str = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
+    let part = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{DEFAULT}"/>"#
+    );
+    let bytes = super::deck::deck_with("ppt/tableStyles.xml", part.as_bytes());
+    let imported = crate::import_pptx(
+        &bytes,
+        casual_doc_package::PackageLimits::default(),
+        crate::ImportLimits::default(),
+    )
+    .expect("a self-closing tableStyles.xml is a legal, common part");
+    let styles = imported.presentation.table_styles();
+    assert_eq!(styles.default_style_id.as_deref(), Some(DEFAULT));
+    assert!(styles.styles.is_empty(), "it carries no entries");
+}

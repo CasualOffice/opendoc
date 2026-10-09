@@ -43,6 +43,11 @@ pub(crate) struct Cursor<'a> {
     limits: ImportLimits,
     elements: u64,
     depth: u32,
+    /// Whether the document element was written self-closing (`<a:tblStyleLst
+    /// def="…"/>`). Its children are then already read — there are none — and
+    /// [`children`] at root level must return at once rather than read on to the
+    /// end of the part looking for a closing tag that was never written.
+    root_empty: bool,
 }
 
 impl<'a> Cursor<'a> {
@@ -59,6 +64,7 @@ impl<'a> Cursor<'a> {
             limits,
             elements: 0,
             depth: 0,
+            root_empty: false,
         }
     }
 
@@ -126,9 +132,16 @@ impl<'a> Cursor<'a> {
         loop {
             match self.event()? {
                 Event::Start(element) => return Ok(element),
-                // An empty root is a legal, if unusual, part: `<p:sld/>` has no
-                // children, and the caller's `children` call reads nothing.
-                Event::Empty(element) => return Ok(element),
+                // An empty root is a legal part, and not an unusual one:
+                // PowerPoint writes `<a:tblStyleLst def="{GUID}"/>` for every deck
+                // with no inserted table. It has no children, and the cursor
+                // remembers that so the caller's `children` call reads nothing —
+                // without it, `children` read to the end of the part and refused
+                // the whole deck as malformed.
+                Event::Empty(element) => {
+                    self.root_empty = true;
+                    return Ok(element);
+                }
                 Event::Eof => return Err(self.malformed()),
                 _ => {}
             }
@@ -233,6 +246,13 @@ pub(crate) fn children<'a, F>(cursor: &mut Cursor<'a>, mut visit: F) -> Result<(
 where
     F: FnMut(&mut Cursor<'a>, &BytesStart<'a>, bool) -> Result<bool, ImportError>,
 {
+    // The document element's children, when it was written self-closing: there
+    // are none, and the next event is the end of the part. This is `enter`'s
+    // guard applied at the one level a caller cannot apply it, because the root's
+    // own start tag is read by `Cursor::root`.
+    if cursor.depth == 0 && cursor.root_empty {
+        return Ok(());
+    }
     cursor.push_depth()?;
     loop {
         match cursor.event()? {
