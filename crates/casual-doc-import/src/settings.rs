@@ -2,7 +2,8 @@
 //!
 //! The load-bearing settings are modeled (font-embedding flags, header parity,
 //! default tab stop, revision tracking, proof state, document/write protection,
-//! default table style, zoom, and the `w:compatSetting` triples). Every OTHER
+//! default table style, view, zoom, the theme font languages, and the
+//! `w:compatSetting` triples). Every OTHER
 //! top-level setting is REPORTED (never silently dropped), so an unmodeled
 //! setting is auditable and — in Retention mode — preserved by the byte floor.
 //! Elements are matched by local name (namespace-agnostic); each `CT_OnOff` flag
@@ -18,6 +19,8 @@ use casual_doc_model::v1::{
     CompatSetting, DocumentProtection, DocumentProtectionEdit, DocumentSettings, NoteNumberRestart,
     NotePosition, NoteProperties, ProofState, WriteProtection, Zoom, ZoomMode,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::{DocumentView, ThemeFontLanguages};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -237,6 +240,16 @@ const PASSWORD_ATTRIBUTES: &[&[u8]] = &[
 /// 16-name comparison each, and there is at most one of each protection element
 /// per document. No document walk.
 fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
+    if local == b"themeFontLang" {
+        // A language the model's bound refuses is the one thing `w:themeFontLang`
+        // can lose; an empty one says nothing and is not a loss.
+        for attribute in THEME_FONT_LANGUAGE_ATTRIBUTES {
+            if attribute_value(element, attribute).is_some_and(|value| value.len() > 255) {
+                reporter.report_attribute(local, attribute);
+            }
+        }
+        return;
+    }
     if !matches!(local, b"documentProtection" | b"writeProtection") {
         return;
     }
@@ -374,9 +387,48 @@ fn apply_setting(local: &[u8], element: &BytesStart<'_>, settings: &mut Document
             }
             settings.zoom = zoom;
         }
+        // An unknown `ST_View` token is not a view this model can carry, so it
+        // falls to the catch-all and is reported rather than guessed at.
+        b"view" => match document_view(element) {
+            Some(view) => settings.view = Some(view),
+            None => return false,
+        },
+        // Consumed whatever it says: every attribute it can carry is kept, an
+        // empty one states nothing (LibreOffice writes all three empty), and an
+        // over-long one is reported by `report_unmodeled_attributes`.
+        b"themeFontLang" => settings.theme_font_languages = theme_font_languages(element),
         _ => return false,
     }
     true
+}
+
+/// `w:themeFontLang`'s three language attributes, in model field order.
+const THEME_FONT_LANGUAGE_ATTRIBUTES: [&[u8]; 3] = [b"val", b"eastAsia", b"bidi"];
+
+/// Reads `w:themeFontLang`: each attribute kept when non-empty and within the
+/// model's 255-byte bound.
+fn theme_font_languages(element: &BytesStart<'_>) -> ThemeFontLanguages {
+    let [latin, east_asia, bidi] = THEME_FONT_LANGUAGE_ATTRIBUTES.map(|attribute| {
+        attribute_value(element, attribute).filter(|value| !value.is_empty() && value.len() <= 255)
+    });
+    ThemeFontLanguages {
+        latin,
+        east_asia,
+        bidi,
+    }
+}
+
+/// Maps `w:view/@w:val` (`ST_View`) to a view.
+fn document_view(element: &BytesStart<'_>) -> Option<DocumentView> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("none") => Some(DocumentView::None),
+        Some("print") => Some(DocumentView::Print),
+        Some("outline") => Some(DocumentView::Outline),
+        Some("masterPages") => Some(DocumentView::MasterPages),
+        Some("normal") => Some(DocumentView::Normal),
+        Some("web") => Some(DocumentView::Web),
+        _ => None,
+    }
 }
 
 /// Parses a `w:compatSetting` triple, returning whether it was well-formed and

@@ -9942,25 +9942,36 @@ fn the_corpus_reports_exactly_these_findings() {
         // numbering parser could not read at all, and every `w:tab w:val="num"`,
         // which no parser accepted. Both are now imported, so all 57 are gone
         // and what is left is `w:formProt` and `w:themeFontLang`.
+        //
+        // 2, then 1 with FID-AT-01. The `w:themeFontLang` in these LibreOffice
+        // files is `w:val="" w:eastAsia="" w:bidi=""` — three empty languages,
+        // which state exactly what an absent element states, so the finding
+        // described no loss. A stated language is modeled and round-trips now,
+        // and the empty form is in the no-op class. `w:formProt w:val="false"`
+        // stays: it IS information (an absent `w:formProt` means the section is
+        // protected when forms protection is on) and the section model has no
+        // field for it (`docs/165` M6).
         (
             "real-producer-footnotes",
             include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
-            2,
+            1,
         ),
         (
             "real-producer-header-footer",
             include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
-            2,
+            1,
         ),
+        // 2, then 1 with FID-AT-01: `w:view w:val="web"` is modeled and written
+        // back, so it is no longer lost. `w:formProt` remains, as above.
         (
             "real-producer-hyperlinks",
             include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
-            2,
+            1,
         ),
         (
             "real-producer-libreoffice",
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
-            2,
+            1,
         ),
         // 2 before FID-P-03's coverage guard, then 4. The two then-new ones are
         // REAL losses that were silent: `a:graphicFrameLocks noChangeAspect="1"`
@@ -9984,20 +9995,23 @@ fn the_corpus_reports_exactly_these_findings() {
         // reported — and not a third. Two features rather than one because they are
         // two locations, as `w14:paraId` is already reported on `w:p` and `w:tr`
         // separately; they collapse when the model carries a name.
+        //
+        // 6, then 5 with FID-AT-01: `w:view` is carried now (see above).
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            6,
+            5,
         ),
+        // 2, then 1 with FID-AT-01 (`w:view`), each.
         (
             "real-producer-table-list",
             include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
-            2,
+            1,
         ),
         (
             "real-producer-table-merges",
             include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
-            2,
+            1,
         ),
         // A document that loses nothing, and says so.
         (

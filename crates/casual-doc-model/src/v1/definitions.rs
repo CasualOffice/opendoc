@@ -1195,6 +1195,64 @@ impl Zoom {
     }
 }
 
+/// The view a document opens in (`w:view/@w:val`, `ST_View`).
+///
+/// Modeled so it survives a save: before `109` FID-AT-01 it was reported and
+/// dropped, so a document its author had left in Web Layout or Outline came back
+/// in Word's default view after any edit here. This engine has one paged layout
+/// and one reflow layout and does not switch between them on this value.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DocumentView {
+    /// No view stated (`none`): the application's default.
+    None,
+    /// Print Layout (`print`).
+    Print,
+    /// Outline (`outline`).
+    Outline,
+    /// Master document view (`masterPages`).
+    MasterPages,
+    /// Draft, Word's old "Normal" view (`normal`).
+    Normal,
+    /// Web Layout (`web`).
+    Web,
+}
+
+/// The languages a theme font reference resolves against (`w:themeFontLang`).
+///
+/// A run whose font is a theme slot (`+mn-ea`, `+mj-cs`, …) is resolved by Word
+/// through the theme's per-script font list (`a:font script="Jpan"`), and THIS is
+/// what says which script each slot means: `w:eastAsia="ja-JP"` makes the East
+/// Asian minor font the theme's Japanese face, `zh-CN` its Simplified Chinese
+/// one. Dropping it hands Word the language of whatever machine opens the file, so
+/// the same document picks a different East Asian face on a different computer.
+///
+/// Each language is a BCP 47 tag as the producer wrote it, non-empty and bounded
+/// to 255 bytes. An empty attribute says nothing, and is read as absent: a
+/// producer that writes `w:val=""` on all three (LibreOffice does) has stated no
+/// language at all, which is the state an absent element leaves too.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThemeFontLanguages {
+    /// The language for the Latin slots (`w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latin: Option<String>,
+    /// The language for the East Asian slots (`w:eastAsia`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub east_asia: Option<String>,
+    /// The language for the complex-script slots (`w:bidi`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bidi: Option<String>,
+}
+
+impl ThemeFontLanguages {
+    /// Whether no language is stated (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.latin.is_none() && self.east_asia.is_none() && self.bidi.is_none()
+    }
+}
+
 /// One `w:compatSetting` — a named compatibility flag scoped by a URI, carrying an
 /// opaque value. The triple is retained verbatim (bounded) so a producer's
 /// compatibility contract survives the semantic round trip.
@@ -1295,6 +1353,13 @@ pub struct DocumentSettings {
     /// (`w:background`). When off, the modeled background is not painted.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub display_background_shape: bool,
+    /// `w:view` — the view the document opens in. Additive: omitted when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<DocumentView>,
+    /// `w:themeFontLang` — the languages theme font references resolve against.
+    /// Additive: omitted when no language is stated.
+    #[serde(default, skip_serializing_if = "ThemeFontLanguages::is_empty")]
+    pub theme_font_languages: ThemeFontLanguages,
 }
 
 impl DocumentSettings {

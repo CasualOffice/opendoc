@@ -4646,6 +4646,118 @@ mod semantic_tests {
         assert_eq!(m1, m2, "expanded settings survive write -> reopen");
     }
 
+    /// A package whose only non-trivial part is `settings`.
+    fn package_with_settings(settings: &[u8]) -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings),
+        ])
+    }
+
+    /// `w:view` and `w:themeFontLang` were reported and DROPPED on every save
+    /// (`109` FID-AT-01): a document left in Web Layout reopened in Word's
+    /// default view, and the language that decides which East Asian face a
+    /// `+mn-ea` theme font means was handed to whatever machine opened the file.
+    /// Measured over the committed corpus: `view` in 5 of 37 importable
+    /// documents, `themeFontLang` in 3 (and 12 of 19 in `docs/160`'s corpus).
+    #[test]
+    fn the_view_and_the_theme_font_languages_survive_a_save() {
+        use casual_doc_model::v1::{DocumentView, ThemeFontLanguages};
+        let source = package_with_settings(
+            br#"<w:settings xmlns:w="urn:w"><w:view w:val="web"/><w:zoom w:percent="100"/><w:themeFontLang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/></w:settings>"#,
+        );
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let settings = &import.document.definitions().settings;
+        assert_eq!(settings.view, Some(DocumentView::Web));
+        assert_eq!(
+            settings.theme_font_languages,
+            ThemeFontLanguages {
+                latin: Some("en-US".to_owned()),
+                east_asia: Some("ja-JP".to_owned()),
+                bidi: Some("ar-SA".to_owned()),
+            }
+        );
+        let features: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            !features.contains(&"view") && !features.contains(&"themeFontLang"),
+            "both are carried now, so neither is a loss: {features:?}"
+        );
+
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/settings.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        let view_at = written.find("<w:view ").expect("w:view is written");
+        let zoom_at = written.find("<w:zoom ").expect("w:zoom is written");
+        assert!(
+            view_at < zoom_at,
+            "CT_Settings puts w:view before w:zoom: {written}"
+        );
+        assert!(
+            written
+                .contains(r#"<w:themeFontLang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/>"#),
+            "the languages are written: {written}"
+        );
+        assert_eq!(
+            reopen(&bytes),
+            import.document,
+            "the view and the languages survive write -> reopen"
+        );
+    }
+
+    /// LibreOffice writes `<w:themeFontLang w:val="" w:eastAsia="" w:bidi=""/>`
+    /// into every document: three empty languages, which state exactly what an
+    /// absent element states. It was reported as a lost setting in 3 of the 37
+    /// committed documents — a false finding of HF-174's class. A real language
+    /// beside empty ones is still kept, and the empties are not invented.
+    #[test]
+    fn an_empty_theme_font_language_is_not_a_loss() {
+        let source = package_with_settings(
+            br#"<w:settings xmlns:w="urn:w"><w:themeFontLang w:val="" w:eastAsia="" w:bidi=""/></w:settings>"#,
+        );
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(
+            import
+                .document
+                .definitions()
+                .settings
+                .theme_font_languages
+                .is_empty(),
+            "nothing was stated, so nothing is held"
+        );
+        assert!(
+            import.report.entries.is_empty(),
+            "an all-empty element loses nothing, got {:?}",
+            import.report.entries
+        );
+        let partial = package_with_settings(
+            br#"<w:settings xmlns:w="urn:w"><w:themeFontLang w:val="" w:eastAsia="zh-CN"/></w:settings>"#,
+        );
+        let mut package = DocxPackage::open(&partial, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let languages = &import.document.definitions().settings.theme_font_languages;
+        assert_eq!(languages.latin, None, "an empty language is not invented");
+        assert_eq!(languages.east_asia.as_deref(), Some("zh-CN"));
+    }
+
     /// A password-protected restriction comes back password-less from a semantic
     /// save — and the import report has to NAME that, because nothing else can.
     ///
