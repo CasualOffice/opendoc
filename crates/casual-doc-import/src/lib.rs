@@ -69,6 +69,8 @@ pub use opaque::{
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use opaque::{InvalidatedPart, STALE_STYLES_WITH_EFFECTS, STALE_THUMBNAIL};
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use opaque::RetainedTheme;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use recovery::{
     MAX_DETAIL_BYTES, MAX_REPAIRS, PartRole, RecoveryReport, Repair, RepairKind, Severity,
 };
@@ -695,6 +697,16 @@ pub fn import_package(
     // to show, and this engine never gets there with a package in hand.
     // The resolved names of the parts read above, so each part's findings say
     // which part they came from (`109` HF-047).
+    // A theme with relationships of its own (a picture fill in its format
+    // scheme) is regenerated as it always was: a verbatim copy would carry
+    // `r:embed`s into a package the writer does not put their targets in.
+    let retain_theme = theme_part.as_ref().is_some_and(|part| {
+        let rels = relationship_part_name(part);
+        !package
+            .entries()
+            .iter()
+            .any(|entry| entry.part_name == rels)
+    });
     let part_names = DefinitionPartNames {
         main: Some(&main_part),
         styles: styles_part.as_deref(),
@@ -702,6 +714,7 @@ pub fn import_package(
         font_table: font_table_part.as_deref(),
         theme: theme_part.as_deref(),
         settings: settings_part.as_deref(),
+        retain_theme,
     };
     let mut import = match import_with_named_sources(
         &document_bytes,
@@ -923,6 +936,29 @@ pub fn import_package(
         &mut import.ledger,
     )?;
     import.retained_parts = retained_parts;
+    // The theme's verbatim copy, when the import minted a record for it (a whole
+    // theme with no relationships of its own), with what it parsed to and the
+    // findings a regenerated theme would lose (`109` FID-AT-03).
+    if let (Some(part), Some(bytes)) = (theme_part.as_deref(), theme_bytes)
+        && import.ledger.opaque_part_record(part).is_some()
+    {
+        let definitions = import.document.definitions();
+        import.retained_parts.theme = Some(RetainedTheme {
+            part_name: part.to_owned(),
+            bytes,
+            font_scheme: definitions.font_scheme.clone(),
+            color_scheme: definitions.color_scheme.clone(),
+            format_scheme: definitions.format_scheme.clone(),
+            format_scheme_xml: definitions.format_scheme_xml.clone(),
+            unmodeled: import
+                .report
+                .entries
+                .iter()
+                .filter(|entry| entry.location.part_name.as_deref() == Some(part))
+                .cloned()
+                .collect(),
+        });
+    }
     // A chart part whose projection succeeded is enumerated by CONSTRUCT rather
     // than as one line about a part: `docs/155` §6.2. A fully-projected chart is
     // `mapped` + `preserved`, which `35` says is never a finding, so it raises
@@ -1111,6 +1147,8 @@ fn build_retained_parts(
         RetainedParts {
             parts,
             relationships,
+            // Set by `import_package` once the theme's ledger record is known.
+            theme: None,
         },
         dispositions,
     ))
@@ -1690,6 +1728,10 @@ pub(crate) struct DefinitionPartNames<'a> {
     pub font_table: Option<&'a str>,
     pub theme: Option<&'a str>,
     pub settings: Option<&'a str>,
+    /// Whether the theme part may be carried verbatim (`109` FID-AT-03): a
+    /// package exists and the part owns no relationships of its own, whose
+    /// targets a verbatim copy would point at without the writer carrying them.
+    pub retain_theme: bool,
 }
 
 /// [`import_with_named_sources`] with no part names: the XML-only entry point and
@@ -1854,12 +1896,27 @@ pub(crate) fn import_with_named_sources(
     };
     reporter.set_part(names.theme);
     let theme = match theme_xml {
-        Some(xml) => recover_part(
-            theme::parse(xml, &mut reporter, config),
-            &mut reporter,
-            PartRole::Theme,
-            theme::ParsedTheme::default,
-        )?,
+        Some(xml) => {
+            let parsed = theme::parse(xml, &mut reporter, config);
+            // A theme read whole is carried verbatim by a save while the model's
+            // theme still equals what it parsed to, so the detail the model does
+            // not carry is `preserved` against the part's own record rather than
+            // lost with the regenerated part (`109` FID-AT-03). A damaged one is
+            // dropped whole by `recover_part`, and there is nothing to carry.
+            if parsed.is_ok()
+                && names.retain_theme
+                && let Some(part) = names.theme
+            {
+                let record = ledger.record_opaque_part(part, xml.len());
+                reporter.retain_part(part, record);
+            }
+            recover_part(
+                parsed,
+                &mut reporter,
+                PartRole::Theme,
+                theme::ParsedTheme::default,
+            )?
+        }
         None => theme::ParsedTheme::default(),
     };
     reporter.set_part(names.settings);

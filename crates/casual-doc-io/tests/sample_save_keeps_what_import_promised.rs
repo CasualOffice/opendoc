@@ -244,22 +244,26 @@ const TABLE: &[Row] = &[
         kept_by_an_edited_save: true,
         probe: |edited, _| part_contains(edited, "word/settings.xml", "<w:useFELayout/>"),
     },
+    // The theme part's own detail. Still findings — the model does not carry
+    // it — but `preserved` against the theme part's own record, because the
+    // save writes the source part back while the model's theme is unchanged
+    // (`RetainedTheme`, FID-AT-03).
     Row {
         at_import: Reported,
         feature: "fontScheme/@name",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: same_theme_part,
     },
     Row {
         at_import: Reported,
         feature: "theme/@name",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: same_theme_part,
     },
     Row {
         at_import: Reported,
         feature: "objectDefaults",
-        kept_by_an_edited_save: false,
+        kept_by_an_edited_save: true,
         probe: |edited, source| {
             same_theme_part(edited, source)
                 && part_contains(edited, "word/theme/theme1.xml", "<a:spDef>")

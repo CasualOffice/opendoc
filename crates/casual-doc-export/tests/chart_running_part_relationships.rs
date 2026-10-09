@@ -596,6 +596,8 @@ fn a_chart_with_no_part_leaves_no_reference_on_any_block_container() {
 fn a_retained_chart_part_on_a_running_surface_is_copied_and_still_referenced() {
     let verbatim = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:layout/></c:plotArea></c:chart><!-- retained --></c:chartSpace>"#;
     let retained = RetainedParts {
+        // A chart's part, not a theme: no verbatim theme is carried.
+        theme: None,
         parts: vec![RetainedPart {
             part_name: CHART_PART.to_owned(),
             content_type: Some(CHART_CT.to_owned()),

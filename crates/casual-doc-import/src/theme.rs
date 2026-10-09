@@ -10,12 +10,19 @@
 //! the `clrScheme`, so same-named elements elsewhere cannot leak in.
 //!
 //! Everything the part carries that is neither modeled nor retained is reported
-//! (FID-R-04). The theme part is *regenerated* by the semantic writer, so an
-//! unreported skip here is permanent, invisible loss: `a:objectDefaults`,
-//! `a:extraClrSchemeLst`, `a:custClrLst` and `a:extLst` are dropped, and the
-//! `a:theme`/`a:fontScheme` `@name` attributes are replaced by fixed writer
-//! defaults. A whole-subtree loss is reported once on its outermost element and
-//! its descendants are skipped, so one dropped construct is one finding.
+//! (FID-R-04): `a:objectDefaults`, `a:extraClrSchemeLst`, `a:custClrLst`,
+//! `a:extLst`, and the `a:theme`/`a:fontScheme` `@name` attributes. A
+//! whole-subtree loss is reported once on its outermost element and its
+//! descendants are skipped, so one dropped construct is one finding.
+//!
+//! The part itself is copy-on-write (`109` FID-AT-03): `import_package` keeps
+//! the source bytes beside what they parse to here (`RetainedTheme`), and the
+//! writer emits them unchanged for as long as the model's theme still equals
+//! that. So these findings are `preserved` against the part's own ledger record
+//! (`Reporter::retain_part`), and a save that has to regenerate the theme —
+//! because the model's theme changed — names each of them. A theme owning
+//! relationships of its own is regenerated as it always was, and its findings
+//! stay `not-retained` on the semantic path.
 
 use std::io::Cursor;
 

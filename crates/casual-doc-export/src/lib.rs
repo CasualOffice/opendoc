@@ -5395,6 +5395,171 @@ mod semantic_tests {
         );
     }
 
+    /// A theme Word would write: a named theme, a named font scheme, a colour
+    /// scheme the model reads, and a POPULATED `a:objectDefaults` and
+    /// `a:custClrLst` the model does not carry.
+    const NAMED_THEME: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        "\n",
+        r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Facet">"#,
+        r#"<a:themeElements><a:clrScheme name="Facet">"#,
+        r#"<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>"#,
+        r#"<a:dk2><a:srgbClr val="2C3C43"/></a:dk2><a:lt2><a:srgbClr val="EBEBEB"/></a:lt2>"#,
+        r#"<a:accent1><a:srgbClr val="90C226"/></a:accent1><a:accent2><a:srgbClr val="54A021"/></a:accent2>"#,
+        r#"<a:accent3><a:srgbClr val="E6B91E"/></a:accent3><a:accent4><a:srgbClr val="E76618"/></a:accent4>"#,
+        r#"<a:accent5><a:srgbClr val="C42F1A"/></a:accent5><a:accent6><a:srgbClr val="918655"/></a:accent6>"#,
+        r#"<a:hlink><a:srgbClr val="99CA3C"/></a:hlink><a:folHlink><a:srgbClr val="B9D181"/></a:folHlink></a:clrScheme>"#,
+        r#"<a:fontScheme name="Facet"><a:majorFont><a:latin typeface="Trebuchet MS"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>"#,
+        r#"<a:minorFont><a:latin typeface="Trebuchet MS"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>"#,
+        r#"</a:themeElements><a:objectDefaults><a:spDef><a:spPr/><a:bodyPr/><a:lstStyle/></a:spDef></a:objectDefaults>"#,
+        r#"<a:extraClrSchemeLst/><a:custClrLst><a:custClr name="Brand"><a:srgbClr val="123456"/></a:custClr></a:custClrLst></a:theme>"#,
+    );
+
+    /// A package carrying `theme` (and, when given, a relationships part of the
+    /// theme's own).
+    fn package_with_theme(theme: &[u8], theme_rels: Option<&[u8]>) -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/></Relationships>"#;
+        let mut parts: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/theme/theme1.xml", theme),
+        ];
+        if let Some(rels) = theme_rels {
+            parts.push(("word/theme/_rels/theme1.xml.rels", rels));
+        }
+        zip_named(&parts)
+    }
+
+    /// The theme part is copy-on-write (`109` FID-AT-03): a save writes the
+    /// source part back byte for byte while the model's theme is unchanged, so
+    /// its name, its font scheme's name, its object defaults and its custom
+    /// colours survive — and the import says `preserved` for them against the
+    /// part's own ledger record. Once the model's theme changes, the part is
+    /// regenerated and the save names every one of those findings.
+    #[test]
+    fn an_unchanged_theme_is_written_back_verbatim_and_a_changed_one_names_its_losses() {
+        use casual_doc_import::{PreservationKind, RetentionOutcome as ImportRetention};
+        let source = package_with_theme(NAMED_THEME.as_bytes(), None);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let theme_findings: Vec<_> = import
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.location.part_name.as_deref() == Some("word/theme/theme1.xml"))
+            .collect();
+        let features: Vec<&str> = theme_findings
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        for expected in ["theme/@name", "fontScheme/@name", "objectDefaults", "custClrLst"] {
+            assert!(
+                features.contains(&expected),
+                "{expected} is still a finding — the model does not carry it: {features:?}"
+            );
+        }
+        for entry in &theme_findings {
+            assert_eq!(
+                entry.retention_outcome(),
+                ImportRetention::Preserved,
+                "{} is kept by the verbatim part, even on the semantic path",
+                entry.feature
+            );
+            let record = import
+                .ledger
+                .get(entry.ledger_id.expect("a preserved finding cites a record"))
+                .expect("the record exists");
+            assert_eq!(record.kind, PreservationKind::OpaquePart);
+            assert_eq!(record.covers.as_deref(), Some("word/theme/theme1.xml"));
+        }
+
+        // Unchanged: the part is the source's bytes, and nothing is lost.
+        let unchanged = crate::export_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut written = DocxPackage::open(&unchanged.bytes, PackageLimits::default()).unwrap();
+        assert_eq!(
+            written.read_part("word/theme/theme1.xml").unwrap(),
+            NAMED_THEME.as_bytes(),
+            "an unchanged theme is written back byte for byte"
+        );
+        assert!(
+            unchanged.report.entries.is_empty(),
+            "nothing is lost: {:?}",
+            unchanged.report.entries
+        );
+
+        // Changed: the model's accent 1 is recoloured, so the source bytes no
+        // longer describe it. The part is regenerated with the new colour, and
+        // what only the source bytes held is named.
+        let mut changed = import.document.clone();
+        changed
+            .definitions_mut()
+            .color_scheme
+            .as_mut()
+            .expect("the colour scheme is modelled")
+            .accent1 = casual_doc_model::v1::SchemeColor::Srgb(casual_doc_model::v1::RgbColor {
+            r: 0xFF,
+            g: 0x00,
+            b: 0x00,
+        });
+        let regenerated = crate::export_document_with_retained_parts(
+            &changed,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut written =
+            DocxPackage::open(&regenerated.bytes, PackageLimits::default()).unwrap();
+        let theme = String::from_utf8(written.read_part("word/theme/theme1.xml").unwrap()).unwrap();
+        assert!(
+            theme.contains("FF0000") && !theme.contains("90C226"),
+            "a changed theme is regenerated from the model: {theme}"
+        );
+        let named: Vec<&str> = regenerated
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.retention_outcome() == ImportRetention::NotRetained)
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        for expected in ["theme/@name", "fontScheme/@name", "objectDefaults", "custClrLst"] {
+            assert!(
+                named.contains(&expected),
+                "the regenerating save names {expected}: {named:?}"
+            );
+        }
+    }
+
+    /// A theme that owns relationships (a picture fill in its format scheme) is
+    /// regenerated as before, and its findings stay `not-retained` on the
+    /// semantic path: a verbatim copy would point at targets the writer does not
+    /// carry (`109` FID-AT-03).
+    #[test]
+    fn a_theme_with_relationships_of_its_own_is_not_carried_verbatim() {
+        use casual_doc_import::RetentionOutcome as ImportRetention;
+        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.jpeg"/></Relationships>"#;
+        let source = package_with_theme(NAMED_THEME.as_bytes(), Some(rels));
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(import.retained_parts.theme.is_none());
+        let name = import
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "theme/@name")
+            .expect("the theme's name is a finding");
+        assert_eq!(name.retention_outcome(), ImportRetention::NotRetained);
+    }
+
     /// LibreOffice writes `<w:themeFontLang w:val="" w:eastAsia="" w:bidi=""/>`
     /// into every document: three empty languages, which state exactly what an
     /// absent element states. It was reported as a lost setting in 3 of the 37

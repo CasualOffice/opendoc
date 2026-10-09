@@ -85,7 +85,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::ExportError;
-use crate::report::{Disposition, DocxExport, Reporter};
+use crate::report::{Disposition, DocxExport, ModelOutcome, Reporter};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding imports here do not collide in one list.
 use crate::chart::{GeneratedChartPart, generate_chart_parts};
@@ -716,7 +716,25 @@ pub fn export_package(
         ));
     }
     let has_embedded_fonts = !font_rels.is_empty();
-    if definitions.font_scheme.is_some()
+    // The theme is copy-on-write (`109` FID-AT-03): the source part's own bytes
+    // while the model's theme still equals what they parsed to — which keeps the
+    // theme's name, its font scheme's name, object defaults, custom colours and
+    // extensions the model does not carry — and a part regenerated from the
+    // model only once the theme changed. Then the detail only those bytes held
+    // is gone, and each finding the import raised against the part is named.
+    let retained_theme = retained_parts
+        .theme
+        .as_ref()
+        .filter(|theme| theme.still_describes(definitions));
+    if let Some(theme) = retained_theme {
+        extras.push(ExtraPart::new(
+            "word/theme/theme1.xml",
+            THEME_CT,
+            THEME_REL_TYPE,
+            "theme/theme1.xml",
+            theme.bytes.clone(),
+        ));
+    } else if definitions.font_scheme.is_some()
         || definitions.color_scheme.is_some()
         || definitions.format_scheme_xml.is_some()
     {
@@ -731,6 +749,22 @@ pub fn export_package(
                 definitions.format_scheme_xml.as_deref(),
             )?,
         ));
+    }
+    if retained_theme.is_none()
+        && let Some(theme) = &retained_parts.theme
+    {
+        for entry in &theme.unmodeled {
+            let disposition = match entry.model_outcome() {
+                ModelOutcome::Degraded => Disposition::DegradedNotRetained,
+                _ => Disposition::OmittedNotRetained,
+            };
+            reporter.record_import_finding(
+                &entry.feature,
+                entry.location.clone(),
+                disposition,
+                entry.occurrences,
+            );
+        }
     }
     if !definitions.settings.is_default() {
         extras.push(ExtraPart::new(
