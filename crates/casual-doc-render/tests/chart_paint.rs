@@ -97,10 +97,8 @@ fn paths(list: &DisplayList) -> Vec<Vec<(Twip, Twip)>> {
             } => Some(
                 commands
                     .iter()
-                    .map(|command| {
-                        let point = command.endpoint();
-                        (point.x, point.y)
-                    })
+                    .filter_map(|command| command.endpoint())
+                    .map(|point| (point.x, point.y))
                     .collect(),
             ),
             _ => None,

@@ -157,10 +157,11 @@ mod tests {
     /// codeless family grows back beside the first.
     /// Everything in `raw` above its test module.
     ///
-    /// `include_str!` hands back the bytes as they sit on disk and this repository has **no
-    /// `.gitattributes`**, so a Windows checkout is CRLF and any pattern carrying `\n` matches
-    /// nothing there. The fallback then hands the scan the **whole file**, test bodies included,
-    /// and the guard charges a module for its own fixtures — on one platform and not the others.
+    /// `include_str!` hands back the bytes as they sit on disk and this repository's
+    /// `.gitattributes` pins **only the preset shape table** to LF, so a Windows checkout of a
+    /// source file is CRLF and any pattern carrying `\n` matches nothing there. The fallback then
+    /// hands the scan the **whole file**, test bodies included, and the guard charges a module for
+    /// its own fixtures — on one platform and not the others.
     /// It reddened `platform (Windows-x64)` in the sibling object-refusal guard.
     ///
     /// The cut is therefore the attribute **alone**, which carries no line break and so cannot

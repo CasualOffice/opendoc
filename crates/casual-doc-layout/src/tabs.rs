@@ -184,6 +184,10 @@ pub enum FlowItem<'a> {
         side: InlineFloatSide,
         /// Horizontal exclusion including wrap distances.
         width: Twip,
+        /// Where the exclusion starts below the anchor paragraph's top: zero
+        /// for a square wrap, a band's top for one band of a tight/through
+        /// contour (`crate::wrap_contour`).
+        top: Twip,
         /// Vertical clearance from the anchor paragraph's top.
         height: Twip,
     },

@@ -31,9 +31,12 @@ use std::io::{Cursor, Write};
 
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::strip_xml_forbidden;
+// Own line (anti-conflict): the drawing-name side table is keyed by node id.
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::BookmarkId;
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::FieldUpdateState;
+use casual_doc_model::v1::ObjectName;
 use casual_doc_model::v1::PageSize;
 use casual_doc_model::v1::SectionId;
 use casual_doc_model::v1::Watermark;
@@ -42,6 +45,8 @@ use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
+// Own line (anti-conflict): `w:view`, FID-AT-01.
+use casual_doc_model::v1::DocumentView;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -3534,6 +3539,12 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:view` sits between `w:writeProtection` and `w:zoom` in CT_Settings.
+    if let Some(view) = settings.view {
+        let mut el = start("w:view");
+        el.push_attribute(("w:val", document_view_token(view)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     write_zoom(&mut w, &settings.zoom)?;
     // `w:displayBackgroundShape` (CT_Settings §17.15.1.29) precedes the embed-font
     // flags in schema order.
@@ -3646,9 +3657,37 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::End(BytesEnd::new("w:compat")))
             .map_err(pkg)?;
     }
+    // `w:themeFontLang` follows `w:compat` (and the `w:docVars`/`w:rsids`/
+    // `w:mathPr`/`w:attachedSchema` this writer does not emit) in CT_Settings.
+    let languages = &settings.theme_font_languages;
+    if !languages.is_empty() {
+        let mut el = start("w:themeFontLang");
+        for (value, attribute) in [
+            (&languages.latin, "w:val"),
+            (&languages.east_asia, "w:eastAsia"),
+            (&languages.bidi, "w:bidi"),
+        ] {
+            if let Some(value) = value {
+                el.push_attribute((attribute, value.as_str()));
+            }
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:settings")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The `ST_View` token for a view.
+const fn document_view_token(view: DocumentView) -> &'static str {
+    match view {
+        DocumentView::None => "none",
+        DocumentView::Print => "print",
+        DocumentView::Outline => "outline",
+        DocumentView::MasterPages => "masterPages",
+        DocumentView::Normal => "normal",
+        DocumentView::Web => "web",
+    }
 }
 
 /// Emits `w:zoom` when the model carries a mode and/or an explicit percent.
@@ -6325,6 +6364,7 @@ fn write_inline(
                 &embed,
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
+                ObjectLabel::of(ctx.defs, drawing.id, ObjectName::GENERIC_PICTURE),
                 PictureAppearance {
                     crop: drawing.crop.as_ref(),
                     opacity: drawing.opacity,
@@ -6355,6 +6395,7 @@ fn write_inline(
                 hlink
                     .as_ref()
                     .map(|(id, tip)| (id.as_str(), tip.as_deref())),
+                ObjectLabel::of(ctx.defs, drawing.id, ObjectName::GENERIC_PICTURE),
             )?;
         }
         // An embedded object (chart / SmartArt diagram / OLE): the drawing wrapper
@@ -6492,11 +6533,50 @@ fn write_inline(
 /// Emits an inline `w:drawing` (embedded picture) referencing `embed` — the
 /// media relationship id the importer resolves through the media table. Only
 /// `wp:extent` and `a:blip@r:embed` are read back; the rest is fixed scaffold.
+/// The `@name`/`@title` a drawing object is written back with (`docs/109`
+/// HF-267): its modelled name (`Definitions::object_names`) when it has one,
+/// otherwise the generic name Word itself gives a new object of that kind —
+/// which is what EVERY object was written with before the name was modelled, so
+/// an object that never had one saves exactly as it did.
+#[derive(Clone, Copy)]
+struct ObjectLabel<'a> {
+    name: &'a str,
+    title: Option<&'a str>,
+}
+
+impl<'a> ObjectLabel<'a> {
+    /// The label of object `id`, or `fallback` as its name.
+    ///
+    /// Complexity: one side-table lookup.
+    fn of(defs: &'a Definitions, id: NodeId, fallback: &'a str) -> Self {
+        let entry = defs.object_names.get(&id);
+        Self {
+            name: entry
+                .and_then(|entry| entry.name.as_deref())
+                .unwrap_or(fallback),
+            title: entry.and_then(|entry| entry.title.as_deref()),
+        }
+    }
+
+    /// Writes `@name`, in the position the schema lists it.
+    fn push_name(self, element: &mut BytesStart<'_>) {
+        element.push_attribute(("name", self.name));
+    }
+
+    /// Writes `@title`, if the object has one.
+    fn push_title(self, element: &mut BytesStart<'_>) {
+        if let Some(title) = self.title {
+            element.push_attribute(("title", title));
+        }
+    }
+}
+
 fn write_drawing(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     extent: Option<&Extent>,
     descr: Option<&str>,
+    label: ObjectLabel<'_>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -6517,12 +6597,13 @@ fn write_drawing(
     }
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Picture 1"));
+    label.push_name(&mut doc_pr);
     if let Some(descr) = descr {
         doc_pr.push_attribute(("descr", descr));
     }
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, look, xfrm)?;
+    write_pic_graphic(w, embed, cx, cy, label, look, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -6647,6 +6728,7 @@ fn write_pic_graphic(
     embed: &str,
     cx: i64,
     cy: i64,
+    label: ObjectLabel<'_>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -6660,7 +6742,7 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
-    c_nv_pr.push_attribute(("name", "Picture 1"));
+    label.push_name(&mut c_nv_pr);
     match look.hlink {
         // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
         // self-closing.
@@ -6748,6 +6830,7 @@ fn write_anchored_drawing(
     embed: &str,
     drawing: &AnchoredDrawing,
     hlink: Option<(&str, Option<&str>)>,
+    label: ObjectLabel<'_>,
 ) -> Result<(), ExportError> {
     let anchor = &drawing.anchor;
     let (cx, cy) = (drawing.extent.width_emu, drawing.extent.height_emu);
@@ -6795,16 +6878,18 @@ fn write_anchored_drawing(
     )?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Picture 1"));
+    label.push_name(&mut doc_pr);
     if let Some(descr) = &drawing.descr {
         doc_pr.push_attribute(("descr", descr.as_str()));
     }
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
     write_pic_graphic(
         w,
         embed,
         cx,
         cy,
+        label,
         PictureAppearance {
             crop: drawing.crop.as_ref(),
             opacity: drawing.opacity,
@@ -6885,6 +6970,7 @@ fn write_group(
             anchor.wrap,
             anchor.wrap_text,
             anchor.wrap_polygon.as_deref(),
+            ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_GROUP),
         )?;
     } else {
         write_extent_only(w, group)?;
@@ -6917,12 +7003,14 @@ fn write_wrap_after_extent(
     wrap: WrapMode,
     side: Option<WrapSide>,
     polygon: Option<&[PointEmu]>,
+    label: ObjectLabel<'_>,
 ) -> Result<(), ExportError> {
     write_extent_only(w, group)?;
     write_wrap(w, wrap, side, polygon)?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Group 1"));
+    label.push_name(&mut doc_pr);
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
     Ok(())
 }
@@ -6958,7 +7046,7 @@ fn write_wgp(
     w.write_event(Event::Start(start(tag))).map_err(pkg)?;
     let mut c_nv_pr = start("wpg:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Group"));
+    ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_CHILD_GROUP).push_name(&mut c_nv_pr);
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
     w.write_event(Event::Empty(start("wpg:cNvGrpSpPr")))
         .map_err(pkg)?;
@@ -6979,8 +7067,10 @@ fn write_wgp(
                     write_group_picture(
                         w,
                         &embed,
+                        ObjectLabel::of(ctx.defs, picture.id, ObjectName::GENERIC_PICTURE),
                         picture.offset,
                         picture.extent,
+                        picture.descr.as_deref(),
                         PictureAppearance {
                             crop: picture.crop.as_ref(),
                             opacity: picture.opacity,
@@ -7006,6 +7096,7 @@ fn write_wgp(
                     hlink
                         .as_ref()
                         .map(|(id, tip)| (id.as_str(), tip.as_deref())),
+                    ObjectLabel::of(ctx.defs, shape.id, ObjectName::GENERIC_SHAPE),
                 )?;
             }
             GroupChild::Group(nested) => write_wgp(w, nested, "wpg:grpSp", ctx)?,
@@ -7056,11 +7147,18 @@ fn write_ext(w: &mut Writer<Cursor<Vec<u8>>>, tag: &str, ext: Extent) -> Result<
 }
 
 /// Emits a group child `pic:pic` positioned at `offset`, sized `extent`.
+///
+/// Eight arguments since the object's name/title (`label`, HF-267) and its alt
+/// text (`descr`, HF-214) both reach `pic:cNvPr` here — the same pair
+/// `write_drawing` takes separately for `wp:docPr`.
+#[allow(clippy::too_many_arguments)]
 fn write_group_picture(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
+    label: ObjectLabel<'_>,
     offset: PointEmu,
     extent: Extent,
+    descr: Option<&str>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -7069,7 +7167,14 @@ fn write_group_picture(
         .map_err(pkg)?;
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
-    c_nv_pr.push_attribute(("name", "Picture 1"));
+    label.push_name(&mut c_nv_pr);
+    // A grouped picture's alt text lives HERE — a group member has no
+    // `wp:docPr` of its own — and the importer reads it from here. Not writing
+    // it dropped every grouped logo's description on save (`docs/109` HF-214:
+    // found when grouped-picture alt text became editable and did not survive).
+    if let Some(descr) = descr {
+        c_nv_pr.push_attribute(("descr", descr));
+    }
     match look.hlink {
         // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
         // self-closing.
@@ -7128,11 +7233,13 @@ fn write_group_shape(
     w: &mut Writer<Cursor<Vec<u8>>>,
     shape: &GroupShape,
     hlink: Option<(&str, Option<&str>)>,
+    label: ObjectLabel<'_>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Shape"));
+    label.push_name(&mut c_nv_pr);
+    label.push_title(&mut c_nv_pr);
     match hlink {
         // A link is a CHILD, so a linked shape's `cNvPr` can no longer be
         // self-closing.
@@ -7161,7 +7268,7 @@ fn write_group_shape(
     // is the one place this row actually DESTROYS data rather than mis-drawing
     // it (docs/119 §2).
     if let Some(path) = &shape.path {
-        write_cust_geom(w, path)?;
+        write_cust_geom(w, path, &shape.adjustments)?;
     } else {
         let preset = shape
             .preset
@@ -7195,7 +7302,9 @@ fn write_group_text_box(
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Text Box"));
+    let label = ObjectLabel::of(ctx.defs, text_box.id, ObjectName::GENERIC_CHILD_TEXT_BOX);
+    label.push_name(&mut c_nv_pr);
+    label.push_title(&mut c_nv_pr);
     match hlink {
         // A link is a CHILD, so a linked shape's `cNvPr` can no longer be
         // self-closing.
@@ -7330,61 +7439,202 @@ fn write_prst_geom_with_adjustments(
     Ok(())
 }
 
-/// Emits an `a:custGeom` for a recovered custom path (docs/119).
+/// Emits an `a:custGeom` for a recovered custom geometry (`docs/119`): its adjust
+/// values, guides, adjust handles, connection sites, text rectangle and every
+/// path, in the schema's element order.
 ///
-/// The empty `a:avLst`/`a:gdLst`/`a:ahLst`/`a:cxnLst` are written because Word
-/// writes them and an empty DrawingML container states that the feature is
-/// absent, so emitting them asserts nothing that was not in the source. `@w` /
-/// `@h` are written only when non-zero, which is exactly the "no path
-/// coordinate space" default of ECMA-376 §20.1.9.15.
+/// An empty list is written as the empty element Word writes, because an empty
+/// DrawingML container states that the feature is absent, so emitting it asserts
+/// nothing that was not in the source. Attributes at their ECMA-376 default are
+/// omitted — `@w`/`@h` of `0`, `@fill="norm"`, `@stroke`/`@extrusionOk` true —
+/// which is exactly what §20.1.9.15 says an absent attribute means. Coordinates
+/// are written as authored: a guide NAME stays a name, so the geometry still
+/// scales when the file is reopened.
 fn write_cust_geom(
     w: &mut Writer<Cursor<Vec<u8>>>,
-    path: &casual_doc_model::v1::ShapePath,
+    geometry: &casual_doc_model::v1::CustomGeometry,
+    adjustments: &[ShapeAdjustment],
 ) -> Result<(), ExportError> {
-    use casual_doc_model::v1::ShapePathCommand;
+    use casual_doc_model::v1::{AdjustHandle, GeometryValue, PathFill, ShapePathCommand};
+
+    let guides = |w: &mut Writer<Cursor<Vec<u8>>>,
+                  name: &str,
+                  list: &[ShapeAdjustment]|
+     -> Result<(), ExportError> {
+        if list.is_empty() {
+            return w.write_event(Event::Empty(start(name))).map_err(pkg);
+        }
+        w.write_event(Event::Start(start(name))).map_err(pkg)?;
+        for guide in list {
+            let mut element = start("a:gd");
+            element.push_attribute(("name", guide.name.as_str()));
+            element.push_attribute(("fmla", guide.formula.as_str()));
+            w.write_event(Event::Empty(element)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new(name))).map_err(pkg)
+    };
+    let pos = |w: &mut Writer<Cursor<Vec<u8>>>,
+               name: &str,
+               point: &casual_doc_model::v1::GeometryPoint|
+     -> Result<(), ExportError> {
+        let mut element = start(name);
+        element.push_attribute(("x", point.x.token().as_str()));
+        element.push_attribute(("y", point.y.token().as_str()));
+        w.write_event(Event::Empty(element)).map_err(pkg)
+    };
 
     w.write_event(Event::Start(start("a:custGeom")))
         .map_err(pkg)?;
-    for empty in ["a:avLst", "a:gdLst", "a:ahLst", "a:cxnLst"] {
-        w.write_event(Event::Empty(start(empty))).map_err(pkg)?;
-    }
-    w.write_event(Event::Start(start("a:pathLst")))
-        .map_err(pkg)?;
-    let mut path_element = start("a:path");
-    if path.width_emu > 0 {
-        path_element.push_attribute(("w", path.width_emu.to_string().as_str()));
-    }
-    if path.height_emu > 0 {
-        path_element.push_attribute(("h", path.height_emu.to_string().as_str()));
-    }
-    w.write_event(Event::Start(path_element)).map_err(pkg)?;
-    for command in &path.commands {
-        // A curve writes its points in the SAME order the model holds them, which
-        // is the authored order: controls first, endpoint last. DrawingML reads
-        // `a:cubicBezTo`'s three `a:pt` positionally, so a reordering here would
-        // round-trip a different curve while staying schema-valid.
-        let name = match command {
-            ShapePathCommand::MoveTo { .. } => "a:moveTo",
-            ShapePathCommand::LineTo { .. } => "a:lnTo",
-            ShapePathCommand::CubicBezTo { .. } => "a:cubicBezTo",
-            ShapePathCommand::QuadBezTo { .. } => "a:quadBezTo",
-            ShapePathCommand::Close => {
-                w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
-                continue;
+    guides(w, "a:avLst", adjustments)?;
+    guides(w, "a:gdLst", &geometry.guides)?;
+
+    if geometry.handles.is_empty() {
+        w.write_event(Event::Empty(start("a:ahLst"))).map_err(pkg)?;
+    } else {
+        w.write_event(Event::Start(start("a:ahLst"))).map_err(pkg)?;
+        for handle in &geometry.handles {
+            let (name, attributes) = match handle {
+                AdjustHandle::Xy {
+                    guide_x,
+                    min_x,
+                    max_x,
+                    guide_y,
+                    min_y,
+                    max_y,
+                    ..
+                } => (
+                    "a:ahXY",
+                    [
+                        ("gdRefX", guide_x.clone()),
+                        ("minX", min_x.as_ref().map(GeometryValue::token)),
+                        ("maxX", max_x.as_ref().map(GeometryValue::token)),
+                        ("gdRefY", guide_y.clone()),
+                        ("minY", min_y.as_ref().map(GeometryValue::token)),
+                        ("maxY", max_y.as_ref().map(GeometryValue::token)),
+                    ],
+                ),
+                AdjustHandle::Polar {
+                    guide_radius,
+                    min_radius,
+                    max_radius,
+                    guide_angle,
+                    min_angle,
+                    max_angle,
+                    ..
+                } => (
+                    "a:ahPolar",
+                    [
+                        ("gdRefR", guide_radius.clone()),
+                        ("minR", min_radius.as_ref().map(GeometryValue::token)),
+                        ("maxR", max_radius.as_ref().map(GeometryValue::token)),
+                        ("gdRefAng", guide_angle.clone()),
+                        ("minAng", min_angle.as_ref().map(GeometryValue::token)),
+                        ("maxAng", max_angle.as_ref().map(GeometryValue::token)),
+                    ],
+                ),
+            };
+            let mut element = start(name);
+            for (attribute, value) in &attributes {
+                if let Some(value) = value {
+                    element.push_attribute((*attribute, value.as_str()));
+                }
             }
-        };
-        w.write_event(Event::Start(start(name))).map_err(pkg)?;
-        for point in command.points() {
-            let mut pt = start("a:pt");
-            pt.push_attribute(("x", point.x_emu.to_string().as_str()));
-            pt.push_attribute(("y", point.y_emu.to_string().as_str()));
-            w.write_event(Event::Empty(pt)).map_err(pkg)?;
+            w.write_event(Event::Start(element)).map_err(pkg)?;
+            pos(w, "a:pos", handle.position())?;
+            w.write_event(Event::End(BytesEnd::new(name)))
+                .map_err(pkg)?;
         }
-        w.write_event(Event::End(BytesEnd::new(name)))
+        w.write_event(Event::End(BytesEnd::new("a:ahLst")))
             .map_err(pkg)?;
     }
-    w.write_event(Event::End(BytesEnd::new("a:path")))
+
+    if geometry.connections.is_empty() {
+        w.write_event(Event::Empty(start("a:cxnLst")))
+            .map_err(pkg)?;
+    } else {
+        w.write_event(Event::Start(start("a:cxnLst")))
+            .map_err(pkg)?;
+        for site in &geometry.connections {
+            let mut element = start("a:cxn");
+            element.push_attribute(("ang", site.angle.token().as_str()));
+            w.write_event(Event::Start(element)).map_err(pkg)?;
+            pos(w, "a:pos", &site.position)?;
+            w.write_event(Event::End(BytesEnd::new("a:cxn")))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("a:cxnLst")))
+            .map_err(pkg)?;
+    }
+
+    if let Some(rect) = &geometry.text_rect {
+        let mut element = start("a:rect");
+        element.push_attribute(("l", rect.left.token().as_str()));
+        element.push_attribute(("t", rect.top.token().as_str()));
+        element.push_attribute(("r", rect.right.token().as_str()));
+        element.push_attribute(("b", rect.bottom.token().as_str()));
+        w.write_event(Event::Empty(element)).map_err(pkg)?;
+    }
+
+    w.write_event(Event::Start(start("a:pathLst")))
         .map_err(pkg)?;
+    for path in &geometry.paths {
+        let mut element = start("a:path");
+        if path.width_emu > 0 {
+            element.push_attribute(("w", path.width_emu.to_string().as_str()));
+        }
+        if path.height_emu > 0 {
+            element.push_attribute(("h", path.height_emu.to_string().as_str()));
+        }
+        if path.fill != PathFill::Norm {
+            element.push_attribute(("fill", path.fill.token()));
+        }
+        if !path.stroke {
+            element.push_attribute(("stroke", "0"));
+        }
+        if !path.extrusion_ok {
+            element.push_attribute(("extrusionOk", "0"));
+        }
+        w.write_event(Event::Start(element)).map_err(pkg)?;
+        for command in &path.commands {
+            // A curve writes its points in the SAME order the model holds them,
+            // which is the authored order: controls first, endpoint last.
+            // DrawingML reads `a:cubicBezTo`'s three `a:pt` positionally, so a
+            // reordering here would round-trip a different curve while staying
+            // schema-valid.
+            let name = match command {
+                ShapePathCommand::MoveTo { .. } => "a:moveTo",
+                ShapePathCommand::LineTo { .. } => "a:lnTo",
+                ShapePathCommand::CubicBezTo { .. } => "a:cubicBezTo",
+                ShapePathCommand::QuadBezTo { .. } => "a:quadBezTo",
+                ShapePathCommand::Close => {
+                    w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
+                    continue;
+                }
+                ShapePathCommand::ArcTo {
+                    width_radius,
+                    height_radius,
+                    start_angle,
+                    swing_angle,
+                } => {
+                    let mut arc = start("a:arcTo");
+                    arc.push_attribute(("wR", width_radius.token().as_str()));
+                    arc.push_attribute(("hR", height_radius.token().as_str()));
+                    arc.push_attribute(("stAng", start_angle.token().as_str()));
+                    arc.push_attribute(("swAng", swing_angle.token().as_str()));
+                    w.write_event(Event::Empty(arc)).map_err(pkg)?;
+                    continue;
+                }
+            };
+            w.write_event(Event::Start(start(name))).map_err(pkg)?;
+            for point in command.points() {
+                pos(w, "a:pt", point)?;
+            }
+            w.write_event(Event::End(BytesEnd::new(name)))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("a:path")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("a:pathLst")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:custGeom")))
@@ -7816,13 +8066,14 @@ fn write_embedded_object(
     {
         return Ok(());
     }
+    let label = ObjectLabel::of(ctx.defs, object.id, ObjectName::GENERIC_OBJECT);
     match &object.kind {
-        EmbeddedKind::Chart => write_graphic_object(w, &object.extent, CHART_URI, |w| {
+        EmbeddedKind::Chart => write_graphic_object(w, &object.extent, label, CHART_URI, |w| {
             let mut chart = start("c:chart");
             chart.push_attribute(("r:id", object.part.relationship_id.as_str()));
             w.write_event(Event::Empty(chart)).map_err(pkg)
         }),
-        EmbeddedKind::Diagram => write_graphic_object(w, &object.extent, DIAGRAM_URI, |w| {
+        EmbeddedKind::Diagram => write_graphic_object(w, &object.extent, label, DIAGRAM_URI, |w| {
             let mut rel_ids = start("dgm:relIds");
             for part in std::iter::once(&object.part).chain(object.extra_parts.iter()) {
                 if let Some(attr) = diagram_rel_attr(&part.relationship_type) {
@@ -7835,7 +8086,7 @@ fn write_embedded_object(
         // An unrecognized `a:graphicData` payload: emit the wrapper with its uri.
         // The referencing relationship is still emitted so the part stays
         // reachable (the importer does not produce this variant).
-        EmbeddedKind::Other(uri) => write_graphic_object(w, &object.extent, uri, |_| Ok(())),
+        EmbeddedKind::Other(uri) => write_graphic_object(w, &object.extent, label, uri, |_| Ok(())),
     }
 }
 
@@ -7855,6 +8106,7 @@ fn diagram_rel_attr(relationship_type: &str) -> Option<&'static str> {
 fn write_graphic_object(
     w: &mut Writer<Cursor<Vec<u8>>>,
     extent: &Extent,
+    label: ObjectLabel<'_>,
     uri: &str,
     body: impl FnOnce(&mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError>,
 ) -> Result<(), ExportError> {
@@ -7872,7 +8124,8 @@ fn write_graphic_object(
     w.write_event(Event::Empty(ext)).map_err(pkg)?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Object 1"));
+    label.push_name(&mut doc_pr);
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
@@ -8012,7 +8265,9 @@ fn write_text_box(
 
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Text Box 1"));
+    let label = ObjectLabel::of(ctx.defs, text_box.id, ObjectName::GENERIC_TEXT_BOX);
+    label.push_name(&mut doc_pr);
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
@@ -8022,7 +8277,7 @@ fn write_text_box(
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Text Box"));
+    c_nv_pr.push_attribute(("name", label.name));
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
     w.write_event(Event::Empty(start("wps:cNvSpPr")))
         .map_err(pkg)?;

@@ -48,6 +48,29 @@ export function objectBarButton(icon, label, title, onClick, danger = false) {
   return btn;
 }
 
+/** An icon-only bar action, for the controls whose label would push the bar
+ *  past the window: the name rides on the tooltip AND the accessible name, the
+ *  pattern Position, Arrange and Rotate already use. */
+function objectBarIconButton(icon, title, onClick) {
+  const btn = objectBarButton(icon, "", title, onClick);
+  btn.classList.add("object-bar-icon");
+  btn.lastElementChild.remove(); // the empty label span
+  return btn;
+}
+
+/** Names the shared outline button for what it is on THIS object: Word calls a
+ *  picture's outline its Picture Border, and the menu, the chip and the
+ *  inspector must all say the same word (`docs/109` HF-254). */
+function nameOutlineButton(btn, kind, t) {
+  const picture = kind === "image";
+  const title = picture ? t("object.pictureBorder") : "Shape outline";
+  btn.title = title;
+  btn.setAttribute("aria-label", title);
+  const label = btn.querySelector(".ms + span");
+  if (label) label.textContent = picture ? t("object.pictureBorder.short") : "Outline";
+  return btn;
+}
+
 export function createObjectBar(io) {
   let barEl = null;
 
@@ -154,10 +177,12 @@ export function createObjectBar(io) {
         objectBarButton("tune", "Properties", "Open object properties", () => io.toggleInspector(true)),
       );
     }
-    if (selection.kind === "shape" && (selection.canFill || selection.canStroke)) {
-      // Word's Shape Format tab reduces to its two live controls.
-      if (selection.canFill) actions.appendChild(io.fillButton());
-      if (selection.canStroke) actions.appendChild(io.outlineButton());
+    // Word's Shape Format tab reduces to its two live controls; its Picture
+    // Format tab's Picture Border is the outline half, on a picture.
+    const formats = selection.kind === "shape" || selection.kind === "image";
+    if (formats && (selection.canFill || selection.canStroke)) {
+      if (selection.canFill && selection.kind === "shape") actions.appendChild(io.fillButton());
+      if (selection.canStroke) actions.appendChild(nameOutlineButton(io.outlineButton(), selection.kind, io.t));
       io.reflectShapeSwatches();
     }
     if (selection.canCrop) {
@@ -170,6 +195,10 @@ export function createObjectBar(io) {
       );
       if (cropping) cropBtn.classList.add("is-active");
       actions.appendChild(cropBtn);
+    }
+    // Word's Change Picture / Docs' Replace image (`docs/109` HF-252).
+    if (!cropping && io.canChangePicture?.(selection)) {
+      actions.appendChild(objectBarIconButton("add_photo_alternate", io.t("object.changePicture"), io.changePicture));
     }
     if (selection.canDelete) {
       actions.appendChild(objectBarButton("delete", "Delete", "Delete object", io.deleteObject, true));

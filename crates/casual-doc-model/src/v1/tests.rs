@@ -2709,18 +2709,15 @@ fn custom_shape_path_bounds_are_validated() {
     let document = shape_path_document(ShapePath {
         width_emu: 100,
         height_emu: 100,
-        commands: vec![
+        ..ShapePath::new(vec![
             ShapePathCommand::MoveTo {
-                point: PointEmu { x_emu: 0, y_emu: 0 },
+                point: GeometryPoint::literal(0, 0),
             },
             ShapePathCommand::LineTo {
-                point: PointEmu {
-                    x_emu: 100,
-                    y_emu: 100,
-                },
+                point: GeometryPoint::literal(100, 100),
             },
             ShapePathCommand::Close,
-        ],
+        ])
     });
     document.validate().unwrap();
 
@@ -2740,12 +2737,10 @@ fn custom_shape_path_bounds_are_validated() {
         .path
         .as_mut()
         .unwrap()
+        .paths[0]
         .commands = (0..=MAX_SHAPE_PATH_COMMANDS)
         .map(|index| ShapePathCommand::MoveTo {
-            point: PointEmu {
-                x_emu: index as i64,
-                y_emu: 0,
-            },
+            point: GeometryPoint::literal(index as i64, 0),
         })
         .collect();
     assert!(matches!(
@@ -2762,6 +2757,7 @@ fn custom_shape_path_bounds_are_validated() {
         .path
         .as_mut()
         .unwrap()
+        .paths[0]
         .commands
         .remove(0);
     assert!(matches!(
@@ -2771,16 +2767,14 @@ fn custom_shape_path_bounds_are_validated() {
         })
     ));
 
-    let mut runaway_point = document;
+    let mut runaway_point = document.clone();
     first_group_shape_mut(&mut runaway_point)
         .path
         .as_mut()
         .unwrap()
+        .paths[0]
         .commands[1] = ShapePathCommand::LineTo {
-        point: PointEmu {
-            x_emu: MAX_EMU + 1,
-            y_emu: 0,
-        },
+        point: GeometryPoint::literal(MAX_EMU + 1, 0),
     };
     assert!(matches!(
         runaway_point.validate(),
@@ -2788,6 +2782,119 @@ fn custom_shape_path_bounds_are_validated() {
             property: "group.shape.path.point"
         })
     ));
+
+    // An arc's radii and angles are values like any coordinate, so they are
+    // bounded too — a check that only walked POINTS would pass an unbounded radius.
+    let mut runaway_radius = document.clone();
+    first_group_shape_mut(&mut runaway_radius)
+        .path
+        .as_mut()
+        .unwrap()
+        .paths[0]
+        .commands[1] = ShapePathCommand::ArcTo {
+        width_radius: GeometryValue::Literal(MAX_EMU + 1),
+        height_radius: GeometryValue::Literal(10),
+        start_angle: GeometryValue::Literal(0),
+        swing_angle: GeometryValue::Literal(5_400_000),
+    };
+    assert!(matches!(
+        runaway_radius.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.point"
+        })
+    ));
+
+    // A coordinate may name a guide, but only one that is DEFINED: a geometry
+    // that cannot be evaluated would paint a rectangle while claiming to be a
+    // freeform, so it is refused where it enters the model.
+    let mut named = document.clone();
+    let geometry = first_group_shape_mut(&mut named).path.as_mut().unwrap();
+    geometry.guides.push(ShapeAdjustment {
+        name: "mid".to_owned(),
+        formula: "*/ w 1 2".to_owned(),
+    });
+    geometry.paths[0].commands[1] = ShapePathCommand::LineTo {
+        point: GeometryPoint {
+            x: GeometryValue::Guide("mid".to_owned()),
+            y: GeometryValue::Guide("b".to_owned()),
+        },
+    };
+    named
+        .validate()
+        .expect("a defined guide name is a legal coordinate");
+    let mut undefined = named;
+    first_group_shape_mut(&mut undefined)
+        .path
+        .as_mut()
+        .unwrap()
+        .paths[0]
+        .commands[1] = ShapePathCommand::LineTo {
+        point: GeometryPoint {
+            x: GeometryValue::Guide("nowhere".to_owned()),
+            y: GeometryValue::Literal(0),
+        },
+    };
+    assert!(matches!(
+        undefined.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.formula"
+        })
+    ));
+
+    let mut too_many_guides = document;
+    first_group_shape_mut(&mut too_many_guides)
+        .path
+        .as_mut()
+        .unwrap()
+        .guides = (0..=MAX_SHAPE_GUIDES)
+        .map(|index| ShapeAdjustment {
+            name: format!("g{index}"),
+            formula: "val 1".to_owned(),
+        })
+        .collect();
+    assert!(matches!(
+        too_many_guides.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.guides"
+        })
+    ));
+}
+
+/// A snapshot written before custom geometry had guides and several paths holds
+/// ONE path object, with `xEmu`/`yEmu` points, in `GroupShape::path`. It must
+/// still read — as a one-path geometry — and a current snapshot must round-trip.
+#[test]
+fn a_single_path_snapshot_still_reads_as_a_custom_geometry() {
+    let legacy = r#"{"widthEmu":6660515,"commands":[
+        {"type":"moveTo","point":{"xEmu":0,"yEmu":0}},
+        {"type":"lineTo","point":{"xEmu":6660057,"yEmu":0}}]}"#;
+    let geometry: CustomGeometry = serde_json::from_str(legacy).expect("the legacy form reads");
+    assert_eq!(geometry.paths.len(), 1);
+    assert_eq!(geometry.paths[0].width_emu, 6_660_515);
+    assert_eq!(
+        geometry.paths[0].commands[1],
+        ShapePathCommand::LineTo {
+            point: GeometryPoint::literal(6_660_057, 0)
+        }
+    );
+
+    let mut current = geometry.clone();
+    current.guides.push(ShapeAdjustment {
+        name: "mid".to_owned(),
+        formula: "*/ w 1 2".to_owned(),
+    });
+    current.paths[0].fill = PathFill::None;
+    current.paths[0].commands.push(ShapePathCommand::LineTo {
+        point: GeometryPoint {
+            x: GeometryValue::Guide("mid".to_owned()),
+            y: GeometryValue::Literal(0),
+        },
+    });
+    let json = serde_json::to_string(&current).expect("serializes");
+    assert_eq!(
+        serde_json::from_str::<CustomGeometry>(&json).expect("reads back"),
+        current
+    );
 }
 
 /// A one-paragraph document whose only inline is a group of one freeform shape
@@ -2826,7 +2933,7 @@ fn shape_path_document(path: ShapePath) -> Document {
                 geometry: ShapeGeometry::Other,
                 preset: None,
                 adjustments: Vec::new(),
-                path: Some(path),
+                path: Some(CustomGeometry::single_path(path)),
                 fill: None,
                 stroke: None,
                 flip_h: false,

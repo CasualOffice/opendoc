@@ -2921,14 +2921,8 @@ impl WasmDocument {
         mime: String,
     ) -> Result<EditResult, JsValue> {
         use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
-        let (media_type, ext) = match mime.to_ascii_lowercase().as_str() {
-            "image/png" => ("image/png", "png"),
-            "image/jpeg" | "image/jpg" => ("image/jpeg", "jpeg"),
-            "image/gif" => ("image/gif", "gif"),
-            "image/bmp" | "image/x-ms-bmp" => ("image/bmp", "bmp"),
-            "image/tiff" => ("image/tiff", "tiff"),
-            "image/webp" => ("image/webp", "webp"),
-            _ => return Err(to_js(format!("unsupported image type {mime:?}"))),
+        let Some((media_type, ext)) = image_part_type(&mime) else {
+            return Err(to_js(format!("unsupported image type {mime:?}")));
         };
         if bytes.is_empty() {
             return Err(to_js("the image has no bytes".into()));
@@ -4237,7 +4231,16 @@ impl WasmDocument {
     pub fn shape_format(&self, shape: &str) -> Result<Option<ShapeFormat>, JsValue> {
         let node = node_id(shape)?;
         let Some(shape) = find_shape(&self.document, node) else {
-            return Ok(None);
+            // A picture has an outline (its border) and no fill, and the host
+            // reflects it through this same read (`docs/109` HF-254).
+            return Ok(
+                casual_doc_edit::picture_border(&self.document, node).map(|border| ShapeFormat {
+                    fill: None,
+                    outline: border.map(|stroke| hex_of(stroke.color)),
+                    #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
+                    outline_width_emu: border.map(|stroke| stroke.width_emu as f64),
+                }),
+            );
         };
         Ok(Some(ShapeFormat {
             fill: shape.fill.as_ref().map(|fill| hex_of(fill.flat_color())),
@@ -4283,7 +4286,12 @@ impl WasmDocument {
         width_emu: Option<f64>,
     ) -> Result<EditResult, JsValue> {
         let node = node_id(shape)?;
-        let current = find_shape(&self.document, node).and_then(|shape| shape.stroke);
+        // A picture's border is the same stroke on a different carrier, and a
+        // weight or colour change inherits the rest of it just the same.
+        let current = match find_shape(&self.document, node) {
+            Some(shape) => shape.stroke,
+            None => casual_doc_edit::picture_border(&self.document, node).flatten(),
+        };
         let stroke = match rgba {
             Some(text) => Some(ShapeStroke {
                 color: shape_rgba(&text)?,
@@ -17879,22 +17887,21 @@ fn move_group_child_in_inlines(
 ) -> bool {
     for inline in inlines {
         match inline {
-            InlineNode::Sdt(sdt) => {
-                if move_group_child_in_inlines(&mut sdt.inlines, child, dx_emu, dy_emu) {
-                    return true;
-                }
-            }
-            InlineNode::Hyperlink(link) => {
-                if move_group_child_in_inlines(&mut link.inlines, child, dx_emu, dy_emu) {
-                    return true;
-                }
-            }
             InlineNode::Group(group) => {
                 if move_child_in_group(group, child, dx_emu, dy_emu) {
                     return true;
                 }
             }
-            _ => {}
+            // The declared inline wrappers (`Hyperlink`, `Field`, `Revision`,
+            // `Sdt`): a group inside a field result or a tracked insertion moved
+            // nothing when its child was dragged (`109` HF-214).
+            other => {
+                if let Some(nested) = contained_inlines_mut(other)
+                    && move_group_child_in_inlines(nested, child, dx_emu, dy_emu)
+                {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -17977,9 +17984,9 @@ fn paragraph_holds_group_child(paragraph: &Paragraph, node: NodeId) -> bool {
     fn in_inlines(inlines: &[InlineNode], node: NodeId) -> bool {
         inlines.iter().any(|inline| match inline {
             InlineNode::Group(group) => group_holds(group, node),
-            InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
-            InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
-            _ => false,
+            // The declared inline wrappers, so a group in a field result or a
+            // tracked insertion is found too (`109` HF-214).
+            other => contained_inlines(other).is_some_and(|nested| in_inlines(nested, node)),
         })
     }
     fn group_holds(group: &WordprocessingGroup, node: NodeId) -> bool {
@@ -24567,6 +24574,9 @@ impl ObjectCapabilities {
             can_delete: true,
             can_alt_text: true,
             can_crop: true,
+            // Word's Picture Border: the picture's own `a:ln`, written by the
+            // same `SetShapeStroke` a shape's outline is (`docs/109` HF-254).
+            can_stroke: true,
             ..Self::empty()
         }
     }
@@ -24622,6 +24632,8 @@ impl ObjectCapabilities {
             can_delete: true,
             can_alt_text: kind == "image",
             can_crop: kind == "image",
+            // A picture's border (`docs/109` HF-254).
+            can_stroke: kind == "image",
             can_edit_text: kind == "textbox",
             ..Self::empty()
         }
@@ -24638,9 +24650,14 @@ impl ObjectCapabilities {
             can_wrap: true,
             can_delete: true,
             can_fill: kind == "shape",
-            can_stroke: kind == "shape",
+            // A grouped picture carries its own border, alt text and source
+            // crop exactly as a loose one does; withholding them made a logo
+            // in a group the one picture nothing could describe or trim
+            // (`docs/109` HF-214, HF-254).
+            can_stroke: kind == "shape" || kind == "image",
+            can_alt_text: kind == "image",
+            can_crop: kind == "image",
             can_edit_text: kind == "textbox",
-            ..Self::empty()
         }
     }
 
@@ -24859,6 +24876,22 @@ fn rotate_about(x: i32, y: i32, cx: i32, cy: i32, rotation_60k: i32) -> (i32, i3
     );
     #[allow(clippy::cast_possible_truncation)]
     (turned.0.round() as i32, turned.1.round() as i32)
+}
+
+/// The package media type and part-name extension for an image `mime` this
+/// editor can place, or `None` for one it cannot. One table for `insertImage`
+/// and `replacePicture`, so the two can never accept different files.
+/// **O(1)**.
+pub(crate) fn image_part_type(mime: &str) -> Option<(&'static str, &'static str)> {
+    Some(match mime.to_ascii_lowercase().as_str() {
+        "image/png" => ("image/png", "png"),
+        "image/jpeg" | "image/jpg" => ("image/jpeg", "jpeg"),
+        "image/gif" => ("image/gif", "gif"),
+        "image/bmp" | "image/x-ms-bmp" => ("image/bmp", "bmp"),
+        "image/tiff" => ("image/tiff", "tiff"),
+        "image/webp" => ("image/webp", "webp"),
+        _ => return None,
+    })
 }
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
@@ -25208,17 +25241,18 @@ fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> O
                     can_rotate: false,
                 });
             }
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(frame) = object_resize_handles_in_inlines(&hyperlink.inlines, object) {
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(frame) = object_resize_handles_in_inlines(nested, object)
+                {
                     return Some(frame);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(frame) = object_resize_handles_in_inlines(&revision.inlines, object) {
-                    return Some(frame);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25344,18 +25378,18 @@ fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> 
                     return Some(extent);
                 }
             }
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(extent) = object_authored_extent_in_inlines(&hyperlink.inlines, object)
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(extent) = object_authored_extent_in_inlines(nested, object)
                 {
                     return Some(extent);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(extent) = object_authored_extent_in_inlines(&revision.inlines, object) {
-                    return Some(extent);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25414,17 +25448,18 @@ fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Dr
                 }
             }
             InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(anchor) = object_anchor_in_inlines(&hyperlink.inlines, object) {
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(anchor) = object_anchor_in_inlines(nested, object)
+                {
                     return Some(anchor);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(anchor) = object_anchor_in_inlines(&revision.inlines, object) {
-                    return Some(anchor);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25478,17 +25513,18 @@ fn object_group_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<&Wo
                     return Some(group);
                 }
             }
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(group) = object_group_in_inlines(&hyperlink.inlines, object) {
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(group) = object_group_in_inlines(nested, object)
+                {
                     return Some(group);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(group) = object_group_in_inlines(&revision.inlines, object) {
-                    return Some(group);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -27090,22 +27126,28 @@ fn object_crop_for_blocks(blocks: &[BlockNode], id: NodeId) -> Option<Option<Cro
                 InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
                     return Some(drawing.crop);
                 }
-                InlineNode::Hyperlink(link) => {
-                    if let Some(found) = inlines(&link.inlines, id) {
-                        return Some(found);
-                    }
-                }
-                InlineNode::Revision(revision) => {
-                    if let Some(found) = inlines(&revision.inlines, id) {
-                        return Some(found);
-                    }
-                }
                 InlineNode::Group(group) => {
                     if let Some(found) = group_crop(&group.children, id) {
                         return Some(found);
                     }
                 }
-                _ => {}
+                // A picture in a text box's own story is croppable by the write
+                // side, so the read side must find it — or crop mode opens on
+                // a cropped picture showing it uncropped.
+                InlineNode::TextBox(text_box) => {
+                    if let Some(found) = object_crop_for_blocks(&text_box.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                // The declared inline wrappers — `Hyperlink`, `Field`,
+                // `Revision`, `Sdt` (`109` HF-214).
+                other => {
+                    if let Some(nested) = contained_inlines(other)
+                        && let Some(found) = inlines(nested, id)
+                    {
+                        return Some(found);
+                    }
+                }
             }
         }
         None

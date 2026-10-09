@@ -46,6 +46,9 @@ import {
   ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
+import { handleCropKey, objectNudge } from "./object_keys.mjs";
+import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
+import { EMU_PER_PX, INSERTABLE_IMAGE_TYPES, canChangePicture, createPictureReplace, decodeImageBlob } from "./picture_replace.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
@@ -4238,9 +4241,10 @@ function enterCropMode() {
  *  resolving which page and which scale, which only the editor can answer. */
 function paintObjectCrop() {
   const s = objectCropSession;
-  const [bx, by, bw, bh] = s.box;
   const rectFlat = doc.objectRect(s.node);
   if (rectFlat.length < 5) return;
+  s.box = rectFlat.slice(1, 5); // the picture as placed NOW, not at enterCropMode (HF-106)
+  const [bx, by, bw, bh] = s.box;
   const pageNumber = rectFlat[0];
   const page = pages[pageNumber - 1];
   if (!page?.overlay) return;
@@ -4265,8 +4269,12 @@ function startCropHandleDrag(event, page, handleKind) {
   };
   beginGripDrag(event, {
     onMove: updateCropHandleDrag,
-    onEnd: () => {
-      if (objectCropSession) objectCropSession.handleDrag = null;
+    onEnd: (cancelled) => {
+      if (!objectCropSession) return;
+      // A gesture the browser cancelled leaves the crop where it started.
+      if (cancelled) objectCropSession.crop = objectCropSession.handleDrag?.startCrop ?? objectCropSession.crop;
+      objectCropSession.handleDrag = null;
+      if (cancelled) drawSelection();
     },
   });
 }
@@ -4340,6 +4348,16 @@ const objectResize = createObjectResizeDrag({
   resetPointerGesture: () => resetPointerGesture(),
 });
 const objectRotate = createObjectRotateDrag(gestureIo);
+/** A drag on an object that cannot move says why, once (HF-259). */
+const refusedObjectDrag = createRefusedDrag({ setStatus: (text, kind) => setStatus(text, kind) });
+/** The crop session's keyboard (`object_keys.mjs`). */
+const cropKeyIo = {
+  get session() { return objectCropSession; },
+  commit: () => commitCrop(),
+  cancel: () => cancelCrop(),
+  redraw: () => drawSelection(),
+  nothingToMove: () => setStatus(t("object.crop.nothingToMove")),
+};
 const sizeLabel = (widthTwip, heightTwip) =>
   resizeSizeLabel(t, widthTwip, heightTwip, measurement);
 
@@ -4353,7 +4371,7 @@ function updateObjectSelectionState() {
 
 /** Reflects a selected shape's own fill and outline onto `#pages`. */
 function reflectShapeFormatState() {
-  reflectShapeFormat(pagesEl, objectSelection?.kind === "shape" ? selectedShapeFormat() : null);
+  reflectShapeFormat(pagesEl, objectSelection?.canFill || objectSelection?.canStroke ? selectedShapeFormat() : null);
 }
 
 /** The object properties panel. Its 170 lines are `object_inspector.mjs`; what
@@ -4366,6 +4384,7 @@ const objectInspector = createObjectInspector({
   setStatus: (text, kind) => setStatus(text, kind),
   openShapeFill: () => shapeFillBtn.click(),
   openShapeOutline: () => shapeOutlineBtn.click(),
+  t,
 });
 const toggleObjectInspector = (open) => objectInspector.toggle(open);
 
@@ -4388,6 +4407,8 @@ const objectBar = createObjectBar({
   openAltText: () => openAltTextDialog(),
   openChartData: () => chartSurface.openData(),
   enterCrop: () => enterCropMode(),
+  canChangePicture,
+  changePicture: () => pictureReplace.choose(),
   deleteObject: () => deleteSelectedObject(),
   reflectShapeSwatches: () => reflectShapeSwatches(),
   fillButton: () => shapeFillBtn,
@@ -4498,7 +4519,9 @@ const OBJECT_CAPABILITY_KEYS = [
  *  is freed. JSON object-order entries use the same camelCase field names. */
 function objectCapabilities(source) {
   if (source && OBJECT_CAPABILITY_KEYS.some((key) => key in source)) {
-    return Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true]));
+    // The engine's reason for every `false` travels with the bits (HF-259).
+    const reasons = { capabilityReasons: readCapabilityReasons(source) };
+    return Object.assign(Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true])), reasons);
   }
   // A missing or stale engine payload must never make an unsupported mutation
   // appear safe. A correctly built production bridge always supplies the bits.
@@ -5153,9 +5176,12 @@ function setObjectWrap(mode) {
 function deleteSelectedObject() {
   if (!objectSelection || objectSelection.mode !== "selected" || !objectSelection.canDelete) return;
   const root = objectSelection.ref.root;
+  // A member of a group is deleted ALONE, as in Word; sending it to the root
+  // deleted everything grouped with it (HF-214).
+  const member = insideGroupSelection() ? objectSelection.node : null;
   runEdit(
     () => {
-      const res = doc.deleteObject(root);
+      const res = member ? doc.deleteGroupMember(member) : doc.deleteObject(root);
       objectSelection = null;
       clearObjectStatus();
       return res;
@@ -5396,20 +5422,15 @@ function finishObjectMove(event) {
   return true;
 }
 
-// Arrow-nudge step in twips: a fine ~1/32in step, and a coarse ~1/8in step with
-// Shift (matching Word/Docs arrow-vs-Shift+arrow nudging).
-const NUDGE_TWIP = 45;
-const NUDGE_TWIP_LARGE = 180;
-
-/** Nudges the selected floating object by one step in the given direction, as a
- *  single `SetAnchor` op (gated in Viewing/Suggesting like a drag-move). */
-function nudgeSelectedObject(dx, dy, large) {
+/** Nudges the selected floating object one `objectNudge` step (`object_keys.mjs`
+ *  owns which key means which step), as a single `SetAnchor` op (gated in
+ *  Viewing/Suggesting like a drag-move). */
+function nudgeSelectedObject({ dx, dy, step }) {
   if (!doc || !objectSelection?.canMove) return;
   const subject = objectSelection.node;
   const root = objectSelection.ref.root;
   const rect = doc.objectRect(subject); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
-  const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
   if (insideGroupSelection()) {
     runEdit(
       () => doc.moveGroupChildBy(subject, dx * step * EMU_PER_TWIP, dy * step * EMU_PER_TWIP),
@@ -5969,7 +5990,7 @@ function onPointerDown(page, event) {
     // A floating object is movable: the same gesture that selects it can drag it
     // (a bare click commits nothing). Inline objects flow with the text.
     if (descriptor.canMove) startObjectMove(event, page, node);
-    else startSelectionAutoScroll();
+    else refusedObjectDrag.arm(event, capabilityRefusal(descriptor, "canMove", SESSION.sentenceFor));
     event.preventDefault();
     return;
   }
@@ -6235,6 +6256,7 @@ function startSelectionAutoScroll() {
 
 function onPointerUp(event) {
   document.body.style.cursor = ""; // the gesture no longer owns the cursor
+  refusedObjectDrag.end();
   if (shapeDrawMode.finish()) return;
   if (finishObjectMove(event)) return;
   if (objectRotate.finish(event)) return;
@@ -6405,6 +6427,7 @@ window.addEventListener("pointermove", (e) => {
   // off the sheet it started on — so the router runs here too, not only over
   // `#pages`. It short-circuits on the drag kind and asks the engine nothing.
   if (pointerHover.dragKind()) pointerHover.schedule(null, e);
+  if (refusedObjectDrag.move(e)) return; // a drag of an object that cannot move says why
   if (shapeDrawMode.dragging()) {
     shapeDrawMode.update(e);
     return;
@@ -7226,6 +7249,7 @@ const objectContextMenuHost = {
   applyShapeFill,
   applyShapeOutline,
   enterCrop: () => enterCropMode(),
+  changePicture: () => pictureReplace.choose(),
   openProperties: () => toggleObjectInspector(true),
   deleteObject: () => deleteSelectedObject(),
 };
@@ -7236,7 +7260,12 @@ const objectContextMenuHost = {
 // caller selects the object before showing the menu.
 function objectContextAtEvent(page, event) {
   const { x, y } = pointToTwip(page, event);
-  const object = doc.objectAt(page.pageNumber, x, y);
+  let object = doc.objectAt(page.pageNumber, x, y);
+  // A right-click on the selected MEMBER of a group is about that member. The
+  // fresh hit answers with the group's root, which put the GROUP's menu — no
+  // alt text, no crop, no border — over the picture just selected (HF-214).
+  const selectedHere = objectSelection?.mode === "selected" && pointInsideObject(objectSelection.node, page, x, y);
+  if (object && selectedHere && object.root === objectSelection.ref.root) object = void object.free?.();
   if (object) {
     const capabilities = objectCapabilities(object);
     const ref = objectReference(object, object.node);
@@ -7251,30 +7280,9 @@ function objectContextAtEvent(page, event) {
     object.free?.();
     return ctx;
   }
-  // No fresh hit, but an object is selected and the point is inside its box.
-  if (objectSelection && objectSelection.mode === "selected") {
-    const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
-    if (
-      rect.length >= 5 &&
-      rect[0] === page.pageNumber &&
-      x >= rect[1] &&
-      x <= rect[1] + rect[3] &&
-      y >= rect[2] &&
-      y <= rect[2] + rect[4]
-    ) {
-      return {
-        surface: "object",
-        node: objectSelection.node,
-        ref: objectSelection.ref,
-        kind: objectSelection.kind,
-        anchored: objectSelection.anchored,
-        ...Object.fromEntries(
-          OBJECT_CAPABILITY_KEYS.map((key) => [key, objectSelection[key] === true]),
-        ),
-      };
-    }
-  }
-  return null;
+  // No fresh hit (or the selected member's), and the point is inside the
+  // selected object's box: the menu is about what is selected.
+  return selectedHere ? selectedObjectContext() : null;
 }
 
 // ---- Menu rendering engine (root context menu + nested submenu flyouts) -----
@@ -9802,12 +9810,8 @@ const shapeOutlineMenu = document.getElementById("shapeOutlineMenu");
  *  no shape selected. Read from the model, never remembered from the last
  *  apply — the swatch must describe THIS shape. */
 function selectedShapeFormat() {
-  if (
-    !doc ||
-    !objectSelection ||
-    objectSelection.kind !== "shape" ||
-    (!objectSelection.canFill && !objectSelection.canStroke)
-  ) return {};
+  // A picture has the outline half — its border (HF-254) — read the same way.
+  if (!doc || !objectSelection || (!objectSelection.canFill && !objectSelection.canStroke)) return {};
   try {
     return doc.shapeFormat(objectSelection.node) ?? {};
   } catch {
@@ -9985,7 +9989,7 @@ function applyShapeFill(hex) {
 /** Applies an outline color and/or weight. Setting a weight on an unoutlined
  *  shape gives it Word's default black outline, so the weight is never a no-op. */
 function applyShapeOutline({ color, widthEmu }) {
-  if (!objectSelection?.canStroke || objectSelection.kind !== "shape") return;
+  if (!objectSelection?.canStroke) return; // a shape's outline or a picture's border
   const node = objectSelection.node;
   // Pass only what was chosen. The engine inherits the rest from the outline the
   // shape already has — including the dash pattern and line ends no control here
@@ -12339,30 +12343,10 @@ async function insertFieldAtCaret(kind) {
 
 // ---- Insert picture ----------------------------------------------------------
 // The engine owns no image codec (docs/85 §Q8), so the host decodes the image to
-// bytes + natural pixel size and hands them to the `insertImage` op. One EMU is
-// 1/914400in; at 96dpi a CSS px is 9525 EMU. A wide image is scaled down to fit
-// the text column, preserving aspect.
-const EMU_PER_PX = 9525;
+// bytes + natural pixel size (`picture_replace.mjs`, shared with Change Picture)
+// and hands them to the `insertImage` op. A wide image is scaled down to fit the
+// text column, preserving aspect.
 const MAX_IMAGE_WIDTH_EMU = 6 * 914_400; // ~6in, a sane default display width
-
-const INSERTABLE_IMAGE_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/bmp",
-  "image/tiff",
-  "image/webp",
-]);
-
-/** Decodes a File/Blob to `{ bytes, widthPx, heightPx, mime }` via the browser. */
-async function decodeImageBlob(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const bitmap = await createImageBitmap(blob);
-  const widthPx = bitmap.width;
-  const heightPx = bitmap.height;
-  bitmap.close?.();
-  return { bytes, widthPx, heightPx, mime: blob.type };
-}
 
 /** Inserts an already-decoded image at the caret as one undoable action, gated
  *  like the other object edits (read-only in Viewing, blocked in Suggesting). */
@@ -12506,6 +12490,17 @@ function insertImageFromFile() {
   });
   input.click();
 }
+
+/** Word's Change Picture (`picture_replace.mjs`, HF-252). */
+const pictureReplace = createPictureReplace({
+  doc: () => doc,
+  selection: () => objectSelection,
+  runEdit: (thunk, options) => runEdit(thunk, { ...options, keepView: true }),
+  blocked: () => objectEditBlocked(),
+  setStatus: (text, kind) => setStatus(text, kind),
+  t,
+  createInput: () => document.createElement("input"),
+});
 
 const fieldDialog = document.getElementById("fieldDialog");
 const fieldList = document.getElementById("fieldList");
@@ -14268,19 +14263,9 @@ document.addEventListener("keydown", async (e) => {
     cancelObjectMove();
     return;
   }
-  // Crop mode owns Enter (apply) and Escape (cancel) before the object grammar.
-  if (objectCropSession) {
-    if (key === "Enter") {
-      e.preventDefault();
-      commitCrop();
-      return;
-    }
-    if (key === "Escape") {
-      e.preventDefault();
-      cancelCrop();
-      return;
-    }
-  }
+  // Crop mode owns Enter, Escape and the arrows before the object grammar —
+  // an arrow let through moved the PICTURE under the crop (HF-106).
+  if (objectCropSession && handleCropKey(e, cropKeyIo)) return;
   // Esc leaves header/footer editing first: while that context is open it is the
   // thing Esc most obviously means, and Word closes the header on Esc too.
   if (runningEditBand && key === "Escape") {
@@ -14321,20 +14306,17 @@ document.addEventListener("keydown", async (e) => {
       }
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
-        if (objectSelection.canDelete) {
-          deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
-        } else {
-          setStatus("This nested object cannot be deleted separately yet", "error");
-        }
+        if (objectSelection.canDelete) deleteSelectedObject(); // one undoable delete; gated
+        else setStatus(capabilityRefusal(objectSelection, "canDelete", SESSION.sentenceFor), "error");
         return;
       }
-      // Arrow keys nudge a FLOATING object's position (Word/Docs); Shift takes a
-      // larger step. Only anchored objects have a position — an inline image has
-      // none, so its arrows still fall through to move the caret off it.
-      const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
-      if (nudge && objectSelection.canMove && !mod) {
+      // Arrow keys nudge a FLOATING object's position (Word/Docs): Shift a larger
+      // step, Ctrl/Option Word's one-pixel step. An inline image has no position,
+      // so its arrows still fall through to move the caret off it.
+      const nudge = objectNudge(e);
+      if (nudge && objectSelection.canMove) {
         e.preventDefault();
-        nudgeSelectedObject(nudge[0], nudge[1], e.shiftKey);
+        nudgeSelectedObject(nudge);
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so

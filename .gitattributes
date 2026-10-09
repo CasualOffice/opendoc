@@ -1,0 +1,5 @@
+# The preset shape table is embedded with `include_str!` and its loader verifies
+# an FNV-1a checksum of the exact body bytes. A CRLF checkout (Windows with
+# `core.autocrlf`) changes those bytes, the table is refused, and every preset
+# shape paints as its bounding rectangle. Keep it LF on every platform.
+crates/casual-doc-model/data/preset_shapes.txt text eol=lf

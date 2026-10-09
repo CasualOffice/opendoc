@@ -25,6 +25,7 @@ Bézier
 CBDT
 CBOR
 CDN
+CDP
 CFF
 CJK
 CKEditor
@@ -325,6 +326,7 @@ commenter
 compat
 composable
 config
+conformant
 contenteditable
 contextualSpacing
 crypto
@@ -420,6 +422,7 @@ idempotent
 iframe
 impl
 incl
+includepicture
 injective
 inlines
 inspectable

@@ -283,12 +283,31 @@ impl Document {
         self.validate_bookmarks()?;
         self.validate_field_ranges()?;
         self.validate_charts()?;
+        self.validate_object_names()?;
         self.validate_font_table()?;
         self.validate_font_scheme()?;
         self.validate_color_scheme()?;
         self.validate_settings()?;
         self.validate_properties()?;
         self.validate_body()?;
+        Ok(())
+    }
+
+    /// Bounds every drawing object name and title (`docs/109` HF-267): present
+    /// means non-empty and within [`MAX_OBJECT_NAME_BYTES`], because an empty one
+    /// says nothing and is not kept, and an unbounded one is a hostile snapshot.
+    ///
+    /// Complexity: O(entries).
+    fn validate_object_names(&self) -> Result<(), ModelError> {
+        for (_, object) in self.definitions.object_names.iter() {
+            check_domain(!object.is_empty(), "objectNames.entry")?;
+            for part in [&object.name, &object.title].into_iter().flatten() {
+                check_domain(
+                    !part.is_empty() && part.len() <= MAX_OBJECT_NAME_BYTES,
+                    "objectNames.name",
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -319,6 +338,24 @@ impl Document {
         }
         for props in [&settings.footnote_props, &settings.endnote_props] {
             check_note_props(props)?;
+        }
+        for (language, property) in [
+            (
+                &settings.theme_font_languages.latin,
+                "settings.themeFontLang.val",
+            ),
+            (
+                &settings.theme_font_languages.east_asia,
+                "settings.themeFontLang.eastAsia",
+            ),
+            (
+                &settings.theme_font_languages.bidi,
+                "settings.themeFontLang.bidi",
+            ),
+        ] {
+            if let Some(language) = language {
+                check_domain(!language.is_empty() && language.len() <= 255, property)?;
+            }
         }
         Ok(())
     }
@@ -1783,39 +1820,21 @@ impl Document {
                         &GROUP_SHAPE_GEOMETRY,
                     )?;
                     if let Some(path) = &shape.path {
-                        // A path only ever accompanies `Other`: a preset carries
-                        // its own geometry and a file that supplies both is
+                        // A custom geometry only ever accompanies `Other`: a preset
+                        // carries its own geometry and a file that supplies both is
                         // contradictory, so it is refused rather than silently
                         // resolved one way (docs/119 §6).
                         check_domain(
                             shape.geometry == ShapeGeometry::Other,
                             "group.shape.path.geometry",
                         )?;
-                        check_domain(
-                            !path.commands.is_empty()
-                                && path.commands.len() <= MAX_SHAPE_PATH_COMMANDS,
-                            "group.shape.path.commands",
-                        )?;
-                        check_domain(
-                            matches!(path.commands[0], ShapePathCommand::MoveTo { .. }),
-                            "group.shape.path.commands.first",
-                        )?;
-                        check_domain(
-                            (0..=MAX_EMU).contains(&path.width_emu)
-                                && (0..=MAX_EMU).contains(&path.height_emu),
-                            "group.shape.path.extent",
-                        )?;
-                        // Via `points()` rather than a local match, so a curve's
-                        // CONTROL points are bounds-checked too — they are real
-                        // coordinates that reach the rasteriser, and a match here
-                        // that only looked at endpoints would pass an unbounded one.
-                        for point in path.commands.iter().flat_map(ShapePathCommand::points) {
-                            check_domain(
-                                (-MAX_EMU..=MAX_EMU).contains(&point.x_emu)
-                                    && (-MAX_EMU..=MAX_EMU).contains(&point.y_emu),
-                                "group.shape.path.point",
-                            )?;
-                        }
+                        // Every bound — counts, lengths, literal ranges, CONTROL
+                        // points and arc radii included — and that the geometry
+                        // compiles with the shape's adjust values, in one place the
+                        // importer's acceptance test shares (`CustomGeometry::check`).
+                        path.check(&shape.adjustments).map_err(|property| {
+                            ModelError::PropertyValueOutOfDomain { property }
+                        })?;
                     }
                     if let Some(stroke) = &shape.stroke {
                         check_domain(
@@ -2397,7 +2416,8 @@ fn accumulate_group_limits(
                 if let Some(preset) = &shape.preset {
                     add_scalar_values(preset, limits, scalar_values)?;
                 }
-                for adjustment in &shape.adjustments {
+                let guides = shape.path.iter().flat_map(|path| &path.guides);
+                for adjustment in shape.adjustments.iter().chain(guides) {
                     add_scalar_values(&adjustment.name, limits, scalar_values)?;
                     add_scalar_values(&adjustment.formula, limits, scalar_values)?;
                 }

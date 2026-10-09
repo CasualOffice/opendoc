@@ -45,6 +45,7 @@
 //   `applyShapeFill(hex)`  `null` clears the fill
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
+//   `changePicture()`      Word's Change Picture: pick a file for the picture
 //   `openProperties()`     open the object inspector
 //   `deleteObject()`       delete the selected object
 export function buildObjectContextCommands(context, io) {
@@ -214,8 +215,10 @@ export function buildObjectContextCommands(context, io) {
 
   // Shape Fill / Shape Outline — the two live controls of Word's Shape Format
   // tab, reachable from the menu as well as the bar so neither surface is the
-  // only way in.
-  if (context.kind === "shape" && (context.canFill || context.canStroke)) {
+  // only way in. A PICTURE has the outline half, under Word's own name for it,
+  // Picture Border (`docs/109` HF-254): the same `a:ln`, the same command.
+  const picture = context.kind === "image";
+  if ((context.kind === "shape" || picture) && (context.canFill || context.canStroke)) {
     const swatch = (hex) => ({
       id: `object.fill.${hex}`,
       label: hex.toUpperCase(),
@@ -223,7 +226,7 @@ export function buildObjectContextCommands(context, io) {
       enabled: mutationEnabled,
       disabledReason: mutationReason,
     });
-    if (context.canFill) {
+    if (context.canFill && !picture) {
       commands.push({
         id: "object.fill",
         label: "Shape fill",
@@ -248,12 +251,13 @@ export function buildObjectContextCommands(context, io) {
     if (context.canStroke) {
       commands.push({
         id: "object.outline",
-        label: "Shape outline",
+        label: picture ? io.text("object.pictureBorder") : "Shape outline",
         group: "arrange",
         icon: "format",
         submenu: [
           {
             id: "object.outline.none",
+            // Word's Picture Border menu says "No Outline" too.
             label: "No outline",
             group: "reset",
             enabled: mutationEnabled,
@@ -280,6 +284,20 @@ export function buildObjectContextCommands(context, io) {
       enabled: mutationEnabled,
       disabledReason: mutationReason,
       run: () => io.enterCrop(),
+    });
+  }
+
+  // Change Picture — Word's right-click row, Docs' Replace image. A picture
+  // only: a chart or an embedded object has no image of its own to swap.
+  if (picture && typeof io.changePicture === "function") {
+    commands.push({
+      id: "object.changePicture",
+      label: io.text("object.changePicture.menu"),
+      group: "arrange",
+      icon: "picture",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => io.changePicture(),
     });
   }
 

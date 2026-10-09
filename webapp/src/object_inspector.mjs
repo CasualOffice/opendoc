@@ -13,11 +13,13 @@
 //   `setStatus(text, k)` the status line
 //   `openShapeFill()`    open the shape-fill picker (the bar owns the button)
 //   `openShapeOutline()`
+//   `t(key)`             the catalogue
 //
 // Cost: O(1) per reflect — a fixed number of engine reads for ONE object. It
 // runs on every repaint while the panel is open, so it must stay that way.
 import { OBJECT_LABELS } from "./object_traversal.mjs";
 import { TWIPS_PER_INCH } from "./units.mjs";
+import { readTextBoxBody, writeTextBoxBody } from "./text_box_body.mjs";
 
 /** Builds the panel. Nothing is created until `ensure()` is first called, so a
  *  session that never selects an object never pays for it. */
@@ -80,30 +82,26 @@ export function createObjectInspector(io) {
     const wrapField = objectInspectorEl.querySelector("[data-object-inspector-wrap]");
     wrapField.hidden = !io.selection().canWrap;
     if (io.selection().canWrap) setValue(wrapField.querySelector("select"), io.doc().objectWrap(io.selection().ref.root) || "square");
+    // A picture's Appearance is its border — Word's Format Picture ▸ Line — and
+    // the button says so (`docs/109` HF-254).
     const appearance = objectInspectorEl.querySelector("[data-object-inspector-appearance]");
-    appearance.hidden = io.selection().kind !== "shape" || (!io.selection().canFill && !io.selection().canStroke);
-    appearance.querySelector("[data-object-inspector-fill]").hidden = !io.selection().canFill;
-    appearance.querySelector("[data-object-inspector-stroke]").hidden = !io.selection().canStroke;
+    const kind = io.selection().kind;
+    appearance.hidden = (kind !== "shape" && kind !== "image") || (!io.selection().canFill && !io.selection().canStroke);
+    appearance.querySelector("[data-object-inspector-fill]").hidden = !io.selection().canFill || kind !== "shape";
+    const stroke = appearance.querySelector("[data-object-inspector-stroke]");
+    stroke.hidden = !io.selection().canStroke;
+    stroke.textContent = kind === "image" ? io.t("object.pictureBorder") : "Shape outline";
     const bodyField = objectInspectorEl.querySelector("[data-object-inspector-textbox]");
     bodyField.hidden = io.selection().kind !== "textbox";
-    if (io.selection().kind === "textbox" && typeof io.doc().textBoxBodyProperties === "function") {
-      try {
-        const raw = io.doc().textBoxBodyProperties(io.selection().node);
-        const props = raw ? JSON.parse(raw) : null;
-        if (props) {
-          const insets = props.insets ?? {};
-          for (const side of ["left", "top", "right", "bottom"]) {
-            const input = bodyField.querySelector(`[data-object-textbox-inset=${side}]`);
-            if (input) setValue(input, String(Math.round(Number(insets[`${side}Emu`] ?? 0) / 914400 * 100) / 100));
-          }
-          setValue(bodyField.querySelector("[data-object-textbox-anchor]"), props.vertical_anchor ?? "top");
-          setValue(bodyField.querySelector("[data-object-textbox-h-overflow]"), props.horizontal_overflow ?? "overflow");
-          setValue(bodyField.querySelector("[data-object-textbox-v-overflow]"), props.vertical_overflow ?? "overflow");
-          setValue(bodyField.querySelector("[data-object-textbox-autofit]"), props.auto_fit?.mode ?? "none");
-        }
-      } catch {
-        // A malformed/unsupported payload fails closed; authored data is not overwritten.
-      }
+    // The record's shape — camelCase, defaults omitted — is `text_box_body.mjs`'s
+    // to know (HF-253: reading snake_case showed every text box as default).
+    const body = io.selection().kind === "textbox" ? readTextBoxBody(io.doc().textBoxBodyProperties?.(io.selection().node)) : null;
+    if (body) {
+      for (const side of ["left", "top", "right", "bottom"]) setValue(bodyField.querySelector(`[data-object-textbox-inset=${side}]`), String(body.insets[side]));
+      setValue(bodyField.querySelector("[data-object-textbox-anchor]"), body.verticalAnchor);
+      setValue(bodyField.querySelector("[data-object-textbox-h-overflow]"), body.horizontalOverflow);
+      setValue(bodyField.querySelector("[data-object-textbox-v-overflow]"), body.verticalOverflow);
+      setValue(bodyField.querySelector("[data-object-textbox-autofit]"), body.autoFit);
     }
   }
 
@@ -169,30 +167,20 @@ export function createObjectInspector(io) {
       io.runEdit(() => io.doc().setObjectWrap(io.selection().ref.root, mode), { gate: true });
     });
     objectInspectorEl.querySelector("[data-object-inspector-textbox-apply]").addEventListener("click", () => {
-      if (!io.doc() || io.selection()?.kind !== "textbox" || typeof io.doc().textBoxBodyProperties !== "function" || typeof io.doc().setTextBoxBodyProperties !== "function") return;
+      if (!io.doc() || io.selection()?.kind !== "textbox" || typeof io.doc().setTextBoxBodyProperties !== "function") return;
       if (!objectInspectorMatchesSelection()) return;
-      let props;
-      try { props = JSON.parse(io.doc().textBoxBodyProperties(io.selection().node)); } catch { return; }
-      if (!props?.insets) return;
-      for (const side of ["left", "top", "right", "bottom"]) {
-        const inches = Number(objectInspectorEl.querySelector(`[data-object-textbox-inset=${side}]`).value);
-        if (!Number.isFinite(inches) || inches < 0) return;
-        props.insets[`${side}Emu`] = Math.round(inches * 914400);
-      }
-      props.vertical_anchor = objectInspectorEl.querySelector("[data-object-textbox-anchor]").value;
-      props.horizontal_overflow = objectInspectorEl.querySelector("[data-object-textbox-h-overflow]").value;
-      props.vertical_overflow = objectInspectorEl.querySelector("[data-object-textbox-v-overflow]").value;
-      const autofitMode = objectInspectorEl.querySelector("[data-object-textbox-autofit]").value;
-      // Keep the authored scale/reduction values for normal autofit. The compact
-      // inspector changes the mode only; it must never erase unsupported detail.
-      if (autofitMode === "normal") {
-        props.auto_fit = props.auto_fit?.mode === "normal"
-          ? props.auto_fit
-          : { mode: "normal", font_scale: 100000, line_spacing_reduction: 0 };
-      } else {
-        props.auto_fit = { mode: autofitMode };
-      }
-      io.runEdit(() => io.doc().setTextBoxBodyProperties(io.selection().node, JSON.stringify(props)), { gate: true });
+      const field = (selector) => objectInspectorEl.querySelector(selector).value;
+      const record = writeTextBoxBody(io.doc().textBoxBodyProperties(io.selection().node), {
+        insets: Object.fromEntries(["left", "top", "right", "bottom"].map((side) => [side, field(`[data-object-textbox-inset=${side}]`)])),
+        verticalAnchor: field("[data-object-textbox-anchor]"),
+        horizontalOverflow: field("[data-object-textbox-h-overflow]"),
+        verticalOverflow: field("[data-object-textbox-v-overflow]"),
+        autoFit: field("[data-object-textbox-autofit]"),
+      });
+      // An inset that is not a number of inches is refused here, and SAYS so,
+      // rather than reaching the engine as a record it would refuse.
+      if (record === null) return io.setStatus(io.t("object.textBoxBody.invalid"), "error");
+      io.runEdit(() => io.doc().setTextBoxBodyProperties(io.selection().node, record), { gate: true });
     });
     objectInspectorEl.querySelector("[data-object-inspector-alt-apply]").addEventListener("click", () => {
       if (!io.doc() || !io.selection()?.canAltText || !objectInspectorMatchesSelection()) return;

@@ -149,24 +149,36 @@ pub enum PathCommand {
         /// The curve's endpoint.
         point: Point,
     },
+    /// Close the current subpath back to its start (`a:close`).
+    ///
+    /// A command rather than only the [`ShapeGeometry::Path`] `closed` flag,
+    /// because a DrawingML path may close one subpath and go on to draw another:
+    /// a `donut` is two closed rings in one path, wound opposite ways so the inner
+    /// one is a hole. The flag still means "close at the end", which is all a
+    /// one-subpath figure needs.
+    Close,
 }
 
 impl PathCommand {
-    /// The point the path arrives at after this command.
+    /// The point the path arrives at after this command, or `None` for a
+    /// [`PathCommand::Close`], whose arrival point is the subpath's start — a
+    /// point the command itself does not carry.
     #[must_use]
-    pub fn endpoint(self) -> Point {
+    pub fn endpoint(self) -> Option<Point> {
         match self {
             Self::MoveTo { point }
             | Self::LineTo { point }
             | Self::CubicTo { point, .. }
-            | Self::QuadTo { point, .. } => point,
+            | Self::QuadTo { point, .. } => Some(point),
+            Self::Close => None,
         }
     }
 
-    /// Whether this command draws a segment, as opposed to only moving the pen.
+    /// Whether this command draws a segment, as opposed to only moving the pen
+    /// or closing a subpath.
     #[must_use]
     pub fn is_segment(self) -> bool {
-        !matches!(self, Self::MoveTo { .. })
+        !matches!(self, Self::MoveTo { .. } | Self::Close)
     }
 
     /// Every point the command names, endpoint and controls alike.
@@ -177,16 +189,78 @@ impl PathCommand {
     /// smaller but is not what either caller is asking for.
     pub fn points(self) -> impl Iterator<Item = Point> {
         let (a, b, c) = match self {
-            Self::MoveTo { point } | Self::LineTo { point } => (point, None, None),
+            Self::MoveTo { point } | Self::LineTo { point } => (Some(point), None, None),
             Self::CubicTo {
                 control1,
                 control2,
                 point,
-            } => (control1, Some(control2), Some(point)),
-            Self::QuadTo { control, point } => (control, Some(point), None),
+            } => (Some(control1), Some(control2), Some(point)),
+            Self::QuadTo { control, point } => (Some(control), Some(point), None),
+            Self::Close => (None, None, None),
         };
-        core::iter::once(a).chain(b).chain(c)
+        a.into_iter().chain(b).chain(c)
     }
+
+    /// Every point translated by `shift`. Exhaustive on purpose, so a new
+    /// command cannot be composed at the wrong origin.
+    #[must_use]
+    pub fn map(self, shift: impl Fn(Point) -> Point) -> Self {
+        match self {
+            Self::MoveTo { point } => Self::MoveTo {
+                point: shift(point),
+            },
+            Self::LineTo { point } => Self::LineTo {
+                point: shift(point),
+            },
+            Self::CubicTo {
+                control1,
+                control2,
+                point,
+            } => Self::CubicTo {
+                control1: shift(control1),
+                control2: shift(control2),
+                point: shift(point),
+            },
+            Self::QuadTo { control, point } => Self::QuadTo {
+                control: shift(control),
+                point: shift(point),
+            },
+            Self::Close => Self::Close,
+        }
+    }
+}
+
+/// Where an OPEN command list starts and ends, and the direction it leaves and
+/// arrives in — what an arrowhead (`a:headEnd`/`a:tailEnd`) is drawn against.
+///
+/// Each direction is given as a second point: the arrowhead at `start` points
+/// away from `start_toward`, and the one at `end` points away from `end_from`.
+/// For a curve the direction is its tangent, i.e. the nearest distinct control
+/// point. `None` when the list is closed anywhere, or draws nothing.
+///
+/// Complexity: O(c) in the commands.
+#[must_use]
+pub fn open_path_ends(commands: &[PathCommand]) -> Option<((Point, Point), (Point, Point))> {
+    if commands.contains(&PathCommand::Close) {
+        return None;
+    }
+    let start = commands.first()?.endpoint()?;
+    // The first point after the start that differs from it.
+    let start_toward = commands
+        .iter()
+        .skip(1)
+        .flat_map(|command| command.points())
+        .find(|point| *point != start)?;
+    let end = commands.last()?.endpoint()?;
+    // The last point before the end that differs from it, walking backwards
+    // through every point named (controls included), so a curve's tangent wins
+    // over its earlier endpoint.
+    let named: Vec<Point> = commands
+        .iter()
+        .flat_map(|command| command.points())
+        .collect();
+    let end_from = named.iter().rev().find(|point| **point != end).copied()?;
+    Some(((start, start_toward), (end, end_from)))
 }
 
 /// The geometry primitive of a painted [`PaintItem::Shape`].
@@ -211,17 +285,21 @@ pub enum ShapeGeometry {
     },
     /// A path in command order, closed (a filled figure) or open (stroked only).
     ///
-    /// One primitive for every non-rectangular outline: a preset's hand-resolved
-    /// vertex list and an authored `a:custGeom` are the same thing here, which is
-    /// what `119` §6 means by "a path is the primitive and a preset is a recipe".
+    /// One primitive for every non-rectangular outline: a preset resolved from the
+    /// standard's table and an authored `a:custGeom` are the same thing here,
+    /// which is what `119` §6 means by "a path is the primitive and a preset is a
+    /// recipe". A geometry of several paths paints one item per path.
     /// It replaced a point-list-only `Polygon` variant; the display list has no
     /// persisted form, so nothing had to be migrated.
     Path {
         /// The commands in path order, beginning with a
         /// [`PathCommand::MoveTo`].
         commands: Vec<PathCommand>,
-        /// Whether the figure joins back to its subpath start. `false` strokes an
-        /// open path — an unclosed `a:custGeom` (`119`).
+        /// Whether the figure joins back to its LAST subpath's start at the end.
+        /// `false` strokes an open path — an unclosed `a:custGeom` (`119`). A
+        /// DrawingML geometry closes each subpath with an explicit
+        /// [`PathCommand::Close`] instead and leaves this `false`, because one
+        /// path may close a subpath and go on to draw another.
         closed: bool,
     },
     /// A straight line / connector.

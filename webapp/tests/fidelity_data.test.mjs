@@ -135,8 +135,9 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // authoring are follow-ups — partial, not none.
   assert.equal(by["Text boxes & shapes"].editable, "partial");
   // Common shape model (fill/gradient, outline/dash/arrows, rotation/flip, wrap
-  // contour, preset geometry) is fully typed as of Layer 1; custGeom stays
-  // retained-not-typed, so semantic-mode round-trip remains partial.
+  // contour, all 187 preset geometries and the whole custGeom grammar, object
+  // names) is fully typed. Semantic-mode round-trip stays partial for shape
+  // effects (shadow/glow/3-D), linked boxes and renumbered drawing ids.
   assert.equal(by["Text boxes & shapes"].modeled, "full");
   assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
   // Notes can be inserted and their bodies edited like any other surface;

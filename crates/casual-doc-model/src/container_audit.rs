@@ -296,12 +296,13 @@ impl Outcome {
 /// The production half of one source file — everything above its test module —
 /// with line endings normalized.
 ///
-/// `include_str!` hands back the bytes as they sit on disk and this repository
-/// has **no `.gitattributes`**, so a Windows checkout is CRLF and any pattern
-/// spanning a line break silently stops matching there. That is not
-/// hypothetical: `casual-doc-wasm`'s equivalent guard passed on macOS and Linux
-/// and failed the `platform (Windows-x64)` job on its first CI run, on exactly
-/// this cut. So the normalization comes first.
+/// `include_str!` hands back the bytes as they sit on disk and this repository's
+/// `.gitattributes` pins **only the preset shape table** to LF, so a Windows
+/// checkout of a source file is CRLF and any pattern spanning a line break
+/// silently stops matching there. That is not hypothetical: `casual-doc-wasm`'s
+/// equivalent guard passed on macOS and Linux and failed the
+/// `platform (Windows-x64)` job on its first CI run, on exactly this cut. So the
+/// normalization comes first.
 ///
 /// A file with **no** test module is production in its entirety, which is the
 /// common case outside the editing crate. The cut exists only so the guard does

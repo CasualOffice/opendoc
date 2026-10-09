@@ -273,7 +273,7 @@
         "localeKey": "DE.Views.DocumentHolder.textEditPoints"
       },
       "rank": 4,
-      "note": "Custom geometry is retained verbatim on import but is not typed, so there is nothing for an editor to move."
+      "note": "Custom geometry is typed now — guides, every path command, adjust handles (docs/119) — and every preset's own definition is available to convert, so there is something to move; the gesture itself is not built (docs/109 FID-SH-02)."
     },
     {
       "id": "object.edit-smartart-structure",
@@ -446,14 +446,14 @@
               "literal": "SHAPE_GROUPS"
             }
           },
-          "missing": "the rest of the preset catalogue — 22 presets against their full Lines, Arrows, Flowchart, Callouts and Math sets"
+          "missing": "the rest of the preset catalogue: the engine draws all 187 ECMA-376 presets (docs/109 FID-L-04), but the gallery and insertShape offer the 22 typed ones (FID-SH-04)"
         }
       },
       "theirs": {
         "control": "btnInsertShape"
       },
       "rank": 3,
-      "note": "Our gallery offers exactly the presets the engine types, in OOXML tokens, so it grows with the model rather than by hand."
+      "note": "Our gallery offers exactly the presets the model types, in OOXML tokens, so it grows with the model rather than by hand. Drawing is no longer the limit: every preset a document carries is drawn from its ECMA-376 definition."
     },
     {
       "id": "object.insert-smartart",
@@ -483,7 +483,7 @@
         "control": "btnShapesMerge"
       },
       "rank": 5,
-      "note": "Their merge writes custom geometry, which our model does not type."
+      "note": "Their merge writes custom geometry, which our model now types and round-trips (docs/109 FID-G-02); the boolean operation that would produce it is what is absent."
     },
     {
       "id": "object.multi-select",

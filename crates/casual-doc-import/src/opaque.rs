@@ -14,6 +14,12 @@
 //! signature over regenerated content would be misleading. They are dropped and
 //! reported (`not-retained`) instead.
 //!
+//! The same reasoning applies, one step later, to the two retained parts that are
+//! *derived* from the content — the thumbnail and Word 2010's
+//! `stylesWithEffects.xml`. They are carried while the document is unedited and
+//! left behind, by name, once it is not: `RetainedParts::invalidated_by_edit`
+//! (`105` FID-R-05).
+//!
 //! Scope: a part referenced only from the document *body* survives as bytes and,
 //! when a first-class node re-references it (a chart/diagram/OLE embedded-object
 //! node, P1F-26/27), the writer emits its relationship from that node — so the
@@ -107,6 +113,161 @@ impl RetainedParts {
             })
             .fold(0_usize, usize::saturating_add)
     }
+
+    /// The side-table a save of an **edited** document may carry, and the parts
+    /// it must leave behind because they describe the document as it was.
+    ///
+    /// # Why (`105` FID-R-05)
+    ///
+    /// The side-table carries a part verbatim because the model does not consume
+    /// it — and most such parts are independent of the text (a glossary, a
+    /// customXml store, web settings). Two are not: they are *derived* from the
+    /// content the model does consume, so after an edit they contradict it.
+    ///
+    /// - **The thumbnail** (`_rels/.rels`, `…/metadata/thumbnail`): a picture of
+    ///   page one as it was at import. File browsers, search indexers and
+    ///   document libraries show it as the document. Word drops it on save when it
+    ///   is not regenerating one, which is what this engine can do; it cannot
+    ///   rasterise a replacement at save time.
+    /// - **`stylesWithEffects.xml`** (`…/stylesWithEffects`): Word 2010's second
+    ///   copy of the style sheet, which Word 2010 reads in preference to
+    ///   `styles.xml`. The semantic writer regenerates `styles.xml` from the model,
+    ///   so a style changed here would be shown in Word 2010 at its OLD
+    ///   definition. Word 2013 and later stop writing it; dropping it hands every
+    ///   reader the regenerated `styles.xml`, which is the current one.
+    ///
+    /// Both leave the package together with the relationship that reaches them,
+    /// so no relationship is left pointing at nothing; each is named in the
+    /// returned list so the caller can report it — a part invalidated in silence
+    /// would be the loss this module exists to prevent.
+    ///
+    /// Deliberately NOT here: a `customXml` store a content control is bound to
+    /// (`w:dataBinding`). Its staleness depends on whether the bound control's
+    /// TEXT changed, which only an XPath evaluation against the store can say;
+    /// dropping the store would unbind every control in the document. Recorded in
+    /// `109` as its own row.
+    ///
+    /// # Target resolution
+    ///
+    /// A root relationship's target resolves against the package root and a
+    /// document relationship's against `word/`, the directory the semantic writer
+    /// places the main document in and so the base those relationships are
+    /// re-emitted against.
+    ///
+    /// # Complexity
+    ///
+    /// O(relationships + parts), once per save.
+    #[must_use]
+    pub fn invalidated_by_edit(&self) -> (RetainedParts, Vec<InvalidatedPart>) {
+        let mut stale: Vec<(String, &'static str)> = Vec::new();
+        for relationship in &self.relationships {
+            if relationship.external {
+                continue;
+            }
+            if let Some(feature) = stale_relationship_feature(&relationship.relationship_type) {
+                stale.push((
+                    resolve_retained_target(relationship.owner, &relationship.target),
+                    feature,
+                ));
+            }
+        }
+        for part in &self.parts {
+            if part.content_type.as_deref() == Some(STYLES_WITH_EFFECTS_CONTENT_TYPE)
+                && !stale.iter().any(|(name, _)| name == &part.part_name)
+            {
+                stale.push((part.part_name.clone(), STALE_STYLES_WITH_EFFECTS));
+            }
+        }
+        let is_stale = |name: &str| stale.iter().any(|(stale_name, _)| stale_name == name);
+        let mut invalidated: Vec<InvalidatedPart> = self
+            .parts
+            .iter()
+            .filter(|part| is_stale(&part.part_name))
+            .map(|part| InvalidatedPart {
+                part_name: part.part_name.clone(),
+                feature: stale
+                    .iter()
+                    .find(|(name, _)| name == &part.part_name)
+                    .map_or(STALE_THUMBNAIL, |(_, feature)| feature),
+            })
+            .collect();
+        invalidated.sort_by(|left, right| left.part_name.cmp(&right.part_name));
+        let kept = RetainedParts {
+            parts: self
+                .parts
+                .iter()
+                .filter(|part| !is_stale(&part.part_name))
+                .cloned()
+                .collect(),
+            relationships: self
+                .relationships
+                .iter()
+                .filter(|relationship| {
+                    relationship.external
+                        || !is_stale(&resolve_retained_target(
+                            relationship.owner,
+                            &relationship.target,
+                        ))
+                })
+                .cloned()
+                .collect(),
+        };
+        (kept, invalidated)
+    }
+}
+
+/// A retained part [`RetainedParts::invalidated_by_edit`] left behind, and the
+/// stable feature identifier that names why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InvalidatedPart {
+    /// The normalized part name that was not carried into the save.
+    pub part_name: String,
+    /// The report feature naming the reason: [`STALE_THUMBNAIL`] or
+    /// [`STALE_STYLES_WITH_EFFECTS`].
+    pub feature: &'static str,
+}
+
+/// Report feature for a thumbnail an edit made stale.
+pub const STALE_THUMBNAIL: &str = "docx.export.stale.thumbnail";
+
+/// Report feature for a `stylesWithEffects.xml` an edit made stale.
+pub const STALE_STYLES_WITH_EFFECTS: &str = "docx.export.stale.styles_with_effects";
+
+/// The content type Word declares for `word/stylesWithEffects.xml`.
+const STYLES_WITH_EFFECTS_CONTENT_TYPE: &str = "application/vnd.ms-word.stylesWithEffects+xml";
+
+/// Which stale class a relationship type reaches, if any.
+fn stale_relationship_feature(relationship_type: &str) -> Option<&'static str> {
+    if relationship_type.ends_with("/metadata/thumbnail") {
+        Some(STALE_THUMBNAIL)
+    } else if relationship_type.ends_with("/stylesWithEffects") {
+        Some(STALE_STYLES_WITH_EFFECTS)
+    } else {
+        None
+    }
+}
+
+/// The normalized part name a retained relationship's target names, resolved
+/// against its owner's base (`""` for the root, `word/` for the document).
+fn resolve_retained_target(owner: RelationshipOwner, target: &str) -> String {
+    let (base, target) = match target.strip_prefix('/') {
+        Some(absolute) => ("", absolute),
+        None => match owner {
+            RelationshipOwner::Root => ("", target),
+            RelationshipOwner::Document => ("word/", target),
+        },
+    };
+    let mut segments: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
+    for segment in target.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    segments.join("/")
 }
 
 /// Whether a part is a digital-signature part (excluded from preservation:
