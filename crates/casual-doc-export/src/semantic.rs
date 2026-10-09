@@ -550,6 +550,30 @@ struct Ctx<'a> {
     embedded_parts: Option<&'a BTreeSet<String>>,
     rels: RelBuilder,
     tokens: IdTokens,
+    /// The one counter every part's frames take their `wp:docPr/@id` from
+    /// (`109` FID-SH-05).
+    doc_pr_ids: &'a DocPrIds,
+}
+
+/// The `wp:docPr/@id` counter for one written package (`109` FID-SH-05).
+///
+/// ECMA-376 §20.4.2.5 makes `@id` a unique identifier for the drawing object
+/// in the document, and Word writes 1, 2, 3, … across the body, the headers,
+/// the footers and the notes. This writer stamped `1` on every frame. One
+/// counter shared by every part's `Ctx` — a `Cell`, because the parts are
+/// written one after another and each holds it by shared reference — numbers
+/// them in write order, which is deterministic. Nothing reads the id back (the
+/// importer does not), so the round trip stays a fixed point.
+#[derive(Debug, Default)]
+struct DocPrIds(std::cell::Cell<u32>);
+
+impl DocPrIds {
+    /// The next id: 1 for the first frame written.
+    fn next(&self) -> u32 {
+        let id = self.0.get().saturating_add(1);
+        self.0.set(id);
+        id
+    }
 }
 
 /// Serializes a v1 `Document` to a DOCX package. `media` supplies binary image
@@ -692,11 +716,14 @@ pub fn export_package(
     for (id, _, _, _) in &embedded_rels {
         reserved_rel_ids.insert(id.clone());
     }
+    // One `wp:docPr/@id` sequence for the whole package (`109` FID-SH-05).
+    let doc_pr_ids = DocPrIds::default();
     let (document_xml, rels) = document_xml(
         document,
         &available_media,
         &available_embedded,
         reserved_rel_ids,
+        &doc_pr_ids,
     )?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
@@ -824,6 +851,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -857,6 +885,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -888,6 +917,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1043,6 +1073,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1099,6 +1130,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &[],
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1134,6 +1166,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -2039,6 +2072,7 @@ fn notes_xml(
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
     surface: &SurfaceEmbedded<'_>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images these notes use, declared by this part and reserved so a
@@ -2057,6 +2091,7 @@ fn notes_xml(
         embedded_parts: Some(surface.available),
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
+        doc_pr_ids,
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -2088,6 +2123,7 @@ fn comments_xml(
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
     surface: &SurfaceEmbedded<'_>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     let mut own_media: Vec<MediaRel> = Vec::new();
@@ -2104,6 +2140,7 @@ fn comments_xml(
         embedded_parts: Some(surface.available),
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
+        doc_pr_ids,
     };
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
@@ -2270,6 +2307,7 @@ fn header_footer_xml(
     available_media: &DefinitionMap<MediaId, MediaReference>,
     watermark: Option<&WatermarkShape<'_>>,
     surface: &SurfaceEmbedded<'_>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images this part uses, reserved so a hyperlink minted inside the part
@@ -2289,6 +2327,7 @@ fn header_footer_xml(
         embedded_parts: Some(surface.available),
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
+        doc_pr_ids,
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -4194,6 +4233,7 @@ fn document_xml(
     available_media: &DefinitionMap<MediaId, MediaReference>,
     available_embedded: &BTreeSet<String>,
     media_rel_ids: BTreeSet<String>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut doc = start("w:document");
@@ -4243,6 +4283,7 @@ fn document_xml(
         embedded_parts: Some(available_embedded),
         rels: RelBuilder::new(media_rel_ids),
         tokens: IdTokens::new(document.definitions(), available_media),
+        doc_pr_ids,
     };
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
@@ -6613,7 +6654,12 @@ fn write_inline(
                 &embed,
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
-                ObjectLabel::of(ctx.defs, drawing.id, ObjectName::GENERIC_PICTURE),
+                ObjectLabel::frame(
+                    ctx.defs,
+                    ctx.doc_pr_ids,
+                    drawing.id,
+                    ObjectName::GENERIC_PICTURE,
+                ),
                 PictureAppearance {
                     crop: drawing.crop.as_ref(),
                     opacity: drawing.opacity,
@@ -6644,7 +6690,12 @@ fn write_inline(
                 hlink
                     .as_ref()
                     .map(|(id, tip)| (id.as_str(), tip.as_deref())),
-                ObjectLabel::of(ctx.defs, drawing.id, ObjectName::GENERIC_PICTURE),
+                ObjectLabel::frame(
+                    ctx.defs,
+                    ctx.doc_pr_ids,
+                    drawing.id,
+                    ObjectName::GENERIC_PICTURE,
+                ),
             )?;
         }
         // An embedded object (chart / SmartArt diagram / OLE): the drawing wrapper
@@ -6798,6 +6849,9 @@ struct ObjectLabel<'a> {
     inner_title: Option<&'a str>,
     /// The object's DrawingML locks (`ObjectName::locks`, `109` FID-AT-09).
     locks: ObjectLocks,
+    /// The frame's `wp:docPr/@id` (`109` FID-SH-05); `0` for a label that
+    /// names no frame (a group child), which never writes a `wp:docPr`.
+    doc_pr_id: u32,
 }
 
 impl<'a> ObjectLabel<'a> {
@@ -6814,7 +6868,22 @@ impl<'a> ObjectLabel<'a> {
             inner_name: entry.and_then(|entry| entry.inner_name.as_deref()),
             inner_title: entry.and_then(|entry| entry.inner_title.as_deref()),
             locks: entry.map(|entry| entry.locks).unwrap_or_default(),
+            doc_pr_id: 0,
         }
+    }
+
+    /// The label of a FRAME (`wp:inline`/`wp:anchor`): [`ObjectLabel::of`],
+    /// numbered from the package's one `wp:docPr/@id` counter.
+    fn frame(defs: &'a Definitions, ids: &DocPrIds, id: NodeId, fallback: &'a str) -> Self {
+        Self {
+            doc_pr_id: ids.next(),
+            ..Self::of(defs, id, fallback)
+        }
+    }
+
+    /// Writes the frame's `wp:docPr/@id`.
+    fn push_doc_pr_id(self, element: &mut BytesStart<'_>) {
+        element.push_attribute(("id", self.doc_pr_id.to_string().as_str()));
     }
 
     /// Writes the frame's `wp:cNvGraphicFramePr`, which sits between
@@ -6927,7 +6996,7 @@ fn write_drawing(
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
+    label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
     if let Some(descr) = descr {
         doc_pr.push_attribute(("descr", descr));
@@ -7209,7 +7278,7 @@ fn write_anchored_drawing(
         anchor.wrap_polygon.as_deref(),
     )?;
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
+    label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
     if let Some(descr) = &drawing.descr {
         doc_pr.push_attribute(("descr", descr.as_str()));
@@ -7303,7 +7372,7 @@ fn write_group(
             anchor.wrap,
             anchor.wrap_text,
             anchor.wrap_polygon.as_deref(),
-            ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_GROUP),
+            ObjectLabel::frame(ctx.defs, ctx.doc_pr_ids, group.id, ObjectName::GENERIC_GROUP),
         )?;
     } else {
         write_extent_only(w, group)?;
@@ -7341,7 +7410,7 @@ fn write_wrap_after_extent(
     write_extent_only(w, group)?;
     write_wrap(w, wrap, side, polygon)?;
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
+    label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
@@ -8412,7 +8481,12 @@ fn write_embedded_object(
     {
         return Ok(());
     }
-    let label = ObjectLabel::of(ctx.defs, object.id, ObjectName::GENERIC_OBJECT);
+    let label = ObjectLabel::frame(
+        ctx.defs,
+        ctx.doc_pr_ids,
+        object.id,
+        ObjectName::GENERIC_OBJECT,
+    );
     match &object.kind {
         EmbeddedKind::Chart => write_graphic_object(w, &object.extent, label, CHART_URI, |w| {
             let mut chart = start("c:chart");
@@ -8469,7 +8543,7 @@ fn write_graphic_object(
     ext.push_attribute(("cy", extent.height_emu.to_string().as_str()));
     w.write_event(Event::Empty(ext)).map_err(pkg)?;
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
+    label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
@@ -8610,9 +8684,14 @@ fn write_text_box(
         "wp:inline"
     };
 
+    let label = ObjectLabel::frame(
+        ctx.defs,
+        ctx.doc_pr_ids,
+        text_box.id,
+        ObjectName::GENERIC_TEXT_BOX,
+    );
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
-    let label = ObjectLabel::of(ctx.defs, text_box.id, ObjectName::GENERIC_TEXT_BOX);
+    label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
     label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;

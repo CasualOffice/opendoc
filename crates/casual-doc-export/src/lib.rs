@@ -6464,6 +6464,59 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the header picture survives write -> reopen");
     }
 
+    /// Every frame in the package gets its own `wp:docPr/@id`, across the body
+    /// and the running parts (`109` FID-SH-05).
+    ///
+    /// ECMA-376 §20.4.2.5 makes the id unique within the document; Word numbers
+    /// 1, 2, 3, … across every part. The writer stamped `1` on every frame, so a
+    /// document with a picture in its header and two in its body wrote three
+    /// drawings all claiming to be object 1.
+    #[test]
+    fn every_frame_in_the_package_has_its_own_doc_pr_id() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let picture = r#"<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/><wp:docPr id="7" name="Logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let text_box = r#"<w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="7" name="Sidebar"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="0" name="Sidebar"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let namespaces = r#"xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps""#;
+        let document = format!(
+            r#"<w:document {namespaces}><w:body><w:p>{picture}</w:p><w:p>{text_box}</w:p><w:p>{picture}</w:p><w:sectPr><w:headerReference w:type="default" r:id="rId5"/></w:sectPr></w:body></w:document>"#
+        );
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>"#;
+        let header = format!(r#"<w:hdr {namespaces}><w:p>{picture}</w:p></w:hdr>"#);
+        let header_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/header1.xml", header.as_bytes()),
+            ("word/_rels/header1.xml.rels", header_rels),
+            ("word/media/logo.png", b"PNGDATA"),
+        ]);
+        let m1 = reopen(&source);
+        let written = write_document(
+            &m1,
+            &BTreeMap::from([("word/media/logo.png".to_owned(), b"PNGDATA".to_vec())]),
+        )
+        .unwrap();
+        let mut package = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        let mut ids: Vec<u32> = Vec::new();
+        for part in ["word/document.xml", "word/header1.xml"] {
+            let xml = String::from_utf8(package.read_part(part).unwrap()).unwrap();
+            for (index, _) in xml.match_indices("<wp:docPr id=\"") {
+                let rest = &xml[index + "<wp:docPr id=\"".len()..];
+                let id = rest[..rest.find('"').unwrap()].parse().unwrap();
+                ids.push(id);
+            }
+        }
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec![1, 2, 3, 4],
+            "four frames — three in the body, one in the header — are 1..4"
+        );
+    }
+
     #[test]
     fn one_media_part_referenced_twice_still_writes_a_valid_package() {
         // A logo placed in the header AND in the body is one media PART reached

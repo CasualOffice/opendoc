@@ -403,12 +403,13 @@ before. `fixtures/generated/preset-shapes.docx` puts 63 gallery presets and one
 guide-driven freeform on a page: **15 of 64** drew as themselves on `main`, **64
 of 64** now.
 
-**Still not done, and filed (`109` FID-SH-01 … FID-SH-05):** text inside a shape
+**Still not done, and filed (`109` FID-SH-01 … FID-SH-04):** text inside a shape
 is still laid out in the whole box rather than the evaluated `a:rect`; there is no
 adjust-handle or Edit Points gesture (the engine exposes `GeometryProgram::handles`
 for one); ODF export still writes the bounding `draw:rect` for a preset or a
-freeform; `insertShape` still offers only the 22 typed presets; and every
-`wp:docPr` is written with `id="1"`. Hit-testing stays rectangular (§6).
+freeform; and `insertShape` still offers only the 22 typed presets. Hit-testing
+stays rectangular (§6). (FID-SH-05, every `wp:docPr` written with `id="1"`, is
+closed: the writer numbers frames 1, 2, 3, … across every part.)
 
 ### Landed since: tight and through wrap follow the contour (FID-L-12)
 
