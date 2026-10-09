@@ -66,6 +66,28 @@ export async function gotoEditor(page, query = "") {
 }
 
 /**
+ * Opens the shipped `sample.docx` — what `/editor.html` opens with no fixture —
+ * and waits until it is painted with its real faces.
+ *
+ * The document a spec reaches for when it needs COMPATIBILITY FINDINGS: since
+ * `109` FID-AT-08/09/10 the engine carries everything `?fixture=rich` used to
+ * report, so that fixture opens with none and no findings chip, while
+ * `sample.docx` still reports its custom XML parts and theme details. Not on an
+ * empty status line, as `gotoEditor` does: `sample.docx` asks for script faces a
+ * checkout that has not provisioned them reports as unavailable there, and that
+ * note is not these specs' subject.
+ */
+export async function gotoSampleDocument(page, query = "") {
+  await page.goto(`/editor.html${query}`);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".page-wrap").length > 0 && document.body.dataset.fontsReady === "true",
+    null,
+    { timeout: 45_000 },
+  );
+}
+
+/**
  * Waits for a FRAMED editor to have booted the engine, opened its document and
  * finished its first render — `gotoEditor`'s condition, asked of a frame.
  *

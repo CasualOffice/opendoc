@@ -4,33 +4,28 @@
 // The chip was a `<span role="status">`: it could not be clicked or focused and
 // no command reached the report behind it (`desk-11-import-findings.png`), so a
 // reader was told something had been lost and given no way to find out what.
-// `?fixture=rich` is the compatibility document with findings to show.
+// `sample.docx` is the document with findings to show: since FID-AT-08/09/10 the
+// engine carries everything `?fixture=rich` used to report, so that fixture has
+// none (its chip is hidden, which the no-findings test below covers).
 //
 // The second half is `109` FID-AT-05, on the document the owner opened:
 // `sample.docx`, whose dialog listed `cNvPr/@name`, `fontScheme/@name` and
 // `docx.rsid ×165` under a headline of 183 kept findings. Each row now reads as
 // words with its id kept beside it, and Word's own bookkeeping is a collapsed,
 // labelled disclosure that the headline does not count.
-import { test, expect, MOD, gotoEditor, openFilePage, runPaletteCommand, stableBox } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  MOD,
+  gotoSampleDocument as openSample,
+  openFilePage,
+  runPaletteCommand,
+  stableBox,
+} from "./fixtures.mjs";
 import { makeLargeDocx } from "./large-docx.mjs";
 
 const chip = (page) => page.locator("#compatibilityStatus");
 const dialog = (page) => page.locator("#compatibilityFindingsDialog");
-
-/** Opens the shipped `sample.docx` — what `/editor.html` opens with no fixture —
- *  and waits until it is painted with its real faces. Not on an empty status
- *  line, as `gotoEditor` does: `sample.docx` asks for script faces a checkout
- *  that has not provisioned them reports as unavailable there, and that note is
- *  not this spec's subject. */
-async function openSample(page, query = "") {
-  await page.goto(`/editor.html${query}`);
-  await page.waitForFunction(
-    () =>
-      document.querySelectorAll(".page-wrap").length > 0 && document.body.dataset.fontsReady === "true",
-    null,
-    { timeout: 45_000 },
-  );
-}
 
 /** The sum of the group headlines the dialog prints. */
 async function headlineTotal(page) {
@@ -49,7 +44,7 @@ test("the findings chip is a button that opens what it counts, grouped by what h
   page,
   consoleErrors,
 }) => {
-  await gotoEditor(page);
+  await openSample(page);
   await expect(chip(page)).toBeVisible();
   await expect(chip(page)).toHaveRole("button");
   const counted = await chipCount(page);
@@ -79,7 +74,7 @@ test("the findings chip is a button that opens what it counts, grouped by what h
 });
 
 test("the palette and the File page open the same findings", async ({ page, consoleErrors }) => {
-  await gotoEditor(page);
+  await openSample(page);
   await page.keyboard.press(`${MOD}+Shift+P`);
   await page.locator("#cmdInput").fill("compatibility");
   const row = page.locator('#cmdList .cmd-item[data-command-id="file.compatibilityReport"]');
@@ -132,10 +127,15 @@ test("sample.docx's findings read as words, and Word's bookkeeping is one collap
   await expect(dialog(page)).toBeVisible();
 
   // Words first, where it is, and the engine's id kept beside them for support.
-  const decimal = dialog(page).locator('.findings-row[data-feature="decimalSymbol"]');
-  await expect(decimal.locator(".findings-name")).toHaveText("Decimal symbol used in calculations");
-  await expect(decimal.locator(".findings-where")).toHaveText("in the document settings");
-  await expect(decimal.locator(".findings-feature")).toHaveText("decimalSymbol");
+  // The rows asserted are the ones the engine still reports for sample.docx;
+  // the settings it used to (`decimalSymbol` and its siblings) are carried
+  // since FID-AT-10 and no longer findings at all.
+  const defaults = dialog(page).locator('.findings-row[data-feature="objectDefaults"]');
+  await expect(defaults.locator(".findings-name")).toHaveText(
+    "Theme's default look for new shapes, lines and text boxes",
+  );
+  await expect(defaults.locator(".findings-where")).toHaveText("in the theme");
+  await expect(defaults.locator(".findings-feature")).toHaveText("objectDefaults");
   const theme = dialog(page).locator('.findings-row[data-feature="theme/@name"]');
   await expect(theme.locator(".findings-name")).toHaveText("Document theme name");
   await expect(theme.locator(".findings-where")).toHaveText("in the theme");
@@ -149,7 +149,7 @@ test("sample.docx's findings read as words, and Word's bookkeeping is one collap
         name: row.querySelector(".findings-name")?.textContent ?? "",
       })),
     );
-  expect(rows.length, "sample.docx has findings for this to prove anything").toBeGreaterThan(10);
+  expect(rows.length, "sample.docx has findings for this to prove anything").toBeGreaterThan(4);
   expect(
     rows.filter((row) => row.name === row.feature || row.name === "" || row.name.startsWith("findings.")),
   ).toEqual([]);
@@ -204,10 +204,10 @@ test("the findings speak the interface's language, words and bookkeeping alike",
   await openSample(page, "?lang=de");
   await chip(page).click();
   await expect(dialog(page)).toBeVisible();
-  const decimal = dialog(page).locator('.findings-row[data-feature="decimalSymbol"]');
-  await expect(decimal.locator(".findings-name")).toHaveText("Dezimaltrennzeichen für Berechnungen");
-  await expect(decimal.locator(".findings-where")).toHaveText("in den Dokumenteinstellungen");
-  await expect(decimal.locator(".findings-feature")).toHaveText("decimalSymbol");
+  const theme = dialog(page).locator('.findings-row[data-feature="theme/@name"]');
+  await expect(theme.locator(".findings-name")).toHaveText("Name des Dokumentdesigns");
+  await expect(theme.locator(".findings-where")).toHaveText("im Design");
+  await expect(theme.locator(".findings-feature")).toHaveText("theme/@name");
   await expect(dialog(page).getByRole("button", { name: /Words eigene Verwaltungsdaten/ })).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
