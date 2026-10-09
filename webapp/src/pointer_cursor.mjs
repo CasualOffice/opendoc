@@ -440,14 +440,17 @@ export const CURSOR_TARGETS = [
     selector: null,
     gesture: "Dragging the object to a new position",
     why:
-      "The press starts a move (`startObjectMove` when `canMove`), so the pointer " +
-      "promises exactly that. This row also settles the linked-PICTURE case: " +
+      "The press starts a move — `startObjectMove` when `canMove`, or the in-text " +
+      "drag when `canMoveInText` (an in-line picture goes to another place in the " +
+      "words, `docs/109` UX-OB-02) — so the pointer promises exactly that, as " +
+      "ONLYOFFICE's does over an in-line picture. This row also settles the linked-PICTURE case: " +
       "`objectAt` is resolved before the link on pointer-down, so the object cursor " +
       "wins and a linked picture does NOT get `pointer`. ONLYOFFICE lands in the " +
       "same place — `checkDrawingHyperlinkAndMacro` fires the tooltip but only " +
       "overrides the cursor inside the text rect, which a picture is not " +
       "(`CommonController.js:861`) — and so does Word.",
-    when: (p) => !!p.object && !p.insideObject && p.object.canMove === true,
+    when: (p) =>
+      !!p.object && !p.insideObject && (p.object.canMove === true || p.object.canMoveInText === true),
   },
   {
     id: "object-selectable",
@@ -456,10 +459,10 @@ export const CURSOR_TARGETS = [
     selector: null,
     gesture: "Selecting the object",
     why:
-      "DIVERGENCE: ONLYOFFICE shows `move` over an INLINE picture too, because it " +
-      "can drag one. This engine cannot — an inline object reports `canMove: false` " +
-      "and the click only selects — and a cursor that promises a drag which does " +
-      "nothing is worse than the arrow. Docs also shows the arrow here.",
+      "An object that can move neither freely nor in the text — an in-line picture " +
+      "that is a link's or a field's content, say — is selected by the click and " +
+      "nothing more, and a cursor that promises a drag which does nothing is worse " +
+      "than the arrow. Its drag says why instead (`object_refusal.mjs`).",
     when: (p) => !!p.object && !p.insideObject,
   },
   // ---- Table boundaries, on ANY table on the page --------------------------
@@ -736,7 +739,7 @@ export const TARGET_BY_ID = new Map(CURSOR_TARGETS.map((row) => [row.id, row]));
  *  - `rotation`       the object's clockwise rotation in degrees
  *  - `formatPainting` the format painter is armed
  *  - `onPage`         the pointer is over a page sheet at all
- *  - `object`         `{ canMove }` for the object under the pointer
+ *  - `object`         `{ canMove, canMoveInText }` for the object under the pointer
  *  - `insideObject`   the pointer is inside the object currently being EDITED,
  *                     which makes it a text surface rather than a target
  *  - `formCheckbox`   the point is inside a form checkbox control

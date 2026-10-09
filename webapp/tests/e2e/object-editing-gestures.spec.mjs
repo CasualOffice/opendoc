@@ -339,26 +339,30 @@ test.describe("the keyboard on a selected picture", () => {
     expect(consoleErrors).toEqual([]);
   });
 
-  test("dragging an in-line picture says why it does not move (HF-259)", async ({ page, consoleErrors }) => {
+  test("dragging an in-line picture that cannot move says why (HF-259)", async ({ page, consoleErrors }) => {
     const at = await openWrapped(page);
     // Reach the in-line picture the way a keyboard user does: select any
-    // object, then Tab through the document's objects to it.
+    // object, then Tab through the document's objects to it. It is the RESULT
+    // of an INCLUDEPICTURE field, so it can be moved neither freely nor in the
+    // text on its own — an in-line picture in plain text now moves
+    // (`object-text-move.spec.mjs`, UX-OB-02), so this is the one that still
+    // has to explain itself.
     const start = at(FIELD_LOGO);
     await page.mouse.click(start.x, start.y);
     let found = false;
     for (let i = 0; i < 8 && !found; i++) {
       await page.keyboard.press("Tab");
-      const caps = await page.locator("#pages").getAttribute("data-object-capabilities");
+      const caps = ((await page.locator("#pages").getAttribute("data-object-capabilities")) ?? "").split(",");
       const kind = await page.locator("#pages").getAttribute("data-object-kind");
-      found = kind === "image" && !!caps && !caps.includes("canMove");
+      found = kind === "image" && !caps.includes("canMove") && !caps.includes("canMoveInText");
     }
-    expect(found, "the fixture's in-line picture is reachable").toBe(true);
+    expect(found, "the fixture's in-line field picture is reachable").toBe(true);
     const box = await outlineBox(page);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 30, { steps: 6 });
     await page.mouse.up();
-    await expect(page.locator("#status")).toContainText("Only a floating object can be moved freely");
+    await expect(page.locator("#status")).toContainText("part of a link, a field, a content control");
     expect(consoleErrors).toEqual([]);
   });
 });

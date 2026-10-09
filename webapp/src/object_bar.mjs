@@ -145,7 +145,8 @@ export function createObjectBar(io) {
     } else {
       if (state) barEl.appendChild(wrapRow(state));
       const hint = document.createElement("small");
-      hint.textContent = selection.canMove
+      // An in-line object moves too now, to another place in the text (UX-OB-02).
+      hint.textContent = selection.canMove || selection.canMoveInText
         ? (selection.canResize ? "Drag to move · handles to resize" : "Drag to move")
         : (selection.canResize ? "Drag handles to resize" : "");
       if (hint.textContent) barEl.appendChild(hint);

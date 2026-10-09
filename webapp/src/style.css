@@ -8172,6 +8172,30 @@ body.is-format-painting .page-wrap * {
   pointer-events: none;
 }
 
+/* Where an in-line object will land when a drag in the text is released
+   (`docs/109` UX-OB-02). The accent, not the ink of the text caret, so the two
+   are never confused while both are on screen, and it does not blink: it
+   follows the pointer. A copy (Ctrl, or Option on a Mac) wears a plus, Word's
+   own sign for a copying drag. Positioned by `object_text_move.mjs` from the
+   engine's `caretRect`. */
+.overlay .object-drop-caret {
+  position: absolute;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.overlay .object-drop-caret[data-copy="true"]::after {
+  content: "+";
+  position: absolute;
+  left: 4px;
+  top: -10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
 /* The object's outline is TURNED with the object rather than redrawn as its
    bounding box, so `transform-origin` has to be its own centre here too. */
 .overlay .object-outline {

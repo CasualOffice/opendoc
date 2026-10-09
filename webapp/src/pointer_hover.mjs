@@ -97,7 +97,8 @@ export function createPointerHover(host) {
     if (!probe.insideObject) {
       const object = doc.objectAt(page.pageNumber, x, y);
       if (object) {
-        probe.object = { canMove: host.objectCapabilities(object).canMove === true };
+        const can = host.objectCapabilities(object);
+        probe.object = { canMove: can.canMove === true, canMoveInText: can.canMoveInText === true };
         object.free?.();
         return probe;
       }
