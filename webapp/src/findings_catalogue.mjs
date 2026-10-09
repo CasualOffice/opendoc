@@ -137,8 +137,29 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "writeProtection/@*": entry("findings.feature.modifyPassword", CONTENT),
 
   // ---- Data stored with the document ---------------------------------------
+  // A store the engine could not name is reported by its part name.
   "customXml/itemN.xml": entry("findings.feature.customXml", CONTENT),
   "customXml/itemPropsN.xml": entry("findings.feature.customXmlProperties", CONTENT),
+  // A store the engine recognises by its root element is reported under a class
+  // id, with its part name as the location (`109` FID-AT-18,
+  // `casual-doc-import` `opaque::custom_xml_kind`). Kept verbatim either way;
+  // what changes is whether a reader would miss it.
+  //
+  // Bookkeeping: an item's identity record (an id and the schemas it uses — it
+  // never holds content), a bibliography store with no sources (Word writes one
+  // the moment the References citation style is touched; it holds only the
+  // style), and the two records a SharePoint library stamps on every file.
+  "docx.customXml.storeIdentity": entry("findings.feature.customXmlStoreIdentity", BOOKKEEPING),
+  "docx.customXml.bibliography.empty": entry("findings.feature.bibliographyStyleOnly", BOOKKEEPING),
+  "docx.customXml.sharepoint.contentType": entry("findings.feature.sharePointContentType", BOOKKEEPING),
+  "docx.customXml.sharepoint.forms": entry("findings.feature.sharePointForms", BOOKKEEPING),
+  // Content: sources a reader entered, metadata values a library holds, the
+  // cover page's own fields.
+  "docx.customXml.bibliography": entry("findings.feature.bibliographySources", CONTENT),
+  "docx.customXml.sharepoint.properties": entry("findings.feature.sharePointProperties", CONTENT),
+  "docx.customXml.coverPage": entry("findings.feature.coverPageProperties", CONTENT),
+  // Microsoft Purview's sensitivity-label record.
+  "docMetadata/LabelInfo.xml": entry("findings.feature.sensitivityLabel", CONTENT),
 
   // ---- Fonts and media the engine could not use ------------------------------
   "docx.font.embedded.*": entry("findings.feature.embeddedFontUnusable", CONTENT),
@@ -166,6 +187,23 @@ const PREFIXES = Object.keys(FEATURE_CATALOGUE)
   .filter((id) => id.endsWith("*"))
   .sort((a, b) => b.length - a.length);
 
+/** The catalogued PART names, by their lower-case spelling. OPC part names are
+ *  case-insensitive, and a producer that writes `customXML/item1.xml` names
+ *  the same part as `customXml/item1.xml` — which fell through to the generic
+ *  "A separate part of the file" until this matched it. Element and attribute
+ *  ids are case-sensitive XML names and are never matched this way. */
+const PART_IDS = new Map(
+  Object.keys(FEATURE_CATALOGUE)
+    .filter((id) => isPartName(id))
+    .map((id) => [id.toLowerCase(), id]),
+);
+
+/** Whether an id is a package part name: a path with a file extension and no
+ *  attribute step. */
+function isPartName(id) {
+  return /\/[^/@]+\.[A-Za-z0-9*]+$/.test(id) && !id.includes("@");
+}
+
 /** `customXml/item12.xml` -> `customXml/itemN.xml`: the number a part name
  *  carries before its extension is an index, not a different feature. */
 function numbered(feature) {
@@ -185,6 +223,10 @@ export function catalogueEntry(feature) {
   const indexed = numbered(id);
   if (indexed !== id && Object.hasOwn(FEATURE_CATALOGUE, indexed)) {
     return { id: indexed, ...FEATURE_CATALOGUE[indexed] };
+  }
+  if (isPartName(id)) {
+    const known = PART_IDS.get(id.toLowerCase()) ?? PART_IDS.get(indexed.toLowerCase());
+    if (known) return { id: known, ...FEATURE_CATALOGUE[known] };
   }
   const prefix = PREFIXES.find((candidate) => id.startsWith(candidate.slice(0, -1)));
   return prefix ? { id: prefix, ...FEATURE_CATALOGUE[prefix] } : null;
@@ -208,34 +250,36 @@ export function isBookkeeping(reportEntry) {
  */
 export function partArea(partName) {
   if (!partName) return null;
+  // Case-insensitive, as OPC part names are (`customXML/item1.xml`).
   const part = String(partName).replace(/^\//, "");
   const rules = [
-    [/^word\/document\d*\.xml$/, "body"],
-    [/^word\/header\d*\.xml$/, "header"],
-    [/^word\/footer\d*\.xml$/, "footer"],
-    [/^word\/footnotes\.xml$/, "footnotes"],
-    [/^word\/endnotes\.xml$/, "endnotes"],
-    [/^word\/comments[A-Za-z]*\.xml$/, "comments"],
-    [/^word\/settings\.xml$/, "settings"],
-    [/^word\/theme\//, "theme"],
-    [/^word\/styles(WithEffects)?\.xml$/, "styles"],
-    [/^word\/numbering\.xml$/, "numbering"],
-    [/^word\/fontTable\.xml$/, "fonts"],
-    [/^word\/fonts\//, "fonts"],
-    [/^word\/charts\//, "chart"],
-    [/^word\/diagrams\//, "diagram"],
-    [/^word\/glossary\//, "glossary"],
-    [/^word\/media\//, "media"],
-    [/^word\/embeddings\//, "embedding"],
-    [/^word\/webSettings\.xml$/, "webSettings"],
-    [/^docProps\//, "properties"],
-    [/^customXml\//, "customXml"],
+    [/^word\/document\d*\.xml$/i, "body"],
+    [/^word\/header\d*\.xml$/i, "header"],
+    [/^word\/footer\d*\.xml$/i, "footer"],
+    [/^word\/footnotes\.xml$/i, "footnotes"],
+    [/^word\/endnotes\.xml$/i, "endnotes"],
+    [/^word\/comments[A-Za-z]*\.xml$/i, "comments"],
+    [/^word\/settings\.xml$/i, "settings"],
+    [/^word\/theme\//i, "theme"],
+    [/^word\/styles(WithEffects)?\.xml$/i, "styles"],
+    [/^word\/numbering\.xml$/i, "numbering"],
+    [/^word\/fontTable\.xml$/i, "fonts"],
+    [/^word\/fonts\//i, "fonts"],
+    [/^word\/charts\//i, "chart"],
+    [/^word\/diagrams\//i, "diagram"],
+    [/^word\/glossary\//i, "glossary"],
+    [/^word\/media\//i, "media"],
+    [/^word\/embeddings\//i, "embedding"],
+    [/^word\/webSettings\.xml$/i, "webSettings"],
+    [/^docProps\//i, "properties"],
+    [/^customXml\//i, "customXml"],
+    [/^docMetadata\//i, "properties"],
     // OpenDocument packages.
-    [/^content\.xml$/, "body"],
-    [/^styles\.xml$/, "styles"],
-    [/^settings\.xml$/, "settings"],
-    [/^meta\.xml$/, "properties"],
-    [/^Pictures\//, "media"],
+    [/^content\.xml$/i, "body"],
+    [/^styles\.xml$/i, "styles"],
+    [/^settings\.xml$/i, "settings"],
+    [/^meta\.xml$/i, "properties"],
+    [/^Pictures\//i, "media"],
   ];
   for (const [pattern, area] of rules) if (pattern.test(part)) return area;
   return "part";

@@ -6402,6 +6402,8 @@ mod tests {
                     style_ref: None,
                     pstyle: None,
                     lvl_restart: None,
+                    template_code: None,
+                    tentative: false,
                 }],
                 multi_level_type: None,
                 num_style_link: None,

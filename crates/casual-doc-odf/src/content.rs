@@ -10071,6 +10071,8 @@ fn build_document(
                         style_ref: None,
                         pstyle: None,
                         lvl_restart: None,
+                        template_code: None,
+                        tentative: false,
                     })
                     .collect(),
                 multi_level_type: None,
@@ -11090,6 +11092,7 @@ fn build_inlines(
                     groups,
                     group_media_ids,
                 )?,
+                history: false,
             })),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
                 id,

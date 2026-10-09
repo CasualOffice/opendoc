@@ -5252,6 +5252,281 @@ mod semantic_tests {
         r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15">"#,
     );
 
+    /// A content control's own run formatting (`w:sdtPr/w:rPr`), its Word
+    /// 2013 colour (`w15:color`) and a building block's `w:docPartUnique`
+    /// survive an edited save (`109` FID-AT-19). The shapes are the owner's: an
+    /// incident form's checkbox controls (blue 16 pt, a teal boundary) and a
+    /// loan agreement's "Page Numbers (Bottom of Page)" footer gallery. Each was
+    /// reported and dropped — the `rPr` and each of its children separately.
+    ///
+    /// MUTATION: the importer's `w:sdtPr/w:rPr` arm removed fails with
+    /// `nothing about the controls is lost: ["rPr", "sz", "szCs"]`.
+    #[test]
+    fn a_content_controls_formatting_colour_and_unique_flag_survive_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w:body>
+            <w:p><w:sdt><w:sdtPr><w:rPr><w:color w:val="1F4E79"/><w:sz w:val="32"/><w:szCs w:val="28"/></w:rPr><w:id w:val="1613008741"/><w15:color w:val="33CCCC"/><w14:checkbox><w14:checked w14:val="0"/><w14:checkedState w14:val="0052" w14:font="Wingdings 2"/><w14:uncheckedState w14:val="00A3" w14:font="Wingdings 2"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>x</w:t></w:r></w:sdtContent></w:sdt></w:p>
+            <w:sdt><w:sdtPr><w:id w:val="1051663145"/><w:docPartObj><w:docPartGallery w:val="Page Numbers (Bottom of Page)"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:r><w:t>1</w:t></w:r></w:p></w:sdtContent></w:sdt>
+        </w:body></w:document>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+        ]);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let reported: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            reported.is_empty(),
+            "nothing about the controls is lost: {reported:?}"
+        );
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/document.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        for needle in [
+            r#"<w:sdtPr><w:rPr><w:color w:val="1F4E79"/><w:sz w:val="32"/><w:szCs w:val="28"/></w:rPr><w:id w:val="1613008741"/><w15:color w:val="33CCCC"/>"#,
+            r#"<w:docPartGallery w:val="Page Numbers (Bottom of Page)"/><w:docPartUnique/></w:docPartObj>"#,
+        ] {
+            assert!(
+                written.contains(needle),
+                "{needle} is written back: {written}"
+            );
+        }
+        let reopened = reopen(&bytes);
+        assert_eq!(
+            reopened.body(),
+            import.document.body(),
+            "the controls reopen exactly"
+        );
+    }
+
+    /// A paragraph mark's character style (`w:pPr/w:rPr/w:rStyle`) survives an
+    /// edited save (`109` FID-AT-19). It fell through to the generic run
+    /// property reader, which cannot resolve a style, and was reported and
+    /// dropped — five in each of two of the owner's documents.
+    ///
+    /// MUTATION: the importer's mark-`rStyle` arm removed fails with
+    /// `nothing about the mark is lost: ["rStyle"]`.
+    #[test]
+    fn a_paragraph_marks_character_style_survives_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="character" w:styleId="Strong"><w:name w:val="Strong"/><w:rPr><w:b/></w:rPr></w:style></w:styles>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:rPr><w:rStyle w:val="Strong"/></w:rPr></w:pPr><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+            ("word/document.xml", document),
+        ]);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let reported: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            reported.is_empty(),
+            "nothing about the mark is lost: {reported:?}"
+        );
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        // Style ids are re-minted on save, so the question is asked of the
+        // reopened document: the mark still names the style called "Strong".
+        let reopened = reopen(&bytes);
+        let Some(casual_doc_model::v1::BlockNode::Paragraph(paragraph)) = reopened.body().first()
+        else {
+            panic!("the paragraph reopens");
+        };
+        let style = paragraph
+            .properties
+            .mark_run
+            .as_ref()
+            .and_then(|mark| mark.style_ref)
+            .and_then(|id| reopened.definitions().styles.get(&id))
+            .and_then(|style| style.name.clone());
+        assert_eq!(
+            style.as_deref(),
+            Some("Strong"),
+            "the mark keeps its character style"
+        );
+    }
+
+    /// A list level keeps its List Library key (`w:tplc`) and Word's placeholder
+    /// flag (`w:tentative`) through a save (`109` FID-AT-16). The owner's loan
+    /// agreement carried 54 and 48 of them; every edited save dropped them, so
+    /// the list lost its gallery association and a placeholder level became
+    /// permanent.
+    ///
+    /// MUTATION: `write_level` leaving out `w:tplc` fails with
+    /// `w:tplc="04090001" is written back`.
+    #[test]
+    fn a_level_keeps_its_template_code_and_tentative_flag_through_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>item</w:t></w:r></w:p></w:body></w:document>"#;
+        let numbering = br#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0" w:tplc="04090001"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl><w:lvl w:ilvl="1" w:tplc="04090019" w:tentative="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/document.xml", document),
+            ("word/numbering.xml", numbering),
+        ]);
+        let document = reopen(&source);
+        let bytes = write_document(&document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/numbering.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        for attribute in [
+            r#"w:tplc="04090001""#,
+            r#"w:tplc="04090019" w:tentative="1""#,
+        ] {
+            assert!(
+                written.contains(attribute),
+                "{attribute} is written back: {written}"
+            );
+        }
+        assert_eq!(
+            written.matches("w:tentative").count(),
+            1,
+            "only the placeholder level says so: {written}"
+        );
+        assert_eq!(
+            reopen(&bytes).definitions().abstract_numbering,
+            document.definitions().abstract_numbering,
+            "the levels reopen exactly"
+        );
+    }
+
+    /// The rest of what Word writes into `settings.xml` that the owner's documents
+    /// carried (`109` FID-AT-15): the drawing grid, a legacy `w:compat` switch
+    /// (`w:ulTrailSpace`), `w:hdrShapeDefaults`, `w:attachedTemplate` (through
+    /// `settings.xml.rels`, external) and `w14:defaultImageDpi="32767"` — Word's
+    /// "High fidelity", which a bound of 10,000 refused. Every one was reported
+    /// and dropped by an edited save; each now survives in `CT_Settings` order
+    /// and raises no finding.
+    ///
+    /// MUTATIONS: the importer's compat branch reporting again → "nothing here
+    /// is a loss"; the writer leaving out the template relationship →
+    /// "settings.xml.rels declares the template".
+    #[test]
+    fn the_drawing_grid_compat_switches_header_shape_defaults_and_template_survive_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let settings_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate" Target="file:///C:\Templates\Report%20(1).dotx" TargetMode="External"/></Relationships>"#;
+        let settings = format!(
+            "{}{}</w:settings>",
+            WORD_SETTINGS_ROOT.replace(
+                "<w:settings ",
+                r#"<w:settings xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#
+            ),
+            concat!(
+                r#"<w:attachedTemplate r:id="rId7"/>"#,
+                r#"<w:defaultTabStop w:val="720"/>"#,
+                r#"<w:drawingGridHorizontalSpacing w:val="110"/>"#,
+                r#"<w:displayHorizontalDrawingGridEvery w:val="2"/>"#,
+                r#"<w:displayVerticalDrawingGridEvery w:val="2"/>"#,
+                r#"<w:hdrShapeDefaults><o:shapedefaults v:ext="edit" spidmax="2050"/></w:hdrShapeDefaults>"#,
+                r#"<w:compat><w:ulTrailSpace/><w:doNotExpandShiftReturn w:val="0"/><w:useFELayout/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
+                r#"<w14:defaultImageDpi w14:val="32767"/>"#,
+            )
+        );
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings.as_bytes()),
+            ("word/_rels/settings.xml.rels", settings_rels),
+        ]);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let reported: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(reported.is_empty(), "nothing here is a loss: {reported:?}");
+        let modeled = &import.document.definitions().settings;
+        assert_eq!(
+            modeled.attached_template.as_deref(),
+            Some(r"file:///C:\Templates\Report%20(1).dotx")
+        );
+        assert_eq!(modeled.drawing_grid.horizontal_spacing, Some(110));
+        assert_eq!(modeled.drawing_grid.display_vertical_every, Some(2));
+        assert_eq!(
+            modeled.compat_options,
+            vec!["ulTrailSpace".to_owned()],
+            "an off switch is the default"
+        );
+        assert_eq!(modeled.default_image_dpi, Some(32_767));
+
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let mut written_package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let written =
+            String::from_utf8(written_package.read_part("word/settings.xml").unwrap()).unwrap();
+        let sequence = [
+            r#"<w:attachedTemplate r:id="rId1"/>"#,
+            "<w:defaultTabStop ",
+            r#"<w:drawingGridHorizontalSpacing w:val="110"/>"#,
+            r#"<w:displayHorizontalDrawingGridEvery w:val="2"/>"#,
+            r#"<w:displayVerticalDrawingGridEvery w:val="2"/>"#,
+            r#"<w:hdrShapeDefaults><o:shapedefaults v:ext="edit" spidmax="2050"/></w:hdrShapeDefaults>"#,
+            "<w:compat><w:ulTrailSpace/><w:useFELayout/><w:compatSetting ",
+            r#"<w14:defaultImageDpi w14:val="32767"/>"#,
+        ];
+        let positions: Vec<usize> = sequence
+            .iter()
+            .map(|needle| {
+                written
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("{needle} is written: {written}"))
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "written in CT_Settings order {sequence:?}: {written}"
+        );
+        let rels = written_package
+            .read_part("word/_rels/settings.xml.rels")
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .unwrap_or_default();
+        assert!(
+            rels.contains("relationships/attachedTemplate")
+                && rels.contains(r#"TargetMode="External""#),
+            "settings.xml.rels declares the template: {rels}"
+        );
+        let reopened = reopen(&bytes);
+        assert_eq!(
+            &reopened.definitions().settings,
+            modeled,
+            "the settings reopen exactly"
+        );
+    }
+
     /// The settings Word writes into every document it saves were reported and
     /// dropped by every edited save (`109` FID-AT-10, found on `sample.docx`);
     /// Track Changes was read from an element that is in no schema and written
@@ -5683,26 +5958,21 @@ mod semantic_tests {
         assert_eq!(languages.east_asia.as_deref(), Some("zh-CN"));
     }
 
-    /// A password-protected restriction comes back password-less from a semantic
-    /// save — and the import report has to NAME that, because nothing else can.
+    /// A password-protected restriction comes back from a semantic save WITH its
+    /// password, every attribute of both groups on both elements, and nothing is
+    /// reported because nothing is lost (ADR-052, updated 2026-10-09).
     ///
-    /// This is the reproduction of the defect as a user meets it. The webapp
-    /// imports with `retain_source`, so an *untouched* save takes
-    /// `ExportMode::ExactIfUnchanged` and returns the original bytes with the
-    /// password intact; but `word/settings.xml` is a **consumed** part that the
-    /// semantic writer regenerates from the model unconditionally, and retained
-    /// parts are *extra* opaque parts, never an override for a generated one. So
-    /// one typed character is enough: the restriction survives, the password
-    /// material does not, and the recipient opens the file in Word and clicks
-    /// Stop Protection with no password.
-    ///
-    /// The test is deliberately written at the altitude `160` §4 argues for —
-    /// *survives or is reported* — so it holds whichever way the open decision on
-    /// re-emitting the hash goes. Verifying or rewriting password material is a
-    /// separate decision (ADR-052 declines it as a security boundary); what is
-    /// not a decision is that the loss must stop being silent.
+    /// This was the reproduction of the defect as a user met it, and it said so:
+    /// the webapp imports with `retain_source`, so an *untouched* save returns
+    /// the original bytes, but `word/settings.xml` is a **consumed** part the
+    /// semantic writer regenerates from the model, so one typed character was
+    /// enough for the restriction to survive and its password not to — the
+    /// recipient clicked Stop Protection in Word with no password. Its own
+    /// failure message asked for this rewrite: "if this fails, the model grew a
+    /// home for password material and this test should assert the round trip
+    /// instead of the report". It did (`PasswordVerifier`), and this does.
     #[test]
-    fn a_password_protected_restriction_saves_password_less_and_the_loss_is_reported() {
+    fn a_password_protected_restriction_keeps_every_password_attribute_through_a_save() {
         use casual_doc_model::v1::DocumentProtectionEdit;
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
         let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
@@ -5747,6 +6017,7 @@ mod semantic_tests {
                 .definitions()
                 .settings
                 .document_protection
+                .as_ref()
                 .map(|p| (p.edit, p.enforcement)),
             Some((DocumentProtectionEdit::ReadOnly, true))
         );
@@ -5758,63 +6029,138 @@ mod semantic_tests {
         let written_settings =
             String::from_utf8(written.read_part("word/settings.xml").unwrap()).unwrap();
 
-        // Half one: the password material is gone from the saved file. Asserted
-        // per attribute so a partial re-emission could not pass this by halves.
-        const PASSWORD_ATTRIBUTES: &[&str] = &[
-            "algIdExt",
-            "algIdExtSource",
-            "algorithmName",
-            "cryptAlgorithmClass",
-            "cryptAlgorithmSid",
-            "cryptAlgorithmType",
-            "cryptProvider",
-            "cryptProviderType",
-            "cryptProviderTypeExt",
-            "cryptProviderTypeExtSource",
-            "cryptSpinCount",
-            "hash",
-            "hashValue",
-            "salt",
-            "saltValue",
-            "spinCount",
+        // Half one: every attribute is back in the saved file, with its value.
+        // Asserted per attribute so a partial re-emission cannot pass by halves.
+        const PASSWORD_ATTRIBUTES: &[(&str, &str)] = &[
+            ("algIdExt", "00000000"),
+            ("algIdExtSource", "com.microsoft.office"),
+            ("algorithmName", "SHA-512"),
+            ("cryptAlgorithmClass", "hash"),
+            ("cryptAlgorithmSid", "14"),
+            ("cryptAlgorithmType", "typeAny"),
+            (
+                "cryptProvider",
+                "Microsoft Enhanced RSA and AES Cryptographic Provider",
+            ),
+            ("cryptProviderType", "rsaAES"),
+            ("cryptProviderTypeExt", "00000000"),
+            ("cryptProviderTypeExtSource", "com.microsoft.office"),
+            ("cryptSpinCount", "100000"),
+            ("hash", "cXV1eA=="),
+            ("hashValue", "Z3JhdWx0"),
+            ("salt", "Y29yZ2U="),
+            ("saltValue", "Z2FycGx5"),
+            ("spinCount", "100000"),
         ];
-        for attribute in PASSWORD_ATTRIBUTES {
+        let protection = written_settings
+            .split("<w:documentProtection ")
+            .nth(1)
+            .and_then(|tail| tail.split("/>").next())
+            .expect("the restriction is written");
+        for (attribute, value) in PASSWORD_ATTRIBUTES {
             assert!(
-                !written_settings.contains(&format!("w:{attribute}=")),
-                "w:{attribute} is not re-emitted by the semantic writer (if this \
-                 fails, the model grew a home for password material and this test \
-                 should assert the round trip instead of the report)"
+                protection.contains(&format!(r#"w:{attribute}="{value}""#)),
+                "w:{attribute} is written back on w:documentProtection: {protection}"
             );
         }
         assert!(
-            written_settings.contains(r#"w:edit="readOnly""#),
-            "the restriction itself survives the save - that is what makes the \
-             dropped password a document-safety defect and not a cosmetic one"
+            protection.contains(r#"w:edit="readOnly""#),
+            "the restriction itself survives the save"
         );
+        let write = written_settings
+            .split("<w:writeProtection ")
+            .nth(1)
+            .and_then(|tail| tail.split("/>").next())
+            .expect("write protection is written");
+        for attribute in [
+            r#"w:algorithmName="SHA-512""#,
+            r#"w:hashValue="Zm9v""#,
+            r#"w:saltValue="YmFy""#,
+            r#"w:spinCount="100000""#,
+        ] {
+            assert!(
+                write.contains(attribute),
+                "{attribute} is written back on w:writeProtection: {write}"
+            );
+        }
 
-        // Half two: the loss is NAMED. Every attribute the source carried, on
-        // both elements, reaches the compatibility report the host surfaces.
+        // Half two: nothing is lost, so nothing is reported.
         let reported: Vec<&str> = import
             .report
             .entries
             .iter()
             .map(|entry| entry.feature.as_str())
+            .filter(|feature| {
+                feature.starts_with("documentProtection") || feature.starts_with("writeProtection")
+            })
             .collect();
-        for attribute in PASSWORD_ATTRIBUTES {
-            let feature = format!("documentProtection/@{attribute}");
+        assert!(
+            reported.is_empty(),
+            "a kept attribute is not a loss: {reported:?}"
+        );
+    }
+
+    /// A Restrict Editing or read-only password survives an edited save,
+    /// verbatim (ADR-052, updated 2026-10-09).
+    ///
+    /// `word/settings.xml` is regenerated from the model on a semantic save, and
+    /// the model used to carry the restriction without its verifier, so a
+    /// password-protected form came back liftable in Word by anyone. The values
+    /// here are the shape Word writes for a legacy SHA-512 verifier (synthetic
+    /// bytes) and for the ISO form on `w:writeProtection`.
+    ///
+    /// MUTATION: `push_password` writing nothing fails with
+    /// "w:cryptProviderType=\"rsaAES\" is written back".
+    #[test]
+    fn a_protection_password_survives_a_save_verbatim() {
+        use casual_doc_model::v1::PasswordAttribute;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let document_xml = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let settings_xml = br#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:writeProtection w:recommended="1" w:algorithmName="SHA-512" w:hashValue="Zm9vYmFy" w:saltValue="c2FsdA==" w:spinCount="100000"/><w:documentProtection w:edit="forms" w:enforcement="1" w:cryptProviderType="rsaAES" w:cryptAlgorithmClass="hash" w:cryptAlgorithmType="typeAny" w:cryptAlgorithmSid="14" w:cryptSpinCount="100000" w:hash="aGFzaA==" w:salt="c2FsdA=="/></w:settings>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/_rels/document.xml.rels", document_rels),
+            ("word/document.xml", document_xml),
+            ("word/settings.xml", settings_xml),
+        ]);
+        let document = reopen(&source);
+        let bytes = write_document(&document, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let written = String::from_utf8(package.read_part("word/settings.xml").unwrap()).unwrap();
+        for attribute in [
+            r#"w:cryptProviderType="rsaAES""#,
+            r#"w:cryptAlgorithmClass="hash""#,
+            r#"w:cryptAlgorithmType="typeAny""#,
+            r#"w:cryptAlgorithmSid="14""#,
+            r#"w:cryptSpinCount="100000""#,
+            r#"w:hash="aGFzaA==""#,
+            r#"w:salt="c2FsdA==""#,
+            r#"w:algorithmName="SHA-512""#,
+            r#"w:hashValue="Zm9vYmFy""#,
+        ] {
             assert!(
-                reported.contains(&feature.as_str()),
-                "{feature} must be reported, not silently dropped; report held {reported:?}"
+                written.contains(attribute),
+                "{attribute} is written back:\n{written}"
             );
         }
-        for attribute in ["algorithmName", "hashValue", "saltValue", "spinCount"] {
-            let feature = format!("writeProtection/@{attribute}");
-            assert!(
-                reported.contains(&feature.as_str()),
-                "{feature} must be reported too - `w:writeProtection` carries the \
-                 same two password groups; report held {reported:?}"
-            );
-        }
+        let reopened = reopen(&bytes);
+        let settings = &reopened.definitions().settings;
+        assert_eq!(
+            settings.document_protection,
+            document.definitions().settings.document_protection,
+            "the restriction and its verifier reopen exactly"
+        );
+        assert_eq!(
+            settings
+                .write_protection
+                .as_ref()
+                .and_then(|write| write.password.as_ref())
+                .and_then(|password| password.get(PasswordAttribute::SpinCount)),
+            Some("100000")
+        );
     }
 
     /// `w:enforcement` is written EXPLICITLY in both directions, never omitted.
@@ -5845,6 +6191,7 @@ mod semantic_tests {
                 edit: DocumentProtectionEdit::ReadOnly,
                 enforcement,
                 formatting: false,
+                password: None,
             });
             let bytes = write_document(&document, &BTreeMap::new()).unwrap();
             let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
@@ -5854,6 +6201,7 @@ mod semantic_tests {
                 .definitions()
                 .settings
                 .document_protection
+                .clone()
                 .expect("the restriction survives the round trip");
             (settings, reopened.enforcement)
         };
@@ -5929,6 +6277,7 @@ mod semantic_tests {
                 .definitions()
                 .settings
                 .document_protection
+                .clone()
                 .expect("the element is present, so a restriction is modeled");
             let locked: Vec<bool> = document
                 .definitions()

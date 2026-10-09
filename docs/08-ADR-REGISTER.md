@@ -2508,6 +2508,21 @@ costed against a fallback that does not exist.
   **not** to verify or re-emit password material stands, untouched and still open; what
   changed is only that it stopped being silent. `docs/160` §7 item 5 asked for exactly
   this, as "report at minimum".
+- **Update (2026-10-09): password material is now KEPT and re-emitted, verbatim; it is still
+  never verified.** `109` FID-AT-14, from the owner's own documents: a loan agreement whose form
+  protection carried a SHA-512 legacy verifier showed seven "Password for Restrict Editing"
+  rows as "shown approximately", and an edited save returned the form liftable in Word by
+  anyone — the author's deterrent silently removed. Re-emitting closes that without
+  advertising a boundary: `DocumentProtection::password` and `WriteProtection::password` hold
+  the sixteen attributes as the file stated them (`PasswordVerifier`, bounded at 1,024 bytes a
+  value; an over-long one is not stored and stays a finding) and the writer puts them back.
+  What did NOT change: nothing asks for or checks the password, and nothing claims the
+  restriction is enforced against an adversary. The open half is settled by the operation
+  that already exists: a restriction set or lifted HERE carries no verifier, so a reader who
+  lifts a passworded restriction removes the password (what Word leaves after its own Stop
+  Protection), Undo restores it with the restriction, and the host is told before Apply
+  (`documentProtection().password`, the Restrict Editing dialog's note) and after (the status
+  line). Prompt-compare-lift as a labelled deterrent remains what a host may ask for later.
 - **A second document-safety defect in the same element, found with it and fixed with it:
   `w:enforcement` has three states and was read as two.** MS-OI29500 Part 1 §17.15.1.29:
   "Word enforces protection when this attribute is missing." The importer treated an

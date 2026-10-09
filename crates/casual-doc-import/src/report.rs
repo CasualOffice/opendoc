@@ -454,6 +454,11 @@ pub struct PartDisposition {
     pub part_name: String,
     /// Declared content type, if the package declared one.
     pub content_type: Option<String>,
+    /// The class id the part is reported under when it is a store the importer
+    /// recognises by its content (`docx.customXml.bibliography.empty`, …, `109`
+    /// FID-AT-18), so a host can say what it is; `None` reports it under its
+    /// own part name, as every part was before.
+    pub kind: Option<&'static str>,
 }
 
 /// One whole-part disposition ready for the report: the part itself, its
@@ -1120,7 +1125,9 @@ impl CompatibilityReport {
     ) {
         for (part, disposition, ledger_id) in parts {
             self.entries.push(CompatibilityEntry {
-                feature: part.part_name.clone(),
+                feature: part
+                    .kind
+                    .map_or_else(|| part.part_name.clone(), str::to_owned),
                 occurrences: 1,
                 location: FeatureLocation {
                     part_name: Some(part.part_name.clone()),

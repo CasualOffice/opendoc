@@ -27,9 +27,12 @@ use casual_doc_model::v1::{
     NotePosition, NoteProperties, ProofState, WriteProtection, Zoom, ZoomMode,
 };
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
-use casual_doc_model::v1::{DocumentView, ThemeFontLanguages};
+use casual_doc_model::v1::{DocumentView, PasswordAttribute, PasswordVerifier, ThemeFontLanguages};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::{LEGACY_COMPAT_OPTIONS, MAX_ATTACHED_TEMPLATE_BYTES};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use std::collections::BTreeMap;
 
 use crate::config::ImportConfig;
 use crate::error::ImportError;
@@ -38,9 +41,13 @@ use crate::report::Reporter;
 
 /// Parses the settings part, returning the modeled subset (default when none of
 /// the recognized settings appear). Every unmodeled top-level setting — and every
-/// non-`compatSetting` child of `w:compat` — is reported.
+/// `w:compat` child that is not a known switch — is reported.
+///
+/// `templates` maps the part's `attachedTemplate` relationship ids to their
+/// targets (`settings.xml.rels`), which is where `w:attachedTemplate` points.
 pub(crate) fn parse(
     xml: &[u8],
+    templates: &BTreeMap<String, String>,
     reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<DocumentSettings, ImportError> {
@@ -141,6 +148,7 @@ pub(crate) fn parse(
                         &element,
                         false,
                         &bindings,
+                        templates,
                         &mut settings,
                         reporter,
                     ),
@@ -164,6 +172,7 @@ pub(crate) fn parse(
                         &element,
                         true,
                         &bindings,
+                        templates,
                         &mut settings,
                         reporter,
                     ),
@@ -245,13 +254,15 @@ impl Bindings {
     }
 }
 
-/// The two settings kept as verbatim fragments.
+/// The settings kept as verbatim fragments.
 #[derive(Clone, Copy)]
 enum Fragment {
     /// `m:mathPr`.
     MathProperties,
     /// `w:shapeDefaults`.
     ShapeDefaults,
+    /// `w:hdrShapeDefaults` — the same VML defaults, for headers and footers.
+    HeaderShapeDefaults,
 }
 
 impl Fragment {
@@ -263,6 +274,9 @@ impl Fragment {
         match element.local_name().as_ref() {
             b"mathPr" if uri == Some(FRAGMENT_NAMESPACES[1].1) => Some(Self::MathProperties),
             b"shapeDefaults" if uri == Some(FRAGMENT_NAMESPACES[0].1) => Some(Self::ShapeDefaults),
+            b"hdrShapeDefaults" if uri == Some(FRAGMENT_NAMESPACES[0].1) => {
+                Some(Self::HeaderShapeDefaults)
+            }
             _ => None,
         }
     }
@@ -272,6 +286,7 @@ impl Fragment {
         match self {
             Self::MathProperties => b"mathPr",
             Self::ShapeDefaults => b"shapeDefaults",
+            Self::HeaderShapeDefaults => b"hdrShapeDefaults",
         }
     }
 }
@@ -379,6 +394,7 @@ impl Capture {
         match kind {
             Fragment::MathProperties => settings.math_properties_xml = Some(fragment),
             Fragment::ShapeDefaults => settings.shape_defaults_xml = Some(fragment),
+            Fragment::HeaderShapeDefaults => settings.header_shape_defaults_xml = Some(fragment),
         }
     }
 }
@@ -411,6 +427,7 @@ fn on_setting(
     element: &BytesStart<'_>,
     self_closing: bool,
     bindings: &Bindings,
+    templates: &BTreeMap<String, String>,
     settings: &mut DocumentSettings,
     reporter: &mut Reporter,
 ) {
@@ -432,7 +449,14 @@ fn on_setting(
                     reporter.report(local);
                 }
             }
-            _ => reporter.report_element(local, element, self_closing),
+            _ => match core::str::from_utf8(local) {
+                Ok(name) if DocumentSettings::is_compat_option(name) => {
+                    if on_off(element) {
+                        push_compat_option(name, settings);
+                    }
+                }
+                _ => reporter.report_element(local, element, self_closing),
+            },
         }
         return;
     }
@@ -453,83 +477,50 @@ fn on_setting(
     if matches!(local, b"footnotePr" | b"endnotePr") {
         return;
     }
-    if apply_setting(local, element, bindings, settings) {
+    if apply_setting(local, element, bindings, templates, settings) {
         report_unmodeled_attributes(reporter, local, element);
     } else {
         reporter.report_element(local, element, self_closing);
     }
 }
 
-/// The `AG_Password` and `AG_TransitionalPassword` attribute groups, which
-/// `w:documentProtection` (`CT_DocProtect`) and `w:writeProtection`
-/// (`CT_WriteProtection`) both carry and this model represents nowhere.
+/// A protection element's password verifier, verbatim (ADR-052, updated
+/// 2026-10-09): every one of the sixteen `AG_Password` and
+/// `AG_TransitionalPassword` attributes the element states, or `None` when it
+/// states none.
 ///
-/// Sorted by name, so the two groups are interleaved rather than in blocks.
-/// `AG_Password` is the legacy twelve Word has always written (`w:hash`,
-/// `w:salt`, `w:cryptProviderType`, `w:cryptAlgorithmClass`,
-/// `w:cryptAlgorithmType`, `w:cryptAlgorithmSid`, `w:cryptSpinCount`,
-/// `w:cryptProvider`, `w:algIdExt`, `w:algIdExtSource`,
-/// `w:cryptProviderTypeExt`, `w:cryptProviderTypeExtSource`).
-/// `AG_TransitionalPassword` is the Office-2010 ISO verifier form Word writes
-/// *instead* when `UseIsoPasswordVerifier` is set — `w:algorithmName`,
-/// `w:hashValue`, `w:saltValue`, `w:spinCount` — so a modern file's password
-/// material may be entirely in those four. ADR-052 and `docs/160` §7 item 5 each
-/// enumerated only the legacy five or seven until this landed; both now name the
-/// sixteen.
-const PASSWORD_ATTRIBUTES: &[&[u8]] = &[
-    b"algIdExt",
-    b"algIdExtSource",
-    b"algorithmName",
-    b"cryptAlgorithmClass",
-    b"cryptAlgorithmSid",
-    b"cryptAlgorithmType",
-    b"cryptProvider",
-    b"cryptProviderType",
-    b"cryptProviderTypeExt",
-    b"cryptProviderTypeExtSource",
-    b"cryptSpinCount",
-    b"hash",
-    b"hashValue",
-    b"salt",
-    b"saltValue",
-    b"spinCount",
-];
+/// Until 2026-10-09 these were reported and dropped, so a password-protected
+/// restriction saved password-less — liftable in Word by anyone. They are now
+/// kept and written back; nothing verifies them, and nothing claims the
+/// restriction is a security boundary (the legacy hash is removable by editing
+/// one attribute, and Word documents it as a deterrent). An empty value says
+/// nothing and is skipped (a producer may write `w:hash=""`); an over-long one
+/// is not stored and is reported by [`report_unmodeled_attributes`].
+///
+/// Complexity: O(16) attribute lookups on the one element.
+fn password_verifier(element: &BytesStart<'_>) -> Option<PasswordVerifier> {
+    let mut verifier = PasswordVerifier::default();
+    for attribute in PasswordAttribute::ALL {
+        if let Some(value) = attribute_value(element, attribute.local_name().as_bytes()) {
+            verifier.set(attribute, value);
+        }
+    }
+    (!verifier.is_empty()).then_some(verifier)
+}
 
-/// Reports the **attributes** of an otherwise-modeled settings element whose
-/// meaning the model does not carry — today, exactly the password groups on the
-/// two protection elements.
+/// Reports the **attributes** of an otherwise-modeled settings element that the
+/// model could not keep: an over-long `w:themeFontLang` language, and a password
+/// attribute whose value is longer than [`PasswordVerifier::MAX_VALUE_LEN`].
 ///
-/// This function exists because `apply_setting` returns *handled* for
-/// `w:documentProtection` and `w:writeProtection`, and the catch-all at the end
-/// of [`on_setting`] fires only on the `false` branch. "Handled" marked the whole
-/// element consumed, so its unread attributes fell through the only reporter in
-/// reach and were dropped **in total silence**: `word/settings.xml` is a consumed
-/// part that the semantic writer regenerates from the model, and retained parts
-/// are extra opaque parts rather than an override for a generated one, so there
-/// is no byte floor behind these either. A password-protected document therefore
-/// saved password-less while the restriction survived, and nothing anywhere said
-/// so. That is `AGENTS.md`'s no-silent-data-loss rule, and `SKILL.md` §1
-/// advantage 2 — verbatim retention is only an advantage if the loss is
-/// *reported*.
+/// This function exists because `apply_setting` returns *handled* for these
+/// elements, and the catch-all at the end of [`on_setting`] fires only on the
+/// `false` branch, so an attribute the model could not hold would otherwise be
+/// dropped in silence: `word/settings.xml` is regenerated from the model on a
+/// semantic save, and there is no byte floor behind it. The shape mirrors
+/// `numbering.rs`'s `report_unmodeled_attributes` (`docs/142` LST-31).
 ///
-/// It is a report rather than a round trip on purpose. ADR-052 decided opendoc
-/// will **not** verify password material as a security boundary (the legacy hash
-/// is removable by editing one attribute, and Word documents it as a deterrent),
-/// and re-emitting a hash the engine cannot verify is a separate decision an
-/// owner has to make. Reporting it needs no decision at all.
-///
-/// The shape mirrors `numbering.rs`'s `report_unmodeled_attributes` (`docs/142`
-/// LST-31), which exists for the same reason in the same position: a parser that
-/// matches on element names cannot see an attribute on an element it recognises.
-///
-/// Empty values are skipped. `docs/160` §3's reduction is that an attribute whose
-/// value says nothing is not a loss — a producer may legitimately write
-/// `w:hash=""` — and a false finding is the failure mode HF-174 put 621 of in
-/// front of the owner.
-///
-/// Complexity: O(A) in the attributes of the one element being opened, with a
-/// 16-name comparison each, and there is at most one of each protection element
-/// per document. No document walk.
+/// Complexity: O(A) in the attributes of the one element being opened. No
+/// document walk.
 fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
     if local == b"themeFontLang" {
         // A language the model's bound refuses is the one thing `w:themeFontLang`
@@ -544,9 +535,12 @@ fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &
     if !matches!(local, b"documentProtection" | b"writeProtection") {
         return;
     }
-    for attribute in PASSWORD_ATTRIBUTES {
-        if attribute_value(element, attribute).is_some_and(|value| !value.is_empty()) {
-            reporter.report_attribute(local, attribute);
+    for attribute in PasswordAttribute::ALL {
+        let name = attribute.local_name().as_bytes();
+        if attribute_value(element, name)
+            .is_some_and(|value| !value.is_empty() && !PasswordVerifier::is_storable(&value))
+        {
+            reporter.report_attribute(local, name);
         }
     }
 }
@@ -621,6 +615,7 @@ fn apply_setting(
     local: &[u8],
     element: &BytesStart<'_>,
     bindings: &Bindings,
+    templates: &BTreeMap<String, String>,
     settings: &mut DocumentSettings,
 ) -> bool {
     match local {
@@ -671,11 +666,13 @@ fn apply_setting(
                 edit: protection_edit(element),
                 enforcement: enforcement(element),
                 formatting: attr_flag(element, b"formatting"),
+                password: password_verifier(element),
             });
         }
         b"writeProtection" => {
             settings.write_protection = Some(WriteProtection {
                 recommended: attr_flag(element, b"recommended"),
+                password: password_verifier(element),
             });
         }
         b"zoom" => {
@@ -731,6 +728,49 @@ fn apply_setting(
                 _ => return false,
             }
         }
+        // Word's drawing grid (Layout ▸ Align ▸ Grid Settings), `109` FID-AT-15.
+        b"drawingGridHorizontalSpacing"
+        | b"drawingGridVerticalSpacing"
+        | b"drawingGridHorizontalOrigin"
+        | b"drawingGridVerticalOrigin" => {
+            let Some(value) = bounded_int(element, 0..=31_680).and_then(|v| u32::try_from(v).ok())
+            else {
+                return false;
+            };
+            let grid = &mut settings.drawing_grid;
+            *match local {
+                b"drawingGridHorizontalSpacing" => &mut grid.horizontal_spacing,
+                b"drawingGridVerticalSpacing" => &mut grid.vertical_spacing,
+                b"drawingGridHorizontalOrigin" => &mut grid.horizontal_origin,
+                _ => &mut grid.vertical_origin,
+            } = Some(value);
+        }
+        b"displayHorizontalDrawingGridEvery" | b"displayVerticalDrawingGridEvery" => {
+            let Some(value) = bounded_int(element, 0..=32_767).and_then(|v| u32::try_from(v).ok())
+            else {
+                return false;
+            };
+            if local == b"displayHorizontalDrawingGridEvery" {
+                settings.drawing_grid.display_horizontal_every = Some(value);
+            } else {
+                settings.drawing_grid.display_vertical_every = Some(value);
+            }
+        }
+        b"doNotUseMarginsForDrawingGridOrigin" => {
+            settings.drawing_grid.do_not_use_margins_for_origin = on_off(element);
+        }
+        // The template's TARGET lives in `settings.xml.rels`; `parse` resolves
+        // the id once the part has been read (`resolve_attached_template`).
+        // The template's TARGET lives in `settings.xml.rels`, resolved here by
+        // the element's `r:id`; an id the part's relationships do not name, or a
+        // target over the bound, is reported rather than invented.
+        b"attachedTemplate" => match attribute_value(element, b"id")
+            .and_then(|id| templates.get(&id))
+            .filter(|target| !target.is_empty() && target.len() <= MAX_ATTACHED_TEMPLATE_BYTES)
+        {
+            Some(target) => settings.attached_template = Some(target.clone()),
+            None => return false,
+        },
         b"defaultImageDpi" => match attribute_value(element, b"val")
             .and_then(|value| value.trim().parse::<u32>().ok())
             .filter(|dpi| DocumentSettings::is_valid_image_dpi(*dpi))
@@ -785,6 +825,26 @@ fn push_compat_setting(element: &BytesStart<'_>, settings: &mut DocumentSettings
     let val = bounded(b"val").unwrap_or_default();
     settings.compat.push(CompatSetting { name, uri, val });
     true
+}
+
+/// Records a `w:compat` switch that is on, keeping
+/// [`DocumentSettings::compat_options`] in schema order and free of repeats.
+/// O(65).
+fn push_compat_option(name: &str, settings: &mut DocumentSettings) {
+    let rank = |option: &str| {
+        LEGACY_COMPAT_OPTIONS
+            .iter()
+            .position(|known| *known == option)
+    };
+    if settings.compat_options.iter().any(|held| held == name) {
+        return;
+    }
+    let at = settings
+        .compat_options
+        .iter()
+        .position(|held| rank(held) > rank(name))
+        .unwrap_or(settings.compat_options.len());
+    settings.compat_options.insert(at, name.to_owned());
 }
 
 /// Reads an OOXML `CT_OnOff` element value: present means `true` unless its

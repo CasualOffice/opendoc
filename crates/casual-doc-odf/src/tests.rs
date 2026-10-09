@@ -957,6 +957,7 @@ fn footer_page_number_field_and_logo_survive_the_export() {
                             properties: Default::default(),
                             text: "Terms".to_owned(),
                         })],
+                        history: false,
                     })),
                     InlineNode::BookmarkEnd(BookmarkEnd {
                         id: fresh(),
@@ -1112,6 +1113,8 @@ fn a_numbered_list_in_a_footer_carries_its_list_style_into_styles_xml() {
                     style_ref: None,
                     lvl_restart: None,
                     pstyle: None,
+                    template_code: None,
+                    tentative: false,
                 }],
                 multi_level_type: None,
                 num_style_link: None,

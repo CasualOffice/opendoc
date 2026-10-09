@@ -17,7 +17,7 @@
 // inch machine the markup's `in` happens to be right — which is exactly the
 // coincidence that hid this. The precondition is asserted, so a change to that
 // default fails here by name rather than turning the guard into a no-op.
-import { test, expect, gotoEditor, openFilePage, measurementSuffix } from "./fixtures.mjs";
+import { test, expect, gotoEditor, openFilePage, measurementSuffix, runPaletteCommand, clickIntoFirstPage } from "./fixtures.mjs";
 
 test.use({ locale: "en-GB" });
 
@@ -63,5 +63,42 @@ test("the Line numbers popover labels its distance in the unit in force", async 
   await page.locator("#lineNumbersBtn").click();
   await expect(page.locator("#lineNumbersMenu")).toBeVisible();
   await expect(page.locator("#lineNumberDistance ~ [data-measure-suffix]")).toHaveText("cm");
+  expect(consoleErrors).toEqual([]);
+});
+
+// Changing the unit converts every distance field, and a field nobody has filled
+// yet is not a mistake. Page setup's fields stay blank until the dialog is first
+// opened, and the Line numbers "From text" field until its popover is, so the
+// conversion read each of them through the reporting parse and the status line
+// said "measurement: no number" — the engine's own token, in English whatever
+// the locale, naming no field — the moment the reader picked a unit.
+test("choosing a unit before anything has painted a distance says nothing", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await runPaletteCommand(page, "view.measurementUnits", "measurement");
+  const select = page.locator("#measurementUnitSelect");
+  await expect(select).toBeVisible();
+  for (const unit of ["inch", "mm", "cm"]) {
+    await select.selectOption(unit);
+    await expect(page.locator("#measurementUnitSelect")).toHaveValue(unit);
+    const status = page.locator("#status");
+    expect(await status.textContent(), `choosing ${unit}`).toBe("");
+    expect(await status.getAttribute("class"), `choosing ${unit}`).not.toContain("error");
+  }
+  expect(consoleErrors).toEqual([]);
+});
+
+// The refusal that IS a mistake — Apply over a blank field — names the field in
+// the reader's words and says what to type, instead of the engine's token.
+test("Apply over a blank margin names the field and asks for a number", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.locator("#tabView").click();
+  await page.locator("#pageSetupBtn").click();
+  await expect(page.locator("#pageSetupMenu")).toBeVisible();
+  await page.locator("#pageMarginTop").fill("");
+  await expect(page.locator("#status"), "typing into a field is not yet a refusal").toHaveText("");
+  await page.locator("#pageSetupApply").click();
+  await expect(page.locator("#status")).toHaveText("Top: type a number.");
+  await expect(page.locator("#pageMarginTop")).toBeFocused();
   expect(consoleErrors).toEqual([]);
 });

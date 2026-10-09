@@ -1858,6 +1858,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                     target: target.clone(),
                     tooltip: tooltip.clone(),
                     inlines: children,
+                    history: false,
                 })),
             );
             para.inlines = next_inlines;
@@ -2533,7 +2534,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
         Operation::SetDocumentProtection { protection } => {
             let slot = &mut doc.definitions_mut().settings.document_protection;
             let previous = match protection {
-                Some(protection) => slot.replace(*protection),
+                Some(protection) => slot.replace(protection.clone()),
                 None => slot.take(),
             };
             Ok(Operation::SetDocumentProtection {
@@ -8926,6 +8927,7 @@ mod tests {
             target: external("https://example.com"),
             tooltip: None,
             inlines: vec![linked_drawing],
+            history: false,
         }));
         let mut d = Document::new(
             n(1000),
@@ -9240,6 +9242,7 @@ mod tests {
             target: external("https://example.com"),
             tooltip: None,
             inlines: vec![run(5, "linked")],
+            history: false,
         }));
         let mut d = doc(vec![para(2, vec![run(3, "A "), linked])]);
         let before = d.clone();
@@ -12191,6 +12194,7 @@ mod tests {
             target: external("https://example.com/"),
             tooltip: None,
             inlines: vec![run(run_id, text)],
+            history: false,
         }))
     }
 
@@ -14381,6 +14385,7 @@ mod tests {
                 target: external("https://example.org/"),
                 tooltip: None,
                 inlines: vec![run(19, "a link")],
+                history: false,
             })),
             revision(20, 21, RevisionKind::Insertion, "suggested"),
             revision(22, 23, RevisionKind::Deletion, "removed"),

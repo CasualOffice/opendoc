@@ -177,6 +177,8 @@ fn numbered_document(body: Vec<BlockNode>) -> Document {
                 style_ref: None,
                 lvl_restart: None,
                 pstyle: None,
+                template_code: None,
+                tentative: false,
             }],
             multi_level_type: None,
             num_style_link: None,

@@ -1017,6 +1017,8 @@ impl Importer<'_> {
                 style_ref: None,
                 lvl_restart: None,
                 pstyle: None,
+                template_code: None,
+                tentative: false,
             })
             .collect();
         if levels.is_empty() {
@@ -1036,6 +1038,8 @@ impl Importer<'_> {
                 style_ref: None,
                 lvl_restart: None,
                 pstyle: None,
+                template_code: None,
+                tentative: false,
             });
             self.losses.record(
                 "rtf.list.level-defaulted",

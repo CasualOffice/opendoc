@@ -75,6 +75,42 @@ export function unitLabel(id) {
   return key ? t(key) : id;
 }
 
+/** The engine's refusals, by the words it ends them with
+ *  (`casual_doc_layout::quantity::QuantityError`'s `Display`, after the
+ *  facade's `measurement: ` prefix), and the sentence a reader sees for each.
+ *
+ *  The engine's words are for a developer: "measurement: no number" reached the
+ *  status line verbatim, in English whatever the locale, and named no field. A
+ *  reason this table does not know still says which field and what was typed,
+ *  rather than showing the engine's token. */
+const REFUSAL_KEYS = Object.freeze({
+  "no number": "units.refused.empty",
+  "not a number": "units.refused.notANumber",
+  "unknown unit": "units.refused.unknownUnit",
+  "too many digits": "units.refused.tooPrecise",
+  "out of range": "units.refused.outOfRange",
+});
+
+/** The sentence for an engine refusal `message` of `value` typed into `field`.
+ *  Pure, so the table can be checked against the engine's own words. */
+export function refusalText(message, { field = "", value = "" } = {}) {
+  const reason = String(message ?? "").replace(/^measurement:\s*/, "");
+  const key = REFUSAL_KEYS[reason] ?? "units.refused.unreadable";
+  return t(key, { field: field || t("units.refused.field"), value: String(value ?? "").trim() });
+}
+
+/** The name a reader knows a distance field by: its `aria-label`, else the
+ *  words of its `<label>` without the unit suffix that sits inside it. */
+export function fieldName(input) {
+  const aria = input?.getAttribute?.("aria-label");
+  if (aria) return aria.trim();
+  const label = input?.labels?.[0];
+  if (!label) return "";
+  let words = "";
+  for (const node of label.childNodes) if (node.nodeType === 3) words += node.textContent;
+  return words.trim();
+}
+
 /**
  * The measurement preference, and the chooser that sets it.
  *
@@ -192,12 +228,29 @@ export function createMeasurementUnits(io) {
    *  off the twip grid, each with its own sentence. The sentence is shown and the
    *  caller is told it has no number, so a dialog can decline to write rather than
    *  writing a value the reader never typed. */
-  function parse(text) {
+  function parse(text, field = "") {
     if (!ensure()) return null;
     try {
       return io.engine.parseMeasurement(String(text ?? ""), chosen);
     } catch (error) {
-      io.setStatus(String(error?.message ?? error), "error");
+      io.setStatus(refusalText(error?.message ?? error, { field, value: text }), "error");
+      return null;
+    }
+  }
+
+  /** Field text → twips, or `null`, saying NOTHING.
+   *
+   *  For every reading that is not the reader committing a value: converting the
+   *  fields when the unit changes, repainting a preview while someone types,
+   *  comparing a field with what it was painted from. A blank field there is not
+   *  a mistake anyone made — Page setup's fields stay blank until the dialog is
+   *  first opened, and changing the unit in Settings used to read every one of
+   *  them through `parse` and put "measurement: no number" on the status line. */
+  function read(text) {
+    if (!ensure()) return null;
+    try {
+      return io.engine.parseMeasurement(String(text ?? ""), chosen);
+    } catch {
       return null;
     }
   }
@@ -245,6 +298,9 @@ export function createMeasurementUnits(io) {
     format,
     display,
     parse,
+    read,
+    /** `parse` for a field the reader is committing: a refusal names it. */
+    parseField: (input) => parse(input?.value, fieldName(input)),
     setUnit,
     reflect,
     /** Applies the unit in force to one numeric field: its spinner step, its

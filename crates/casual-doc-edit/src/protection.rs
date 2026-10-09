@@ -889,6 +889,7 @@ mod tests {
             edit,
             enforcement,
             formatting: false,
+            password: None,
         });
         Document::new(
             document_id,
@@ -1178,6 +1179,7 @@ mod tests {
                 ),
                 tooltip: None,
                 inlines: vec![run(61, "a")],
+                history: false,
             })),
             revision(62, RevisionKind::Insertion, vec![run(63, "a")]),
         ];
@@ -1834,6 +1836,7 @@ mod tests {
                 edit,
                 enforcement: true,
                 formatting: false,
+                password: None,
             }),
         }
     }
@@ -1868,6 +1871,7 @@ mod tests {
             edit,
             enforcement,
             formatting: true,
+            password: None,
         });
         // Built from the crate's own helper rather than a twenty-field literal: a field added
         // to `Style` on a sibling branch is a breaking change to every literal with nothing

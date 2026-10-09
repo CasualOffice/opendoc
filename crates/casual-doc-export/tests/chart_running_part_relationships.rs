@@ -668,6 +668,7 @@ fn a_running_part_does_not_hand_a_charts_id_to_a_hyperlink() {
             properties: RunProperties::default().into(),
             text: "link".to_owned(),
         })],
+        history: false,
     }));
     for surface in &SURFACES {
         let document = (surface.place)(

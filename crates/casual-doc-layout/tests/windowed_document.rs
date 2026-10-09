@@ -955,6 +955,8 @@ fn numbered(count: u64) -> Document {
                 style_ref: None,
                 lvl_restart: None,
                 pstyle: None,
+                template_code: None,
+                tentative: false,
             }],
             multi_level_type: None,
             num_style_link: None,

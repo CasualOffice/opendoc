@@ -45,6 +45,10 @@ use casual_doc_model::v1::WatermarkContent;
 use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
 use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::PasswordVerifier;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::LEGACY_COMPAT_OPTIONS;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 // Own line (anti-conflict): `w:view`, FID-AT-01.
@@ -161,6 +165,11 @@ const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordproce
 const FOOTER_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
 const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+/// `w:attachedTemplate`'s relationship, declared by `settings.xml` itself.
+const ATTACHED_TEMPLATE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate";
+/// The one relationship id `settings.xml.rels` declares (the template's).
+const ATTACHED_TEMPLATE_REL_ID: &str = "rId1";
 const SETTINGS_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
 const SETTINGS_CT: &str =
@@ -1339,6 +1348,16 @@ pub fn export_package_with_options(
             );
         }
         parts.push(extra.part_name, extra.bytes);
+    }
+    // `w:attachedTemplate` resolves through the settings part's OWN
+    // relationships, to an external target (`109` FID-AT-15). `settings.xml` is
+    // emitted whenever the template is set, because a set template makes the
+    // settings non-default.
+    if let Some(target) = &document.definitions().settings.attached_template {
+        parts.push(
+            "word/_rels/settings.xml.rels".to_owned(),
+            attached_template_rels_xml(target)?,
+        );
     }
     // Generated chart parts (HF-256). Their `document.xml.rels` entry is already
     // emitted from the node's verbatim relationship id by `embedded_rels`, so
@@ -3307,6 +3326,23 @@ fn font_table_xml(
 
 /// Emits a `fontTable.xml.rels` carrying the embedded-font `/font` relationships
 /// (internal targets, no `TargetMode`).
+/// `word/_rels/settings.xml.rels`: the attached template, external.
+fn attached_template_rels_xml(target: &str) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("Relationships");
+    root.push_attribute(("xmlns", REL_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    let mut rel = start("Relationship");
+    rel.push_attribute(("Id", ATTACHED_TEMPLATE_REL_ID));
+    rel.push_attribute(("Type", ATTACHED_TEMPLATE_REL_TYPE));
+    rel.push_attribute(("Target", target));
+    rel.push_attribute(("TargetMode", "External"));
+    w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("Relationships")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
 fn font_rels_xml(rels: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("Relationships");
@@ -3749,6 +3785,21 @@ fn table_style_region_token(region: TableStyleRegion) -> &'static str {
     }
 }
 
+/// Writes a protection element's password verifier back, attribute by
+/// attribute, as the file stated it (ADR-052, updated 2026-10-09). The model
+/// keeps them in `PasswordAttribute::ALL` order, so the output is deterministic.
+fn push_password(el: &mut BytesStart<'_>, password: Option<&PasswordVerifier>) {
+    for (attribute, value) in password
+        .map(|p| p.attributes.as_slice())
+        .unwrap_or_default()
+    {
+        el.push_attribute((
+            format!("w:{}", attribute.local_name()).as_str(),
+            value.as_str(),
+        ));
+    }
+}
+
 /// Emits `word/settings.xml` with the modeled settings, in `CT_Settings` schema
 /// order so the part is valid WordprocessingML. Each field is emitted only when
 /// it departs from the default, and the importer reads the same shapes back — so
@@ -3776,6 +3827,10 @@ fn settings_xml(
         .shape_defaults_xml
         .as_deref()
         .filter(|xml| settings_fragment_is_writable(xml, "shapeDefaults", reporter));
+    let header_shape_defaults = settings
+        .header_shape_defaults_xml
+        .as_deref()
+        .filter(|xml| settings_fragment_is_writable(xml, "hdrShapeDefaults", reporter));
     let w14 = settings.document_id_w14.is_some() || settings.default_image_dpi.is_some();
     let w15 = settings.document_id_w15.is_some();
     let mut w = new_writer();
@@ -3784,7 +3839,10 @@ fn settings_xml(
     if math_properties.is_some() {
         root.push_attribute(("xmlns:m", M_NS));
     }
-    if shape_defaults.is_some() {
+    if settings.attached_template.is_some() {
+        root.push_attribute(("xmlns:r", R_NS));
+    }
+    if shape_defaults.is_some() || header_shape_defaults.is_some() {
         root.push_attribute(("xmlns:o", O_NS));
         root.push_attribute(("xmlns:v", V_NS));
     }
@@ -3811,6 +3869,7 @@ fn settings_xml(
         if protection.recommended {
             el.push_attribute(("w:recommended", "1"));
         }
+        push_password(&mut el, protection.password.as_ref());
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     // `w:view` sits between `w:writeProtection` and `w:zoom` in CT_Settings.
@@ -3849,6 +3908,14 @@ fn settings_xml(
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:attachedTemplate` follows `w:proofState` (and the `w:formsDesign` this
+    // writer does not emit) in CT_Settings; its id is the one relationship
+    // `settings.xml.rels` declares (`109` FID-AT-15).
+    if settings.attached_template.is_some() {
+        let mut el = start("w:attachedTemplate");
+        el.push_attribute(("r:id", ATTACHED_TEMPLATE_REL_ID));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     // `w:trackRevisions` (ECMA-376 §17.15.1.89). This wrote `w:trackChanges`,
     // which is in no schema, until `109` FID-AT-11: a strict consumer refuses
     // an unknown element in the main namespace, and Word ignored it.
@@ -3875,6 +3942,7 @@ fn settings_xml(
         if protection.formatting {
             el.push_attribute(("w:formatting", "1"));
         }
+        push_password(&mut el, protection.password.as_ref());
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(value) = settings.default_tab_stop {
@@ -3916,6 +3984,41 @@ fn settings_xml(
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
             .map_err(pkg)?;
     }
+    // The drawing grid sits between the book-fold group and
+    // `w:doNotShadeFormData` in CT_Settings, in this order (`109` FID-AT-15).
+    let grid = &settings.drawing_grid;
+    for (name, value) in [
+        ("w:drawingGridHorizontalSpacing", grid.horizontal_spacing),
+        ("w:drawingGridVerticalSpacing", grid.vertical_spacing),
+        (
+            "w:displayHorizontalDrawingGridEvery",
+            grid.display_horizontal_every,
+        ),
+        (
+            "w:displayVerticalDrawingGridEvery",
+            grid.display_vertical_every,
+        ),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if grid.do_not_use_margins_for_origin {
+        w.write_event(Event::Empty(start("w:doNotUseMarginsForDrawingGridOrigin")))
+            .map_err(pkg)?;
+    }
+    for (name, value) in [
+        ("w:drawingGridHorizontalOrigin", grid.horizontal_origin),
+        ("w:drawingGridVerticalOrigin", grid.vertical_origin),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
     if settings.save_preview_picture {
         w.write_event(Event::Empty(start("w:savePreviewPicture")))
             .map_err(pkg)?;
@@ -3924,21 +4027,34 @@ fn settings_xml(
         w.write_event(Event::Empty(start("w:updateFields")))
             .map_err(pkg)?;
     }
+    // `w:hdrShapeDefaults` follows `w:updateFields` and precedes
+    // `w:footnotePr`. Verbatim, already checked (`109` FID-AT-15).
+    if let Some(xml) = header_shape_defaults {
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
     write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
     write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
-    if settings.adjust_line_height_in_table || settings.use_fe_layout || !settings.compat.is_empty()
+    if settings.adjust_line_height_in_table
+        || settings.use_fe_layout
+        || !settings.compat.is_empty()
+        || !settings.compat_options.is_empty()
     {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
-        // `CT_Compat` order: `w:adjustLineHeightInTable`, …, `w:useFELayout`,
-        // …, then the `w:compatSetting` triples last.
-        if settings.adjust_line_height_in_table {
-            w.write_event(Event::Empty(start("w:adjustLineHeightInTable")))
-                .map_err(pkg)?;
-        }
-        if settings.use_fe_layout {
-            w.write_event(Event::Empty(start("w:useFELayout")))
-                .map_err(pkg)?;
+        // `CT_Compat` order (`LEGACY_COMPAT_OPTIONS`): every switch that is on,
+        // the two typed ones from their fields and the rest from
+        // `compat_options` (`109` FID-AT-15), then the `w:compatSetting`
+        // triples last. O(65).
+        for name in LEGACY_COMPAT_OPTIONS {
+            let on = match name {
+                "adjustLineHeightInTable" => settings.adjust_line_height_in_table,
+                "useFELayout" => settings.use_fe_layout,
+                _ => settings.compat_options.iter().any(|held| held == name),
+            };
+            if on {
+                w.write_event(Event::Empty(start(&format!("w:{name}"))))
+                    .map_err(pkg)?;
+            }
         }
         for setting in &settings.compat {
             let mut el = start("w:compatSetting");
@@ -4278,6 +4394,14 @@ fn write_level(
 ) -> Result<(), ExportError> {
     let mut lvl = start("w:lvl");
     lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
+    // `w:tplc` and `w:tentative` (`109` FID-AT-16): the List Library key, and
+    // whether Word made the level as a placeholder it may discard.
+    if let Some(code) = &level.template_code {
+        lvl.push_attribute(("w:tplc", code.as_str()));
+    }
+    if level.tentative {
+        lvl.push_attribute(("w:tentative", "1"));
+    }
     w.write_event(Event::Start(lvl)).map_err(pkg)?;
     let mut s = start("w:start");
     s.push_attribute(("w:val", level.start.to_string().as_str()));
@@ -6607,16 +6731,20 @@ fn write_inline(
                     if let Some(tip) = &link.tooltip {
                         el.push_attribute(("w:tooltip", tip.as_str()));
                     }
-                    w.write_event(Event::Start(el)).map_err(pkg)?;
                 }
                 HyperlinkTarget::Internal(int) => {
                     el.push_attribute(("w:anchor", int.anchor.as_str()));
                     if let Some(tip) = &link.tooltip {
                         el.push_attribute(("w:tooltip", tip.as_str()));
                     }
-                    w.write_event(Event::Start(el)).map_err(pkg)?;
                 }
             }
+            // `w:history` (`109` FID-AT-17): what Word writes on every link it
+            // inserts, so a followed link paints as followed.
+            if link.history {
+                el.push_attribute(("w:history", "1"));
+            }
+            w.write_event(Event::Start(el)).map_err(pkg)?;
             for child in &link.inlines {
                 write_inline(w, child, ctx, in_deletion)?;
             }
@@ -9019,6 +9147,14 @@ fn write_sdt_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:sdtPr"))).map_err(pkg)?;
+    // `CT_SdtPr` opens with the control's own run formatting (`109` FID-AT-19).
+    if let Some(run) = &properties.run_properties {
+        if *run == RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, run)?;
+        }
+    }
     for (value, name) in [
         (&properties.alias, "w:alias"),
         (&properties.tag, "w:tag"),
@@ -9027,6 +9163,13 @@ fn write_sdt_properties(
         if let Some(value) = value {
             write_val_element(w, name, value)?;
         }
+    }
+    // `w15:color`, where Word writes it: after the id, before the lock. The
+    // part roots declare `w15` (`declare_fold_namespaces`).
+    if let Some(color) = &properties.color {
+        let mut el = start("w15:color");
+        el.push_attribute(("w:val", color.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(lock) = properties.lock {
         write_val_element(w, "w:lock", sdt_lock_token(lock))?;
@@ -9098,7 +9241,10 @@ fn write_sdt_control(
         }
         SdtControlKind::BuildingBlockGallery => {
             let element = sdt_kind_element(kind);
-            if properties.gallery.is_none() && properties.category.is_none() {
+            if properties.gallery.is_none()
+                && properties.category.is_none()
+                && !properties.doc_part_unique
+            {
                 w.write_event(Event::Empty(start(element))).map_err(pkg)?;
             } else {
                 w.write_event(Event::Start(start(element))).map_err(pkg)?;
@@ -9107,6 +9253,10 @@ fn write_sdt_control(
                 }
                 if let Some(category) = &properties.category {
                     write_val_element(w, "w:docPartCategory", category)?;
+                }
+                if properties.doc_part_unique {
+                    w.write_event(Event::Empty(start("w:docPartUnique")))
+                        .map_err(pkg)?;
                 }
                 w.write_event(Event::End(BytesEnd::new(element)))
                     .map_err(pkg)?;

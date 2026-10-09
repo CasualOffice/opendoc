@@ -4258,6 +4258,7 @@ impl WasmDocument {
                     target,
                     tooltip: None,
                     inlines: vec![run_node],
+                    history: false,
                 })));
             } else {
                 out.push(run_node);
@@ -4632,18 +4633,24 @@ impl WasmDocument {
     /// restriction the author set up and switched off — and it is deliberately
     /// distinguishable from `null`, which is the element being absent.
     ///
+    /// `password` says whether the file carries a Word password verifier with the
+    /// restriction. It is kept and saved, never checked (ADR-052), so a host can
+    /// tell the reader that lifting or changing the restriction here removes it.
+    ///
     /// O(1).
     #[wasm_bindgen(js_name = documentProtection)]
     #[must_use]
     pub fn document_protection(&self) -> String {
-        let Some(protection) = self.document.definitions().settings.document_protection else {
-            return "{\"edit\":null,\"enforcement\":false,\"formatting\":false}".to_owned();
+        let Some(protection) = &self.document.definitions().settings.document_protection else {
+            return "{\"edit\":null,\"enforcement\":false,\"formatting\":false,\"password\":false}"
+                .to_owned();
         };
         format!(
-            "{{\"edit\":\"{}\",\"enforcement\":{},\"formatting\":{}}}",
+            "{{\"edit\":\"{}\",\"enforcement\":{},\"formatting\":{},\"password\":{}}}",
             protection_token(protection.edit),
             protection.enforcement,
-            protection.formatting
+            protection.formatting,
+            protection.password.is_some()
         )
     }
 
@@ -4664,10 +4671,14 @@ impl WasmDocument {
     /// **Who may do this: the local reader, and nobody else is checked.** There is
     /// no participant grant yet (`152` §10 Q4), so any host that can open the
     /// document can lift its restriction — which is exactly what Word does with an
-    /// **unpassworded** restriction. No password is modelled, asked for, or
-    /// verified: ADR-052 records that this is policy rather than security, and
-    /// verifying `w:hash`/`w:salt` would advertise a boundary that does not exist
-    /// (the legacy hash is removable by editing one XML attribute).
+    /// **unpassworded** restriction. A password the file carries is kept and saved
+    /// but never asked for or verified: ADR-052 records that this is policy rather
+    /// than security, and verifying `w:hash`/`w:salt` would advertise a boundary
+    /// that does not exist (the legacy hash is removable by editing one XML
+    /// attribute). The value installed here carries NO verifier, so lifting or
+    /// changing a passworded restriction removes the password — what Word leaves
+    /// after its own Stop Protection — and Undo restores the old value, verifier
+    /// and all. `documentProtection().password` lets the host say so first.
     ///
     /// # Errors
     ///
@@ -4712,6 +4723,7 @@ impl WasmDocument {
                 })?,
                 enforcement,
                 formatting,
+                password: None,
             }),
         };
         self.apply_action_as(
@@ -28764,6 +28776,8 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         style_ref: None,
         lvl_restart: None,
         pstyle: None,
+        template_code: None,
+        tentative: false,
     }
 }
 
@@ -32909,6 +32923,7 @@ mod tests {
                 edit: DocumentProtectionEdit::ReadOnly,
                 enforcement: true,
                 formatting: false,
+                password: None,
             }),
         );
         // The precondition: it really is read-only now.
@@ -32947,8 +32962,56 @@ mod tests {
                 edit: DocumentProtectionEdit::ReadOnly,
                 enforcement: true,
                 formatting: false,
+                password: None,
             }),
             "undoing Stop Protection must restore the exact restriction it removed"
+        );
+    }
+
+    /// A restriction the file carries with a Word password keeps it through an edit
+    /// and a save, says so to the host, and loses it only when the reader lifts the
+    /// restriction here — which Undo reverses, verifier and all (ADR-052, updated
+    /// 2026-10-09).
+    ///
+    /// MUTATION: the lift carrying the old verifier forward (`password:
+    /// previous.password`) fails with "a restriction set here carries no password".
+    #[test]
+    fn a_passworded_restriction_keeps_its_password_until_the_reader_lifts_it() {
+        use casual_doc_model::v1::{PasswordAttribute, PasswordVerifier};
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let mut verifier = PasswordVerifier::default();
+        verifier.set(PasswordAttribute::CryptAlgorithmSid, "14".to_owned());
+        verifier.set(PasswordAttribute::Hash, "aGFzaA==".to_owned());
+        let passworded = DocumentProtection {
+            edit: DocumentProtectionEdit::Comments,
+            enforcement: true,
+            formatting: false,
+            password: Some(verifier),
+        };
+        doc.document.definitions_mut().settings.document_protection = Some(passworded.clone());
+        assert!(
+            doc.document_protection().ends_with("\"password\":true}"),
+            "the host is told the file carries a password: {}",
+            doc.document_protection()
+        );
+
+        doc.set_document_protection_inner(Some("readOnly"), true, false)
+            .expect("the reader may change the restriction");
+        assert_eq!(
+            doc.document
+                .definitions()
+                .settings
+                .document_protection
+                .as_ref()
+                .and_then(|protection| protection.password.as_ref()),
+            None,
+            "a restriction set here carries no password"
+        );
+        doc.undo_inner().expect("the change undoes");
+        assert_eq!(
+            doc.document.definitions().settings.document_protection,
+            Some(passworded),
+            "Undo restores the restriction with its password"
         );
     }
 
@@ -32975,6 +33038,7 @@ mod tests {
                 .definitions()
                 .settings
                 .document_protection
+                .as_ref()
                 .map(|protection| protection.edit),
             Some(DocumentProtectionEdit::Forms),
             "the fixture no longer carries a forms restriction, so this guard would pass for \
@@ -33019,7 +33083,7 @@ mod tests {
         let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
         assert_eq!(
             doc.document_protection(),
-            "{\"edit\":null,\"enforcement\":false,\"formatting\":false}",
+            "{\"edit\":null,\"enforcement\":false,\"formatting\":false,\"password\":false}",
             "an unprotected document must report no restriction, not a defaulted one"
         );
         for level in ["none", "readOnly", "comments", "trackedChanges", "forms"] {
@@ -33027,7 +33091,9 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{level} must be settable: {error}"));
             assert_eq!(
                 doc.document_protection(),
-                format!("{{\"edit\":\"{level}\",\"enforcement\":true,\"formatting\":true}}"),
+                format!(
+                    "{{\"edit\":\"{level}\",\"enforcement\":true,\"formatting\":true,\"password\":false}}"
+                ),
                 "the level a host writes must be the level it reads back"
             );
         }
@@ -33036,12 +33102,17 @@ mod tests {
             .expect("an unenforced restriction is a real state");
         assert_eq!(
             doc.document_protection(),
-            "{\"edit\":\"readOnly\",\"enforcement\":false,\"formatting\":false}",
+            "{\"edit\":\"readOnly\",\"enforcement\":false,\"formatting\":false,\"password\":false}",
             "an unenforced restriction must stay present and distinguishable from none"
         );
         // An unrecognised level is refused with a sentence, not defaulted to a restriction
         // the host did not ask for — and the document is left exactly as it was.
-        let before = doc.document.definitions().settings.document_protection;
+        let before = doc
+            .document
+            .definitions()
+            .settings
+            .document_protection
+            .clone();
         let refusal = doc
             .set_document_protection_inner(Some("sideways"), true, false)
             .expect_err("an unknown level must be refused, never defaulted");
@@ -35225,6 +35296,7 @@ mod tests {
                             properties: Default::default(),
                             text: "Go".to_owned(),
                         })],
+                        history: false,
                     }))],
                 }),
                 BlockNode::Paragraph(Paragraph {
@@ -43195,6 +43267,7 @@ mod tests {
                             }),
                             page_number,
                         ],
+                        history: false,
                     }))],
                 }),
                 BlockNode::Paragraph(Paragraph {
@@ -44878,6 +44951,7 @@ mod tests {
             edit: casual_doc_model::v1::DocumentProtectionEdit::Forms,
             enforcement: true,
             formatting: false,
+            password: None,
         });
     }
 
@@ -45835,6 +45909,7 @@ mod tests {
                 }),
                 tooltip: None,
                 inlines: vec![run(id(), "link")],
+                history: false,
             })),
             InlineNode::Drawing(Box::new(Drawing {
                 hyperlink: None,

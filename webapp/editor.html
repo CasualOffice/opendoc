@@ -2194,7 +2194,12 @@
               <span><strong data-i18n="protect.enforce">Apply this restriction now</strong><small data-i18n="protect.enforce.hint">Word's "Start enforcing protection". Left off, the restriction is kept in the file without being applied — a state Word writes, and one this preserves.</small></span>
             </label>
           </div>
-          <p data-i18n="protect.authority" class="settings-note">This is a policy, not a password. Anyone who can open this document can lift the restriction here, exactly as in Word when no password was set. No password is stored, asked for, or checked.</p>
+          <p data-i18n="protect.authority" class="settings-note">This is a policy, not a password. Anyone who can open this document can lift the restriction here, exactly as in Word when no password was set. A password set in Word is kept in the file, but it is never asked for or checked here.</p>
+          <!-- Shown only when the file carries a Word password verifier with the
+               restriction (`documentProtection().password`, ADR-052 updated
+               2026-10-09): Word would ask for it, this editor does not, and a
+               change made here removes it — said before Apply, not after. -->
+          <p data-i18n="protect.passwordNote" class="settings-note" id="restrictEditingPassword" hidden>This restriction has a password set in Word. Word asks for it before the restriction can be changed; this editor does not, and changing or stopping the restriction here removes the password.</p>
         </div>
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>

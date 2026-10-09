@@ -220,6 +220,8 @@ fn incremental_matches_the_fresh_path_with_a_numbered_list() {
                 style_ref: None,
                 lvl_restart: None,
                 pstyle: None,
+                template_code: None,
+                tentative: false,
             }],
             multi_level_type: None,
             num_style_link: None,

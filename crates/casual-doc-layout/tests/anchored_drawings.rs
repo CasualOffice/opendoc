@@ -924,6 +924,7 @@ fn top_and_bottom_reflow_survives_an_inline_wrapper_inside_a_table_cell() {
         }),
         tooltip: None,
         inlines: vec![top_bottom_drawing(46, media_id, 1_440, 100)],
+        history: false,
     }));
     let table = one_cell_table(40, 41, 42, 43, vec![run(44, "cell text"), wrapped_float]);
     let document = Document::new(node(1), vec![table], definitions).unwrap();

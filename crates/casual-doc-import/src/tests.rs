@@ -1,10 +1,12 @@
 use casual_doc_model::v1::MAX_DESCR_BYTES;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
     InlineNode, LevelJustification, LevelSuffix, MathExpression, MoveKind, NumberFormat, Paragraph,
     PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState, RevisionKind,
     RgbColor, SdtControlKind, StyleKind, Symbol,
 };
+use casual_doc_model::v1::{PasswordAttribute, PasswordVerifier};
 use casual_doc_ooxml::DocxPackage;
 
 use crate::{
@@ -2344,12 +2346,20 @@ fn level_attributes_the_model_cannot_carry_are_reported_not_dropped() {
     // `docs/142` LST-31. `numbering.rs` never called `report_attribute`, so the
     // element-only catch-all could not see an attribute on an element the parser
     // handles: `w:tplc`, `w:tentative` and the custom `w:numFmt@w:format` picture
-    // went out with no finding at all, against the no-silent-loss rule.
+    // went out with no finding at all, against the no-silent-loss rule. Since
+    // `109` FID-AT-16 the first two are MODELED (the export half is
+    // `a_level_keeps_its_template_code_and_tentative_flag_through_a_save`), so
+    // only the picture — and a template code that is not hex — is a loss.
+    //
+    // MUTATION: `build_level` dropping `template_code` fails with "the level's
+    // List Library key is modeled".
     let numbering = br#"<w:numbering xmlns:w="urn:w">
         <w:abstractNum w:abstractNumId="0">
             <w:lvl w:ilvl="0" w:tplc="04090001" w:tentative="1">
                 <w:start w:val="1"/><w:numFmt w:val="custom" w:format="001, 002, 003, ..."/>
-                <w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+                <w:lvlText w:val="%1."/></w:lvl>
+            <w:lvl w:ilvl="1" w:tplc="not hex">
+                <w:start w:val="1"/><w:lvlText w:val="%2."/></w:lvl></w:abstractNum>
         <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
     </w:numbering>"#;
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
@@ -2358,16 +2368,43 @@ fn level_attributes_the_model_cannot_carry_are_reported_not_dropped() {
     </w:body></w:document>"#;
     let import = import_with_numbering(document, numbering);
 
-    for feature in ["lvl/@tplc", "lvl/@tentative", "numFmt/@format"] {
+    let reference = paragraph(&import, 0)
+        .properties
+        .numbering
+        .expect("the paragraph is numbered");
+    let level = import
+        .document
+        .definitions()
+        .numbering_resolver()
+        .level(reference)
+        .expect("the level resolves");
+    assert_eq!(
+        level.template_code.as_deref(),
+        Some("04090001"),
+        "the level's List Library key is modeled"
+    );
+    assert!(level.tentative, "the placeholder flag is modeled");
+
+    for feature in ["numFmt/@format", "lvl/@tplc"] {
         assert!(
             features(&import).contains(&feature),
-            "{feature} is not modeled and must be reported; got {:?}",
+            "{feature} is not carried here and must be reported; got {:?}",
             features(&import)
         );
     }
+    assert_eq!(
+        import
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "lvl/@tplc")
+            .map(|entry| entry.occurrences),
+        Some(1),
+        "only the code that is not hex is a loss"
+    );
+    assert!(!features(&import).contains(&"lvl/@tentative"));
     // And the level itself is still modeled: reporting an attribute must not
     // become a claim that the element was lost.
-    assert!(paragraph(&import, 0).properties.numbering.is_some());
     for feature in ["lvl", "numPr", "start", "lvlText"] {
         assert!(
             !features(&import).contains(&feature),
@@ -2521,9 +2558,10 @@ fn numbering_level_detail_is_modeled_not_reported() {
 fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     // A settings part mixing modeled settings (header parity, default tab stop,
     // track changes, document protection, proof state, zoom, a compatSetting) with
-    // an unmodeled one (`w:hideSpellingErrors`) plus an unmodeled `w:compat` child
-    // (`w:doNotExpandShiftReturn`). The modeled ones land in the model; the two
-    // unmodeled ones are reported (no silent loss).
+    // an unmodeled one (`w:hideSpellingErrors`) plus a `w:compat` child no schema
+    // names (`w:notACompatSwitch`). The modeled ones land in the model — a legacy
+    // switch such as `w:doNotExpandShiftReturn` among them since `109` FID-AT-15 —
+    // and the two unmodeled ones are reported (no silent loss).
     let settings = br#"<w:settings xmlns:w="urn:w">
         <w:writeProtection w:recommended="1"/>
         <w:zoom w:percent="150"/>
@@ -2537,6 +2575,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
             <w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/>
             <w:adjustLineHeightInTable/>
             <w:doNotExpandShiftReturn/>
+            <w:notACompatSwitch/>
         </w:compat>
     </w:settings>"#;
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
@@ -2561,7 +2600,9 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     assert!(s.adjust_line_height_in_table);
     // The unmodeled top-level setting and the unmodeled compat child are reported.
     assert!(features(&import).contains(&"hideSpellingErrors"));
-    assert!(features(&import).contains(&"doNotExpandShiftReturn"));
+    assert!(features(&import).contains(&"notACompatSwitch"));
+    assert_eq!(s.compat_options, vec!["doNotExpandShiftReturn".to_owned()]);
+    assert!(!features(&import).contains(&"doNotExpandShiftReturn"));
     // The modeled compatSetting is NOT reported (it is retained as a triple).
     assert!(!features(&import).contains(&"compatSetting"));
     assert!(!features(&import).contains(&"adjustLineHeightInTable"));
@@ -2598,6 +2639,7 @@ fn an_absent_w_enforcement_means_enforced_and_an_explicit_zero_still_means_off()
             .definitions()
             .settings
             .document_protection
+            .clone()
             .expect("the element is present, so the model carries a restriction")
     };
 
@@ -2631,31 +2673,30 @@ fn an_absent_w_enforcement_means_enforced_and_an_explicit_zero_still_means_off()
     assert_eq!(protection("").edit, DocumentProtectionEdit::ReadOnly);
 }
 
-/// The password groups on the two protection elements are REPORTED, not dropped
-/// in silence.
+/// The password groups on the two protection elements are KEPT, verbatim, and
+/// not reported (ADR-052, updated 2026-10-09).
 ///
-/// `apply_setting` returns *handled* for `w:documentProtection` and
-/// `w:writeProtection`, which marked the whole element consumed and put its
-/// unread attributes beyond the reach of the only reporter in the function — so
-/// the sixteen `AG_Password`/`AG_TransitionalPassword` attributes were dropped
-/// with **no finding at all**, and `word/settings.xml` is a consumed part with no
-/// byte floor behind it. A password-protected document saved password-less while
-/// the restriction survived.
+/// They were first dropped with no finding at all, then reported and dropped: a
+/// password-protected document saved password-less while the restriction
+/// survived, so Word let anyone lift it. The model now carries every one of the
+/// sixteen `AG_Password`/`AG_TransitionalPassword` attributes as the file stated
+/// it, and the writer puts them back (`casual-doc-export`'s
+/// `a_protection_password_survives_a_save_verbatim`).
 ///
-/// The four Office-2010 ISO-verifier attributes are asserted by name because
-/// ADR-052 and `docs/160` §7 item 5 each enumerate only the legacy group, and a
-/// modern Word file's password material may be entirely in those four.
+/// The four Office-2010 ISO-verifier attributes are asserted on both elements by
+/// name, because a modern Word file's password material may be entirely in them.
 ///
-/// This guard asserts the FINDING, not the parse: nothing here reads a hash into
-/// the model, and nothing should until ADR-052's open decision is made.
+/// MUTATION: `password_verifier` returning `None` (the old behaviour without the
+/// report) fails with "the verifier is carried: None".
 #[test]
-fn the_protection_password_groups_are_reported_rather_than_dropped_in_silence() {
+fn the_protection_password_groups_are_kept_verbatim_and_not_reported() {
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
     // Synthetic values. `w:hash=""` is present-but-empty on purpose: an attribute
-    // whose value says nothing is not a loss (`docs/160` §3), and a false finding
-    // is the failure HF-174 put 621 of in front of the owner.
-    let settings = br#"<w:settings xmlns:w="urn:w">
+    // whose value says nothing is neither kept nor a loss (`docs/160` §3).
+    let long = "A".repeat(PasswordVerifier::MAX_VALUE_LEN + 1);
+    let settings = format!(
+        r#"<w:settings xmlns:w="urn:w">
         <w:writeProtection w:recommended="1" w:algorithmName="SHA-512"
             w:hashValue="Zm9v" w:saltValue="YmFy" w:spinCount="100000"/>
         <w:documentProtection w:edit="readOnly" w:enforcement="1"
@@ -2664,62 +2705,87 @@ fn the_protection_password_groups_are_reported_rather_than_dropped_in_silence() 
             w:cryptSpinCount="100000" w:cryptProvider="Microsoft Enhanced RSA and AES"
             w:algIdExt="00000000" w:algIdExtSource="com.microsoft.office"
             w:cryptProviderTypeExt="00000000" w:cryptProviderTypeExtSource="com.microsoft.office"
-            w:hash="" w:salt="Y29yZ2U="
+            w:hash="" w:salt="{long}"
             w:algorithmName="SHA-512" w:hashValue="Z3JhdWx0" w:saltValue="Z2FycGx5"
             w:spinCount="100000"/>
-    </w:settings>"#;
-    let import = import_with_settings(document, settings);
+    </w:settings>"#
+    );
+    let import = import_with_settings(document, settings.as_bytes());
+    let protection = import
+        .document
+        .definitions()
+        .settings
+        .document_protection
+        .clone()
+        .expect("the restriction is modeled");
+    let verifier = protection.password.as_ref();
+    assert!(verifier.is_some(), "the verifier is carried: {verifier:?}");
+    let verifier = verifier.unwrap();
+    for (attribute, value) in [
+        (PasswordAttribute::AlgorithmName, "SHA-512"),
+        (PasswordAttribute::HashValue, "Z3JhdWx0"),
+        (PasswordAttribute::SaltValue, "Z2FycGx5"),
+        (PasswordAttribute::SpinCount, "100000"),
+        (PasswordAttribute::CryptProviderType, "rsaAES"),
+        (PasswordAttribute::CryptAlgorithmClass, "hash"),
+        (PasswordAttribute::CryptAlgorithmType, "typeAny"),
+        (PasswordAttribute::CryptAlgorithmSid, "14"),
+        (PasswordAttribute::CryptSpinCount, "100000"),
+        (
+            PasswordAttribute::CryptProvider,
+            "Microsoft Enhanced RSA and AES",
+        ),
+        (PasswordAttribute::AlgIdExt, "00000000"),
+        (PasswordAttribute::AlgIdExtSource, "com.microsoft.office"),
+        (PasswordAttribute::CryptProviderTypeExt, "00000000"),
+        (
+            PasswordAttribute::CryptProviderTypeExtSource,
+            "com.microsoft.office",
+        ),
+    ] {
+        assert_eq!(verifier.get(attribute), Some(value), "{attribute:?}");
+    }
+    assert_eq!(
+        verifier.get(PasswordAttribute::Hash),
+        None,
+        "an empty value says nothing"
+    );
+    assert_eq!(
+        verifier.get(PasswordAttribute::Salt),
+        None,
+        "an over-long value is not stored"
+    );
+
+    let write = import
+        .document
+        .definitions()
+        .settings
+        .write_protection
+        .clone();
+    let write_verifier = write
+        .and_then(|write| write.password)
+        .expect("write protection's verifier");
+    assert_eq!(
+        write_verifier.get(PasswordAttribute::HashValue),
+        Some("Zm9v")
+    );
+    assert_eq!(
+        write_verifier.get(PasswordAttribute::SpinCount),
+        Some("100000")
+    );
+
+    // Kept is not lost, so nothing is reported — except the one value the model's
+    // bound refused, which IS lost and must say so.
     let reported = features(&import);
-    for attribute in [
-        "algIdExt",
-        "algIdExtSource",
-        "algorithmName",
-        "cryptAlgorithmClass",
-        "cryptAlgorithmSid",
-        "cryptAlgorithmType",
-        "cryptProvider",
-        "cryptProviderType",
-        "cryptProviderTypeExt",
-        "cryptProviderTypeExtSource",
-        "cryptSpinCount",
-        "hashValue",
-        "salt",
-        "saltValue",
-        "spinCount",
-    ] {
-        let feature = format!("documentProtection/@{attribute}");
-        assert!(
-            reported.contains(&feature.as_str()),
-            "{feature} must reach the compatibility report; it held {reported:?}"
-        );
-    }
-    // The same two groups live on `w:writeProtection` (`CT_WriteProtection`), and
-    // the same handler consumed them, so the family is covered rather than the
-    // one reported case.
-    for attribute in ["algorithmName", "hashValue", "saltValue", "spinCount"] {
-        let feature = format!("writeProtection/@{attribute}");
-        assert!(
-            reported.contains(&feature.as_str()),
-            "{feature} must reach the compatibility report; it held {reported:?}"
-        );
-    }
-    // Empty is not a loss, and the three POLICY attributes are modeled, so none
-    // of them may appear - otherwise this is a finding generator rather than a
-    // loss report.
-    for not_a_finding in [
-        "documentProtection/@hash",
-        "documentProtection/@edit",
-        "documentProtection/@enforcement",
-        "documentProtection/@formatting",
-        "writeProtection/@recommended",
-        "documentProtection",
-        "writeProtection",
-    ] {
-        assert!(
-            !reported.contains(&not_a_finding),
-            "{not_a_finding} is not a loss and must not be reported; it held {reported:?}"
-        );
-    }
+    assert_eq!(
+        reported
+            .iter()
+            .filter(|feature| feature.starts_with("documentProtection")
+                || feature.starts_with("writeProtection"))
+            .collect::<Vec<_>>(),
+        vec![&"documentProtection/@salt"],
+        "only the refused value is a loss; it held {reported:?}"
+    );
 }
 
 #[test]
@@ -7328,6 +7394,67 @@ fn reused_bookmark_id_after_close_models_both_ranges_without_a_phantom_end() {
     assert!(import.document.validate().is_ok());
 }
 
+/// A bookmark that ends BETWEEN paragraphs — a `w:bookmarkEnd` child of
+/// `w:body`, or of a table between two rows — keeps its end: it becomes the
+/// first marker of the next paragraph, which is the same position (`109`
+/// FID-AT-19). Both were reported and dropped, so the bookmark lost its end on
+/// every edited save (seven in the owner's loan agreement, six between rows).
+///
+/// MUTATION: the block-level arm reporting instead of holding fails with
+/// `no end is lost: ["bookmarkEnd", "bookmarkStart"]`.
+#[test]
+fn a_bookmark_that_ends_between_blocks_ends_at_the_next_paragraph() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:bookmarkStart w:id="1" w:name="whole"/><w:r><w:t>First</w:t></w:r></w:p>
+        <w:bookmarkEnd w:id="1"/>
+        <w:tbl><w:tr><w:tc><w:p><w:bookmarkStart w:id="2" w:name="row"/><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>
+            <w:bookmarkEnd w:id="2"/>
+            <w:tr><w:tc><w:p><w:r><w:t>Next</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        <w:p><w:r><w:t>Last</w:t></w:r></w:p>
+        <w:bookmarkStart w:id="3" w:name="dangling"/>
+    </w:body></w:document>"#;
+    let import = import(document);
+    assert!(
+        !features(&import).contains(&"bookmarkEnd"),
+        "no end is lost: {:?}",
+        features(&import)
+    );
+    let mut texts = Vec::new();
+    collect_block_texts(import.document.body(), &mut texts);
+    assert_eq!(texts, ["First", "Cell", "Next", "Last"]);
+
+    // The first end opens the table's first paragraph; the second opens the
+    // second row's paragraph.
+    fn first_marker_is_an_end(blocks: &[BlockNode], out: &mut Vec<bool>) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    out.push(matches!(
+                        paragraph.inlines.first(),
+                        Some(InlineNode::BookmarkEnd(_))
+                    ));
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            first_marker_is_an_end(&cell.blocks, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut opens_with_end = Vec::new();
+    first_marker_is_an_end(import.document.body(), &mut opens_with_end);
+    assert_eq!(
+        opens_with_end,
+        [false, true, true, false],
+        "every block-level end lands at the start of the paragraph after it"
+    );
+    assert!(import.document.validate().is_ok(), "every marker pairs");
+}
+
 #[test]
 fn column_bookmark_is_modeled_by_name_and_reported() {
     // The column span (`w:colFirst`/`w:colLast`) is dropped but the bookmark is
@@ -7724,11 +7851,20 @@ fn sdt_property_long_tail_is_reported_and_rpr_does_not_leak() {
     assert_eq!(sdt.properties.lock, Some(SdtLock::SdtLocked));
     assert_eq!(sdt.properties.placeholder.as_deref(), Some("Default"));
     // A dataBinding without the required `w:xpath` is meaningless: reported and
-    // dropped. The end-mark `w:rPr` remains the reported long tail.
+    // dropped.
     assert!(sdt.properties.data_binding.is_none());
     let reported = features(&import);
     assert!(reported.contains(&"dataBinding"));
-    assert!(reported.contains(&"rPr"));
+    // The control's own `w:rPr` is modeled since `109` FID-AT-19 — on the
+    // CONTROL, which is the point of not leaking it onto the run above.
+    assert_eq!(
+        sdt.properties
+            .run_properties
+            .as_ref()
+            .and_then(|run| run.bold),
+        Some(true)
+    );
+    assert!(!reported.contains(&"rPr"), "{reported:?}");
 }
 
 #[test]
@@ -7971,6 +8107,87 @@ fn semantic_import_reports_each_unconsumed_admitted_part_once() {
     assert_eq!(part.part_name, "customXml/item1.xml");
     assert_eq!(part.content_type.as_deref(), Some("application/xml"));
     assert_eq!(part.bytes, EXTRA_CUSTOM_XML);
+}
+
+/// A `customXml` store is reported as what it is, by its content, and its part
+/// name stays the finding's location (`109` FID-AT-18). Every one of these is
+/// still kept verbatim; what changes is the name a host shows and whether a
+/// reader would miss it. The owner's three documents each carried an EMPTY
+/// bibliography store and its identity record, and the loan agreement carried a
+/// SharePoint library's content type, form templates and properties — six
+/// findings read as "Custom XML data stored with the document".
+///
+/// MUTATION: `custom_xml_kind` returning `None` (report by name, as before)
+/// fails with `customXml/item1.xml` where `docx.customXml.bibliography.empty`
+/// was expected.
+#[test]
+fn a_custom_xml_store_is_reported_as_what_it_is() {
+    let content_types: &[u8] = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>"#;
+    let empty_bibliography: &[u8] = br#"<b:Sources xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography" xmlns="http://schemas.openxmlformats.org/officeDocument/2006/bibliography" SelectedStyle="\APASixthEditionOfficeOnline.xsl" StyleName="APA" Version="6"></b:Sources>"#;
+    let bibliography: &[u8] = br#"<b:Sources xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography"><b:Source><b:Tag>Doe20</b:Tag></b:Source></b:Sources>"#;
+    let identity: &[u8] = br#"<ds:datastoreItem ds:itemID="{00000000-0000-0000-0000-000000000001}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"/>"#;
+    let content_type: &[u8] = br#"<ct:contentTypeSchema xmlns:ct="http://schemas.microsoft.com/office/2006/metadata/contentType"/>"#;
+    let forms: &[u8] = br#"<FormTemplates xmlns="http://schemas.microsoft.com/sharepoint/v3/contenttype/forms"><Display>DocumentLibraryForm</Display></FormTemplates>"#;
+    let properties: &[u8] = br#"<p:properties xmlns:p="http://schemas.microsoft.com/office/2006/metadata/properties"><documentManagement/></p:properties>"#;
+    let bytes = zip_package(&[
+        ("[Content_Types].xml", content_types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document),
+        ("customXml/item1.xml", empty_bibliography),
+        ("customXml/itemProps1.xml", identity),
+        ("customXML/item2.xml", bibliography),
+        ("customXml/item3.xml", content_type),
+        ("customXml/item4.xml", forms),
+        ("customXml/item5.xml", properties),
+        ("customXml/item6.xml", EXTRA_CUSTOM_XML),
+    ]);
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let mut reported: Vec<(String, String)> = import
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let part = entry.part.as_ref()?;
+            Some((part.part_name.to_ascii_lowercase(), entry.feature.clone()))
+        })
+        .collect();
+    reported.sort();
+    assert_eq!(
+        reported,
+        [
+            ("customxml/item1.xml", "docx.customXml.bibliography.empty"),
+            ("customxml/item2.xml", "docx.customXml.bibliography"),
+            (
+                "customxml/item3.xml",
+                "docx.customXml.sharepoint.contentType"
+            ),
+            ("customxml/item4.xml", "docx.customXml.sharepoint.forms"),
+            (
+                "customxml/item5.xml",
+                "docx.customXml.sharepoint.properties"
+            ),
+            ("customxml/item6.xml", "customXml/item6.xml"),
+            ("customxml/itemprops1.xml", "docx.customXml.storeIdentity"),
+        ]
+        .map(|(part, feature)| (part.to_owned(), feature.to_owned()))
+        .to_vec(),
+        "each store is named by what it holds, and an unknown one by its part"
+    );
+    // Recognising a store changes its name, not what happens to it: each is
+    // still carried verbatim.
+    assert_eq!(import.retained_parts.parts.len(), 7);
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.part.is_some())
+            .all(|entry| entry.retention_outcome() == RetentionOutcome::Preserved)
+    );
 }
 
 #[test]

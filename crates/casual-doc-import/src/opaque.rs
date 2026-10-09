@@ -345,3 +345,89 @@ pub(crate) fn is_signature_part(part_name: &str, content_type: Option<&str>) -> 
 pub(crate) fn is_signature_relationship(relationship_type: &str) -> bool {
     relationship_type.contains("/digital-signature/")
 }
+
+/// The class a `customXml` part is reported under, when its content says what
+/// kind of store it is (`109` FID-AT-18), or `None` to report it by name.
+///
+/// The panel listed every store as "Custom XML data stored with the document",
+/// and every identity record beside it as "Identity and schemas of the custom
+/// XML data" — so a file Word stamped with an EMPTY bibliography store (written
+/// the moment the References citation style is touched) and a SharePoint
+/// library's two records read as four pieces of content the reader was missing.
+/// Each store is still kept verbatim; this decides only what it is called and
+/// whether a reader would miss it:
+///
+/// - `customXml/itemPropsN.xml` is always an identity record (an id and the
+///   schemas the item uses; it never holds content): `docx.customXml.storeIdentity`.
+/// - an item whose root is the bibliography `Sources` is
+///   `docx.customXml.bibliography`, or `…bibliography.empty` with no `Source`;
+/// - SharePoint's `contentTypeSchema`, `FormTemplates` and `properties` roots,
+///   and the cover page's `CoverPageProperties`, by their namespaces.
+///
+/// Part names match case-insensitively, as OPC part names do
+/// (`customXML/item1.xml`). Complexity: O(the item's events), stopping at the
+/// first `Source` under a bibliography root and otherwise at the root.
+#[must_use]
+pub(crate) fn custom_xml_kind(part_name: &str, bytes: &[u8]) -> Option<&'static str> {
+    let lower = part_name.to_ascii_lowercase();
+    let file = lower.strip_prefix("customxml/")?;
+    let numbered = |stem: &str| {
+        file.strip_prefix(stem)
+            .and_then(|rest| rest.strip_suffix(".xml"))
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if numbered("itemprops") {
+        return Some("docx.customXml.storeIdentity");
+    }
+    if !numbered("item") {
+        return None;
+    }
+    const BIBLIOGRAPHY: &[u8] =
+        b"http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
+    const CONTENT_TYPE: &[u8] = b"http://schemas.microsoft.com/office/2006/metadata/contentType";
+    const FORMS: &[u8] = b"http://schemas.microsoft.com/sharepoint/v3/contenttype/forms";
+    const PROPERTIES: &[u8] = b"http://schemas.microsoft.com/office/2006/metadata/properties";
+    const COVER_PAGE: &[u8] = b"http://schemas.microsoft.com/office/2006/coverPageProps";
+    let mut reader = quick_xml::NsReader::from_reader(bytes);
+    let mut buffer = Vec::new();
+    let mut root: Option<&'static str> = None;
+    loop {
+        let event = reader.read_resolved_event_into(&mut buffer).ok()?;
+        match event {
+            (
+                namespace,
+                quick_xml::events::Event::Start(element) | quick_xml::events::Event::Empty(element),
+            ) => {
+                let uri = match namespace {
+                    quick_xml::name::ResolveResult::Bound(uri) => uri.into_inner().to_vec(),
+                    _ => Vec::new(),
+                };
+                let local = element.local_name();
+                match root {
+                    None => {
+                        root = Some(match (uri.as_slice(), local.as_ref()) {
+                            (BIBLIOGRAPHY, b"Sources") => "docx.customXml.bibliography.empty",
+                            (CONTENT_TYPE, b"contentTypeSchema") => {
+                                "docx.customXml.sharepoint.contentType"
+                            }
+                            (FORMS, b"FormTemplates") => "docx.customXml.sharepoint.forms",
+                            (PROPERTIES, b"properties") => "docx.customXml.sharepoint.properties",
+                            (COVER_PAGE, b"CoverPageProperties") => "docx.customXml.coverPage",
+                            _ => return None,
+                        });
+                        if root != Some("docx.customXml.bibliography.empty") {
+                            return root;
+                        }
+                    }
+                    Some(_) if uri.as_slice() == BIBLIOGRAPHY && local.as_ref() == b"Source" => {
+                        return Some("docx.customXml.bibliography");
+                    }
+                    Some(_) => {}
+                }
+            }
+            (_, quick_xml::events::Event::Eof) => return root,
+            _ => {}
+        }
+        buffer.clear();
+    }
+}

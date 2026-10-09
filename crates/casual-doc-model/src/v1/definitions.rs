@@ -293,6 +293,25 @@ pub struct NumberingLevel {
     /// placeholder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pstyle: Option<StyleId>,
+    /// The level's list-template code (`w:lvl/@w:tplc`, `ST_LongHexNumber`):
+    /// the key Word uses to tie the level back to an entry in the reader's List
+    /// Library. One to eight hexadecimal digits, kept as written. Additive
+    /// (`109` FID-AT-16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_code: Option<String>,
+    /// `w:lvl/@w:tentative`: Word created this level as a placeholder and may
+    /// discard it if it is never used. Dropping it made a tentative level
+    /// permanent on reopen. Additive (`109` FID-AT-16).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub tentative: bool,
+}
+
+impl NumberingLevel {
+    /// Whether `code` is a storable `w:tplc`: one to eight hexadecimal digits.
+    #[must_use]
+    pub fn is_valid_template_code(code: &str) -> bool {
+        (1..=8).contains(&code.len()) && code.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
 }
 
 /// An abstract numbering definition (its id is the map key).
@@ -1112,21 +1131,25 @@ pub enum DocumentProtectionEdit {
     Forms,
 }
 
-/// Editing/formatting protection (`w:documentProtection`). Only the three
-/// load-bearing policy attributes are modeled.
+/// Editing/formatting protection (`w:documentProtection`): the three policy
+/// attributes, and the password verifier Word stored with them.
 ///
-/// The sixteen password attributes (`AG_Password`'s `w:hash`, `w:salt`,
+/// **The verifier is kept, not checked** (ADR-052, updated 2026-10-09). The
+/// sixteen password attributes (`AG_Password`'s `w:hash`, `w:salt`,
 /// `w:cryptProviderType`, … and `AG_TransitionalPassword`'s `w:algorithmName`,
-/// `w:hashValue`, `w:saltValue`, `w:spinCount`) are **not** modeled and are
-/// **not** the byte floor's concern either — this doc comment used to say they
-/// were, and that was wrong. `word/settings.xml` is a *consumed* part that the
-/// semantic writer regenerates from this struct, so a password-protected
-/// restriction saves password-less while the restriction itself survives.
-/// `casual-doc-import` reports every one of them as a named compatibility
-/// finding (`documentProtection/@hashValue`, …) so the loss is not silent;
-/// whether to re-emit or verify password material is ADR-052's open decision,
-/// and ADR-052 declines to treat it as a security boundary.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// `w:hashValue`, `w:saltValue`, `w:spinCount`) are carried verbatim in
+/// [`DocumentProtection::password`] and written back, so a document an author
+/// protected with a password in Word still asks Word for that password after it
+/// is edited and saved here. Until then they were reported and dropped: the
+/// restriction survived and became liftable in Word with no password at all,
+/// which silently weakened the author's own deterrent. Nothing here verifies the
+/// verifier, and nothing claims the restriction is a security boundary; a
+/// reader who lifts or changes the restriction here installs a new value with no
+/// verifier, which removes the password (Word would have asked for it first —
+/// the host says so), and Undo puts the old value, verifier and all, back.
+///
+/// Not `Copy` since the verifier was added: it owns its strings.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DocumentProtection {
     /// The editing restriction (`w:edit`).
@@ -1144,22 +1167,178 @@ pub struct DocumentProtection {
     /// Whether style formatting is also locked (`w:formatting`).
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub formatting: bool,
+    /// The password verifier the file carried with the restriction, verbatim;
+    /// `None` when it had none. See the type's documentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<PasswordVerifier>,
+}
+
+/// One attribute of a protection's password verifier: `AG_Password`'s twelve
+/// (the legacy form Word has always written) and `AG_TransitionalPassword`'s
+/// four (the ISO form Office writes instead when `UseIsoPasswordVerifier` is
+/// set), ECMA-376 Part 1 §17.15.1.29 and §17.15.1.93.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PasswordAttribute {
+    /// `w:algorithmName`.
+    AlgorithmName,
+    /// `w:hashValue`.
+    HashValue,
+    /// `w:saltValue`.
+    SaltValue,
+    /// `w:spinCount`.
+    SpinCount,
+    /// `w:cryptProviderType`.
+    CryptProviderType,
+    /// `w:cryptAlgorithmClass`.
+    CryptAlgorithmClass,
+    /// `w:cryptAlgorithmType`.
+    CryptAlgorithmType,
+    /// `w:cryptAlgorithmSid`.
+    CryptAlgorithmSid,
+    /// `w:cryptSpinCount`.
+    CryptSpinCount,
+    /// `w:cryptProvider`.
+    CryptProvider,
+    /// `w:algIdExt`.
+    AlgIdExt,
+    /// `w:algIdExtSource`.
+    AlgIdExtSource,
+    /// `w:cryptProviderTypeExt`.
+    CryptProviderTypeExt,
+    /// `w:cryptProviderTypeExtSource`.
+    CryptProviderTypeExtSource,
+    /// `w:hash`.
+    Hash,
+    /// `w:salt`.
+    Salt,
+}
+
+impl PasswordAttribute {
+    /// Every attribute, in the order they are written: the ISO four first, then
+    /// the legacy twelve in the schema's own order.
+    pub const ALL: [Self; 16] = [
+        Self::AlgorithmName,
+        Self::HashValue,
+        Self::SaltValue,
+        Self::SpinCount,
+        Self::CryptProviderType,
+        Self::CryptAlgorithmClass,
+        Self::CryptAlgorithmType,
+        Self::CryptAlgorithmSid,
+        Self::CryptSpinCount,
+        Self::CryptProvider,
+        Self::AlgIdExt,
+        Self::AlgIdExtSource,
+        Self::CryptProviderTypeExt,
+        Self::CryptProviderTypeExtSource,
+        Self::Hash,
+        Self::Salt,
+    ];
+
+    /// The attribute's local name in the `w:` namespace.
+    #[must_use]
+    pub const fn local_name(self) -> &'static str {
+        match self {
+            Self::AlgorithmName => "algorithmName",
+            Self::HashValue => "hashValue",
+            Self::SaltValue => "saltValue",
+            Self::SpinCount => "spinCount",
+            Self::CryptProviderType => "cryptProviderType",
+            Self::CryptAlgorithmClass => "cryptAlgorithmClass",
+            Self::CryptAlgorithmType => "cryptAlgorithmType",
+            Self::CryptAlgorithmSid => "cryptAlgorithmSid",
+            Self::CryptSpinCount => "cryptSpinCount",
+            Self::CryptProvider => "cryptProvider",
+            Self::AlgIdExt => "algIdExt",
+            Self::AlgIdExtSource => "algIdExtSource",
+            Self::CryptProviderTypeExt => "cryptProviderTypeExt",
+            Self::CryptProviderTypeExtSource => "cryptProviderTypeExtSource",
+            Self::Hash => "hash",
+            Self::Salt => "salt",
+        }
+    }
+
+    /// The attribute a local name denotes, if it is one of the sixteen.
+    #[must_use]
+    pub fn from_local_name(name: &[u8]) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|attribute| attribute.local_name().as_bytes() == name)
+    }
+}
+
+/// A protection's password verifier, kept verbatim so a save writes back what
+/// the file said (ADR-052). Never verified: see [`DocumentProtection`].
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PasswordVerifier {
+    /// The attributes the file stated, at most one per name, in
+    /// [`PasswordAttribute::ALL`] order, each non-empty and at most
+    /// [`PasswordVerifier::MAX_VALUE_LEN`] bytes.
+    pub attributes: Vec<(PasswordAttribute, String)>,
+}
+
+impl PasswordVerifier {
+    /// The longest value kept. A SHA-512 hash in base64 is 88 bytes; this bounds
+    /// a hostile part without refusing anything Word or LibreOffice writes.
+    pub const MAX_VALUE_LEN: usize = 1024;
+
+    /// Whether `value` may be stored for an attribute: non-empty and bounded.
+    #[must_use]
+    pub fn is_storable(value: &str) -> bool {
+        !value.is_empty() && value.len() <= Self::MAX_VALUE_LEN
+    }
+
+    /// Sets `attribute`, keeping [`Self::attributes`] in `ALL` order and one per
+    /// name. A value [`Self::is_storable`] refuses is not stored, and the call
+    /// says so. O(16).
+    pub fn set(&mut self, attribute: PasswordAttribute, value: String) -> bool {
+        if !Self::is_storable(&value) {
+            return false;
+        }
+        match self
+            .attributes
+            .binary_search_by(|(name, _)| name.cmp(&attribute))
+        {
+            Ok(index) => self.attributes[index].1 = value,
+            Err(index) => self.attributes.insert(index, (attribute, value)),
+        }
+        true
+    }
+
+    /// The value stated for `attribute`, if any. O(16).
+    #[must_use]
+    pub fn get(&self, attribute: PasswordAttribute) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|(name, _)| *name == attribute)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Whether nothing was stated.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.attributes.is_empty()
+    }
 }
 
 /// Write protection (`w:writeProtection`) — the document is recommended or
 /// required to be opened read-only. Presence (`Some`) is itself load-bearing.
 ///
 /// `CT_WriteProtection` carries the same sixteen password attributes as
-/// [`DocumentProtection`], with the same consequence and the same remedy: they
-/// are not modeled, `word/settings.xml` is regenerated rather than byte-floored,
-/// and `casual-doc-import` reports each one it sees
-/// (`writeProtection/@hashValue`, …) rather than dropping it in silence.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+/// [`DocumentProtection`], kept the same way and for the same reason: a
+/// document Word opens read-only behind a password keeps that password through
+/// a save here.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WriteProtection {
     /// Whether opening read-only is merely recommended (`w:recommended`).
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub recommended: bool,
+    /// The password verifier the file carried, verbatim; `None` when it had none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<PasswordVerifier>,
 }
 
 /// The view magnification mode (`w:zoom/@w:val`, `ST_Zoom`).
@@ -1396,7 +1575,9 @@ pub struct DocumentSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_id_w15: Option<String>,
     /// `w14:defaultImageDpi` — the resolution pictures are compressed to when
-    /// they are compressed (`220`, `150`, `96`, …), bounded 1..=10,000.
+    /// they are compressed (`220`, `150`, `96`, …), bounded 1..=32,767. Word's
+    /// "High fidelity" (do not compress) is stored as `32767`, which a bound of
+    /// 10,000 refused and reported until the owner's documents showed it.
     /// Additive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_image_dpi: Option<u32>,
@@ -1418,6 +1599,149 @@ pub struct DocumentSettings {
     /// states. Additive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shape_defaults_xml: Option<String>,
+    /// `w:hdrShapeDefaults` — the same VML defaults for shapes in headers and
+    /// footers, retained VERBATIM like [`DocumentSettings::shape_defaults_xml`].
+    /// Word writes one into most documents it saves (`spidmax`, the highest
+    /// shape id used). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_shape_defaults_xml: Option<String>,
+    /// `w:drawingGrid*` and `w:displayHorizontal/VerticalDrawingGridEvery` —
+    /// Word's drawing grid (Layout ▸ Align ▸ Grid Settings). Additive.
+    #[serde(default, skip_serializing_if = "DrawingGrid::is_empty")]
+    pub drawing_grid: DrawingGrid,
+    /// The legacy `w:compat` switches that are on, by local name, in
+    /// [`LEGACY_COMPAT_OPTIONS`] order — every `CT_Compat` on/off child except
+    /// the two typed ones above (`w:adjustLineHeightInTable`, `w:useFELayout`).
+    ///
+    /// Kept and written back so an edited save does not change how Word lays
+    /// the document out; the layout engine here does not interpret them (most
+    /// apply only to documents in an older compatibility mode). A switch stated
+    /// off is the default and is not stored. Additive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compat_options: Vec<String>,
+    /// `w:attachedTemplate` — the target of the template the document was based
+    /// on (`Normal.dotm`, or a path or URL), from `settings.xml.rels`. Word keeps
+    /// it across saves; nothing here opens it. At most
+    /// [`MAX_ATTACHED_TEMPLATE_BYTES`]. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_template: Option<String>,
+}
+
+/// The longest attached-template target kept ([`DocumentSettings::attached_template`]).
+pub const MAX_ATTACHED_TEMPLATE_BYTES: usize = 2048;
+
+/// Every on/off child of `w:compat` (`CT_Compat`, ECMA-376 Part 1 §17.15.3), in
+/// schema order, except `w:compatSetting`. [`DocumentSettings::compat_options`]
+/// holds the ones that are on, other than the two typed fields.
+pub const LEGACY_COMPAT_OPTIONS: [&str; 65] = [
+    "useSingleBorderforContiguousCells",
+    "wpJustification",
+    "noTabHangInd",
+    "noLeading",
+    "spaceForUL",
+    "noColumnBalance",
+    "balanceSingleByteDoubleByteWidth",
+    "noExtraLineSpacing",
+    "doNotLeaveBackslashAlone",
+    "ulTrailSpace",
+    "doNotExpandShiftReturn",
+    "spacingInWholePoints",
+    "lineWrapLikeWord6",
+    "printBodyTextBeforeHeader",
+    "printColBlack",
+    "wpSpaceWidth",
+    "showBreaksInFrames",
+    "subFontBySize",
+    "suppressBottomSpacing",
+    "suppressTopSpacing",
+    "suppressSpacingAtTopOfPage",
+    "suppressTopSpacingWP",
+    "suppressSpBfAfterPgBrk",
+    "swapBordersFacingPages",
+    "convMailMergeEsc",
+    "truncateFontHeightsLikeWP6",
+    "mwSmallCaps",
+    "usePrinterMetrics",
+    "doNotSuppressParagraphBorders",
+    "wrapTrailSpaces",
+    "footnoteLayoutLikeWW8",
+    "shapeLayoutLikeWW8",
+    "alignTablesRowByRow",
+    "forgetLastTabAlignment",
+    "adjustLineHeightInTable",
+    "autoSpaceLikeWord95",
+    "noSpaceRaiseLower",
+    "doNotUseHTMLParagraphAutoSpacing",
+    "layoutRawTableWidth",
+    "layoutTableRowsApart",
+    "useWord97LineBreakRules",
+    "doNotBreakWrappedTables",
+    "doNotSnapToGridInCell",
+    "selectFldWithFirstOrLastChar",
+    "applyBreakingRules",
+    "doNotWrapTextWithPunct",
+    "doNotUseEastAsianBreakRules",
+    "useWord2002TableStyleRules",
+    "growAutofit",
+    "useFELayout",
+    "useNormalStyleForList",
+    "doNotUseIndentAsNumberingTabStop",
+    "useAltKinsokuLineBreakRules",
+    "allowSpaceOfSameStyleInTable",
+    "doNotSuppressIndentation",
+    "doNotAutofitConstrainedTables",
+    "autofitToFirstFixedWidthCell",
+    "underlineTabInNumList",
+    "displayHangulFixedWidth",
+    "splitPgBreakAndParaMark",
+    "doNotVertAlignCellWithSp",
+    "doNotBreakConstrainedForcedTable",
+    "doNotVertAlignInTxbx",
+    "useAnsiKerningPairs",
+    "cachedColBalance",
+];
+
+/// Word's drawing grid (`w:drawingGridHorizontalSpacing` and its six siblings,
+/// ECMA-376 Part 1 §17.15.1.43–48). Each value is what the file stated; `None`
+/// and `false` are the schema's absent. Spacings and origins are twips, bounded
+/// like a tab stop (0..=31,680); the "every" counts are 0..=32,767.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingGrid {
+    /// `w:drawingGridHorizontalSpacing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_spacing: Option<u32>,
+    /// `w:drawingGridVerticalSpacing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_spacing: Option<u32>,
+    /// `w:displayHorizontalDrawingGridEvery`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_horizontal_every: Option<u32>,
+    /// `w:displayVerticalDrawingGridEvery`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_vertical_every: Option<u32>,
+    /// `w:doNotUseMarginsForDrawingGridOrigin`.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub do_not_use_margins_for_origin: bool,
+    /// `w:drawingGridHorizontalOrigin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_origin: Option<u32>,
+    /// `w:drawingGridVerticalOrigin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_origin: Option<u32>,
+}
+
+impl DrawingGrid {
+    /// The largest spacing or origin kept, in twips (22 inches).
+    pub const MAX_TWIPS: u32 = 31_680;
+    /// The largest "display every" count kept.
+    pub const MAX_EVERY: u32 = 32_767;
+
+    /// Whether the file stated nothing about the grid.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Maximum UTF-8 length of a settings token (`w:decimalSymbol`,
@@ -1465,10 +1789,19 @@ impl DocumentSettings {
             })
     }
 
-    /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=10,000.
+    /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=32,767, the top
+    /// being Word's "High fidelity".
     #[must_use]
     pub const fn is_valid_image_dpi(dpi: u32) -> bool {
-        dpi >= 1 && dpi <= 10_000
+        dpi >= 1 && dpi <= 32_767
+    }
+
+    /// Whether `name` is a `w:compat` switch [`Self::compat_options`] may hold.
+    #[must_use]
+    pub fn is_compat_option(name: &str) -> bool {
+        name != "adjustLineHeightInTable"
+            && name != "useFELayout"
+            && LEGACY_COMPAT_OPTIONS.contains(&name)
     }
 }
 
