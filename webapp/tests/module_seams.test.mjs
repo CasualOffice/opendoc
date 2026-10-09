@@ -436,8 +436,12 @@ const SRC = new URL("../src/", import.meta.url);
  *  paid by taking out the thing it needed a seam on: the drag-selection's
  *  edge-scroll arithmetic, which the object drag needed too, is now
  *  `edge_scroll.mjs` and both gestures call it. MEASURED with `wc -l` on
- *  `ux/objects-v3` before any rebase; re-measure after one. */
-const MAIN_JS_LINE_CEILING = 16045;
+ *  `ux/objects-v3` before any rebase; re-measure after one.
+ *
+ *  Lowered to 16,044 by FID-FW-01: the Save line and the draft snapshot now
+ *  take the chip's count from `compat_findings.mjs`, so `format_io.mjs`'s raw
+ *  occurrence count left `main.js`'s import list. MEASURED with `wc -l`. */
+const MAIN_JS_LINE_CEILING = 16044;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

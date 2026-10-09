@@ -65,7 +65,7 @@ import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./styl
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
 import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
-import { createCompatibilityFindings } from "./compat_findings.mjs";
+import { createCompatibilityFindings, findingTotals } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
@@ -85,7 +85,6 @@ import {
   scrollToDoc,
 } from "./page_scroll.mjs";
 import {
-  compatibilityOccurrenceCount,
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
@@ -13508,7 +13507,7 @@ function exportDocumentAs(targetFormat, intent = "export") {
     const mimeType = artifact.mimeType;
     const extension = artifact.suggestedExtension;
     const report = artifact.reportJson;
-    const findings = compatibilityOccurrenceCount(report);
+    const findings = findingTotals(report).headline; // the chip's count: Word's bookkeeping excluded (FID-FW-01)
     artifact.free();
     const saved = downloadBytes(bytes, mimeType, downloadNameForFormat(currentName, extension), document);
     hostSession?.noteWrite(intent, { format: targetFormat, name: saved, bytes: bytes.length });
@@ -15103,7 +15102,7 @@ function takeDraftSnapshot() {
       const bytes = artifact.bytes;
       let findings = 0;
       try {
-        findings = compatibilityOccurrenceCount(artifact.reportJson);
+        findings = findingTotals(artifact.reportJson).headline; // the chip's count (FID-FW-01)
       } catch {
         findings = 0; // a report we cannot parse must not lose us the draft
       }
