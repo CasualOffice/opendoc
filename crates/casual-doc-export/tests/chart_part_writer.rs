@@ -39,6 +39,9 @@ use casual_doc_model::v1::{
 };
 // Own `use` line: `Document` is the v1 one, not the crate-root re-export.
 use casual_doc_model::v1::Document;
+// Own lines: the chart-formatting vocabulary (`docs/155` §19).
+use casual_doc_model::v1::{ChartFont, DashStyle, Trendline, TrendlineKind};
+use casual_doc_model::v1::{ErrorBarDirection, ErrorBarType, ErrorBars, ErrorValueType};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 
 const CHART_PART: &str = "word/charts/chart7.xml";
@@ -151,6 +154,7 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
     );
     let scatter = matches!(group, ChartGroupKind::Scatter { .. });
     Chart {
+        font: None,
         chart_retained: Default::default(),
         namespaces: Default::default(),
         space_retained: Default::default(),
@@ -189,6 +193,7 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
             axes: if pie { Vec::new() } else { axes() },
         },
         legend: Some(Legend {
+            font: None,
             retained: Default::default(),
             position: LegendPosition::Bottom,
             overlay: false,
@@ -478,6 +483,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
         },
     );
     before.title = Some(ChartTitle {
+        font: None,
         retained: Default::default(),
         text: Some(ChartText {
             text: "Quarterly revenue".to_owned(),
@@ -489,6 +495,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
     before.plot_visible_only = false;
     before.display_blanks_as = DisplayBlanks::Span;
     before.legend = Some(Legend {
+        font: None,
         retained: Default::default(),
         position: LegendPosition::TopRight,
         overlay: true,
@@ -500,6 +507,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
         b: 0xC4,
     }));
     series.line = Some(ChartLine {
+        dash: None,
         color: Some(Color::Theme(ThemeColor {
             slot: ThemeColorRef::Accent3,
             theme_tint: None,
@@ -892,8 +900,129 @@ const SCHEMA_ORDER: &[(&str, &[&str])] = &[
     ("title", &["tx", "layout", "overlay", "spPr", "txPr"]),
     // CT_Tx (rich choice) / CT_TextBody, and the one run it holds.
     ("rich", &["bodyPr", "lstStyle", "p"]),
-    ("p", &["pPr", "r", "endParaRPr"]),
+    // CT_TextBody of a `c:txPr` — the same sequence as `c:rich`.
+    ("txPr", &["bodyPr", "lstStyle", "p"]),
+    // CT_TextParagraph / CT_TextParagraphProperties / CT_RegularTextRun.
+    ("p", &["pPr", "r", "br", "fld", "endParaRPr"]),
+    (
+        "pPr",
+        &[
+            "lnSpc",
+            "spcBef",
+            "spcAft",
+            "buClrTx",
+            "buClr",
+            "buSzTx",
+            "buSzPct",
+            "buSzPts",
+            "buFontTx",
+            "buFont",
+            "buNone",
+            "buAutoNum",
+            "buChar",
+            "buBlip",
+            "tabLst",
+            "defRPr",
+            "extLst",
+        ],
+    ),
     ("r", &["rPr", "t"]),
+    // CT_TextCharacterProperties (`a:defRPr`, `a:rPr`): the colour's fill
+    // BEFORE the face — the mistake this row exists to catch.
+    (
+        "defRPr",
+        &[
+            "ln",
+            "noFill",
+            "solidFill",
+            "gradFill",
+            "blipFill",
+            "pattFill",
+            "grpFill",
+            "effectLst",
+            "effectDag",
+            "highlight",
+            "uLnTx",
+            "uLn",
+            "uFillTx",
+            "uFill",
+            "latin",
+            "ea",
+            "cs",
+            "sym",
+            "hlinkClick",
+            "hlinkMouseOver",
+            "rtl",
+            "extLst",
+        ],
+    ),
+    (
+        "rPr",
+        &[
+            "ln",
+            "noFill",
+            "solidFill",
+            "gradFill",
+            "blipFill",
+            "pattFill",
+            "grpFill",
+            "effectLst",
+            "effectDag",
+            "highlight",
+            "uLnTx",
+            "uLn",
+            "uFillTx",
+            "uFill",
+            "latin",
+            "ea",
+            "cs",
+            "sym",
+            "hlinkClick",
+            "hlinkMouseOver",
+            "rtl",
+            "extLst",
+        ],
+    ),
+    // CT_Trendline
+    (
+        "trendline",
+        &[
+            "name",
+            "spPr",
+            "trendlineType",
+            "order",
+            "period",
+            "forward",
+            "backward",
+            "intercept",
+            "dispRSqr",
+            "dispEq",
+            "trendlineLbl",
+            "extLst",
+        ],
+    ),
+    // CT_TrendlineLbl
+    (
+        "trendlineLbl",
+        &["layout", "tx", "numFmt", "spPr", "txPr", "extLst"],
+    ),
+    // CT_ErrBars
+    (
+        "errBars",
+        &[
+            "errDir",
+            "errBarType",
+            "errValType",
+            "noEndCap",
+            "plus",
+            "minus",
+            "val",
+            "spPr",
+            "extLst",
+        ],
+    ),
+    ("plus", &["numRef", "numLit"]),
+    ("minus", &["numRef", "numLit"]),
     // CT_PlotArea — groups, then axes, then the tail.
     (
         "plotArea",
@@ -1109,7 +1238,24 @@ const SCHEMA_ORDER: &[(&str, &[&str])] = &[
             "ln",
         ],
     ),
-    ("ln", &["noFill", "solidFill", "gradFill", "prstDash"]),
+    // CT_LineProperties: fill, then dash, then join, then the ends.
+    (
+        "ln",
+        &[
+            "noFill",
+            "solidFill",
+            "gradFill",
+            "pattFill",
+            "prstDash",
+            "custDash",
+            "round",
+            "bevel",
+            "miter",
+            "headEnd",
+            "tailEnd",
+            "extLst",
+        ],
+    ),
     (
         "solidFill",
         &[
@@ -1227,6 +1373,7 @@ fn every_generated_chart_part_is_in_ecma_376_child_order() {
         // a guard over the bare projection would only ever see five elements.
         let mut chart = projection(id(3), group);
         chart.title = Some(ChartTitle {
+            font: None,
             retained: Default::default(),
             text: Some(ChartText {
                 text: "Revenue".to_owned(),
@@ -1242,6 +1389,7 @@ fn every_generated_chart_part_is_in_ecma_376_child_order() {
             b: 0xC4,
         }));
         series.line = Some(ChartLine {
+            dash: None,
             color: Some(Color::Theme(ThemeColor {
                 slot: ThemeColorRef::Accent1,
                 theme_tint: Some(0x7F),
@@ -1887,7 +2035,80 @@ const CONTAINER_ORDER: &[(&str, &[&str])] = &[
     (
         "plotArea",
         &[
-            "layout", "barChart", "catAx", "valAx", "dTable", "spPr", "extLst",
+            "layout",
+            "barChart",
+            "lineChart",
+            "areaChart",
+            "pieChart",
+            "doughnutChart",
+            "scatterChart",
+            "catAx",
+            "valAx",
+            "dateAx",
+            "dTable",
+            "spPr",
+            "extLst",
+        ],
+    ),
+    // CT_Title — the chart's own and an axis's.
+    (
+        "title",
+        &["tx", "layout", "overlay", "spPr", "txPr", "extLst"],
+    ),
+    // The union of the five CT_*Ser sequences (they agree on relative order).
+    (
+        "ser",
+        &[
+            "idx",
+            "order",
+            "tx",
+            "spPr",
+            "marker",
+            "explosion",
+            "invertIfNegative",
+            "pictureOptions",
+            "dPt",
+            "dLbls",
+            "trendline",
+            "errBars",
+            "cat",
+            "xVal",
+            "val",
+            "yVal",
+            "shape",
+            "smooth",
+            "extLst",
+        ],
+    ),
+    (
+        "trendline",
+        &[
+            "name",
+            "spPr",
+            "trendlineType",
+            "order",
+            "period",
+            "forward",
+            "backward",
+            "intercept",
+            "dispRSqr",
+            "dispEq",
+            "trendlineLbl",
+            "extLst",
+        ],
+    ),
+    (
+        "errBars",
+        &[
+            "errDir",
+            "errBarType",
+            "errValType",
+            "noEndCap",
+            "plus",
+            "minus",
+            "val",
+            "spPr",
+            "extLst",
         ],
     ),
     (
@@ -2185,4 +2406,600 @@ fn a_malformed_carried_fragment_is_dropped_and_reported() {
             .any(|entry| entry.feature == "docx.export.chart.fragment_dropped"),
         "the dropped fragment was not reported"
     );
+}
+
+// ---- Chart formatting (`docs/155` §19): fonts, axis titles, dashes,
+// trendlines, error bars. Synthetic fixtures only.
+
+/// A font with every field set, its colour a THEME colour so the guard can see
+/// that a scheme colour stays one.
+fn full_font(size: u32, face: &str) -> ChartFont {
+    ChartFont {
+        typeface: Some(face.to_owned()),
+        size: Some(size),
+        bold: Some(true),
+        italic: Some(false),
+        color: Some(Color::Theme(ThemeColor {
+            slot: ThemeColorRef::Accent2,
+            theme_tint: None,
+            theme_shade: None,
+        })),
+    }
+}
+
+/// A dashed, coloured line.
+fn dashed(dash: DashStyle) -> ChartLine {
+    ChartLine {
+        color: Some(Color::Rgb(RgbColor {
+            r: 0xC0,
+            g: 0x50,
+            b: 0x4D,
+        })),
+        width_emu: Some(19_050),
+        no_fill: false,
+        dash: Some(dash),
+    }
+}
+
+/// A projection of `group` carrying every formatting construct the writer
+/// generates: chart-space, title, legend and both axes' fonts; two axis
+/// titles (one with text, one automatic); a dashed series line; a trendline
+/// that displays its equation; custom error bars.
+fn formatted(group: ChartGroupKind) -> Chart {
+    let mut chart = projection(id(3), group);
+    chart.font = Some(ChartFont {
+        size: Some(1_000),
+        typeface: Some("Georgia".to_owned()),
+        ..ChartFont::default()
+    });
+    chart.title = Some(ChartTitle {
+        text: Some(ChartText {
+            text: "Revenue".to_owned(),
+            formula: None,
+        }),
+        overlay: false,
+        font: Some(full_font(1_800, "Cambria")),
+        retained: Vec::new(),
+    });
+    chart.auto_title_deleted = false;
+    if let Some(legend) = chart.legend.as_mut() {
+        legend.font = Some(ChartFont {
+            italic: Some(true),
+            size: Some(800),
+            ..ChartFont::default()
+        });
+    }
+    if let [category, value] = chart.plot_area.axes.as_mut_slice() {
+        category.font = Some(full_font(900, "Arial"));
+        // An automatic title (no text): its font can only go in `c:txPr`.
+        category.title = Some(ChartTitle {
+            text: None,
+            overlay: false,
+            font: Some(ChartFont {
+                size: Some(1_100),
+                ..ChartFont::default()
+            }),
+            retained: Vec::new(),
+        });
+        value.font = Some(ChartFont {
+            color: Some(Color::Rgb(RgbColor {
+                r: 0x40,
+                g: 0x40,
+                b: 0x40,
+            })),
+            ..ChartFont::default()
+        });
+        value.title = Some(ChartTitle {
+            text: Some(ChartText {
+                text: "Units".to_owned(),
+                formula: None,
+            }),
+            overlay: false,
+            font: Some(full_font(1_000, "Calibri")),
+            retained: Vec::new(),
+        });
+    }
+    let series = &mut chart.plot_area.groups[0].series[0];
+    series.line = Some(dashed(DashStyle::Dash));
+    series.trendlines = vec![Trendline {
+        name: Some("Trend".to_owned()),
+        kind: TrendlineKind::Polynomial,
+        order: Some(2),
+        forward: Some("1.5".to_owned()),
+        display_equation: true,
+        line: Some(dashed(DashStyle::SystemDot)),
+        ..Trendline::default()
+    }];
+    series.error_bars = vec![ErrorBars {
+        direction: Some(ErrorBarDirection::Y),
+        bar_type: ErrorBarType::Both,
+        value_type: ErrorValueType::Custom,
+        plus: Some(numbers(&["0.5", "0.25", "0.75", "1"])),
+        minus: Some(numbers(&["0.1", "0.2", "0.3", "0.4"])),
+        no_end_cap: true,
+        line: Some(dashed(DashStyle::LargeDashDot)),
+        ..ErrorBars::default()
+    }];
+    chart
+}
+
+fn bar() -> ChartGroupKind {
+    ChartGroupKind::Bar {
+        direction: BarDirection::Column,
+        grouping: BarGrouping::Clustered,
+        gap_width: 150,
+        overlap: -27,
+    }
+}
+
+/// Writes `chart` and returns its part, as text, and the export's findings.
+fn write_part(chart: Chart) -> (String, casual_doc_export::CompatibilityReport) {
+    let export = export_document(&document_with(chart), &BTreeMap::new()).expect("writes");
+    let mut package = DocxPackage::open(&export.bytes, PackageLimits::default()).expect("opens");
+    let xml = String::from_utf8(package.read_part(CHART_PART).expect("chart")).expect("UTF-8");
+    (xml, export.report)
+}
+
+/// The text from the first `<{open}` through the `</{close}>` after it.
+fn section<'a>(xml: &'a str, open: &str, close: &str) -> &'a str {
+    let start = xml
+        .find(&format!("<{open}"))
+        .unwrap_or_else(|| panic!("no <{open}> in:\n{xml}"));
+    let rest = &xml[start..];
+    let end = rest
+        .find(&format!("</{close}>"))
+        .unwrap_or_else(|| panic!("no </{close}> after <{open}>"));
+    &rest[..end + close.len() + 3]
+}
+
+/// **Every formatting construct is written, where the schema puts it.**
+///
+/// Each assertion names one element at one place: the chart-space, legend
+/// and axis fonts as `c:txPr` with the colour BEFORE the face; the chart and
+/// value-axis titles' fonts inside their rich text (paragraph default and
+/// run); the automatic category-axis title's font in its own `c:txPr`; the
+/// vertical axis title rotated; the dash after the fill inside `a:ln`; the
+/// trendline with the label Word needs to show its equation; the custom error
+/// bars as literals. Both order tables walk the part, so a misplaced element
+/// fails even where a substring matched.
+#[test]
+fn chart_formatting_is_written_in_ecma_376_order() {
+    for group in [
+        bar(),
+        ChartGroupKind::Line {
+            grouping: Grouping::Standard,
+            marker: true,
+        },
+        ChartGroupKind::Scatter {
+            style: ScatterStyle::LineMarker,
+        },
+    ] {
+        let (xml, report) = write_part(formatted(group));
+        assert_schema_order(xml.as_bytes());
+        assert_containers_in_order(xml.as_bytes());
+        assert!(
+            !report
+                .entries
+                .iter()
+                .any(|entry| entry.feature.starts_with("docx.export.chart")),
+            "nothing was dropped, so nothing may be reported: {:?}",
+            report.entries
+        );
+
+        // Chart space: the default every element inherits, after `c:chart`.
+        let tail = &xml[xml.find("</c:chart>").expect("chart closes")..];
+        assert!(
+            tail.contains(
+                r#"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1000"><a:latin typeface="Georgia"/></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>"#
+            ),
+            "the chart-space font is not written:\n{tail}"
+        );
+
+        // The chart title: font in the rich body, scheme colour kept.
+        let title = section(&xml, "c:title>", "c:title");
+        let rich_font = r#"sz="1800" b="1" i="0"><a:solidFill><a:schemeClr val="accent2"/></a:solidFill><a:latin typeface="Cambria"/>"#;
+        assert!(
+            title.contains(&format!("<a:pPr><a:defRPr {rich_font}</a:defRPr></a:pPr>")),
+            "the title's paragraph default font is missing:\n{title}"
+        );
+        assert!(
+            title.contains(&format!(
+                "<a:r><a:rPr {rich_font}</a:rPr><a:t>Revenue</a:t>"
+            )),
+            "the title's run font is missing:\n{title}"
+        );
+        assert!(
+            !title.contains("<c:txPr>"),
+            "a title whose font is in its rich body must not repeat it:\n{title}"
+        );
+
+        // The legend.
+        let legend = section(&xml, "c:legend>", "c:legend");
+        assert!(
+            legend.contains(r#"<a:defRPr sz="800" i="1"/>"#),
+            "the legend font is missing:\n{legend}"
+        );
+
+        // The category axis: tick-label font and an automatic title.
+        let category = section(&xml, "c:catAx>", "c:catAx");
+        let category_title = section(category, "c:title>", "c:title");
+        assert!(
+            !category_title.contains("<c:tx>"),
+            "an automatic title has no text"
+        );
+        assert!(
+            category_title
+                .contains(r#"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1100"/>"#),
+            "an automatic title's font must go in its c:txPr:\n{category_title}"
+        );
+        let after_title = &category[category.find("</c:title>").expect("title")..];
+        assert!(
+            after_title.contains(
+                r#"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900" b="1" i="0"><a:solidFill><a:schemeClr val="accent2"/></a:solidFill><a:latin typeface="Arial"/></a:defRPr>"#
+            ),
+            "the category tick-label font is missing:\n{category}"
+        );
+
+        // The value axis: a vertical title, rotated as Word draws it.
+        let value = section(&xml, "c:valAx>", "c:valAx");
+        let value_title = section(value, "c:title>", "c:title");
+        assert!(
+            value_title.contains(r#"<a:bodyPr rot="-5400000" vert="horz"/>"#),
+            "a left axis title must be rotated:\n{value_title}"
+        );
+        assert!(value_title.contains("<a:t>Units</a:t>"));
+        assert!(
+            value.contains(
+                r#"<a:defRPr><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:defRPr>"#
+            ),
+            "the value tick-label colour is missing:\n{value}"
+        );
+
+        // The series line, the trendline and the error bars, each dashed.
+        let series = section(&xml, "c:ser>", "c:ser");
+        assert!(
+            series.contains(
+                r#"<a:ln w="19050"><a:solidFill><a:srgbClr val="C0504D"/></a:solidFill><a:prstDash val="dash"/></a:ln>"#
+            ),
+            "the series dash is not after its fill:\n{series}"
+        );
+        let trendline = section(series, "c:trendline>", "c:trendline");
+        for expected in [
+            "<c:name>Trend</c:name>",
+            r#"<a:prstDash val="sysDot"/>"#,
+            r#"<c:trendlineType val="poly"/><c:order val="2"/><c:forward val="1.5"/>"#,
+            r#"<c:dispRSqr val="0"/><c:dispEq val="1"/><c:trendlineLbl><c:numFmt formatCode="General" sourceLinked="0"/></c:trendlineLbl>"#,
+        ] {
+            assert!(
+                trendline.contains(expected),
+                "{expected} missing:\n{trendline}"
+            );
+        }
+        let bars = section(series, "c:errBars>", "c:errBars");
+        for expected in [
+            r#"<c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:noEndCap val="1"/>"#,
+            r#"<c:plus><c:numLit><c:ptCount val="4"/><c:pt idx="0"><c:v>0.5</c:v></c:pt>"#,
+            r#"<c:minus><c:numLit>"#,
+            r#"<a:prstDash val="lgDashDot"/>"#,
+        ] {
+            assert!(bars.contains(expected), "{expected} missing:\n{bars}");
+        }
+    }
+}
+
+/// **The formatting comes back as the model that went in** — the guarantee
+/// the substring guard above cannot give.
+///
+/// Needs the chart-formatting IMPORT lane, which types `c:txPr` fonts, axis
+/// titles, `a:prstDash`, `c:trendline` and `c:errBars` (until it lands the
+/// reader carries the last two verbatim and leaves the fonts untyped).
+/// Un-ignore it in the commit that combines the two lanes.
+#[test]
+fn chart_formatting_round_trips_through_the_reader() {
+    for group in [
+        bar(),
+        ChartGroupKind::Scatter {
+            style: ScatterStyle::LineMarker,
+        },
+    ] {
+        let before = formatted(group);
+        let import = round_trip(&document_with(before.clone()));
+        let after = unbound(reopened_projection(&import));
+        assert_eq!(after.coverage, ChartCoverage::Complete);
+        assert_eq!(after.font, before.font, "chart-space font");
+        assert_eq!(after.title, before.title, "chart title");
+        assert_eq!(after.legend, before.legend, "legend");
+        assert_eq!(after.plot_area.axes, before.plot_area.axes, "axes");
+        assert_eq!(
+            after.plot_area.groups[0].series[0], before.plot_area.groups[0].series[0],
+            "series"
+        );
+        assert_eq!(after, before);
+    }
+}
+
+/// **A carried `c:txPr` wins over the generated one**, in each of the four
+/// places one can be: it holds what `ChartFont` does not (East Asian faces,
+/// kerning, a rotated body), and the facade drops it when the reader edits
+/// the font — so while it is here it is the more complete truth. It is
+/// written once, in the generated one's place, never beside it.
+#[test]
+fn a_carried_text_properties_element_wins_over_the_generated_one() {
+    let carried = |marker: &str| casual_doc_model::v1::ChartXml {
+        name: "txPr".to_owned(),
+        xml: format!(
+            r#"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="{marker}"><a:ea typeface="+mn-ea"/></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>"#
+        ),
+    };
+    let mut chart = formatted(bar());
+    chart.space_retained.push(carried("901"));
+    if let Some(legend) = chart.legend.as_mut() {
+        legend.retained.push(carried("902"));
+    }
+    chart.plot_area.axes[0].retained.push(carried("903"));
+    if let Some(title) = chart.plot_area.axes[0].title.as_mut() {
+        title.retained.push(carried("904"));
+    }
+    let (xml, report) = write_part(chart);
+    assert_schema_order(xml.as_bytes());
+    assert_containers_in_order(xml.as_bytes());
+    assert!(report.entries.is_empty(), "{:?}", report.entries);
+    for (marker, generated) in [
+        ("901", r#"typeface="Georgia""#),
+        ("902", r#"sz="800""#),
+        ("903", r#"typeface="Arial""#),
+        ("904", r#"sz="1100""#),
+    ] {
+        assert_eq!(
+            xml.matches(&format!(r#"sz="{marker}""#)).count(),
+            1,
+            "the carried c:txPr {marker} must be written exactly once:\n{xml}"
+        );
+        assert!(
+            !xml.contains(generated),
+            "the generated font {generated} was written beside the carried {marker}:\n{xml}"
+        );
+    }
+    // Each container still holds exactly one `c:txPr`.
+    let category = section(&xml, "c:catAx>", "c:catAx");
+    assert_eq!(category.matches("<c:txPr>").count(), 2, "{category}");
+    let legend = section(&xml, "c:legend>", "c:legend");
+    assert_eq!(legend.matches("<c:txPr>").count(), 1, "{legend}");
+}
+
+/// **A font with nothing to say writes nothing**: `Some(ChartFont::default())`
+/// is not a `c:txPr`. (A font present with no carried copy is generated —
+/// the other half of the shadow rule, asserted above.)
+#[test]
+fn an_empty_font_writes_no_text_properties() {
+    let mut chart = projection(id(3), bar());
+    chart.font = Some(ChartFont::default());
+    chart.plot_area.axes[0].font = Some(ChartFont::default());
+    let (xml, _) = write_part(chart);
+    assert!(!xml.contains("txPr"), "an empty font was written:\n{xml}");
+}
+
+/// **A trendline on a pie series is dropped and reported, by element.**
+/// `CT_PieSer` has no `c:trendline` or `c:errBars`; writing either makes Word
+/// repair the part and lose the chart. A second error-bar set on a bar series
+/// (`maxOccurs="1"`) is the same loss one element along; a scatter series
+/// admits two.
+#[test]
+fn a_trendline_the_family_cannot_hold_is_dropped_and_reported() {
+    let mut pie = projection(
+        id(3),
+        ChartGroupKind::Pie {
+            first_slice_angle: 0,
+        },
+    );
+    pie.plot_area.groups[0].series[0].trendlines = vec![Trendline::default()];
+    pie.plot_area.groups[0].series[0].error_bars = vec![ErrorBars::default()];
+    let (xml, report) = write_part(pie);
+    assert!(!xml.contains("trendline"), "a pie trendline was written");
+    assert!(!xml.contains("errBars"), "pie error bars were written");
+    assert_schema_order(xml.as_bytes());
+    for element in ["trendline", "errBars"] {
+        assert!(
+            report.entries.iter().any(|entry| {
+                entry.feature == "docx.export.chart.fragment_dropped"
+                    && entry.location.element.as_deref() == Some(element)
+                    && entry.location.part_name.as_deref() == Some(CHART_PART)
+            }),
+            "the dropped pie {element} was not reported: {:?}",
+            report.entries
+        );
+    }
+
+    let mut column = projection(id(3), bar());
+    column.plot_area.groups[0].series[0].error_bars = vec![
+        ErrorBars {
+            direction: Some(ErrorBarDirection::Y),
+            ..ErrorBars::default()
+        },
+        ErrorBars {
+            direction: Some(ErrorBarDirection::X),
+            ..ErrorBars::default()
+        },
+    ];
+    let (xml, report) = write_part(column);
+    assert_eq!(
+        xml.matches("<c:errBars>").count(),
+        1,
+        "a bar series holds one error-bar set"
+    );
+    assert!(
+        xml.contains(r#"<c:errDir val="y"/>"#),
+        "the first set must be the one kept"
+    );
+    assert!(
+        report.entries.iter().any(|entry| {
+            entry.feature == "docx.export.chart.fragment_dropped"
+                && entry.location.element.as_deref() == Some("errBars")
+        }),
+        "the second set's loss was not reported: {:?}",
+        report.entries
+    );
+
+    let mut scatter = projection(
+        id(3),
+        ChartGroupKind::Scatter {
+            style: ScatterStyle::Marker,
+        },
+    );
+    scatter.plot_area.groups[0].series[0].error_bars = vec![
+        ErrorBars {
+            direction: Some(ErrorBarDirection::X),
+            ..ErrorBars::default()
+        },
+        ErrorBars {
+            direction: Some(ErrorBarDirection::Y),
+            ..ErrorBars::default()
+        },
+    ];
+    let (xml, report) = write_part(scatter);
+    assert_eq!(xml.matches("<c:errBars>").count(), 2);
+    assert!(report.entries.is_empty(), "{:?}", report.entries);
+}
+
+/// **The typed element supersedes a carried copy; with no typed one the
+/// carried copy is still written.** A reader that did not type trendlines or
+/// axis titles carried them verbatim, and those charts must keep them; a
+/// model holding both would otherwise write two (`c:title` and a bar
+/// series' `c:errBars` are `maxOccurs="1"`).
+#[test]
+fn a_typed_element_supersedes_its_carried_copy() {
+    let fragment = |name: &str, xml: &str| casual_doc_model::v1::ChartXml {
+        name: name.to_owned(),
+        xml: xml.to_owned(),
+    };
+    let legacy_trendline = r#"<c:trendline><c:trendlineType val="exp"/><c:dispRSqr val="0"/><c:dispEq val="0"/></c:trendline>"#;
+    let legacy_title = r#"<c:title><c:overlay val="1"/></c:title>"#;
+
+    // Nothing typed: the carried copies are written, in place.
+    let mut chart = projection(id(3), bar());
+    chart.plot_area.groups[0].series[0]
+        .retained
+        .push(fragment("trendline", legacy_trendline));
+    chart.plot_area.axes[0]
+        .retained
+        .push(fragment("title", legacy_title));
+    let (xml, report) = write_part(chart.clone());
+    assert!(
+        xml.contains(legacy_trendline),
+        "a carried trendline was lost"
+    );
+    assert!(xml.contains(legacy_title), "a carried axis title was lost");
+    assert_containers_in_order(xml.as_bytes());
+    assert!(report.entries.is_empty(), "{:?}", report.entries);
+
+    // Typed too: only the typed ones, and the superseded copies are reported.
+    chart.plot_area.groups[0].series[0].trendlines = vec![Trendline::default()];
+    chart.plot_area.axes[0].title = Some(ChartTitle::default());
+    let (xml, report) = write_part(chart);
+    assert!(
+        !xml.contains(legacy_trendline),
+        "both trendlines were written"
+    );
+    assert!(!xml.contains(legacy_title), "both axis titles were written");
+    assert_eq!(xml.matches("<c:trendline>").count(), 1);
+    assert_eq!(xml.matches("<c:title>").count(), 1);
+    assert_containers_in_order(xml.as_bytes());
+    assert!(
+        report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "docx.export.chart.fragment_dropped"),
+        "a superseded carried copy is a loss and must be reported"
+    );
+}
+
+/// **A trendline label is present by the model.** Word shows R² or the
+/// equation only through a `c:trendlineLbl`; with both flags off a carried
+/// label is not written (the gridlines rule), and with one on the carried
+/// label is written in place of the minimal one.
+#[test]
+fn a_trendline_label_follows_the_display_flags() {
+    let label =
+        r#"<c:trendlineLbl><c:numFmt formatCode="0.00" sourceLinked="0"/></c:trendlineLbl>"#;
+    let with = |r_squared: bool| {
+        let mut chart = projection(id(3), bar());
+        chart.plot_area.groups[0].series[0].trendlines = vec![Trendline {
+            display_r_squared: r_squared,
+            retained: vec![casual_doc_model::v1::ChartXml {
+                name: "trendlineLbl".to_owned(),
+                xml: label.to_owned(),
+            }],
+            ..Trendline::default()
+        }];
+        write_part(chart).0
+    };
+    let off = with(false);
+    assert!(
+        !off.contains("trendlineLbl"),
+        "a label with nothing to show:\n{off}"
+    );
+    let on = with(true);
+    assert!(on.contains(label), "the carried label was not used:\n{on}");
+    assert_eq!(on.matches("<c:trendlineLbl>").count(), 1);
+    assert!(!on.contains(r#"formatCode="General""#));
+    assert_schema_order(on.as_bytes());
+}
+
+/// **A title whose text is a cell reference keeps its font in `c:txPr`** —
+/// `c:strRef` has no run to carry it.
+#[test]
+fn a_referenced_title_keeps_its_font_in_text_properties() {
+    let mut chart = projection(id(3), bar());
+    chart.title = Some(ChartTitle {
+        text: Some(ChartText {
+            text: "Revenue".to_owned(),
+            formula: Some("Sheet1!$B$1".to_owned()),
+        }),
+        font: Some(ChartFont {
+            bold: Some(true),
+            ..ChartFont::default()
+        }),
+        ..ChartTitle::default()
+    });
+    chart.auto_title_deleted = false;
+    let (xml, _) = write_part(chart);
+    let title = section(&xml, "c:title>", "c:title");
+    assert!(
+        title.contains(
+            r#"<c:overlay val="0"/><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr b="1"/>"#
+        ),
+        "{title}"
+    );
+    assert_schema_order(xml.as_bytes());
+}
+
+/// **Custom error bars stay literals when the workbook is generated, and a
+/// chart whose error bars name cells is not rebound.** The values-only
+/// workbook has no error-bar columns, so a literal is the only honest
+/// spelling; and a `c:f` in an error bar points into the producer's workbook,
+/// which binding would replace.
+#[test]
+fn custom_error_bars_and_the_generated_workbook() {
+    let mut chart = projection(id(3), bar());
+    chart.plot_area.groups[0].series[0].error_bars = vec![ErrorBars {
+        value_type: ErrorValueType::Custom,
+        plus: Some(numbers(&["1", "1", "1", "1"])),
+        ..ErrorBars::default()
+    }];
+    let (xml, _) = write_part(chart.clone());
+    assert!(xml.contains("<c:externalData"), "the chart was bound");
+    assert!(
+        xml.contains("<c:plus><c:numLit>"),
+        "custom lengths must stay literal:\n{xml}"
+    );
+
+    let mut range = numbers(&["1", "1", "1", "1"]);
+    range.formula = Some("[1]Sheet1!$D$2:$D$5".to_owned());
+    chart.plot_area.groups[0].series[0].error_bars[0].plus = Some(range);
+    let (xml, _) = write_part(chart);
+    assert!(
+        !xml.contains("<c:externalData"),
+        "a chart whose error bars name a foreign workbook must not be rebound:\n{xml}"
+    );
+    assert!(xml.contains("<c:plus><c:numRef><c:f>[1]Sheet1!$D$2:$D$5</c:f><c:numCache>"));
 }

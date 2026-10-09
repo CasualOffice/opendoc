@@ -4333,17 +4333,16 @@ fn chart_item<'a>(
     // The label shaper resolves fonts through the document's own cascade, so chart
     // text uses the document's fonts rather than a hard-coded face. It is handed a
     // CLONE of the projection's text only; nothing in the closure touches the
-    // chart.
-    let base = RunProperties {
-        size_half_points: Some(CHART_LABEL_HALF_POINTS),
-        ..RunProperties::default()
-    };
+    // chart. Each label arrives with its element's resolved style (size, weight,
+    // slant, typeface — `docs/155` §19).
     // Copied out before the shaping closure borrows `ctx` mutably: a chart's
     // authored colour may name a THEME slot, and `run_color` is the document's one
     // resolution of that — the chart module deliberately holds no second copy.
     let colors = |color: Color| run_color(Some(color), chart_palette);
     let primitives = {
-        let mut shape_label = |text: &str| chart_label(text, &base, shaper, ctx);
+        let mut shape_label = |text: &str, style: &chart::ChartTextStyle| {
+            chart_label(text, &chart_run_properties(style), shaper, ctx)
+        };
         chart::compose_chart(chart, size, &style, &colors, &mut shape_label)
     };
     if primitives.is_empty() {
@@ -4356,9 +4355,57 @@ fn chart_item<'a>(
     })
 }
 
-/// Chart furniture text size, in half-points: 9 pt, Word's default chart font
-/// size for axis labels, the legend and data labels.
-pub(crate) const CHART_LABEL_HALF_POINTS: u32 = 18;
+/// The run properties one chart label is shaped with, from its resolved
+/// [`chart::ChartTextStyle`].
+///
+/// The size is rounded to the half-point a run can carry. A theme typeface
+/// reference becomes the run's theme font slot, so it resolves through the
+/// document theme exactly as body text does (`+mn-*` the minor scheme, `+mj-*`
+/// the major; `-lt` latin, `-ea` East Asian, `-cs` complex script); any other
+/// typeface is a named face. The colour is set too, though the chart module
+/// paints the runs in it regardless. O(1).
+fn chart_run_properties(style: &chart::ChartTextStyle) -> RunProperties {
+    use casual_doc_model::v1::{FontName, FontRef, ThemeFont, ThemeFontRef};
+    let mut properties = RunProperties {
+        size_half_points: Some(style.size.div_ceil(50).max(1)),
+        bold: Some(style.bold),
+        italic: Some(style.italic),
+        color: Some(Color::Rgb(casual_doc_model::v1::RgbColor {
+            r: style.color[0],
+            g: style.color[1],
+            b: style.color[2],
+        })),
+        ..RunProperties::default()
+    };
+    let Some(typeface) = style.typeface.as_deref().filter(|face| !face.is_empty()) else {
+        return properties;
+    };
+    let theme = |slot| Some(FontRef::Theme(ThemeFont { slot }));
+    match typeface {
+        "+mn-lt" => {
+            properties.font_ref = theme(ThemeFontRef::MinorAscii);
+            properties.font_ref_h_ansi = theme(ThemeFontRef::MinorHAnsi);
+        }
+        "+mj-lt" => {
+            properties.font_ref = theme(ThemeFontRef::MajorAscii);
+            properties.font_ref_h_ansi = theme(ThemeFontRef::MajorHAnsi);
+        }
+        "+mn-ea" => properties.font_ref_east_asia = theme(ThemeFontRef::MinorEastAsia),
+        "+mj-ea" => properties.font_ref_east_asia = theme(ThemeFontRef::MajorEastAsia),
+        "+mn-cs" => properties.font_ref_cs = theme(ThemeFontRef::MinorBidi),
+        "+mj-cs" => properties.font_ref_cs = theme(ThemeFontRef::MajorBidi),
+        // An unknown `+` reference is no face at all: the body face stands.
+        reference if reference.starts_with('+') => {}
+        name => {
+            let named = Some(FontRef::Named(FontName {
+                name: name.to_owned(),
+            }));
+            properties.font_ref = named.clone();
+            properties.font_ref_h_ansi = named;
+        }
+    }
+    properties
+}
 
 /// Shapes one short chart label through the document's own cascade and shaper.
 ///
@@ -11579,6 +11626,7 @@ mod tests {
             ChartGroup, ChartGroupKind, ChartValue, DataRange, DisplayBlanks, PlotArea, Series,
         };
         Chart {
+            font: None,
             chart_retained: Default::default(),
             namespaces: Default::default(),
             space_retained: Default::default(),
@@ -11636,6 +11684,44 @@ mod tests {
             external_data: None,
             dirty: false,
         }
+    }
+
+    #[test]
+    fn a_chart_label_style_becomes_the_run_properties_it_is_shaped_with() {
+        use casual_doc_model::v1::{FontName, FontRef, ThemeFont, ThemeFontRef};
+        let style = |typeface: Option<&str>| chart::ChartTextStyle {
+            size: 1_050,
+            bold: true,
+            italic: false,
+            typeface: typeface.map(str::to_owned),
+            color: [10, 20, 30, 255],
+        };
+        let minor = chart_run_properties(&style(Some("+mn-lt")));
+        assert_eq!(minor.size_half_points, Some(21), "10.5 pt");
+        assert_eq!(minor.bold, Some(true));
+        assert_eq!(
+            minor.font_ref_h_ansi,
+            Some(FontRef::Theme(ThemeFont {
+                slot: ThemeFontRef::MinorHAnsi
+            })),
+            "a theme reference resolves through the document theme"
+        );
+        let major = chart_run_properties(&style(Some("+mj-lt")));
+        assert_eq!(
+            major.font_ref,
+            Some(FontRef::Theme(ThemeFont {
+                slot: ThemeFontRef::MajorAscii
+            }))
+        );
+        let named = chart_run_properties(&style(Some("Georgia")));
+        assert_eq!(
+            named.font_ref,
+            Some(FontRef::Named(FontName {
+                name: "Georgia".to_owned()
+            }))
+        );
+        assert_eq!(chart_run_properties(&style(None)).font_ref, None);
+        assert_eq!(chart_run_properties(&style(Some("+zz-lt"))).font_ref, None);
     }
 
     #[test]

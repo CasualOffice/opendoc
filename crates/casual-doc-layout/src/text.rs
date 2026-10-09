@@ -12,6 +12,8 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 
 use casual_doc_model::v1::{NoteId, NoteKind};
+// Own line (anti-conflict): a chart stroke's preset dash (`docs/155` §19).
+use casual_doc_model::v1::DashStyle;
 // Own line (anti-conflict): the paragraph anchor `GlyphRun::node` carries.
 use casual_doc_model::NodeId;
 
@@ -351,12 +353,43 @@ pub struct InlineRule {
 /// series line), and a single `width` in twips is what both need. Composition
 /// converts it to the display list's device-pixel [`crate::display::Stroke`] in
 /// one place, so a chart's hairline is exactly as thick as a bar-tab rule's.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+///
+/// `dash` is the model's own preset ([`DashStyle`]), carried through to the
+/// display stroke unchanged — the renderer already draws every preset, so a
+/// dashed series line needed no new paint vocabulary. It is skipped when solid,
+/// so a serialized galley of an undashed chart is byte-identical to before.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ChartStroke {
     /// Resolved RGBA colour.
     pub color: [u8; 4],
     /// Stroke width in twips.
     pub width: Twip,
+    /// The preset dash pattern; [`DashStyle::Solid`] is an unbroken line.
+    #[serde(default = "solid_dash", skip_serializing_if = "is_solid_dash")]
+    pub dash: DashStyle,
+}
+
+impl ChartStroke {
+    /// An unbroken stroke — chart furniture (frame, gridlines, axes, ticks).
+    /// O(1).
+    #[must_use]
+    pub const fn solid(color: [u8; 4], width: Twip) -> Self {
+        Self {
+            color,
+            width,
+            dash: DashStyle::Solid,
+        }
+    }
+}
+
+/// Serde default for [`ChartStroke::dash`].
+fn solid_dash() -> DashStyle {
+    DashStyle::Solid
+}
+
+/// Whether a dash is the solid default, so it is not serialized.
+fn is_solid_dash(dash: &DashStyle) -> bool {
+    *dash == DashStyle::Solid
 }
 
 /// One painted piece of a chart, in the chart box's **own** coordinate space
@@ -428,6 +461,23 @@ pub enum ChartPrimitive {
     Text {
         /// The shaped run.
         run: GlyphRun,
+    },
+    /// Shaped text turned a whole number of quarter turns about its own centre:
+    /// a vertical axis title (`docs/155` §19).
+    ///
+    /// The runs are placed UPRIGHT, box-local, with the label's box centred on
+    /// `center`; composition brackets them in a
+    /// [`crate::display::PaintItem::PushLayer`] whose transform turns the group
+    /// about that point. That is the display list's one way of expressing
+    /// rotated text, so a glyph run grows no angle of its own.
+    RotatedText {
+        /// The shaped runs, upright, origins on their baselines, box-local.
+        runs: Vec<GlyphRun>,
+        /// The rotation centre — the upright label box's centre, box-local.
+        center: Point,
+        /// Clockwise quarter turns: `-1` reads bottom-to-top (Word's vertical
+        /// axis title on the left), `1` top-to-bottom (on the right).
+        quarter_turns: i8,
     },
 }
 

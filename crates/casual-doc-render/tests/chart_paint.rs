@@ -17,8 +17,9 @@
 //! `fixtures/generated/chart.docx` is the committed combo fixture: a `c:barChart`
 //! (`4.30`, `2.5`, `3.5`, `4.5` against categories Q1–Q4) plus a `c:lineChart`
 //! (`4`, `4`, `4`, `4`) sharing one category axis, a primary value axis on the
-//! left with major gridlines, a **secondary** value axis on the right, and an
-//! out-of-scope `c:trendline` that keeps the projection `Partial`.
+//! left with major gridlines, a **secondary** value axis on the right, and a
+//! linear `c:trendline` on the bar series — typed and drawn since `docs/155`
+//! §19, as a dotted line, so the series' own polylines are the SOLID paths.
 //!
 //! `crates/casual-doc-layout/src/chart.rs` holds the unit-level geometry tests;
 //! this file exists because only an actual `.docx` proves the projection survives
@@ -32,6 +33,7 @@ use casual_doc_layout::display::{DisplayList, PaintItem, ShapeGeometry};
 use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Rect, Twip};
+use casual_doc_model::v1::DashStyle;
 use casual_doc_model::v1::Document;
 use casual_doc_ooxml::DocxPackage;
 use casual_doc_ooxml::PackageLimits;
@@ -88,13 +90,20 @@ fn filled_rects(list: &DisplayList) -> Vec<Rect> {
 
 /// Every `PaintItem::Shape` carrying a path, as its vertex list.
 fn paths(list: &DisplayList) -> Vec<Vec<(Twip, Twip)>> {
+    dashed_paths(list, false)
+}
+
+/// Every `PaintItem::Shape` path whose outline is (`dashed`) or is not dashed,
+/// as its vertex list. A series line is solid; a trendline is dotted.
+fn dashed_paths(list: &DisplayList, dashed: bool) -> Vec<Vec<(Twip, Twip)>> {
     list.items
         .iter()
         .filter_map(|item| match item {
             PaintItem::Shape {
                 geometry: ShapeGeometry::Path { commands, .. },
+                stroke,
                 ..
-            } => Some(
+            } if stroke.is_some_and(|outline| outline.dash != DashStyle::Solid) == dashed => Some(
                 commands
                     .iter()
                     .filter_map(|command| command.endpoint())
@@ -363,5 +372,35 @@ fn reading_a_projection_does_not_change_the_document() {
     assert_eq!(
         before, after,
         "composing a chart must not change a single byte of the document"
+    );
+}
+
+#[test]
+fn the_bar_series_trendline_is_painted_dotted_and_rising_like_its_fit() {
+    let document = imported();
+    let list = painted(&document);
+    let box_rect = chart_box(&list);
+    let trendlines: Vec<Vec<(Twip, Twip)>> = dashed_paths(&list, true)
+        .into_iter()
+        .filter(|points| {
+            points
+                .iter()
+                .all(|(x, _)| *x >= box_rect.origin.x && *x <= box_rect.right())
+        })
+        .collect();
+    assert_eq!(
+        trendlines.len(),
+        1,
+        "the fixture's one linear trendline paints one dotted path, got {trendlines:?}"
+    );
+    let points = &trendlines[0];
+    let (first, last) = (points[0], points[points.len() - 1]);
+    // A least-squares line through 4.30, 2.5, 3.5, 4.5 has slope +0.16 per
+    // category: it RISES left to right, so its right end is higher on the page
+    // (smaller y). A trendline drawn through the points, or flat at the mean,
+    // fails this.
+    assert!(
+        last.0 > first.0 && last.1 < first.1,
+        "the trendline rises across the plot like its fit, got {first:?} → {last:?}"
     );
 }

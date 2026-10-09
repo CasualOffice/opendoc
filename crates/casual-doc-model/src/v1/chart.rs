@@ -35,7 +35,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Color, EmbeddedPart};
+use super::{Color, DashStyle, EmbeddedPart};
 use crate::NodeId;
 
 /// Chart groups a plot area may hold. A combo chart beyond this is not a
@@ -58,6 +58,19 @@ pub const MAX_CHART_FORMULA_BYTES: usize = 2_048;
 /// summed over every container. A real Word chart carries a few kilobytes of
 /// formatting; this bounds what a hostile part can make the model hold.
 pub const MAX_CHART_RETAINED_BYTES: usize = 1_048_576;
+/// Trendlines one series may hold. Word offers one per type per series; this
+/// is slack for a producer that writes several of a type.
+pub const MAX_CHART_TRENDLINES: usize = 8;
+/// Error-bar sets one series may hold: ECMA-376 admits two on a scatter series
+/// (one per direction) and one elsewhere.
+pub const MAX_CHART_ERROR_BARS: usize = 2;
+/// Byte ceiling on a [`ChartFont::typeface`] — the same 31-character face-name
+/// limit Word's font box has, with slack for a theme reference (`+mn-lt`) and
+/// for multi-byte names.
+pub const MAX_CHART_TYPEFACE_BYTES: usize = 128;
+/// The smallest and largest chart text size, in hundredths of a point
+/// (`ST_TextFontSize`: 1 pt to 4000 pt).
+pub const CHART_FONT_SIZE_RANGE: core::ops::RangeInclusive<u32> = 100..=400_000;
 
 /// How much of the source chart part the projection captured.
 ///
@@ -209,6 +222,59 @@ pub struct ChartXml {
     pub xml: String,
 }
 
+/// Chart text formatting: the run defaults a `c:txPr` (or a title's rich
+/// text) declares in `a:defRPr` — what ONLYOFFICE's and Word's chart Font
+/// controls set (`docs/155` §19).
+///
+/// Every field is optional and absent means "inherit": from the chart-space
+/// font ([`Chart::font`]) for a title, legend or axis, and from Word's chart
+/// defaults (Calibri-equivalent body face, 9 pt furniture, 14 pt title) for
+/// the chart space itself. A colour is a model [`Color`], so a theme colour
+/// stays a theme colour.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChartFont {
+    /// `a:latin@typeface`, verbatim — a face name or a theme reference
+    /// (`+mn-lt`, `+mj-lt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typeface: Option<String>,
+    /// `@sz`, in hundredths of a point, within [`CHART_FONT_SIZE_RANGE`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    /// `@b`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    /// `@i`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    /// The `a:solidFill` text colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+}
+
+impl ChartFont {
+    /// Whether this declares nothing, so writing it would be noise.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// `self`, with every field it leaves unset taken from `base`. O(1).
+    #[must_use]
+    pub fn over(&self, base: Option<&Self>) -> Self {
+        let Some(base) = base else {
+            return self.clone();
+        };
+        Self {
+            typeface: self.typeface.clone().or_else(|| base.typeface.clone()),
+            size: self.size.or(base.size),
+            bold: self.bold.or(base.bold),
+            italic: self.italic.or(base.italic),
+            color: self.color.or(base.color),
+        }
+    }
+}
+
 /// A chart container whose children have a schema order, for placing a
 /// [`ChartXml`] fragment back where it came from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -227,8 +293,12 @@ pub enum ChartContainer {
     Axis(AxisKind),
     /// `c:legend` (`CT_Legend`).
     Legend,
-    /// `c:title` (`CT_Title`).
+    /// `c:title` (`CT_Title`) — the chart's own, or an axis title.
     Title,
+    /// `c:trendline` (`CT_Trendline`).
+    Trendline,
+    /// `c:errBars` (`CT_ErrBars`).
+    ErrorBars,
 }
 
 /// The ECMA-376 Part 1 child sequence of `container`, by local name.
@@ -495,6 +565,31 @@ pub const fn chart_child_order(container: ChartContainer) -> &'static [&'static 
             "extLst",
         ],
         ChartContainer::Title => &["tx", "layout", "overlay", "spPr", "txPr", "extLst"],
+        ChartContainer::Trendline => &[
+            "name",
+            "spPr",
+            "trendlineType",
+            "order",
+            "period",
+            "forward",
+            "backward",
+            "intercept",
+            "dispRSqr",
+            "dispEq",
+            "trendlineLbl",
+            "extLst",
+        ],
+        ChartContainer::ErrorBars => &[
+            "errDir",
+            "errBarType",
+            "errValType",
+            "noEndCap",
+            "plus",
+            "minus",
+            "val",
+            "spPr",
+            "extLst",
+        ],
     }
 }
 
@@ -519,6 +614,10 @@ pub struct ChartTitle {
     /// `c:overlay` — whether the title is drawn over the plot area.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub overlay: bool,
+    /// The title's text formatting: the rich text's `a:defRPr` (or its
+    /// `c:txPr` when the text is automatic).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<ChartFont>,
     /// Children carried verbatim ([`ChartXml`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<ChartXml>,
@@ -551,6 +650,9 @@ pub struct Legend {
     /// `c:overlay` — whether the legend is drawn over the plot area.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub overlay: bool,
+    /// The legend text's formatting (`c:txPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<ChartFont>,
     /// Children carried verbatim ([`ChartXml`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<ChartXml>,
@@ -693,6 +795,146 @@ pub struct ChartLine {
     /// an absent colour, which means "use the theme's".
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub no_fill: bool,
+    /// `a:prstDash`, when the producer declared one. `None` and
+    /// [`DashStyle::Solid`] draw the same unbroken line; the distinction is
+    /// kept so a rewrite does not add an element the source did not have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<DashStyle>,
+}
+
+/// Which regression a trendline fits (`c:trendlineType`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrendlineKind {
+    /// `linear`.
+    #[default]
+    Linear,
+    /// `exp`.
+    Exponential,
+    /// `log`.
+    Logarithmic,
+    /// `poly`, of [`Trendline::order`].
+    Polynomial,
+    /// `power`.
+    Power,
+    /// `movingAvg`, over [`Trendline::period`] points.
+    MovingAverage,
+}
+
+/// One trendline on a series (`c:trendline`).
+///
+/// Numbers are verbatim lexical forms, the module's no-float rule.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Trendline {
+    /// `c:name` — the legend text, when the producer named it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `c:trendlineType`.
+    #[serde(default)]
+    pub kind: TrendlineKind,
+    /// `c:order` — a polynomial's degree, 2 to 6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<u8>,
+    /// `c:period` — a moving average's window, 2 to 255.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<u32>,
+    /// `c:forward` — how far past the last point the line is projected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward: Option<String>,
+    /// `c:backward` — how far before the first point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backward: Option<String>,
+    /// `c:intercept` — a fixed y intercept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intercept: Option<String>,
+    /// `c:dispRSqr`.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub display_r_squared: bool,
+    /// `c:dispEq`.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub display_equation: bool,
+    /// The line (`c:spPr/a:ln`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<ChartLine>,
+    /// Children carried verbatim ([`ChartXml`], [`ChartContainer::Trendline`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
+}
+
+/// The direction an error bar runs (`c:errDir`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorBarDirection {
+    /// `x` — horizontal bars, on a scatter series' x values.
+    X,
+    /// `y` — vertical bars, on the values.
+    #[default]
+    Y,
+}
+
+/// Which side of the point an error bar extends to (`c:errBarType`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorBarType {
+    /// `both`.
+    #[default]
+    Both,
+    /// `minus`.
+    Minus,
+    /// `plus`.
+    Plus,
+}
+
+/// How an error bar's length is computed (`c:errValType`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorValueType {
+    /// `cust` — per-point lengths from [`ErrorBars::plus`]/[`ErrorBars::minus`].
+    Custom,
+    /// `fixedVal` — [`ErrorBars::value`] in data units.
+    #[default]
+    FixedValue,
+    /// `percentage` — [`ErrorBars::value`] percent of each value.
+    Percentage,
+    /// `stdDev` — [`ErrorBars::value`] standard deviations of the series.
+    StandardDeviation,
+    /// `stdErr` — the series' standard error.
+    StandardError,
+}
+
+/// One set of error bars on a series (`c:errBars`).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ErrorBars {
+    /// `c:errDir`, when the producer declared one (a bar or line series has
+    /// only the value direction and may omit it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<ErrorBarDirection>,
+    /// `c:errBarType`.
+    #[serde(default)]
+    pub bar_type: ErrorBarType,
+    /// `c:errValType`.
+    #[serde(default)]
+    pub value_type: ErrorValueType,
+    /// `c:val`, verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// `c:noEndCap` — draw the bars without the cross strokes at their ends.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_end_cap: bool,
+    /// `c:plus` — a custom bar's positive lengths, per point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plus: Option<DataRange>,
+    /// `c:minus` — a custom bar's negative lengths, per point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minus: Option<DataRange>,
+    /// The bar line (`c:spPr/a:ln`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<ChartLine>,
+    /// Children carried verbatim ([`ChartXml`], [`ChartContainer::ErrorBars`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ChartXml>,
 }
 
 /// Where a data label sits relative to its point (`c:dLblPos`).
@@ -775,6 +1017,12 @@ pub struct Series {
     /// `c:dLbls`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_labels: Option<DataLabels>,
+    /// `c:trendline`, in source order, at most [`MAX_CHART_TRENDLINES`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trendlines: Vec<Trendline>,
+    /// `c:errBars`, in source order, at most [`MAX_CHART_ERROR_BARS`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub error_bars: Vec<ErrorBars>,
     /// Children carried verbatim ([`ChartXml`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<ChartXml>,
@@ -905,6 +1153,10 @@ pub struct Axis {
     /// `c:minorGridlines`.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub minor_gridlines: bool,
+    /// `c:title` — the axis title, drawn beside the axis (rotated a quarter
+    /// turn for a vertical one, as Word draws it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<ChartTitle>,
     /// `c:majorTickMark`.
     #[serde(default)]
     pub major_tick_mark: TickMark,
@@ -917,6 +1169,9 @@ pub struct Axis {
     /// `c:numFmt@formatCode`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number_format: Option<String>,
+    /// The tick labels' text formatting (`c:txPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<ChartFont>,
     /// `c:crossAx` — the axis this one crosses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_axis_id: Option<u32>,
@@ -1011,6 +1266,10 @@ pub struct Chart {
     /// longer describe it.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub dirty: bool,
+    /// The chart-space text formatting (`c:chartSpace/c:txPr`) — the default
+    /// every title, legend, axis and data label inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<ChartFont>,
     /// The namespace declarations on the source `c:chartSpace`, as
     /// `(prefix, uri)`, so the prefixes inside carried fragments resolve when
     /// the part is regenerated.
@@ -1042,7 +1301,10 @@ impl Chart {
                 .plot_area
                 .axes
                 .iter()
-                .map(|axis| sum(&axis.retained))
+                .map(|axis| {
+                    sum(&axis.retained)
+                        + axis.title.as_ref().map_or(0, |title| sum(&title.retained))
+                })
                 .sum::<usize>()
             + self
                 .plot_area
@@ -1053,7 +1315,19 @@ impl Chart {
                         + group
                             .series
                             .iter()
-                            .map(|series| sum(&series.retained))
+                            .map(|series| {
+                                sum(&series.retained)
+                                    + series
+                                        .trendlines
+                                        .iter()
+                                        .map(|line| sum(&line.retained))
+                                        .sum::<usize>()
+                                    + series
+                                        .error_bars
+                                        .iter()
+                                        .map(|bars| sum(&bars.retained))
+                                        .sum::<usize>()
+                            })
                             .sum::<usize>()
                 })
                 .sum::<usize>()
@@ -1078,6 +1352,13 @@ impl Chart {
                     series.categories.as_ref(),
                     series.x_values.as_ref(),
                 ]
+                .into_iter()
+                .chain(
+                    series
+                        .error_bars
+                        .iter()
+                        .flat_map(|bars| [bars.plus.as_ref(), bars.minus.as_ref()]),
+                )
             })
             .flatten()
     }

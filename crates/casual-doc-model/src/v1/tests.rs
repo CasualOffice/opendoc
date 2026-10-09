@@ -5938,6 +5938,7 @@ fn embedded_object_paragraph(
 /// A minimal projection of a one-series bar chart, anchored to `object`.
 fn chart_projection(object: NodeId) -> Chart {
     Chart {
+        font: None,
         chart_retained: Default::default(),
         namespaces: Default::default(),
         space_retained: Default::default(),

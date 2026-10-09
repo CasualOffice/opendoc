@@ -893,6 +893,7 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
         document.definitions_mut().charts.insert(
             ChartId::new(NodeId::new(900_002).expect("non-zero")),
             Chart {
+                font: None,
                 chart_retained: Default::default(),
                 namespaces: Default::default(),
                 space_retained: Default::default(),

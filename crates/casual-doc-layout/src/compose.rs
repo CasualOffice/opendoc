@@ -19,8 +19,6 @@ use crate::display::ShapeTransform;
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::LayerBlend;
-// Own line (anti-conflict): the solid dash a chart's furniture strokes with.
-use casual_doc_model::v1::DashStyle;
 // Own line (anti-conflict): a geometry path's `a:path@fill` mode.
 use casual_doc_model::v1::PathFill;
 // Own line (anti-conflict): the paint-only non-printing-character overlay.
@@ -290,7 +288,8 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
         stroke.map(|stroke| ShapeOutline {
             color: rgba(stroke.color),
             width: stroke_px(stroke.width),
-            dash: DashStyle::Solid,
+            // The model's preset, unchanged: the renderer already patterns it.
+            dash: stroke.dash,
         })
     };
     let solid = |fill: Option<[u8; 4]>| fill.map(|fill| Fill::Solid(rgba(fill)));
@@ -352,6 +351,30 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
             let mut placed = run.clone();
             placed.origin = shift(run.origin);
             list.push(PaintItem::Glyphs { run: placed });
+        }
+        ChartPrimitive::RotatedText {
+            runs,
+            center,
+            quarter_turns,
+        } => {
+            // The display list's one rotated-text seam: a layer bracket whose
+            // transform turns the upright runs about their own centre. Normal
+            // blend — this is ordinary chart text, not a watermark.
+            list.push(PaintItem::PushLayer {
+                transform: Some(ShapeTransform {
+                    rotation: i32::from(*quarter_turns) * 90 * 60_000,
+                    flip_h: false,
+                    flip_v: false,
+                    center: shift(*center),
+                }),
+                blend: LayerBlend::Normal,
+            });
+            for run in runs {
+                let mut placed = run.clone();
+                placed.origin = shift(run.origin);
+                list.push(PaintItem::Glyphs { run: placed });
+            }
+            list.push(PaintItem::PopLayer);
         }
     }
 }
@@ -3199,5 +3222,87 @@ mod tests {
             .filter(|item| matches!(item, PaintItem::Rect { .. }))
             .count();
         assert_eq!(plain_rects, 0, "an unbordered run paints no border bands");
+    }
+
+    /// A chart run for the lowering tests below.
+    fn chart_run(x: i32) -> GlyphRun {
+        GlyphRun {
+            is_marker: false,
+            is_leader: false,
+            node: None,
+            font: FontId(0),
+            size: Twip(180),
+            ascent: Twip(144),
+            descent: Twip(36),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip(x), Twip(500)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            glyphs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_rotated_chart_title_lowers_to_a_turned_layer_around_its_glyphs() {
+        let mut list = DisplayList::new();
+        compose_chart_primitive(
+            &mut list,
+            &ChartPrimitive::RotatedText {
+                runs: vec![chart_run(100)],
+                center: Point::new(Twip(300), Twip(400)),
+                quarter_turns: -1,
+            },
+            Point::new(Twip(1_000), Twip(2_000)),
+        );
+        let [
+            PaintItem::PushLayer {
+                transform: Some(transform),
+                blend: LayerBlend::Normal,
+            },
+            PaintItem::Glyphs { run },
+            PaintItem::PopLayer,
+        ] = list.items.as_slice()
+        else {
+            panic!("a layer bracket around the glyphs, got {:?}", list.items);
+        };
+        assert_eq!(
+            transform.rotation,
+            -90 * 60_000,
+            "a quarter turn anticlockwise"
+        );
+        assert_eq!(transform.center, Point::new(Twip(1_300), Twip(2_400)));
+        assert_eq!(run.origin, Point::new(Twip(1_100), Twip(2_500)));
+    }
+
+    #[test]
+    fn a_dashed_chart_stroke_reaches_the_display_outline() {
+        let mut list = DisplayList::new();
+        compose_chart_primitive(
+            &mut list,
+            &ChartPrimitive::polyline(
+                &[Point::new(Twip(0), Twip(0)), Point::new(Twip(100), Twip(0))],
+                false,
+                None,
+                Some(ChartStroke {
+                    color: [1, 2, 3, 255],
+                    width: Twip(30),
+                    dash: DashStyle::LargeDashDot,
+                }),
+            ),
+            Point::new(Twip::ZERO, Twip::ZERO),
+        );
+        let [
+            PaintItem::Shape {
+                stroke: Some(outline),
+                ..
+            },
+        ] = list.items.as_slice()
+        else {
+            panic!("one stroked shape, got {:?}", list.items);
+        };
+        assert_eq!(outline.dash, DashStyle::LargeDashDot);
     }
 }

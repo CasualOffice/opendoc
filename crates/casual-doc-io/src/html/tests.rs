@@ -901,7 +901,7 @@ fn a_chart_with_no_stored_picture_is_drawn_as_the_page_draws_it() {
     );
     // The first quarter's bar, in the first accent colour, and its label.
     assert!(
-        text.contains("<rect x=\"61.27\" y=\"61.67\" width=\"53.33\" height=\"231.67\" fill=\"#4472c4\" stroke=\"none\"/>"),
+        text.contains("<rect x=\"61.27\" y=\"67.4\" width=\"53.33\" height=\"225.93\" fill=\"#4472c4\" stroke=\"none\"/>"),
         "{text}"
     );
     assert!(
@@ -910,7 +910,19 @@ fn a_chart_with_no_stored_picture_is_drawn_as_the_page_draws_it() {
     );
     // The target series as a line, and the legend's entry for it.
     assert!(
-        text.contains("<path d=\"M87.93 24L221.27 24L354.6 24L487.93 24\" fill=\"none\" stroke=\"#ed7d31\" stroke-width=\"2\"/>"),
+        text.contains("<path d=\"M87.93 30.67L221.27 30.67L354.6 30.67L487.93 30.67\" fill=\"none\" stroke=\"#ed7d31\" stroke-width=\"2\"/>"),
+        "{text}"
+    );
+    // Each label in its own style (`docs/155` §19): the title at Word's 14 pt,
+    // where the tick labels above are 9 pt.
+    assert!(
+        text.contains("font-size=\"18.67\" fill=\"#595959\">Revenue by quarter</text>"),
+        "{text}"
+    );
+    // The bar series' linear trendline, dotted as the page draws it, rising
+    // like its fit (4.30, 2.5, 3.5, 4.5: slope +0.16, so y falls on the page).
+    assert!(
+        text.contains("<path d=\"M87.93 111.6L487.93 86.33\" fill=\"none\" stroke=\"#4472c4\" stroke-width=\"2\" stroke-dasharray=\"2 2\"/>"),
         "{text}"
     );
     assert!(text.contains(">Target</text>"), "{text}");
@@ -919,6 +931,70 @@ fn a_chart_with_no_stored_picture_is_drawn_as_the_page_draws_it() {
             .iter()
             .any(|feature| feature.starts_with("html.embedded_object")),
         "{report:?}"
+    );
+}
+
+#[test]
+fn a_chart_label_keeps_its_own_style_and_a_vertical_axis_title_is_turned() {
+    use casual_doc_layout::chart::ChartTextStyle;
+    use casual_doc_layout::paint_values::{ChartDrawing, ChartDrawingLabel};
+    use casual_doc_layout::text::{ChartPrimitive, Decoration, FontId, GlyphRun};
+    use casual_doc_layout::units::{Point, Twip};
+
+    let run = |label: u32, size: i32| GlyphRun {
+        font: FontId(label),
+        size: Twip(size),
+        ascent: Twip(size * 4 / 5),
+        descent: Twip(size / 5),
+        character_scale_percent: 100,
+        color: [0x11, 0x22, 0x33, 0xFF],
+        origin: Point::new(Twip(300), Twip(600)),
+        bidi_level: 0,
+        decoration: Decoration::default(),
+        highlight: None,
+        shading: None,
+        glyphs: Vec::new(),
+        is_marker: false,
+        node: None,
+        is_leader: false,
+    };
+    let style = |bold, typeface: Option<&str>| ChartTextStyle {
+        size: 1400,
+        bold,
+        italic: !bold,
+        typeface: typeface.map(str::to_owned),
+        color: [0x11, 0x22, 0x33, 0xFF],
+    };
+    let drawing = ChartDrawing {
+        primitives: vec![
+            ChartPrimitive::Text { run: run(0, 280) },
+            ChartPrimitive::RotatedText {
+                runs: vec![run(1, 200)],
+                center: Point::new(Twip(150), Twip(1500)),
+                quarter_turns: -1,
+            },
+        ],
+        labels: vec![
+            ChartDrawingLabel {
+                text: "Sales".to_owned(),
+                style: style(true, Some("Georgia")),
+            },
+            ChartDrawingLabel {
+                text: "Units".to_owned(),
+                style: style(false, Some("+mn-lt")),
+            },
+        ],
+    };
+    let svg = super::drawing::chart(&drawing, "Sales", Twip(2880), Twip(2880));
+    assert!(
+        svg.contains("<text x=\"20\" y=\"40\" font-size=\"18.67\" fill=\"#112233\" font-weight=\"bold\" font-family=\"Georgia\">Sales</text>"),
+        "{svg}"
+    );
+    // Turned a quarter anticlockwise about its centre; a theme face reference
+    // is the page's own body face, so no family is named.
+    assert!(
+        svg.contains("<text x=\"20\" y=\"40\" font-size=\"13.33\" fill=\"#112233\" font-style=\"italic\" transform=\"rotate(-90 10 100)\">Units</text>"),
+        "{svg}"
     );
 }
 
