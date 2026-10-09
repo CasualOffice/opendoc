@@ -392,7 +392,9 @@ fn refuse_if_formatting_locked(
         | Operation::SetTextBoxBody { .. }
         // A lock is a restriction on later edits, not formatting of the object, like
         // its alt text beside it in the same non-visual properties.
-        | Operation::SetObjectLocks { .. } => Ok(()),
+        | Operation::SetObjectLocks { .. }
+        // A document setting, as `SetEvenAndOddHeaders` is.
+        | Operation::SetTrackRevisions { .. } => Ok(()),
     }
 }
 
@@ -585,7 +587,10 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
         | Operation::SetTextBoxBody { .. }
-        | Operation::SetObjectLocks { .. } => false,
+        | Operation::SetObjectLocks { .. }
+        // Not a comment. (Under `trackedChanges`, `is_tracked_only` admits turning
+        // tracking ON before it gets here.)
+        | Operation::SetTrackRevisions { .. } => false,
     }
 }
 
@@ -596,6 +601,11 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
 /// [`is_comment_only`]: the projection below drops comment markers as well.
 pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
     match op {
+        // ECMA-376 §17.15.1.29: `trackedChanges` "shall imply the presence of the
+        // `trackRevisions` element, and applications shall not allow that element's
+        // state to be changed to false". Turning tracking ON is what the restriction
+        // asks for; turning it off is refused.
+        Operation::SetTrackRevisions { enabled } => *enabled,
         Operation::UpdateReviewState { paragraphs, .. } => paragraphs.iter().all(|state| {
             current_inlines(document, state.node).is_some_and(|current| {
                 before_projection(current) == before_projection(&state.inlines)

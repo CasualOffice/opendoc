@@ -109,6 +109,7 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetTrackRevisions { .. }
         // Document-global policy with no node and no registry key: the definition of
         // document scope (ADR-059).
         | Operation::SetDocumentProtection { .. } => Tier::DocumentScope,
@@ -182,6 +183,7 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetShapeStroke { .. } => "SetShapeStroke",
         Operation::SetTextBoxBody { .. } => "SetTextBoxBody",
         Operation::SetObjectLocks { .. } => "SetObjectLocks",
+        Operation::SetTrackRevisions { .. } => "SetTrackRevisions",
     }
 }
 
@@ -331,7 +333,8 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
         | Operation::SetTextBoxBody { .. }
-        | Operation::SetObjectLocks { .. } => Coordinates::None,
+        | Operation::SetObjectLocks { .. }
+        | Operation::SetTrackRevisions { .. } => Coordinates::None,
     }
 }
 

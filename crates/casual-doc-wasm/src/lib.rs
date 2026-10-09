@@ -172,6 +172,11 @@ mod object_locks_tests;
 #[path = "save_statistics_tests.rs"]
 mod save_statistics_tests;
 
+// The document's Track Changes setting (`docs/165` M7, `docs/109` HF-282).
+#[cfg(test)]
+#[path = "track_changes_tests.rs"]
+mod track_changes_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -829,6 +834,8 @@ enum HistoryKind {
     NoteChange,
     Review,
     ReviewTyping,
+    /// The document's Track Changes setting (`SetTrackRevisions`).
+    TrackChanges,
 }
 
 impl HistoryKind {
@@ -869,6 +876,7 @@ impl HistoryKind {
             Self::NoteChange => "Note change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
+            Self::TrackChanges => "Track changes",
         }
     }
 }
@@ -959,6 +967,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. } => HistoryKind::Edit,
+        Operation::SetTrackRevisions { .. } => HistoryKind::TrackChanges,
         // Shape fill and outline are formatting, exactly as Word groups them.
         Operation::SetShapeFill { .. } | Operation::SetShapeStroke { .. } => {
             HistoryKind::Formatting
@@ -4531,6 +4540,73 @@ impl WasmDocument {
             HistoryKind::Edit,
         )
         .map_err(to_js)
+    }
+
+    /// Whether the document's Track Changes setting is on (`w:trackRevisions`,
+    /// `docs/165` M7): the flag Word saves a document with while tracking is on,
+    /// and opens it with. The host opens such a document in Suggesting mode. O(1).
+    #[wasm_bindgen(getter, js_name = trackRevisions)]
+    #[must_use]
+    pub fn track_revisions(&self) -> bool {
+        self.document.definitions().settings.track_changes
+    }
+
+    /// Turns the document's Track Changes setting on or off as one undoable edit
+    /// (`SetTrackRevisions`), so a save writes it and a reopen honours it. The
+    /// host calls it when the reader switches between Editing and Suggesting.
+    ///
+    /// `(node, offset)` is the caret to keep: a setting has no place in the text,
+    /// and moving the reader's caret because they changed mode would be a defect.
+    /// A request for the value the document already has is reported UNCHANGED —
+    /// same revision, nothing on the undo stack — rather than as an empty edit.
+    ///
+    /// # Errors
+    ///
+    /// A refusal when the choke point refuses the operation — a `trackedChanges`
+    /// restriction locks Track Changes, as Word does — or `node` is not an id.
+    #[wasm_bindgen(js_name = setTrackRevisions)]
+    pub fn set_track_revisions(
+        &mut self,
+        enabled: bool,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.set_track_revisions_inner(enabled, node, offset)
+            .map_err(to_js)
+    }
+
+    /// [`set_track_revisions`](Self::set_track_revisions) with a `String` error,
+    /// so a native test can read a refusal.
+    fn set_track_revisions_inner(
+        &mut self,
+        enabled: bool,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, String> {
+        // No caret yet (a document nobody has clicked into): the document root,
+        // which the host resolves to its first position, as for any setting.
+        let anchor = if node.is_empty() {
+            self.document.id()
+        } else {
+            node_id_msg(node)?
+        };
+        let caret = Pos::new(anchor, offset);
+        if self.track_revisions() == enabled {
+            return Ok(EditResult {
+                node: caret.node.to_string(),
+                offset,
+                revision: self.revision,
+                page_count: self.page_count(),
+                dirty: Vec::new(),
+                paste_loss: Vec::new(),
+                placed_object: String::new(),
+            });
+        }
+        self.apply_action_caret_as(
+            vec![Operation::SetTrackRevisions { enabled }],
+            caret,
+            HistoryKind::TrackChanges,
+        )
     }
 
     /// The document's editing restriction (`w:documentProtection`), for the host's
@@ -28834,6 +28910,9 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        // A setting has no place in the text; `set_track_revisions` keeps the
+        // caller's caret through `apply_action_caret_as`.
+        | Operation::SetTrackRevisions { .. }
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }

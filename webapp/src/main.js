@@ -160,6 +160,7 @@ import { newestObject, placedObjectIds } from "./placed_objects.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
+import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollTargetFor } from "./scroll_into_view.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
@@ -1260,6 +1261,7 @@ function chromeShows(region) {
  *  is correct — no host has been handed the session yet. */
 let hostSession = null;
 let reviewMode = HOST_MODE;
+const reviewTracking = createReviewTracking(); // the document's Track Changes setting and the mode (HF-282)
 /** Why this DOCUMENT cannot be edited at all, or "" when it can be.
  *
  *  The engine answers this (`editingUnavailableReason`), and exactly one
@@ -1517,11 +1519,7 @@ function setReviewMode(mode, { restoreFocus = true } = {}) {
   if (reviewMode === "suggesting" && !showingChanges) {
     void setShowingChanges(true);
   }
-  // Paragraph formatting is tracked for as long as Suggesting is on (HF-131).
-  // Every paragraph formatting command funnels through one engine choke point,
-  // and review decisions build their own operations, so this cannot accidentally
-  // track an Editing-mode change or a decision. Dated per command by the engine.
-  doc?.setParagraphTracking(reviewMode === "suggesting", undefined);
+  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus, caret: selection?.focus, runEdit }); // HF-131; HF-282
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
@@ -3123,7 +3121,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // mode and, now that chrome follows it, the reading chrome. Skipped only where
     // nothing can have changed — editing to editing.
     // ...narrowed by the ROOM's grant too: a read-only guest arrives in Viewing, as a `readonly` container does.
-    const openMode = readOnlyReason ? "viewing" : SESSION.openMode(HOST_MODE);
+    const openMode = readOnlyReason ? "viewing" : reviewTracking.openMode(SESSION.openMode(HOST_MODE), doc.trackRevisions);
     if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode, { restoreFocus: false });
     breakTypingSession();
     currentName = name;
@@ -8213,6 +8211,8 @@ function noteDocumentEdited(revision) {
   spellChecker.noteEdited();
   // And the host's, under the same constraint: one revision integer, one boolean.
   hostSession?.noteChange();
+  // An edit that changed the document's Track Changes setting — an Undo, a co-author — moves the mode with it (HF-282).
+  reviewTracking.follow(doc?.trackRevisions, reviewMode, (mode) => SESSION.modeAuthority?.allows(mode).allowed !== false && setReviewMode(mode, { restoreFocus: false }));
 }
 
 /** How many documents this tab has opened.

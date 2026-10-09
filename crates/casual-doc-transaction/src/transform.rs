@@ -800,7 +800,8 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
-        | Operation::SetEvenAndOddHeaders { .. } => {}
+        | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetTrackRevisions { .. } => {}
     }
 }
 
@@ -878,7 +879,9 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
         | Operation::SetTextBoxBody { .. }
-        | Operation::SetObjectLocks { .. } => None,
+        | Operation::SetObjectLocks { .. }
+        // A field of `Definitions::settings`, which always exists.
+        | Operation::SetTrackRevisions { .. } => None,
     }
 }
 
@@ -1694,6 +1697,7 @@ impl Aspects {
     const DOCUMENT_PROTECTION: Self = Self(1 << 24);
     const CHART_DEFINITION: Self = Self(1 << 25);
     const OBJECT_LOCKS: Self = Self(1 << 26);
+    const TRACK_REVISIONS: Self = Self(1 << 27);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1798,6 +1802,9 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         Operation::SetEvenAndOddHeaders { .. } => {
             Some((Target::Settings, Aspects::EVEN_AND_ODD_HEADERS))
         }
+        // The same settings record, its own aspect: one replica turning tracking on
+        // and another turning on even/odd headers do not contend.
+        Operation::SetTrackRevisions { .. } => Some((Target::Settings, Aspects::TRACK_REVISIONS)),
         // The same `Definitions::settings` object as the headers flag above, and a
         // DIFFERENT aspect: two replicas, one turning on even/odd headers and one
         // restricting editing, claim independent fields of one settings record and must not

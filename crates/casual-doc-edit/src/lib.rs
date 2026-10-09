@@ -1302,6 +1302,17 @@ pub enum Operation {
         /// The complete replacement locks.
         locks: ObjectLocks,
     },
+    /// Turn the document's Track Changes setting (`w:trackRevisions`, ECMA-376
+    /// §17.15.1.89) on or off — the flag a Word document is saved with, and opens
+    /// with, when tracking is on for it. Self-inverse, carrying the previous value,
+    /// like [`Operation::SetEvenAndOddHeaders`] beside it in the same settings
+    /// record. Never rejected by the operation itself; a `trackedChanges`
+    /// restriction refuses it at the choke point, as Word locks the control.
+    /// O(1).
+    SetTrackRevisions {
+        /// Whether revisions are tracked.
+        enabled: bool,
+    },
 }
 
 /// Whether a running-content op addresses the header or the footer side.
@@ -3029,6 +3040,12 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let previous = settings.even_and_odd_headers;
             settings.even_and_odd_headers = *enabled;
             Ok(Operation::SetEvenAndOddHeaders { enabled: previous })
+        }
+        Operation::SetTrackRevisions { enabled } => {
+            let settings = &mut doc.definitions_mut().settings;
+            let previous = settings.track_changes;
+            settings.track_changes = *enabled;
+            Ok(Operation::SetTrackRevisions { enabled: previous })
         }
         Operation::CreateHeaderFooterBody { region, id, blocks } => {
             // Refuse rather than overwrite: an existing body silently replaced

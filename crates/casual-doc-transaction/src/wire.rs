@@ -416,7 +416,8 @@ impl WireOperation {
             | Operation::SetShapeFill { .. }
             | Operation::SetShapeStroke { .. }
             | Operation::SetTextBoxBody { .. }
-            | Operation::SetObjectLocks { .. } => 0,
+            | Operation::SetObjectLocks { .. }
+            | Operation::SetTrackRevisions { .. } => 0,
         };
         PER_ITEM + ids + payload
     }
@@ -527,7 +528,8 @@ impl WireOperation {
             | Operation::SetShapeFill { .. }
             | Operation::SetShapeStroke { .. }
             | Operation::SetTextBoxBody { .. }
-            | Operation::SetObjectLocks { .. } => Vec::new(),
+            | Operation::SetObjectLocks { .. }
+            | Operation::SetTrackRevisions { .. } => Vec::new(),
         }
     }
 }
