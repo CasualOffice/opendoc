@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::{DocxPackage, WasmDocument, open_document, viewer_limits};
 
-const SAMPLE_DOCX: &[u8] = include_bytes!("../../../webapp/sample.docx");
+const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
 const FLOAT_DOCX: &[u8] = include_bytes!("../../../webapp/float.docx");
 const SHAPES_DOCX: &[u8] = include_bytes!("../../../fixtures/generated/shapes.docx");
 

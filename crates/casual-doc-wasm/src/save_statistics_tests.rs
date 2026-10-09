@@ -11,7 +11,7 @@ use casual_doc_edit::Pos;
 
 use crate::{DocxPackage, WasmDocument, open_document, viewer_limits};
 
-const SAMPLE_DOCX: &[u8] = include_bytes!("../../../webapp/sample.docx");
+const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
 const DOCX: &str = casual_doc_io::formats::DOCX;
 
 fn part_text(bytes: &[u8], part: &str) -> String {
