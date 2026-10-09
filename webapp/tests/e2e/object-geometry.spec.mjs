@@ -245,8 +245,10 @@ test("Shift on a SHAPE corner constrains it, the same direction it does everywhe
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  // A shape, not a picture: a picture is proportional by DEFAULT, so it cannot
-  // tell whether Shift added the constraint or the default did.
+  // A shape inserted here, not the fixture's picture: that picture's file locks
+  // its aspect ratio (Word's `noChangeAspect`, FID-AT-09), so it cannot tell
+  // whether Shift added the constraint or the lock did. A shape inserted here
+  // carries no lock, as in Word.
   await page.locator("#tabInsert").click();
   await expect(page.locator("#panelInsert")).toBeVisible();
   await page.locator("#insertShapeBtn").click();

@@ -856,6 +856,20 @@ presence/absence) — again, proven, not invented.
 - The **object grammar**: single-click → handles + context surface; drag handle →
   resize (Shift constrains proportions); double-click container → enter text;
   Delete removes the object (§4).
+- **Lock aspect ratio comes from the file, as in Word** (`109` FID-AT-09). A corner
+  drag keeps an object's proportions without Shift exactly when its DrawingML
+  `noChangeAspect` is set — on the frame (`a:graphicFrameLocks`) or on the object
+  (`a:picLocks`/`a:spLocks`/`a:grpSpLocks`) — and never because of its kind. Word
+  honours the flag both ways, so a picture whose file states no lock stretches and
+  a shape whose file locks its ratio keeps it. **An absent flag is unlocked**: that
+  is how Word reads the same file, and the model cannot tell an absent attribute
+  from `noChangeAspect="0"`. Word writes the lock on every picture it inserts, and
+  so does Insert ▸ Picture here (`SetObjectLocks` in the insert's transaction), so
+  a picture inserted here behaves as pictures always have. The engine publishes the
+  answer with the selection (`locksAspectRatio`); `resizeRulesFor` reads it once at
+  pointer-down. A lone shape's lock is written on the shape inside its
+  group-of-one and counts for the top-level selection; a member of a many-member
+  group does not lend the group its lock.
 - The **wrap-mode vocabulary** verbatim (it *is* our `WrapMode` enum) and a
   right-click / context-bar **Wrap** submenu (§5.3).
 - **Crop, Replace Image, Alt-text** as first-class image context actions (all

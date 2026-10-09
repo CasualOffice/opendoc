@@ -326,7 +326,7 @@ fn a_dragged_picture_lands_after_the_word_it_was_dropped_after_and_is_the_same_p
     assert_eq!(
         d.document.definitions().object_names.get(&p).cloned(),
         name,
-        "and its name, which a side table keys by that id"
+        "and its name, inner name and aspect lock, which a side table keys by that id"
     );
     assert_eq!(d.undo_label(), "Object move");
 }

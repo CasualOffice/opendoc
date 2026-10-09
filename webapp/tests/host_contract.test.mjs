@@ -272,6 +272,38 @@ test("a withheld capability produces a refusal that names the code and the requi
 
 // ── The result, and what a refusal says ────────────────────────────────────
 
+test("a command the HOST runs is marked as the host's while it runs, and only then", async () => {
+  // The editor reads this to tell a host's command from the reader's own gesture:
+  // a review-mode switch the reader makes writes the document's Track Changes
+  // setting, and the same switch made by a host must not (`docs/109` HF-283 —
+  // `host-contract.spec.mjs` saw a host granted nothing change the revision by
+  // cycling the mode). So it must be true inside the run, false outside it, and
+  // false again after a run that threw.
+  const seenInside = [];
+  let session = null;
+  const registry = () =>
+    everyContractId().map((id) => ({
+      id,
+      label: id,
+      enabled: true,
+      disabledReason: "",
+      run: () => {
+        seenInside.push(session.executing);
+        if (id === "edit.undo") throw new Error("boom");
+      },
+    }));
+  session = createHostSession({
+    capabilities: resolveCapabilities({ mode: "owner", framed: true }),
+    registry,
+  });
+  assert.equal(session.executing, false, "nothing is running before a host asks");
+  await session.execute("review.mode.cycle");
+  assert.equal(session.executing, false, "and nothing after the command returned");
+  await session.execute("edit.undo");
+  assert.equal(session.executing, false, "a command that threw still ends the host's run");
+  assert.deepEqual(seenInside, [true, true], "inside each run the command is the host's");
+});
+
 test("a refused command says so in its result, with the chrome's own reason", async () => {
   const ran = [];
   const session = createHostSession({
