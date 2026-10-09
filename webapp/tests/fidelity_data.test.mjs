@@ -165,24 +165,19 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Document protection & forms"].editable, "partial");
   assert.equal(by["Document protection & forms"].rendered, "none");
   // `modeled` was "full" and that was an overstatement by omission (SKILL §9
-  // rule 3), by its own note's admission in the same object: `w:permStart` /
-  // `w:permEnd` have no typed model at all, `w:sectPr/w:formProt` has none
-  // either, and the sixteen password attributes have none. `grep -rn
-  // "permStart\|formProt" crates/ --include="*.rs"` returns one comment in a
-  // test and no model, importer arm or exporter arm. Three unmodelled
-  // constructs in one family is "partial", and the note now says which three
-  // rather than leaving the cell to imply there are none. Pinned so the cell
-  // cannot drift back to "full" the way the editable cell drifted into a lie.
+  // rule 3). Three constructs had no typed model; two now do -
+  // `w:sectPr/w:formProt` (`Definitions::section_form_protection`, FID-AT-06)
+  // and the sixteen password attributes (`PasswordVerifier`, FID-AT-14). The
+  // third keeps the cell at "partial": `w:permStart` / `w:permEnd` editable
+  // ranges, which `grep -rn permStart crates/ --include="*.rs"` finds no model,
+  // importer arm or exporter arm for. Pinned so the cell cannot drift back to
+  // "full" the way the editable cell drifted into a lie.
   assert.equal(by["Document protection & forms"].modeled, "partial");
   assert.notEqual(by["Document protection & forms"].modeled, "full");
-  // Round-trip is NOT full, and it never was: the sixteen `AG_Password` /
-  // `AG_TransitionalPassword` attributes on `w:documentProtection` and
-  // `w:writeProtection` have no home in the model, and `word/settings.xml` is a
-  // consumed part the semantic writer regenerates - so a password-protected
-  // document saves with the restriction intact and the password gone. The
-  // importer now REPORTS every one of those attributes by name
-  // (`documentProtection/@hashValue`, ...) so the loss is not silent, which is
-  // what makes "partial" the honest grade rather than "full".
+  // Round-trip is NOT full. The password was the reason until FID-AT-14 kept
+  // it verbatim through an edited save; the reason now is the same
+  // `w:permStart` / `w:permEnd` pair, which is reported and dropped, so a
+  // document with editable ranges saves with the ranges gone.
   assert.equal(by["Document protection & forms"].roundtrips, "partial");
   assert.notEqual(by["Document protection & forms"].roundtrips, "full");
   // Math is fully typed as of Layer 1 (all 20 OMML math elements mapped or
@@ -307,18 +302,28 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // The shaper exposes no paragraph base-direction control and levels collapse
   // to a single RTL flag (casual-doc-layout/src/shape.rs:480-505, :1125).
   assert.equal(by["Bidi, RTL & CJK grid"].rendered, "partial");
-  // None of these seven is authorable from the editor today.
-  for (const family of [
-    "Hyphenation",
-    "Line numbering (w:lnNumType)",
-    "Watermarks & WordArt",
-    "Vertical & rotated text",
-    "Drop caps",
-  ]) {
+  // Neither of these is authorable from the editor today.
+  for (const family of ["Hyphenation", "Vertical & rotated text"]) {
     assert.equal(
       by[family].editable,
       "none",
       `${family} is not authorable from the editor`,
+    );
+  }
+  // These three were pinned to "none" after their editors shipped, which held
+  // the public page to an understatement (SKILL §9). Each has an editor and a
+  // named remainder, so "partial": line numbers always apply to the caret's
+  // section (no Apply to), a watermark can only be text (the picture choice is
+  // disabled), and a drop cap offers no font or distance from text.
+  for (const family of [
+    "Line numbering (w:lnNumType)",
+    "Watermarks & WordArt",
+    "Drop caps",
+  ]) {
+    assert.equal(
+      by[family].editable,
+      "partial",
+      `${family} has an editor with a named remainder`,
     );
   }
 });
