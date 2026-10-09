@@ -177,6 +177,11 @@ mod save_statistics_tests;
 #[path = "track_changes_tests.rs"]
 mod track_changes_tests;
 
+// Forms protection per section (`docs/165` M6, `docs/109` FID-AT-06).
+#[cfg(test)]
+#[path = "forms_protection_tests.rs"]
+mod forms_protection_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -974,6 +979,8 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. } => HistoryKind::Edit,
         Operation::SetTrackRevisions { .. } => HistoryKind::TrackChanges,
+        // Leads no user action of its own: a section break carries it.
+        Operation::SetSectionFormProtection { .. } => HistoryKind::SectionBreak,
         // Shape fill and outline are formatting, exactly as Word groups them.
         Operation::SetShapeFill { .. } | Operation::SetShapeStroke { .. } => {
             HistoryKind::Formatting
@@ -5255,7 +5262,7 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| "id space exhausted".to_owned())?;
-        let ops = section_break_ops(
+        let mut ops = section_break_ops(
             Pos::new(nid, offset),
             &split,
             &inherited,
@@ -5263,6 +5270,20 @@ impl WasmDocument {
             new_paragraph,
             start,
         );
+        // Word copies the split section's `w:sectPr` to the new break, `w:formProt`
+        // included; the model keeps that one flag in a side table keyed by section
+        // (`109` FID-AT-06), so it travels as its own operation, after the boundary
+        // it names exists.
+        if let Some(protected) = self
+            .document
+            .definitions()
+            .section_form_protection(split.current)
+        {
+            ops.push(Operation::SetSectionFormProtection {
+                section: new_section,
+                protected: Some(protected),
+            });
+        }
         self.apply_action_caret_as(ops, Pos::new(new_paragraph, 0), HistoryKind::SectionBreak)
     }
 
@@ -15380,6 +15401,12 @@ impl WasmDocument {
             if casual_doc_edit::protection::exempt_from_protection(op, self.capabilities) {
                 continue;
             }
+            // `forms` protects only the sections that do not say `w:formProt="false"`
+            // (ECMA-376 §17.18.29: "no restrictions in sections where `formProt` is
+            // false"; `docs/165` M6, `109` FID-AT-06).
+            if self.forms_leave_open(op) {
+                continue;
+            }
             if !self.op_is_inside_a_form_field(op) {
                 return Err(refused!(
                     "document.protected-forms-only",
@@ -15389,6 +15416,38 @@ impl WasmDocument {
             }
         }
         Ok(())
+    }
+
+    /// Whether forms protection leaves every paragraph `op` writes in OPEN: each
+    /// one is in the body, in a section whose `w:formProt` is `false`
+    /// (`Definitions::section_form_protection`, `109` FID-AT-06). A section that
+    /// states nothing, or `true`, is protected — `None` is not `Some(false)`.
+    ///
+    /// Only paragraph-addressed operations can be placed in a section here
+    /// ([`operation_paragraphs`]); anything else stays under the form-field rule,
+    /// which refuses it — a table or block insertion in an open section included
+    /// (`109` FID-AT-13). Headers, footers, notes and text boxes are not in a
+    /// section's body and stay protected, as in Word.
+    ///
+    /// **Complexity.** O(sections) and nothing more for every document whose
+    /// sections leave none open — which is every document but a mixed one. A
+    /// mixed one pays one pass over the top-level body per paragraph named,
+    /// stopping at the next section break: O(top-level body blocks).
+    fn forms_leave_open(&self, op: &Operation) -> bool {
+        let definitions = self.document.definitions();
+        let open = |section: SectionId| definitions.section_form_protection(section) == Some(false);
+        if !definitions
+            .sections
+            .iter()
+            .any(|boundary| open(boundary.id))
+        {
+            return false;
+        }
+        operation_paragraphs(op).is_some_and(|paragraphs| {
+            paragraphs
+                .iter()
+                .all(|paragraph| body_section_of(&self.document, *paragraph).is_some_and(open))
+        })
     }
 
     /// Whether an operation writes inside an ENABLED text form field's result.
@@ -18529,6 +18588,66 @@ fn damage_of(ops: &[Operation]) -> DirtySet {
         nodes.push(node);
     }
     DirtySet::complete(nodes)
+}
+
+/// The paragraphs `op` writes in, for the per-section forms rule
+/// (`WasmDocument::forms_leave_open`), or `None` when it is not addressed to
+/// paragraphs. Both ends of a range: a range that crosses into a protected
+/// section is not open. O(1).
+fn operation_paragraphs(op: &Operation) -> Option<Vec<NodeId>> {
+    match op {
+        Operation::InsertText { at, .. }
+        | Operation::SplitParagraph { at, .. }
+        | Operation::InsertInlineObject { at, .. } => Some(vec![at.node]),
+        Operation::DeleteText { range }
+        | Operation::FormatText { range, .. }
+        | Operation::ClearFormatting { range }
+        | Operation::SetHyperlink { range, .. } => Some(vec![range.start.node, range.end.node]),
+        Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
+            Some(vec![*node])
+        }
+        Operation::JoinParagraphs { first, second, .. } => Some(vec![*first, *second]),
+        _ => None,
+    }
+}
+
+/// The section a BODY paragraph sits in — in a table cell or a content control
+/// too — or `None` when `paragraph` is not in the body.
+///
+/// `ParagraphProperties::section_break` names the section a top-level paragraph
+/// ENDS, and the final section is the trailing entry no paragraph names, so the
+/// paragraph's section is the one named by the first top-level paragraph at or
+/// after its block that carries a break (`casual_doc_edit::section_split_site`'s
+/// rule). **O(top-level body blocks)**: one pass to find the block, which
+/// continues forward to the break.
+fn body_section_of(document: &Document, paragraph: NodeId) -> Option<SectionId> {
+    fn holds(block: &BlockNode, paragraph: NodeId) -> bool {
+        match block {
+            BlockNode::Paragraph(candidate) => candidate.id == paragraph,
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| cell.blocks.iter().any(|block| holds(block, paragraph)))
+            }),
+            BlockNode::Sdt(sdt) => sdt.blocks.iter().any(|block| holds(block, paragraph)),
+            BlockNode::AltChunk(_) => false,
+        }
+    }
+    let body = document.body();
+    let index = body.iter().position(|block| holds(block, paragraph))?;
+    body[index..]
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Paragraph(candidate) => candidate.properties.section_break,
+            _ => None,
+        })
+        .or_else(|| {
+            document
+                .definitions()
+                .sections
+                .last()
+                .map(|boundary| boundary.id)
+        })
 }
 
 fn operation_write_position(op: &Operation) -> Option<(NodeId, u32)> {
@@ -28919,6 +29038,8 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // A setting has no place in the text; `set_track_revisions` keeps the
         // caller's caret through `apply_action_caret_as`.
         | Operation::SetTrackRevisions { .. }
+        // Carried by a section break, which supplies its own caret.
+        | Operation::SetSectionFormProtection { .. }
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }

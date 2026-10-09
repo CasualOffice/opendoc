@@ -1313,6 +1313,21 @@ pub enum Operation {
         /// Whether revisions are tracked.
         enabled: bool,
     },
+    /// Set or clear one section's `w:formProt` (`Definitions::form_protection`,
+    /// `109` FID-AT-06): whether the section is protected when the document's
+    /// forms protection is in force. `Some(false)` leaves the section editable
+    /// under that protection, `Some(true)` and `None` (no element) protect it —
+    /// `None` is kept apart from `Some(false)` because the file keeps them apart.
+    /// Self-inverse, carrying the previous value. A section break carries the
+    /// split section's value to the new one with it, as Word copies `w:sectPr`.
+    /// Rejected with [`EditError::NodeNotFound`] when `section` names no section.
+    /// O(sections).
+    SetSectionFormProtection {
+        /// The section whose `w:formProt` is replaced.
+        section: SectionId,
+        /// The new value, or `None` for no element.
+        protected: Option<bool>,
+    },
 }
 
 /// Whether a running-content op addresses the header or the footer side.
@@ -3046,6 +3061,24 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let previous = settings.track_changes;
             settings.track_changes = *enabled;
             Ok(Operation::SetTrackRevisions { enabled: previous })
+        }
+        Operation::SetSectionFormProtection { section, protected } => {
+            let definitions = doc.definitions_mut();
+            if !definitions
+                .sections
+                .iter()
+                .any(|candidate| candidate.id == *section)
+            {
+                return Err(EditError::NodeNotFound);
+            }
+            let previous = match protected {
+                Some(value) => definitions.form_protection.insert(*section, *value),
+                None => definitions.form_protection.remove(section),
+            };
+            Ok(Operation::SetSectionFormProtection {
+                section: *section,
+                protected: previous,
+            })
         }
         Operation::CreateHeaderFooterBody { region, id, blocks } => {
             // Refuse rather than overwrite: an existing body silently replaced

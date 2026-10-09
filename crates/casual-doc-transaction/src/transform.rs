@@ -801,7 +801,8 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
-        | Operation::SetTrackRevisions { .. } => {}
+        | Operation::SetTrackRevisions { .. }
+        | Operation::SetSectionFormProtection { .. } => {}
     }
 }
 
@@ -824,7 +825,8 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetSectionWatermark { section, .. }
         | Operation::SetSectionLineNumbering { section, .. }
         | Operation::SetSectionPageNumbering { section, .. }
-        | Operation::SetSectionVerticalAlignment { section, .. } => Some(Key::Section(*section)),
+        | Operation::SetSectionVerticalAlignment { section, .. }
+        | Operation::SetSectionFormProtection { section, .. } => Some(Key::Section(*section)),
         Operation::SpliceSectionBoundary { at, .. } => at.map(Key::Section),
         Operation::InsertText { .. }
         | Operation::DeleteText { .. }
@@ -1698,6 +1700,7 @@ impl Aspects {
     const CHART_DEFINITION: Self = Self(1 << 25);
     const OBJECT_LOCKS: Self = Self(1 << 26);
     const TRACK_REVISIONS: Self = Self(1 << 27);
+    const SECTION_FORM_PROTECTION: Self = Self(1 << 28);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1805,6 +1808,9 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         // The same settings record, its own aspect: one replica turning tracking on
         // and another turning on even/odd headers do not contend.
         Operation::SetTrackRevisions { .. } => Some((Target::Settings, Aspects::TRACK_REVISIONS)),
+        Operation::SetSectionFormProtection { section, .. } => {
+            Some((Target::Section(*section), Aspects::SECTION_FORM_PROTECTION))
+        }
         // The same `Definitions::settings` object as the headers flag above, and a
         // DIFFERENT aspect: two replicas, one turning on even/odd headers and one
         // restricting editing, claim independent fields of one settings record and must not
