@@ -167,6 +167,11 @@ mod inline_move;
 #[path = "object_locks_tests.rs"]
 mod object_locks_tests;
 
+// An edited save states the current `app.xml` counts (`docs/109` FID-AT-04).
+#[cfg(test)]
+#[path = "save_statistics_tests.rs"]
+mod save_statistics_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -1011,9 +1016,117 @@ pub fn open_as(bytes: &[u8], format_id: &str) -> Result<WasmDocument, JsValue> {
 
 #[wasm_bindgen]
 impl WasmDocument {
+    /// The `docProps/app.xml` statistics as they are NOW (`109` FID-AT-04), each
+    /// `None` where the editor cannot say.
+    ///
+    /// Words, characters (without and with spaces) and paragraphs are
+    /// [`document_stats`](Self::document_stats)' — the counts the status bar
+    /// shows, which take in every story's text (headers, footers, notes, text
+    /// boxes); Word's own definitions are not reproduced, so a count can differ
+    /// from the one Word would write for the same text. Pages and lines come from
+    /// this session's own pagination and only when it is whole and exact: a
+    /// windowed body has measured a prefix, and a count of a prefix is not the
+    /// document's — that statistic is left as it was, so the save leaves it out
+    /// as stale and says so rather than writing a guess.
+    ///
+    /// **O(document)**: one text walk and, for lines, one pass over the placed
+    /// pages. Called once per regenerating save, which is O(document) anyway.
+    fn current_statistics(&self) -> [Option<i64>; 6] {
+        let stats = self.document_stats();
+        // The page count is the document's once measuring has reached the end,
+        // windowed or not; a line count needs every page laid out, which only a
+        // whole body has.
+        let pages = self
+            .layout
+            .page_count_is_exact()
+            .then(|| i64::try_from(self.layout.page_count()).unwrap_or(i64::MAX));
+        let lines = (!self.layout.is_windowed()).then(|| {
+            let lines: usize = self
+                .layout
+                .resident()
+                .pages
+                .iter()
+                .map(|page| {
+                    placed_paragraphs(&page.placed)
+                        .iter()
+                        .map(|paragraph| paragraph.lines.lines.len())
+                        .sum::<usize>()
+                })
+                .sum();
+            i64::try_from(lines).unwrap_or(i64::MAX)
+        });
+        [
+            pages,
+            Some(i64::from(stats.words)),
+            Some(i64::from(stats.characters)),
+            Some(i64::from(stats.characters_with_spaces)),
+            lines,
+            Some(i64::from(stats.paragraphs)),
+        ]
+    }
+
+    /// Runs `export` over the document with `statistics` written into its
+    /// `docProps/app.xml` properties, then puts back what was there — so the
+    /// save carries current counts and the document the session goes on editing
+    /// is exactly what it was. `None` when there is nothing to write (no
+    /// statistics asked for, or a document that carries no application
+    /// properties at all, where inventing an `app.xml` is not this save's call).
+    ///
+    /// A statistic given as `None` is left as the document holds it.
+    /// `source_unchanged` is false for the callback by construction: statistics
+    /// are only refreshed for an edited document.
+    fn with_current_statistics<T>(
+        &mut self,
+        statistics: Option<[Option<i64>; 6]>,
+        export: impl FnOnce(&Document, &DocumentResources, Option<&SourceEnvelope>) -> T,
+    ) -> Option<T> {
+        let statistics = statistics?;
+        self.document.properties()?;
+        let app = &mut self.document.properties_mut().app;
+        let slots = [
+            &mut app.pages,
+            &mut app.words,
+            &mut app.characters,
+            &mut app.characters_with_spaces,
+            &mut app.lines,
+            &mut app.paragraphs,
+        ];
+        let mut previous = [None; 6];
+        for ((slot, current), kept) in slots.into_iter().zip(statistics).zip(&mut previous) {
+            *kept = *slot;
+            if let Some(current) = current {
+                *slot = Some(current);
+            }
+        }
+        let result = export(
+            &self.document,
+            &self.resources,
+            self.format_state.source.as_ref(),
+        );
+        let app = &mut self.document.properties_mut().app;
+        for (slot, kept) in [
+            &mut app.pages,
+            &mut app.words,
+            &mut app.characters,
+            &mut app.characters_with_spaces,
+            &mut app.lines,
+            &mut app.paragraphs,
+        ]
+        .into_iter()
+        .zip(previous)
+        {
+            *slot = kept;
+        }
+        Some(result)
+    }
+
     /// See [`WasmDocument::export_as`]. Kept free of `JsValue` so native tests
     /// exercise the same registry dispatch and compatibility reporting as WASM.
-    fn export_as_inner(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, String> {
+    fn export_as_inner(
+        &mut self,
+        format_id: &str,
+        mode: &str,
+    ) -> Result<WasmExportArtifact, String> {
         let format = FormatId::new(format_id)
             .map_err(|error| format!("invalid format identifier: {error}"))?;
         let mode = match mode {
@@ -1028,17 +1141,41 @@ impl WasmDocument {
             }
         };
         let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
-        let artifact = registry
-            .export(
-                &format,
-                ExportRequest {
-                    document: &self.document,
-                    resources: &self.resources,
-                    source: self.format_state.source.as_ref(),
-                    source_unchanged: self.revision == 0,
-                    mode,
-                },
-            )
+        // An EDITED document's `docProps/app.xml` statistics are the counts it had
+        // when it was opened; the io adapter leaves out each one still holding the
+        // source's value (`109` FID-AT-04). The editor knows the current counts, so
+        // a regenerating DOCX save writes them instead — for the duration of the
+        // export only (`with_current_statistics`), so saving changes nothing in the
+        // document the session goes on editing.
+        let refresh = format.as_str() == casual_doc_io::formats::DOCX
+            && !matches!(mode, ExportMode::ExactIfUnchanged)
+            && self.revision != 0;
+        let statistics = refresh.then(|| self.current_statistics());
+        let artifact = self
+            .with_current_statistics(statistics, |document, resources, source| {
+                registry.export(
+                    &format,
+                    ExportRequest {
+                        document,
+                        resources,
+                        source,
+                        source_unchanged: false,
+                        mode,
+                    },
+                )
+            })
+            .unwrap_or_else(|| {
+                registry.export(
+                    &format,
+                    ExportRequest {
+                        document: &self.document,
+                        resources: &self.resources,
+                        source: self.format_state.source.as_ref(),
+                        source_unchanged: self.revision == 0,
+                        mode,
+                    },
+                )
+            })
             .map_err(|error| format!("export {format}: {error}"))?;
         let report_json = compatibility_report_json(&artifact.report)?;
 
@@ -13989,7 +14126,11 @@ impl WasmDocument {
     /// Accepted modes are `semantic`, `preserve_when_safe`, and
     /// `exact_if_unchanged`.
     #[wasm_bindgen(js_name = exportAs)]
-    pub fn export_as(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, JsValue> {
+    pub fn export_as(
+        &mut self,
+        format_id: &str,
+        mode: &str,
+    ) -> Result<WasmExportArtifact, JsValue> {
         self.export_as_inner(format_id, mode).map_err(to_js)
     }
 }
@@ -30788,7 +30929,7 @@ mod tests {
 
     #[test]
     fn format_neutral_host_opens_text_and_round_trips_through_odt() {
-        let doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
+        let mut doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
         assert_eq!(doc.source_format(), formats::TEXT);
         assert_eq!(doc.import_report_json(), "{\"entries\":[]}");
         assert_eq!(
@@ -30864,7 +31005,7 @@ mod tests {
 
     #[test]
     fn generic_export_surfaces_cross_format_compatibility_findings() {
-        let doc = open_document(RICH_DOCX).expect("open rich DOCX");
+        let mut doc = open_document(RICH_DOCX).expect("open rich DOCX");
         let artifact = doc
             .export_as_inner(formats::ODT, "semantic")
             .expect("export bounded ODT projection");
