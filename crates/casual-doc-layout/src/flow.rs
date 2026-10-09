@@ -4260,8 +4260,8 @@ fn collect_items_with_measure<'a>(
 /// 3. anything else keeps the typed text placeholder, unchanged.
 ///
 /// Case 3 is deliberately still reachable and is not a fallback nobody takes: a
-/// chart whose part declined to project, whose only groups are pie or doughnut
-/// (tier 1B — no arc primitive), or that carries no series at all lands here, and
+/// chart whose part declined to project (a 3-D, surface, stock, radar, bubble
+/// or of-pie chart), or that carries no series at all lands here, and
 /// a labelled placeholder is more honest than an empty frame (`docs/155` §6.2).
 ///
 /// Complexity: O(1) plus, for a chart, O(points in that chart) once. The chart

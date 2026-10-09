@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Security-bounded OpenDocument package admission and semantic import.
+//! Security-bounded OpenDocument package admission, semantic ODT import, and
+//! bounded ODT writing ([`write_odt`]).
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

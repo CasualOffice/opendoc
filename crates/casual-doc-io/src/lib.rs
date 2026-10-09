@@ -4,11 +4,10 @@
 //!
 //! This crate is the adapter boundary described by doc 94. It does not parse or
 //! write document formats itself: registered adapters map source bytes to the
-//! normalized v1 model and back. Built-in adapters cover DOCX, bounded ODT,
-//! normalized JSON, UTF-8 plain text and export-only CommonMark and single-file
-//! HTML, each with an
-//! explicit capability descriptor, plus an opt-in export-only PDF adapter
-//! ([`register_pdf_exporter`]).
+//! normalized v1 model and back. The built-in registry ([`builtin_registry`])
+//! covers DOCX, bounded ODT, normalized JSON and UTF-8 plain text both ways,
+//! RTF import, and export-only DOTX, CommonMark, single-file HTML and PDF
+//! ([`register_pdf_exporter`]), each with an explicit capability descriptor.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

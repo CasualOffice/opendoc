@@ -136,9 +136,10 @@ impl FormatExporter for PdfAdapter {
 
 /// Registers the PDF exporter into `registry`.
 ///
-/// This is **opt-in** rather than part of [`crate::builtin_registry`] so a host
-/// chooses when PDF appears in its save-as list, and so the browser build can
-/// keep it behind the wiring that gives the export the session's own fonts.
+/// [`crate::builtin_registry`] calls this, so every host that uses the built-in
+/// registry offers PDF; a host assembling its own registry calls it to add
+/// PDF. It was once opt-in, which is how a built capability ends up shipped by
+/// no host (`docs/105` §9 rule 4).
 ///
 /// # Errors
 ///
