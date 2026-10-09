@@ -5,11 +5,40 @@
 // no command reached the report behind it (`desk-11-import-findings.png`), so a
 // reader was told something had been lost and given no way to find out what.
 // `?fixture=rich` is the compatibility document with findings to show.
-import { test, expect, MOD, gotoEditor, openFilePage } from "./fixtures.mjs";
+//
+// The second half is `109` FID-AT-05, on the document the owner opened:
+// `sample.docx`, whose dialog listed `cNvPr/@name`, `fontScheme/@name` and
+// `docx.rsid ×165` under a headline of 183 kept findings. Each row now reads as
+// words with its id kept beside it, and Word's own bookkeeping is a collapsed,
+// labelled disclosure that the headline does not count.
+import { test, expect, MOD, gotoEditor, openFilePage, runPaletteCommand, stableBox } from "./fixtures.mjs";
 import { makeLargeDocx } from "./large-docx.mjs";
 
 const chip = (page) => page.locator("#compatibilityStatus");
 const dialog = (page) => page.locator("#compatibilityFindingsDialog");
+
+/** Opens the shipped `sample.docx` — what `/editor.html` opens with no fixture —
+ *  and waits until it is painted with its real faces. Not on an empty status
+ *  line, as `gotoEditor` does: `sample.docx` asks for script faces a checkout
+ *  that has not provisioned them reports as unavailable there, and that note is
+ *  not this spec's subject. */
+async function openSample(page, query = "") {
+  await page.goto(`/editor.html${query}`);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".page-wrap").length > 0 && document.body.dataset.fontsReady === "true",
+    null,
+    { timeout: 45_000 },
+  );
+}
+
+/** The sum of the group headlines the dialog prints. */
+async function headlineTotal(page) {
+  const totals = await dialog(page)
+    .locator(".findings-total")
+    .evaluateAll((nodes) => nodes.map((node) => Number(node.textContent.replace(/[^\d]/g, ""))));
+  return totals.reduce((sum, value) => sum + value, 0);
+}
 
 /** The count the chip prints, as a number. */
 async function chipCount(page) {
@@ -89,4 +118,117 @@ test("a document with no findings shows no chip, and the command says why it is 
   await expect(row).toBeDisabled();
   await expect(row).toContainText("This document has no compatibility findings");
   expect(consoleErrors).toEqual([]);
+});
+
+test("sample.docx's findings read as words, and Word's bookkeeping is one collapsed, labelled group", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSample(page);
+  await expect(chip(page)).toBeVisible();
+  const counted = await chipCount(page);
+  await chip(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog(page)).toBeVisible();
+
+  // Words first, where it is, and the engine's id kept beside them for support.
+  const decimal = dialog(page).locator('.findings-row[data-feature="decimalSymbol"]');
+  await expect(decimal.locator(".findings-name")).toHaveText("Decimal symbol used in calculations");
+  await expect(decimal.locator(".findings-where")).toHaveText("in the document settings");
+  await expect(decimal.locator(".findings-feature")).toHaveText("decimalSymbol");
+  const theme = dialog(page).locator('.findings-row[data-feature="theme/@name"]');
+  await expect(theme.locator(".findings-name")).toHaveText("Document theme name");
+  await expect(theme.locator(".findings-where")).toHaveText("in the theme");
+
+  // No row, open or folded, reads as its id or as a catalogue key.
+  const rows = await dialog(page)
+    .locator(".findings-row")
+    .evaluateAll((nodes) =>
+      nodes.map((row) => ({
+        feature: row.dataset.feature,
+        name: row.querySelector(".findings-name")?.textContent ?? "",
+      })),
+    );
+  expect(rows.length, "sample.docx has findings for this to prove anything").toBeGreaterThan(10);
+  expect(
+    rows.filter((row) => row.name === row.feature || row.name === "" || row.name.startsWith("findings.")),
+  ).toEqual([]);
+
+  // The headline counts what a reader would miss: the chip and the group totals
+  // agree, and the 165 revision-save ids are in neither.
+  expect(await headlineTotal(page)).toBe(counted);
+  expect(counted).toBeGreaterThan(0);
+  expect(counted).toBeLessThan(165);
+
+  // Word's own bookkeeping: a real disclosure, collapsed, naming its count.
+  // Found by the row it holds, not by the group it sits in — which group that
+  // is, is the engine's outcome and may change; that it is folded may not.
+  const rsidRow = '.findings-row[data-feature="docx.rsid"]';
+  const rsid = dialog(page).locator(rsidRow);
+  const disclosure = dialog(page).locator(".findings-bookkeeping", { has: page.locator(rsidRow) });
+  const toggle = disclosure.getByRole("button", { name: /Word's own bookkeeping/ });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  const folded = await toggle.locator(".findings-bookkeeping-total").textContent();
+  expect(Number(folded.replace(/[^\d]/g, ""))).toBeGreaterThanOrEqual(165);
+  await expect(rsid).toBeHidden();
+  const panel = page.locator(`#${await toggle.getAttribute("aria-controls")}`);
+  await expect(panel).toBeHidden();
+
+  // Keyboard: Enter opens it, and every entry is there, rsid as ONE line.
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(panel).toBeVisible();
+  await expect(rsid).toHaveCount(1);
+  await expect(rsid).toBeVisible();
+  await expect(rsid.locator(".findings-count")).toHaveText("×165");
+  await expect(rsid.locator(".findings-name")).toHaveText(/Word adds on every save/);
+  await expect(
+    panel.locator('.findings-row[data-feature="docProps/thumbnail.jpeg"] .findings-name'),
+  ).toHaveText("Thumbnail preview of the first page");
+  // Space, a button's own key, folds it again.
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(rsid).toBeHidden();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog(page)).toBeHidden();
+  await expect(chip(page)).toBeFocused();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the findings speak the interface's language, words and bookkeeping alike", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSample(page, "?lang=de");
+  await chip(page).click();
+  await expect(dialog(page)).toBeVisible();
+  const decimal = dialog(page).locator('.findings-row[data-feature="decimalSymbol"]');
+  await expect(decimal.locator(".findings-name")).toHaveText("Dezimaltrennzeichen für Berechnungen");
+  await expect(decimal.locator(".findings-where")).toHaveText("in den Dokumenteinstellungen");
+  await expect(decimal.locator(".findings-feature")).toHaveText("decimalSymbol");
+  await expect(dialog(page).getByRole("button", { name: /Words eigene Verwaltungsdaten/ })).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
+test.describe("with a finger", () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test("the bookkeeping disclosure is a finger-sized target and a tap opens it", async ({
+    page,
+    consoleErrors,
+  }) => {
+    await openSample(page);
+    // The chip is not shown on a phone; the report is a command away.
+    await runPaletteCommand(page, "file.compatibilityReport", "compatibility");
+    await expect(dialog(page)).toBeVisible();
+    const toggle = dialog(page).locator(".findings-disclosure").first();
+    await toggle.scrollIntoViewIfNeeded();
+    const box = await stableBox(toggle);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    await toggle.tap();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(consoleErrors).toEqual([]);
+  });
 });
