@@ -460,10 +460,15 @@ per-construct taxonomy.
   resolve fails — but a host reading the neutral report cannot re-audit a
   `preserved` claim itself. Plumbing the ledger through the adapter layer is
   deliberately deferred, not overlooked.
-- Repeated equivalent findings are aggregated by feature **and disposition**,
-  keeping the count and the **first** bounded location. Two findings that share a
-  feature name but differ in what happened to the construct are different
-  fidelity facts and stay separate entries.
+- Repeated equivalent findings are aggregated by feature, disposition **and
+  part**, keeping the count and the **first** bounded location within that part.
+  Two findings that share a feature name but differ in what happened to the
+  construct are different fidelity facts and stay separate entries — and so are
+  two in different parts, because a count charged to one part when some of it
+  happened in another is a location that is not true of the count. The part is
+  the one the package's relationships resolved, stamped by the import driver
+  while that part is read (`109` HF-047); a document-level class such as
+  `docx.rsid` stays one unlocated entry, which is the point of the class.
 
 ## Migration from the previous single-enum wording
 

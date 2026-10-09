@@ -154,12 +154,17 @@ impl Disposition {
 /// a prefix in a stable feature identifier would make the identifier a property
 /// of the writer rather than of the construct.
 ///
-/// `part_name` is populated where the importer genuinely knows it — whole-part
-/// dispositions, which are enumerated from the package manifest. Element and
-/// attribute findings leave it `None`, because the parsers are handed part
-/// *bytes* rather than part names, and a conventional name (`word/styles.xml`)
-/// would be an invented location that a package need not use. An invented
-/// location is worse than none.
+/// `part_name` is populated where the importer genuinely knows it: whole-part
+/// dispositions, which are enumerated from the package manifest, and — since
+/// `109` HF-047's engine half — every element and attribute finding raised while
+/// a package part was being read, stamped with the part name the package's own
+/// relationships RESOLVED to (`word/header2.xml`, not a conventional guess). The
+/// parsers are still handed bytes; the driver tells the reporter which part
+/// those bytes are (`Reporter::set_part`). It stays `None` where no package
+/// exists (the XML-only entry point) and for the document-level `w:rsid*` class,
+/// which is one entry per document by design. A conventional name
+/// (`word/styles.xml`) would be an invented location a package need not use, and
+/// an invented location is worse than none.
 #[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct FeatureLocation {
     /// Normalized package part the finding is charged to, when known.
@@ -557,7 +562,9 @@ impl CompatibilityReport {
     pub(crate) fn merge(&mut self, other: Self) {
         for entry in other.entries {
             match self.entries.iter_mut().find(|existing| {
-                existing.feature == entry.feature && existing.disposition == entry.disposition
+                existing.feature == entry.feature
+                    && existing.disposition == entry.disposition
+                    && existing.location.part_name == entry.location.part_name
             }) {
                 Some(existing) => {
                     existing.occurrences = existing.occurrences.saturating_add(entry.occurrences);
@@ -573,6 +580,7 @@ impl CompatibilityReport {
             left.feature
                 .cmp(&right.feature)
                 .then_with(|| left.disposition.cmp(&right.disposition))
+                .then_with(|| left.location.part_name.cmp(&right.location.part_name))
         });
     }
 }
@@ -682,15 +690,21 @@ struct Pending {
 
 /// Aggregating report sink shared by every parser.
 ///
-/// Findings aggregate on `(feature, finding kind)`: two findings that share a
-/// feature name but differ in what happened to the construct are different
-/// fidelity facts. The **first** location for a key is kept, which is what `35`
-/// permits ("Repeated equivalent findings may be aggregated only when counts and
-/// first bounded locations remain deterministic").
+/// Findings aggregate on `(feature, finding kind, part)`: two findings that share
+/// a feature name but differ in what happened to the construct are different
+/// fidelity facts, and so are two that happened in different parts — a count of
+/// three `drawing` findings charged to `word/header1.xml` when two of them were
+/// in the body would be a location that is not true of the count. Within a key
+/// the **first** element/attribute location is kept, which is what `35` permits
+/// ("Repeated equivalent findings may be aggregated only when counts and first
+/// bounded locations remain deterministic").
 #[derive(Debug)]
 pub(crate) struct Reporter {
-    findings: BTreeMap<(String, FindingKey), Pending>,
+    findings: BTreeMap<(String, FindingKey, Option<String>), Pending>,
     retention: SourceRetention,
+    /// The package part whose bytes the parsers are reading now, stamped on every
+    /// located finding (`Reporter::set_part`). `None` when no package exists.
+    part: Option<String>,
     overflow: u32,
     /// Whether the parsers reading through this reporter may recover from damage
     /// instead of refusing ([`crate::ImportConfig::recover`]).
@@ -724,6 +738,7 @@ impl Reporter {
         Self {
             findings: BTreeMap::new(),
             retention,
+            part: None,
             overflow: 0,
             recovering: false,
             repairs: Vec::new(),
@@ -736,6 +751,18 @@ impl Reporter {
             recovering: true,
             ..Self::new(retention)
         }
+    }
+
+    /// Names the package part the next findings come from: the part name the
+    /// package's relationships resolved, or `None` when there is no package.
+    ///
+    /// Set by the import driver before each part's parser runs, because the
+    /// parsers are handed bytes and cannot know it. A reader shown "`drawing` ×3"
+    /// cannot tell a lost header logo from a lost body chart; "×1
+    /// `word/header1.xml`, ×2 `word/document.xml`" is the report naming what was
+    /// lost, which is `109` HF-047's engine half.
+    pub(crate) fn set_part(&mut self, part: Option<&str>) {
+        self.part = part.map(str::to_owned);
     }
 
     /// Whether a parser reading through this reporter may recover from damage
@@ -875,7 +902,10 @@ impl Reporter {
     /// honest: `preserved` under the retention byte floor, `not-retained` on a
     /// semantic save. `35-DISPOSITION-TAXONOMY.md` records the decision.
     pub(crate) fn report_rsid(&mut self) {
-        self.insert(
+        // One class entry per DOCUMENT: the class spans `document.xml`,
+        // `styles.xml` and `settings.xml`, and splitting it by part would undo
+        // the aggregation this method exists for.
+        self.insert_unlocated(
             RSID_CLASS_FEATURE.to_owned(),
             FeatureLocation::default(),
             Finding::Omitted,
@@ -903,12 +933,22 @@ impl Reporter {
         );
     }
 
-    fn insert(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
+    /// Records a finding charged to the part being read now.
+    fn insert(&mut self, feature: String, mut location: FeatureLocation, finding: Finding) {
+        if location.part_name.is_none() {
+            location.part_name.clone_from(&self.part);
+        }
+        self.insert_unlocated(feature, location, finding);
+    }
+
+    /// Records a finding with exactly the location given — for a document-level
+    /// class that no single part owns.
+    fn insert_unlocated(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
         let retained_bytes = match finding {
             Finding::RetainedInModel(bytes) => bytes,
             _ => 0,
         };
-        let key = (feature, finding.key());
+        let key = (feature, finding.key(), location.part_name.clone());
         if let Some(pending) = self.findings.get_mut(&key) {
             pending.occurrences = pending.occurrences.saturating_add(1);
             pending.retained_bytes = pending.retained_bytes.saturating_add(retained_bytes);
@@ -935,7 +975,7 @@ impl Reporter {
         let retention = self.retention;
         let snapshot = ledger.source_snapshot();
         let mut entries: Vec<CompatibilityEntry> = Vec::with_capacity(self.findings.len());
-        for ((feature, key), pending) in self.findings {
+        for ((feature, key, _), pending) in self.findings {
             let finding = match key {
                 FindingKey::Omitted => Finding::Omitted,
                 FindingKey::Degraded => Finding::Degraded,

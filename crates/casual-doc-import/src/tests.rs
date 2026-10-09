@@ -11180,3 +11180,81 @@ fn an_empty_picture_level_alt_text_reports_nothing() {
         features(&import),
     );
 }
+
+// --- HF-047's engine half: a finding names the PART it came from ---
+
+/// One unresolvable picture in a header and two in the body, plus revision-save
+/// ids in both. Every relationship is declared so the parts resolve by name.
+fn package_with_losses_in_two_parts() -> Vec<u8> {
+    let lost_picture = r#"<w:r><w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rIdGone"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let ns = r#"xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic""#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document {ns}><w:body><w:p w:rsidR="00A1">{lost_picture}</w:p><w:p w:rsidR="00A2">{lost_picture}</w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr></w:body></w:document>"#
+    );
+    let header = format!(
+        r#"<?xml version="1.0"?><w:hdr {ns}><w:p w:rsidR="00A3">{lost_picture}</w:p></w:hdr>"#
+    );
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+    build_package(
+        document.as_bytes(),
+        rels,
+        &[("word/header1.xml", header.as_bytes())],
+    )
+}
+
+/// The compatibility report used to say "`drawing` ×3" and stop: the chip and
+/// the findings dialog (`webapp/src/compat_findings.mjs`, #810) could list the
+/// entries, but an entry could not say WHERE, so a reader could not tell a lost
+/// header logo from a lost body chart (`109` HF-047, the engine half). Element
+/// and attribute findings carried `part_name: None` because the parsers are
+/// handed bytes; the driver now tells the reporter which resolved part those
+/// bytes are, and a count is split by part so the location is true of it.
+#[test]
+fn a_finding_names_the_part_it_came_from_and_its_count_is_true_of_that_part() {
+    let import = import_bytes(&package_with_losses_in_two_parts());
+    let mut drawings: Vec<(Option<&str>, u32)> = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == "drawing")
+        .map(|entry| (entry.location.part_name.as_deref(), entry.occurrences))
+        .collect();
+    drawings.sort();
+    assert_eq!(
+        drawings,
+        vec![
+            (Some("word/document.xml"), 2),
+            (Some("word/header1.xml"), 1)
+        ],
+        "each part's losses are counted against that part, by its resolved name"
+    );
+    // The revision-save-id class is one entry per DOCUMENT by design (`35`), so
+    // it stays unlocated even though its members span both parts.
+    let rsid: Vec<_> = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == crate::RSID_CLASS_FEATURE)
+        .collect();
+    assert_eq!(rsid.len(), 1, "one class entry, not one per part");
+    assert_eq!(rsid[0].location.part_name, None);
+    assert_eq!(rsid[0].occurrences, 3);
+}
+
+/// Without a package there is no part name to give, and none is invented.
+#[test]
+fn an_xml_only_import_invents_no_part_name() {
+    let import = import(
+        br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:unmodelledProbe/></w:r></w:p></w:body></w:document>"#,
+    );
+    assert!(
+        !import.report.entries.is_empty(),
+        "the probe element is reported"
+    );
+    for entry in &import.report.entries {
+        assert_eq!(
+            entry.location.part_name, None,
+            "an XML-only import has no package to name a part from: {entry:?}"
+        );
+    }
+}
