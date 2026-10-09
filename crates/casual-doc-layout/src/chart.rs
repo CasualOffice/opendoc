@@ -19,20 +19,17 @@
 //! a cell reference. `docs/155` §5.2 is the line that stops a document editor
 //! growing a spreadsheet engine.
 //!
-//! # Tier 1A only — and why that is a complete statement, not a partial one
+//! # What draws
 //!
-//! `docs/155` §7.3 splits delivery by the one primitive that is missing rather
-//! than by family: bar, column, line (including `c:smooth`), area and scatter are
-//! expressible with the rectangle, straight-line and polyline primitives the
-//! display list already has, so they draw here. **Pie and doughnut are not
-//! drawn**: a sector is an arc between two radii, and
-//! [`crate::display::PathCommand`] has `CubicTo`/`QuadTo` but no `ArcTo`.
+//! `docs/155` §7.3 split delivery by primitive rather than by family. Bar,
+//! column, line (including `c:smooth`), area and scatter (tier 1A) use the
+//! rectangle, straight-line and polyline primitives the display list has. Pie
+//! and doughnut (tier 1B) needed an arc between two radii; they draw through the
+//! shared sector geometry in [`crate::arc`] (`docs/155` §7.4) rather than a
+//! many-sided polygon fan, which `docs/119` §6 named the wrong axis.
 //! [`is_drawable`] is the single place that decides, and a chart with no drawable
-//! group yields no primitives at all — so the caller keeps today's reported
-//! placeholder rather than painting an empty frame. A many-sided polygon fan is
-//! deliberately **not** used: `docs/119` §6 already named per-shape vertex lists
-//! as the wrong axis, and a second curve mechanism is what the shared primitive
-//! exists to prevent.
+//! group yields no primitives at all — so the caller keeps its reported
+//! placeholder rather than painting an empty frame.
 //!
 //! A smooth series *is* drawn, as a sampled polyline. That is not an
 //! approximation standing in for a curve: `c:smooth` is a function evaluated at

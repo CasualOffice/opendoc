@@ -163,6 +163,7 @@ PDFs
 PNG
 PNGs
 POS
+PPTX
 PRD
 PRs
 PTS
@@ -463,7 +464,6 @@ mjs
 mousedown
 moveFrom
 moveTo
-multiset
 musl
 mut
 namespace
@@ -592,6 +592,7 @@ submenu
 subpath
 subpaths
 subsequence
+subsetted
 subsetter
 subsetting
 substitutable

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! DOCX package writer for the no-edit round-trip case.
+//! DOCX package writers.
 //!
-//! This is the "exact no-op return" that Retention mode enables: given the
-//! source parts retained verbatim at import ([`RetainedSource`]), it
-//! reconstructs a valid DOCX package with byte-identical part contents. It does
-//! NOT regenerate OOXML from the model — that is the Phase-2 semantic writer.
-//! Combined with the importer, it makes round-trip end-to-end verifiable:
-//! `import (Retention) -> write_package -> reopen -> identical model`.
+//! - **Exact re-emission** ([`write_package`]): the "exact no-op return" that
+//!   Retention mode enables. Given the source parts retained verbatim at import
+//!   ([`RetainedSource`]), it reconstructs a valid DOCX package with
+//!   byte-identical part contents, which makes the round trip verifiable:
+//!   `import (Retention) -> write_package -> reopen -> identical model`.
+//! - **Semantic writer** ([`export_document`] and its variants): regenerates
+//!   WordprocessingML from the model — the writer an *edited* document is saved
+//!   through, charts and their embedded workbooks included — carrying retained
+//!   parts the model does not represent.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

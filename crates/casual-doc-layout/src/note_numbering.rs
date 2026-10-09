@@ -177,7 +177,7 @@ pub(crate) fn note_props_for_section_id(
 /// section asks for `eachPage` restart (which is what makes the second pagination
 /// pass necessary).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct NoteLabels {
+pub struct NoteLabels {
     footnotes: BTreeMap<NoteId, String>,
     endnotes: BTreeMap<NoteId, String>,
     restarts_each_page: bool,
@@ -187,7 +187,7 @@ impl NoteLabels {
     /// The label for one note, or `None` when the note is never referenced in the
     /// body (its number would not be shown anywhere).
     #[must_use]
-    pub(crate) fn label(&self, kind: NoteKind, note: NoteId) -> Option<&str> {
+    pub fn label(&self, kind: NoteKind, note: NoteId) -> Option<&str> {
         self.map(kind).get(&note).map(String::as_str)
     }
 

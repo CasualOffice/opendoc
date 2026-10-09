@@ -2383,25 +2383,9 @@ fn flow_table<S: GalleySink + ?Sized>(
             // banded-row or header-row fill. Only then does the table's own
             // direct `w:shd` apply through the cell extent.
             let style_layer = &style_layers[row_index][index];
-            // Each level resolves its own `w:shd` (concrete sRGB *or* a `w:themeFill`
-            // slot against the palette); the cell wins, then the table-style layer
-            // (concrete only), then the table's own direct shading.
-            // A cell whose own `w:shd` says `w:fill="auto"` has CANCELLED the
-            // fill, so the fallback chain stops there instead of reaching past
-            // the cancellation to the table style or the table. Word writes
-            // that attribute for **No Color**, so without this a cell cleared by
-            // hand keeps painting the banded/header fill of its table style.
-            let shading = if cell.properties.shading.fill_none {
-                None
-            } else {
-                shading_rgba(&cell.properties.shading, ctx.palette)
-                    .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
-                    .or_else(|| {
-                        (!table.properties.shading.fill_none)
-                            .then(|| shading_rgba(&table.properties.shading, ctx.palette))
-                            .flatten()
-                    })
-            };
+            // The cell, then the table style, then the table — and a cell's
+            // `w:fill="auto"` cancels the chain (see `cell_shading_rgba`).
+            let shading = cell_shading_rgba(table, cell, style_layer, ctx.palette);
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
@@ -2626,7 +2610,35 @@ fn mirror_cell_geometry(
     }
 }
 
-fn resolve_table_style_layers(
+/// A cell's paint fill: its own `w:shd` (concrete sRGB or a `w:themeFill` slot
+/// against the palette), then the table-style layer (concrete only), then the
+/// table's own direct shading.
+///
+/// A cell whose own `w:shd` says `w:fill="auto"` has CANCELLED the fill, so the
+/// fallback chain stops there instead of reaching past the cancellation to the
+/// table style or the table. Word writes that attribute for **No Color**, so
+/// without this a cell cleared by hand keeps painting the banded/header fill of
+/// its table style. One function so the page and a flowed exporter
+/// ([`crate::paint_values`]) cannot disagree about a cell's colour. O(1).
+pub(crate) fn cell_shading_rgba(
+    table: &Table,
+    cell: &casual_doc_model::v1::TableCell,
+    style_layer: &TableStyleLayer,
+    palette: Option<&ResolvedPalette>,
+) -> Option<[u8; 4]> {
+    if cell.properties.shading.fill_none {
+        return None;
+    }
+    shading_rgba(&cell.properties.shading, palette)
+        .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
+        .or_else(|| {
+            (!table.properties.shading.fill_none)
+                .then(|| shading_rgba(&table.properties.shading, palette))
+                .flatten()
+        })
+}
+
+pub(crate) fn resolve_table_style_layers(
     table: &Table,
     cascade: &StyleCascade<'_>,
 ) -> Vec<Vec<TableStyleLayer>> {
@@ -2655,7 +2667,7 @@ fn resolve_table_style_layers(
 /// Materializes the border candidate on each physical cell side before shared-
 /// edge conflict resolution. This lets conditional table borders vary by cell
 /// while preserving the existing topology/segmentation pass.
-fn resolve_table_border_candidates(
+pub(crate) fn resolve_table_border_candidates(
     table: &Table,
     layers: &[Vec<TableStyleLayer>],
 ) -> Vec<Vec<TableBorders>> {
@@ -2933,7 +2945,7 @@ const DEFAULT_CELL_MARGIN_LR: i32 = 108;
 /// cell's own `w:tcMar` wins, else the table's `w:tblCellMar`, else Word's default
 /// (108 twips left/right, 0 top/bottom). This is the inset from each cell edge to
 /// its content box (`docs/38-…#tables`).
-fn resolve_cell_margins(
+pub(crate) fn resolve_cell_margins(
     cell: &casual_doc_model::v1::CellMargins,
     table: &casual_doc_model::v1::CellMargins,
 ) -> CellContentMargins {
@@ -4248,8 +4260,8 @@ fn collect_items_with_measure<'a>(
 /// 3. anything else keeps the typed text placeholder, unchanged.
 ///
 /// Case 3 is deliberately still reachable and is not a fallback nobody takes: a
-/// chart whose part declined to project, whose only groups are pie or doughnut
-/// (tier 1B — no arc primitive), or that carries no series at all lands here, and
+/// chart whose part declined to project (a 3-D, surface, stock, radar, bubble
+/// or of-pie chart), or that carries no series at all lands here, and
 /// a labelled placeholder is more honest than an empty frame (`docs/155` §6.2).
 ///
 /// Complexity: O(1) plus, for a chart, O(points in that chart) once. The chart
@@ -4346,7 +4358,7 @@ fn chart_item<'a>(
 
 /// Chart furniture text size, in half-points: 9 pt, Word's default chart font
 /// size for axis labels, the legend and data labels.
-const CHART_LABEL_HALF_POINTS: u32 = 18;
+pub(crate) const CHART_LABEL_HALF_POINTS: u32 = 18;
 
 /// Shapes one short chart label through the document's own cascade and shaper.
 ///
@@ -4396,7 +4408,7 @@ fn chart_label(
 /// The chart colour style for this document: the theme's six accents as the series
 /// colour cycle (`docs/155` §12 Q-D — resolve against the document theme, which
 /// already exists; `colors1.xml` stays out of scope and preserved).
-fn chart_style(palette: Option<&ResolvedPalette>) -> chart::ChartStyle {
+pub(crate) fn chart_style(palette: Option<&ResolvedPalette>) -> chart::ChartStyle {
     let mut style = chart::ChartStyle::default();
     if let Some(palette) = palette {
         style.accents = [
@@ -7266,7 +7278,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
 /// in a covering text face rather than tofu. Returns the (possibly rewritten)
 /// text and whether any glyph was remapped; ordinary bullet text (a literal `•`,
 /// a number) passes through unchanged.
-fn map_marker_glyphs(text: &str, family: Option<&str>) -> (String, bool) {
+pub(crate) fn map_marker_glyphs(text: &str, family: Option<&str>) -> (String, bool) {
     let Some(family) = family else {
         return (text.to_owned(), false);
     };
@@ -7594,7 +7606,7 @@ fn run_decoration(properties: &RunProperties, palette: Option<&ResolvedPalette>)
 /// Resolves a run's `w:color` to opaque RGBA: an explicit `w:color@val` sRGB is
 /// itself; a `w:themeColor` resolves against the document's theme palette (with any
 /// tint/shade applied); an absent color (`w:color@val="auto"` / unset) is black.
-fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4] {
+pub(crate) fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4] {
     match color {
         Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
         // Automatic color resolves to black on the (light) page background — the
@@ -7652,7 +7664,7 @@ fn theme_slot_index(slot: ThemeColorRef) -> usize {
 
 /// Word's default Office theme (2013 and later), slot for slot — what a chart
 /// is drawn in when its document declares no `a:clrScheme`.
-const OFFICE_PALETTE: ResolvedPalette = ResolvedPalette {
+pub(crate) const OFFICE_PALETTE: ResolvedPalette = ResolvedPalette {
     slots: [
         [0x00, 0x00, 0x00, 0xFF],
         [0xFF, 0xFF, 0xFF, 0xFF],
@@ -7940,7 +7952,7 @@ fn box_metrics(properties: &ParagraphProperties) -> BoxMetrics {
 /// `w:afterAutospacing`): Word derives a blank-line-sized gap from the paragraph
 /// font. The paragraph-mark run size drives it (falling back to Word's 11pt body
 /// default); one font-size worth of twips is a close, deterministic approximation.
-fn auto_paragraph_space(properties: &ParagraphProperties) -> Twip {
+pub(crate) fn auto_paragraph_space(properties: &ParagraphProperties) -> Twip {
     let half_points = properties
         .mark_run
         .as_deref()
@@ -8095,7 +8107,7 @@ fn prepare_list_marker(
 /// Merges a numbering level's indentation (`base`, lower precedence) under a
 /// paragraph's own (`over`): each field the paragraph sets wins; the level fills the
 /// rest. Mirrors the cascade's per-field indentation merge.
-fn merge_indent_over(base: Indentation, over: Option<Indentation>) -> Indentation {
+pub(crate) fn merge_indent_over(base: Indentation, over: Option<Indentation>) -> Indentation {
     let Some(over) = over else {
         return base;
     };
@@ -8367,7 +8379,7 @@ fn single_edge(edge: Option<&BorderEdge>) -> Option<ResolvedEdge> {
 
 /// Resolves a named `w:highlight` color to an opaque RGBA fill. `None`
 /// (`ST_HighlightColor` `none`) yields no highlight.
-fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
+pub(crate) fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
     let (r, g, b) = match color {
         HighlightColor::None => return None,
         HighlightColor::Black => (0, 0, 0),
@@ -8393,7 +8405,7 @@ fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
 /// A `w:shd` background resolved to an opaque RGBA: an explicit sRGB `w:fill` wins;
 /// otherwise a `w:themeFill` slot resolves against the palette (with any tint/shade).
 /// `None` when no fill is declared (or a theme fill has no palette to resolve).
-fn shading_rgba(
+pub(crate) fn shading_rgba(
     shading: &casual_doc_model::v1::Shading,
     palette: Option<&ResolvedPalette>,
 ) -> Option<[u8; 4]> {

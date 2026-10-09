@@ -49,14 +49,21 @@ pub struct StyleCascade<'a> {
 /// `wholeTable`, and active conditional regions have been resolved.
 ///
 /// This is deliberately a layout value rather than model state: callers reuse
-/// it during intrinsic measurement and final flow, then discard it.
+/// it during intrinsic measurement and final flow, then discard it. Public so a
+/// flowed exporter resolves a cell exactly as the page paints it
+/// ([`crate::paint_values`]).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct TableStyleLayer {
-    pub(crate) paragraph: ParagraphProperties,
-    pub(crate) run: RunProperties,
-    pub(crate) table_borders: TableBorders,
-    pub(crate) cell_borders: TableBorders,
-    pub(crate) shading: Option<RgbColor>,
+pub struct TableStyleLayer {
+    /// The paragraph properties the table style gives the cell's paragraphs.
+    pub paragraph: ParagraphProperties,
+    /// The run properties the table style gives the cell's runs.
+    pub run: RunProperties,
+    /// The table-level borders the style contributes.
+    pub table_borders: TableBorders,
+    /// The cell-level borders the style contributes.
+    pub cell_borders: TableBorders,
+    /// The concrete cell fill the style contributes, if any.
+    pub shading: Option<RgbColor>,
 }
 
 impl<'a> StyleCascade<'a> {
@@ -110,7 +117,7 @@ impl<'a> StyleCascade<'a> {
     /// Resolves a paragraph with an optional table-style layer between document
     /// defaults and the ordinary paragraph-style chain.
     #[must_use]
-    pub(crate) fn resolve_paragraph_in_table(
+    pub fn resolve_paragraph_in_table(
         &self,
         direct: &ParagraphProperties,
         table: Option<&TableStyleLayer>,
@@ -149,7 +156,7 @@ impl<'a> StyleCascade<'a> {
     /// Resolves a run with an optional table-style layer between document
     /// defaults and the paragraph/character style chains.
     #[must_use]
-    pub(crate) fn resolve_run_in_table(
+    pub fn resolve_run_in_table(
         &self,
         paragraph_style: Option<StyleId>,
         direct: &RunProperties,
@@ -186,7 +193,7 @@ impl<'a> StyleCascade<'a> {
     /// Matching regions are applied in increasing precedence and duplicate
     /// region blocks retain document order.
     #[must_use]
-    pub(crate) fn table_style_layer(
+    pub fn table_style_layer(
         &self,
         style_ref: Option<StyleId>,
         look: TableLook,
