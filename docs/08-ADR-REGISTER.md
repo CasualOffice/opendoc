@@ -4154,7 +4154,7 @@ selection and a scroll.
 
 **Status:** accepted. Asked for by the owner: "HTML export fidelity is way too weak", then "fix
 and embed header, footer, drawings and TOC". Design and measurement: `docs/167`. Tracker: `109`
-HF-283, HF-284, HF-285.
+HF-286, HF-284, HF-285.
 
 ### The decision
 

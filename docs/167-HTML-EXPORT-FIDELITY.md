@@ -1,6 +1,6 @@
 # 167 — HTML export fidelity: the file is resolved the way the page is
 
-**Status:** implemented (ADR-066, `109` HF-283, HF-284, HF-285). **Opened:** 2026-10-09.
+**Status:** implemented (ADR-066, `109` HF-286, HF-284, HF-285). **Opened:** 2026-10-09.
 **Asked for by the owner:** "check HTML export — its fidelity is way too weak — work on it and
 improve it", then "fix and embed header, footer, drawings and TOC — it's important".
 
