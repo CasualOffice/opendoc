@@ -320,6 +320,24 @@ impl Document {
         for props in [&settings.footnote_props, &settings.endnote_props] {
             check_note_props(props)?;
         }
+        for (language, property) in [
+            (
+                &settings.theme_font_languages.latin,
+                "settings.themeFontLang.val",
+            ),
+            (
+                &settings.theme_font_languages.east_asia,
+                "settings.themeFontLang.eastAsia",
+            ),
+            (
+                &settings.theme_font_languages.bidi,
+                "settings.themeFontLang.bidi",
+            ),
+        ] {
+            if let Some(language) = language {
+                check_domain(!language.is_empty() && language.len() <= 255, property)?;
+            }
+        }
         Ok(())
     }
 

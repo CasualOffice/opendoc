@@ -194,30 +194,33 @@ pub(crate) struct ChartPartOutcome {
     pub(crate) out_of_scope_family: Option<String>,
 }
 
-/// Reads every chart part a chart node in `body` references, in document order.
+/// Reads every chart part a chart node in `containers` references, in the order
+/// the containers are given and document order within each.
 ///
-/// # Why the body only
+/// # Every surface, not the body only
 ///
-/// An `EmbeddedObject` can only be produced by the body parser today: the
-/// note/header/footer/comment parsers are handed no embedded-relationship index
-/// (`PartSources` carries images and hyperlinks, not embedded objects), so a
-/// chart inside a header is not modeled as a chart node in the first place. The
-/// model-side validator walks every container regardless, so a chart node that
-/// starts appearing in one will be projected by extending this walk and nothing
-/// else.
+/// This walked the body alone while only the body parser could produce an
+/// `EmbeddedObject`: the note/header/footer/comment parsers were handed an empty
+/// embedded-relationship index, so a chart in a header never became a node and
+/// there was nothing to project (`109` HF-266). Those parsers resolve their own
+/// part's relationships now, so a chart node appears on all five running
+/// surfaces, and the caller passes every container — body first, so a document
+/// whose charts are all in its body allocates exactly the ids it always did.
 ///
 /// # Complexity
 ///
-/// O(body nodes) for the walk plus O(bytes) per chart part, once, at import.
-pub(crate) fn build_charts(
-    body: &[BlockNode],
+/// O(document nodes) for the walk plus O(bytes) per chart part, once, at import.
+pub(crate) fn build_charts<'b>(
+    containers: impl IntoIterator<Item = &'b [BlockNode]>,
     chart_parts: &BTreeMap<String, ChartPartSource>,
     ids: &mut IdGenerator,
     config: ImportConfig,
 ) -> Result<ChartProjections, ImportError> {
     let mut anchors = Vec::new();
-    for block in body {
-        collect_chart_anchors(block, &mut anchors);
+    for container in containers {
+        for block in container {
+            collect_chart_anchors(block, &mut anchors);
+        }
     }
     let mut charts = DefinitionMap::default();
     let mut parts = Vec::new();

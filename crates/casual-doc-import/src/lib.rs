@@ -67,6 +67,8 @@ pub use opaque::{
     RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
 };
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use opaque::{InvalidatedPart, STALE_STYLES_WITH_EFFECTS, STALE_THUMBNAIL};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use recovery::{
     MAX_DETAIL_BYTES, MAX_REPAIRS, PartRole, RecoveryReport, Repair, RepairKind, Severity,
 };
@@ -394,29 +396,29 @@ pub fn import_package(
             EMPTY_MAIN_DOCUMENT.to_vec()
         }
     };
-    let styles_bytes = match styles_part {
-        Some(part) => recover_read(package, &part, PartRole::Styles, recover, &mut repairs)?,
+    let styles_bytes = match &styles_part {
+        Some(part) => recover_read(package, part, PartRole::Styles, recover, &mut repairs)?,
         None => None,
     };
-    let numbering_bytes = match numbering_part {
-        Some(part) => recover_read(package, &part, PartRole::Numbering, recover, &mut repairs)?,
+    let numbering_bytes = match &numbering_part {
+        Some(part) => recover_read(package, part, PartRole::Numbering, recover, &mut repairs)?,
         None => None,
     };
     // The font table plus its own relationships (embedded `.odttf` fonts resolve
     // through `fontTable.xml.rels`, not the document's).
-    let (font_table_bytes, font_table_rels) = match font_table_part {
+    let (font_table_bytes, font_table_rels) = match &font_table_part {
         Some(part) => {
-            match recover_read(package, &part, PartRole::FontTable, recover, &mut repairs)? {
+            match recover_read(package, part, PartRole::FontTable, recover, &mut repairs)? {
                 None => (None, std::collections::BTreeMap::new()),
                 Some(bytes) => {
-                    let relationships = match package.part_relationships(&part) {
+                    let relationships = match package.part_relationships(part) {
                         Ok(relationships) => relationships,
                         Err(error) if recover => {
                             let _ = error;
                             repairs.push(Repair::in_part(
                                 RepairKind::PartUnparsable,
                                 PartRole::FontTable,
-                                &part,
+                                part,
                             ));
                             Vec::new()
                         }
@@ -438,12 +440,12 @@ pub fn import_package(
     for part in font_table_rels.values() {
         consumed.insert(part.clone());
     }
-    let theme_bytes = match theme_part {
-        Some(part) => recover_read(package, &part, PartRole::Theme, recover, &mut repairs)?,
+    let theme_bytes = match &theme_part {
+        Some(part) => recover_read(package, part, PartRole::Theme, recover, &mut repairs)?,
         None => None,
     };
-    let settings_bytes = match settings_part {
-        Some(part) => recover_read(package, &part, PartRole::Settings, recover, &mut repairs)?,
+    let settings_bytes = match &settings_part {
+        Some(part) => recover_read(package, part, PartRole::Settings, recover, &mut repairs)?,
         None => None,
     };
     // Each extra part (notes, headers, footers) carries its own image and
@@ -585,35 +587,26 @@ pub fn import_package(
     // The referenced parts stay preserved by the side-table but are un-orphaned
     // below (their rel is emitted by the writer from the node, not re-added as an
     // orphan).
-    let embedded_index: std::collections::BTreeMap<String, EmbeddedRel> = package
-        .main_document_relationships()
-        .iter()
-        .filter(|relationship| {
-            is_embedded_object_rel(&relationship.relationship_type)
-                || is_alt_chunk_rel(&relationship.relationship_type)
-        })
-        .filter(|relationship| !relationship.id.is_empty())
-        .filter_map(|relationship| {
-            let part = relationship.resolved_part.clone()?;
-            Some((
-                relationship.id.clone(),
-                EmbeddedRel {
-                    relationship_type: relationship.relationship_type.clone(),
-                    part_name: part,
-                },
-            ))
-        })
-        .collect();
+    let embedded_index = embedded_relationships(package.main_document_relationships());
 
-    // The chart parts the body can reference, each with its OWN relationships (a
-    // chart's workbook, colour style and chart style hang off
-    // `word/charts/_rels/chartN.xml.rels`, not the document's). Read here because
-    // only this entry point has a package; the parts stay in the opaque side-table
-    // and the embedded workbook is never opened (`docs/155` §5.2).
+    // The chart parts any surface can reference — the body through the document's
+    // relationships, a header, footer, note or comment through its own (HF-266) —
+    // each with its OWN relationships (a chart's workbook, colour style and chart
+    // style hang off `word/charts/_rels/chartN.xml.rels`, not the document's).
+    // Read here because only this entry point has a package; the parts stay in the
+    // opaque side-table and the embedded workbook is never opened (`docs/155`
+    // §5.2).
     let mut chart_part_sources: std::collections::BTreeMap<String, crate::chart::ChartPartSource> =
         std::collections::BTreeMap::new();
+    let running_parts = footnotes
+        .iter()
+        .chain(endnotes.iter())
+        .chain(comments.iter())
+        .chain(header_parts.iter().map(|(_, part)| part))
+        .chain(footer_parts.iter().map(|(_, part)| part));
     let chart_part_names: Vec<String> = embedded_index
         .values()
+        .chain(running_parts.flat_map(|part| part.embedded.values()))
         .filter(|rel| rel.relationship_type.ends_with("/chart"))
         .map(|rel| rel.part_name.clone())
         .collect();
@@ -700,7 +693,17 @@ pub fn import_package(
     // document carrying the file's properties, styles and headers, with a report
     // saying the text could not be read, is the floor; below it there is nothing
     // to show, and this engine never gets there with a package in hand.
-    let mut import = match import_with_sources(
+    // The resolved names of the parts read above, so each part's findings say
+    // which part they came from (`109` HF-047).
+    let part_names = DefinitionPartNames {
+        main: Some(&main_part),
+        styles: styles_part.as_deref(),
+        numbering: numbering_part.as_deref(),
+        font_table: font_table_part.as_deref(),
+        theme: theme_part.as_deref(),
+        settings: settings_part.as_deref(),
+    };
+    let mut import = match import_with_named_sources(
         &document_bytes,
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
@@ -717,6 +720,7 @@ pub fn import_package(
         &hyperlink_rels,
         &embedded_index,
         &chart_part_sources,
+        part_names,
         ImportConfig {
             recover: false,
             ..config
@@ -754,7 +758,7 @@ pub fn import_package(
             for (_, part) in &mut footer_parts {
                 repair_part(&mut part.xml, PartRole::Footer, &mut repairs);
             }
-            match import_with_sources(
+            match import_with_named_sources(
                 &document_bytes,
                 styles_bytes.as_deref(),
                 numbering_bytes.as_deref(),
@@ -771,6 +775,7 @@ pub fn import_package(
                 &hyperlink_rels,
                 &embedded_index,
                 &chart_part_sources,
+                part_names,
                 config,
             ) {
                 Ok(import) => import,
@@ -780,7 +785,7 @@ pub fn import_package(
                         PartRole::MainDocument,
                     ));
                     document_bytes = EMPTY_MAIN_DOCUMENT.to_vec();
-                    import_with_sources(
+                    import_with_named_sources(
                         &document_bytes,
                         styles_bytes.as_deref(),
                         numbering_bytes.as_deref(),
@@ -797,6 +802,7 @@ pub fn import_package(
                         &hyperlink_rels,
                         &embedded_index,
                         &chart_part_sources,
+                        part_names,
                         config,
                     )?
                 }
@@ -1349,8 +1355,38 @@ fn related_or_wellknown(package: &DocxPackage<'_>, suffix: &str, fallback: &str)
         .filter(|part| admitted(part))
 }
 
-/// Reads an extra part and resolves its own image and external-hyperlink
-/// relationships (via the part's `_rels`), so content inside it can be modeled.
+/// The embedded-object (chart / SmartArt / OLE) and alt-chunk relationships in one
+/// part's relationship list, keyed by `r:id`.
+///
+/// One function for the main document and every running part, because the two
+/// used to be built differently — the main document's by this filter, the running
+/// parts' not at all — and that difference is `109` HF-266.
+fn embedded_relationships(
+    relationships: &[casual_doc_ooxml::DocumentRelationship],
+) -> std::collections::BTreeMap<String, EmbeddedRel> {
+    relationships
+        .iter()
+        .filter(|relationship| {
+            is_embedded_object_rel(&relationship.relationship_type)
+                || is_alt_chunk_rel(&relationship.relationship_type)
+        })
+        .filter(|relationship| !relationship.id.is_empty())
+        .filter_map(|relationship| {
+            let part = relationship.resolved_part.clone()?;
+            Some((
+                relationship.id.clone(),
+                EmbeddedRel {
+                    relationship_type: relationship.relationship_type.clone(),
+                    part_name: part,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Reads an extra part and resolves its own image, external-hyperlink and
+/// embedded-object relationships (via the part's `_rels`), so content inside it
+/// can be modeled.
 fn resolve_part_sources(
     package: &mut DocxPackage<'_>,
     part_name: &str,
@@ -1384,10 +1420,13 @@ fn resolve_part_sources(
         })
         .map(|relationship| (relationship.id.clone(), relationship.target.clone()))
         .collect();
+    let embedded = embedded_relationships(&relationships);
     Ok(PartSources {
+        part_name: Some(part_name.to_owned()),
         xml,
         images,
         hyperlinks,
+        embedded,
         ..PartSources::default()
     })
 }
@@ -1406,10 +1445,10 @@ type BuiltNotes = (
 fn build_notes(
     part: Option<&PartSources>,
     container: &'static [u8],
-    styles: &Styles,
-    numbering: &Numbering,
+    shared: &SharedTables<'_>,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
     parsed_defs: &mut body::ParsedDefinitions,
+    embedded_part_names: &mut std::collections::BTreeSet<String>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -1417,20 +1456,19 @@ fn build_notes(
     let mut map = DefinitionMap::default();
     let mut index = std::collections::BTreeMap::new();
     if let Some(part) = part {
+        reporter.set_part(part.part_name.as_deref());
         let media_index = media::build_into(&part.images, media, ids, reporter)?;
-        let notes = body::parse_notes(
+        let parsed = body::parse_notes(
             &part.xml,
             ids,
             reporter,
-            styles,
-            numbering,
-            &media_index,
-            &part.hyperlinks,
+            &shared.running_part(&media_index, part),
             parsed_defs,
             container,
             config,
         )?;
-        for (source_id, note_id, blocks) in notes {
+        embedded_part_names.extend(parsed.embedded_part_names);
+        for (source_id, note_id, blocks) in parsed.notes {
             index.insert(source_id, note_id);
             map.insert(note_id, Note { blocks });
         }
@@ -1455,10 +1493,10 @@ type BuiltComments = (
 #[allow(clippy::too_many_arguments)]
 fn build_comments(
     part: Option<&PartSources>,
-    styles: &Styles,
-    numbering: &Numbering,
+    shared: &SharedTables<'_>,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
     parsed_defs: &mut body::ParsedDefinitions,
+    embedded_part_names: &mut std::collections::BTreeSet<String>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -1467,18 +1505,18 @@ fn build_comments(
     let mut index = std::collections::BTreeMap::new();
     let mut people = Vec::new();
     if let Some(part) = part {
+        reporter.set_part(part.part_name.as_deref());
         let media_index = media::build_into(&part.images, media, ids, reporter)?;
-        let comments = body::parse_comments(
+        let parsed = body::parse_comments(
             &part.xml,
             ids,
             reporter,
-            styles,
-            numbering,
-            &media_index,
-            &part.hyperlinks,
+            &shared.running_part(&media_index, part),
             parsed_defs,
             config,
         )?;
+        embedded_part_names.extend(parsed.embedded_part_names);
+        let comments = parsed.comments;
         // Companion-part joins: the last-paragraph `paraId` per comment (from the
         // base part) is the key into commentsExtended (parent/done) and
         // commentsIds (durable id); people supplies author identity.
@@ -1539,10 +1577,10 @@ type BuiltHeaderFooters = (
 fn build_header_footers(
     parts: &[(String, PartSources)],
     root: &'static [u8],
-    styles: &Styles,
-    numbering: &Numbering,
+    shared: &SharedTables<'_>,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
     parsed_defs: &mut body::ParsedDefinitions,
+    embedded_part_names: &mut std::collections::BTreeSet<String>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -1557,19 +1595,18 @@ fn build_header_footers(
             .next_id()
             .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
         let hf_id = HeaderFooterId::new(node);
+        reporter.set_part(part.part_name.as_deref());
         let media_index = media::build_into(&part.images, media, ids, reporter)?;
         let parsed = body::parse_header_footer(
             &part.xml,
             ids,
             reporter,
-            styles,
-            numbering,
-            &media_index,
-            &part.hyperlinks,
+            &shared.running_part(&media_index, part),
             parsed_defs,
             root,
             config,
         )?;
+        embedded_part_names.extend(parsed.embedded_part_names);
         index.insert(relationship_id.clone(), hf_id);
         if let Some(watermark) = parsed.watermark {
             watermarks.insert(hf_id, watermark);
@@ -1584,15 +1621,23 @@ fn build_header_footers(
     Ok((map, index, watermarks))
 }
 
-/// An extra part's bytes plus its own resolved image and external-hyperlink
-/// relationships, so images and links inside a note/header/footer are modeled.
-/// For the comments part, the companion parts (`commentsExtended`/`commentsIds`/
-/// `people`) ride along so `build_comments` can join threading and identity.
+/// An extra part's bytes plus its own resolved image, external-hyperlink and
+/// embedded-object relationships, so images, links, charts, diagrams and OLE
+/// objects inside a note/header/footer/comment are modeled. For the comments
+/// part, the companion parts (`commentsExtended`/`commentsIds`/`people`) ride
+/// along so `build_comments` can join threading and identity.
 #[derive(Default)]
 pub(crate) struct PartSources {
+    /// The part's resolved package name, so its findings can be charged to it
+    /// (`109` HF-047). `None` only where there is no package.
+    pub part_name: Option<String>,
     pub xml: Vec<u8>,
     pub images: Vec<MediaSource>,
     pub hyperlinks: std::collections::BTreeMap<String, String>,
+    /// This part's embedded-object and alt-chunk relationships
+    /// (`embedded_relationships`). Empty before HF-266 for every running part,
+    /// which is how a header chart came to be dropped.
+    pub embedded: std::collections::BTreeMap<String, EmbeddedRel>,
     /// `word/commentsExtended.xml` bytes (comments part only), when present.
     pub comments_extended: Option<Vec<u8>>,
     /// `word/commentsIds.xml` bytes (comments part only), when present.
@@ -1601,6 +1646,54 @@ pub(crate) struct PartSources {
     pub people: Option<Vec<u8>>,
 }
 
+/// The document-global tables every running part resolves against, so the three
+/// running-part builders take one value rather than three parameters each — and
+/// so the colour scheme cannot be left out of one of them again (HF-266).
+struct SharedTables<'a> {
+    styles: &'a Styles,
+    numbering: &'a Numbering,
+    color_scheme: Option<&'a casual_doc_model::v1::ColorScheme>,
+}
+
+impl<'a> SharedTables<'a> {
+    /// The inputs for one running part: these shared tables, plus the part's own
+    /// media index (already merged into the shared media table), hyperlinks and
+    /// embedded-object relationships.
+    fn running_part<'b>(
+        &self,
+        media_index: &'b std::collections::BTreeMap<String, MediaId>,
+        part: &'b PartSources,
+    ) -> body::RunningPartInputs<'b>
+    where
+        'a: 'b,
+    {
+        body::RunningPartInputs {
+            styles: self.styles,
+            numbering: self.numbering,
+            color_scheme: self.color_scheme,
+            media_index,
+            hyperlink_rels: &part.hyperlinks,
+            embedded_index: &part.embedded,
+        }
+    }
+}
+
+/// The resolved package part names of the main document and the definition
+/// parts, so a finding raised while one is read can say which part it came from
+/// (`Reporter::set_part`, `109` HF-047). Every field is `None` where no package
+/// exists. A running part carries its own name in [`PartSources::part_name`].
+#[derive(Clone, Copy, Default)]
+pub(crate) struct DefinitionPartNames<'a> {
+    pub main: Option<&'a str>,
+    pub styles: Option<&'a str>,
+    pub numbering: Option<&'a str>,
+    pub font_table: Option<&'a str>,
+    pub theme: Option<&'a str>,
+    pub settings: Option<&'a str>,
+}
+
+/// [`import_with_named_sources`] with no part names: the XML-only entry point and
+/// the unit tests, which have bytes and no package to name them from.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn import_with_sources(
     document_xml: &[u8],
@@ -1619,6 +1712,49 @@ pub(crate) fn import_with_sources(
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
     embedded_index: &std::collections::BTreeMap<String, EmbeddedRel>,
     chart_parts: &std::collections::BTreeMap<String, crate::chart::ChartPartSource>,
+    config: ImportConfig,
+) -> Result<Import, ImportError> {
+    import_with_named_sources(
+        document_xml,
+        styles_xml,
+        numbering_xml,
+        font_table_xml,
+        font_table_rels,
+        theme_xml,
+        settings_xml,
+        footnotes,
+        endnotes,
+        header_parts,
+        footer_parts,
+        comments,
+        media_sources,
+        hyperlink_rels,
+        embedded_index,
+        chart_parts,
+        DefinitionPartNames::default(),
+        config,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn import_with_named_sources(
+    document_xml: &[u8],
+    styles_xml: Option<&[u8]>,
+    numbering_xml: Option<&[u8]>,
+    font_table_xml: Option<&[u8]>,
+    font_table_rels: &std::collections::BTreeMap<String, String>,
+    theme_xml: Option<&[u8]>,
+    settings_xml: Option<&[u8]>,
+    footnotes: Option<&PartSources>,
+    endnotes: Option<&PartSources>,
+    header_parts: &[(String, PartSources)],
+    footer_parts: &[(String, PartSources)],
+    comments: Option<&PartSources>,
+    media_sources: &[MediaSource],
+    hyperlink_rels: &std::collections::BTreeMap<String, String>,
+    embedded_index: &std::collections::BTreeMap<String, EmbeddedRel>,
+    chart_parts: &std::collections::BTreeMap<String, crate::chart::ChartPartSource>,
+    names: DefinitionPartNames<'_>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
@@ -1675,6 +1811,8 @@ pub(crate) fn import_with_sources(
     // the damaged part, names it, and carries on; the body parse below is the
     // only input whose loss is not survivable this way, and it has its own ladder
     // in `import_package`.
+    // Each part's findings are charged to that part (`Reporter::set_part`).
+    reporter.set_part(names.styles);
     let styles = match styles_xml {
         Some(xml) => recover_part(
             styles::parse(xml, &mut ids, &mut reporter, config),
@@ -1684,6 +1822,7 @@ pub(crate) fn import_with_sources(
         )?,
         None => Styles::default(),
     };
+    reporter.set_part(names.numbering);
     let numbering = match numbering_xml {
         Some(xml) => recover_part(
             numbering::parse(xml, &mut ids, &mut reporter, config, &styles),
@@ -1699,7 +1838,11 @@ pub(crate) fn import_with_sources(
     // `paragraph.numbering`, so a paragraph that inherits its list from its style
     // renders with a marker.
     let mut styles = styles;
+    // What this can lose is a style's list membership, so it is the style
+    // sheet's finding.
+    reporter.set_part(names.styles);
     styles.resolve_numbering(&numbering, &mut reporter);
+    reporter.set_part(names.font_table);
     let font_table = match font_table_xml {
         Some(xml) => recover_part(
             font_table::parse(xml, font_table_rels, config, &mut reporter),
@@ -1709,6 +1852,7 @@ pub(crate) fn import_with_sources(
         )?,
         None => Vec::new(),
     };
+    reporter.set_part(names.theme);
     let theme = match theme_xml {
         Some(xml) => recover_part(
             theme::parse(xml, &mut reporter, config),
@@ -1718,6 +1862,7 @@ pub(crate) fn import_with_sources(
         )?,
         None => theme::ParsedTheme::default(),
     };
+    reporter.set_part(names.settings);
     let settings = match settings_xml {
         Some(xml) => recover_part(
             settings::parse(xml, &mut reporter, config),
@@ -1736,6 +1881,7 @@ pub(crate) fn import_with_sources(
     // document -> styles -> numbering -> main media -> [footnotes media, content]
     // -> [endnotes ...] -> [headers ...] -> [footers ...] -> body.
     let mut media = DefinitionMap::default();
+    reporter.set_part(names.main);
     let media_index = media::build_into(media_sources, &mut media, &mut ids, &mut reporter)?;
 
     // Bookmarks and paragraph-spanning field ranges are discovered during each
@@ -1744,14 +1890,23 @@ pub(crate) fn import_with_sources(
     // notes, headers, footers, and comments all land in a single
     // `Definitions::bookmarks` / `Definitions::field_ranges`.
     let mut parsed_defs = body::ParsedDefinitions::new();
+    // The package parts an embedded-object node references, from EVERY surface:
+    // a chart in a header is as much a node-referenced part as one in the body,
+    // and the side-table must not re-add its relationship as an orphan either.
+    let mut embedded_part_names = std::collections::BTreeSet::new();
+    let shared = SharedTables {
+        styles: &styles,
+        numbering: &numbering,
+        color_scheme: theme.color_scheme.as_ref(),
+    };
 
     let (footnotes_map, footnote_ids) = build_notes(
         footnotes,
         b"footnote",
-        &styles,
-        &numbering,
+        &shared,
         &mut media,
         &mut parsed_defs,
+        &mut embedded_part_names,
         &mut ids,
         &mut reporter,
         config,
@@ -1759,10 +1914,10 @@ pub(crate) fn import_with_sources(
     let (endnotes_map, endnote_ids) = build_notes(
         endnotes,
         b"endnote",
-        &styles,
-        &numbering,
+        &shared,
         &mut media,
         &mut parsed_defs,
+        &mut embedded_part_names,
         &mut ids,
         &mut reporter,
         config,
@@ -1770,10 +1925,10 @@ pub(crate) fn import_with_sources(
     let (headers, header_ids, header_watermarks) = build_header_footers(
         header_parts,
         b"hdr",
-        &styles,
-        &numbering,
+        &shared,
         &mut media,
         &mut parsed_defs,
+        &mut embedded_part_names,
         &mut ids,
         &mut reporter,
         config,
@@ -1783,29 +1938,30 @@ pub(crate) fn import_with_sources(
     let (footers, footer_ids, _) = build_header_footers(
         footer_parts,
         b"ftr",
-        &styles,
-        &numbering,
+        &shared,
         &mut media,
         &mut parsed_defs,
+        &mut embedded_part_names,
         &mut ids,
         &mut reporter,
         config,
     )?;
     let (comments_map, comment_ids, people) = build_comments(
         comments,
-        &styles,
-        &numbering,
+        &shared,
         &mut media,
         &mut parsed_defs,
+        &mut embedded_part_names,
         &mut ids,
         &mut reporter,
         config,
     )?;
 
+    reporter.set_part(names.main);
     let body::BodyParse {
         blocks: mut body,
         mut sections,
-        embedded_part_names,
+        embedded_part_names: body_embedded_part_names,
         page_background,
     } = body::parse(
         document_xml,
@@ -1831,13 +1987,36 @@ pub(crate) fn import_with_sources(
     // the header parse, and only now — with the body's `w:sectPr` boundaries built
     // and each one's header references resolved — is it known which section each
     // stamp belongs to. This is why `build_section_boundary` cannot set it.
+    reporter.set_part(None);
     watermark::lift_header_watermarks(&mut sections, &header_watermarks);
+    embedded_part_names.extend(body_embedded_part_names);
 
     // The typed chart projections (`docs/155` §8): a READ projection of parts that
     // stay byte-preserved, built after the body parse because each one is anchored
-    // to the `EmbeddedObject` node the body minted. Ids come from the same
+    // to the `EmbeddedObject` node a part parse minted. Ids come from the same
     // generator, immediately after the body's, so the sequence stays deterministic.
-    let projected_charts = chart::build_charts(&body, chart_parts, &mut ids, config)?;
+    // The body is walked first, so a document with charts only in its body
+    // projects with exactly the ids it always did; the running surfaces follow in
+    // the order `Document::visit_chart_object_ids` walks them (HF-266).
+    let chart_containers = std::iter::once(body.as_slice())
+        .chain(
+            footnotes_map
+                .iter()
+                .chain(endnotes_map.iter())
+                .map(|(_, note)| note.blocks.as_slice()),
+        )
+        .chain(
+            headers
+                .iter()
+                .chain(footers.iter())
+                .map(|(_, running)| running.blocks.as_slice()),
+        )
+        .chain(
+            comments_map
+                .iter()
+                .map(|(_, comment)| comment.blocks.as_slice()),
+        );
+    let projected_charts = chart::build_charts(chart_containers, chart_parts, &mut ids, config)?;
 
     if body.is_empty() {
         // A body with no paragraphs yields a single empty paragraph so the v1

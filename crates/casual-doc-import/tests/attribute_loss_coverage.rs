@@ -6,9 +6,10 @@
 //!
 //! `crates/casual-doc-export/tests/source_element_coverage.rs` arms one axis:
 //! **no element name in the source may vanish from the written package without a
-//! compatibility-report entry naming it.** Its own doc comment states the limit —
+//! compatibility-report entry naming it.** Its own doc comment stated the limit —
 //! *"It is about names, not values. Attribute names are a separate axis"* — and
-//! `35-DISPOSITION-TAXONOMY.md` recorded that axis as deliberately deferred.
+//! `35-DISPOSITION-TAXONOMY.md` recorded that axis as deliberately deferred. That
+//! doc comment now points here (`109` HF-268).
 //!
 //! HF-242 is what the hole costs: `wp:wrapSquare@wrapText` was not modelled, so
 //! every float wrapped on both sides whatever the author asked for, and **no

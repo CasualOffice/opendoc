@@ -192,6 +192,24 @@ pub(crate) fn carries_no_meaning_when(
         // a populated one is a loss and reports. Both were unconditionally silent
         // until FID-P-03 measured them.
         b"graphicFrameLocks" | b"picLocks" => element.attributes().next().is_none(),
+        // `w:themeFontLang` with every language empty or absent. LibreOffice
+        // writes `w:val="" w:eastAsia="" w:bidi=""` into every document, which
+        // states exactly what an absent element does — it was 3 of the committed
+        // corpus's findings and described no loss. A STATED language is modeled
+        // (`DocumentSettings::theme_font_languages`) and round-trips, so it is
+        // neither silent nor lost; this arm only decides the empty form, which
+        // the writer correctly omits (`109` FID-AT-01).
+        // `<a:extraClrSchemeLst/>` and `<a:objectDefaults/>` — an EMPTY list of
+        // extra colour schemes and an EMPTY set of new-object defaults, which
+        // Word's stock theme writes into every document. Neither states anything
+        // an absent element does not, and reporting them put a "lost" theme
+        // construct in front of every reader of an ordinary Word file. A
+        // populated one (a second colour scheme, a default shape style) is
+        // unmodeled and dropped by the regenerated theme, and still reports.
+        b"extraClrSchemeLst" | b"objectDefaults" => self_closing,
+        b"themeFontLang" => [b"val".as_slice(), b"eastAsia", b"bidi"]
+            .iter()
+            .all(|language| attribute_value(element, language).is_none_or(|v| v.is_empty())),
         _ => false,
     }
 }
@@ -405,6 +423,45 @@ mod tests {
             assert!(
                 !carries_no_meaning_when(local, &element(loud), false),
                 "dropped something visible in silence: {loud}"
+            );
+        }
+    }
+
+    /// An empty theme list states nothing; a populated one is a lost construct.
+    #[test]
+    fn only_an_empty_theme_list_is_silent() {
+        for local in [b"extraClrSchemeLst".as_slice(), b"objectDefaults"] {
+            let name = format!("a:{}", String::from_utf8_lossy(local));
+            assert!(
+                carries_no_meaning_when(local, &element(&name), true),
+                "reported a loss that cannot be seen: <{name}/>"
+            );
+            assert!(
+                !carries_no_meaning_when(local, &element(&name), false),
+                "silenced a populated {name}"
+            );
+        }
+    }
+
+    /// The empty form states nothing; one stated language is information.
+    #[test]
+    fn only_an_all_empty_theme_font_language_is_silent() {
+        for silent in [
+            r#"w:themeFontLang w:val="" w:eastAsia="" w:bidi="""#,
+            "w:themeFontLang",
+        ] {
+            assert!(
+                carries_no_meaning_when(b"themeFontLang", &element(silent), true),
+                "reported a loss that cannot be seen: {silent}"
+            );
+        }
+        for loud in [
+            r#"w:themeFontLang w:val="" w:eastAsia="ja-JP" w:bidi="""#,
+            r#"w:themeFontLang w:val="en-US""#,
+        ] {
+            assert!(
+                !carries_no_meaning_when(b"themeFontLang", &element(loud), true),
+                "silenced a stated language: {loud}"
             );
         }
     }

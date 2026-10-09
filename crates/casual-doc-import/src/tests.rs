@@ -9942,25 +9942,36 @@ fn the_corpus_reports_exactly_these_findings() {
         // numbering parser could not read at all, and every `w:tab w:val="num"`,
         // which no parser accepted. Both are now imported, so all 57 are gone
         // and what is left is `w:formProt` and `w:themeFontLang`.
+        //
+        // 2, then 1 with FID-AT-01. The `w:themeFontLang` in these LibreOffice
+        // files is `w:val="" w:eastAsia="" w:bidi=""` — three empty languages,
+        // which state exactly what an absent element states, so the finding
+        // described no loss. A stated language is modeled and round-trips now,
+        // and the empty form is in the no-op class. `w:formProt w:val="false"`
+        // stays: it IS information (an absent `w:formProt` means the section is
+        // protected when forms protection is on) and the section model has no
+        // field for it (`docs/165` M6).
         (
             "real-producer-footnotes",
             include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
-            2,
+            1,
         ),
         (
             "real-producer-header-footer",
             include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
-            2,
+            1,
         ),
+        // 2, then 1 with FID-AT-01: `w:view w:val="web"` is modeled and written
+        // back, so it is no longer lost. `w:formProt` remains, as above.
         (
             "real-producer-hyperlinks",
             include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
-            2,
+            1,
         ),
         (
             "real-producer-libreoffice",
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
-            2,
+            1,
         ),
         // 2 before FID-P-03's coverage guard, then 4. The two then-new ones are
         // REAL losses that were silent: `a:graphicFrameLocks noChangeAspect="1"`
@@ -9984,20 +9995,23 @@ fn the_corpus_reports_exactly_these_findings() {
         // reported — and not a third. Two features rather than one because they are
         // two locations, as `w14:paraId` is already reported on `w:p` and `w:tr`
         // separately; they collapse when the model carries a name.
+        //
+        // 6, then 5 with FID-AT-01: `w:view` is carried now (see above).
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            6,
+            5,
         ),
+        // 2, then 1 with FID-AT-01 (`w:view`), each.
         (
             "real-producer-table-list",
             include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
-            2,
+            1,
         ),
         (
             "real-producer-table-merges",
             include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
-            2,
+            1,
         ),
         // A document that loses nothing, and says so.
         (
@@ -11165,4 +11179,108 @@ fn an_empty_picture_level_alt_text_reports_nothing() {
         "nothing was lost, so nothing should be reported: {:?}",
         features(&import),
     );
+}
+
+// --- HF-047's engine half: a finding names the PART it came from ---
+
+/// One unresolvable picture in a header and two in the body, plus revision-save
+/// ids in both. Every relationship is declared so the parts resolve by name.
+fn package_with_losses_in_two_parts() -> Vec<u8> {
+    let lost_picture = r#"<w:r><w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rIdGone"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let ns = r#"xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic""#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document {ns}><w:body><w:p w:rsidR="00A1">{lost_picture}</w:p><w:p w:rsidR="00A2">{lost_picture}</w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr></w:body></w:document>"#
+    );
+    let header = format!(
+        r#"<?xml version="1.0"?><w:hdr {ns}><w:p w:rsidR="00A3">{lost_picture}</w:p></w:hdr>"#
+    );
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+    build_package(
+        document.as_bytes(),
+        rels,
+        &[("word/header1.xml", header.as_bytes())],
+    )
+}
+
+/// The compatibility report used to say "`drawing` ×3" and stop: the chip and
+/// the findings dialog (`webapp/src/compat_findings.mjs`, #810) could list the
+/// entries, but an entry could not say WHERE, so a reader could not tell a lost
+/// header logo from a lost body chart (`109` HF-047, the engine half). Element
+/// and attribute findings carried `part_name: None` because the parsers are
+/// handed bytes; the driver now tells the reporter which resolved part those
+/// bytes are, and a count is split by part so the location is true of it.
+#[test]
+fn a_finding_names_the_part_it_came_from_and_its_count_is_true_of_that_part() {
+    let import = import_bytes(&package_with_losses_in_two_parts());
+    let mut drawings: Vec<(Option<&str>, u32)> = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == "drawing")
+        .map(|entry| (entry.location.part_name.as_deref(), entry.occurrences))
+        .collect();
+    drawings.sort();
+    assert_eq!(
+        drawings,
+        vec![
+            (Some("word/document.xml"), 2),
+            (Some("word/header1.xml"), 1)
+        ],
+        "each part's losses are counted against that part, by its resolved name"
+    );
+    // The revision-save-id class is one entry per DOCUMENT by design (`35`), so
+    // it stays unlocated even though its members span both parts.
+    let rsid: Vec<_> = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == crate::RSID_CLASS_FEATURE)
+        .collect();
+    assert_eq!(rsid.len(), 1, "one class entry, not one per part");
+    assert_eq!(rsid[0].location.part_name, None);
+    assert_eq!(rsid[0].occurrences, 3);
+}
+
+/// Without a package there is no part name to give, and none is invented.
+#[test]
+fn an_xml_only_import_invents_no_part_name() {
+    let import = import(
+        br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:unmodelledProbe/></w:r></w:p></w:body></w:document>"#,
+    );
+    assert!(
+        !import.report.entries.is_empty(),
+        "the probe element is reported"
+    );
+    for entry in &import.report.entries {
+        assert_eq!(
+            entry.location.part_name, None,
+            "an XML-only import has no package to name a part from: {entry:?}"
+        );
+    }
+}
+
+/// Word's stock theme writes `<a:objectDefaults/>` and `<a:extraClrSchemeLst/>`
+/// into every document: no new-object defaults, no extra colour schemes. The
+/// regenerated theme omits both and nothing is lost, so nothing is reported —
+/// while the POPULATED forms in
+/// `theme_children_the_writer_regenerates_away_are_each_reported_once` still are.
+#[test]
+fn the_empty_theme_lists_word_writes_everywhere_are_not_losses() {
+    let theme = br#"<a:theme xmlns:a="urn:a">
+        <a:themeElements>
+            <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1></a:clrScheme>
+            <a:fontScheme><a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
+        </a:themeElements>
+        <a:objectDefaults/>
+        <a:extraClrSchemeLst/>
+    </a:theme>"#;
+    let import = import_with_theme(PLAIN_BODY, theme);
+    for feature in ["objectDefaults", "extraClrSchemeLst"] {
+        assert_eq!(
+            occurrences(&import, feature),
+            0,
+            "an empty {feature} states nothing and must not be reported: {:?}",
+            features(&import)
+        );
+    }
 }

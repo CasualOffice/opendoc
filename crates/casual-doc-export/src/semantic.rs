@@ -42,6 +42,8 @@ use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
+// Own line (anti-conflict): `w:view`, FID-AT-01.
+use casual_doc_model::v1::DocumentView;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -3534,6 +3536,12 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:view` sits between `w:writeProtection` and `w:zoom` in CT_Settings.
+    if let Some(view) = settings.view {
+        let mut el = start("w:view");
+        el.push_attribute(("w:val", document_view_token(view)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     write_zoom(&mut w, &settings.zoom)?;
     // `w:displayBackgroundShape` (CT_Settings §17.15.1.29) precedes the embed-font
     // flags in schema order.
@@ -3646,9 +3654,37 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::End(BytesEnd::new("w:compat")))
             .map_err(pkg)?;
     }
+    // `w:themeFontLang` follows `w:compat` (and the `w:docVars`/`w:rsids`/
+    // `w:mathPr`/`w:attachedSchema` this writer does not emit) in CT_Settings.
+    let languages = &settings.theme_font_languages;
+    if !languages.is_empty() {
+        let mut el = start("w:themeFontLang");
+        for (value, attribute) in [
+            (&languages.latin, "w:val"),
+            (&languages.east_asia, "w:eastAsia"),
+            (&languages.bidi, "w:bidi"),
+        ] {
+            if let Some(value) = value {
+                el.push_attribute((attribute, value.as_str()));
+            }
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:settings")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The `ST_View` token for a view.
+const fn document_view_token(view: DocumentView) -> &'static str {
+    match view {
+        DocumentView::None => "none",
+        DocumentView::Print => "print",
+        DocumentView::Outline => "outline",
+        DocumentView::MasterPages => "masterPages",
+        DocumentView::Normal => "normal",
+        DocumentView::Web => "web",
+    }
 }
 
 /// Emits `w:zoom` when the model carries a mode and/or an explicit percent.
