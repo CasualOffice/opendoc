@@ -347,7 +347,9 @@ fn export_fixture(bytes: &[u8]) -> (String, Vec<String>) {
 }
 
 const STYLED: &[u8] = include_bytes!("../../../../webapp/styled.docx");
-const SAMPLE: &[u8] = include_bytes!("../../../../webapp/sample.docx");
+// The tracked original; `webapp/sample.docx` is the copy `build.sh` makes,
+// which a fresh checkout does not have.
+const SAMPLE: &[u8] = include_bytes!("../../../../sample.docx");
 const TABLE_LIST: &[u8] =
     include_bytes!("../../../../fixtures/corpus/real-producer-table-list.docx");
 const FOOTNOTES: &[u8] = include_bytes!("../../../../fixtures/corpus/real-producer-footnotes.docx");
