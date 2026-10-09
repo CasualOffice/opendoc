@@ -94,11 +94,12 @@ test("the page LOADS the stylesheet it depends on", () => {
     PAGE.indexOf("src/slides.css") > PAGE.indexOf("src/style.css"),
     "slides.css must come after style.css",
   );
-  // COMPACT mode, and that is a decision rather than a default: `style.css`
-  // shows the compact toolbar and hides the ribbon under this class, and this
-  // page has no ribbon because the facade exposes no operation set, so every
-  // band would be empty. A page with neither mode class gets neither bar.
-  assert.match(PAGE, /<body class="compact-mode">/);
+  // A MODE class from the first paint: `style.css` shows exactly one of the
+  // compact toolbar and the ribbon under `compact-mode`/`ribbon-mode`, so a page
+  // with neither class gets neither bar until script runs. Ribbon, because it is
+  // the editor's default too; `slides_chrome.mjs` then applies the reader's
+  // saved choice from the editor's own preference.
+  assert.match(PAGE, /<body class="(ribbon|compact)-mode">/);
 });
 
 test("the slides stylesheet writes no bare colour", () => {

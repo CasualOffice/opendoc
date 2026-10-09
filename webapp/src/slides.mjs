@@ -163,6 +163,15 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     return state.zoom;
   }
 
+  /// Sets the multiplier directly, for a typed percentage or a presets row,
+  /// clamped to the ends of the product's ladder so a typed "900%" cannot ask the
+  /// engine for a bitmap the ladder would never reach.
+  function setZoomFactor(factor) {
+    if (!Number.isFinite(factor) || factor <= 0) return state.zoom;
+    state.zoom = Math.min(ZOOM_STEPS.at(-1), Math.max(ZOOM_STEPS[0], factor));
+    return state.zoom;
+  }
+
   /// Sets what 1.0 means — the whole slide, or the desk's width — and returns to
   /// it. Changing the fit always resets the multiplier, because "fit the slide at
   /// 150%" is not a fit.
@@ -349,6 +358,7 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     zoomFactor,
     registerFonts,
     stepZoom,
+    setZoomFactor,
     setFit,
     currentFit,
     canZoom,

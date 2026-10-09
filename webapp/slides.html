@@ -51,7 +51,7 @@
     <link rel="modulepreload" href="./pkg/casual_pres_wasm.js" />
     <link rel="preload" as="fetch" type="application/wasm" crossorigin href="./pkg/casual_pres_wasm_bg.wasm" />
   </head>
-  <body class="compact-mode">
+  <body class="ribbon-mode">
     <a data-i18n="slides.skipToSlide" class="skip-link" href="#slideCanvas">Skip to the slide</a>
 
     <!-- `.bar` is the editor's header, used as the component it is rather than
@@ -89,30 +89,53 @@
         <!-- The application menus. `createMenuBar` from `command_menu.mjs` drives
              these — the same module the editor uses — so a row's label, its
              enablement and its shortcut all come from the one command registry
-             rather than from a second set of listeners (`105` UX-004/UX-005). -->
+             rather than from a second set of listeners (`105` UX-004/UX-005).
+             COMPACT-MODE chrome only, as in the editor: `body.ribbon-mode` hides
+             it, and the tab strip below is ribbon mode's one navigation axis. -->
         <nav data-i18n-label="slides.appMenus" id="appMenuBar" class="app-menu-bar" aria-label="Application menus">
           <button data-i18n="slides.menuFile" type="button" class="app-menu-button" data-menu="file" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">File</button>
           <button data-i18n="slides.menuSlide" type="button" class="app-menu-button" data-menu="slide" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Slide</button>
           <button data-i18n="slides.menuView" type="button" class="app-menu-button" data-menu="view" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">View</button>
         </nav>
+        <!-- The editor's ribbon TAB STRIP, in the slot the editor gives it and
+             under the editor's own tab names and keys, so a tab is the same word
+             in every language on both pages. The three tabs a viewer has
+             commands for; `slides_chrome.mjs` builds each tab's band from the
+             command registry. -->
+        <div class="ribbon-nav">
+          <div data-i18n-label="documentChrome.ribbon.label" id="slidesRibbonTabs" class="ribbon-tabs" role="tablist" aria-label="Ribbon">
+            <button data-i18n="documentChrome.file" type="button" class="ribbon-tab ribbon-tab-file" data-tab="file" role="tab" aria-selected="false" tabindex="-1">File</button>
+            <button data-i18n="documentChrome.home" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-selected="true" tabindex="0">Home</button>
+            <button data-i18n="documentChrome.view" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-selected="false" tabindex="-1">View</button>
+          </div>
+        </div>
         <div class="controls-doc">
-          <!-- The fidelity count, in the chip the editor already uses for its
-               import/export findings. Same claim, same vocabulary: a neutral
-               status chip and never an alert, because a converter cannot make
-               this claim at all and dressing it as an error would read as a
-               failure rather than as the advantage it is. -->
-          <span id="slidesFidelity" class="compatibility-status" role="status" hidden></span>
+          <!-- The editor's two state chips, in the editor's row: what state the
+               file is in, then the findings count as a BUTTON that opens the
+               editor's own findings dialog (`compat_findings.mjs`). A neutral
+               status chip and never an alert — this is the one claim a converter
+               cannot make, and dressing it as an error would read as a failure
+               rather than as the advantage it is. -->
+          <span id="documentState" class="document-state" data-state="opened" aria-live="polite" hidden>
+            <span class="ms" aria-hidden="true">check_circle</span>
+            <span data-i18n="documentState.opened" id="documentStateText">Opened</span>
+          </span>
+          <button id="slidesFidelity" class="compatibility-status" type="button" aria-haspopup="dialog" aria-live="polite" hidden></button>
         </div>
         <div class="controls-app">
-          <!-- The real control, styled by the editor's own `.btn` pair. A label
-               over the input keeps the input's keyboard behaviour and accessible
-               name instead of rebuilding both in script. -->
-          <label class="btn btn-primary" for="slidesFile">Open a presentation</label>
-          <input id="slidesFile" class="sr-only" type="file" accept=".pptx,.potx,.ppsx" />
-          <!-- Disabled until a deck is open: a save button that throws because
-               there is nothing to save is worse than one that is visibly not
-               available yet. -->
-          <button id="slidesSave" type="button" class="btn" data-i18n-title="slides.saveHelp" title="Writes the deck back out, carrying the parts this build does not model through unchanged" disabled>Save a copy</button>
+          <!-- The editor's Compact / Ribbon switch, on the editor's preference
+               (`opendoc.chromeMode`): a reader who chose Compact in a document
+               gets Compact in a deck too. -->
+          <div data-i18n-label="ui.toolbarMode.label" class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
+            <button data-i18n="ui.compact" type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
+                    data-chrome-mode="compact" aria-checked="false" tabindex="-1">Compact</button>
+            <button data-i18n="ui.ribbon" type="button" id="modeRibbon" class="chrome-mode-btn" role="radio"
+                    data-chrome-mode="ribbon" aria-checked="true" tabindex="0">Ribbon</button>
+          </div>
+          <!-- The picker the File ▸ Open command, the toolbar and the empty
+               state's button all open. Not a header button: the editor opens
+               files from File, and so does this page. -->
+          <input id="slidesFile" class="sr-only" type="file" accept=".pptx,.potx,.ppsx" tabindex="-1" aria-hidden="true" />
         </div>
       </div>
     </header>
@@ -125,7 +148,16 @@
          and one pressed-state source whichever surface is showing. Hand-binding
          a button here would recreate the drift `105` UX-004/UX-005 records. -->
     <div data-i18n-label="slides.toolbar" class="compact-toolbar" id="compactToolbar" role="toolbar"
-         aria-label="Slide toolbar" aria-controls="slideCanvas"></div>
+         aria-label="Slide toolbar" aria-controls="slideCanvas" hidden></div>
+
+    <!-- The editor's ribbon, mutually exclusive with the compact toolbar above
+         (`body.compact-mode` hides this, `body.ribbon-mode` hides that). EMPTY in
+         markup for the reason the compact toolbar is: every control is rendered
+         from the command registry, so a command has one enablement path, one
+         activation path and one pressed-state source whichever chrome shows it. -->
+    <div class="ribbon">
+      <div id="slidesRibbonBody" class="ribbon-body"></div>
+    </div>
 
     <!-- The editor's workarea: a rail of panel toggles, the panels themselves,
          and the viewport. The slide sorter IS the editor's page-thumbnail panel
@@ -133,10 +165,9 @@
          the same thing for the same purpose — a column of page previews you
          click to navigate — so it is reused rather than rebuilt.
 
-         No ribbon and no compact toolbar on this page YET, and that is a stated
-         phase rather than a different design: both are driven by `main.js`'s
-         command registry, and this facade exposes no operation set at all, so
-         every band would be empty. They arrive with the shared chrome module. -->
+         The toolbars above are the editor's two, behind the editor's switch,
+         drawn from this page's command registry by `slides_chrome.mjs` and
+         `compact_toolbar.mjs`. -->
     <div class="workarea">
       <nav data-i18n-label="slides.deckNavigation" class="rail" aria-label="Deck navigation">
         <button id="railSlides" type="button" class="rail-btn" title="Slides in this deck" aria-label="Slides in this deck" aria-pressed="true"><span class="ms" aria-hidden="true">auto_stories</span><span data-i18n="slides.railSlides">Slides</span></button>
@@ -176,6 +207,10 @@
             <span class="ms drop-icon" aria-hidden="true">slideshow</span>
             <p data-i18n="slides.empty" class="drop-title">Open a <strong data-i18n="slides.pptx">.pptx</strong> to see it rendered by this engine</p>
             <p data-i18n="slides.emptyHelp" class="muted">Rendered entirely in your browser by the OpenDoc engine (WASM). Nothing is uploaded.</p>
+            <!-- The one place a primary button belongs on an empty viewer: the
+                 thing the reader came to do, where they are looking. Its label
+                 is the registry's `file.open`, set by script. -->
+            <button id="slidesOpen" type="button" class="btn btn-primary"></button>
           </div>
         </div>
         <!-- `.page-wrap` is the editor's SHEET — paper background, page shadow,
@@ -195,18 +230,38 @@
         <span id="status" class="status">Loading engine…</span>
       </span>
       <span class="foot-right">
-        <!-- `aria-live="polite"` because the position changes under the reader's
+        <!-- Where the reader is, in the slot the editor's "Page 1 of 14" takes.
+             `aria-live="polite"` because the position changes under the reader's
              own keystroke: a screen reader should hear the new slide without the
              focus moving, and `assertive` would interrupt them mid-word on every
              arrow key. -->
-        <output id="slidesPosition" class="status" aria-live="polite"></output>
-        <!-- The zoom readout, where ONLYOFFICE's status bar and Google Slides'
-             bottom bar both put it. Not a live region: it changes under a
-             deliberate command, and announcing it would talk over the reader on
-             every step. -->
-        <span id="slidesZoom" class="status"></span>
+        <output id="slidesPosition" class="stat-pages" aria-live="polite"></output>
+        <!-- The editor's language control, driven by the editor's own
+             `locale_boot.mjs` on the editor's own setting, so a language chosen
+             in a document is the language of a deck too. -->
+        <button data-i18n-title="ui.language.title" data-i18n-label="ui.language.label" id="languageStatus" type="button" class="footer-language" data-status-priority="2" title="Language" aria-label="Language" aria-haspopup="menu" aria-controls="languageMenu" aria-expanded="false"><span class="ms" aria-hidden="true">language</span><span id="languageStatusLabel" class="footer-language-label">English</span></button>
+        <!-- The editor's zoom control: −, a percentage you can type, presets, +.
+             On a deck the percentage is relative to the FIT (the whole slide, or
+             the desk's width), which is what "100%" means on a slide in both
+             reference products. -->
+        <span class="zoom">
+          <button data-i18n-title="ui.zoomOut.title" data-i18n-label="ui.zoomOut.label" id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><span class="ms" aria-hidden="true">remove</span></button>
+          <span class="zoom-value-control">
+            <input data-i18n-title="ui.zoomLevelTypePercentage.title" data-i18n-label="ui.zoomLevelTypePercentage.label" id="zoom" type="text" class="zoom-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="100%" aria-label="Zoom level (type a percentage)" title="Zoom level (type a percentage)" />
+            <button data-i18n-title="ui.zoomPresets.title" data-i18n-label="ui.zoomPresets.label2" id="zoomMenuBtn" type="button" class="zoom-caret" title="Zoom presets" aria-label="Zoom presets" aria-haspopup="menu" aria-controls="zoomMenu" aria-expanded="false"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+          </span>
+          <button data-i18n-title="ui.zoom.title" data-i18n-label="ui.zoom.label" id="zoomIn" type="button" class="zbtn" title="Zoom in" aria-label="Zoom in"><span class="ms" aria-hidden="true">add</span></button>
+        </span>
       </span>
     </footer>
+
+    <!-- The footer's two menus, at body level as the editor puts them, so no
+         ancestor's stacking context can put them under the slide. -->
+    <div data-i18n-label="ui.zoomPresets.label" id="zoomMenu" class="context-menu zoom-menu" hidden role="menu" aria-label="Zoom presets"></div>
+    <div id="languageMenu" class="context-menu language-menu" hidden>
+      <div data-i18n-label="settings.language.label" id="languageMenuList" class="language-menu-list" role="menu" aria-label="Language"></div>
+      <p data-i18n="settings.language.note" class="settings-note language-menu-note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
+    </div>
 
     <!-- The feedback channel's three surfaces, in the editor's own arrangement
          and at BODY level for the reason `109` UX-017 records: a container that

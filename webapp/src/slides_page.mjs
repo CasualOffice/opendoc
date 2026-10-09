@@ -5,13 +5,18 @@
 // the wiring needs one. Everything here is event handlers and element writes;
 // no slide arithmetic, no unit conversion, no rendering policy.
 
-import { setCatalogue, t } from "./i18n.mjs";
-import { EN_STRINGS } from "./en_strings.mjs";
-// The same locale seam the public site pages use. The editor's
-// `startLocalisation` wants a picker, a settings object and a popover registry —
-// editor chrome this page does not have — while this one takes an optional
-// `select` and nothing else, which is exactly the shape of a viewer.
-import { startSiteLocalisation } from "./site_locale.mjs";
+import { t } from "./i18n.mjs";
+// The EDITOR's locale seam, not the site's: this page now carries the editor's
+// footer language control, on the editor's own setting, so a language chosen in
+// a document is the language of a deck too (docs/124 §5's one language setting).
+import { startLocalisation } from "./locale_boot.mjs";
+import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
+// The editor's shell, shared: the ribbon in the editor's markup, the Compact /
+// Ribbon switch on the editor's preference, the status bar's zoom control, and
+// the editor's findings dialog fed from the deck's report.
+import { createChromeMode, createSlideRibbon, createSlideZoom, deckReportJson } from "./slides_chrome.mjs";
+import { createCompatibilityFindings } from "./compat_findings.mjs";
+import { registerModal } from "./modal.mjs";
 import { createViewer } from "./slides.mjs";
 import { renderSlideMirror } from "./slides_mirror.mjs";
 // The EDITOR's own toolbar and menu renderers, reused rather than rebuilt. Both
@@ -48,6 +53,10 @@ import { localizeShortcutText } from "./shortcut_labels.mjs";
 import { keyboardPlatform, matchesShortcut } from "./keyboard.mjs";
 import { SLIDE_KEYMAP } from "./slide_commands.mjs";
 
+/// The editor's settings key. The deck viewer reads and writes the SAME object,
+/// so a language or a theme chosen on either page holds on both.
+const SETTINGS_KEY = "opendoc.settings";
+
 /// The media type a `.pptx` is served and saved as.
 const PPTX_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -61,7 +70,7 @@ function resolveElements() {
   const ids = [
     "deckTitle",
     "slidesFile",
-    "slidesSave",
+    "slidesOpen",
     "slidesPosition",
     "slidesSorter",
     "slideStage",
@@ -83,7 +92,14 @@ function resolveElements() {
     "appMenuBar",
     "appMenuPopover",
     "compactToolbar",
-    "slidesZoom",
+    "slidesRibbonTabs",
+    "slidesRibbonBody",
+    "documentState",
+    "zoomOut",
+    "zoomIn",
+    "zoom",
+    "zoomMenuBtn",
+    "zoomMenu",
     "statusLiveRegion",
     "statusToast",
   ];
@@ -103,8 +119,23 @@ function resolveElements() {
 /// Exported and taking its dependencies so a test can drive the whole wiring
 /// with a stub facade and a document fragment, which is the only way to assert
 /// the handlers without a browser engine.
-export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
+export function bootViewer({
+  facade,
+  elements,
+  devicePixelRatio = 1,
+  settings = { theme: "system" },
+  saveSettings = () => {},
+}) {
   const viewer = createViewer({ facade, elements, devicePixelRatio });
+
+  // The editor's findings dialog, opened by the editor's findings chip. The
+  // deck's report is restated in the editor's report shape (`deckReportJson`),
+  // so a deck's losses read exactly as a document's do.
+  const findingsDialog = createCompatibilityFindings({
+    chip: elements.slidesFidelity,
+    registerModal,
+    fallbackFocus: () => elements.slideStage,
+  });
 
   /// Shows a refusal in BOTH halves the editor uses: the status bar a reader
   /// sees, and the body-level live region assistive technology hears.
@@ -163,6 +194,18 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     return width > 0 ? width : 960;
   }
 
+  /// The height the WHOLE slide must fit in, from the stage's own box.
+  ///
+  /// "Fit slide" is the editor's "fit page": the whole sheet visible without
+  /// scrolling, which is what both reference products open a deck at. It used to
+  /// be measured on width alone, so a 16:9 deck in an ordinary window opened
+  /// taller than the desk with its bottom below the fold.
+  function availableHeight() {
+    const box = elements.slideStage.getBoundingClientRect?.();
+    const height = (box?.height ?? 0) - DESK_MARGIN_PX;
+    return height > 0 ? height : Infinity;
+  }
+
   function renderPosition() {
     const total = viewer.slideCount();
     elements.slidesPosition.textContent =
@@ -207,9 +250,13 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
       const thumb = document.createElement("canvas");
       thumb.className = "page-thumb-canvas";
       box.append(thumb);
+      // The NUMBER under the card, as the editor's page navigator, PowerPoint's
+      // thumbnail pane and Google Slides' filmstrip all show it; the slide's
+      // name stays the card's accessible name and tooltip above, which is where
+      // a name that may be long or absent belongs.
       const num = document.createElement("span");
       num.className = "page-thumb-num";
-      num.textContent = slide.name;
+      num.textContent = String(n);
       card.append(box, num);
       if (slide.hidden) {
         // A hidden slide is still in the deck — retained, saved and sortable —
@@ -249,15 +296,16 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   function renderFidelity() {
     const findings = viewer.findings();
     const total = findings.reduce((sum, finding) => sum + (finding.occurrences ?? 1), 0);
-    // The count goes in the header chip the editor already uses for its own
-    // import/export findings — a neutral status chip, never an alert, because
-    // this is the one claim a converter cannot make and dressing it as an error
-    // would read as a failure rather than as the advantage it is.
-    elements.slidesFidelity.hidden = false;
-    elements.slidesFidelity.textContent =
-      findings.length === 0 ? t("slides.fidelityClean") : t("slides.fidelityLossy", { count: total });
+    // The count goes in the editor's own findings chip, painted by the editor's
+    // own module, and the chip opens the editor's own findings dialog — grouped
+    // into what was lost, approximated or kept, in words — rather than a second
+    // presentation of the same kind of fact. A neutral status chip, never an
+    // alert: this is the one claim a converter cannot make.
+    findingsDialog.show(deckReportJson(findings), "import");
+    elements.documentState.hidden = false;
     elements.railFidelity.disabled = findings.length === 0;
-    elements.slidesFidelitySummary.textContent = elements.slidesFidelity.textContent;
+    elements.slidesFidelitySummary.textContent =
+      findings.length === 0 ? t("slides.fidelityClean") : t("slides.fidelityLossy", { count: total });
     elements.slidesFidelityList.replaceChildren();
     for (const finding of findings) {
       const item = document.createElement("li");
@@ -289,7 +337,7 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   const toggleFidelity = (show) => togglePanel("fidelity", show);
 
   function paint() {
-    const painted = viewer.paint(elements.slideCanvas, availableWidth());
+    const painted = viewer.paint(elements.slideCanvas, availableWidth(), availableHeight());
     elements.slidesEmpty.hidden = painted;
     // The SHEET is what is shown or hidden, not the canvas inside it: hiding only
     // the canvas would leave an empty paper rectangle with a shadow on the desk.
@@ -304,9 +352,6 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
       outline: viewer.slideText(),
     });
     renderPosition();
-    elements.slidesZoom.textContent = viewer.slideCount()
-      ? t("slides.zoomReadout", { percent: viewer.zoomPercent() })
-      : "";
     refreshCommandSurfaces();
     reflectPagesPanelSelection(elements.slidesSorter, viewer.currentIndex() + 1);
   }
@@ -315,14 +360,13 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     clearError();
     const result = viewer.open(bytes);
     if (!result.ok) {
-      elements.slidesSave.disabled = true;
       elements.slidesEmpty.hidden = false;
+      elements.documentState.hidden = true;
       elements.slideSheet.hidden = true;
       elements.deckTitle.value = "";
       showError(result.message);
       return false;
     }
-    elements.slidesSave.disabled = false;
     clearError();
     renderSorter();
     paint();
@@ -349,8 +393,9 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   // are `prefs.mjs`'s, which already answers the question this page would
   // otherwise answer badly: `localStorage` is HOST POLICY and may throw or be
   // absent, so every read falls back and every write is allowed to fail.
-  const PREF_KEY = "opendoc.slides";
-  const prefs = loadPrefObject(PREF_KEY, { theme: "system" });
+  //
+  // The THEME lives in the editor's settings object, passed in by `start`, so a
+  // reader who chose Dark in a document opens a deck in Dark too.
 
   /// Applies the theme through the module that owns what a theme IS.
   ///
@@ -359,8 +404,8 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   /// than setting it to anything, and that a host-pinned accent must not be
   /// overwritten. Both are rules this page would have got wrong.
   function setTheme(theme) {
-    prefs.theme = theme;
-    savePrefObject(PREF_KEY, prefs);
+    settings.theme = theme;
+    saveSettings();
     applyAppearance({
       root: document.documentElement,
       theme,
@@ -379,7 +424,7 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
       openPicker: () => elements.slidesFile.click(),
       save: () => saveDeck(),
       repaint: () => paint(),
-      theme: () => prefs.theme,
+      theme: () => settings.theme,
       setTheme,
       panelShown: (name) =>
         name === "slides"
@@ -470,10 +515,8 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   /// the header and the File ▸ Open row can never say different things.
   function labelFromRegistry() {
     const by = new Map(editorCommands().map((command) => [command.id, command.label]));
-    elements.slidesFile.previousElementSibling?.replaceChildren(
-      document.createTextNode(by.get("file.open") ?? ""),
-    );
-    elements.slidesSave.textContent = by.get("file.save") ?? "";
+    // The empty state's button says what File ▸ Open says, from the same row.
+    elements.slidesOpen.textContent = by.get("file.open") ?? "";
     for (const [id, label] of [
       ["railSlides", t("slides.sorter")],
       ["railFidelity", t("slides.fidelityPanel")],
@@ -506,8 +549,51 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   /// rebuilds its compact bar for exactly this reason.
   function refreshCommandSurfaces() {
     toolbar.render?.();
+    ribbon.render();
+    zoom.render();
     menuBar.close?.({ focus: false });
   }
+
+  // The editor's ribbon, from the same registry the compact bar and the menus
+  // read, so the three cannot disagree about a command.
+  const ribbon = createSlideRibbon({
+    tablist: elements.slidesRibbonTabs,
+    body: elements.slidesRibbonBody,
+    editorCommands,
+    onButton,
+    t,
+    localizeShortcut: (text) => localizeShortcutText(text, keyboardPlatform()),
+  });
+
+  // The editor's Compact / Ribbon switch, on the editor's own preference. A
+  // phone forces compact, as it does in the editor, without changing the choice.
+  const chromeMode = createChromeMode({
+    group: document.querySelector(".chrome-mode"),
+    body: document.body,
+    compactToolbar: elements.compactToolbar,
+    isPhone: () => phone.isPhone(),
+    onChange: () => {
+      toolbar.render?.();
+      // The stage's height changes with the chrome, so the slide's fit does too.
+      if (viewer.slideCount() > 0) paint();
+    },
+  });
+  phone.onPhoneChange?.(() => chromeMode.refresh());
+
+  // The editor's status-bar zoom control.
+  const zoom = createSlideZoom({
+    elements: {
+      zoomOut: elements.zoomOut,
+      zoomIn: elements.zoomIn,
+      zoomInput: elements.zoom,
+      zoomMenuBtn: elements.zoomMenuBtn,
+      zoomMenu: elements.zoomMenu,
+    },
+    viewer,
+    repaint: () => paint(),
+    registerPopover,
+    t,
+  });
 
   elements.slidesFile.addEventListener("change", async (event) => {
     const file = event.target?.files?.[0];
@@ -557,11 +643,11 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     requestAnimationFrame(() => URL.revokeObjectURL(url));
   }
 
-  elements.slidesSave.addEventListener("click", () => saveDeck());
+  elements.slidesOpen.addEventListener("click", () => elements.slidesFile.click());
 
   // The persisted theme, before the first paint, so the page does not flash the
   // system theme on its way to the reader's choice.
-  setTheme(prefs.theme);
+  setTheme(settings.theme);
   labelFromRegistry();
   // Rendered once at boot so the bar and the status strip exist before a deck
   // does, with every command disabled and saying why.
@@ -595,7 +681,18 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     }
   });
 
-  return { openBytes, paint, renderSorter, renderFidelity, toggleFidelity, viewer };
+  /// After a language change: the registry's labels, the ribbon's group labels
+  /// and every control's tooltip are script-side, so they are re-rendered here;
+  /// the markup's own labels were already swept by `localizeTree`.
+  function relabel() {
+    labelFromRegistry();
+    ribbon.relabel();
+    renderPosition();
+    if (viewer.slideCount() > 0) renderFidelity();
+    refreshCommandSurfaces();
+  }
+
+  return { openBytes, paint, relabel, renderSorter, renderFidelity, toggleFidelity, viewer };
 }
 
 /// Fetches the named web faces and hands them to the engine.
@@ -649,18 +746,31 @@ async function start() {
   //
   // `locale_boot.startLocalisation` seeds the same way for the same reason; this
   // is that one line rather than the editor's whole picker-and-popover contract.
-  setCatalogue("en", EN_STRINGS);
+  // The editor's settings object: one language and one theme across the
+  // document editor and the deck viewer.
+  const settings = loadPrefObject(SETTINGS_KEY, DEFAULT_SETTINGS);
+  const saveSettings = () => savePrefObject(SETTINGS_KEY, settings);
   // Localise BEFORE the engine request, not after: the catalogue is a small JSON
   // fetch and the engine is megabytes of WebAssembly, so awaiting the engine
   // first would leave the chrome in English for the whole download on every
-  // non-English locale.
-  await startSiteLocalisation({ select: document.getElementById("slidesLanguage") });
+  // non-English locale. `startLocalisation` seeds the compiled-in English first,
+  // so no script-side string ever renders as its key.
+  let booted = null;
+  await startLocalisation({
+    select: null,
+    settings,
+    saveSettings,
+    registerPopover,
+    onLocalised: () => booted?.relabel(),
+  });
   const module = await import("../pkg/casual_pres_wasm.js");
   await module.default();
-  bootViewer({
+  booted = bootViewer({
     facade: module,
     elements,
     devicePixelRatio: globalThis.devicePixelRatio || 1,
+    settings,
+    saveSettings,
   });
 }
 

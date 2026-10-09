@@ -27,7 +27,7 @@ async function gotoSlides(page) {
   // has booted. Waiting on the control rather than on a timer is the difference
   // between a spec that is slow and a spec that is flaky.
   await expect(page.locator("#slidesFile")).toBeAttached({ timeout: 45_000 });
-  await page.waitForFunction(() => document.getElementById("slidesSave") !== null, null, {
+  await page.waitForFunction(() => document.querySelector('[data-command="file.save"]') !== null, null, {
     timeout: 45_000,
   });
 }
@@ -78,7 +78,13 @@ test("the sorter lists the deck in presentation order, not part order", async ({
   await gotoSlides(page);
   await openDeck(page);
 
-  const labels = await page.locator("#slidesSorter .page-thumb-num").allTextContents();
+  // The card's accessible name is the slide's name; the caption under it is the
+  // slide's number, as in the editor's page navigator.
+  const labels = await page
+    .locator("#slidesSorter .page-thumb")
+    .evaluateAll((cards) => cards.map((card) => card.getAttribute("aria-label")));
+  const numbers = await page.locator("#slidesSorter .page-thumb-num").allTextContents();
+  expect(numbers).toEqual(["1", "2", "3"]);
   // The fixture's parts are slide1 ("Opening"), slide2 ("Detail") and slide10
   // ("Appendix"), presented 1, 2, 10. EVERY lexical ordering of those part names
   // gives 1, 10, 2 — "Opening", "Appendix", "Detail" — so a page built on part
@@ -173,7 +179,9 @@ test("a file that is not a presentation is refused, visibly", async ({ page }) =
   // `display: none` subtree is not in the accessibility tree.
   await expect(page.locator("#status")).not.toBeEmpty({ timeout: 30_000 });
   await expect(page.locator("#slidesError")).not.toBeEmpty();
-  await expect(page.locator("#slidesSave")).toBeDisabled();
+  // Save is the registry's command on every surface — the ribbon button here —
+  // and with nothing open it is disabled, saying why, rather than missing.
+  await expect(page.locator('#slidesRibbonBody [data-command="file.save"]').first()).toBeDisabled();
   // The SHELL stays. An earlier revision cleared `doc-loaded` on a refusal, which
   // took the toolbar, the rail and the status bar off screen with it — so the one
   // moment a reader most needs to see what the page is and try again was the one
@@ -293,7 +301,32 @@ test("a screen reader can read the slide, which the canvas itself says nothing t
 
 test("the page is actually laid out, not bare markup", async ({ page }) => {
   await gotoSlides(page);
+
+  // The real `<input type="file">` is hidden VISUALLY while a styled control
+  // stands in for it. Unstyled, the browser's own "Choose File" control shows and
+  // the stand-in is plain text beside it — which is what was on screen. Before a
+  // deck is open the stand-in is the empty state's button; after, it is the
+  // ribbon's Open, the editor's large captioned button.
+  const standIn = (selector) =>
+    page.evaluate((sel) => {
+      const box = (el) => {
+        const r = el.getBoundingClientRect();
+        return { w: r.width, h: r.height };
+      };
+      return { input: box(document.getElementById("slidesFile")), control: box(document.querySelector(sel)) };
+    }, selector);
+  const empty = await standIn("#slidesOpen");
+  expect(empty.input.w, "the raw file input is not what a reader sees").toBeLessThan(3);
+  expect(empty.control.w, "the empty state's Open button").toBeGreaterThan(80);
+  expect(empty.control.h).toBeGreaterThan(20);
+
   await openDeck(page);
+  const ribbon = await standIn('#slidesPanel-home [data-command="file.open"]');
+  expect(ribbon.input.w).toBeLessThan(3);
+  expect(ribbon.control.w, "the ribbon's Open button").toBeGreaterThan(30);
+  // A strip icon is one `--h-control` (30px) square; the editor's large
+  // captioned button stacks a 22px icon over its caption and measures ~42px.
+  expect(ribbon.control.h, "a large captioned button, not a strip icon").toBeGreaterThan(36);
 
   // THIS IS THE GUARD THE PAGE SHIPPED WITHOUT. Every other spec in this file
   // passes on a completely unstyled page: they query elements by id and read
@@ -315,8 +348,6 @@ test("the page is actually laid out, not bare markup", async ({ page }) => {
       stage: box("#slideStage"),
       footer: box("footer.footer"),
       sheet: box("#slideSheet"),
-      input: box("#slidesFile"),
-      label: box(".btn-primary"),
       thumb: box(".page-thumb"),
     };
   });
@@ -334,15 +365,136 @@ test("the page is actually laid out, not bare markup", async ({ page }) => {
   expect(layout.stage.x).toBeGreaterThan(layout.sorter.x + layout.sorter.w - 1);
   expect(layout.thumb.h, "a thumbnail is a card, not a line of text").toBeGreaterThan(60);
 
-  // The real `<input type="file">` is hidden VISUALLY while the styled label
-  // stands in for it. Unstyled, the browser's own "Choose File" control shows and
-  // the label is plain text beside it — which is what was on screen.
-  expect(layout.input.w, "the raw file input is not what a reader sees").toBeLessThan(3);
-  expect(layout.label.w, "the label is").toBeGreaterThan(80);
-  expect(layout.label.h).toBeGreaterThan(20);
-
   // The slide sits on the editor's SHEET, inside the viewport, with desk either
   // side — not edge to edge, which is what dropping `DESK_MARGIN_PX` would give.
   expect(layout.sheet.w).toBeLessThan(layout.stage.w);
   expect(layout.sheet.w).toBeGreaterThan(layout.stage.w - 120);
+});
+
+// ---- The editor's shell, on the deck viewer ----------------------------------
+//
+// The owner's rule for this page: a reader moving between a document and a deck
+// does not meet a different application. Each test below names one piece of the
+// editor's shell and asserts the deck viewer behaves as the editor does.
+
+test("the deck viewer has the editor's two toolbars behind the editor's switch, on the editor's preference", async ({ page }) => {
+  await gotoSlides(page);
+  // Ribbon by default, as in the editor: the tab strip and the band, not the
+  // compact bar.
+  await expect(page.locator("body")).toHaveClass(/ribbon-mode/);
+  await expect(page.locator("#slidesRibbonTabs [role=tab]")).toHaveText(["File", "Home", "View"]);
+  await expect(page.locator("#slidesRibbonBody")).toBeVisible();
+  await expect(page.locator("#compactToolbar")).toBeHidden();
+
+  // The switch.
+  await page.locator("#modeCompact").click();
+  await expect(page.locator("body")).toHaveClass(/compact-mode/);
+  await expect(page.locator("#compactToolbar")).toBeVisible();
+  await expect(page.locator("#slidesRibbonBody")).toBeHidden();
+  // On the EDITOR's key, so the choice holds on both pages.
+  expect(await page.evaluate(() => localStorage.getItem("opendoc.chromeMode"))).toContain("compact");
+
+  // And it survives a reload.
+  await gotoSlides(page);
+  await expect(page.locator("body")).toHaveClass(/compact-mode/);
+  await page.locator("#modeRibbon").click();
+  await expect(page.locator("body")).toHaveClass(/ribbon-mode/);
+});
+
+test("a ribbon tab shows its own band and the arrows move between tabs", async ({ page }) => {
+  await gotoSlides(page);
+  await openDeck(page);
+  const view = page.locator('#slidesRibbonTabs [data-tab="view"]');
+  await view.click();
+  await expect(view).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#slidesPanel-view")).toBeVisible();
+  await expect(page.locator("#slidesPanel-home")).toBeHidden();
+  // The band's panel toggles reflect the panels' state, from the registry.
+  await expect(page.locator('#slidesPanel-view [data-command="view.slides"]')).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  // Roving: ArrowLeft from View lands on Home and shows its band.
+  await view.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator('#slidesRibbonTabs [data-tab="home"]')).toBeFocused();
+  await expect(page.locator("#slidesPanel-home")).toBeVisible();
+  // And a ribbon button runs its command: Next slide moves the position.
+  await page.locator('#slidesPanel-home [data-command="slide.next"]').click();
+  await expect(page.locator("#slidesPosition")).toHaveText(/2.*3/);
+});
+
+test("a deck opens with the whole slide on screen, as the editor opens a page", async ({ page }) => {
+  // A wide, short window: fitting the WIDTH alone would put the bottom of a 16:9
+  // slide below the fold, which is how this page used to open every deck.
+  await page.setViewportSize({ width: 1600, height: 760 });
+  await gotoSlides(page);
+  await openDeck(page);
+  const fits = await page.evaluate(() => {
+    const stage = document.getElementById("slideStage").getBoundingClientRect();
+    const slide = document.getElementById("slideCanvas").getBoundingClientRect();
+    return { slideBottom: slide.bottom, stageBottom: stage.bottom, slideTop: slide.top, stageTop: stage.top };
+  });
+  expect(fits.slideTop).toBeGreaterThanOrEqual(fits.stageTop);
+  expect(fits.slideBottom, "the whole slide is visible without scrolling").toBeLessThanOrEqual(
+    fits.stageBottom,
+  );
+});
+
+test("the status bar's zoom control is the editor's: steppers, a typed value and presets", async ({ page }) => {
+  await gotoSlides(page);
+  await openDeck(page);
+  const input = page.locator("#zoom");
+  await expect(input).toHaveValue("100%");
+  const width = () => page.locator("#slideCanvas").evaluate((c) => c.getBoundingClientRect().width);
+  const fitted = await width();
+
+  await page.locator("#zoomIn").click();
+  await expect(input).toHaveValue("125%");
+  expect(await width()).toBeGreaterThan(fitted);
+
+  await input.fill("50");
+  await input.press("Enter");
+  await expect(input).toHaveValue("50%");
+  expect(await width()).toBeLessThan(fitted);
+
+  // The presets, on the editor's ladder plus the two fits.
+  await page.locator("#zoomMenuBtn").click();
+  await expect(page.locator("#zoomMenu")).toBeVisible();
+  await page.locator("#zoomMenu .zoom-preset", { hasText: "Fit slide" }).click();
+  await expect(input).toHaveValue("100%");
+  await expect(page.locator("#zoomMenu")).toBeHidden();
+});
+
+test("the findings chip is the editor's, and opens the editor's findings dialog", async ({ page }) => {
+  await gotoSlides(page);
+  await openDeck(page);
+  const chip = page.locator("#slidesFidelity");
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveText(/\d+ import finding/);
+  await expect(page.locator("#documentState")).toBeVisible();
+  await chip.click();
+  const dialog = page.locator("#compatibilityFindingsDialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("h2")).toHaveText("Compatibility findings");
+  // Grouped as a document's findings are; the fixture deck loses things, so the
+  // dialog has at least one group with entries in it.
+  await expect(dialog.locator("section").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
+test("the language control is the editor's, on the editor's setting", async ({ page }) => {
+  await gotoSlides(page);
+  await page.locator("#languageStatus").click();
+  const menu = page.locator("#languageMenu");
+  await expect(menu).toBeVisible();
+  // Every language names itself, as in the editor's footer menu.
+  await expect(menu.locator('[role="menuitemradio"], [role="menuitem"]').first()).toBeVisible();
+  const deutsch = menu.getByText("Deutsch", { exact: false }).first();
+  await deutsch.click();
+  await expect(page.locator('#slidesRibbonTabs [data-tab="home"]')).toHaveText("Start");
+  // Saved where the editor saves it.
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("opendoc.settings") ?? "{}"));
+  expect(saved.language).toBe("de");
 });

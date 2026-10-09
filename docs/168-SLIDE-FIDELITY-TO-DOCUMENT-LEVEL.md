@@ -111,6 +111,43 @@ Parallel, scoped by file domain so they cannot collide (`SKILL` §7).
 E2 touches the shipped DOCX editor, so it carries the editor's full browser suite as a
 gate. E1 touches neither shared crate nor `webapp/`, which is why it goes first.
 
+## 4a. The shell: one application, not two
+
+The owner's rule (2026-10-09): "use whatever we can from our document shell and
+engine, so the UX does not differ from slides to the document editor." Measured
+against `editor.html` at 1440×900 before this section's work, `slides.html` had a
+text menu bar where the editor has a ribbon tab strip, no Compact/Ribbon switch, a
+black "Open a presentation" button and a truncated fidelity sentence where the
+editor has its state and findings chips, a status bar reading "Slide 1 of 10
+100%" where the editor has a language control and a zoom control, number-free
+thumbnail captions in a monospace face, and a slide fitted by width alone, so a
+16:9 deck opened with its bottom below the fold.
+
+**Shared now** — each the editor's own module or markup, not a copy:
+
+| Piece | From the editor | Notes |
+| --- | --- | --- |
+| Ribbon, tab strip | `.ribbon-tabs`/`.ribbon-panel`/`.rgroup` markup, `ribbon_nav.mjs` roving | File, Home and View: the three tabs a viewer has commands for. Captions are the editor's keys. Built by `slides_chrome.mjs` from the same registry the compact bar and the menus read |
+| Compact / Ribbon switch | `.chrome-mode` markup, `radio_group.mjs`, `prefs.mjs` | On the editor's `opendoc.chromeMode` preference, so the choice holds on both pages; a phone forces compact as the editor does |
+| State and findings chips | `#documentState`, `.compatibility-status`, `compat_findings.mjs` | The chip opens the editor's findings dialog; `deckReportJson` restates the deck report in the editor's report shape, including the outcome spellings (`not-retained` → `not_retained`) |
+| Language control | `locale_boot.mjs`'s `startLocalisation`, the footer menu | On the editor's `opendoc.settings`, so one language setting across both pages (`124` §5) |
+| Theme | `appearance.mjs` | Also on `opendoc.settings` |
+| Zoom control | the footer's `.zoom` markup, `view_zoom.mjs`'s ladder and parser | The percentage is relative to the fit, which is what "100%" means on a slide in both reference products |
+| Fit on open | — | Whole slide, measured on both axes, as the editor opens a page |
+| Slide navigator | `.pages-panel`/`.page-thumb`, `pages_panel.mjs` | Captions are numbers, as in the editor's navigator; the slide's name is the card's accessible name |
+
+Every new string is an existing editor key with identical English;
+`slides_chrome.test.mjs` fails the build if a borrowed key's English drifts,
+because `build-locale.mjs` merges both pages' markup into one catalogue.
+
+**Not shared yet, and why.** The editor's settings dialog, document-properties
+dialog and editing-mode menu are bound by id inside `main.js`, which has no mount
+seam (`109` HF-109); the ribbon's own controller is in `slides_chrome.mjs` for the
+same reason. They move to a shared chrome module when HF-109 lifts them out of
+`main.js`, and `slides_chrome.mjs` is written to be that module's first consumer.
+The editing-mode control is absent rather than disabled: a deck has no mode to
+choose until the slide operation set (lane D1 above) exists.
+
 ## 5. What this programme will not do
 
 **Editing.** No slide operation set, no transaction envelope. A surface that mutated a deck

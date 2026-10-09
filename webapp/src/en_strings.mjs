@@ -1595,6 +1595,9 @@ export const EN_STRINGS = Object.freeze({
   // and one source for each.
   "slides.chooseFile": "Open a presentation",
   "slides.save": "Save a copy",
+  // The large ribbon button's caption: the verb alone, as the editor's own
+  // "Open" reads. The full sentence stays the command's label and tooltip.
+  "slides.open": "Open",
   "slides.sorter": "Slides",
   "slides.fidelityPanel": "Fidelity",
   //
