@@ -276,13 +276,16 @@ const TABLE: &[Row] = &[
     // Whole parts the opaque side-table carries verbatim through any save.
     Row {
         at_import: Reported,
-        feature: "customXml/item1.xml",
+        // An empty bibliography store, reported under its class since `109`
+        // FID-AT-18; the probe still asks about the part itself.
+        feature: "docx.customXml.bibliography.empty",
         kept_by_an_edited_save: true,
         probe: |edited, source| same_part(edited, source, "customXml/item1.xml"),
     },
     Row {
         at_import: Reported,
-        feature: "customXml/itemProps1.xml",
+        // Its identity record, likewise.
+        feature: "docx.customXml.storeIdentity",
         kept_by_an_edited_save: true,
         probe: |edited, source| same_part(edited, source, "customXml/itemProps1.xml"),
     },
