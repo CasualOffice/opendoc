@@ -178,6 +178,12 @@ mod toc;
 // without an engine change.
 mod diff;
 
+// The redline view (ADR-065): a finished comparison painted into a throwaway
+// copy of its newer side, for the version-history and Compare canvases. Its own
+// module because `diff` is at its size limit and this is a separate act — it
+// writes a document, where `diff` only reads two.
+mod compare_view;
+
 // Measurement units (`docs/153`, "Choose measurement units"). Its own module
 // because the preference belongs to the PERSON rather than to a document, so
 // nothing in it hangs off `WasmDocument` and nothing in this file needs to know

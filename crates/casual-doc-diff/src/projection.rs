@@ -91,7 +91,7 @@ impl BlockKey {
     }
 
     /// The path segment a child of this kind contributes.
-    const fn segment(self, index: u32) -> PathSegment {
+    pub(crate) const fn segment(self, index: u32) -> PathSegment {
         match self {
             Self::Row => PathSegment::Row { index },
             Self::Cell => PathSegment::Cell { index },
@@ -853,6 +853,61 @@ pub fn block_at_path<'a>(
         List::Blocks(blocks) => blocks.get(*index as usize),
         List::Rows(_) | List::Cells(_) => None,
     }
+}
+
+/// Where a block would be put back into a document: the block list's owner and
+/// a position in it. See [`insertion_point_at_path`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InsertionPoint {
+    /// The table cell or block content control that owns the list, or `None`
+    /// for the story's own root list.
+    pub container: Option<NodeId>,
+    /// The position in that list, `0..=len`.
+    pub index: u32,
+}
+
+/// Resolves a [`crate::record::DiffChange::place`] — an **insertion point**,
+/// not a block — against a document the caller holds. **O(depth)**.
+///
+/// The same walk as [`block_at_path`] (the producer's own `descend`), with two
+/// differences that are the whole reason it exists: the last index may be one
+/// past the end of its list, because "at the end" is a real place for removed
+/// content to have stood; and what comes back is the list's *owner*, the cell
+/// or content control an insertion is addressed to, rather than a block.
+///
+/// `None` when the path is empty, ends at a row or a cell, leaves the
+/// document's shape, or its last index is past the end of the list.
+#[must_use]
+pub fn insertion_point_at_path(
+    document: &Document,
+    story: &Story,
+    path: &[PathSegment],
+) -> Option<InsertionPoint> {
+    let (last, container) = path.split_last()?;
+    let PathSegment::Block { index } = last else {
+        return None;
+    };
+    let mut list = List::Blocks(story_blocks(document, story)?);
+    let mut owner = None;
+    for segment in container {
+        let at = segment_index(*segment);
+        owner = match list {
+            List::Blocks(blocks) => match blocks.get(at as usize)? {
+                BlockNode::Sdt(sdt) => Some(sdt.id),
+                _ => owner,
+            },
+            List::Cells(cells) => Some(cells.get(at as usize)?.id),
+            List::Rows(_) => owner,
+        };
+        list = descend(list, at)?;
+    }
+    let List::Blocks(blocks) = list else {
+        return None;
+    };
+    (*index as usize <= blocks.len()).then_some(InsertionPoint {
+        container: owner,
+        index: *index,
+    })
 }
 
 /// The sibling index a path segment carries, whichever kind it is. The kind

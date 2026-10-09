@@ -372,34 +372,41 @@ export const EN_STRINGS = Object.freeze({
   "compare.needsDocument": "Open a document to compare another one with",
   "compare.intro": "Pick a document to compare this one with. Nothing is uploaded.",
   "compare.chooseFile": "Choose a document…",
-  // REPLACES `compare.notTrackedChanges`, which said "The differences are listed
-  // here, not written into a document — they cannot be accepted or rejected."
-  // That was true of the change list and is false of ADR-061: the differences are
-  // written into the open document as tracked changes now, and the key's own name
-  // said the opposite. Renamed rather than reworded in place, so a maintainer
-  // reading `notTrackedChanges` cannot be told the opposite of what it carries.
-  //
-  // Said BEFORE a file is picked, because it is the warning that matters: Word and
-  // Google Docs build a merged THIRD document; we mutate the one on screen, which
-  // is ONLYOFFICE's answer (`docs/158` §2.2).
-  "compare.writesTrackedChanges":
-    "The differences are written into this document as tracked changes, which you can then accept or reject.",
-  // The answer, FIRST and as a sentence about the document rather than a number
-  // about the panel. The owner's report on the previous shape was that a count
-  // told them nothing: "i cant even see what is being changed".
-  //
-  // NO COUNT IN IT, deliberately, and measured: the first draft read "{count}
-  // differences are now tracked changes in this document" and rendered "1
-  // differences" on a one-word edit. A sentence needs plural agreement where a
-  // labelled number does not, and the count already has its own line directly
-  // below (`compare.changeCount`) — whose own comment records why that one is not
-  // a plural family. One number, one place, and nineteen catalogues that need one
-  // form each instead of Arabic's six.
+  // REPLACES `compare.writesTrackedChanges` (ADR-065): a comparison is SHOWN on
+  // the page now, read-only, and written into this document only if the reader
+  // keeps it. Said before a file is picked, because it is the reassurance that
+  // matters to someone about to compare their own document.
+  "compare.showsOnPage":
+    "The differences are shown on the page. Your document is not changed unless you keep them as tracked changes.",
+  // The redline on the canvas (ADR-065): its heading, its read-only reason (also
+  // the sentence an attempted edit is refused with), and the three ways on.
+  "compare.changesFrom": "Changes from {older} to {newer}",
+  "compare.thisDocument": "this document",
+  "compare.viewReadOnly": "You are looking at a comparison; close it to change the document",
+  "compare.keep": "Keep as tracked changes",
+  "compare.swap": "Swap order",
+  "compare.closeView": "Close comparison",
+  // The diff canvas's navigator and key (`diff_canvas.mjs`, ADR-065), shared by
+  // version history and Compare. "{index} of {count}" is a position, not a
+  // plural, so every language needs one form.
+  "diffCanvas.position": "{index} of {count}",
+  "diffCanvas.previous": "Previous change",
+  "diffCanvas.next": "Next change",
+  "diffCanvas.moved": "Moved",
+  "diffCanvas.replaced": "Replaced",
+  "diffCanvas.changesBy": "Changes by {name}",
+  // A version captured with no author name recorded: versions live in this
+  // browser, so they are the reader's own — the Settings name field's own
+  // placeholder says the same.
+  "diffCanvas.someone": "You",
+  "diffCanvas.details": "What isn't highlighted",
+  // After "Keep as tracked changes": a sentence about the document, with NO COUNT
+  // in it — "1 differences" is what a count in a sentence rendered, and a
+  // labelled number (`compare.changeCount`) needs one form per language where a
+  // plural needs Arabic's six.
   "compare.marked": "The differences are now tracked changes in this document.",
-  // And how to walk them. Review's own next/previous navigate the revisions the
-  // comparison just wrote, which is the route that cannot land on the wrong
-  // paragraph — unlike a click on a list entry, whose anchor belongs to the
-  // comparison's throwaway re-import (`compare_documents.mjs`, "still blocked").
+  // And how to walk them: review's own next/previous, over the revisions Keep
+  // just wrote.
   "compare.reviewNav":
     "Review ▸ Next and Previous move through them; Accept or Reject decides each one.",
   // The author a comparison's tracked changes are attributed to when the compared
@@ -416,6 +423,9 @@ export const EN_STRINGS = Object.freeze({
     "Whole paragraphs the other document has and this one does not — a tracked change marks text that is here, and there is no paragraph here to mark.",
   "compare.unmarked.trackedMove":
     "The far half of a move: where the content came from is in the other document only.",
+  // A removed paragraph is shown struck where it was (ADR-065), as its text: a
+  // picture's bytes belong to the other document's package.
+  "compare.unmarked.removedObject": "Pictures and other objects in removed paragraphs are not shown.",
   // The body only, and deliberately. A body path maps back to this document by
   // identity because the comparison's right-hand side is its own re-export; a
   // header, footer, note or comment story is paired by position or ordinal and
@@ -455,15 +465,8 @@ export const EN_STRINGS = Object.freeze({
   "compare.cancelled": "Comparison cancelled.",
   "compare.against": "Compared with {name}",
   "compare.identical": "No differences.",
-  // NOT "No differences". A document whose drawings this build has no typed
-  // comparison for can produce zero changes AND a loss report, and claiming the
-  // two files agree about something the engine never looked at is the silent loss
-  // `SKILL` §12 forbids. The finding wins and the sentence narrows.
-  "compare.identicalPartly": "No differences in what could be compared.",
   // What the comparison could NOT compare, aggregated by the engine — one row per
-  // construct with a count, so forty thousand drawings are one line. Shown before
-  // the changes themselves: a reader deciding whether to trust the list needs its
-  // limits first.
+  // construct with a count, so forty thousand drawings are one line.
   "compare.findingsTitle": "Not fully compared:",
   "compare.finding.notCompared":
     "{construct} changed, and this build has no detailed comparison for it ({count})",
@@ -477,93 +480,6 @@ export const EN_STRINGS = Object.freeze({
   // findings sentence records: it reports a labelled number, which reads the same
   // in every language and needs one form per locale instead of Arabic's six.
   "compare.changeCount": "Differences: {count}",
-  // CORRECTED 2026-10-04, English and all eighteen translations. This read "This
-  // comparison did not finish, so the list below is incomplete", on a comment in
-  // `compare_documents.mjs` claiming `complete: false` happens only on a cancelled
-  // job. `record.rs` says the opposite in as many words — `complete` is "False
-  // whenever `findings` is non-empty" — so a perfectly ordinary comparison that
-  // met one construct this build cannot compare in detail was telling the reader
-  // it had broken. Measured on bolding one word in the demo document: four
-  // differences found, and "did not finish" printed above them. A comparison that
-  // finished and skipped something is not a comparison that did not finish, and
-  // the findings list directly below already names what was skipped.
-  "compare.partial":
-    "Some of what differs could not be characterised; the list below says which.",
-  // VERSION HISTORY'S HEADING (ADR-062). Both instants, in the reader's own
-  // locale, because every version of a document shares one file name and the
-  // timestamp is the only thing that tells two of them apart. Older first,
-  // matching the comparison's own orientation: an insertion is what the newer
-  // version added.
-  "compare.betweenVersions": "Changes between {older} and {newer}",
-  // Said before the counts on the version-history route, and only there. The
-  // reader asked a question about the past; this is the promise that asking it
-  // changed nothing. Review ▸ Compare keeps ADR-061 and says the opposite
-  // sentence (`compare.marked`), so these two can never both be on screen.
-  "compare.readOnlyProjection":
-    "Read-only: these differences are not written into your document.",
-  // WORD'S FIVE CATEGORIES, and the one our engine has that Word has no name
-  // for. Microsoft's wording is the sourced spec — the Reviewing Pane shows "the
-  // total number of changes and the number of insertions, deletions, moves,
-  // formatting changes, and comments" — so these are those five, in that order,
-  // plus `properties` for a typed model field that differs. Labelled numbers
-  // rather than plural families, which is this surface's established decision:
-  // one form per language instead of six in Arabic.
-  "compare.summary.title": "What happened:",
-  "compare.summary.insertions": "Insertions: {count}",
-  "compare.summary.deletions": "Deletions: {count}",
-  "compare.summary.moves": "Moves: {count}",
-  "compare.summary.formatting": "Formatting changes: {count}",
-  "compare.summary.properties": "Property changes: {count}",
-  "compare.summary.comments": "Comments: {count}",
-  // THE UNIFIED DIFF — GitHub's shape over blocks. The owner's words: "diff
-  // should be like how GitHub diff appears on a PR — things added or removed, on
-  // that changes, while you can expect to see more."
-  "compare.diff.title": "The differences:",
-  "compare.diff.at": "Paragraph {position}",
-  // A difference the engine found and this surface could not place: it carries no
-  // anchor on either side, so there is no position to show context around. Said
-  // rather than dropped — a difference nobody can see is worse than one nobody
-  // can navigate to.
-  "compare.diff.unplaced": "Elsewhere in the document",
-  "compare.diff.more": "Show more",
-  "compare.diff.moreAbove": "Show more of the document above this change",
-  "compare.diff.moreBelow": "Show more of the document below this change",
-  "compare.diff.noMoreContext": "There is no more of the document to show here",
-  // A block with no projected text — a table, an external content chunk. Named
-  // rather than rendered as a blank line a reader would take for an empty
-  // paragraph.
-  "compare.diff.notText": "(not text)",
-  // `nodeAtStoryPath` returned nothing: the path no longer resolves against the
-  // document on screen, which an edit made since the comparison can do. Said
-  // rather than guessed at — `DiffAnchor.node` would scroll somewhere, and
-  // somewhere wrong is worse than nowhere.
-  "compare.diff.unresolved": "That change is no longer where the comparison found it",
-  // WHAT A ROW IS ABOUT when there is no text and no typed field to name — the
-  // bracketed convention ONLYOFFICE uses, where theirs reads `<Image>`, `<Shape>`,
-  // `<Chart>` or `<Equation>`.
-  //
-  // Ours can only be as specific as the sidecar, and `family_of` in
-  // `casual-doc-diff/src/job.rs` maps a table row or cell to `table` and
-  // EVERYTHING else to `block` — so a deleted image-only paragraph is `<Block>`
-  // here and `<Image>` there. That gap is the engine's, it is reported as the
-  // engine's, and it is not papered over by printing `<Image>` on the grounds that
-  // images are the commonest untexted block: a plausible guess presented as a fact
-  // is what this repository has published by accident twice.
-  //
-  // All twelve families, enumerated rather than defaulted (SKILL §9.3), and
-  // `compare_documents.test.mjs` fails if the engine grows a family with no entry.
-  "compare.object.block": "<Block>",
-  "compare.object.text": "<Text>",
-  "compare.object.formatting": "<Formatting>",
-  "compare.object.style": "<Style>",
-  "compare.object.table": "<Table>",
-  "compare.object.object": "<Object>",
-  "compare.object.section": "<Page setup>",
-  "compare.object.definition": "<Definition>",
-  "compare.object.resource": "<Resource>",
-  "compare.object.comment": "<Comment>",
-  "compare.object.review": "<Tracked change>",
-  "compare.object.metadata": "<Document property>",
   "compare.cannotExport":
     "This document could not be written out, so there is nothing to compare.",
   // The engine's own sentence about this document — an admission limit, a corrupt
@@ -597,15 +513,6 @@ export const EN_STRINGS = Object.freeze({
   "compare.kind.move_from": "Moved from here",
   "compare.kind.move_to": "Moved to here",
   "compare.kind.formatting": "Reformatted",
-  "compare.kind.property": "Property changed",
-  // Where a change is, when it is not in the body. Saying "in the body" on every
-  // row of a body-only comparison would be noise, so the body says nothing.
-  "compare.story.header": "in the header of section {section}",
-  "compare.story.footer": "in the footer of section {section}",
-  "compare.story.footnote": "in footnote {number}",
-  "compare.story.endnote": "in endnote {number}",
-  "compare.story.comment": "in a comment",
-  "compare.story.definitions": "in the document's definitions",
   // ---- Breaks ---------------------------------------------------------------
   //
   // The six NAMES are not here, and that is deliberate. They live beside their
@@ -960,7 +867,9 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.kind.saved": "Saved",
   "versionHistory.kind.named": "Named",
   "versionHistory.kind.auto": "Autosaved",
-  "versionHistory.kind.manual": "Version created",
+  // The version Make a copy takes of the current document before the copy
+  // replaces it. "Version created" said nothing about why it exists.
+  "versionHistory.kind.manual": "Before making a copy",
   "versionHistory.kind.preRestore": "Before a restore",
   "versionHistory.kind.restore": "Restored",
   "versionHistory.kind.recovery": "Recovered",
@@ -988,9 +897,11 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.row.sameAs": "Same content as {name}",
   "versionHistory.row.edits.one": "{count} edit",
   "versionHistory.row.edits.other": "{count} edits",
-  "versionHistory.row.grew": "{size} larger",
-  "versionHistory.row.shrank": "{size} smaller",
   "versionHistory.row.by": "by {name}",
+  // Labelled numbers, not plural families, for the reason `compare.changeCount`
+  // gives: one form per language instead of Arabic's six.
+  "versionHistory.row.wordsAdded": "Words added: {count}",
+  "versionHistory.row.wordsRemoved": "Words removed: {count}",
 
   // Said, not whispered. SKILL §10 forbids a silent no-op, and a capture that
   // found nothing new to keep used to be exactly that: no row appeared and
@@ -1025,8 +936,7 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.emptyNamed": "No named versions. Name a version to find it here later.",
   "versionHistory.needsSelection": "Select a version in the list first",
   "versionHistory.headNotRestorable": "This is the current version — there is nothing to restore",
-  "versionHistory.headNotDeletable":
-    "This is the current version — it is the only one that still describes the document",
+  "versionHistory.headNotDeletable": "This is the current version, so it can't be deleted",
   // CORRECTED 2026-10-01. This read "Comparing one version with another is not
   // built yet", and the comment above it said the structural diff was `docs/140`
   // H3 and not built. The diff was built the whole time — `casual-doc-diff` plus
@@ -1052,13 +962,18 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.kept.one": "{count} version kept",
   "versionHistory.kept.other": "{count} versions kept",
   "versionHistory.footerDetail": "{size} in this browser · {named} of {limit} named",
+  // REWORDED 2026-10-09: "kept for at least {days} days, up to {count}" promised
+  // a minimum the policy does not keep — the count ceiling removes younger
+  // versions too. This says what happens.
   "versionHistory.retention":
-    "Versions are kept for at least {days} days, up to {count} of them. Named versions are kept until you delete them.",
+    "Recent versions are kept for up to {days} days, {count} at most. Named versions are kept until you delete them.",
 
   // Why the entry point is disabled. Five different reasons, because the way out
   // of each is different and a reader can only act on the specific one.
   "versionHistory.disabled.noDocument": "Open a document to see its version history",
-  "versionHistory.disabled.setting": "Version history is off. Turn it on in Settings.",
+  // Settings has no version-history switch (only the host's stored preference
+  // reaches it), so this no longer sends the reader to look for one.
+  "versionHistory.disabled.setting": "Version history is turned off for this editor.",
   "versionHistory.disabled.autosave":
     "Version history follows autosave, which is off. Turn autosave on in Settings.",
   "versionHistory.disabled.embedded":
@@ -1076,9 +991,9 @@ export const EN_STRINGS = Object.freeze({
   // destructive, which is why it is a sentence and not a warning glyph.
   "versionHistory.restore.title": "Restore this version?",
   "versionHistory.restore.message":
-    "“{name}” replaces what is on screen. Nothing is lost: the document you have now is kept as a version of its own first, and every version after this one stays in the timeline.",
+    "Your document is replaced by “{name}”. What you have now is saved as a version first, so you can go back to it.",
   "versionHistory.restore.confirm": "Restore",
-  "versionHistory.restore.cancel": "Keep current",
+  "versionHistory.restore.cancel": "Cancel",
   "versionHistory.restore.note": "The restored document is unsaved until you save it to a file.",
   "versionHistory.restore.cannotKeepCurrent":
     "The document on screen could not be kept as a version ({message}), so it was not replaced.",
@@ -1113,7 +1028,7 @@ export const EN_STRINGS = Object.freeze({
 
   "versionHistory.named": "Named this version “{name}”.",
   "versionHistory.pinned": "This version is now kept until you say otherwise.",
-  "versionHistory.unpinned": "This version can now be released by the retention policy.",
+  "versionHistory.unpinned": "This version may now be removed automatically, like any recent version.",
   "versionHistory.deleted": "Deleted that version.",
 
   "versionHistory.delete.title": "Delete this version?",

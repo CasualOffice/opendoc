@@ -59,10 +59,9 @@ async function exportCostFor(page, lines) {
   await page.locator("#railCompare").click();
   await expect(page.locator("#comparePanel")).toBeVisible();
   // The other side differs by three paragraphs, so the comparison has a real
-  // answer to produce: "No differences" renders no total and the wait below
-  // would then be waiting for something that never arrives.
+  // answer to produce and the redline below is not an empty one.
   await page.locator("#compareFile").setInputFiles(textFile("other.txt", lines - 3));
-  await expect(page.locator("#compareBody [data-compare-total]")).toBeVisible({
+  await expect(page.locator("#compareBody [data-compare-view]")).toBeVisible({
     timeout: 300_000,
   });
 
@@ -156,14 +155,14 @@ test("the reader is given progress and a Cancel BEFORE the export blocks", async
       window.__states.push({
         cancel: Boolean(body.querySelector('[data-compare-action="cancel"]')),
         progress: Boolean(body.querySelector("[data-compare-progress]")),
-        total: Boolean(body.querySelector("[data-compare-total]")),
+        total: Boolean(body.querySelector("[data-compare-view]")),
       });
     record();
     window.__stateObserver = new MutationObserver(record);
     window.__stateObserver.observe(body, { childList: true, subtree: true });
   });
   await page.locator("#compareFile").setInputFiles(textFile("states-other.txt", 9_997));
-  await expect(page.locator("#compareBody [data-compare-total]")).toBeVisible({
+  await expect(page.locator("#compareBody [data-compare-view]")).toBeVisible({
     timeout: 300_000,
   });
   const states = await page.evaluate(() => {

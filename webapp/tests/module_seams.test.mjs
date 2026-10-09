@@ -440,8 +440,18 @@ const SRC = new URL("../src/", import.meta.url);
  *
  *  Lowered to 16,044 by FID-FW-01: the Save line and the draft snapshot now
  *  take the chip's count from `compat_findings.mjs`, so `format_io.mjs`'s raw
- *  occurrence count left `main.js`'s import list. MEASURED with `wc -l`. */
-const MAIN_JS_LINE_CEILING = 16044;
+ *  occurrence count left `main.js`'s import list. MEASURED with `wc -l`.
+ *
+ *  16,047 -> 16,044 (ADR-065, the diff canvas): the redline seams — a preview
+ *  that carries its markup, the step-to-a-change navigation, Compare's view and
+ *  the version panel's redline — cost eleven lines, and were paid for by
+ *  folding the comparison panel's comment block and two of the preview swap's
+ *  comments, so the file shrank while it gained a feature.
+ *
+ *  16,042 on the merge of the two: each branch measured 16,044 against its
+ *  own base, and the two reductions do not overlap. MEASURED with `wc -l` on
+ *  the merged tree. */
+const MAIN_JS_LINE_CEILING = 16042;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

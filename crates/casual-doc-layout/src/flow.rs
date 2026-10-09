@@ -35,6 +35,8 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// Separate `use` line (anti-conflict): a move's double underline in the markup view.
+use casual_doc_model::v1::UnderlineStyle;
 // Separate `use` line (anti-conflict): the note's in-body auto-number mark.
 use casual_doc_model::v1::NoteNumberMark;
 // Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
@@ -172,18 +174,25 @@ fn review_author_color(author: Option<&str>) -> [u8; 4] {
 }
 
 /// Stamps the author color and the kind's decoration onto the runs just emitted
-/// for a revision in the read-only markup view: underline for an insertion or
-/// move-to, strikethrough for a deletion or move-from (docs/93).
+/// for a revision in the read-only markup view (docs/93): underline for an
+/// insertion, strikethrough for a deletion, and the DOUBLE form of each for a
+/// move — double underline where text moved to, double strikethrough where it
+/// moved from. That is Word's own default for moves, and it is the only cue a
+/// reader has that struck text is not gone but elsewhere (ADR-065); colour
+/// cannot carry it, because colour is the author's.
 fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author: Option<&str>) {
     let color = review_author_color(author);
-    let struck = matches!(kind, RevisionKind::Deletion | RevisionKind::MoveFrom);
     for item in items {
         if let FlowItem::Run(run) = item {
             run.color = color;
-            if struck {
-                run.decoration.strikethrough = true;
-            } else {
-                run.decoration.underline = true;
+            match kind {
+                RevisionKind::Deletion => run.decoration.strikethrough = true,
+                RevisionKind::MoveFrom => run.decoration.double_strike = true,
+                RevisionKind::Insertion => run.decoration.underline = true,
+                RevisionKind::MoveTo => {
+                    run.decoration.underline = true;
+                    run.decoration.underline_style = UnderlineStyle::Double;
+                }
             }
         }
     }
@@ -11039,6 +11048,57 @@ mod tests {
             "a deletion is struck, not underlined"
         );
         assert_eq!(del.color, ins.color, "the same author gets the same color");
+    }
+
+    /// A move is drawn with the DOUBLE form of insert/delete (ADR-065): a
+    /// reader must be able to tell "struck because it is gone" from "struck
+    /// because it is somewhere else", and colour is already the author's.
+    #[test]
+    fn markup_view_draws_moves_with_double_lines() {
+        use casual_doc_model::v1::Revision;
+
+        let rev = |id: u64, run: u64, kind: RevisionKind, text: &str| {
+            InlineNode::Revision(Box::new(Revision {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                kind,
+                author: Some("Ann".to_owned()),
+                date: None,
+                revision_id: None,
+                editor_group: None,
+                inlines: vec![run_node(run, text, RunProperties::default())],
+            }))
+        };
+        let inlines = vec![
+            rev(20, 5, RevisionKind::MoveFrom, "from"),
+            rev(21, 6, RevisionKind::MoveTo, "to"),
+            rev(22, 7, RevisionKind::Deletion, "del"),
+        ];
+        let definitions = Definitions::default();
+        let items = collected_items_view(&definitions, &inlines, ReviewView::Markup);
+        let run = |text: &str| {
+            items
+                .iter()
+                .find_map(|item| match item {
+                    FlowItem::Run(run) if run.text == text => Some(run),
+                    _ => None,
+                })
+                .expect("run present")
+        };
+        let from = run("from");
+        assert!(
+            from.decoration.double_strike && !from.decoration.strikethrough,
+            "a move origin is double-struck, not single-struck like a deletion"
+        );
+        let to = run("to");
+        assert!(
+            to.decoration.underline && to.decoration.underline_style == UnderlineStyle::Double,
+            "a move destination is double-underlined"
+        );
+        let del = run("del");
+        assert!(
+            del.decoration.strikethrough && !del.decoration.double_strike,
+            "a deletion keeps its single strike"
+        );
     }
 
     #[test]
