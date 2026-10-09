@@ -201,6 +201,8 @@ The test `webapp/tests/rival_plan.test.mjs` fails if any of the following holds:
 
 ### 2. P1 correctness sweep (HF-225, HF-270, HF-164, HF-178)
 
+**State:** done. Re-measuring first found HF-225 and HF-164 already fixed by #754; HF-270 and HF-178 were built.
+
 **Where:** casual-doc-edit, casual-doc-import, webapp.
 
 **Moves:** none.

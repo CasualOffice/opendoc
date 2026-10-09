@@ -2124,7 +2124,7 @@
   "viewingBanner.switchEditing": "Zum Bearbeiten wechseln",
   "viewingBanner.viewingDocumentReadOnly": "Ansicht – das Dokument ist schreibgeschützt.",
   "viewport.commentsSuggestions.label": "Kommentare und Vorschläge",
-  "viewport.documentContentReadOnly.label": "Dokumentinhalt (schreibgeschützt für Hilfstechnologien)",
+  "viewport.documentContent.label": "Dokumentinhalt für Hilfstechnologien (Formular-Kontrollkästchen können hier angekreuzt werden)",
   "viewport.documentEditingSurface.label": "Bearbeitungsfläche des Dokuments",
   "viewport.documentTextInput.label": "Texteingabe für das Dokument",
   "watermark.fontDefault": "Standard des Dokuments",

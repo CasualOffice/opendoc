@@ -2140,7 +2140,7 @@
   "viewingBanner.switchEditing": "Перейти к редактированию",
   "viewingBanner.viewingDocumentReadOnly": "Просмотр — документ только для чтения.",
   "viewport.commentsSuggestions.label": "Примечания и предложения",
-  "viewport.documentContentReadOnly.label": "Содержимое документа (только для чтения для вспомогательных технологий)",
+  "viewport.documentContent.label": "Содержимое документа для вспомогательных технологий (здесь можно отмечать флажки формы)",
   "viewport.documentEditingSurface.label": "Область правки документа",
   "viewport.documentTextInput.label": "Ввод текста документа",
   "watermark.fontDefault": "Шрифт документа по умолчанию",

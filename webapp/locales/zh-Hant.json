@@ -2116,7 +2116,7 @@
   "viewingBanner.switchEditing": "切換至編輯",
   "viewingBanner.viewingDocumentReadOnly": "檢視模式 — 文件為唯讀。",
   "viewport.commentsSuggestions.label": "註解與建議",
-  "viewport.documentContentReadOnly.label": "文件內容（對輔助技術為唯讀）",
+  "viewport.documentContent.label": "供輔助技術使用的文件內容（可在此勾選表單核取方塊）",
   "viewport.documentEditingSurface.label": "文件編輯區",
   "viewport.documentTextInput.label": "文件文字輸入",
   "watermark.fontDefault": "文件預設字型",

@@ -2124,7 +2124,7 @@
   "viewingBanner.switchEditing": "संपादन पर स्विच करें",
   "viewingBanner.viewingDocumentReadOnly": "देखना — दस्तावेज़ केवल पढ़ने के लिए है।",
   "viewport.commentsSuggestions.label": "टिप्पणियाँ और सुझाव",
-  "viewport.documentContentReadOnly.label": "दस्तावेज़ सामग्री (सहायक तकनीक के लिए केवल पढ़ने योग्य)",
+  "viewport.documentContent.label": "सहायक तकनीक के लिए दस्तावेज़ की सामग्री (फ़ॉर्म के चेक बॉक्स यहाँ चुने जा सकते हैं)",
   "viewport.documentEditingSurface.label": "दस्तावेज़ संपादन सतह",
   "viewport.documentTextInput.label": "दस्तावेज़ टेक्स्ट इनपुट",
   "watermark.fontDefault": "दस्तावेज़ का डिफ़ॉल्ट",

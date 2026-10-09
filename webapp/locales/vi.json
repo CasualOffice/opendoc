@@ -2116,7 +2116,7 @@
   "viewingBanner.switchEditing": "Chuyển sang biên tập",
   "viewingBanner.viewingDocumentReadOnly": "Chế độ xem — tài liệu chỉ đọc.",
   "viewport.commentsSuggestions.label": "Nhận xét và đề xuất",
-  "viewport.documentContentReadOnly.label": "Nội dung tài liệu (chỉ đọc đối với công nghệ trợ giúp)",
+  "viewport.documentContent.label": "Nội dung tài liệu cho công nghệ hỗ trợ (có thể đánh dấu các hộp kiểm của biểu mẫu tại đây)",
   "viewport.documentEditingSurface.label": "Vùng biên tập tài liệu",
   "viewport.documentTextInput.label": "Nhập văn bản tài liệu",
   "watermark.fontDefault": "Mặc định của tài liệu",

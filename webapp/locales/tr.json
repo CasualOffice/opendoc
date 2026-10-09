@@ -2124,7 +2124,7 @@
   "viewingBanner.switchEditing": "Düzenlemeye geç",
   "viewingBanner.viewingDocumentReadOnly": "Görüntüleme — belge salt okunur.",
   "viewport.commentsSuggestions.label": "Açıklamalar ve öneriler",
-  "viewport.documentContentReadOnly.label": "Belge içeriği (yardımcı teknolojiler için salt okunur)",
+  "viewport.documentContent.label": "Yardımcı teknolojiler için belge içeriği (form onay kutuları burada işaretlenebilir)",
   "viewport.documentEditingSurface.label": "Belge düzenleme alanı",
   "viewport.documentTextInput.label": "Belge metin girişi",
   "watermark.fontDefault": "Belge varsayılanı",

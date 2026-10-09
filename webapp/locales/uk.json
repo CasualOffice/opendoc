@@ -2140,7 +2140,7 @@
   "viewingBanner.switchEditing": "Перейти до редагування",
   "viewingBanner.viewingDocumentReadOnly": "Перегляд — документ лише для читання.",
   "viewport.commentsSuggestions.label": "Примітки та пропозиції",
-  "viewport.documentContentReadOnly.label": "Вміст документа (лише для читання для допоміжних технологій)",
+  "viewport.documentContent.label": "Вміст документа для допоміжних технологій (тут можна позначати прапорці форми)",
   "viewport.documentEditingSurface.label": "Область редагування документа",
   "viewport.documentTextInput.label": "Введення тексту документа",
   "watermark.fontDefault": "Типовий шрифт документа",

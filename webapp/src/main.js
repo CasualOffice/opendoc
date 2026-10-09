@@ -10799,10 +10799,10 @@ createTableGridPicker({
 });
 
 /** Rebuilds the off-screen accessibility mirror for the caret's part of the
- *  document. The projection itself lives in `a11y_mirror.mjs`; what stays here
- *  is the two pieces of editor state it needs. */
+ *  document. The projection lives in `a11y_mirror.mjs`; what stays here is the
+ *  editor state it needs and the gated toggle a mirror checkbox runs (HF-178). */
 function buildAccessibilityTree() {
-  renderAccessibilityMirror(doc, selection?.focus?.node ?? "", tableRange.gridRect());
+  renderAccessibilityMirror(doc, selection?.focus?.node ?? "", tableRange.gridRect(), (control) => runEdit(() => doc.toggleFormCheckbox(control)));
 }
 
 // ---- Outline panel (heading tree → scroll-to) -------------------------------

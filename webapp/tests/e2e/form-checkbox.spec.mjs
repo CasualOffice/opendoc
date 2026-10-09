@@ -214,3 +214,58 @@ test("the announced state follows the document when the box is ticked", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+/** The accessible name of whatever holds focus, so a test can say WHICH
+ *  control a reader is on after the mirror rebuilds under them. */
+const focusedName = (page) =>
+  page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? "");
+
+test("a screen reader ticks a box from the mirror and keeps its place", async ({
+  page,
+  consoleErrors,
+}) => {
+  // `109` HF-178. The mirror announced the box and its state, and a reader
+  // still had to find the canvas to tick it. A screen reader in browse mode
+  // activates a control with a click event, and Space ticks a focused
+  // checkbox (the ARIA pattern). Both run the same gated command a click on
+  // the page runs. The edit rebuilds the mirror and replaces the element, so
+  // the assertion that matters is that focus comes back to THIS control.
+  await openForm(page);
+  const control = page
+    .locator("#a11yDocument [role=checkbox][aria-label='Medication error']")
+    .first();
+  await expect(control).toHaveAttribute("aria-checked", "false");
+  // Focusable for the restore, but not a Tab stop: the mirror is off-screen.
+  await expect(control).toHaveAttribute("tabindex", "-1");
+
+  await control.dispatchEvent("click");
+  await expect(control).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => focusedName(page)).toBe("Medication error");
+
+  await page.keyboard.press("Space");
+  await expect(control).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => focusedName(page)).toBe("Medication error");
+
+  // Each tick is one undo step, as on the canvas.
+  await page.locator("#undoBtn").click();
+  await expect(control).toHaveAttribute("aria-checked", "true");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the mirror cannot tick a box in Viewing mode either", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openForm(page);
+  const before = await boxes(page);
+  await setReviewMode(page, "viewing");
+  await expect(page.locator("#viewingBanner")).toBeVisible();
+
+  await page.locator("#a11yDocument [role=checkbox]").first().dispatchEvent("click");
+
+  await expect(page.locator("#status")).toContainText("read-only");
+  expect(await boxes(page)).toEqual(before);
+
+  expect(consoleErrors).toEqual([]);
+});

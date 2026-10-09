@@ -29,6 +29,10 @@ const A11Y_WINDOW_BLOCKS = 600;
  *  caret to anchor it to (a freshly opened document). */
 let a11yWindowStart = 0;
 
+/** The control a reader just ticked from the mirror, by node id, until the
+ *  rebuild its own edit triggers puts focus back on it. */
+let pendingCheckboxFocus = "";
+
 /** What a form checkbox is announced as when the DOCUMENT gives it no name.
  *
  *  An operable control with no accessible name is a WCAG 4.1.2 failure, so the
@@ -49,18 +53,41 @@ const UNNAMED_CHECKBOX = "Check box";
  * `"false"` the specification requires, and it is re-derived from the model on
  * every rebuild, so ticking the box on the canvas moves what is announced.
  *
- * It is deliberately NOT focusable and carries no click handler: this mirror
- * is a read-only projection (the container says so in its own label) and the
- * control is operated in the document, by click or Space, since #578. Making
- * the mirror operable is a separate piece of work — `109` HF-178 — because it
- * needs focus to survive the rebuild that the edit itself triggers.
+ * With `onToggle`, the control is operable here, as it is on the canvas
+ * (`109` HF-178). A screen reader in browse mode activates it with a click,
+ * and once it has focus Space ticks it, which is the ARIA checkbox pattern.
+ * Both run `onToggle(node)`, which is the same gated engine command a click
+ * on the page runs, so Viewing refuses it and Suggesting tracks it. This is
+ * not a hidden DOM editor (`docs/67`): nothing here changes text, and the
+ * document changes only through the engine.
+ *
+ * `tabindex="-1"` makes the control focusable without adding a Tab stop: the
+ * mirror is off-screen, and a sighted keyboard user must not tab into a
+ * control they cannot see. The edit rebuilds the mirror and replaces this
+ * element, so the node id is remembered and the rebuild puts focus back on
+ * the new element. The reader keeps their place, and hears the new state.
  */
-function appendCheckbox(parent, node) {
+function appendCheckbox(parent, node, onToggle) {
   const box = document.createElement("span");
   box.setAttribute("role", "checkbox");
   box.setAttribute("aria-checked", node.checked === true ? "true" : "false");
   const name = typeof node.name === "string" ? node.name.trim() : "";
   box.setAttribute("aria-label", name || UNNAMED_CHECKBOX);
+  const control = typeof node.node === "string" ? node.node : "";
+  if (typeof onToggle === "function" && control !== "") {
+    box.dataset.node = control;
+    box.tabIndex = -1;
+    const activate = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pendingCheckboxFocus = control;
+      onToggle(control);
+    };
+    box.addEventListener("click", activate);
+    box.addEventListener("keydown", (event) => {
+      if (event.key === " ") activate(event);
+    });
+  }
   parent.appendChild(box);
 }
 
@@ -96,9 +123,16 @@ function appendCheckbox(parent, node) {
  * which is the point — an unfiltered mirror makes the fold a lie to the one
  * reader who cannot check it.
  */
-export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) {
+export function renderAccessibilityMirror(doc, focusNode, cellSelection = null, onToggleCheckbox = null) {
   const a11yDocument = document.getElementById("a11yDocument");
   if (!a11yDocument) return;
+  // The control that should hold focus once this rebuild is done: the one a
+  // reader just ticked here, or the one focus is already on.
+  const active = document.activeElement;
+  const refocus =
+    pendingCheckboxFocus ||
+    (active instanceof HTMLElement && a11yDocument.contains(active) ? (active.dataset.node ?? "") : "");
+  pendingCheckboxFocus = "";
   if (!doc) {
     a11yDocument.replaceChildren();
     return;
@@ -212,7 +246,7 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) 
       // way a figure does, because the paragraph is usually its visible label
       // and the engine has already used that text to name it.
       const wrap = document.createElement("p");
-      appendCheckbox(wrap, node);
+      appendCheckbox(wrap, node, onToggleCheckbox);
       frag.appendChild(wrap);
     } else if (node.kind === "table") {
       const table = document.createElement("table");
@@ -268,7 +302,7 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) 
           // its state or its name. Older payloads sent a bare string.
           el.textContent = String((typeof cell === "string" ? cell : cell?.text) ?? "");
           for (const box of Array.isArray(cell?.checkboxes) ? cell.checkboxes : []) {
-            appendCheckbox(el, box);
+            appendCheckbox(el, box, onToggleCheckbox);
           }
           tr.appendChild(el);
         }
@@ -295,4 +329,10 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) 
     frag.insertBefore(note, frag.firstChild);
   }
   a11yDocument.replaceChildren(frag);
+  if (refocus) {
+    const again = [...a11yDocument.querySelectorAll("[role=checkbox][data-node]")].find(
+      (box) => box.dataset.node === refocus,
+    );
+    again?.focus();
+  }
 }

@@ -243,13 +243,17 @@ where the localisation seam will be (`109` HF-081).
   A structural mirror can be browsed with a screen reader's own navigation; a
   `aria-live` region can only be heard as it happens. Adopting theirs would be
   a downgrade, and their vocabulary has no form control in it anyway.
-- **Making the mirror's checkbox operable.** It is a read-only projection —
-  `docs/67`'s Open Risks say "accessibility bridges cannot become hidden DOM
-  editors", and the container's own label says read-only. Operating it also
-  needs focus to survive the rebuild the edit itself triggers, which is real
-  work rather than an attribute. Filed as **HF-178**; today the control is
-  operated in the document by click or Space (#578), which is the same gesture
-  Word and ONLYOFFICE use.
+- **Making the mirror's checkbox operable** was not adopted here, and was
+  filed as **HF-178**. It has since shipped (`docs/168` batch 2):
+  - A click (how a screen reader in browse mode activates a control) or Space
+    on the focused control runs the same gated `toggleFormCheckbox` a click on
+    the page runs.
+  - That is not a hidden DOM editor in `docs/67`'s sense. Nothing in the
+    mirror changes text, and the document changes only through the engine.
+  - The control is `tabindex="-1"`: focusable, so focus can come back to it
+    after the rebuild its own edit triggers, but not a Tab stop, because the
+    mirror is off-screen.
+  - The container's label no longer says read-only.
 - **`aria-disabled` on the mirror's checkbox.** It would be a lie: the control
   is not disabled, it is operated somewhere else.
 - **Mapping Wingdings code points to their Unicode equivalents** (`U+F0A3` →
@@ -291,7 +295,8 @@ Browser (`webapp/tests/e2e/`):
 
 ## 7. Still open
 
-- **HF-178** — the mirror announces a form checkbox but cannot activate one.
+- ~~**HF-178** — the mirror announces a form checkbox but cannot activate one.~~
+  Fixed: see §5 *Not adopted*, which records how it shipped.
 - Table cells project text and checkboxes only: a **picture** inside a cell
   still does not reach the mirror, although one in a body paragraph does.
 - Legacy `w:fldChar`/`w:ffData` FORMCHECKBOX and FORMTEXT fields are a

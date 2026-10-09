@@ -2132,7 +2132,7 @@
   "viewingBanner.switchEditing": "Mudar para edição",
   "viewingBanner.viewingDocumentReadOnly": "Visualização — o documento é somente leitura.",
   "viewport.commentsSuggestions.label": "Comentários e sugestões",
-  "viewport.documentContentReadOnly.label": "Conteúdo do documento (somente leitura para tecnologia assistiva)",
+  "viewport.documentContent.label": "Conteúdo do documento para tecnologias assistivas (as caixas de seleção do formulário podem ser marcadas aqui)",
   "viewport.documentEditingSurface.label": "Área de edição do documento",
   "viewport.documentTextInput.label": "Entrada de texto do documento",
   "watermark.fontDefault": "Padrão do documento",
