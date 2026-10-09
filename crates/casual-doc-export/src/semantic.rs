@@ -4394,6 +4394,14 @@ fn write_level(
 ) -> Result<(), ExportError> {
     let mut lvl = start("w:lvl");
     lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
+    // `w:tplc` and `w:tentative` (`109` FID-AT-16): the List Library key, and
+    // whether Word made the level as a placeholder it may discard.
+    if let Some(code) = &level.template_code {
+        lvl.push_attribute(("w:tplc", code.as_str()));
+    }
+    if level.tentative {
+        lvl.push_attribute(("w:tentative", "1"));
+    }
     w.write_event(Event::Start(lvl)).map_err(pkg)?;
     let mut s = start("w:start");
     s.push_attribute(("w:val", level.start.to_string().as_str()));

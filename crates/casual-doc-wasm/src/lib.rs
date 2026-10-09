@@ -28773,6 +28773,8 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         style_ref: None,
         lvl_restart: None,
         pstyle: None,
+        template_code: None,
+        tentative: false,
     }
 }
 

@@ -5249,6 +5249,58 @@ mod semantic_tests {
         r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15">"#,
     );
 
+    /// A list level keeps its List Library key (`w:tplc`) and Word's placeholder
+    /// flag (`w:tentative`) through a save (`109` FID-AT-16). The owner's loan
+    /// agreement carried 54 and 48 of them; every edited save dropped them, so
+    /// the list lost its gallery association and a placeholder level became
+    /// permanent.
+    ///
+    /// MUTATION: `write_level` leaving out `w:tplc` fails with
+    /// `w:tplc="04090001" is written back`.
+    #[test]
+    fn a_level_keeps_its_template_code_and_tentative_flag_through_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>item</w:t></w:r></w:p></w:body></w:document>"#;
+        let numbering = br#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0" w:tplc="04090001"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl><w:lvl w:ilvl="1" w:tplc="04090019" w:tentative="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/document.xml", document),
+            ("word/numbering.xml", numbering),
+        ]);
+        let document = reopen(&source);
+        let bytes = write_document(&document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/numbering.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        for attribute in [
+            r#"w:tplc="04090001""#,
+            r#"w:tplc="04090019" w:tentative="1""#,
+        ] {
+            assert!(
+                written.contains(attribute),
+                "{attribute} is written back: {written}"
+            );
+        }
+        assert_eq!(
+            written.matches("w:tentative").count(),
+            1,
+            "only the placeholder level says so: {written}"
+        );
+        assert_eq!(
+            reopen(&bytes).definitions().abstract_numbering,
+            document.definitions().abstract_numbering,
+            "the levels reopen exactly"
+        );
+    }
+
     /// The rest of what Word writes into `settings.xml` that the owner's documents
     /// carried (`109` FID-AT-15): the drawing grid, a legacy `w:compat` switch
     /// (`w:ulTrailSpace`), `w:hdrShapeDefaults`, `w:attachedTemplate` (through

@@ -10071,6 +10071,8 @@ fn build_document(
                         style_ref: None,
                         pstyle: None,
                         lvl_restart: None,
+                        template_code: None,
+                        tentative: false,
                     })
                     .collect(),
                 multi_level_type: None,

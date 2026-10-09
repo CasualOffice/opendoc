@@ -309,6 +309,8 @@ fn multilevel_list() -> Document {
             style_ref: None,
             lvl_restart: None,
             pstyle: None,
+            template_code: None,
+            tentative: false,
         }
     };
     let mut definitions = Definitions::default();
@@ -397,6 +399,8 @@ fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
                 style_ref: None,
                 lvl_restart: None,
                 pstyle: None,
+                template_code: None,
+                tentative: false,
             }],
             multi_level_type: None,
             num_style_link: None,

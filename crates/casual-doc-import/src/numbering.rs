@@ -27,6 +27,8 @@ use quick_xml::events::{BytesStart, Event};
 use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{apply_paragraph_property, apply_run_property, attribute_value};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::properties::is_true;
 // Separate `use` lines to minimize import-block merge conflicts.
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
@@ -138,6 +140,10 @@ struct RawLevel {
     /// Raw `w:lvl/w:pStyle@val` (a style id token); resolved to a `StyleId`
     /// against the parsed styles in the assembly pass.
     pstyle: Option<String>,
+    /// `w:tplc`, when it is one to eight hexadecimal digits.
+    template_code: Option<String>,
+    /// `w:tentative`.
+    tentative: bool,
     paragraph: ParagraphProperties,
     has_paragraph: bool,
     run: RunProperties,
@@ -330,6 +336,8 @@ fn build_level(level: RawLevel, styles: &Styles, reporter: &mut Reporter) -> Num
         style_ref: None,
         lvl_restart: level.lvl_restart,
         pstyle: resolve_style_link(styles, level.pstyle.as_deref(), reporter, b"pStyle"),
+        template_code: level.template_code,
+        tentative: level.tentative,
     }
 }
 
@@ -503,6 +511,10 @@ fn on_start(
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(state.current_override_ilvl.unwrap_or(0)),
                 start: 1,
+                template_code: attribute_value(element, b"tplc")
+                    .filter(|code| NumberingLevel::is_valid_template_code(code)),
+                tentative: attribute_value(element, b"tentative")
+                    .is_some_and(|value| is_true(Some(&value))),
                 ..RawLevel::default()
             });
         }
@@ -667,13 +679,11 @@ fn on_start(
 ///
 /// What is reported, and why each is a real loss:
 ///
-/// - **`w:lvl@w:tplc`** — the level's list-template code. Word writes one on
-///   nearly every authored level; 18 of them in one document of the owner's
-///   sample set, 54 in another. It keys the level back to the entry in the user's
-///   List Library, so a save drops the gallery association.
-/// - **`w:lvl@w:tentative`** — this level was created as a placeholder and Word
-///   may discard it if it is never used. Dropping it makes a tentative level
-///   permanent on reopen, which is a behaviour difference, not bookkeeping.
+/// - **`w:lvl@w:tplc`**, only when it is not one to eight hex digits. The
+///   level's list-template code keys it back to the reader's List Library; Word
+///   writes one on nearly every authored level (54 in the owner's loan
+///   agreement), and it was reported and dropped until `109` FID-AT-16 modeled
+///   it with `w:lvl@w:tentative` (a placeholder level Word may discard).
 /// - **`w:numFmt@w:format`** — the custom number-format picture used when
 ///   `w:val="custom"`. The typed model carries only the token, so the picture
 ///   that decides what the marker actually reads is lost.
@@ -696,15 +706,19 @@ fn on_start(
 /// Complexity: O(A) in the attributes of the one element being opened (three
 /// name comparisons each), so O(1) per element and linear in the part overall.
 fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
-    const UNMODELED: &[(&[u8], &[u8])] = &[
-        (b"lvl", b"tplc"),
-        (b"lvl", b"tentative"),
-        (b"numFmt", b"format"),
-    ];
+    const UNMODELED: &[(&[u8], &[u8])] = &[(b"numFmt", b"format")];
     for (element_name, attribute) in UNMODELED {
         if *element_name == local && attribute_value(element, attribute).is_some() {
             reporter.report_attribute(local, attribute);
         }
+    }
+    // `w:tplc` and `w:tentative` are modeled since `109` FID-AT-16; a template
+    // code that is not one to eight hex digits is the one thing still lost.
+    if local == b"lvl"
+        && attribute_value(element, b"tplc")
+            .is_some_and(|code| !NumberingLevel::is_valid_template_code(&code))
+    {
+        reporter.report_attribute(local, b"tplc");
     }
 }
 

@@ -924,6 +924,8 @@ mod tests {
             style_ref: None,
             lvl_restart: None,
             pstyle: None,
+            template_code: None,
+            tentative: false,
         }
     }
 

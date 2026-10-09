@@ -2346,12 +2346,20 @@ fn level_attributes_the_model_cannot_carry_are_reported_not_dropped() {
     // `docs/142` LST-31. `numbering.rs` never called `report_attribute`, so the
     // element-only catch-all could not see an attribute on an element the parser
     // handles: `w:tplc`, `w:tentative` and the custom `w:numFmt@w:format` picture
-    // went out with no finding at all, against the no-silent-loss rule.
+    // went out with no finding at all, against the no-silent-loss rule. Since
+    // `109` FID-AT-16 the first two are MODELED (the export half is
+    // `a_level_keeps_its_template_code_and_tentative_flag_through_a_save`), so
+    // only the picture — and a template code that is not hex — is a loss.
+    //
+    // MUTATION: `build_level` dropping `template_code` fails with "the level's
+    // List Library key is modeled".
     let numbering = br#"<w:numbering xmlns:w="urn:w">
         <w:abstractNum w:abstractNumId="0">
             <w:lvl w:ilvl="0" w:tplc="04090001" w:tentative="1">
                 <w:start w:val="1"/><w:numFmt w:val="custom" w:format="001, 002, 003, ..."/>
-                <w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+                <w:lvlText w:val="%1."/></w:lvl>
+            <w:lvl w:ilvl="1" w:tplc="not hex">
+                <w:start w:val="1"/><w:lvlText w:val="%2."/></w:lvl></w:abstractNum>
         <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
     </w:numbering>"#;
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
@@ -2360,16 +2368,43 @@ fn level_attributes_the_model_cannot_carry_are_reported_not_dropped() {
     </w:body></w:document>"#;
     let import = import_with_numbering(document, numbering);
 
-    for feature in ["lvl/@tplc", "lvl/@tentative", "numFmt/@format"] {
+    let reference = paragraph(&import, 0)
+        .properties
+        .numbering
+        .expect("the paragraph is numbered");
+    let level = import
+        .document
+        .definitions()
+        .numbering_resolver()
+        .level(reference)
+        .expect("the level resolves");
+    assert_eq!(
+        level.template_code.as_deref(),
+        Some("04090001"),
+        "the level's List Library key is modeled"
+    );
+    assert!(level.tentative, "the placeholder flag is modeled");
+
+    for feature in ["numFmt/@format", "lvl/@tplc"] {
         assert!(
             features(&import).contains(&feature),
-            "{feature} is not modeled and must be reported; got {:?}",
+            "{feature} is not carried here and must be reported; got {:?}",
             features(&import)
         );
     }
+    assert_eq!(
+        import
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "lvl/@tplc")
+            .map(|entry| entry.occurrences),
+        Some(1),
+        "only the code that is not hex is a loss"
+    );
+    assert!(!features(&import).contains(&"lvl/@tentative"));
     // And the level itself is still modeled: reporting an attribute must not
     // become a claim that the element was lost.
-    assert!(paragraph(&import, 0).properties.numbering.is_some());
     for feature in ["lvl", "numPr", "start", "lvlText"] {
         assert!(
             !features(&import).contains(&feature),

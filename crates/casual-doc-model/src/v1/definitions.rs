@@ -293,6 +293,25 @@ pub struct NumberingLevel {
     /// placeholder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pstyle: Option<StyleId>,
+    /// The level's list-template code (`w:lvl/@w:tplc`, `ST_LongHexNumber`):
+    /// the key Word uses to tie the level back to an entry in the reader's List
+    /// Library. One to eight hexadecimal digits, kept as written. Additive
+    /// (`109` FID-AT-16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_code: Option<String>,
+    /// `w:lvl/@w:tentative`: Word created this level as a placeholder and may
+    /// discard it if it is never used. Dropping it made a tentative level
+    /// permanent on reopen. Additive (`109` FID-AT-16).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub tentative: bool,
+}
+
+impl NumberingLevel {
+    /// Whether `code` is a storable `w:tplc`: one to eight hexadecimal digits.
+    #[must_use]
+    pub fn is_valid_template_code(code: &str) -> bool {
+        (1..=8).contains(&code.len()) && code.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
 }
 
 /// An abstract numbering definition (its id is the map key).
