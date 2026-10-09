@@ -676,6 +676,97 @@ pub fn export_package(
     retained_parts: &RetainedParts,
     kind: PackageKind,
 ) -> Result<DocxExport, ExportError> {
+    export_package_with_options(
+        document,
+        media,
+        retained_parts,
+        kind,
+        ExportOptions::default(),
+    )
+}
+
+/// What a caller knows about the document that the model does not say.
+///
+/// `#[non_exhaustive]` with builder methods, so a field added here later is not
+/// a breaking change to every caller (`SKILL` §6a.5).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct ExportOptions {
+    /// The `docProps/app.xml` statistics the SOURCE carried, given when the
+    /// content has been edited since, so that they no longer describe it
+    /// (`109` FID-AT-04). `None` when the content is unchanged or unknown.
+    pub stale_statistics: Option<DocumentStatistics>,
+}
+
+impl ExportOptions {
+    /// These options, stating that the content was edited since `source` —
+    /// the statistics as they were read — was written.
+    #[must_use]
+    pub const fn statistics_stale_since(mut self, source: DocumentStatistics) -> Self {
+        self.stale_statistics = Some(source);
+        self
+    }
+}
+
+/// The six statistics Word derives from a document's content and writes into
+/// `docProps/app.xml` (`109` FID-AT-04).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DocumentStatistics {
+    /// `Pages`.
+    pub pages: Option<i64>,
+    /// `Words`.
+    pub words: Option<i64>,
+    /// `Characters`.
+    pub characters: Option<i64>,
+    /// `CharactersWithSpaces`.
+    pub characters_with_spaces: Option<i64>,
+    /// `Lines`.
+    pub lines: Option<i64>,
+    /// `Paragraphs`.
+    pub paragraphs: Option<i64>,
+}
+
+impl DocumentStatistics {
+    /// The statistics `app` states.
+    #[must_use]
+    pub const fn of(app: &AppProperties) -> Self {
+        Self {
+            pages: app.pages,
+            words: app.words,
+            characters: app.characters,
+            characters_with_spaces: app.characters_with_spaces,
+            lines: app.lines,
+            paragraphs: app.paragraphs,
+        }
+    }
+}
+
+/// Report feature for `docProps/app.xml` statistics an edit made stale and the
+/// save therefore left out (`109` FID-AT-04).
+pub const STALE_STATISTICS: &str = "docx.export.stale.statistics";
+
+/// [`export_package`] with what the caller knows beyond the model.
+///
+/// With [`ExportOptions::stale_statistics`], `docProps/app.xml` is written
+/// without each of the six statistics Word derives from the content that still
+/// holds the value the source carried, and the save names them
+/// ([`STALE_STATISTICS`]): those values describe the document as it was, and a
+/// file browser or document library shows them AS the document. It is the
+/// thumbnail's rule (`105` FID-R-05) one part over. A statistic the model holds
+/// a DIFFERENT value for was set since — a host that knows the current counts
+/// (the webapp computes them, pages included, for its status bar) can put them
+/// in the model before saving — and is written.
+///
+/// # Errors
+///
+/// Returns [`ExportError`] when the package cannot be assembled.
+pub fn export_package_with_options(
+    document: &Document,
+    media: &BTreeMap<String, Vec<u8>>,
+    retained_parts: &RetainedParts,
+    kind: PackageKind,
+    options: ExportOptions,
+) -> Result<DocxExport, ExportError> {
     let definitions = document.definitions();
     let mut reporter = Reporter::default();
     // The media the package will contain. An entry whose bytes the caller did
@@ -1187,7 +1278,7 @@ pub fn export_package(
     // relationships (not `document.xml.rels`). A group is emitted only when the
     // model carries it, so an unedited package without metadata is byte-identical
     // to the earlier slices.
-    let docprops = docprop_parts(document)?;
+    let docprops = docprop_parts(document, options.stale_statistics, &mut reporter)?;
 
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible.
@@ -1644,7 +1735,11 @@ fn write_retained_relationships(
 /// Builds the `docProps/*` parts from the document's metadata, one per non-empty
 /// group, in core/app/custom order. Returns an empty vector when the document
 /// carries no metadata.
-fn docprop_parts(document: &Document) -> Result<Vec<DocPropPart>, ExportError> {
+fn docprop_parts(
+    document: &Document,
+    stale_statistics: Option<DocumentStatistics>,
+    reporter: &mut Reporter,
+) -> Result<Vec<DocPropPart>, ExportError> {
     let mut parts = Vec::new();
     let Some(properties) = document.properties() else {
         return Ok(parts);
@@ -1664,7 +1759,7 @@ fn docprop_parts(document: &Document) -> Result<Vec<DocPropPart>, ExportError> {
             content_type: APP_PROPS_CT,
             rel_type: APP_PROPS_REL_TYPE,
             target: "docProps/app.xml",
-            bytes: app_properties_xml(&properties.app)?,
+            bytes: app_properties_xml(&properties.app, stale_statistics, reporter)?,
         });
     }
     if !properties.custom.is_empty() {
@@ -1753,7 +1848,45 @@ fn core_properties_xml(core: &CoreProperties) -> Result<Vec<u8>, ExportError> {
 
 /// Emits `docProps/app.xml` (extended properties) in the ECMA-376 CT_Properties
 /// element order. Each field is omitted when unset.
-fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
+fn app_properties_xml(
+    app: &AppProperties,
+    stale_statistics: Option<DocumentStatistics>,
+    reporter: &mut Reporter,
+) -> Result<Vec<u8>, ExportError> {
+    // A statistic still holding the source's value after an edit is stale, so it
+    // is left out and named (`109` FID-AT-04, `export_package_with_options`).
+    let stale = stale_statistics.unwrap_or_default();
+    let current = |value: Option<i64>, source: Option<i64>| {
+        if stale_statistics.is_some() && value.is_some() && value == source {
+            None
+        } else {
+            value
+        }
+    };
+    let pages = current(app.pages, stale.pages);
+    let words = current(app.words, stale.words);
+    let characters = current(app.characters, stale.characters);
+    let characters_with_spaces =
+        current(app.characters_with_spaces, stale.characters_with_spaces);
+    let lines = current(app.lines, stale.lines);
+    let paragraphs = current(app.paragraphs, stale.paragraphs);
+    let dropped = [
+        (app.pages, pages),
+        (app.words, words),
+        (app.characters, characters),
+        (app.characters_with_spaces, characters_with_spaces),
+        (app.lines, lines),
+        (app.paragraphs, paragraphs),
+    ]
+    .iter()
+    .any(|(model, written)| model.is_some() && written.is_none());
+    if dropped {
+        reporter.record_part(
+            STALE_STATISTICS,
+            "docProps/app.xml",
+            Disposition::OmittedNotRetained,
+        );
+    }
     let mut w = new_writer();
     let mut root = start("Properties");
     root.push_attribute(("xmlns", EXT_PROPS_NS));
@@ -1769,11 +1902,11 @@ fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
         }
     }
     for (value, tag) in [
-        (app.pages, "Pages"),
-        (app.words, "Words"),
-        (app.characters, "Characters"),
-        (app.lines, "Lines"),
-        (app.paragraphs, "Paragraphs"),
+        (pages, "Pages"),
+        (words, "Words"),
+        (characters, "Characters"),
+        (lines, "Lines"),
+        (paragraphs, "Paragraphs"),
         (app.total_time, "TotalTime"),
     ] {
         if let Some(value) = value {
@@ -1828,7 +1961,7 @@ fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
     if let Some(value) = app.links_up_to_date {
         write_text_element(&mut w, "LinksUpToDate", bool_token(value))?;
     }
-    if let Some(value) = app.characters_with_spaces {
+    if let Some(value) = characters_with_spaces {
         write_text_element(&mut w, "CharactersWithSpaces", &value.to_string())?;
     }
     if let Some(value) = app.shared_doc {

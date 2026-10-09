@@ -33,6 +33,10 @@ pub use semantic::{
     PackageKind, export_document, export_document_with_retained_parts, export_package,
     write_document, write_document_with_retained_parts,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use semantic::{
+    DocumentStatistics, ExportOptions, STALE_STATISTICS, export_package_with_options,
+};
 
 /// A package-writing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use casual_doc_export::{export_document, export_document_with_retained_parts};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_export::{DocumentStatistics, ExportOptions, PackageKind, export_package_with_options};
 use casual_doc_import::{
     FeatureLocation as DocxFeatureLocation, ImportConfig, ImportMode,
     ModelOutcome as DocxModelOutcome, RetainedParts, RetentionOutcome as DocxRetentionOutcome,
@@ -41,6 +42,10 @@ struct DocxSourceState {
     /// so that save's report names each one. Empty for a semantic import, whose
     /// report already says `not-retained` for the same detail.
     lost_on_regeneration: Vec<CompatibilityEntry>,
+    /// The `docProps/app.xml` statistics as they were read, so a save of an
+    /// EDITED document can leave out the ones that still hold them (`109`
+    /// FID-AT-04). `None` when the source had no application properties.
+    source_statistics: Option<DocumentStatistics>,
 }
 
 /// Built-in adapter that delegates to the existing bounded DOCX pipeline.
@@ -242,6 +247,10 @@ impl FormatImporter for DocxAdapter {
         }
         report.sort();
         let lost_on_regeneration = lost_on_regeneration(&imported.report, &imported.ledger);
+        let source_statistics = imported
+            .document
+            .properties()
+            .map(|properties| DocumentStatistics::of(&properties.app));
         let source = SourceEnvelope::new(
             self.descriptor.id.clone(),
             env!("CARGO_PKG_VERSION").to_owned(),
@@ -249,6 +258,7 @@ impl FormatImporter for DocxAdapter {
                 original_bytes: request.retain_source.then(|| request.bytes.to_vec()),
                 retained_parts: imported.retained_parts,
                 lost_on_regeneration,
+                source_statistics,
             },
         );
         Ok(ImportArtifact {
@@ -277,6 +287,14 @@ impl FormatExporter for DocxAdapter {
             .filter(|source| source.format() == &self.descriptor.id)
             .and_then(SourceEnvelope::state::<DocxSourceState>);
 
+        // An edited document's source statistics describe the text it no longer
+        // has (`109` FID-AT-04); every regenerating save is told which they were.
+        let options = match matching_source.and_then(|source| source.source_statistics) {
+            Some(statistics) if !request.source_unchanged => {
+                ExportOptions::default().statistics_stale_since(statistics)
+            }
+            _ => ExportOptions::default(),
+        };
         let (bytes, mut report) = match request.mode {
             // Semantic: regenerate everything from the model and carry no opaque
             // part. The writer's own findings now travel with the bytes instead of
@@ -285,8 +303,14 @@ impl FormatExporter for DocxAdapter {
             // is named too, because "the user asked for a semantic save" does not
             // make the dropped parts less dropped.
             ExportMode::Semantic => {
-                let exported = export_document(request.document, request.resources.as_map())
-                    .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
+                let exported = export_package_with_options(
+                    request.document,
+                    request.resources.as_map(),
+                    &empty_retained,
+                    PackageKind::Document,
+                    options,
+                )
+                .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
                 let mut report = convert_export_report(&exported.report);
                 let dropped = matching_source
                     .map(|source| source.retained_parts.parts.len())
@@ -323,10 +347,12 @@ impl FormatExporter for DocxAdapter {
                     let (kept, invalidated) = retained.invalidated_by_edit();
                     (Some(kept), invalidated)
                 };
-                let exported = export_document_with_retained_parts(
+                let exported = export_package_with_options(
                     request.document,
                     request.resources.as_map(),
                     edited_retained.as_ref().unwrap_or(retained),
+                    PackageKind::Document,
+                    options,
                 )
                 .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
                 let mut report = convert_export_report(&exported.report);
@@ -1360,6 +1386,123 @@ mod tests {
             false,
         );
         assert!(reopened.is_ok(), "the edited save reopens");
+    }
+
+    /// `docProps/app.xml`'s statistics are derived from the content, so an
+    /// edited save leaves out the ones still holding the source's values and
+    /// names them, while one a host refreshed is written (`109` FID-AT-04).
+    ///
+    /// Before, an edited save wrote the page and word counts the file had when
+    /// it was opened — what a file browser or document library shows AS the
+    /// document — exactly as it carried a stale thumbnail before FID-R-05.
+    #[test]
+    fn an_edited_save_leaves_its_stale_statistics_out_and_says_so() {
+        use std::io::{Cursor, Read as _, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let app = br#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Template>Normal.dotm</Template><Pages>3</Pages><Words>1200</Words><Characters>6400</Characters><Lines>90</Lines><Paragraphs>30</Paragraphs><CharactersWithSpaces>7500</CharactersWithSpaces><Application>Microsoft Office Word</Application></Properties>"#;
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("docProps/app.xml", app.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("statistics.docx"),
+                    mime_hint: None,
+                },
+                true,
+            )
+            .expect("the package opens");
+        let save = |document: &casual_doc_model::v1::Document, source_unchanged: bool| {
+            registry
+                .export(
+                    &FormatId::new(formats::DOCX).unwrap(),
+                    ExportRequest {
+                        document,
+                        resources: &imported.resources,
+                        source: Some(&imported.source),
+                        source_unchanged,
+                        mode: ExportMode::PreserveWhenSafe,
+                    },
+                )
+                .expect("it exports")
+        };
+        let app_xml = |bytes: &[u8]| {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("a ZIP");
+            let mut text = String::new();
+            archive
+                .by_name("docProps/app.xml")
+                .expect("app.xml is written")
+                .read_to_string(&mut text)
+                .unwrap();
+            text
+        };
+        let names_stale = |report: &CompatibilityReport| {
+            report.entries.iter().any(|entry| {
+                entry.feature == casual_doc_export::STALE_STATISTICS
+                    && entry.retention_outcome == RetentionOutcome::NotRetained
+            })
+        };
+        let statistics = [
+            "<Pages>3</Pages>",
+            "<Words>1200</Words>",
+            "<Characters>6400</Characters>",
+            "<Lines>90</Lines>",
+            "<Paragraphs>30</Paragraphs>",
+            "<CharactersWithSpaces>7500</CharactersWithSpaces>",
+        ];
+
+        // Unedited: the counts still describe the document.
+        let unedited = save(&imported.document, true);
+        let written = app_xml(&unedited.bytes);
+        for statistic in statistics {
+            assert!(written.contains(statistic), "an unedited save keeps {statistic}");
+        }
+        assert!(!names_stale(&unedited.report));
+
+        // Edited: every count that still holds the source's value is left out,
+        // the rest of the part is written, and the save says so.
+        let edited = save(&imported.document, false);
+        let written = app_xml(&edited.bytes);
+        for statistic in statistics {
+            assert!(
+                !written.contains(statistic),
+                "an edited save leaves out {statistic}: {written}"
+            );
+        }
+        assert!(written.contains("<Application>Microsoft Office Word</Application>"));
+        assert!(
+            names_stale(&edited.report),
+            "the save names the left-out statistics: {:?}",
+            edited.report.entries
+        );
+
+        // A host that refreshed a count gets it written.
+        let mut refreshed = imported.document.clone();
+        refreshed.properties_mut().app.words = Some(1201);
+        let written = app_xml(&save(&refreshed, false).bytes);
+        assert!(
+            written.contains("<Words>1201</Words>") && !written.contains("<Pages>3</Pages>"),
+            "a refreshed count is written, a stale one is not: {written}"
+        );
     }
 
     #[test]
