@@ -48,6 +48,8 @@ import {
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { handleCropKey, objectNudge } from "./object_keys.mjs";
 import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
+import { createKeyboardObjectMove, createObjectTextDrag } from "./object_text_move.mjs";
+import { edgeScrollStep } from "./edge_scroll.mjs";
 import { EMU_PER_PX, INSERTABLE_IMAGE_TYPES, canChangePicture, createPictureReplace, decodeImageBlob } from "./picture_replace.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
@@ -63,7 +65,7 @@ import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./styl
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
 import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
-import { createCompatibilityFindings } from "./compat_findings.mjs";
+import { createCompatibilityFindings, findingTotals } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
@@ -83,7 +85,6 @@ import {
   scrollToDoc,
 } from "./page_scroll.mjs";
 import {
-  compatibilityOccurrenceCount,
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
@@ -4161,9 +4162,9 @@ function paintObjectSelection() {
   // already have it, or the browser starts scrolling at touch-start and the
   // move gesture is gone before any handler runs. Selected + movable only.
   const padPage = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  if (objectSelection.canMove && padPage?.overlay) {
+  if ((objectSelection.canMove || objectSelection.canMoveInText) && padPage?.overlay) {
     paintMovePad(padPage.overlay, rect.slice(1, 5), scaleOf(padPage), (event) =>
-      startObjectMove(event, padPage, node));
+      objectSelection.canMove ? startObjectMove(event, padPage, node) : objectTextDrag.arm(event, padPage, objectSelection));
   }
   // The angle comes with the frame, in ONE engine read: the grips are drawn at
   // the object's rotated corners, the cursors are turned with them, and the
@@ -4350,6 +4351,18 @@ const objectResize = createObjectResizeDrag({
 const objectRotate = createObjectRotateDrag(gestureIo);
 /** A drag on an object that cannot move says why, once (HF-259). */
 const refusedObjectDrag = createRefusedDrag({ setStatus: (text, kind) => setStatus(text, kind) });
+/** Dragging, or F2 ("Move to where?"), an in-line object to a new place in the text (`109` UX-OB-02). */
+const objectTextIo = {
+  doc: () => doc, pageAt: pageFromClientPoint, pageByNumber: (n) => pages[n - 1], pointToTwip, scaleOf, platform: EDITOR_KEYBOARD_PLATFORM, t, viewport: () => viewportEl,
+  blocked: () => objectEditBlocked(), runEdit: (thunk, options) => runEdit(thunk, options), setStatus: (text, kind) => setStatus(text, kind),
+  select: (node, held) => selectObject(node, held.kind, null, false, { ...held, ref: { ...held.ref, root: node, subject: node } }),
+  caret: () => selection?.focus ?? null,
+  selection: () => (objectSelection?.mode === "selected" ? objectSelection : null),
+  leaveObject: () => { objectSelection = null; clearObjectStatus(); drawSelection(); },
+  refusal: (held) => capabilityRefusal(held, held.anchored ? "canMove" : "canMoveInText", SESSION.sentenceFor),
+};
+const objectTextDrag = createObjectTextDrag(objectTextIo);
+const keyboardObjectMove = createKeyboardObjectMove(objectTextIo);
 /** The crop session's keyboard (`object_keys.mjs`). */
 const cropKeyIo = {
   get session() { return objectCropSession; },
@@ -4513,6 +4526,7 @@ const OBJECT_CAPABILITY_KEYS = [
   "canFill",
   "canStroke",
   "canEditText",
+  "canMoveInText",
 ];
 
 /** Copies the engine-declared structural capabilities before a wasm hit payload
@@ -5789,7 +5803,7 @@ const pointerHover = createPointerHover({
     insideObjectNode: objectSelection?.mode === "editing" ? objectSelection.node : null,
     resizeDrag: objectResize.record(),
     cropDrag: objectCropSession?.handleDrag ?? null,
-    moveDrag: objectMoveDrag,
+    moveDrag: objectMoveDrag ?? (objectTextDrag.dragging() || null),
     tableDrag: tableChrome.dragKind(),
     tableStripDrag: tableGutter.dragKind(),
     textDrag: dragging,
@@ -5987,10 +6001,11 @@ function onPointerDown(page, event) {
     // records why, and ONLYOFFICE and Word agree.
     const objectLink = linkAt(page, event);
     if (objectLink) showLinkChip(objectLink, event);
-    // A floating object is movable: the same gesture that selects it can drag it
-    // (a bare click commits nothing). Inline objects flow with the text.
+    // The same gesture that selects an object drags it (a bare click commits
+    // nothing): a floating one anywhere on the page, an in-line one to another
+    // place in the text (UX-OB-02), and any other says why it cannot.
     if (descriptor.canMove) startObjectMove(event, page, node);
-    else refusedObjectDrag.arm(event, capabilityRefusal(descriptor, "canMove", SESSION.sentenceFor));
+    else if (!objectTextDrag.arm(event, page, objectSelection)) refusedObjectDrag.arm(event, objectTextIo.refusal({ ...descriptor, anchored }));
     event.preventDefault();
     return;
   }
@@ -6109,6 +6124,7 @@ function onPointerDown(page, event) {
 }
 
 function onPointerMove(page, event) {
+  if (objectTextDrag.active()) return; // the window listener drives it, once per event
   if (objectMoveDrag) {
     updateObjectMove(event);
     return;
@@ -6206,39 +6222,13 @@ function syncSelectionToCellRange() {
   drawSelection();
 }
 
-const AUTO_SCROLL_EDGE_PX = 56;
-const AUTO_SCROLL_MAX_PX = 24;
-
 function startSelectionAutoScroll() {
   if (selectionAutoScrollFrame) return;
   const tick = () => {
     selectionAutoScrollFrame = 0;
     if (!dragging || !pointerGesture) return;
-
-    const rect = viewportEl.getBoundingClientRect();
-    const y = pointerGesture.lastClientY;
-    let dy = 0;
-    if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX);
-      dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
-      dy = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    }
-
-    // The same rule on the other axis. Only `dy` existed, so at any zoom where
-    // the sheet is wider than the window a drag-selection simply stopped at the
-    // window edge and the end of the line was unreachable by mouse.
-    const x = pointerGesture.lastClientX;
-    let dx = 0;
-    if (x < rect.left + AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (rect.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX);
-      dx = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    } else if (x > rect.right - AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (x - (rect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
-      dx = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    }
-
+    // Both axes (`edge_scroll.mjs`, shared with the in-text object drag).
+    const { dx, dy } = edgeScrollStep(viewportEl.getBoundingClientRect(), pointerGesture.lastClientX, pointerGesture.lastClientY);
     if (dy !== 0 || dx !== 0) {
       const beforeTop = viewportEl.scrollTop;
       const beforeLeft = viewportEl.scrollLeft;
@@ -6257,6 +6247,7 @@ function startSelectionAutoScroll() {
 function onPointerUp(event) {
   document.body.style.cursor = ""; // the gesture no longer owns the cursor
   refusedObjectDrag.end();
+  if (objectTextDrag.finish(event)) return;
   if (shapeDrawMode.finish()) return;
   if (finishObjectMove(event)) return;
   if (objectRotate.finish(event)) return;
@@ -6428,6 +6419,7 @@ window.addEventListener("pointermove", (e) => {
   // `#pages`. It short-circuits on the drag kind and asks the engine nothing.
   if (pointerHover.dragKind()) pointerHover.schedule(null, e);
   if (refusedObjectDrag.move(e)) return; // a drag of an object that cannot move says why
+  if (objectTextDrag.move(e)) return; // an in-line object follows the drop caret (UX-OB-02)
   if (shapeDrawMode.dragging()) {
     shapeDrawMode.update(e);
     return;
@@ -6589,6 +6581,7 @@ window.addEventListener("pointerup", onPointerUp);
  *  them and forgotten in the fourth. One list, named once. */
 function abortPointerGestures() {
   cancelObjectMove();
+  objectTextDrag.cancel();
   objectResize.cancel();
   objectRotate.cancel();
   tableChrome.cancelDrag();
@@ -7252,6 +7245,7 @@ const objectContextMenuHost = {
   changePicture: () => pictureReplace.choose(),
   openProperties: () => toggleObjectInspector(true),
   deleteObject: () => deleteSelectedObject(),
+  moveInText: () => keyboardObjectMove.begin(false),
 };
 
 // Resolves a pointer event to an OBJECT context (or null). Prefers a fresh
@@ -8330,7 +8324,9 @@ async function applyEditResult(res, { keepView = false } = {}) {
   const newCount = res.pageCount;
   const revision = readRevision(res);
   res.free();
-  noteDocumentEdited(revision);
+  // The engine reports an edit that changed nothing — a picture dropped where it
+  // came from, an empty comparison — as the SAME revision and no dirty pages.
+  if (revision === null || revision !== currentRevision || dirty.length > 0) noteDocumentEdited(revision);
   // An edit has landed, so the caret the editor now shows is the result of the
   // user's own action — never the untouched load-time seed, even if the two
   // positions coincide.
@@ -13511,7 +13507,7 @@ function exportDocumentAs(targetFormat, intent = "export") {
     const mimeType = artifact.mimeType;
     const extension = artifact.suggestedExtension;
     const report = artifact.reportJson;
-    const findings = compatibilityOccurrenceCount(report);
+    const findings = findingTotals(report).headline; // the chip's count: Word's bookkeeping excluded (FID-FW-01)
     artifact.free();
     const saved = downloadBytes(bytes, mimeType, downloadNameForFormat(currentName, extension), document);
     hostSession?.noteWrite(intent, { format: targetFormat, name: saved, bytes: bytes.length });
@@ -14256,6 +14252,8 @@ document.addEventListener("keydown", async (e) => {
   // object is selected. Escape is the two-step exit (editing → selected → text);
   // Enter/Delete act on the object; a selected object swallows text keys so a
   // stale caret is never edited.
+  if (key === "Escape" && objectTextDrag.cancel()) return void e.preventDefault();
+  if (keyboardObjectMove.onKey(e)) return; // F2 / Shift+F2, "Move to where?" (UX-OB-02)
   if ((objectResize.active() || objectRotate.active() || objectMoveDrag) && key === "Escape") {
     e.preventDefault();
     objectResize.cancel();
@@ -15104,7 +15102,7 @@ function takeDraftSnapshot() {
       const bytes = artifact.bytes;
       let findings = 0;
       try {
-        findings = compatibilityOccurrenceCount(artifact.reportJson);
+        findings = findingTotals(artifact.reportJson).headline; // the chip's count (FID-FW-01)
       } catch {
         findings = 0; // a report we cannot parse must not lose us the draft
       }

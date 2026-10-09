@@ -1337,6 +1337,16 @@ export const EN_STRINGS = Object.freeze({
   "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",
   // The text box body's Apply refuses a bad inset rather than doing nothing (HF-253).
   "object.textBoxBody.invalid": "Each inset must be a number of inches, 0 or more",
+  // Moving an in-line object to another place in the text (`docs/109` UX-OB-02):
+  // the drag's hint, and Word's F2 "Move to where?" / Shift+F2 "Copy to where?".
+  // `{key}` is the copy key's name for this keyboard (Ctrl, or ⌥ on a Mac).
+  "object.dragInText.hint": "Release to drop it at the marker · hold {key} to copy · Esc cancels",
+  "object.moveTo.menu": "Move to…",
+  "object.moveTo.prompt": "Move to where? Put the insertion point where it should go, then press Enter. Esc cancels.",
+  "object.copyTo.prompt": "Copy to where? Put the insertion point where the copy should go, then press Enter. Esc cancels.",
+  "object.moveTo.cancelled": "Move cancelled",
+  "object.moved": "Moved",
+  "object.copied": "Copy placed",
   // The gutter's REORDER gesture (`docs/141` §4.2.3). The tooltip is on the band
   // once it is the selection — the moment it becomes a handle — and the two
   // announcements name both ends of the move, because the live region is the

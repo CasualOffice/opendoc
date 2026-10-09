@@ -177,6 +177,13 @@ test("precedence follows what the press will actually do", () => {
     resolvePointerCursor({ object: { canMove: false }, formCheckbox: true }).target,
     "object-selectable",
   );
+  // An in-line picture cannot be placed freely but CAN be dragged to another
+  // place in the text (`docs/109` UX-OB-02), so the pointer promises the move
+  // the press now starts — as ONLYOFFICE's does over an in-line picture.
+  assert.equal(
+    resolvePointerCursor({ object: { canMove: false, canMoveInText: true } }).cursor,
+    "move",
+  );
   // A form checkbox outranks a link, matching `toggleFormCheckboxAt` returning
   // before the link chip is ever considered.
   assert.equal(resolvePointerCursor({ formCheckbox: true, link: true }).target, "form-checkbox");

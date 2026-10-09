@@ -48,6 +48,8 @@
 //   `changePicture()`      Word's Change Picture: pick a file for the picture
 //   `openProperties()`     open the object inspector
 //   `deleteObject()`       delete the selected object
+//   `moveInText()`         Word's F2, "Move to where?" — move an in-line object
+//                          to another place in the text by keyboard
 export function buildObjectContextCommands(context, io) {
   // Object edits are untrackable, so they are read-only in Viewing and blocked
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
@@ -198,6 +200,25 @@ export function buildObjectContextCommands(context, io) {
   // Viewing even though nothing in it can change.
   if (context.kind === "chart") {
     commands.push(...(io.chartCommands?.() ?? []));
+  }
+
+  // Move to… — Word's F2 ("Move to where?") for an in-line object: the keyboard
+  // and menu surface of the drag that puts it at another place in the text
+  // (`docs/109` UX-OB-02). The drag alone would leave a keyboard or screen-reader
+  // user no way to move a picture at all.
+  if (context.canMoveInText && typeof io.moveInText === "function") {
+    commands.push({
+      id: "object.moveInText",
+      label: io.text("object.moveTo.menu"),
+      group: "arrange",
+      // A move in the text is a cut and a paste in one step; the scissors are
+      // the glyph that already means that.
+      icon: "cut",
+      shortcut: "F2",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => io.moveInText(),
+    });
   }
 
   // Alt text — opens the shared alt-text dialog (its Apply pre-checks the gate).

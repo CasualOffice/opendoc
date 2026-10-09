@@ -2711,6 +2711,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let (node, offset, removed) = surface_block_lists(doc)
                 .into_iter()
                 .find_map(|blocks| locate_inline_object(blocks, *object))
+                .map(|(node, offset, removed)| (node, offset, removed.clone()))
                 .ok_or(EditError::NodeNotFound)?;
             let snapshot = find_paragraph_any(doc, node)
                 .ok_or(EditError::NodeNotFound)?
@@ -4023,6 +4024,58 @@ fn set_object_descr_in_inlines(
         }
     }
     None
+}
+
+/// Where an in-line object sits in the flow of text: the paragraph whose inline
+/// list holds it directly, and the byte offset it occupies there.
+///
+/// Returned by [`inline_object_position`]. An object is zero-width in offset
+/// space, so `offset` is both the position just before it and the position just
+/// after it — which is why "dropped back where it came from" is one comparison
+/// against this value.
+#[derive(Clone, Copy, Debug)]
+pub struct InlineObjectPosition<'a> {
+    /// The paragraph whose inline list holds the object at top level.
+    pub paragraph: NodeId,
+    /// The object's byte offset in that paragraph.
+    pub offset: u32,
+    /// The object node itself.
+    pub node: &'a InlineNode,
+}
+
+/// The position of the object `object` in the flow of text, when it is one
+/// [`Operation::RemoveInlineObject`] can lift out: a drawing, an embedded object,
+/// a text box or a group sitting **directly** in a paragraph's inline list, on
+/// any surface (body, table cell, header, footer, note, text-box story). A
+/// FLOATING object is found too — it sits in its anchor paragraph's list — so a
+/// caller that means "in the line of text" checks the node it gets back.
+///
+/// `None` for anything else — deliberately including an object nested in a
+/// hyperlink, a field result, an inline content control or a tracked change.
+/// Lifting one of those out would rewrite the wrapper around it, which is a
+/// different edit with its own consequences: an `INCLUDEPICTURE` field whose
+/// result is the picture would be left with no result. This reads through the
+/// same locator the removal uses, so "can this move in the text" and "will the
+/// move's first half succeed" cannot disagree.
+///
+/// **O(document)**: one walk over every surface, stopping at the object — the
+/// walk `RemoveInlineObject` itself makes.
+#[must_use]
+pub fn inline_object_position(
+    document: &Document,
+    object: NodeId,
+) -> Option<InlineObjectPosition<'_>> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| locate_inline_object(blocks, object))
+        // The locator also finds a `w:br` (the pair authors breaks too), and a
+        // break is not an object anybody can pick up.
+        .filter(|(_, _, node)| is_object_node(node))
+        .map(|(paragraph, offset, node)| InlineObjectPosition {
+            paragraph,
+            offset,
+            node,
+        })
 }
 
 /// The current alt text (`wp:docPr@descr`) of the drawing `object`, or `None`
@@ -7384,17 +7437,21 @@ fn insert_inline_object_at(
 
 /// Locates the top-level inline object node with id `object` among the body's
 /// paragraph inlines (descending into tables and block SDTs), returning its
-/// paragraph, its byte offset in that paragraph, and a clone of the node (for
-/// [`Operation::RemoveInlineObject`]'s inverse). The read-side sibling of
+/// paragraph, its byte offset in that paragraph, and the node itself (which
+/// [`Operation::RemoveInlineObject`] clones for its inverse, and
+/// [`inline_object_position`] lends out). The read-side sibling of
 /// [`locate_field`].
-fn locate_inline_object(blocks: &[BlockNode], object: NodeId) -> Option<(NodeId, u32, InlineNode)> {
+fn locate_inline_object(
+    blocks: &[BlockNode],
+    object: NodeId,
+) -> Option<(NodeId, u32, &InlineNode)> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0u32;
                 for inline in &paragraph.inlines {
                     if is_removable_inline_node(inline) && inline.id() == object {
-                        return Some((paragraph.id, offset, inline.clone()));
+                        return Some((paragraph.id, offset, inline));
                     }
                     offset = offset.saturating_add(inline_text_len(inline));
                 }
