@@ -19100,6 +19100,7 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         )
     };
     Chart {
+        font: None,
         chart_retained: Vec::new(),
         namespaces: Vec::new(),
         space_retained: Vec::new(),
@@ -19123,6 +19124,7 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
             axes,
         },
         legend: Some(Legend {
+            font: None,
             retained: Vec::new(),
             position: LegendPosition::Bottom,
             overlay: false,

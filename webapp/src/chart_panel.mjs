@@ -18,6 +18,7 @@
 // Cost: a render is one `chartData` read and O(controls) DOM work; `sync` on
 // repaint is one read and a string compare while the panel is open.
 import { buildChartCommands, CHART_TYPE_KEYS, groupedTypes, LEGEND_KEYS, LABEL_POSITION_KEYS, PALETTE_KEYS, titleState } from "./chart_commands.mjs";
+import { axisFormatFields, renderSeriesSection, renderTextSection } from "./chart_panel_format.mjs";
 
 /** Every leaf of a command tree, by id. O(commands). */
 function commandIndex(tree) {
@@ -47,6 +48,11 @@ export function createChartPanel(io) {
   let lastJson = "";
   let commands = new Map();
   const parts = {};
+  // What the Series and Text sections have picked, kept across re-renders so
+  // a change does not throw the reader back to the first series.
+  const seriesState = { index: 0 };
+  const textState = { target: "chart" };
+  let kit = null;
 
   const run = (id) => {
     const command = commands.get(id);
@@ -100,9 +106,10 @@ export function createChartPanel(io) {
     return wrap;
   }
 
-  function axisFields(heading, role, axis, editable) {
+  function axisFields(heading, role, axis, editable, format) {
     if (!axis?.present) return;
     const group = section(heading);
+    axisFormatFields(kit, group, role, axis, format);
     if (axis.numeric) {
       const bound = (which, value) => {
         const input = document.createElement("input");
@@ -154,6 +161,21 @@ export function createChartPanel(io) {
     const editable = commands.get("chart.legend.none")?.enabled !== false;
     const reason = commands.get("chart.legend.none")?.disabledReason ?? "";
     parts.body.replaceChildren();
+    kit = {
+      t,
+      editable,
+      reason,
+      titleLimit: view.titleLimit || 1024,
+      section,
+      field,
+      select,
+      checkbox,
+      render,
+      writeFormat: (change) =>
+        void io.bridge
+          .write(node, (patch) => ({ ...patch, format: change }), { onRefused: (sentence) => note(sentence, true) })
+          .then(render),
+    };
 
     const notice = !editable ? reason : view.replacesWorkbook ? t("chart.replacesWorkbook") : "";
     if (notice) {
@@ -285,9 +307,13 @@ export function createChartPanel(io) {
       );
       elements.append(grid);
       // ---- Axes ----
-      axisFields(t("chart.axis.verticalHeading"), "vertical", vertical, editable);
-      axisFields(t("chart.axis.horizontalHeading"), "horizontal", horizontal, editable);
+      axisFields(t("chart.axis.verticalHeading"), "vertical", vertical, editable, format);
+      axisFields(t("chart.axis.horizontalHeading"), "horizontal", horizontal, editable, format);
     }
+
+    // ---- Series and Text: pick what to format, then format it ----
+    renderSeriesSection(kit, view, seriesState);
+    renderTextSection(kit, view, textState);
 
     // ---- Data ----
     const data = section(t("chart.dataHeading"));
@@ -348,15 +374,20 @@ export function createChartPanel(io) {
     (document.querySelector(".workarea") ?? document.body).append(el);
   }
 
-  /** Opens the panel on the chart at `target` (default: the selected chart). */
-  function open(target = io.selection()?.node) {
+  /** Opens the panel on the chart at `target` (default: the selected chart),
+   *  at `at` — a section name (`series`, `text`) — or at the top. */
+  function open(target = io.selection()?.node, at = "") {
     if (!io.bridge.view(target)) return false;
     ensure();
     node = target;
     el.hidden = false;
     note("");
     render();
-    el.querySelector('[data-chart-control="type"]')?.focus({ preventScroll: true });
+    const sectionEl = at ? el.querySelector(`[data-chart-section="${at}"]`) : null;
+    sectionEl?.scrollIntoView?.({ block: "start" });
+    (sectionEl?.querySelector("select, input, button") ?? el.querySelector('[data-chart-control="type"]'))?.focus({
+      preventScroll: !!sectionEl,
+    });
     return true;
   }
 
@@ -386,7 +417,7 @@ export function createChartPanel(io) {
       return;
     }
     if (current.json === lastJson) return;
-    const typing = el.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement && document.activeElement.type === "text";
+    const typing = el.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement && ["text", "number"].includes(document.activeElement.type);
     if (typing) return;
     const focusedControl = document.activeElement?.dataset?.chartControl;
     render();

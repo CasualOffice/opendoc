@@ -99,8 +99,75 @@ export const PALETTE_KEYS = Object.freeze({
   "mono-6": "chart.palette.mono6",
 });
 
+/** Trendline tokens and their keys, in Word's Chart Elements order. */
+export const TRENDLINE_KEYS = Object.freeze({
+  none: "chart.trendline.none",
+  linear: "chart.trendline.linear",
+  exp: "chart.trendline.exp",
+  log: "chart.trendline.log",
+  power: "chart.trendline.power",
+  poly: "chart.trendline.poly",
+  movingAvg: "chart.trendline.movingAvg",
+});
+
+/** Error-bar tokens and their keys. `cust` is shown, never offered: its
+ *  lengths are per-point data this editor does not author. */
+export const ERROR_BAR_KEYS = Object.freeze({
+  none: "chart.errorBars.none",
+  stdErr: "chart.errorBars.stdErr",
+  percentage: "chart.errorBars.percentage",
+  stdDev: "chart.errorBars.stdDev",
+  fixedVal: "chart.errorBars.fixedVal",
+  cust: "chart.errorBars.cust",
+});
+
+/** The amount Word's Chart Elements gives each error-bar kind it adds:
+ *  5% for percentage, one standard deviation, and a fixed 1. */
+export const ERROR_BAR_DEFAULTS = Object.freeze({ percentage: "5", stdDev: "1", fixedVal: "1", stdErr: "" });
+
+/** Line dash tokens and their keys. */
+export const DASH_KEYS = Object.freeze({
+  solid: "chart.dash.solid",
+  sysDot: "chart.dash.roundDot",
+  sysDash: "chart.dash.squareDot",
+  dash: "chart.dash.dash",
+  dashDot: "chart.dash.dashDot",
+  lgDash: "chart.dash.longDash",
+  lgDashDot: "chart.dash.longDashDot",
+  lgDashDotDot: "chart.dash.longDashDotDot",
+  dot: "chart.dash.dot",
+  sysDashDot: "chart.dash.sysDashDot",
+  sysDashDotDot: "chart.dash.sysDashDotDot",
+});
+
+/** Word's Change Chart Type ▸ Combo presets, as the per-series kinds each
+ *  writes for `n` series. Every preset keeps the last series apart, which is
+ *  how Word builds all three. */
+export const COMBO_PRESETS = Object.freeze({
+  columnLine: (n) => Array.from({ length: n }, (_, i) => ({ kind: i === n - 1 ? "line" : "column", secondary: false })),
+  columnLineSecondary: (n) =>
+    Array.from({ length: n }, (_, i) => ({ kind: i === n - 1 ? "line" : "column", secondary: i === n - 1 })),
+  areaColumn: (n) => Array.from({ length: n }, (_, i) => ({ kind: i === n - 1 ? "column" : "area-stacked", secondary: false })),
+});
+
+/** Each combo preset's key. */
+export const COMBO_KEYS = Object.freeze({
+  columnLine: "chart.combo.columnLine",
+  columnLineSecondary: "chart.combo.columnLineSecondary",
+  areaColumn: "chart.combo.areaColumn",
+});
+
 /** Word's own default title text for a chart that is given one. */
 const DEFAULT_TITLE_KEY = "chart.defaultTitle";
+/** Word's own default text for an axis title that is turned on. */
+const DEFAULT_AXIS_TITLE_KEY = "chart.defaultAxisTitle";
+
+/** The trendline every series that can carry one shares, as a token: one
+ *  kind when they all agree, "" when they differ. */
+export function sharedSeriesValue(series, read) {
+  const values = new Set(series.map(read));
+  return values.size === 1 ? [...values][0] : "";
+}
 
 /** The title state as a token: "none", "above" or "overlay". */
 export function titleState(view) {
@@ -132,7 +199,10 @@ export function groupedTypes(kinds) {
 export function createChartBridge(io) {
   const REFUSAL_KEYS = {
     "chart.partial-coverage": "chart.refused.partial",
-    "chart.many-groups": "chart.refused.combo",
+    "chart.scatter-combo": "chart.refused.combo",
+    "chart.not-combinable": "chart.refused.notCombinable",
+    "chart.no-trendline": "chart.refused.noTrendline",
+    "chart.no-error-bars": "chart.refused.noErrorBars",
   };
   const routeRefusal = (code) => (REFUSAL_KEYS[code] ? io.t(REFUSAL_KEYS[code]) : "");
   let queue = Promise.resolve(true);
@@ -201,7 +271,7 @@ export function createChartBridge(io) {
  *  @param {object} io
  *  @param {(key: string, params?: object) => string} io.t
  *  @param {(node: string) => void} io.openData      the data dialog
- *  @param {(node: string) => void} io.openSettings  the settings panel
+ *  @param {(node: string, section?: string) => void} io.openSettings  the settings panel, optionally scrolled to a section
  *  @param {(node: string, mutate: Function) => Promise<boolean>} io.write
  *  @param {() => string} [io.blockedReason]  why nothing may change now, or ""
  */
@@ -337,6 +407,101 @@ export function buildChartCommands(view, io) {
     }),
   ];
 
+  // Axis titles: Word's Chart Elements ▸ Axis Titles. Turning one on writes
+  // Word's own placeholder text, which the settings panel then edits.
+  const axisTitleLeaf = (role, axis) =>
+    axisLeaf(`chart.axisTitle.${role}`, t(role === "horizontal" ? "chart.axis.horizontal" : "chart.axis.vertical"), !!axis.title, {
+      [`${role}Axis`]: { title: axis.title ? "" : t(DEFAULT_AXIS_TITLE_KEY) },
+    });
+  const axisTitlesMenu = [];
+  if (horizontal.present !== false) axisTitlesMenu.push(axisTitleLeaf("horizontal", horizontal));
+  if (vertical.present !== false) axisTitlesMenu.push(axisTitleLeaf("vertical", vertical));
+  if (axisTitlesMenu.length === 0) axisTitlesMenu.push(axisTitleLeaf("vertical", vertical));
+
+  // Trendlines and error bars apply to every series that can carry one, as
+  // Word's Chart Elements does when no single series is selected; one series
+  // at a time is the settings panel's Series section.
+  const allSeries = format.series ?? [];
+  const seriesPatch = (admits, make) =>
+    allSeries.flatMap((entry, index) => (entry[admits] ? [{ index, ...make(entry) }] : []));
+  const trendlineSeries = allSeries.filter((entry) => entry.admitsTrendline);
+  const errorSeries = allSeries.filter((entry) => entry.admitsErrorBars);
+  const noTrendline = trendlineSeries.length ? "" : t("chart.noTrendline");
+  const noErrorBars = errorSeries.length ? "" : t("chart.noErrorBars");
+  const currentTrend = sharedSeriesValue(trendlineSeries, (entry) => entry.trendline?.kind ?? "none");
+  const currentError = sharedSeriesValue(errorSeries, (entry) => entry.errorBars?.kind ?? "none");
+  const trendLeaf = (kind, extra = {}) =>
+    leaf(
+      `chart.trendline.${kind}`,
+      t(TRENDLINE_KEYS[kind]),
+      () =>
+        withFormat({
+          series: seriesPatch("admitsTrendline", () => ({ trendline: { kind, ...extra } })),
+        }),
+      { shortcut: check(currentTrend === kind), enabled: editable && !noTrendline, disabledReason: reason || noTrendline },
+    );
+  const trendlineMenu = [
+    trendLeaf("none"),
+    trendLeaf("linear"),
+    trendLeaf("exp"),
+    trendLeaf("log"),
+    trendLeaf("power"),
+    trendLeaf("poly", { order: 2 }),
+    trendLeaf("movingAvg", { period: 2 }),
+    { ...leaf("chart.trendline.more", t("chart.moreOptions"), () => io.openSettings(node)), enabled: true, group: "chart.more" },
+  ];
+  const errorLeaf = (kind) =>
+    leaf(
+      `chart.errorBars.${kind}`,
+      t(ERROR_BAR_KEYS[kind]),
+      () =>
+        withFormat({
+          series: seriesPatch("admitsErrorBars", () => ({
+            errorBars: kind === "none" ? { kind } : { kind, value: ERROR_BAR_DEFAULTS[kind] ?? "", type: "both" },
+          })),
+        }),
+      { shortcut: check(currentError === kind), enabled: editable && !noErrorBars, disabledReason: reason || noErrorBars },
+    );
+  const errorBarsMenu = [
+    errorLeaf("none"),
+    errorLeaf("stdErr"),
+    errorLeaf("percentage"),
+    errorLeaf("stdDev"),
+    { ...leaf("chart.errorBars.more", t("chart.moreOptions"), () => io.openSettings(node)), enabled: true, group: "chart.more" },
+  ];
+
+  // Combo presets: Word's Change Chart Type ▸ Combo. Two series at least —
+  // a combination of one series is not one.
+  const combinable = new Set(format.combinable ?? []);
+  const comboReason = allSeries.length < 2 ? t("chart.combo.needsTwoSeries") : "";
+  for (const [preset, kinds] of Object.entries(COMBO_PRESETS)) {
+    const wanted = kinds(allSeries.length);
+    const current = allSeries.length >= 2 && wanted.every((entry, index) =>
+      allSeries[index]?.kind === entry.kind && !!allSeries[index]?.secondary === entry.secondary);
+    typeMenu.push(
+      leaf(
+        `chart.type.combo.${preset}`,
+        t(COMBO_KEYS[preset]),
+        () =>
+          withFormat({
+            series: wanted.filter((entry) => combinable.has(entry.kind)).map((entry, index) => ({ index, ...entry })),
+          }),
+        {
+          group: "chart.familyCombo",
+          shortcut: check(current),
+          enabled: editable && !comboReason,
+          disabledReason: reason || comboReason,
+        },
+      ),
+    );
+  }
+  typeMenu.push({
+    ...leaf("chart.type.combo.custom", t("chart.combo.custom"), () => io.openSettings(node, "series")),
+    group: "chart.familyCombo",
+    enabled: true,
+    shortcut: check(!!format.combo && !typeMenu.some((entry) => entry.group === "chart.familyCombo" && entry.shortcut)),
+  });
+
   const styleMenu = (format.palettes ?? []).map((palette) =>
     leaf(`chart.style.${palette}`, t(PALETTE_KEYS[palette] ?? "chart.palette.colorful"), () => withFormat({ palette }), {
       shortcut: check(format.palette === palette),
@@ -364,7 +529,10 @@ export function buildChartCommands(view, io) {
         { id: "chart.elements.legend", label: t("chart.element.legend"), group: "chart", submenu: legendMenu },
         { id: "chart.elements.labels", label: t("chart.element.labels"), group: "chart", submenu: labelsMenu },
         { id: "chart.elements.axes", label: t("chart.element.axes"), group: "chart", submenu: axesMenu },
+        { id: "chart.elements.axisTitles", label: t("chart.element.axisTitles"), group: "chart", submenu: axisTitlesMenu },
+        { id: "chart.elements.errorBars", label: t("chart.element.errorBars"), group: "chart", submenu: errorBarsMenu },
         { id: "chart.elements.gridlines", label: t("chart.element.gridlines"), group: "chart", submenu: gridlinesMenu },
+        { id: "chart.elements.trendline", label: t("chart.element.trendline"), group: "chart", submenu: trendlineMenu },
       ],
     },
     { id: "chart.style", label: t("chart.style"), group: "chart", submenu: styleMenu },

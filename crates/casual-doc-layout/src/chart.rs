@@ -51,6 +51,16 @@ use casual_doc_model::v1::{
     ChartGroupKind, ChartValue, Color, DataLabelPosition, DataRange, DisplayBlanks, Grouping,
     LegendPosition, ScatterStyle, Series, TickLabelPosition, TickMark,
 };
+// Own line (anti-conflict): chart text formatting and line dashes (`docs/155` §19).
+use casual_doc_model::v1::{CHART_FONT_SIZE_RANGE, ChartFont, ChartLine, DashStyle};
+
+// Own line (anti-conflict): trendlines and error bars (`docs/155` §19).
+mod analysis;
+#[cfg(test)]
+mod tests;
+
+// Own line (anti-conflict): Excel number-format codes for labels.
+use crate::chart_number_format::{format_chart_number, is_general};
 
 // Own line (anti-conflict): the shared arc/sector geometry (`docs/155` §7.4).
 use crate::arc::{FULL_TURN, sector};
@@ -94,6 +104,16 @@ const TARGET_INTERVALS: f64 = 5.0;
 /// count ONLYOFFICE's shipping `calculateSplineLine` uses).
 const SMOOTH_SAMPLES: usize = 10;
 
+/// Word's default chart-title size, in hundredths of a point (14 pt).
+pub const TITLE_TEXT_SIZE: u32 = 1_400;
+
+/// Word's default size for chart furniture text — tick labels, the legend and
+/// data labels — in hundredths of a point (9 pt).
+pub const LABEL_TEXT_SIZE: u32 = 900;
+
+/// Word's default axis-title size, in hundredths of a point (10 pt).
+pub const AXIS_TITLE_TEXT_SIZE: u32 = 1_000;
+
 /// The chart-space background.
 const BACKGROUND: [u8; 4] = [255, 255, 255, 255];
 
@@ -130,6 +150,34 @@ impl ChartLabel {
         self.ascent + self.descent
     }
 }
+
+/// The text formatting one chart label is shaped with: a chart element's
+/// [`ChartFont`] laid over the chart-space font, with Word's defaults for what
+/// neither declares (`docs/155` §19).
+///
+/// `typeface` is the authored `a:latin@typeface`, verbatim — a face name or a
+/// theme reference (`+mn-lt`, `+mj-lt`), which the caller's shaper resolves
+/// against the document theme, because this module holds no font cascade.
+/// `color` is already resolved; [`compose_chart`] also paints the shaped runs
+/// in it, so a shaper that ignores it still draws the right colour.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChartTextStyle {
+    /// Size in hundredths of a point, within [`CHART_FONT_SIZE_RANGE`].
+    pub size: u32,
+    /// Bold.
+    pub bold: bool,
+    /// Italic.
+    pub italic: bool,
+    /// The authored typeface or theme reference; `None` is the document's
+    /// body face.
+    pub typeface: Option<String>,
+    /// Resolved RGBA text colour.
+    pub color: [u8; 4],
+}
+
+/// The label-shaping callback [`compose_chart`] takes: shape `text` in
+/// `style`, or decline with `None`.
+pub type LabelShaper<'a> = dyn FnMut(&str, &ChartTextStyle) -> Option<ChartLabel> + 'a;
 
 /// The colours a chart resolves its series and text against.
 ///
@@ -188,9 +236,22 @@ struct Paint<'a> {
     style: &'a ChartStyle,
     palette: &'a [[u8; 4]],
     colors: &'a dyn Fn(Color) -> [u8; 4],
+    /// The chart-space font every element's font is laid over.
+    chart_font: Option<&'a ChartFont>,
+    /// The data-label text style, resolved once per chart (the model carries
+    /// no per-series label font, so every data label takes the chart's).
+    data_text: ChartTextStyle,
 }
 
 impl Paint<'_> {
+    /// One element's text style: `font` over the chart-space font, then
+    /// `default_size` and the chart text colour for what neither declares.
+    ///
+    /// O(1) (one typeface clone).
+    fn text(&self, font: Option<&ChartFont>, default_size: u32) -> ChartTextStyle {
+        resolve_text(font, self.chart_font, default_size, self.style, self.colors)
+    }
+
     /// A series' fill: its explicit solid `c:spPr` fill, else the accent for its
     /// position in the chart.
     fn series(&self, series: &Series, index: usize) -> [u8; 4] {
@@ -221,6 +282,31 @@ impl Paint<'_> {
             .line
             .and_then(|line| line.color)
             .map_or_else(|| self.series(series, index), self.colors)
+    }
+}
+
+/// Resolves an element's text style — see `Paint::text`. A free function so
+/// the data-label style can be resolved before the `Paint` that holds it.
+fn resolve_text(
+    font: Option<&ChartFont>,
+    chart_font: Option<&ChartFont>,
+    default_size: u32,
+    style: &ChartStyle,
+    colors: &dyn Fn(Color) -> [u8; 4],
+) -> ChartTextStyle {
+    let resolved = match font {
+        Some(font) => font.over(chart_font),
+        None => chart_font.cloned().unwrap_or_default(),
+    };
+    ChartTextStyle {
+        size: resolved
+            .size
+            .filter(|size| CHART_FONT_SIZE_RANGE.contains(size))
+            .unwrap_or(default_size),
+        bold: resolved.bold.unwrap_or(false),
+        italic: resolved.italic.unwrap_or(false),
+        typeface: resolved.typeface,
+        color: resolved.color.map_or(style.text, colors),
     }
 }
 
@@ -287,18 +373,23 @@ pub fn has_drawable_content(chart: &Chart) -> bool {
 /// the geometry it would have reserved is not reserved either, so a shaper that
 /// cannot shape text yields a chart with no labels rather than a misaligned one.
 ///
+/// Every label is shaped in its element's own [`ChartTextStyle`]: the title at
+/// 14 pt, axis titles at 10 pt, tick labels, the legend and data labels at
+/// 9 pt — each `font.over(chart.font)` first (`docs/155` §19).
+///
 /// Returns an empty list when nothing is drawable, which is the signal to keep
 /// the placeholder — see [`has_drawable_content`].
 ///
-/// Complexity: O(points in the chart + labels shaped). Per visible chart, not per
-/// document.
+/// Complexity: O(points in the chart + labels shaped), trendlines and error bars
+/// included (a polynomial fit is O(points x order), order at most 6). Per
+/// visible chart, not per document.
 #[must_use]
 pub fn compose_chart(
     chart: &Chart,
     size: Size,
     style: &ChartStyle,
     colors: &dyn Fn(Color) -> [u8; 4],
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    shape: &mut LabelShaper<'_>,
 ) -> Vec<ChartPrimitive> {
     if size.width.raw() <= 0 || size.height.raw() <= 0 || !has_drawable_content(chart) {
         return Vec::new();
@@ -309,10 +400,7 @@ pub fn compose_chart(
     out.push(ChartPrimitive::Rect {
         rect: full,
         fill: Some(BACKGROUND),
-        stroke: Some(ChartStroke {
-            color: FURNITURE,
-            width: HAIRLINE,
-        }),
+        stroke: Some(ChartStroke::solid(FURNITURE, HAIRLINE)),
     });
 
     let mut area = inset(full, PADDING);
@@ -323,16 +411,19 @@ pub fn compose_chart(
     // Series colours are assigned in document order across the WHOLE chart, so a
     // combo's line group continues the palette rather than restarting it.
     let accents = series_colors(chart, style);
+    let chart_font = chart.font.as_ref();
     let paint = Paint {
         style,
         palette: &accents,
         colors,
+        chart_font,
+        data_text: resolve_text(None, chart_font, LABEL_TEXT_SIZE, style, colors),
     };
 
-    area = place_title(chart, area, style, shape, &mut out);
+    area = place_title(chart, area, &paint, shape, &mut out);
     area = place_legend(chart, area, &paint, shape, &mut out);
 
-    let plot = reserve_axis_gutters(chart, area, style, shape);
+    let plot = reserve_axis_gutters(chart, area, &paint, shape);
     if plot.size.width.raw() <= 0 || plot.size.height.raw() <= 0 {
         return out;
     }
@@ -345,22 +436,19 @@ pub fn compose_chart(
     for group in &chart.plot_area.groups {
         let count = group.series.len();
         if is_drawable(group.kind) {
-            draw_group(
-                group,
-                &GroupGeometry {
-                    plot,
-                    categories,
-                    scale: group_scale(chart, group),
-                    first_color: color,
-                },
-                &paint,
-                shape,
-                &mut out,
-            );
+            let geometry = GroupGeometry {
+                plot,
+                categories,
+                scale: group_scale(chart, group),
+                first_color: color,
+            };
+            draw_group(group, &geometry, &paint, shape, &mut out);
+            // Trendlines and error bars sit over their series, under the axes.
+            analysis::draw_series_analysis(group, &geometry, &paint, shape, &mut out);
         }
         color += count;
     }
-    draw_axes(chart, plot, categories, style, shape, &mut out);
+    draw_axes(chart, plot, area, categories, &paint, shape, &mut out);
     out
 }
 
@@ -453,8 +541,8 @@ fn place_label(label: &ChartLabel, left: Twip, baseline: Twip, out: &mut Vec<Cha
 fn place_title(
     chart: &Chart,
     area: Rect,
-    style: &ChartStyle,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    paint: &Paint<'_>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) -> Rect {
     if chart.auto_title_deleted {
@@ -469,7 +557,11 @@ fn place_title(
     let Some(text) = title.text.as_ref().map(|text| text.text.as_str()) else {
         return area;
     };
-    let Some(label) = shape_colored(text, style.text, shape) else {
+    let Some(label) = shape_colored(
+        text,
+        &paint.text(title.font.as_ref(), TITLE_TEXT_SIZE),
+        shape,
+    ) else {
         return area;
     };
     let left = Twip(area.origin.x.raw() + ((area.size.width.raw() - label.width.raw()) / 2).max(0));
@@ -509,7 +601,7 @@ fn place_legend(
     chart: &Chart,
     area: Rect,
     paint: &Paint<'_>,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) -> Rect {
     let Some(legend) = chart.legend.as_ref() else {
@@ -518,6 +610,7 @@ fn place_legend(
     if legend.overlay {
         return area;
     }
+    let text = paint.text(legend.font.as_ref(), LABEL_TEXT_SIZE);
     let mut entries: Vec<LegendEntry> = Vec::new();
     let mut color = 0usize;
     // Hoisted: one walk for the whole chart, not one per group.
@@ -528,7 +621,7 @@ fn place_legend(
         .any(|group| colors_by_point(group.kind) && !group.series.is_empty());
     if by_point {
         for (point, name) in category_labels(chart).into_iter().enumerate() {
-            if let Some(label) = shape_colored(&name, paint.style.text, shape) {
+            if let Some(label) = shape_colored(&name, &text, shape) {
                 entries.push(LegendEntry {
                     label,
                     color: paint.point(point),
@@ -541,7 +634,7 @@ fn place_legend(
             if is_drawable(group.kind)
                 && !colors_by_point(group.kind)
                 && let Some(name) = series.name.as_ref().map(|name| name.text.as_str())
-                && let Some(label) = shape_colored(name, paint.style.text, shape)
+                && let Some(label) = shape_colored(name, &text, shape)
             {
                 entries.push(LegendEntry {
                     label,
@@ -671,17 +764,21 @@ fn draw_legend_entry(entry: &LegendEntry, origin: Point, row: Twip, out: &mut Ve
     );
 }
 
-/// Shrinks `area` by the gutters the axes' tick labels and tick marks need, and
-/// returns the plot rectangle.
+/// Shrinks `area` by the gutters the axes' tick labels, tick marks and titles
+/// need, and returns the plot rectangle.
 ///
 /// Measures the widest value-axis label on each vertical edge and the tallest
 /// category label along the bottom, so a secondary axis on the right reserves its
-/// own gutter and the plot does not overrun it.
+/// own gutter and the plot does not overrun it. An axis title adds its own line
+/// height on its edge — on a vertical edge too, because a vertical title is
+/// turned a quarter turn and its height becomes its thickness.
+///
+/// Complexity: O(axes x (ticks + categories)) labels shaped.
 fn reserve_axis_gutters(
     chart: &Chart,
     area: Rect,
-    style: &ChartStyle,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    paint: &Paint<'_>,
+    shape: &mut LabelShaper<'_>,
 ) -> Rect {
     let mut left = Twip::ZERO;
     let mut right = Twip::ZERO;
@@ -689,32 +786,42 @@ fn reserve_axis_gutters(
     let mut top = Twip::ZERO;
 
     for axis in &chart.plot_area.axes {
-        if axis.deleted || axis.tick_label_position == TickLabelPosition::None {
+        if axis.deleted {
             continue;
         }
         let position = axis_position(axis);
-        let extent = match axis.kind {
-            AxisKind::Value => {
-                let scale = axis_scale(chart, axis);
-                scale
-                    .ticks()
+        let mut gutter = Twip::ZERO;
+        if axis.tick_label_position != TickLabelPosition::None {
+            let text = paint.text(axis.font.as_ref(), LABEL_TEXT_SIZE);
+            let extent = match axis.kind {
+                AxisKind::Value => {
+                    let scale = axis_scale(chart, axis);
+                    let format = value_axis_format(chart, axis);
+                    scale
+                        .ticks()
+                        .iter()
+                        .filter_map(|value| shape_colored(&format.label(*value), &text, shape))
+                        .map(|label| label.width)
+                        .max()
+                        .unwrap_or(Twip::ZERO)
+                }
+                AxisKind::Category | AxisKind::Date => category_labels(chart)
                     .iter()
-                    .filter_map(|value| shape_colored(&format_value(*value), style.text, shape))
-                    .map(|label| label.width)
+                    .filter_map(|label| shape_colored(label, &text, shape))
+                    .map(|label| label.height())
                     .max()
-                    .unwrap_or(Twip::ZERO)
+                    .unwrap_or(Twip::ZERO),
+            };
+            if extent.raw() > 0 {
+                gutter = extent + LABEL_GAP + TICK_LENGTH;
             }
-            AxisKind::Category | AxisKind::Date => category_labels(chart)
-                .iter()
-                .filter_map(|text| shape_colored(text, style.text, shape))
-                .map(|label| label.height())
-                .max()
-                .unwrap_or(Twip::ZERO),
-        };
-        if extent.raw() <= 0 {
+        }
+        if let Some(title) = axis_title_label(axis, paint, shape) {
+            gutter = gutter + title.height() + LABEL_GAP;
+        }
+        if gutter.raw() <= 0 {
             continue;
         }
-        let gutter = extent + LABEL_GAP + TICK_LENGTH;
         match position {
             AxisPosition::Left => left = left.max(gutter),
             AxisPosition::Right => right = right.max(gutter),
@@ -730,6 +837,88 @@ fn reserve_axis_gutters(
             Twip((area.size.height.raw() - top.raw() - bottom.raw()).max(0)),
         ),
     )
+}
+
+/// An axis title, shaped in its own font over the chart's (10 pt by default),
+/// or `None` when the axis is deleted or has no title text.
+fn axis_title_label(
+    axis: &Axis,
+    paint: &Paint<'_>,
+    shape: &mut LabelShaper<'_>,
+) -> Option<ChartLabel> {
+    if axis.deleted {
+        return None;
+    }
+    let title = axis.title.as_ref()?;
+    let text = title.text.as_ref()?;
+    shape_colored(
+        &text.text,
+        &paint.text(title.font.as_ref(), AXIS_TITLE_TEXT_SIZE),
+        shape,
+    )
+}
+
+/// How a value axis prints its tick values.
+struct AxisFormat<'a> {
+    /// The format code, or `None` for General.
+    code: Option<&'a str>,
+    /// A percent-stacked axis: the scale runs 0..100 and prints as a percent.
+    percent: bool,
+}
+
+impl AxisFormat<'_> {
+    /// One tick value's label. O(code length).
+    fn label(&self, value: f64) -> String {
+        if self.percent {
+            // The scale is in percentage points; a `%` code multiplies by 100,
+            // so it is handed the fraction, as Excel's own 0..1 axis would be.
+            format_chart_number(value / 100.0, Some(self.code.unwrap_or("0%")))
+        } else {
+            format_chart_number(value, self.code)
+        }
+    }
+}
+
+/// A value axis' tick-label format: its own `c:numFmt` when that is not
+/// General, else the first plotted series' cached `c:formatCode` — Word's
+/// `sourceLinked` behaviour, which is what a General axis over currency data
+/// shows. A percent-stacked axis keeps its `0%` default unless it declares a
+/// format of its own.
+///
+/// Complexity: O(groups + series), once per axis.
+fn value_axis_format<'a>(chart: &'a Chart, axis: &'a Axis) -> AxisFormat<'a> {
+    let own = axis
+        .number_format
+        .as_deref()
+        .filter(|code| !is_general(Some(code)));
+    let plotted = || {
+        chart.plot_area.groups.iter().filter(|group| {
+            is_drawable(group.kind)
+                && (group.axis_ids.is_empty() || group.axis_ids.contains(&axis.id))
+        })
+    };
+    let percent = plotted().next().is_some() && plotted().all(group_is_percent_stacked);
+    if percent {
+        return AxisFormat {
+            code: own,
+            percent: true,
+        };
+    }
+    let code = own.or_else(|| {
+        plotted()
+            .flat_map(|group| group.series.iter())
+            .find_map(|series| {
+                series
+                    .values
+                    .number_format
+                    .as_deref()
+                    .filter(|code| !is_general(Some(code)))
+            })
+    });
+    AxisFormat {
+        code,
+        percent: false,
+    }
 }
 
 /// An axis' drawing edge: its declared `c:axPos`, else the conventional edge for
@@ -749,10 +938,7 @@ fn axis_position(axis: &Axis) -> AxisPosition {
 ///
 /// O(ticks + categories).
 fn draw_gridlines(chart: &Chart, plot: Rect, categories: usize, out: &mut Vec<ChartPrimitive>) {
-    let stroke = ChartStroke {
-        color: FURNITURE,
-        width: HAIRLINE,
-    };
+    let stroke = ChartStroke::solid(FURNITURE, HAIRLINE);
     for axis in &chart.plot_area.axes {
         if axis.deleted || !axis.major_gridlines {
             continue;
@@ -793,19 +979,22 @@ fn draw_gridlines(chart: &Chart, plot: Rect, categories: usize, out: &mut Vec<Ch
 }
 
 /// Paints every non-deleted axis: its line along the plot edge, its major tick
-/// marks, and its tick labels.
+/// marks, its tick labels, and its title.
+///
+/// A title is placed on the outer edge of `area` (the rectangle the gutters were
+/// reserved from): a horizontal axis' centred under (or over) its labels, a
+/// vertical axis' turned a quarter turn — reading bottom-to-top on the left,
+/// top-to-bottom on the right, as Word draws a secondary axis title.
 fn draw_axes(
     chart: &Chart,
     plot: Rect,
+    area: Rect,
     categories: usize,
-    style: &ChartStyle,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    paint: &Paint<'_>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
-    let stroke = ChartStroke {
-        color: AXIS_LINE,
-        width: HAIRLINE,
-    };
+    let stroke = ChartStroke::solid(AXIS_LINE, HAIRLINE);
     for axis in &chart.plot_area.axes {
         if axis.deleted {
             continue;
@@ -832,28 +1021,93 @@ fn draw_axes(
         out.push(ChartPrimitive::Line { from, to, stroke });
         match axis.kind {
             AxisKind::Value => {
-                draw_value_axis_labels(chart, axis, plot, position, style, shape, out);
+                draw_value_axis_labels(chart, axis, plot, position, paint, shape, out);
             }
             AxisKind::Category | AxisKind::Date => {
                 draw_category_axis_labels(
-                    chart, axis, plot, categories, position, style, shape, out,
+                    chart, axis, plot, categories, position, paint, shape, out,
                 );
             }
+        }
+        if let Some(title) = axis_title_label(axis, paint, shape) {
+            place_axis_title(&title, position, plot, area, out);
         }
     }
 }
 
-/// A value axis' major tick marks and numeric labels.
+/// Places one shaped axis title on `area`'s outer edge for `position`.
+fn place_axis_title(
+    title: &ChartLabel,
+    position: AxisPosition,
+    plot: Rect,
+    area: Rect,
+    out: &mut Vec<ChartPrimitive>,
+) {
+    let (width, height) = (title.width.raw(), title.height().raw());
+    let centre_x = plot.origin.x.raw() + plot.size.width.raw() / 2;
+    let centre_y = plot.origin.y.raw() + plot.size.height.raw() / 2;
+    match position {
+        AxisPosition::Bottom => place_label(
+            title,
+            Twip(centre_x - width / 2),
+            Twip(area.bottom().raw() - title.descent.raw()),
+            out,
+        ),
+        AxisPosition::Top => place_label(
+            title,
+            Twip(centre_x - width / 2),
+            area.origin.y + title.ascent,
+            out,
+        ),
+        AxisPosition::Left | AxisPosition::Right => {
+            let on_left = position == AxisPosition::Left;
+            let centre = Point::new(
+                Twip(if on_left {
+                    area.origin.x.raw() + height / 2
+                } else {
+                    area.right().raw() - height / 2
+                }),
+                Twip(centre_y),
+            );
+            // Upright first, its box centred on the rotation centre; the
+            // primitive's quarter turn is applied about that centre.
+            let mut placed = Vec::new();
+            place_label(
+                title,
+                Twip(centre.x.raw() - width / 2),
+                Twip(centre.y.raw() - height / 2 + title.ascent.raw()),
+                &mut placed,
+            );
+            let runs = placed
+                .into_iter()
+                .filter_map(|primitive| match primitive {
+                    ChartPrimitive::Text { run } => Some(run),
+                    _ => None,
+                })
+                .collect();
+            out.push(ChartPrimitive::RotatedText {
+                runs,
+                center: centre,
+                quarter_turns: if on_left { -1 } else { 1 },
+            });
+        }
+    }
+}
+
+/// A value axis' major tick marks and numeric labels, printed through the
+/// axis' number format (`value_axis_format`).
 fn draw_value_axis_labels(
     chart: &Chart,
     axis: &Axis,
     plot: Rect,
     position: AxisPosition,
-    style: &ChartStyle,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    paint: &Paint<'_>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
     let scale = axis_scale(chart, axis);
+    let format = value_axis_format(chart, axis);
+    let text = paint.text(axis.font.as_ref(), LABEL_TEXT_SIZE);
     let on_right = position == AxisPosition::Right;
     let edge = if on_right {
         plot.right()
@@ -868,13 +1122,10 @@ fn draw_value_axis_labels(
             out.push(ChartPrimitive::Line {
                 from: Point::new(from, y),
                 to: Point::new(to, y),
-                stroke: ChartStroke {
-                    color: AXIS_LINE,
-                    width: HAIRLINE,
-                },
+                stroke: ChartStroke::solid(AXIS_LINE, HAIRLINE),
             });
         }
-        if show && let Some(label) = shape_colored(&format_value(value), style.text, shape) {
+        if show && let Some(label) = shape_colored(&format.label(value), &text, shape) {
             let left = if on_right {
                 edge + TICK_LENGTH + LABEL_GAP
             } else {
@@ -898,13 +1149,14 @@ fn draw_category_axis_labels(
     plot: Rect,
     categories: usize,
     position: AxisPosition,
-    style: &ChartStyle,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    paint: &Paint<'_>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
     if axis.tick_label_position == TickLabelPosition::None || categories == 0 {
         return;
     }
+    let text = paint.text(axis.font.as_ref(), LABEL_TEXT_SIZE);
     let labels = category_labels(chart);
     let slot = plot.size.width.raw() / categories.max(1) as i32;
     let baseline_top = if position == AxisPosition::Top {
@@ -912,8 +1164,8 @@ fn draw_category_axis_labels(
     } else {
         plot.bottom() + TICK_LENGTH + LABEL_GAP
     };
-    for (index, text) in labels.iter().enumerate().take(categories) {
-        let Some(label) = shape_colored(text, style.text, shape) else {
+    for (index, name) in labels.iter().enumerate().take(categories) {
+        let Some(label) = shape_colored(name, &text, shape) else {
             continue;
         };
         let centre = plot.origin.x.raw() + slot * index as i32 + slot / 2;
@@ -951,7 +1203,7 @@ fn draw_group(
     group: &ChartGroup,
     geometry: &GroupGeometry,
     paint: &Paint<'_>,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
     match group.kind {
@@ -1057,7 +1309,7 @@ fn draw_pie(
     geometry: &GroupGeometry,
     pie: PieShape,
     paint: &Paint<'_>,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
     let plot = geometry.plot;
@@ -1122,10 +1374,7 @@ fn draw_pie(
                 commands,
                 closed: true,
                 fill: Some(color),
-                stroke: Some(ChartStroke {
-                    color: BACKGROUND,
-                    width: HAIRLINE,
-                }),
+                stroke: Some(ChartStroke::solid(BACKGROUND, HAIRLINE)),
             });
             if show_value(series) {
                 // At the band's mid-radius, on the slice's bisector — the only
@@ -1141,13 +1390,13 @@ fn draw_pie(
                     Size::new(Twip::ZERO, Twip::ZERO),
                 );
                 draw_data_label(
-                    &format_value(magnitude),
+                    &format_chart_number(magnitude, series.values.number_format.as_deref()),
                     anchor,
                     false,
                     // A slice label sits on the bisector at mid-radius, which is
                     // already its center; the zero-size anchor centres it.
                     Some(DataLabelPosition::Center),
-                    paint.style,
+                    &paint.data_text,
                     shape,
                     out,
                 );
@@ -1193,7 +1442,7 @@ fn draw_bars(
     geometry: &GroupGeometry,
     bars: BarShape,
     paint: &Paint<'_>,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
     let plot = geometry.plot;
@@ -1280,11 +1529,11 @@ fn draw_bars(
             });
             if show_value(series) {
                 draw_data_label(
-                    &format_value(raw),
+                    &format_chart_number(raw, series.values.number_format.as_deref()),
                     rect,
                     horizontal,
                     label_position(series),
-                    paint.style,
+                    &paint.data_text,
                     shape,
                     out,
                 );
@@ -1323,7 +1572,7 @@ fn draw_lines(
     grouping: Grouping,
     marker: bool,
     paint: &Paint<'_>,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
     let plot = geometry.plot;
@@ -1375,11 +1624,11 @@ fn draw_lines(
             points.push(Point::new(x, y));
             if show_value(series) {
                 draw_data_label(
-                    &format_value(raw),
+                    &format_chart_number(raw, series.values.number_format.as_deref()),
                     Rect::new(Point::new(x, y), Size::new(Twip::ZERO, Twip::ZERO)),
                     false,
                     label_position(series),
-                    paint.style,
+                    &paint.data_text,
                     shape,
                     out,
                 );
@@ -1409,10 +1658,7 @@ fn flush_polyline(
             &core::mem::take(points),
             false,
             None,
-            Some(ChartStroke {
-                color,
-                width: series_line_width(series),
-            }),
+            Some(series_stroke(series, color)),
         ));
     } else {
         points.clear();
@@ -1452,10 +1698,7 @@ fn push_marker(centre: Point, color: [u8; 4], out: &mut Vec<ChartPrimitive>) {
             Size::new(MARKER_SIZE, MARKER_SIZE),
         ),
         fill: Some(color),
-        stroke: Some(ChartStroke {
-            color: BACKGROUND,
-            width: HAIRLINE,
-        }),
+        stroke: Some(ChartStroke::solid(BACKGROUND, HAIRLINE)),
     });
 }
 
@@ -1595,10 +1838,7 @@ fn draw_scatter(
                 &smoothed,
                 false,
                 None,
-                Some(ChartStroke {
-                    color,
-                    width: series_line_width(series),
-                }),
+                Some(series_stroke(series, color)),
             ));
         }
         if marked {
@@ -1653,11 +1893,11 @@ fn draw_data_label(
     anchor: Rect,
     horizontal: bool,
     position: Option<DataLabelPosition>,
-    style: &ChartStyle,
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    text_style: &ChartTextStyle,
+    shape: &mut LabelShaper<'_>,
     out: &mut Vec<ChartPrimitive>,
 ) {
-    let Some(label) = shape_colored(text, style.text, shape) else {
+    let Some(label) = shape_colored(text, text_style, shape) else {
         return;
     };
     let (w, h, ascent) = (label.width.raw(), label.height().raw(), label.ascent.raw());
@@ -1768,12 +2008,27 @@ fn catmull_rom(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
 /// A series' stroke width: `a:ln@w` in EMU converted to twips, else Word's
 /// default series weight.
 fn series_line_width(series: &Series) -> Twip {
-    series
-        .line
-        .and_then(|line| line.width_emu)
-        .map_or(SERIES_LINE_WIDTH, |emu| {
-            crate::units::emu_to_twip_extent(i64::from(emu)).max(HAIRLINE)
-        })
+    line_width(series.line, SERIES_LINE_WIDTH)
+}
+
+/// An authored `a:ln@w` in twips (floored at a hairline), else `default`.
+fn line_width(line: Option<ChartLine>, default: Twip) -> Twip {
+    line.and_then(|line| line.width_emu).map_or(default, |emu| {
+        crate::units::emu_to_twip_extent(i64::from(emu)).max(HAIRLINE)
+    })
+}
+
+/// A series line's stroke: `color`, its authored width, and its authored
+/// `a:prstDash` (solid when absent).
+fn series_stroke(series: &Series, color: [u8; 4]) -> ChartStroke {
+    ChartStroke {
+        color,
+        width: series_line_width(series),
+        dash: series
+            .line
+            .and_then(|line| line.dash)
+            .unwrap_or(DashStyle::Solid),
+    }
 }
 
 /// Every series' default colour, in whole-chart document order, so a combo's
@@ -1792,25 +2047,25 @@ fn series_colors(chart: &Chart, style: &ChartStyle) -> Vec<[u8; 4]> {
         .collect()
 }
 
-/// Shapes a label and recolours its runs to `color`.
+/// Shapes a label in `style` and paints its runs in the style's colour.
 ///
-/// The caller's shaper resolves fonts through the document's cascade, which paints
-/// body text in the document's own colour; chart furniture is grey, so the colour
-/// is applied here rather than threaded through the shaping closure.
+/// The colour is applied here as well as handed to the shaper, so a shaper that
+/// resolves colour through the document cascade (body text colour) still draws
+/// chart text in the chart's colour.
 fn shape_colored(
     text: &str,
-    color: [u8; 4],
-    shape: &mut dyn FnMut(&str) -> Option<ChartLabel>,
+    style: &ChartTextStyle,
+    shape: &mut LabelShaper<'_>,
 ) -> Option<ChartLabel> {
     if text.is_empty() {
         return None;
     }
-    let mut label = shape(text)?;
+    let mut label = shape(text, style)?;
     if label.width.raw() <= 0 {
         return None;
     }
     for run in &mut label.runs {
-        run.color = color;
+        run.color = style.color;
     }
     Some(label)
 }
@@ -2157,21 +2412,4 @@ fn nice_step(min: f64, max: f64) -> f64 {
         10.0
     };
     (magnitude * factor).max(f64::MIN_POSITIVE)
-}
-
-/// Formats an axis or data-label number for display.
-///
-/// `c:numFmt`/`c:formatCode` is **not** applied: a format code is a whole
-/// mini-language and it is reported as unmodelled rather than half-implemented
-/// (`docs/155` §4.3, §14.5). This prints the value plainly, trimming a trailing
-/// `.0`, which is what Word's `General` format does and what the fixture carries.
-fn format_value(value: f64) -> String {
-    if !value.is_finite() {
-        return String::new();
-    }
-    if (value - value.round()).abs() < 1e-9 && value.abs() < 1e15 {
-        return format!("{}", value.round() as i64);
-    }
-    let text = format!("{value:.2}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }

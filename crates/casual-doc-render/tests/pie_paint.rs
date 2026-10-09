@@ -51,6 +51,7 @@ fn node(id: u64) -> NodeId {
 /// A chart projection over `values`, in the requested family.
 fn chart(kind: ChartGroupKind, values: &[&str]) -> Chart {
     Chart {
+        font: None,
         chart_retained: Default::default(),
         namespaces: Default::default(),
         space_retained: Default::default(),

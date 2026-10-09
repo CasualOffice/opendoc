@@ -201,17 +201,29 @@ pub fn text_box_frame(text_box: &GroupTextBox, rect: Rect) -> AnchorContent {
 pub struct ChartDrawing {
     /// The primitives, box-local, in paint order.
     pub primitives: Vec<ChartPrimitive>,
-    /// Each label's text. A [`ChartPrimitive::Text`] run's `font` is the index
-    /// of its label here, not a face: the runs carry no glyphs.
-    pub labels: Vec<String>,
-    /// The size every label is set at.
-    pub label_size: Twip,
+    /// Each label, in the order it was shaped. A [`ChartPrimitive::Text`] or
+    /// [`ChartPrimitive::RotatedText`] run's `font` is the index of its label
+    /// here, not a face: the runs carry no glyphs.
+    pub labels: Vec<ChartDrawingLabel>,
+}
+
+/// One chart label for an output that sets its own text: the words and the
+/// style the chart resolved for them (`docs/155` §19 — a title, an axis, the
+/// legend and the data labels each have their own font). The size and colour
+/// are also on the label's runs.
+#[derive(Clone, Debug)]
+pub struct ChartDrawingLabel {
+    /// The label's text.
+    pub text: String,
+    /// Its size, weight, slant, face and colour.
+    pub style: crate::chart::ChartTextStyle,
 }
 
 /// Composes `chart` into `size` (twips) with the page's own composer, palette
-/// and label size. The page shapes each label to place it; this measures one
-/// at an average advance instead (`LABEL_ADVANCE_PER_MILLE`), so an output that sets
-/// the text itself places it within a few percent of the page.
+/// and label styles. The page shapes each label to place it; this measures one
+/// at an average advance of its own size instead (`LABEL_ADVANCE_PER_MILLE`),
+/// so an output that sets the text itself places it within a few percent of
+/// the page.
 ///
 /// Complexity: O(points + labels).
 #[must_use]
@@ -225,46 +237,51 @@ pub fn chart_drawing(document: &Document, chart: &Chart, size: Size) -> ChartDra
     let chart_palette = palette.as_ref().or(Some(&flow::OFFICE_PALETTE));
     let style = flow::chart_style(chart_palette);
     let colors = |color: Color| flow::run_color(Some(color), chart_palette);
-    let label_size = Twip(flow::CHART_LABEL_HALF_POINTS as i32 * 10);
-    let mut labels: Vec<String> = Vec::new();
+    let mut labels: Vec<ChartDrawingLabel> = Vec::new();
     let primitives = {
-        let mut shape = |text: &str| -> Option<ChartLabel> {
-            let index = u32::try_from(labels.len()).ok()?;
-            labels.push(text.to_owned());
-            let advance = label_size.raw() * LABEL_ADVANCE_PER_MILLE / 1000;
-            let width = Twip(advance.saturating_mul(text.chars().count() as i32));
-            let ascent = Twip(label_size.raw() * 4 / 5);
-            let descent = Twip(label_size.raw() / 5);
-            Some(ChartLabel {
-                runs: vec![GlyphRun {
-                    font: FontId(index),
-                    size: label_size,
+        let mut shape =
+            |text: &str, text_style: &crate::chart::ChartTextStyle| -> Option<ChartLabel> {
+                let index = u32::try_from(labels.len()).ok()?;
+                labels.push(ChartDrawingLabel {
+                    text: text.to_owned(),
+                    style: text_style.clone(),
+                });
+                // Hundredths of a point to twips: one point is twenty twips.
+                let label_size = Twip(
+                    i32::try_from(text_style.size / 5)
+                        .unwrap_or(i32::MAX)
+                        .max(1),
+                );
+                let advance = label_size.raw() * LABEL_ADVANCE_PER_MILLE / 1000;
+                let width = Twip(advance.saturating_mul(text.chars().count() as i32));
+                let ascent = Twip(label_size.raw() * 4 / 5);
+                let descent = Twip(label_size.raw() / 5);
+                Some(ChartLabel {
+                    runs: vec![GlyphRun {
+                        font: FontId(index),
+                        size: label_size,
+                        ascent,
+                        descent,
+                        character_scale_percent: 100,
+                        color: text_style.color,
+                        origin: Point::new(Twip::ZERO, Twip::ZERO),
+                        bidi_level: 0,
+                        decoration: Decoration::default(),
+                        highlight: None,
+                        shading: None,
+                        glyphs: Vec::new(),
+                        is_marker: false,
+                        node: None,
+                        is_leader: false,
+                    }],
+                    width,
                     ascent,
                     descent,
-                    character_scale_percent: 100,
-                    color: style.text,
-                    origin: Point::new(Twip::ZERO, Twip::ZERO),
-                    bidi_level: 0,
-                    decoration: Decoration::default(),
-                    highlight: None,
-                    shading: None,
-                    glyphs: Vec::new(),
-                    is_marker: false,
-                    node: None,
-                    is_leader: false,
-                }],
-                width,
-                ascent,
-                descent,
-            })
-        };
+                })
+            };
         crate::chart::compose_chart(chart, size, &style, &colors, &mut shape)
     };
-    ChartDrawing {
-        primitives,
-        labels,
-        label_size,
-    }
+    ChartDrawing { primitives, labels }
 }
 
 /// The average advance of a chart label's characters, in thousandths of the

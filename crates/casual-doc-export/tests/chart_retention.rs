@@ -325,9 +325,9 @@ fn the_chart_projection_changes_no_byte_of_the_retained_part() {
         &casual_doc_model::v1::ChartValue::Number("4.30".to_owned()),
         "the cache is read verbatim"
     );
-    // The fixture carries an out-of-scope `c:trendline`. Since `docs/155` §17
-    // it is carried verbatim on its series, so it would survive a regenerated
-    // save and the projection is complete — but the chart is NOT dirty, so
+    // The fixture carries a `c:trendline`. Since `docs/155` §19 it is typed on
+    // its series (before that, §17 carried it verbatim), so it would survive a
+    // regenerated save and the projection is complete — but the chart is NOT dirty, so
     // retention still wins and the closure must still come back byte-identical
     // below. That second half is what this test is for.
     assert_eq!(
@@ -341,11 +341,12 @@ fn the_chart_projection_changes_no_byte_of_the_retained_part() {
             .groups
             .iter()
             .flat_map(|group| &group.series)
-            .any(|series| series
-                .retained
-                .iter()
-                .any(|fragment| fragment.name == "trendline")),
-        "the trendline must be carried on its series"
+            .any(|series| !series.trendlines.is_empty()
+                && !series
+                    .retained
+                    .iter()
+                    .any(|fragment| fragment.name == "trendline")),
+        "the trendline is typed on its series since docs/155 §19, not carried"
     );
     assert!(!chart.dirty, "an imported chart starts clean");
 
