@@ -149,11 +149,36 @@ test("Shift on a text box corner constrains instead of freeing", () => {
   assert.equal(resizeFromDrag(start, 4, 600, 20, free).h, 1020);
 });
 
-test("Shift never frees a picture — it is already constrained, and stays so", () => {
-  for (const shiftKey of [false, true]) {
-    const rules = resizeRulesFor({ kind: "image", shiftKey, ctrlKey: false, metaKey: false }, 144);
-    assert.equal(rules.lockAspect, true, `a picture stays proportional with shift=${shiftKey}`);
+test("Shift never frees a locked object — it is already constrained, and stays so", () => {
+  for (const kind of ["image", "shape", "textbox"]) {
+    for (const shiftKey of [false, true]) {
+      const rules = resizeRulesFor({ kind, locksAspect: true, shiftKey, ctrlKey: false, metaKey: false }, 144);
+      assert.equal(rules.lockAspect, true, `a locked ${kind} stays proportional with shift=${shiftKey}`);
+    }
   }
+});
+
+// ---- Lock aspect ratio comes from the FILE, not the kind (FID-AT-09) --------
+// Word honours `noChangeAspect` both ways. These two are the two directions.
+
+test("a picture whose file locks no aspect ratio stretches on a corner drag, as in Word", () => {
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  const rules = resizeRulesFor({ kind: "image", locksAspect: false, shiftKey: false, ctrlKey: false, metaKey: false }, 144);
+  assert.equal(rules.lockAspect, false, "an absent lock is unlocked, whatever the kind");
+  const box = resizeFromDrag(start, 4, 600, 20, rules); // SE corner, mostly sideways
+  assert.equal(box.w, 2600);
+  assert.equal(box.h, 1020, "the height followed the pointer, not the ratio");
+  // Shift still constrains it, as it constrains anything.
+  const held = resizeRulesFor({ kind: "image", locksAspect: false, shiftKey: true, ctrlKey: false, metaKey: false }, 144);
+  assert.equal(resizeFromDrag(start, 4, 600, 20, held).h, 1300);
+});
+
+test("a shape whose file locks its aspect ratio keeps it on a corner drag, as in Word", () => {
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  const rules = resizeRulesFor({ kind: "shape", locksAspect: true, shiftKey: false, ctrlKey: false, metaKey: false }, 144);
+  const box = resizeFromDrag(start, 4, 600, 20, rules);
+  assert.equal(box.lockedAspect, true);
+  assert.equal(box.w / box.h, 2, "the 2:1 ratio held without Shift");
 });
 
 test("an edge midpoint is free even under Shift, because only one axis moves", () => {

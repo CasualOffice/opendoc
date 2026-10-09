@@ -83,7 +83,8 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::RemoveNote { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => Tier::NodeAddressed,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. } => Tier::NodeAddressed,
 
         Operation::SetCoreProperties { .. }
         | Operation::SetSectionGeometry { .. }
@@ -108,6 +109,8 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetTrackRevisions { .. }
+        | Operation::SetSectionFormProtection { .. }
         // Document-global policy with no node and no registry key: the definition of
         // document scope (ADR-059).
         | Operation::SetDocumentProtection { .. } => Tier::DocumentScope,
@@ -180,6 +183,9 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetShapeFill { .. } => "SetShapeFill",
         Operation::SetShapeStroke { .. } => "SetShapeStroke",
         Operation::SetTextBoxBody { .. } => "SetTextBoxBody",
+        Operation::SetObjectLocks { .. } => "SetObjectLocks",
+        Operation::SetTrackRevisions { .. } => "SetTrackRevisions",
+        Operation::SetSectionFormProtection { .. } => "SetSectionFormProtection",
     }
 }
 
@@ -328,7 +334,10 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetDocumentProtection { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => Coordinates::None,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. }
+        | Operation::SetTrackRevisions { .. }
+        | Operation::SetSectionFormProtection { .. } => Coordinates::None,
     }
 }
 
