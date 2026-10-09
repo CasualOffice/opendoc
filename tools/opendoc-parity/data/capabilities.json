@@ -3589,7 +3589,7 @@
         "control": "btnProtectDoc"
       },
       "rank": 2,
-      "note": "Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. The remaining gap is also narrower than their control in one direction and wider in another: we drop `w:hash`/`w:salt` on import, so a password-protected document round-trips to a passwordless one."
+      "note": "Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one."
     },
     {
       "id": "review.protect-form",
@@ -3718,7 +3718,7 @@
           "evidence": {
             "command": "review.restrictEditing"
           },
-          "missing": "the password. Import drops `w:hash` and `w:salt`, so a password-protected document round-trips to a passwordless one, and the dialog says in words that this is a policy rather than a password."
+          "missing": "setting a password. A password Word set is carried verbatim through a save and never verified; lifting a passworded restriction here removes it, and the dialog says so before Apply."
         }
       },
       "theirs": {
