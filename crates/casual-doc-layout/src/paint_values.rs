@@ -10,17 +10,23 @@
 //! (`docs/08` ADR-066).
 //!
 //! Everything here is a thin delegation to the function the flow engine itself
-//! calls. Nothing paginates, shapes or measures.
+//! calls. Nothing paginates or shapes text; the one measurement is a chart
+//! label's width, estimated ([`chart_drawing`]) because the output sets the
+//! label itself.
 
 use casual_doc_model::v1::{
-    BorderEdge, Color, Document, HighlightColor, Indentation, NoteId, NoteKind,
-    ParagraphProperties, Shading, Table, TableBorders, TableCell, TableCellProperties,
-    TableProperties,
+    BorderEdge, Chart, Color, Document, GroupShape, GroupTextBox, HighlightColor, Indentation,
+    NoteId, NoteKind, ParagraphProperties, Shading, Table, TableBorders, TableCell,
+    TableCellProperties, TableProperties,
 };
 
 use crate::block::{CellContentMargins, ResolvedEdge};
 use crate::cascade::{StyleCascade, TableStyleLayer};
+use crate::chart::ChartLabel;
 use crate::flow::{self, ResolvedPalette};
+use crate::page::AnchorContent;
+use crate::text::{ChartPrimitive, Decoration, FontId, GlyphRun};
+use crate::units::{Point, Rect, Size, Twip};
 
 /// The document's theme palette, resolved once, with the colour questions the
 /// renderer answers through it.
@@ -162,3 +168,106 @@ impl NoteLabels {
         self.0.label(kind, note)
     }
 }
+
+/// What the page draws for a drawn shape laid into `rect` (twips): its preset
+/// or custom geometry evaluated at that box, with its fill and outline —
+/// direct, or from the theme's format scheme. O(geometry).
+#[must_use]
+pub fn shape_content(document: &Document, shape: &GroupShape, rect: Rect) -> AnchorContent {
+    let (fill, stroke) = crate::anchor::themed_appearance(shape, document.definitions());
+    crate::anchor::geometry_content(
+        crate::anchor::GeometryRef::of_shape(shape),
+        rect,
+        fill.as_ref(),
+        stroke,
+    )
+}
+
+/// The frame the page draws behind a grouped text box's text, laid into
+/// `rect` (twips): its geometry with its fill and outline. O(geometry).
+#[must_use]
+pub fn text_box_frame(text_box: &GroupTextBox, rect: Rect) -> AnchorContent {
+    crate::anchor::geometry_content(
+        crate::anchor::GeometryRef::of_text_box(text_box, text_box.extent),
+        rect,
+        text_box.fill.as_ref(),
+        text_box.border,
+    )
+}
+
+/// A chart composed as the page composes it, for an output that sets its own
+/// text.
+#[derive(Clone, Debug)]
+pub struct ChartDrawing {
+    /// The primitives, box-local, in paint order.
+    pub primitives: Vec<ChartPrimitive>,
+    /// Each label's text. A [`ChartPrimitive::Text`] run's `font` is the index
+    /// of its label here, not a face: the runs carry no glyphs.
+    pub labels: Vec<String>,
+    /// The size every label is set at.
+    pub label_size: Twip,
+}
+
+/// Composes `chart` into `size` (twips) with the page's own composer, palette
+/// and label size. The page shapes each label to place it; this measures one
+/// at an average advance instead (`LABEL_ADVANCE_PER_MILLE`), so an output that sets
+/// the text itself places it within a few percent of the page.
+///
+/// Complexity: O(points + labels).
+#[must_use]
+pub fn chart_drawing(document: &Document, chart: &Chart, size: Size) -> ChartDrawing {
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(flow::resolve_palette);
+    // A document with no theme still draws its chart in Word's Office theme.
+    let chart_palette = palette.as_ref().or(Some(&flow::OFFICE_PALETTE));
+    let style = flow::chart_style(chart_palette);
+    let colors = |color: Color| flow::run_color(Some(color), chart_palette);
+    let label_size = Twip(flow::CHART_LABEL_HALF_POINTS as i32 * 10);
+    let mut labels: Vec<String> = Vec::new();
+    let primitives = {
+        let mut shape = |text: &str| -> Option<ChartLabel> {
+            let index = u32::try_from(labels.len()).ok()?;
+            labels.push(text.to_owned());
+            let advance = label_size.raw() * LABEL_ADVANCE_PER_MILLE / 1000;
+            let width = Twip(advance.saturating_mul(text.chars().count() as i32));
+            let ascent = Twip(label_size.raw() * 4 / 5);
+            let descent = Twip(label_size.raw() / 5);
+            Some(ChartLabel {
+                runs: vec![GlyphRun {
+                    font: FontId(index),
+                    size: label_size,
+                    ascent,
+                    descent,
+                    character_scale_percent: 100,
+                    color: style.text,
+                    origin: Point::new(Twip::ZERO, Twip::ZERO),
+                    bidi_level: 0,
+                    decoration: Decoration::default(),
+                    highlight: None,
+                    shading: None,
+                    glyphs: Vec::new(),
+                    is_marker: false,
+                    node: None,
+                    is_leader: false,
+                }],
+                width,
+                ascent,
+                descent,
+            })
+        };
+        crate::chart::compose_chart(chart, size, &style, &colors, &mut shape)
+    };
+    ChartDrawing {
+        primitives,
+        labels,
+        label_size,
+    }
+}
+
+/// The average advance of a chart label's characters, in thousandths of the
+/// label size: digits and the short words axes carry are a little over half
+/// an em in the faces documents use.
+const LABEL_ADVANCE_PER_MILLE: i32 = 550;

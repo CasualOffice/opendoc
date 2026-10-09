@@ -4152,8 +4152,9 @@ selection and a scroll.
 
 ## ADR-066 — HTML export is resolved by the renderer's resolver: one cascade, one palette, a normalized stylesheet
 
-**Status:** accepted. Asked for by the owner: "HTML export fidelity is way too weak." Design and
-measurement: `docs/167`. Tracker: `109` HF-283.
+**Status:** accepted. Asked for by the owner: "HTML export fidelity is way too weak", then "fix
+and embed header, footer, drawings and TOC". Design and measurement: `docs/167`. Tracker: `109`
+HF-283, HF-284, HF-285.
 
 ### The decision
 
@@ -4174,6 +4175,17 @@ and padding, and a `<thead>` only for rows the document marks as repeating heade
 and endnotes are written after the body and linked both ways; `@page` carries the first
 section's size and margins.
 
+Drawings follow the same rule. A shape is the geometry the anchor engine evaluates
+(`paint_values::shape_content` → `geometry_content`, with the theme's fill and line), a chart
+with no stored picture is what the page's own `compose_chart` composes
+(`paint_values::chart_drawing`), and both are written as inline SVG, so a drawing the page fixes
+is a drawing the export fixes. The chart's labels are carried beside its primitives as strings
+and written as SVG text, the one place the export measures for itself (an average advance;
+`docs/167` §2). A drawing in front of or behind the text is placed at its offsets in its
+paragraph's box; one placed only approximately is reported. Headers and footers are written
+once, above and below the text. A tab goes to its stop on the two lines tabs are used for — a
+contents line and a header line — and keeps the default grid elsewhere, reported.
+
 ### Alternatives rejected
 
 - **A second resolver inside the exporter.** It is how the import, the model validator and the
@@ -4185,6 +4197,14 @@ section's size and margins.
 - **Absolute positioning from the paginated layout** (one `<div>` per line at its page
   coordinate). Pixel-faithful and useless as a web page: no reflow, no selection order, no
   accessibility. HTML is the flowed format; PDF is the paginated one.
-- **Writing headers and footers into the body.** A "Page 1 of 14" footer on a page that has no
-  pages is a wrong fact; they are reported (`html.header_footer`) instead of — as before —
-  silently dropped.
+- **Reporting headers and footers instead of writing them** — this ADR's first position, on the
+  ground that a "Page 1 of 14" footer on a page with no pages is a wrong fact. Reversed at the
+  owner's request: a reader expects the letterhead and the footer's text, and a page number in
+  them is its field's saved result, as every field in the export is. Written once, and that
+  much is reported (`html.header_footer_once`).
+- **Drawings as raster pictures**, rendered by the engine and embedded as PNG. Exact to the
+  pixel and wrong as a web page: a grouped text box's words could not be selected, searched or
+  read aloud, and the file grows with every shape. SVG keeps each shape a shape and each word
+  text.
+- **Chart labels as glyph outlines** (the page's shaped glyphs as paths). Exact placement, but
+  the labels stop being text; the estimate is a few percent off and the text stays text.

@@ -12,6 +12,11 @@
 // through) cannot pass. The expected values are the sample's own styles: Title
 // 30pt bold #102a43 with a rule under it, Heading 1 #2563eb, the suite table's
 // header row #e8eef5, Calibri for body text, real list items.
+//
+// The owner, after: "fix and embed header, footer, drawings and TOC — it's
+// important." The page's header (right-aligned, above everything) and footer
+// (centred, below everything) are read the same way: where they sit and how
+// they are aligned, not that some text exists.
 import { test, expect, runAppMenuCommand } from "./fixtures.mjs";
 import { readFile } from "node:fs/promises";
 
@@ -40,6 +45,9 @@ test("an exported web page shows the document's styles, tables and lists as the 
     const headerCell = byText("th,td", "Feature group");
     const bullet = byText("li", "Typography and character formatting");
     const body = byText("p", "This document is intentionally varied");
+    const header = document.querySelector("header.page-header");
+    const footer = document.querySelector("footer.page-footer");
+    const top = (element) => element.getBoundingClientRect().top;
     return {
       title: title && {
         size: style(title).fontSize,
@@ -51,6 +59,16 @@ test("an exported web page shows the document's styles, tables and lists as the 
       headerCell: headerCell && { tag: headerCell.tagName, fill: style(headerCell).backgroundColor },
       bullet: bullet && { inList: !!bullet.closest("ul"), marker: style(bullet).listStyleType },
       bodyFont: body && style(body).fontFamily,
+      header: header && {
+        text: header.textContent.trim(),
+        align: style(header.querySelector("p")).textAlign,
+        aboveTitle: !!title && top(header) < top(title),
+      },
+      footer: footer && {
+        text: footer.textContent.trim().replace(/\s+/g, " "),
+        align: style(footer.querySelector("p")).textAlign,
+        last: footer === document.body.lastElementChild,
+      },
     };
   });
   await reader.close();
@@ -65,5 +83,9 @@ test("an exported web page shows the document's styles, tables and lists as the 
   expect(seen.bullet.inList).toBe(true);
   expect(seen.bullet.marker).toContain("•");
   expect(seen.bodyFont).toMatch(/^Calibri, Carlito, sans-serif$/);
+  // The header once, above the title, in its own right alignment; the footer
+  // once, below everything, centred, its page field showing its saved value.
+  expect(seen.header).toEqual({ text: "OpenDoc • Compatibility Fixture", align: "end", aboveTitle: true });
+  expect(seen.footer).toEqual({ text: "OpenDoc by CasualOffice • 1 of 14", align: "center", last: true });
   expect(consoleErrors).toEqual([]);
 });

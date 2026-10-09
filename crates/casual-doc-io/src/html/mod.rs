@@ -64,6 +64,8 @@
 //! one B-tree lookup per drawing, never by a scan (`SKILL` §8).
 
 mod css;
+mod drawing;
+mod tabs;
 mod writer;
 
 use std::collections::BTreeMap;
@@ -287,13 +289,13 @@ const FEATURES: &[&str] = &[
     "html.content_control",
     "html.dangling_bookmark",
     "html.dangling_note",
+    "html.drawing_line_end",
     "html.document_author",
     "html.embedded_object",
     "html.embedded_object_as_picture",
     "html.field_instruction",
     "html.group_shape",
-    "html.grouped_drawing",
-    "html.header_footer",
+    "html.header_footer_once",
     "html.math_markup",
     "html.picture_bytes_absent",
     "html.picture_over_embedding_limit",

@@ -530,13 +530,31 @@ fn footnotes_are_written_and_linked_both_ways() {
 }
 
 #[test]
-fn a_header_and_footer_are_reported_not_dropped_in_silence() {
-    // A web page has no pages to repeat them on, so they are not in the file
-    // — and the report says so, where it used to say nothing.
-    let (_, report) = export_fixture(HEADER_FOOTER);
+fn the_header_is_above_the_text_and_the_footer_below_it() {
+    // They used to be dropped with no report at all. A web page has one top
+    // and one bottom, so each is written once — resolved like the body — and
+    // the report says that much (`html.header_footer_once`).
+    let (text, report) = export_fixture(HEADER_FOOTER);
+    let header = text
+        .find("<header class=\"page-header\">\n<p class=\"s-normal\">Page header</p>\n</header>");
+    let body = text.find(">Intro paragraph.</p>");
+    let footer = text
+        .find("<footer class=\"page-footer\">\n<p class=\"s-normal\">Page footer</p>\n</footer>");
     assert!(
-        report.contains(&"html.header_footer".to_owned()),
+        matches!((header, body, footer), (Some(h), Some(b), Some(f)) if h < b && b < f),
+        "{text}"
+    );
+    assert!(
+        report.contains(&"html.header_footer_once".to_owned()),
         "{report:?}"
+    );
+    // The sample's header is right-aligned in its own style.
+    let (sample, _) = export_fixture(SAMPLE);
+    assert!(
+        sample.contains(
+            "<header class=\"page-header\">\n<p class=\"s-header\" style=\"text-align:end\">"
+        ),
+        "{sample}"
     );
 }
 
@@ -772,9 +790,12 @@ fn a_text_box_keeps_its_size_and_margins_and_no_block_sits_in_a_paragraph() {
         "../../../../fixtures/generated/floating-text-box.docx"
     ))
     .0;
+    // In front of the text (`wp:wrapNone`), at its offset from the column.
     assert!(
-        floating
-            .contains("max-width:100%;min-height:60pt;padding:3.6pt 7.2pt 3.6pt 7.2pt;width:216pt"),
+        floating.contains(concat!(
+            "<div class=\"s-default\" style=\"position:relative\"><div style=\"left:36pt;max-width:100%;",
+            "min-height:60pt;padding:3.6pt 7.2pt 3.6pt 7.2pt;position:absolute;top:0pt;width:216pt;z-index:1\">"
+        )),
         "{floating}"
     );
     let inline = export_fixture(include_bytes!(
@@ -790,4 +811,184 @@ fn a_text_box_keeps_its_size_and_margins_and_no_block_sits_in_a_paragraph() {
         inline.contains("<div class=\"s-default\"><div style=\"display:inline-block;"),
         "{inline}"
     );
+}
+
+#[test]
+fn a_contents_line_has_its_leader_and_its_number_at_the_stop() {
+    // A TOC entry: a link holding the title, a tab to a right-aligned stop with
+    // a dot leader, and the page number. It used to be "Introduction 3" with
+    // an em space. The row ends at the stop, the dots fill the gap, and the
+    // link stays a link on both sides of the leader.
+    let (text, report) = html(&document(concat!(
+        "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"9350\"/></w:tabs></w:pPr>",
+        "<w:hyperlink w:anchor=\"_Toc1\"><w:r><w:t>Introduction</w:t></w:r>",
+        "<w:r><w:tab/></w:r><w:r><w:t>3</w:t></w:r></w:hyperlink></w:p>",
+    )));
+    assert!(
+        text.contains("style=\"align-items:baseline;display:flex;max-width:467.5pt\">"),
+        "{text}"
+    );
+    assert!(
+        text.contains(concat!(
+            "<span class=\"tab-before\"><a href=\"#_Toc1\">Introduction</a></span>",
+            "<span class=\"tab-leader\" style=\"border-bottom:1.5px dotted currentColor\"></span>",
+            "<span class=\"tab-after\"><a href=\"#_Toc1\">3</a></span>"
+        )),
+        "{text}"
+    );
+    assert!(features(&report).is_empty(), "{:?}", features(&report));
+}
+
+#[test]
+fn a_header_line_puts_each_part_at_its_stop() {
+    // Word's Header style: a centre stop mid-page and a right stop at the
+    // margin, with "left<TAB>centre<TAB>right" on one line.
+    let (text, _) = html(&document(concat!(
+        "<w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4680\"/>",
+        "<w:tab w:val=\"right\" w:pos=\"9360\"/></w:tabs></w:pPr>",
+        "<w:r><w:t>Acme</w:t></w:r><w:r><w:tab/><w:t>Report</w:t></w:r>",
+        "<w:r><w:tab/><w:t>2026</w:t></w:r></w:p>",
+    )));
+    assert!(
+        text.contains("style=\"min-height:1.2em;position:relative\">Acme"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<span style=\"left:234pt;position:absolute;top:0;transform:translateX(-50%);white-space:nowrap\">Report</span>"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<span style=\"left:0;position:absolute;text-align:right;top:0;white-space:nowrap;width:468pt\">2026</span>"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_right_to_left_header_line_keeps_the_grid_and_says_so() {
+    // Its stops are measured from the right edge, and the placed layout
+    // measures from the left: the grid is the honest fallback.
+    let (text, report) = html(&document(concat!(
+        "<w:p><w:pPr><w:bidi/><w:tabs><w:tab w:val=\"center\" w:pos=\"4680\"/>",
+        "<w:tab w:val=\"right\" w:pos=\"9360\"/></w:tabs></w:pPr>",
+        "<w:r><w:t>Acme</w:t></w:r><w:r><w:tab/><w:t>Report</w:t></w:r>",
+        "<w:r><w:tab/><w:t>2026</w:t></w:r></w:p>",
+    )));
+    assert!(!text.contains("position:absolute"), "{text}");
+    assert!(
+        features(&report).contains(&"html.tab_stop".to_owned()),
+        "{:?}",
+        features(&report)
+    );
+}
+
+const SHAPES: &[u8] = include_bytes!("../../../../fixtures/generated/shapes.docx");
+const PRESET_SHAPES: &[u8] = include_bytes!("../../../../fixtures/generated/preset-shapes.docx");
+const GROUPED_TEXT_BOXES: &[u8] =
+    include_bytes!("../../../../fixtures/generated/grouped-text-boxes.docx");
+const CHART: &[u8] = include_bytes!("../../../../fixtures/generated/chart.docx");
+
+#[test]
+fn a_chart_with_no_stored_picture_is_drawn_as_the_page_draws_it() {
+    // The fixture's chart carries no fallback picture, so it used to be
+    // omitted. The page draws it itself; the export draws the same primitives
+    // in SVG, with the labels as text and the title as the drawing's name.
+    let (text, report) = export_fixture(CHART);
+    assert!(
+        text.contains("<svg class=\"chart\" role=\"img\" aria-label=\"Revenue by quarter\" width=\"576\" height=\"336\""),
+        "{text}"
+    );
+    // The first quarter's bar, in the first accent colour, and its label.
+    assert!(
+        text.contains("<rect x=\"61.27\" y=\"61.67\" width=\"53.33\" height=\"231.67\" fill=\"#4472c4\" stroke=\"none\"/>"),
+        "{text}"
+    );
+    assert!(
+        text.contains("font-size=\"12\" fill=\"#595959\">Q1</text>"),
+        "{text}"
+    );
+    // The target series as a line, and the legend's entry for it.
+    assert!(
+        text.contains("<path d=\"M87.93 24L221.27 24L354.6 24L487.93 24\" fill=\"none\" stroke=\"#ed7d31\" stroke-width=\"2\"/>"),
+        "{text}"
+    );
+    assert!(text.contains(">Target</text>"), "{text}");
+    assert!(
+        !report
+            .iter()
+            .any(|feature| feature.starts_with("html.embedded_object")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_shape_is_drawn_at_its_offset_with_its_fill_and_outline() {
+    // A rectangle anchored 0.5in from the column, in front of the text. It
+    // used to be reported and dropped (`html.group_shape`).
+    let (text, report) = export_fixture(SHAPES);
+    assert!(
+        text.contains(concat!(
+            "<div class=\"s-default\" style=\"position:relative\">",
+            "<svg class=\"drawing\" width=\"192\" height=\"96\" viewBox=\"0 0 192 96\" ",
+            "style=\"height:auto;left:36pt;max-width:100%;overflow:visible;position:absolute;top:0pt;vertical-align:baseline;z-index:1\">",
+            "<rect x=\"0\" y=\"0\" width=\"192\" height=\"96\" fill=\"#c9d7f0\" stroke=\"#2a4b8d\" stroke-width=\"1.33\"/></svg></div>"
+        )),
+        "{text}"
+    );
+    // The group beside it: an ellipse and a text box whose paragraph is HTML,
+    // inside the drawing at the box's place.
+    assert!(
+        text.contains("<ellipse cx=\"72\" cy=\"48\" rx=\"72\" ry=\"48\" fill=\"#f3d6a8\" stroke=\"#8a5a00\" stroke-width=\"1\"/>"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<foreignObject x=\"144\" y=\"0\" width=\"144\" height=\"96\"><div xmlns=\"http://www.w3.org/1999/xhtml\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("<p class=\"s-default\">Grouped caption</p>"),
+        "{text}"
+    );
+    assert!(report.is_empty(), "{report:?}");
+}
+
+#[test]
+fn a_preset_shape_is_its_geometry_and_each_sits_at_its_own_offset() {
+    let (text, report) = export_fixture(PRESET_SHAPES);
+    // The first preset is a rounded rectangle: arcs at the corners, not a box.
+    assert!(
+        text.contains("<path d=\"M0 11.2C0 5 5 0 11.2 0L65.6 0C71.8 0 76.8 5 76.8 11.2L76.8 56C76.8 62.2 71.8 67.2 65.6 67.2L11.2 67.2C5 67.2 0 62.2 0 56Z\" fill=\"#5b9bd5\" stroke=\"#1f3864\" stroke-width=\"1.33\"/>"),
+        "{text}"
+    );
+    // In front of the text, each shape is placed by its own offset; stacked in
+    // the flow they would be one column.
+    for left in ["left:0pt;", "left:68.4pt;", "left:136.8pt;"] {
+        assert!(
+            text.contains(&format!(
+                "{left}max-width:100%;overflow:visible;position:absolute;top:36pt;"
+            )),
+            "{left} {text}"
+        );
+    }
+    // Their vertical offsets are from the page's top edge, which a web page
+    // does not have: placed from the paragraph instead, and reported. The
+    // shapes in `shapes.docx`, offset from their paragraph, land exactly and
+    // are not.
+    assert!(
+        report.contains(&"html.anchor_position".to_owned()),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_groups_text_boxes_keep_their_places_inside_the_group() {
+    let (text, report) = export_fixture(GROUPED_TEXT_BOXES);
+    let one = text.find("<foreignObject x=\"0\" y=\"0\" width=\"288\" height=\"40\">");
+    let two = text.find("<foreignObject x=\"0\" y=\"40\" width=\"288\" height=\"40\">");
+    assert!(
+        matches!((one, two), (Some(one), Some(two)) if one < two),
+        "{text}"
+    );
+    assert!(text.contains(">Group child one</p>"), "{text}");
+    assert!(text.contains(">Group child two</p>"), "{text}");
+    assert!(report.is_empty(), "{report:?}");
 }

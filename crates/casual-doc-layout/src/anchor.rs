@@ -1091,7 +1091,7 @@ fn place_group_children(
 /// Borrowed from a [`GroupShape`] or a `GroupTextBox`, so both resolve through
 /// [`geometry_content`] — a text box that is a star is the same star.
 #[derive(Clone, Copy)]
-struct GeometryRef<'a> {
+pub(crate) struct GeometryRef<'a> {
     geometry: ShapeGeometry,
     preset: Option<&'a str>,
     adjustments: &'a [ShapeAdjustment],
@@ -1104,7 +1104,7 @@ struct GeometryRef<'a> {
 }
 
 impl<'a> GeometryRef<'a> {
-    fn of_shape(shape: &'a GroupShape) -> Self {
+    pub(crate) fn of_shape(shape: &'a GroupShape) -> Self {
         Self {
             geometry: shape.geometry,
             preset: shape.preset.as_deref(),
@@ -1114,7 +1114,7 @@ impl<'a> GeometryRef<'a> {
         }
     }
 
-    fn of_text_box(text_box: &'a GroupTextBox, extent: Extent) -> Self {
+    pub(crate) fn of_text_box(text_box: &'a GroupTextBox, extent: Extent) -> Self {
         Self {
             geometry: text_box.geometry,
             preset: text_box.preset.as_deref(),
@@ -1153,7 +1153,7 @@ impl<'a> GeometryRef<'a> {
 ///
 /// Complexity: O(g + c) in the geometry's guides and commands — a preset compiles
 /// once per process, a custom geometry once per call — so O(1) in document size.
-fn geometry_content(
+pub(crate) fn geometry_content(
     shape: GeometryRef<'_>,
     rect: Rect,
     fill: Option<&Fill>,
@@ -1722,7 +1722,7 @@ impl GroupMapper {
 /// quietly becoming a solid.
 ///
 /// Complexity: O(1) — two map lookups and an index.
-fn themed_appearance(
+pub(crate) fn themed_appearance(
     shape: &GroupShape,
     definitions: &Definitions,
 ) -> (Option<Fill>, Option<ShapeStroke>) {

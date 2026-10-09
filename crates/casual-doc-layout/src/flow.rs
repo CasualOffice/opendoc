@@ -4358,7 +4358,7 @@ fn chart_item<'a>(
 
 /// Chart furniture text size, in half-points: 9 pt, Word's default chart font
 /// size for axis labels, the legend and data labels.
-const CHART_LABEL_HALF_POINTS: u32 = 18;
+pub(crate) const CHART_LABEL_HALF_POINTS: u32 = 18;
 
 /// Shapes one short chart label through the document's own cascade and shaper.
 ///
@@ -4408,7 +4408,7 @@ fn chart_label(
 /// The chart colour style for this document: the theme's six accents as the series
 /// colour cycle (`docs/155` §12 Q-D — resolve against the document theme, which
 /// already exists; `colors1.xml` stays out of scope and preserved).
-fn chart_style(palette: Option<&ResolvedPalette>) -> chart::ChartStyle {
+pub(crate) fn chart_style(palette: Option<&ResolvedPalette>) -> chart::ChartStyle {
     let mut style = chart::ChartStyle::default();
     if let Some(palette) = palette {
         style.accents = [
@@ -7664,7 +7664,7 @@ fn theme_slot_index(slot: ThemeColorRef) -> usize {
 
 /// Word's default Office theme (2013 and later), slot for slot — what a chart
 /// is drawn in when its document declares no `a:clrScheme`.
-const OFFICE_PALETTE: ResolvedPalette = ResolvedPalette {
+pub(crate) const OFFICE_PALETTE: ResolvedPalette = ResolvedPalette {
     slots: [
         [0x00, 0x00, 0x00, 0xFF],
         [0xFF, 0xFF, 0xFF, 0xFF],

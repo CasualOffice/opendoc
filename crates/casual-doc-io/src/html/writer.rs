@@ -30,24 +30,33 @@ use casual_doc_layout::cascade::{StyleCascade, TableStyleLayer, requested_font_f
 use casual_doc_layout::font_substitution::DeclaredFamilies;
 use casual_doc_layout::numbering::NumberingState;
 use casual_doc_layout::paint_values::{
-    NoteLabels, PaintPalette, cell_margins, list_indent, marker_glyphs, note_labels,
-    table_cell_borders, table_cell_layers,
+    NoteLabels, PaintPalette, chart_drawing, list_indent, marker_glyphs, note_labels,
 };
+use casual_doc_layout::units::{Size, Twip};
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Definitions, Document, DrawingAnchor,
-    EmbeddedKind, Extent, GroupChild, HeightRule, HorizontalAlign, HorizontalPosition,
-    HyperlinkTarget, InlineNode, LevelSuffix, MediaId, NoteId, NoteKind, NumberFormat, Paragraph,
-    ParagraphProperties, RevisionKind, RunProperties, SectionBoundary, SectionType, StyleId, Table,
-    TableWidth, TextBoxVerticalAnchor, TextDirection, VerticalAlignment, VerticalMerge, WidthType,
-    WordprocessingGroup, WrapMode,
+    BlockNode, BreakKind, Chart, Definitions, Document, DrawingAnchor, EmbeddedKind, Extent,
+    HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HyperlinkTarget, InlineNode,
+    LevelSuffix, MediaId, NoteId, NoteKind, NumberFormat, PageMargins, Paragraph,
+    ParagraphProperties, RevisionKind, RunProperties, SectionBoundary, SectionType, StyleId,
+    TextBoxVerticalAnchor, VerticalAlignment,
 };
 
 use super::css::{
     self, DEFAULT_SIZE_HALF_POINTS, Declarations, Fonts, css_string, hex, paragraph_css,
     paragraph_space, points, run_css, twips,
 };
-use super::{HtmlLimits, Losses, base64, enforce, escape_attribute, escape_text};
+use super::drawing;
+use super::tabs::{self, TabPlan};
+use super::{HtmlLimits, Losses, enforce, escape_attribute, escape_text};
 use crate::{AdapterError, DocumentResources, ModelOutcome};
+
+mod anchor;
+mod group;
+mod notes;
+mod table;
+
+use anchor::holds_free_drawing;
 
 /// The fixed part of the stylesheet: resets that let the document's own
 /// formatting decide, instead of the browser's defaults for `<h1>`, `<th>`,
@@ -64,9 +73,12 @@ img{max-width:100%;height:auto;vertical-align:baseline}\
 a{color:inherit;text-decoration:none}\
 sup,sub{font-size:inherit;vertical-align:baseline;line-height:0}\
 .tab{white-space:pre}\
+.tab-before{flex:0 1 auto;min-width:0}.tab-leader{flex:1 1 0;min-width:.5em;margin:0 .25em}\
+.tab-after{flex:none;white-space:nowrap}\
 .note-ref{font-size:66.67%;vertical-align:.5em;line-height:0}\
 .note-ref a,.note-back{color:inherit}\
 .notes{margin-top:24pt}\
+.page-header{margin-bottom:18pt}.page-footer{margin-top:18pt}\
 hr{border:0;border-top:1px solid #999}\
 @media print{body{max-width:none;padding:0}}";
 
@@ -122,6 +134,13 @@ pub(super) struct Writer<'d> {
     /// and label, for the number at its head.
     current_note: Option<(usize, NoteKind)>,
     document_language: Option<String>,
+    /// The chart each embedded object's node id draws, indexed once.
+    charts: BTreeMap<NodeId, &'d Chart>,
+    /// The last id given a drawing's gradient definition.
+    drawing_ids: usize,
+    /// The first section's margins, which page-relative offsets are taken
+    /// from.
+    page_margins: Option<PageMargins>,
     losses: Losses,
 }
 
@@ -160,6 +179,16 @@ impl<'d> Writer<'d> {
             rules: BTreeMap::new(),
             current_note: None,
             document_language,
+            charts: definitions
+                .charts
+                .iter()
+                .map(|(_, chart)| (chart.object, chart))
+                .collect(),
+            drawing_ids: 0,
+            page_margins: definitions
+                .sections
+                .first()
+                .map(|section| section.page_margins),
             losses: Losses::default(),
         }
     }
@@ -182,6 +211,21 @@ impl<'d> Writer<'d> {
             depth: 0,
             layer: None,
         };
+        // The page's header, once, above the text: the first page's when the
+        // first section has a distinct first page, its default header
+        // otherwise.
+        let first_page_distinct = first.is_some_and(|section| section.title_page == Some(true));
+        if let Some(blocks) = first.and_then(|section| {
+            let order = if first_page_distinct {
+                [HeaderFooterKind::First, HeaderFooterKind::Default]
+            } else {
+                [HeaderFooterKind::Default, HeaderFooterKind::First]
+            };
+            running_blocks(&section.headers, &self.definitions.headers, order)
+        }) {
+            self.running_part("header", "page-header", blocks)?;
+        }
+
         let body = self.document.body();
         let mut section = 0;
         let mut start = 0;
@@ -204,6 +248,17 @@ impl<'d> Writer<'d> {
             }
         }
         self.write_notes()?;
+        // The page's footer, once, below everything: the default footer, the
+        // one most pages carry.
+        if let Some(blocks) = first.and_then(|section| {
+            running_blocks(
+                &section.footers,
+                &self.definitions.footers,
+                [HeaderFooterKind::Default, HeaderFooterKind::First],
+            )
+        }) {
+            self.running_part("footer", "page-footer", blocks)?;
+        }
 
         if self
             .document
@@ -231,10 +286,12 @@ impl<'d> Writer<'d> {
             .iter()
             .any(|section| !section.headers.is_empty() || !section.footers.is_empty())
         {
-            // A web page has no pages to repeat a header on. The header is
-            // still in the document; it is not in this file, and that is said.
+            // A web page has one top and one bottom: the header is written
+            // once above the text and the footer once below it, not on every
+            // printed page, and a page-number field in them shows the value it
+            // was saved with. Written, and that much is said.
             self.losses
-                .record("html.header_footer", ModelOutcome::Omitted);
+                .record("html.header_footer_once", ModelOutcome::Degraded);
         }
         if sections.iter().any(|section| section.watermark.is_some()) {
             self.losses.record("html.watermark", ModelOutcome::Omitted);
@@ -248,6 +305,30 @@ impl<'d> Writer<'d> {
             self.losses
                 .record("html.section_layout", ModelOutcome::Degraded);
         }
+    }
+
+    /// A header or footer: its blocks walked like the body's — styles, tabs,
+    /// pictures and all — inside `<header>`/`<footer>`.
+    fn running_part(
+        &mut self,
+        tag: &str,
+        class: &str,
+        blocks: &[BlockNode],
+    ) -> Result<(), AdapterError> {
+        self.push("<")?;
+        self.push(tag)?;
+        self.push(" class=\"")?;
+        self.push(class)?;
+        self.push("\">\n")?;
+        let mut flow = Flow::default();
+        let cx = Cx {
+            depth: 1,
+            layer: None,
+        };
+        self.blocks(blocks, cx, &mut flow)?;
+        self.push("</")?;
+        self.push(tag)?;
+        self.push(">\n")
     }
 
     /// One section's blocks, in its columns when it has more than one.
@@ -595,10 +676,50 @@ impl<'d> Writer<'d> {
             }
             None => {}
         }
-        if has_tab(&paragraph.inlines) && !effective.tabs.is_empty() {
-            // A custom tab stop — right-aligned, centred, with a leader — has
-            // no CSS equivalent; the tab advances to the default grid instead.
-            self.losses.record("html.tab_stop", ModelOutcome::Degraded);
+        // Tabs go to their stops where a web page can say where a stop is
+        // (`tabs`): a contents line as a leader row, a header line as placed
+        // segments. A list item keeps the grid: a flex `<li>` has no marker.
+        let indent_start = i64::from(
+            effective
+                .indentation
+                .and_then(|indentation| indentation.start_twips)
+                .unwrap_or(0),
+        );
+        let plan = if item.is_some() {
+            if tabs::count_tabs(&paragraph.inlines) > 0 && !effective.tabs.is_empty() {
+                TabPlan::Grid { degraded: true }
+            } else {
+                TabPlan::Grid { degraded: false }
+            }
+        } else {
+            match tabs::plan(&paragraph.inlines, &effective.tabs, indent_start) {
+                // Segments are placed from the left edge; a right-to-left
+                // paragraph measures its stops from the right.
+                TabPlan::Positioned(_) if effective.bidi == Some(true) => {
+                    TabPlan::Grid { degraded: true }
+                }
+                plan => plan,
+            }
+        };
+        if holds_free_drawing(&paragraph.inlines) {
+            inline.set("position", "relative");
+        }
+        match &plan {
+            TabPlan::Grid { degraded: true } => {
+                self.losses.record("html.tab_stop", ModelOutcome::Degraded);
+            }
+            TabPlan::Grid { degraded: false } => {}
+            TabPlan::Leader { end, .. } => {
+                inline.set("display", "flex");
+                inline.set("align-items", "baseline");
+                if *end > 0 {
+                    inline.set("max-width", twips(*end));
+                }
+            }
+            TabPlan::Positioned(_) => {
+                inline.set("position", "relative");
+                inline.set("min-height", "1.2em");
+            }
         }
 
         // A `<p>` or `<hN>` may hold only phrasing content, and a browser
@@ -635,7 +756,49 @@ impl<'d> Writer<'d> {
             layer: cx.layer,
             base: self.base_run(style, cx.layer).inherited,
         };
-        self.inlines(&paragraph.inlines, cx, &context)?;
+        match plan {
+            TabPlan::Grid { .. } => self.inlines(&paragraph.inlines, cx, &context)?,
+            TabPlan::Leader { leader, .. } => {
+                let segments = tabs::split_at_tabs(&paragraph.inlines);
+                if let Some((last, before)) = segments.split_last() {
+                    self.push("<span class=\"tab-before\">")?;
+                    for (index, segment) in before.iter().enumerate() {
+                        if index > 0 {
+                            self.push("<span class=\"tab\">\t</span>")?;
+                        }
+                        self.inlines(segment, cx, &context)?;
+                    }
+                    self.push("</span><span class=\"tab-leader\"")?;
+                    if let Some(border) = tabs::leader_border(leader) {
+                        self.push(" style=\"border-bottom:")?;
+                        self.push(border)?;
+                        self.push("\"")?;
+                    }
+                    self.push("></span><span class=\"tab-after\">")?;
+                    self.inlines(last, cx, &context)?;
+                    self.push("</span>")?;
+                }
+            }
+            TabPlan::Positioned(stops) => {
+                let segments = tabs::split_at_tabs(&paragraph.inlines);
+                for (index, segment) in segments.iter().enumerate() {
+                    if index == 0 {
+                        self.inlines(segment, cx, &context)?;
+                        continue;
+                    }
+                    let Some(stop) = stops.get(index - 1) else {
+                        self.inlines(segment, cx, &context)?;
+                        continue;
+                    };
+                    let placed = tabs::placed(stop, indent_start);
+                    self.push("<span style=\"")?;
+                    self.push(&escape_attribute(&placed.to_css()))?;
+                    self.push("\">")?;
+                    self.inlines(segment, cx, &context)?;
+                    self.push("</span>")?;
+                }
+            }
+        }
         if !has_visible_content(&paragraph.inlines) {
             // An empty paragraph is a blank line on the page; an empty `<p>`
             // has no height at all. The break gives it its line.
@@ -778,213 +941,6 @@ impl<'d> Writer<'d> {
         Ok(())
     }
 
-    // ---- tables ------------------------------------------------------------
-
-    /// A real HTML table: the grid's column widths, merged cells as `colspan`
-    /// and `rowspan`, each cell's borders, fill, padding and alignment as the
-    /// page resolves them — table style, banding and conflict rules included.
-    fn table(&mut self, table: &Table, cx: Cx<'_>, flow: &mut Flow) -> Result<(), AdapterError> {
-        if cx.depth >= self.limits.max_nesting_depth {
-            return Err(AdapterError::new(
-                "limit html_nesting_depth exceeded while walking nested tables",
-            ));
-        }
-        let layers = table_cell_layers(table, &self.cascade);
-        let borders = table_cell_borders(table, &layers);
-        let columns = grid_columns(table);
-
-        let mut css = Declarations::default();
-        let properties = &table.properties;
-        if let Some(width) = properties.width.as_ref().and_then(width_css) {
-            css.set("width", width);
-        }
-        if properties.layout == Some(casual_doc_model::v1::TableLayout::Fixed) {
-            css.set("table-layout", "fixed");
-        }
-        if let Some(indent) = properties.indent_twips.filter(|indent| *indent != 0) {
-            css.set("margin-inline-start", twips(i64::from(indent)));
-        }
-        match properties.alignment {
-            Some(casual_doc_model::v1::Alignment::Center) => {
-                css.set("margin-inline-start", "auto");
-                css.set("margin-inline-end", "auto");
-            }
-            Some(casual_doc_model::v1::Alignment::End) => {
-                css.set("margin-inline-start", "auto");
-            }
-            _ => {}
-        }
-        if let Some(spacing) = properties.cell_spacing_twips.filter(|spacing| *spacing > 0) {
-            css.set("border-collapse", "separate");
-            css.set("border-spacing", twips(i64::from(spacing) * 2));
-        }
-        if flow.pending_after > 0 {
-            css.set("margin-top", twips(flow.pending_after));
-        }
-        if std::mem::take(&mut flow.page_break) {
-            css.set("break-before", "page");
-        }
-        flow.pending_after = 0;
-        flow.previous = None;
-        if properties.float_position.is_some() {
-            // A floating table's page position has no meaning on a web page;
-            // it flows where it is anchored.
-            self.losses
-                .record("html.table_float_position", ModelOutcome::Degraded);
-        }
-
-        self.push("<table")?;
-        if !css.is_empty() {
-            self.push(" style=\"")?;
-            self.push(&escape_attribute(&css.to_css()))?;
-            self.push("\"")?;
-        }
-        self.push(">\n")?;
-        if table.grid.iter().any(|column| column.width_twips.is_some()) {
-            self.push("<colgroup>")?;
-            for column in &table.grid {
-                match column.width_twips {
-                    Some(width) => {
-                        self.push("<col style=\"width:")?;
-                        self.push(&twips(i64::from(width.max(0))))?;
-                        self.push("\">")?;
-                    }
-                    None => self.push("<col>")?,
-                }
-            }
-            self.push("</colgroup>\n")?;
-        }
-
-        let deeper = Cx {
-            depth: cx.depth + 1,
-            layer: None,
-        };
-        // Header rows — those Word repeats on every page — are the table's
-        // head, and their cells are header cells. A first row that is not one
-        // is an ordinary row.
-        let header_rows = table
-            .rows
-            .iter()
-            .take_while(|row| row.properties.header)
-            .count();
-        for (row_index, row) in table.rows.iter().enumerate() {
-            if row_index == 0 && header_rows > 0 {
-                self.push("<thead>\n")?;
-            }
-            if row_index == header_rows {
-                if header_rows > 0 {
-                    self.push("</thead>\n")?;
-                }
-                self.push("<tbody>\n")?;
-            }
-            let header = row_index < header_rows;
-            self.push("<tr")?;
-            if let Some(height) = row
-                .properties
-                .height
-                .value_twips
-                .filter(|height| *height > 0)
-                && row.properties.height.rule != Some(HeightRule::Auto)
-            {
-                self.push(" style=\"height:")?;
-                self.push(&twips(i64::from(height)))?;
-                self.push("\"")?;
-            }
-            self.push(">\n")?;
-            for (cell_index, cell) in row.cells.iter().enumerate() {
-                if cell.properties.vertical_merge == Some(VerticalMerge::Continue) {
-                    continue;
-                }
-                let layer = &layers[row_index][cell_index];
-                let tag = if header { "th" } else { "td" };
-                self.push("<")?;
-                self.push(tag)?;
-                if let Some(span) = cell.properties.grid_span.filter(|span| *span > 1) {
-                    self.push(&format!(" colspan=\"{span}\""))?;
-                }
-                let rows_spanned = vertical_span(table, &columns, row_index, cell_index);
-                if rows_spanned > 1 {
-                    self.push(&format!(" rowspan=\"{rows_spanned}\""))?;
-                }
-                let mut cell_css = Declarations::default();
-                let candidates = &borders[row_index][cell_index];
-                for (property, edge) in [
-                    ("border-top", candidates.top.as_ref()),
-                    ("border-bottom", candidates.bottom.as_ref()),
-                    ("border-inline-start", candidates.start.as_ref()),
-                    ("border-inline-end", candidates.end.as_ref()),
-                ] {
-                    if let Some(value) = edge.and_then(|edge| self.cell_edge(edge)) {
-                        cell_css.set(property, value);
-                    }
-                }
-                if let Some(fill) = self.palette.cell_fill(table, cell, layer) {
-                    cell_css.set("background-color", hex(fill));
-                }
-                let margins = cell_margins(&cell.properties, &table.properties);
-                for (property, value) in [
-                    ("padding-top", margins.top.raw()),
-                    ("padding-bottom", margins.bottom.raw()),
-                    ("padding-inline-start", margins.start.raw()),
-                    ("padding-inline-end", margins.end.raw()),
-                ] {
-                    if value > 0 {
-                        cell_css.set(property, twips(i64::from(value)));
-                    }
-                }
-                match cell.properties.vertical_alignment {
-                    Some(CellVerticalAlignment::Center) => cell_css.set("vertical-align", "middle"),
-                    Some(CellVerticalAlignment::Bottom) => cell_css.set("vertical-align", "bottom"),
-                    _ => {}
-                }
-                if let Some(width) = cell.properties.width.as_ref().and_then(width_css) {
-                    cell_css.set("width", width);
-                }
-                match cell.properties.text_direction {
-                    Some(TextDirection::TbRl) => cell_css.set("writing-mode", "vertical-rl"),
-                    Some(TextDirection::BtLr) => {
-                        cell_css.set("writing-mode", "vertical-rl");
-                        cell_css.set("transform", "rotate(180deg)");
-                    }
-                    _ => {}
-                }
-                if !cell_css.is_empty() {
-                    self.push(" style=\"")?;
-                    self.push(&escape_attribute(&cell_css.to_css()))?;
-                    self.push("\"")?;
-                }
-                self.push(">\n")?;
-                let mut cell_flow = Flow::default();
-                let in_cell = Cx {
-                    layer: Some(layer),
-                    ..deeper
-                };
-                self.blocks(&cell.blocks, in_cell, &mut cell_flow)?;
-                self.push("</")?;
-                self.push(tag)?;
-                self.push(">\n")?;
-            }
-            self.push("</tr>\n")?;
-        }
-        if header_rows == table.rows.len() && header_rows > 0 {
-            self.push("</thead>\n")?;
-        } else if !table.rows.is_empty() {
-            self.push("</tbody>\n")?;
-        }
-        self.push("</table>\n")?;
-        Ok(())
-    }
-
-    /// One cell side as CSS: the winning edge as the page draws it, `hidden`
-    /// for an explicit `nil` (which suppresses the shared edge on both sides,
-    /// as it does on the page), nothing for no border.
-    fn cell_edge(&self, edge: &BorderEdge) -> Option<String> {
-        if edge.style == "nil" {
-            return Some("hidden".to_owned());
-        }
-        css::border_css(&self.palette, edge)
-    }
-
     // ---- inlines -----------------------------------------------------------
 
     fn inlines(
@@ -1054,10 +1010,8 @@ impl<'d> Writer<'d> {
                 )
             }
             InlineNode::AnchoredDrawing(drawing) => {
-                // A page position has no meaning on a web page; the picture
-                // floats to the side it is anchored to, or sits in the text.
-                self.losses
-                    .record("html.anchor_position", ModelOutcome::Degraded);
+                // Placed as the page places it where a web page can say so
+                // (`anchor::anchor_css`), and reported where it cannot.
                 let link = drawing
                     .hyperlink
                     .as_ref()
@@ -1087,9 +1041,9 @@ impl<'d> Writer<'d> {
                 self.inlines(&field.inlines, cx, context)
             }
             InlineNode::TextBox(text_box) => {
-                // The box keeps its size, fill, outline and inner margins; what
-                // a web page cannot keep is a page position (it floats to its
-                // side instead) and Word's shrink-text-on-overflow.
+                // The box keeps its size, fill, outline and inner margins, and
+                // its place as far as a web page can say it (`anchor_css`);
+                // what it cannot keep is Word's shrink-text-on-overflow.
                 self.losses.record("html.text_box", ModelOutcome::Degraded);
                 let mut css = Declarations::default();
                 if let Some(extent) = text_box
@@ -1135,7 +1089,7 @@ impl<'d> Writer<'d> {
                     TextBoxVerticalAnchor::Top => {}
                 }
                 match &text_box.anchor {
-                    Some(anchor) => anchor_css(anchor, &mut css),
+                    Some(anchor) => self.place(anchor, &mut css),
                     None => {
                         if css.get("display").is_none() {
                             css.set("display", "inline-block");
@@ -1217,10 +1171,41 @@ impl<'d> Writer<'d> {
                         cx,
                     )
                 }
+                // No stored picture: a chart is drawn as the page draws it.
                 None => {
-                    self.losses
-                        .record("html.embedded_object", ModelOutcome::Omitted);
-                    Ok(())
+                    let chart = matches!(object.kind, EmbeddedKind::Chart)
+                        .then(|| self.charts.get(&object.id).copied())
+                        .flatten();
+                    let drawing = chart.map(|chart| {
+                        chart_drawing(
+                            self.document,
+                            chart,
+                            Size::new(
+                                Twip(emu_twips(object.extent.width_emu)),
+                                Twip(emu_twips(object.extent.height_emu)),
+                            ),
+                        )
+                    });
+                    match drawing.filter(|drawing| !drawing.primitives.is_empty()) {
+                        Some(drawing) => {
+                            let name = chart
+                                .and_then(|chart| chart.title.as_ref())
+                                .and_then(|title| title.text.as_ref())
+                                .map_or("Chart", |text| text.text.as_str());
+                            let svg = drawing::chart(
+                                &drawing,
+                                name,
+                                Twip(emu_twips(object.extent.width_emu)),
+                                Twip(emu_twips(object.extent.height_emu)),
+                            );
+                            self.push(&svg)
+                        }
+                        None => {
+                            self.losses
+                                .record("html.embedded_object", ModelOutcome::Omitted);
+                            Ok(())
+                        }
+                    }
                 }
             },
             InlineNode::NoteReference(reference) => {
@@ -1363,12 +1348,8 @@ impl<'d> Writer<'d> {
         Ok(())
     }
 
-    /// Blocks inside an inline container (a text box): a nested flow.
-    fn nested_blocks(&mut self, blocks: &[BlockNode], cx: Cx<'_>) -> Result<(), AdapterError> {
-        self.nested_blocks_in(blocks, cx, &Declarations::default())
-    }
-
-    /// [`Self::nested_blocks`] in a box with its own declarations.
+    /// Blocks inside an inline container (a text box), as a nested flow in a
+    /// box with its own declarations.
     fn nested_blocks_in(
         &mut self,
         blocks: &[BlockNode],
@@ -1396,67 +1377,16 @@ impl<'d> Writer<'d> {
         self.push("</div>\n")
     }
 
-    fn group(&mut self, group: &WordprocessingGroup, cx: Cx<'_>) -> Result<(), AdapterError> {
-        if cx.depth >= self.limits.max_nesting_depth {
-            return Err(AdapterError::new(
-                "limit html_nesting_depth exceeded while walking a grouped drawing",
-            ));
-        }
-        self.losses
-            .record("html.grouped_drawing", ModelOutcome::Degraded);
-        let deeper = Cx {
-            depth: cx.depth + 1,
-            layer: None,
-        };
-        for child in &group.children {
-            match child {
-                GroupChild::Picture(picture) => {
-                    self.picture(
-                        &Picture {
-                            media: picture.media,
-                            description: picture.descr.as_deref(),
-                            extent: None,
-                            crop: None,
-                            rotation: None,
-                            flip_h: false,
-                            flip_v: false,
-                            opacity: None,
-                            anchor: None,
-                            link: None,
-                        },
-                        deeper,
-                    )?;
-                }
-                GroupChild::TextBox(text_box) => self.nested_blocks(&text_box.blocks, deeper)?,
-                GroupChild::Shape(_) => {
-                    self.losses
-                        .record("html.group_shape", ModelOutcome::Omitted);
-                }
-                GroupChild::Group(inner) => self.group(inner, deeper)?,
-            }
-        }
-        Ok(())
-    }
-
     /// One picture, embedded as a `data:` URI when its bytes are present and
     /// within the per-picture ceiling, at the size the document gives it.
     fn picture(&mut self, picture: &Picture<'_>, _cx: Cx<'_>) -> Result<(), AdapterError> {
         let alt = picture.description.unwrap_or("");
-        let reference = self.definitions.media.get(&picture.media);
-        let bytes = reference.and_then(|entry| self.resources.get(&entry.part_name));
-        let Some((entry, bytes)) = reference.zip(bytes) else {
-            // A drawing whose bytes the host did not supply cannot be embedded,
-            // and an `<img>` with no source is a broken-image icon. The alt text
-            // is what is left.
-            self.losses
-                .record("html.picture_bytes_absent", ModelOutcome::Degraded);
+        // A drawing whose bytes the host did not supply, or that are over the
+        // ceiling, cannot be embedded, and an `<img>` with no source is a
+        // broken-image icon. The alt text is what is left.
+        let Some(uri) = self.picture_uri(picture.media)? else {
             return self.alt_text(alt);
         };
-        if bytes.len() > self.limits.max_embedded_bytes {
-            self.losses
-                .record("html.picture_over_embedding_limit", ModelOutcome::Degraded);
-            return self.alt_text(alt);
-        }
 
         let mut frame = Declarations::default();
         let mut image = Declarations::default();
@@ -1488,7 +1418,7 @@ impl<'d> Writer<'d> {
             frame.set("opacity", format!("{}", f64::from(opacity) / 100_000.0));
         }
         if let Some(anchor) = picture.anchor {
-            anchor_css(anchor, &mut frame);
+            self.place(anchor, &mut frame);
         }
 
         // A crop shows part of the source scaled to fill the box: the image is
@@ -1542,11 +1472,8 @@ impl<'d> Writer<'d> {
             self.push(&escape_attribute(&image.to_css()))?;
             self.push("\"")?;
         }
-        self.push(" src=\"data:")?;
-        self.push(&escape_attribute(&entry.media_type))?;
-        self.push(";base64,")?;
-        let encoded = base64(bytes);
-        self.push(&encoded)?;
+        self.push(" src=\"")?;
+        self.push(&escape_attribute(&uri))?;
         self.push("\">")?;
         if cropped {
             self.push("</span>")?;
@@ -1564,111 +1491,6 @@ impl<'d> Writer<'d> {
         self.push("<span>")?;
         self.push(&escape_text(alt))?;
         self.push("</span>")
-    }
-
-    // ---- notes -------------------------------------------------------------
-
-    /// A footnote or endnote reference: the label the page prints, linked to
-    /// the note at the end of the file, and linked back from it.
-    fn note_reference(&mut self, kind: NoteKind, note: NoteId) -> Result<(), AdapterError> {
-        let exists = match kind {
-            NoteKind::Footnote => self.definitions.footnotes.get(&note).is_some(),
-            NoteKind::Endnote => self.definitions.endnotes.get(&note).is_some(),
-        };
-        if !exists {
-            self.losses
-                .record("html.dangling_note", ModelOutcome::Omitted);
-            return Ok(());
-        }
-        let label = self
-            .note_labels
-            .label(kind, note)
-            .map_or_else(|| "*".to_owned(), str::to_owned);
-        let (index, first) = match self.notes.iter().position(|seen| *seen == (kind, note)) {
-            Some(index) => (index, false),
-            None => {
-                self.notes.push((kind, note));
-                (self.notes.len() - 1, true)
-            }
-        };
-        let id = note_anchor(kind, index);
-        self.push("<sup class=\"note-ref\"><a href=\"#")?;
-        self.push(&id)?;
-        self.push("\"")?;
-        if first {
-            self.push(" id=\"ref-")?;
-            self.push(&id)?;
-            self.push("\"")?;
-        }
-        self.push(">")?;
-        self.push(&escape_text(&label))?;
-        self.push("</a></sup>")
-    }
-
-    /// The number at the head of a note's own text, linking back to where the
-    /// note is referenced.
-    fn note_number_mark(&mut self) -> Result<(), AdapterError> {
-        let Some((index, kind)) = self.current_note else {
-            return Ok(());
-        };
-        let (note_kind, note) = self.notes[index];
-        let label = self
-            .note_labels
-            .label(note_kind, note)
-            .map_or_else(|| "*".to_owned(), str::to_owned);
-        let id = note_anchor(kind, index);
-        self.push("<sup class=\"note-ref\"><a class=\"note-back\" href=\"#ref-")?;
-        self.push(&id)?;
-        self.push("\">")?;
-        self.push(&escape_text(&label))?;
-        self.push("</a></sup>")
-    }
-
-    /// Every referenced note, after the body: footnotes, then endnotes.
-    fn write_notes(&mut self) -> Result<(), AdapterError> {
-        // A note may reference another note; the queue can grow while this
-        // walks it, so it is walked by index.
-        for kind in [NoteKind::Footnote, NoteKind::Endnote] {
-            let mut opened = false;
-            let mut index = 0;
-            while index < self.notes.len() {
-                let (note_kind, note) = self.notes[index];
-                if note_kind != kind {
-                    index += 1;
-                    continue;
-                }
-                let blocks = match kind {
-                    NoteKind::Footnote => self.definitions.footnotes.get(&note),
-                    NoteKind::Endnote => self.definitions.endnotes.get(&note),
-                }
-                .map(|note| note.blocks.clone())
-                .unwrap_or_default();
-                if !opened {
-                    self.push(match kind {
-                        NoteKind::Footnote => "<section class=\"notes footnotes\">\n<hr>\n",
-                        NoteKind::Endnote => "<section class=\"notes endnotes\">\n<hr>\n",
-                    })?;
-                    opened = true;
-                }
-                self.push("<div class=\"note\" id=\"")?;
-                self.push(&note_anchor(kind, index))?;
-                self.push("\">\n")?;
-                self.current_note = Some((index, kind));
-                let mut flow = Flow::default();
-                let cx = Cx {
-                    depth: 1,
-                    layer: None,
-                };
-                self.blocks(&blocks, cx, &mut flow)?;
-                self.current_note = None;
-                self.push("</div>\n")?;
-                index += 1;
-            }
-            if opened {
-                self.push("</section>\n")?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1698,45 +1520,6 @@ struct Picture<'p> {
     opacity: Option<u32>,
     anchor: Option<&'p DrawingAnchor>,
     link: Option<String>,
-}
-
-/// How an anchored picture sits on a web page: beside the text on the side it
-/// is anchored to when text wraps around it, on its own line when text sits
-/// above and below it.
-fn anchor_css(anchor: &DrawingAnchor, css: &mut Declarations) {
-    let side = match anchor.horizontal.position {
-        HorizontalPosition::Align(HorizontalAlign::Right | HorizontalAlign::Outside) => {
-            Some("right")
-        }
-        HorizontalPosition::Align(HorizontalAlign::Center) => None,
-        HorizontalPosition::Align(HorizontalAlign::Left | HorizontalAlign::Inside) => Some("left"),
-        HorizontalPosition::Offset(_) => Some("left"),
-    };
-    let distances = anchor.wrap_distances;
-    match anchor.wrap {
-        WrapMode::Square | WrapMode::Tight | WrapMode::Through => {
-            let side = side.unwrap_or("left");
-            css.set("float", side);
-            css.set("margin-top", emu(distances.top_emu));
-            css.set("margin-bottom", emu(distances.bottom_emu));
-            if side == "left" {
-                css.set("margin-right", emu(distances.end_emu));
-            } else {
-                css.set("margin-left", emu(distances.start_emu));
-            }
-        }
-        WrapMode::TopAndBottom | WrapMode::None => {
-            css.set("display", "block");
-            match side {
-                None => {
-                    css.set("margin-left", "auto");
-                    css.set("margin-right", "auto");
-                }
-                Some("right") => css.set("margin-left", "auto"),
-                Some(_) => {}
-            }
-        }
-    }
 }
 
 /// A drawing colour, with its alpha when it has one.
@@ -1769,6 +1552,23 @@ fn stroke_css(stroke: &casual_doc_model::v1::ShapeStroke) -> String {
     )
 }
 
+/// The blocks of the first header or footer of `order`'s kinds that the
+/// section references and the document defines.
+fn running_blocks<'p>(
+    references: &[HeaderFooterRef],
+    parts: &'p casual_doc_model::v1::DefinitionMap<HeaderFooterId, HeaderFooter>,
+    order: [HeaderFooterKind; 2],
+) -> Option<&'p [BlockNode]> {
+    order.iter().find_map(|kind| {
+        references
+            .iter()
+            .find(|reference| reference.kind == *kind)
+            .and_then(|reference| parts.get(&reference.reference))
+            .map(|part| part.blocks.as_slice())
+            .filter(|blocks| !blocks.is_empty())
+    })
+}
+
 /// EMUs (914,400 to the inch, 12,700 to the point) as points.
 fn emu(value: i64) -> String {
     points(value as f64 / 12_700.0)
@@ -1776,67 +1576,6 @@ fn emu(value: i64) -> String {
 
 fn round3(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
-}
-
-/// A table or cell width as CSS, or `None` for automatic.
-fn width_css(width: &TableWidth) -> Option<String> {
-    match width.width_type {
-        WidthType::Dxa if width.value > 0 => Some(twips(i64::from(width.value))),
-        // Fiftieths of a percent: 5000 is the full width.
-        WidthType::Pct if width.value > 0 => {
-            Some(format!("{}%", round3(f64::from(width.value) / 50.0)))
-        }
-        _ => None,
-    }
-}
-
-/// The grid column each cell starts in, `[row][cell]`: `w:gridBefore` plus
-/// the spans before it. A vertical merge continues in the same *grid column*,
-/// which is not the same cell index once a row has a span.
-fn grid_columns(table: &Table) -> Vec<Vec<u32>> {
-    table
-        .rows
-        .iter()
-        .map(|row| {
-            let mut column = row.properties.grid_before.unwrap_or(0);
-            row.cells
-                .iter()
-                .map(|cell| {
-                    let start = column;
-                    column = column.saturating_add(cell.properties.grid_span.unwrap_or(1).max(1));
-                    start
-                })
-                .collect()
-        })
-        .collect()
-}
-
-/// How many rows a cell's vertical merge spans, counting from `row_index`.
-///
-/// Complexity: O(rows below × cells per row) for a merged cell and O(1) for
-/// the common case.
-fn vertical_span(table: &Table, columns: &[Vec<u32>], row_index: usize, cell_index: usize) -> u32 {
-    let start = table
-        .rows
-        .get(row_index)
-        .and_then(|row| row.cells.get(cell_index));
-    if start.map(|cell| cell.properties.vertical_merge) != Some(Some(VerticalMerge::Restart)) {
-        return 1;
-    }
-    let column = columns[row_index][cell_index];
-    let mut span = 1;
-    for (offset, row) in table.rows.iter().enumerate().skip(row_index + 1) {
-        let continues = columns[offset]
-            .iter()
-            .position(|start| *start == column)
-            .and_then(|index| row.cells.get(index))
-            .is_some_and(|cell| cell.properties.vertical_merge == Some(VerticalMerge::Continue));
-        if !continues {
-            break;
-        }
-        span += 1;
-    }
-    span
 }
 
 /// Where a paragraph's page or column break sits, which decides whether it
@@ -1919,17 +1658,6 @@ fn holds_blocks(inlines: &[InlineNode]) -> bool {
     })
 }
 
-fn has_tab(inlines: &[InlineNode]) -> bool {
-    inlines.iter().any(|inline| match inline {
-        InlineNode::Tab(_) => true,
-        InlineNode::Hyperlink(link) => has_tab(&link.inlines),
-        InlineNode::Field(field) => has_tab(&field.inlines),
-        InlineNode::Sdt(sdt) => has_tab(&sdt.inlines),
-        InlineNode::Revision(revision) => has_tab(&revision.inlines),
-        _ => false,
-    })
-}
-
 fn link_target(target: &HyperlinkTarget) -> String {
     match target {
         HyperlinkTarget::External(external) => match &external.anchor {
@@ -1937,13 +1665,6 @@ fn link_target(target: &HyperlinkTarget) -> String {
             None => external.url.clone(),
         },
         HyperlinkTarget::Internal(internal) => format!("#{}", internal.anchor),
-    }
-}
-
-fn note_anchor(kind: NoteKind, index: usize) -> String {
-    match kind {
-        NoteKind::Footnote => format!("fn{}", index + 1),
-        NoteKind::Endnote => format!("en{}", index + 1),
     }
 }
 
@@ -1987,4 +1708,9 @@ fn heading_level_from_name(name: &str) -> Option<u8> {
         .strip_prefix("heading")
         .or_else(|| trimmed.strip_prefix("Heading"))?;
     rest.trim().parse::<u8>().ok()
+}
+
+/// EMUs as twips (635 to the twip).
+fn emu_twips(value: i64) -> i32 {
+    i32::try_from(value / 635).unwrap_or(i32::MAX)
 }
