@@ -1133,15 +1133,13 @@ fn push_shape_items(
     transform: Option<crate::display::ShapeTransform>,
 ) {
     let single =
-        |geometry, fill: Option<&AnchorFill>, stroke: Option<&AnchorStroke>| {
-            PaintItem::Shape {
-                geometry,
-                fill: fill.map(fill_to_display),
-                stroke: stroke.map(shape_outline),
-                head_end: None,
-                tail_end: None,
-                transform,
-            }
+        |geometry, fill: Option<&AnchorFill>, stroke: Option<&AnchorStroke>| PaintItem::Shape {
+            geometry,
+            fill: fill.map(fill_to_display),
+            stroke: stroke.map(shape_outline),
+            head_end: None,
+            tail_end: None,
+            transform,
         };
     match content {
         AnchorContent::Rectangle { fill, stroke } => list.push(single(

@@ -9,14 +9,17 @@
 [![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-black.svg?logo=rust)](rust-toolchain.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**A deterministic, embeddable Word-document engine written in Rust** — it reads
-and writes `.docx`, holds the document in a normalized editable model, and lays it
-out and renders it to pixels, for native, WebAssembly, and headless hosts that
-need real DOCX fidelity without a browser, a server, or a UI framework.
+**An Apache-2.0, embeddable, local-first editor for Word documents** — and the
+deterministic Rust engine underneath it. OpenDoc reads and writes `.docx`, holds the
+document in a normalized editable model, lays it out and paints it itself, and runs
+the same engine natively, headless, or in the browser as WebAssembly. Nothing has to
+run behind it: the editor opens, edits and saves a document entirely in the tab.
 
-The same engine compiles to WebAssembly and drives a **live in-browser editor** —
-[open the bundled DOCX demo](https://opendoc.casualoffice.org/editor.html?demo=1)
-or visit the [developer site](https://opendoc.casualoffice.org).
+It is built as an open alternative to ONLYOFFICE Docs for documents: one you can
+embed and brand without a commercial licence.
+
+[Open the live editor with a sample document](https://opendoc.casualoffice.org/editor.html?demo=1) ·
+[developer site](https://opendoc.casualoffice.org)
 
 [![OpenDoc in-browser editor](docs/assets/editor.jpg)](https://opendoc.casualoffice.org/editor.html?demo=1)
 
@@ -25,58 +28,114 @@ for Casual Docs and an SDK others can embed.
 
 ## Why OpenDoc
 
-Most ways to work with `.docx` force a trade-off: a full office suite you can't
-embed, a converter that silently drops anything it doesn't understand, or a
-browser editor that treats the DOM as the source of truth. OpenDoc is built the
-other way around:
+- **Loss-aware by design.** Content the model does not yet represent is kept and
+  written back verbatim, or reported in a compatibility report — never silently
+  dropped. An unedited `.docx` saves back byte-for-byte.
+- **Deterministic.** The same input, fonts and engine version produce the same model,
+  layout, pixels and bytes, so rendering is regression-tested, not eyeballed.
+- **Local-first.** No document server, no upload. The editor is a static web app;
+  drafts and version history live in the browser's own storage.
+- **Embeddable.** A custom element, an in-process API and a `postMessage` bridge, with
+  roles, capabilities and build-time white-labelling. No React, DOM-as-model, or
+  mandatory collaboration provider.
+- **Safe with untrusted files.** Packages are parsed under explicit entry, path, size,
+  expansion and resource limits, and macro-enabled `.docm` files are refused.
 
-- **Loss-aware by design.** Content the semantic model doesn't yet represent is
-  preserved and reproduced verbatim, or reported — never silently discarded.
-- **Deterministic.** The same input, fonts, and engine version produce the same
-  model, layout, and bytes, every time — so rendering can be regression-tested.
-- **Embeddable and host-agnostic.** No mandatory DOM, server, React, or
-  collaboration provider. The core targets Rust hosts, `wasm32-unknown-unknown`,
-  desktop, and headless services alike.
-- **Safe with untrusted files.** Packages are parsed under explicit entry, path,
-  size, expansion, and resource limits.
+## What you can do in the editor today
 
-## Features
+- **Write and format** — styles (create and update from the selection), fonts, sizes,
+  colours, paragraph spacing and indents, tab stops and the ruler, lists and
+  multilevel numbering, format painter, smart quotes, change case, drop caps.
+- **Tables** — insert, merge and split, borders and shading, cell formatting,
+  row/column operations, move and reorder.
+- **Objects** — pictures (crop, rotate, wrap, alt text, group), shapes (22 to insert;
+  all 187 DrawingML presets and custom geometry render) and text boxes, and **charts**:
+  drawn by the engine (bar, column, line, area, scatter, pie, doughnut), insertable,
+  with an editable data grid, and saved back into the `.docx`.
+- **Document structure** — headers and footers (first-page and odd/even), footnotes and
+  endnotes, sections and breaks, page setup, line numbers, watermarks, a table of
+  contents the engine generates and updates, captions and cross-references,
+  bookmarks, hyperlinks and fields.
+- **Review** — threaded comments with replies and resolve; tracked changes with
+  Editing / Suggesting / Viewing modes, per-author colours, accept and reject one or
+  all; a document's own Track Changes setting is honoured on open and saved; Restrict
+  Editing (read-only, comments, tracked changes, forms).
+- **Versions and compare** — a version timeline with named versions, a read-only
+  preview with the changes painted on the page, non-destructive restore, download and
+  copy; compare against another file as a redline on the canvas, or keep the
+  differences as tracked changes.
+- **Proofing** — offline spell check (English, US and UK) and grammar rules in a
+  worker, with a personal dictionary.
+- **Views** — paper layout, an editable pageless reflow view, a phone layout with touch
+  selection, an outline pane, folding headings, page thumbnails, zoom, and a dark
+  theme.
+- **Find and replace, print** (as real-text PDF), document statistics, a command
+  palette and keyboard shortcuts.
+- **Accessibility** — a screen-reader mirror of the document's structure (headings,
+  lists, tables, alt text), F6 region navigation, arrow-key ribbon navigation and key
+  tips; WCAG contrast is measured in CI.
+- **19 interface languages** (machine-translated, marked as such), with a mirrored
+  chrome for right-to-left languages.
 
-- **DOCX import** into a normalized, editable model: paragraphs and runs with the
-  full property tail, styles (`basedOn` chains) and theme, numbering, sections
-  and page geometry, tables (merged cells, nested tables, borders, shading, cell
-  margins), images and drawings, hyperlinks, fields, text boxes, footnotes and
-  endnotes, headers and footers, comments, tracked changes, bookmarks, and
-  content controls.
-- **DOCX export** in two modes: byte-identical reconstruction of an unedited
-  package, and a semantic writer that re-emits an *edited* model as a valid
-  `.docx` that opens cleanly in LibreOffice.
-- **Editing primitives**: grapheme-aware inserts/deletes, paragraph split/join,
-  atomic transactions with semantic inverses, position mapping, revision-checked
-  undo/redo, directed caret/range selection, and bounded ordered events.
-- **Layout and rendering**: text shaping and line breaking via
-  [`parley`](https://github.com/linebender/parley), an effective-property style
-  cascade, pagination with break control, a backend-neutral display list, and a
-  CPU raster backend that renders real pages and tables to PNG via
-  [`tiny-skia`](https://github.com/RazrFalcon/tiny-skia) and glyph outlines from
-  [`skrifa`](https://github.com/googlefonts/fontations).
-- **In-browser editor** (WebAssembly): the engine compiled to
-  `wasm32-unknown-unknown` drives a live editor — hit-testing, a custom
-  engine-drawn caret and selection, incremental per-page repaint (sub-10 ms on a
-  large document), text and run/paragraph formatting with type-in-format, lists,
-  tables, pictures, drawings, comments and tracked changes, all through a closed
-  operation set with group undo/redo. See
-  [Try it in your browser](#try-it-in-your-browser).
-- **Every editable surface takes every editing operation**: the page body, headers,
-  footers, footnote and endnote bodies, text boxes, and objects nested inside a
-  shape group each accept typing, selection, formatting, clipboard, find and
-  replace, comments, and tracked changes — held to that by an operation × surface
-  matrix in CI rather than by spot-checks.
+## Formats
+
+| Format | Open | Save / export |
+| --- | :---: | :---: |
+| Word (`.docx`) | yes | yes — byte-identical when unedited |
+| Word template (`.dotx`) | opens as a document | yes |
+| OpenDocument Text (`.odt`) | yes | yes |
+| Rich Text (`.rtf`) | yes | — |
+| PDF | — | yes — real, selectable text with embedded, subsetted fonts |
+| Web page (`.html`) | — | yes — one self-contained file, styled the way the page is |
+| Markdown (`.md`) | — | yes |
+| Plain text (`.txt`) | yes | yes |
+| Normalized JSON snapshot | yes | yes |
+
+Every export reports what it could not carry. A `.docm` file is refused at open.
+
+## The engine
+
+The editor is a thin shell over a Rust engine that owns everything a document is:
+
+- **Import** — WordprocessingML, ODF and RTF into one normalized, versioned model:
+  styles and themes, numbering, sections, tables, drawings and charts, fields, notes,
+  headers and footers, comments, tracked changes, bookmarks, content controls and
+  OMML math.
+- **Editing** — a closed operation set applied through transactions, each with its
+  inverse, so undo/redo, collaboration and history share one mutation path.
+- **Layout and paint** — shaping and line breaking with
+  [`parley`](https://github.com/linebender/parley), a full style cascade, pagination
+  with keep and widow rules, floats with tight/through contour wrapping, the document
+  grid, all 187 ECMA-376 preset shapes and custom geometry, charts, and math, into a
+  backend-neutral display list.
+- **Output** — a CPU rasterizer ([`tiny-skia`](https://github.com/RazrFalcon/tiny-skia)
+  with [`skrifa`](https://github.com/googlefonts/fontations) outlines, including COLR
+  and bitmap colour glyphs), a vector PDF writer, and DOCX, ODT, HTML, Markdown and
+  text writers.
+- **Diff** — a structural comparison of two documents (blocks, moves, words, formatting,
+  styles, lists, tables) that drives version history and Compare.
+
+## Collaboration (experimental)
+
+Real-time co-editing is built from operational transformation over the same
+transactions (ADR-033) and an optional relay, `opendoc-relay`, that orders and
+forwards changes and never holds the document (ADR-047). Rooms carry a role —
+viewer, commenter, suggester, editor or owner — that caps every participant.
+
+It is **not on the public demo yet**, and it is not a product surface: there is no
+Share button, presence and remote cursors are not shown, and each participant opens
+the same file themselves. To try it locally, see
+[deployment §5](docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md):
+
+```sh
+docker compose run --rm relay create /var/lib/opendoc-relay/room.journal
+docker compose --profile relay up --build
+# then open the editor with ?room=ws://localhost:7070
+```
 
 ## Quickstart
 
-OpenDoc builds from source. Install
-[Rust](https://www.rust-lang.org/tools/install), then clone and test the
+Install [Rust](https://www.rust-lang.org/tools/install), then clone and test the
 workspace:
 
 ```sh
@@ -85,57 +144,45 @@ cd opendoc
 cargo test --workspace --all-features --locked
 ```
 
-Render the first page of a bundled sample document to a PNG — the full pipeline
-(import → paginate → compose → raster):
+Render the first page of a bundled sample to a PNG — the whole pipeline (import →
+paginate → compose → raster):
 
 ```sh
 cargo run -p casual-doc-render --example render_docx_page -- page.png
 ```
 
-On native, the render crate resolves installed OS faces by default (useful for
-CJK, symbol, and complex-script text the bundled Latin faces do not cover), so no
-feature flag is needed:
-
-```sh
-cargo run -p casual-doc-render --example render_docx_page -- page.png
-```
-
-The repository pins Rust **1.96.0** through `rust-toolchain.toml` and supports
-Rust **1.88.0** as its minimum supported version (MSRV). Every pull request runs
-the build, test, lint, docs, and WASM gates on the pinned toolchain plus a
-separate locked all-target check on the MSRV.
-
-## Try it in your browser
-
-**Live sample:
-[opendoc.casualoffice.org/editor.html?demo=1](https://opendoc.casualoffice.org/editor.html?demo=1)**
-— inspect and edit a bundled `.docx`, no install. To start with your own local
-file, open the [blank editor](https://opendoc.casualoffice.org/editor.html).
-
-`webapp/` is a zero-server harness that runs the engine as WebAssembly: open a
-`.docx`, see it rendered exactly as the engine lays it out, and **edit it live** —
-type with formatting, apply styles / fonts / sizes / colors, bulleted and numbered
-lists, and tables (right-click a cell for row/column operations), with undo/redo
-and save back to `.docx`. Nothing is uploaded; everything runs client-side. To run
-it locally:
+Run the editor locally:
 
 ```sh
 # Requires wasm-pack (https://drager.github.io/wasm-pack) and the pinned toolchain.
-./webapp/build.sh     # compile the engine to webapp/pkg and wire the harness
+./webapp/build.sh     # compile the engine to webapp/pkg and build the pages
 ./webapp/serve.py     # serve on http://localhost:8099 with no-cache headers
-# then open the site at http://localhost:8099/
-# or the editor at http://localhost:8099/editor.html?demo=1
+# then open http://localhost:8099/editor.html?demo=1
 ```
 
-The editor is a pre-release developer surface, not a stable SDK or supported
-product. It is the browser-first environment where interaction and DOCX fidelity
-are built and fine-tuned. Theme and accent color are customizable from the
-in-app settings (⚙). See the architecture in
-[Editor shell & render (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md).
+Or run it as a container: `docker compose up` starts the editor alone, with no server
+behind it ([deployment](docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md)).
 
-## Example
+The repository pins Rust **1.96.0** through `rust-toolchain.toml` and supports Rust
+**1.88.0** as its minimum (MSRV). Every pull request runs format, lint, tests, docs,
+WebAssembly, browser, fuzz-build and benchmark gates on the pinned toolchain, the
+full test suite on Windows and macOS, and an all-target check on the MSRV.
 
-Import a `.docx` into the model and read back its content:
+## Embedding
+
+Put the editor in your own page as `<opendoc-editor>` (from
+[`packages/opendoc-embed`](packages/opendoc-embed), not yet published to npm), drive
+it in-process through `window.opendoc`, or from another origin through a versioned
+`postMessage` contract with an explicit origin allowlist. A host chooses the role
+(preview, read-only, commenter, editor, owner), the capabilities (open, save,
+download, print, edit, comment, autosave, branding) and the chrome, and receives
+`ready`, `change`, `selection`, `save`, `export`, `error` and `refusal` events. See
+the generated [embedding guide](https://opendoc.casualoffice.org/embedding.html) and
+[the SDK plan](docs/126-EMBEDDABILITY-AND-SDK-THREE-PHASE-PLAN.md).
+
+A host cannot yet hand a document to the editor by URL or bytes; the user opens it.
+
+Use the engine directly from Rust:
 
 ```rust
 use casual_doc_import::{import_package, ImportConfig, ImportMode};
@@ -153,119 +200,113 @@ let document = outcome.document;
 // Anything not yet modeled is captured in the compatibility report, not lost.
 ```
 
-## Status & limitations
+## Status and limitations
 
-**Pre-release** — a maturing engine, not a finished product. An honest picture:
+**Pre-release.** The editor is usable and tested end to end, but the public SDK
+surfaces are not stable and the internal crates are not published. Known gaps, all
+tracked in [the backlog](docs/109-BACKLOG.md):
 
-**Works today** — DOCX **import → model → semantic write-back** (round-trips to a
-LibreOffice-valid `.docx` and an identical model; unedited packages reconstruct
-byte-for-byte); a structurally strong **layout/render** path (style cascade,
-headers/footers, tables, floats with z-order, VML) that matches LibreOffice page
-counts exactly on 3/5 corpus docs and within ±1 on the rest; and an **in-browser
-editor** (WebAssembly) with hit-testing, a custom caret/selection, incremental
-repaint, text/format/list/table editing, pictures and drawings, headers, footers
-and notes as full editing surfaces, comments and tracked changes, find and
-replace, print, undo/redo, and save.
+- **Rendering is not yet identical to Word.** It is measured against LibreOffice as
+  an oracle ([fidelity harness](docs/94-ORACLE-VISUAL-FIDELITY-HARNESS-DESIGN.md));
+  there is no automatic hyphenation, and the character grid (`charSpace`) is not
+  applied.
+- **SmartArt** is kept for round trip and shown as a placeholder; **3-D, radar,
+  surface, stock and bubble charts** likewise. Equations render and round-trip but
+  cannot be edited or inserted.
+- **RTF** opens but cannot be saved. The **PDF** export has no tags, links,
+  bookmarks or PDF/A yet, and does not carry colour emoji.
+- **Collaboration** is experimental (see above); version history is stored in the
+  browser, not on a server.
+- **Spell check** is English only, and the 18 non-English interface languages are
+  machine-translated and not yet reviewed.
+- 20 of the 24 document font faces are served by the editor itself; the CJK and
+  colour-emoji faces come from a pinned, hash-verified mirror unless the deployment
+  provisions them. There is no offline service worker.
+- Not authorable yet: drawing custom shape geometry, creating SmartArt, and a recent
+  files list.
 
-**Not yet** — the renderer is **not pixel-perfect Word-grade**. Tight/through
-contour wrapping around floats, document-grid row snapping, and full Word-parity
-math typesetting are partial; two of the five oracle documents sit ±1 page from
-LibreOffice. Charts and SmartArt are preserved and previewed, not drawn. There is
-**no PDF export** (designed in docs/98 / ADR-031, not built) — printing goes
-through the browser. Colour fonts and colour emoji are not rasterized. `.docm`
-files are rejected at open, pending a policy decision. Not authorable yet: shape
-rotation/flip, custom shape geometry, in-place picture replacement, picture
-borders and effects, text-box body properties, footnote↔endnote conversion and
-note number formats, section insert/split, and creating or updating a named
-style.
-
-A GPU backend, the Tauri desktop shell, worker isolation, and a stable public SDK
-are not started. The current focus is deeper DOCX fidelity. Internal
-format-neutral registry, normalized JSON, plain-text and a bounded ODT adapter are
-implemented; stable public host surfaces and native PDF export from the engine
-display list remain future goals rather than shipped capabilities.
-
-Details: [what is still missing](docs/99-REMAINING-WORK-AUDIT.md) ·
-[fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
-[support matrix](docs/18-SUPPORT-MATRIX.md).
+More: [support matrix](docs/18-SUPPORT-MATRIX.md) ·
+[ONLYOFFICE parity matrix](docs/153-ONLYOFFICE-CAPABILITY-PARITY-MATRIX.md) ·
+[what is still missing](docs/99-REMAINING-WORK-AUDIT.md).
 
 ## Workspace
 
 | Crate | Responsibility |
 | --- | --- |
-| `casual-doc-sdk` | Host-facing engine and document-session facade |
 | `casual-doc-model` | Normalized document values, IDs, invariants, and snapshot I/O |
-| `casual-doc-transaction` | Atomic operations, inverses, and position mapping |
-| `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-package` | Format-neutral, security-bounded ZIP admission and part reads |
-| `casual-doc-ooxml` | Security-bounded OOXML package inspection |
-| `casual-doc-odf` | Security-bounded ODF package/profile admission and incremental ODT semantic import |
-| `casual-doc-import` | WordprocessingML semantic import into the normalized model |
-| `casual-doc-export` | DOCX writers: byte-identical reconstruction and the semantic model → WordprocessingML writer |
-| `casual-doc-io` | Format-neutral identities, capability descriptors, deterministic detection/dispatch, preservation envelopes, and built-in adapters |
-| `casual-doc-layout` | Geometry, text shaping (`parley`), style cascade, block/flow galley, pagination, and the backend-neutral display list |
-| `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
-| `casual-doc-wasm` | WebAssembly bridge: the document session, edit operations, and page raster the in-browser editor drives |
-| `casual-pres-model` | Normalized presentation values: slides, layouts, masters, placeholder slots, and the slide surface |
+| `casual-doc-ooxml` | Security-bounded DOCX package admission and on-demand part reads |
+| `casual-doc-import` | WordprocessingML import into the normalized model |
+| `casual-doc-loss` | The one loss taxonomy every importer reports in: dispositions, the preservation ledger and the shared reporter |
+| `casual-doc-odf` | Security-bounded ODF admission, ODT import, and bounded ODT writing |
+| `casual-doc-rtf` | Security-bounded RTF admission and import |
+| `casual-doc-export` | DOCX writers: byte-identical re-emission and the semantic model → WordprocessingML writer, charts included |
+| `casual-doc-pdf` | Real-text vector PDF from the shared display list, with subsetted embedded fonts |
+| `casual-doc-io` | Format identities, capability descriptors, detection, the adapter registry, and the HTML, Markdown and text writers |
+| `casual-doc-edit` | The closed set of editing operations, each returning its inverse |
+| `casual-doc-transaction` | Transactions and the ordered revision log — the one mutation path — plus the collaboration session and transform |
+| `casual-doc-selection` | Validated caret, text-range and table-cell-range selection |
+| `casual-doc-diff` | Structural difference between two documents, for version history and Compare |
+| `casual-doc-layout` | Style cascade, shaping, flow, pagination, charts and shapes, and the backend-neutral display list |
+| `casual-doc-render` | CPU rasterization of the display list (`tiny-skia`, `skrifa`, colour glyphs) |
+| `casual-doc-sdk` | Host-facing engine and document-session facade |
+| `casual-doc-wasm` | WebAssembly bridge: the document session, edit operations and page raster the editor drives |
+| `casual-pres-model` | Normalized presentation values: slides, layouts, masters, placeholder slots, themes and text bodies |
+| `casual-pres-import` | Security-bounded PPTX reading into the presentation model, with a loss report |
+| `casual-pres-layout` | Lays a slide out into the same display list a document page uses |
+| `casual-pres-export` | Writes a deck back to PPTX, carrying the parts it does not model through unchanged |
+| `casual-pres-wasm` | WebAssembly bridge for the read-only deck viewer (`slides.html`) |
+| `opendoc-relay` (`server/`) | Optional collaboration relay that orders and forwards changes and holds no document |
 
-Supporting tooling lives outside `crates/`: `tools/opendoc-benchmark`
-(reproducible workloads and baselines), `tools/opendoc-fidelity` (LibreOffice
-differential fidelity harness: `compare` reports geometry differences as
-measurements — page count, text extents, line positions, words per line, resolved
-fonts — and `text` reports word-multiset content agreement; see
-`docs/94` §H2b), and `fuzz/` (`opendoc-fuzz`, independently locked
-package-reader fuzz targets). Internal crates are deliberately unpublished while
-the architecture and public API contracts evolve.
+Tooling: `tools/opendoc-benchmark` (reproducible workloads and baselines),
+`tools/opendoc-fidelity` (geometry and text compared against LibreOffice),
+`tools/opendoc-parity` (derives the [ONLYOFFICE parity
+matrix](docs/153-ONLYOFFICE-CAPABILITY-PARITY-MATRIX.md)), `tools/opendoc-render`
+(batch page renders for visual regression), and `fuzz/` (independently locked
+package-reader fuzz targets). The browser editor and the developer site are in
+[`webapp/`](webapp/).
 
 ## Roadmap
 
-OpenDoc follows capability-gated delivery rather than feature claims based only
-on design.
+Delivery is capability-gated: a feature is claimed when it is built and tested, not
+when it is designed. The direction is the [Apache-2.0 alternative to ONLYOFFICE
+Docs](docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md); the order work is done in is
+[the backlog](docs/109-BACKLOG.md), the single queue; phases and exit gates are in
+[the roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
 
-| Phase | Outcome | Status |
-| --- | --- | --- |
-| 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
-| 1A | Semantic DOCX import + modeling (every construct family a first-class model value) | Complete |
-| 1B | Semantic writer (model → valid editable `.docx`) | Complete |
-| 1C | Typography and paragraph/block layout | Substantially implemented |
-| 1D | Pagination and backend-neutral display list | Substantially implemented |
-| 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering + hit testing implemented; GPU backend not started |
-| 1G | In-browser editor (Rust→WASM): viewer, editing, tables, objects, sub-documents | In progress (developer harness in `webapp/`) |
-| 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
-| 3 | Advanced office-document features | Planned |
-| 4 | Stable SDK surfaces and third-party embedding | Planned |
-| 5 | Collaboration adapters and product migration | Planned |
-| 6 | Stable 1.0 release | Planned |
-
-Phases 1C–1E are structurally in place and improving in fidelity; they are not
-yet declared complete. Development is **web-first and open-source-first**: the
-editor is built and fine-tuned in the browser (Phase 1G, `webapp/`) before the
-public editing SDK and the desktop (Tauri) shell, which are not started. None of
-the rendering work above is a Word-grade or release claim. Detailed deliverables
-and exit gates live in the [roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
+| Area | State |
+| --- | --- |
+| Engine: model, import, semantic DOCX writer | Built |
+| Layout, pagination, CPU rendering, PDF | Built, improving in fidelity |
+| Browser editor (`webapp/`) | Built and tested end to end, pre-release |
+| Review, versions, compare | Built |
+| Embedding: element, API, `postMessage` contract | Built; package not yet published |
+| Real-time collaboration | Engine and relay built; product surface (sharing, presence) not yet |
+| Stable public SDK and published crates | Planned |
+| Desktop shell, GPU backend | Not started |
 
 ## Documentation
 
 The numbered documents in [`docs/`](docs/) are the source of truth for accepted
-architecture, behavior, and compatibility. Good entry points:
+architecture, behaviour and compatibility, listed in [the docs index](docs/00-README.md).
+Good entry points:
 [architecture](docs/02-ARCHITECTURE.md) ·
+[decisions (ADRs)](docs/08-ADR-REGISTER.md) ·
 [SDK API](docs/05-SDK-API-SPEC.md) ·
-[roadmap](docs/06-ROADMAP-AND-DELIVERY.md) ·
-[editor architecture (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md) ·
-[experimental co-editing architecture](docs/143-EMBEDDED-COEDITING-RESEARCH-AND-INTEGRATION-ARCHITECTURE.md) ·
-[co-editing phased checklist](docs/144-COEDITING-PHASED-IMPLEMENTATION-PLAN-AND-CHECKLIST.md) ·
-[experimental capability portfolio](docs/145-EXPERIMENTAL-CAPABILITY-PORTFOLIO-ROADMAP-AND-CHECKLIST.md) ·
-[execution tracker](docs/14-EXECUTION-TRACKER.md).
+[editor architecture](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md) ·
+[collaboration protocol](docs/152-COLLABORATION-PROTOCOL-SESSION-AND-IDENTITY.md) ·
+[deployment](docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md) ·
+[backlog](docs/109-BACKLOG.md).
 
 ## Contributing
 
 Contributions are welcome through issues and pull requests. OpenDoc uses a
-design-first workflow for substantial behavior and architecture changes:
+design-first workflow for substantial behaviour and architecture changes:
 
 1. Define the required outcome and constraints.
 2. Record relevant specifications, compatibility evidence, and alternatives.
 3. Discuss and accept the design.
-4. Create or update the execution tracker item.
+4. Add or update the row in [the backlog](docs/109-BACKLOG.md).
 5. Implement with tests, documentation, and CI coverage.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting work, and please follow

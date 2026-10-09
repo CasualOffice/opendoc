@@ -213,7 +213,12 @@ impl LossReporter {
 
     /// Records a finding with exactly the location given — for a document-level
     /// class that no single part owns.
-    pub fn record_unlocated(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
+    pub fn record_unlocated(
+        &mut self,
+        feature: String,
+        location: FeatureLocation,
+        finding: Finding,
+    ) {
         let retained_bytes = match finding {
             Finding::RetainedInModel(bytes) => bytes,
             _ => 0,
@@ -462,6 +467,11 @@ mod tests {
     /// Under a byte floor every remainder is recoverable, so three findings that
     /// differ on the model axis collapse onto one disposition — and still stay
     /// separate entries, in `FindingKey` order, because they are different facts.
+    ///
+    /// The subtree retained INSIDE the model still cites its own record rather
+    /// than the snapshot: the model carries it through every save, edited or not,
+    /// while the snapshot reproduces the source only when the file is saved
+    /// unchanged (`109` FID-AT-07).
     #[test]
     fn a_byte_floor_collapses_the_retention_axis_without_merging_the_findings() {
         let mut reporter = LossReporter::new(SourceRetention::Snapshot);
@@ -479,10 +489,24 @@ mod tests {
         let mut ledger = PreservationLedger::with_source_snapshot(1_024);
         let report = reporter.into_report(&mut ledger);
         assert_eq!(report.entries.len(), 3);
+        let snapshot = ledger.source_snapshot();
+        let mut cites_snapshot = 0;
+        let mut cites_subtree = 0;
         for entry in &report.entries {
             assert_eq!(entry.disposition, Disposition::OmittedPreserved);
-            assert_eq!(entry.ledger_id, ledger.source_snapshot());
+            let record = entry.ledger_id.expect("a preserved entry cites a record");
+            if Some(record) == snapshot {
+                cites_snapshot += 1;
+            } else {
+                assert_eq!(
+                    ledger.get(record).map(|record| record.kind),
+                    Some(crate::PreservationKind::ModelSubtree),
+                    "the in-model subtree cites its own record"
+                );
+                cites_subtree += 1;
+            }
         }
+        assert_eq!((cites_snapshot, cites_subtree), (2, 1));
         assert_eq!(report.validate(&ledger), Ok(()));
     }
 

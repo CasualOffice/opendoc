@@ -5382,12 +5382,18 @@ fn a_picture_filled_shape_clips_its_image_to_its_outline() {
             // The geometry engine closes a subpath with an explicit `Close`
             // command, so a closed outline is either flagged or ends in one.
             assert!(
-                *closed || matches!(commands.last(), Some(casual_doc_layout::display::PathCommand::Close)),
+                *closed
+                    || matches!(
+                        commands.last(),
+                        Some(casual_doc_layout::display::PathCommand::Close)
+                    ),
                 "a filled shape's outline closes: {commands:?}"
             );
             let vertices = commands
                 .iter()
-                .filter(|command| !matches!(command, casual_doc_layout::display::PathCommand::Close))
+                .filter(|command| {
+                    !matches!(command, casual_doc_layout::display::PathCommand::Close)
+                })
                 .count();
             assert_eq!(
                 vertices, 3,

@@ -7004,7 +7004,10 @@ fn a_solid_fill_style_stored_before_the_tagged_form_still_reads() {
         "written in the tagged form: {current}"
     );
     let legacy = current.replace(r#""kind":"solid","#, "");
-    assert!(!legacy.contains("kind"), "the legacy form has no tag: {legacy}");
+    assert!(
+        !legacy.contains("kind"),
+        "the legacy form has no tag: {legacy}"
+    );
     let read: FillStyle = serde_json::from_str(&legacy).expect("the legacy form still reads");
     assert_eq!(read, solid);
     let round: FillStyle = serde_json::from_str(&current).expect("the current form reads");

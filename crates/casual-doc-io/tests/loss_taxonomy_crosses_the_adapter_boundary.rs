@@ -145,13 +145,16 @@ fn the_docx_adapter_hands_over_the_importer_report_and_ledger_unchanged() {
     // A floor, not an expectation. Its only job is to fail if the loop above goes
     // vacuous — an adapter that stopped publishing entries, or a corpus filter that
     // silently matched nothing, would otherwise pass this test by comparing nothing.
-    // **78** is what the committed corpus actually produces, measured rather than
+    // **46** is what the committed corpus actually produces, measured rather than
     // guessed: this was first written as `>= 100`, which no corpus satisfied, so the
-    // guard failed for a reason that had nothing to do with the code under test.
+    // guard failed for a reason that had nothing to do with the code under test. It
+    // was 78 until `main` began modelling `w:formProt`, `w:view`,
+    // `w:themeFontLang` and drawing names and locks, each of which stopped being a
+    // finding — the loss-report golden shows exactly those entries leaving.
     // Set below the measurement so adding a fixture cannot break it, and far enough
     // above zero that a vacuous run cannot pass.
     assert!(
-        entries_compared >= 70,
+        entries_compared >= 40,
         "the comparison must actually have seen findings; it saw {entries_compared}"
     );
 }

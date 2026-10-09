@@ -203,6 +203,8 @@ implement in small increments → test → update docs and ADRs.
   deploy dies). Run `npm ci` there instead.
 - `webapp/pkg` is not committed: run `./webapp/build.sh` after a rebase or a Rust change
   before trusting an e2e result.
+- `webapp/sample.docx` is a gitignored copy `build.sh` stages. A Rust test embeds the
+  committed root `sample.docx`; the copy compiles locally and fails CI's fresh checkout.
 - Chrome built at boot must not call `t()` until it is shown: the catalogue lands later,
   and `chrome-raw-keys.spec.mjs` reads `title`/`aria-label` on HIDDEN elements too. A
   scoped e2e run missed this and turned `main` red (#815 → HF-281); before pushing UI, run

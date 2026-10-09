@@ -26,8 +26,7 @@ use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
     ColorTransform, DashStyle, Definitions, Extent, Fill, GroupChild, GroupPicture, GroupShape,
-    GroupTransform, LineEndKind, PointEmu, Rgba, ShapePathCommand, ShapeStroke,
-    StyleColor,
+    GroupTransform, LineEndKind, PointEmu, Rgba, ShapePathCommand, ShapeStroke, StyleColor,
 };
 // Own line (anti-conflict): the shared custom-geometry model a freeform is written from.
 use casual_doc_model::v1::{CustomGeometry, GeometryPoint, PathFill};

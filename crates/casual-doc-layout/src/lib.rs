@@ -4,10 +4,10 @@
 //!
 //! This crate turns a [`casual_doc_model::v1::Document`] into an immutable
 //! paginated layout and a backend-neutral display list, following the accepted
-//! design in `docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md`. It is a production,
-//! Word-grade engine delivered in slices — this module is the type spine and the
-//! [`text::LineShaper`] seam; shaping (`parley`), the block/flow engine, the
-//! paginator, and rendering backends land in following slices.
+//! design in `docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md`: the style cascade,
+//! shaping through the [`text::LineShaper`] seam (`parley`), the block/flow
+//! engine, floats and wrapping, charts, shapes and math, the paginator, and the
+//! display list that the raster, PDF and editor backends all consume.
 //!
 //! Layering (`43-…` §3):
 //! - [`units`] — device-independent geometry (everything computes in twips).
@@ -58,6 +58,7 @@ pub mod numbering;
 pub mod page;
 mod page_border;
 pub mod paginate;
+pub mod paint_values;
 // Own line (anti-conflict): the user-facing measurement-unit layer.
 pub mod quantity;
 // Own line (anti-conflict): what a reflowed column approximates in a document.

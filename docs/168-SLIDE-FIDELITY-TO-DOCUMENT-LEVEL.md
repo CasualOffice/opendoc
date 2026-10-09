@@ -1,4 +1,4 @@
-# 167 — Slide fidelity to document level: the measured gap, the reuse map, and the lanes
+# 168 — Slide fidelity to document level: the measured gap, the reuse map, and the lanes
 
 **Status:** Programme tracker. **Opened:** 2026-10-06.
 **Scope:** Bringing `casual-pres-*` to the fidelity bar `casual-doc-*` already holds, and

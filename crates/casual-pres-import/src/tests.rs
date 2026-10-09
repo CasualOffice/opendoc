@@ -953,12 +953,15 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         "the fixture must carry at least two unpositioned shapes for this guard to \
          discriminate between the two reporting paths; it carries {unpositioned}"
     );
-    let reported = imported
+    // Summed over parts: a finding is charged to the part it was read from, so
+    // the shapes on two slides are two entries, and the guard is on the total.
+    let reported: u32 = imported
         .report
         .entries
         .iter()
-        .find(|entry| entry.feature == "spPr/@xfrm")
-        .map_or(0, |entry| entry.occurrences);
+        .filter(|entry| entry.feature == "spPr/@xfrm")
+        .map(|entry| entry.occurrences)
+        .sum();
     assert_eq!(
         u32::try_from(unpositioned).ok(),
         Some(reported),

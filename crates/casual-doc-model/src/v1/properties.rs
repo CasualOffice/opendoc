@@ -1125,7 +1125,9 @@ enum FillStyleTagged {
 enum FillStyleWire {
     Tagged(FillStyleTagged),
     /// The solid-only form, before gradients and patterns were modelled.
-    Solid { color: StyleColor },
+    Solid {
+        color: StyleColor,
+    },
 }
 
 impl<'de> Deserialize<'de> for FillStyle {
