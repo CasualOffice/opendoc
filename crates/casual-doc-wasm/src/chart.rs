@@ -76,11 +76,13 @@
 //!
 //! # When authoring is REFUSED
 //!
-//! Two conditions, both read off the model, both cases where regenerating the
-//! part would drop something the projection does not hold: a `Partial`
-//! projection may not be regenerated at all
-//! ([`ChartCoverage::permits_regeneration`]), and a multi-group plot area is a
-//! combo chart this grid cannot describe.
+//! Two conditions, both read off the model: a `Partial` projection may not be
+//! regenerated at all ([`ChartCoverage::permits_regeneration`]), because the
+//! save would drop what it does not hold; and a combination chart that mixes a
+//! scatter group with another family, whose x values and category names cannot
+//! share the grid's one first column. Every other combination chart is edited
+//! here: each grid column is a series in plot order, and a series keeps the
+//! group (chart type, axis) it is plotted in.
 //!
 //! A refused chart is still **read**, and its grid is still shown — disabled,
 //! with the sentence. A control that vanishes cannot be told from a bug (`SKILL`
@@ -113,6 +115,16 @@ use casual_doc_model::NodeId;
 use crate::{
     EditResult, WasmDocument, chart_colors_by_point, chart_group_for_kind, damage_of, node_id,
     node_id_msg, to_js, unpainted_chart_refusal,
+};
+
+mod format;
+#[cfg(test)]
+mod format_tests;
+// Own line (the parallel-import rule): the formatting half (`docs/155` §19).
+use format::{
+    COMBINABLE, DASHES, FontsPatch, FontsView, NUMBER_FORMATS, SeriesFormatPatch, SeriesFormatView,
+    apply_axis_title, apply_fonts, apply_series, fonts_view, number_format_value, plot_order,
+    prune_orphaned_axes, role_axis_index, series_views,
 };
 
 /// The family tokens the data editor's gallery offers, in the order a gallery
@@ -325,6 +337,11 @@ pub(crate) struct AxisView {
     pub(crate) reverse: bool,
     /// Major gridlines drawn ACROSS the plot from this axis.
     pub(crate) gridlines: bool,
+    /// The axis title, or empty when it has none.
+    pub(crate) title: String,
+    /// The tick labels' `c:numFmt` format code, or empty for General /
+    /// source-linked.
+    pub(crate) number_format: String,
 }
 
 /// The chart's elements, as the editor's Chart Elements controls see them.
@@ -354,6 +371,19 @@ pub(crate) struct ChartFormatView {
     /// the document's own theme exactly as the page paints them — so a swatch
     /// cannot show a colour the chart will not have. Same order as `palettes`.
     pub(crate) swatches: Vec<Vec<String>>,
+    /// Every text element's effective font.
+    pub(crate) fonts: FontsView,
+    /// Every series' formatting, in plot order across all groups — the same
+    /// order as the grid's columns.
+    pub(crate) series: Vec<SeriesFormatView>,
+    /// More than one chart group: a combination chart.
+    pub(crate) combo: bool,
+    /// The chart types a series may take in a combination chart.
+    pub(crate) combinable: Vec<&'static str>,
+    /// The dash types a series line may take.
+    pub(crate) dashes: Vec<&'static str>,
+    /// Number-format presets the editor offers.
+    pub(crate) number_formats: Vec<&'static str>,
 }
 
 /// What the editor sends back. Every field is authoritative: a patch names the
@@ -383,6 +413,10 @@ struct ChartFormatPatch {
     horizontal_axis: Option<AxisPatch>,
     vertical_axis: Option<AxisPatch>,
     palette: Option<String>,
+    /// Font changes per text element.
+    fonts: Option<FontsPatch>,
+    /// Per-series changes, addressed by plot order.
+    series: Option<Vec<SeriesFormatPatch>>,
 }
 
 /// One axis's changes.
@@ -394,6 +428,10 @@ struct AxisPatch {
     maximum: Option<String>,
     reverse: Option<bool>,
     gridlines: Option<bool>,
+    /// `""` removes the axis title.
+    title: Option<String>,
+    /// `""` returns to General / source-linked.
+    number_format: Option<String>,
 }
 
 /// The colour palettes the editor offers, in gallery order: the theme's own
@@ -545,10 +583,10 @@ fn is_horizontal(axis: &Axis) -> bool {
     }
 }
 
-/// The view of the axis in one role, or an absent one.
-fn axis_view(axes: &[Axis], horizontal: bool) -> AxisView {
-    axes.iter()
-        .find(|axis| is_horizontal(axis) == horizontal)
+/// The view of the PRIMARY axis in one role, or an absent one.
+fn axis_view(chart: &Chart, horizontal: bool) -> AxisView {
+    role_axis_index(chart, horizontal)
+        .map(|index| &chart.plot_area.axes[index])
         .map_or_else(AxisView::default, |axis| AxisView {
             present: true,
             visible: !axis.deleted,
@@ -557,11 +595,19 @@ fn axis_view(axes: &[Axis], horizontal: bool) -> AxisView {
             maximum: axis.maximum.clone().unwrap_or_default(),
             reverse: axis.orientation == casual_doc_model::v1::AxisOrientation::MaxMin,
             gridlines: axis.major_gridlines,
+            title: axis
+                .title
+                .as_ref()
+                .and_then(|title| title.text.as_ref())
+                .map(|text| text.text.clone())
+                .unwrap_or_default(),
+            number_format: axis.number_format.clone().unwrap_or_default(),
         })
 }
 
-/// The palette the series are coloured with, when they match one exactly.
-fn current_palette(series: &[Series]) -> &'static str {
+/// The palette the series (in plot order) are coloured with, when they match
+/// one exactly.
+fn current_palette(series: &[&Series]) -> &'static str {
     CHART_PALETTES
         .iter()
         .copied()
@@ -573,10 +619,20 @@ fn current_palette(series: &[Series]) -> &'static str {
         .unwrap_or("")
 }
 
-/// The format view of `chart`. O(series + axes).
-fn format_view(chart: &Chart) -> ChartFormatView {
+/// The series of `chart` in plot order, across every group. O(series × log
+/// series).
+fn plotted(chart: &Chart) -> Vec<&Series> {
+    plot_order(chart)
+        .into_iter()
+        .map(|(group, index)| &chart.plot_area.groups[group].series[index])
+        .collect()
+}
+
+/// The format view of `chart`, colours and theme fonts resolved against
+/// `definitions`. O(series × log series + axes + palettes).
+fn format_view(chart: &Chart, definitions: &casual_doc_model::v1::Definitions) -> ChartFormatView {
     let group = chart.plot_area.groups.first();
-    let series = group.map(|group| group.series.as_slice()).unwrap_or(&[]);
+    let series = plotted(chart);
     let first_labels = series.first().and_then(|series| series.data_labels);
     ChartFormatView {
         has_axes: !chart.plot_area.axes.is_empty(),
@@ -585,17 +641,30 @@ fn format_view(chart: &Chart) -> ChartFormatView {
         data_labels: first_labels.is_some_and(|labels| labels.show_value || labels.show_percent),
         label_position: label_position_token(first_labels.and_then(|labels| labels.position)),
         label_positions: group.map_or_else(Vec::new, |group| label_positions(group.kind).to_vec()),
-        horizontal_axis: axis_view(&chart.plot_area.axes, true),
-        vertical_axis: axis_view(&chart.plot_area.axes, false),
-        palette: current_palette(series),
+        horizontal_axis: axis_view(chart, true),
+        vertical_axis: axis_view(chart, false),
+        palette: current_palette(&series),
         palettes: CHART_PALETTES.to_vec(),
-        // Filled in by `chart_data`, which has the document's theme.
-        swatches: Vec::new(),
+        swatches: palette_swatches(definitions),
+        fonts: fonts_view(chart, definitions),
+        series: series_views(chart, definitions),
+        combo: chart.plot_area.groups.len() > 1,
+        combinable: COMBINABLE.to_vec(),
+        dashes: DASHES.to_vec(),
+        number_formats: NUMBER_FORMATS.to_vec(),
     }
 }
 
 /// Applies one axis's changes, validating bounds as the model's numbers.
 fn apply_axis(axis: &mut Axis, patch: &AxisPatch, role: &str) -> Result<(), String> {
+    if let Some(title) = &patch.title {
+        apply_axis_title(axis, title, role)?;
+    }
+    if let Some(format) = &patch.number_format {
+        axis.number_format = number_format_value(format, &format!("the {role} axis"))?;
+        // A carried `c:numFmt` would contradict the modelled one.
+        axis.retained.retain(|fragment| fragment.name != "numFmt");
+    }
     if let Some(visible) = patch.visible {
         axis.deleted = !visible;
     }
@@ -672,30 +741,58 @@ fn apply_format(next: &mut Chart, format: &ChartFormatPatch) -> Result<(), Strin
     {
         legend.overlay = overlay;
     }
-    if let Some(group) = next.plot_area.groups.first_mut() {
-        let kind = group.kind;
-        if format.data_labels.is_some() || format.label_position.is_some() {
-            let position = match format.label_position.as_deref() {
-                None | Some("") => None,
-                Some(token) => {
-                    if !label_positions(kind).contains(&token) {
-                        return Err(refusal::marked(
-                            "chart.label-position",
-                            &format!(
-                                "A {} chart cannot place its labels at “{token}”.",
-                                chart_kind_token(kind)
-                            ),
-                        ));
-                    }
-                    label_position_value(token)
+    // The palette first, in plot order across every group: a series colour in
+    // the same patch is then the reader's override of it.
+    if let Some(token) = format.palette.as_deref() {
+        for (index, (group, at)) in plot_order(next).into_iter().enumerate() {
+            let series = &mut next.plot_area.groups[group].series[at];
+            series.fill = palette_fill(token, index)?;
+            // A line series paints its line colour over its fill; the
+            // palette colours the series, so an explicit line colour yields.
+            if let Some(line) = series.line.as_mut() {
+                line.color = None;
+            }
+            if series.line == Some(casual_doc_model::v1::ChartLine::default()) {
+                series.line = None;
+            }
+            series.retained.retain(|fragment| fragment.name != "spPr");
+        }
+    }
+    // Then the per-series changes, which may regroup the plot area, so the
+    // label changes below see the final groups.
+    if let Some(patches) = &format.series {
+        apply_series(next, patches)?;
+    }
+    if (format.data_labels.is_some() || format.label_position.is_some())
+        && let Some(first) = next.plot_area.groups.first()
+    {
+        // The menu offers the FIRST group's positions; a group in a combination
+        // chart that cannot place labels there takes its family's default.
+        let kind = first.kind;
+        let token = match format.label_position.as_deref() {
+            None | Some("") => None,
+            Some(token) => {
+                if !label_positions(kind).contains(&token) {
+                    return Err(refusal::marked(
+                        "chart.label-position",
+                        &format!(
+                            "A {} chart cannot place its labels at “{token}”.",
+                            chart_kind_token(kind)
+                        ),
+                    ));
                 }
-            };
-            let on = format.data_labels.unwrap_or_else(|| {
-                group
-                    .series
-                    .first()
-                    .is_some_and(|series| series.data_labels.is_some())
-            });
+                Some(token)
+            }
+        };
+        let on = format.data_labels.unwrap_or_else(|| {
+            plotted(next)
+                .first()
+                .is_some_and(|series| series.data_labels.is_some())
+        });
+        for group in &mut next.plot_area.groups {
+            let position = token
+                .filter(|token| label_positions(group.kind).contains(token))
+                .and_then(label_position_value);
             group.retained.retain(|fragment| fragment.name != "dLbls");
             for series in &mut group.series {
                 series.retained.retain(|fragment| fragment.name != "dLbls");
@@ -706,12 +803,6 @@ fn apply_format(next: &mut Chart, format: &ChartFormatPatch) -> Result<(), Strin
                 });
             }
         }
-        if let Some(token) = format.palette.as_deref() {
-            for (index, series) in group.series.iter_mut().enumerate() {
-                series.fill = palette_fill(token, index)?;
-                series.retained.retain(|fragment| fragment.name != "spPr");
-            }
-        }
     }
     for (patch, horizontal, role) in [
         (&format.horizontal_axis, true, "horizontal"),
@@ -720,15 +811,13 @@ fn apply_format(next: &mut Chart, format: &ChartFormatPatch) -> Result<(), Strin
         let Some(patch) = patch else {
             continue;
         };
-        let axis = next
-            .plot_area
-            .axes
-            .iter_mut()
-            .find(|axis| is_horizontal(axis) == horizontal)
-            .ok_or_else(|| {
-                refusal::marked("chart.no-axis", &format!("This chart has no {role} axis."))
-            })?;
-        apply_axis(axis, patch, role)?;
+        let index = role_axis_index(next, horizontal).ok_or_else(|| {
+            refusal::marked("chart.no-axis", &format!("This chart has no {role} axis."))
+        })?;
+        apply_axis(&mut next.plot_area.axes[index], patch, role)?;
+    }
+    if let Some(fonts) = &format.fonts {
+        apply_fonts(next, fonts)?;
     }
     Ok(())
 }
@@ -749,11 +838,16 @@ fn chart_authoring_refusal(chart: &Chart) -> Option<String> {
              cannot be rewritten without losing them.",
         ));
     }
-    if chart.plot_area.groups.len() != 1 {
+    // A combination chart is edited like any other (each column a series in
+    // plot order, each series in its own group) — except one that pairs a
+    // scatter group with another family: the grid's first column would have
+    // to be x values for one and category names for the other.
+    let groups = &chart.plot_area.groups;
+    if groups.len() > 1 && groups.iter().any(|group| plots_x_values(group.kind)) {
         return Some(refusal::marked(
-            "chart.many-groups",
-            "This chart plots more than one chart type at once. Editing the data \
-             of a combination chart is not possible yet.",
+            "chart.scatter-combo",
+            "This chart combines a scatter chart with another chart type, whose x \
+             values and category names cannot share one data grid.",
         ));
     }
     None
@@ -798,7 +892,7 @@ fn dense_cells(range: Option<&DataRange>, rows: usize) -> Vec<String> {
 /// delete it on the next write.
 ///
 /// Complexity: O(series + points).
-fn row_count(series: &[Series]) -> usize {
+fn row_count<'a>(series: impl IntoIterator<Item = &'a Series>) -> usize {
     let extent = |range: Option<&DataRange>| {
         range.map_or(0, |range| {
             let declared = usize::try_from(range.point_count).unwrap_or(0);
@@ -813,7 +907,7 @@ fn row_count(series: &[Series]) -> usize {
         })
     };
     series
-        .iter()
+        .into_iter()
         .map(|series| {
             extent(Some(&series.values))
                 .max(extent(series.categories.as_ref()))
@@ -823,17 +917,25 @@ fn row_count(series: &[Series]) -> usize {
         .unwrap_or(0)
 }
 
-/// The authoring view of `chart`, anchored at `object`.
+/// The authoring view of `chart`, anchored at `object`, with its colours and
+/// theme fonts resolved against `definitions`.
+///
+/// The grid's columns are every series in plot order across all groups, so a
+/// combination chart's line series is a column beside its bars.
 ///
 /// Complexity: O(series × rows) for the one chart.
-fn chart_view(object: NodeId, chart: &Chart) -> ChartDataView {
+fn chart_view(
+    object: NodeId,
+    chart: &Chart,
+    definitions: &casual_doc_model::v1::Definitions,
+) -> ChartDataView {
     // `groups.first()` rather than indexing: a projection with no group at all is
     // representable (an empty plot area), and the view of it is an empty grid
     // whose family is the default the gallery lands on, not a panic.
     let group = chart.plot_area.groups.first();
     let kind = group.map_or("column", |group| chart_kind_token(group.kind));
-    let series = group.map(|group| group.series.as_slice()).unwrap_or(&[]);
-    let rows = row_count(series);
+    let series = plotted(chart);
+    let rows = row_count(series.iter().copied());
     let scatter = group.is_some_and(|group| plots_x_values(group.kind));
     let labels = dense_cells(
         series.first().and_then(|first| {
@@ -911,7 +1013,7 @@ fn chart_view(object: NodeId, chart: &Chart) -> ChartDataView {
         max_series: MAX_CHART_SERIES_PER_GROUP,
         max_rows: MAX_CHART_DATA_POINTS,
         title_limit: MAX_CHART_TEXT_BYTES,
-        format: format_view(chart),
+        format: format_view(chart, definitions),
     }
 }
 
@@ -1143,9 +1245,41 @@ fn apply_chart_patch(chart: &Chart, patch: &ChartDataPatch) -> Result<Chart, Str
             .collect::<Result<_, _>>()?
     };
 
-    let mut series = Vec::with_capacity(columns);
+    // Column `i` is the series at plot position `i`, and it stays in the group
+    // it is plotted in; a new column joins the last series' group. A change of
+    // family makes the whole chart one group of the new family, as Word's
+    // Change Chart Type does for a non-combo choice.
+    let order = plot_order(chart);
+    let groups_before = &chart.plot_area.groups;
+    let home = |column: usize| -> usize {
+        if family_changed {
+            0
+        } else {
+            order
+                .get(column)
+                .or_else(|| order.last())
+                .map_or(0, |&(group, _)| group)
+        }
+    };
+    let mut buckets: Vec<Vec<Series>> = vec![
+        Vec::new();
+        if family_changed {
+            1
+        } else {
+            groups_before.len()
+        }
+    ];
     for (column, name) in patch.series.iter().enumerate() {
-        let old = previous.series.get(column);
+        let old = order
+            .get(column)
+            .map(|&(group, index)| &groups_before[group].series[index]);
+        let group = home(column);
+        let kind = if family_changed {
+            kind
+        } else {
+            groups_before[group].kind
+        };
+        let series = &mut buckets[group];
         let values: Vec<ChartValue> = (0..rows)
             .map(|row| {
                 let text = patch
@@ -1219,10 +1353,13 @@ fn apply_chart_patch(chart: &Chart, patch: &ChartDataPatch) -> Result<Chart, Str
         // Scatter plots both axes as values; every other family puts the
         // categories on the bottom. Without this, a column chart switched to
         // scatter kept a category axis under numeric x values and drew its ticks
-        // in the wrong place.
-        if let Some(bottom) = axes
-            .iter_mut()
-            .find(|axis| axis.position == Some(AxisPosition::Bottom))
+        // in the wrong place. Only on a change of family: a horizontal bar
+        // chart's value axis sits at the bottom, and a data edit retyping it a
+        // category axis would plot its numbers as names.
+        if family_changed
+            && let Some(bottom) = axes
+                .iter_mut()
+                .find(|axis| axis.position == Some(AxisPosition::Bottom))
         {
             bottom.kind = if scatter {
                 AxisKind::Value
@@ -1287,15 +1424,41 @@ fn apply_chart_patch(chart: &Chart, patch: &ChartDataPatch) -> Result<Chart, Str
     });
     next.vary_colors = by_point;
     next.plot_area.axes = axes;
-    next.plot_area.groups = vec![casual_doc_model::v1::ChartGroup {
-        // Group-level carry (Word's group `c:dLbls`, `c:serLines`), filtered to
-        // what the family admits — `c:serLines` has no place in a line chart.
-        retained: keep_carried(&previous.retained, ChartContainer::Group(kind), &[]),
-        kind,
-        series,
-        axis_ids,
-        vary_colors: by_point,
-    }];
+    next.plot_area.groups = if family_changed {
+        let series = buckets.into_iter().flatten().collect();
+        vec![casual_doc_model::v1::ChartGroup {
+            // Group-level carry (Word's group `c:dLbls`, `c:serLines`), filtered to
+            // what the family admits — `c:serLines` has no place in a line chart.
+            retained: keep_carried(&previous.retained, ChartContainer::Group(kind), &[]),
+            kind,
+            series,
+            axis_ids,
+            vary_colors: by_point,
+        }]
+    } else {
+        // Each group keeps its family, axes and carried formatting; the first
+        // takes the axis ids resolved above (which fills in ids a producer
+        // left out), and a group whose every series was removed goes.
+        groups_before
+            .iter()
+            .zip(buckets)
+            .enumerate()
+            .filter(|(_, (_, series))| !series.is_empty())
+            .map(|(at, (group, series))| casual_doc_model::v1::ChartGroup {
+                retained: keep_carried(&group.retained, ChartContainer::Group(group.kind), &[]),
+                kind: group.kind,
+                series,
+                axis_ids: if at == 0 {
+                    axis_ids.clone()
+                } else {
+                    group.axis_ids.clone()
+                },
+                vary_colors: if at == 0 { by_point } else { group.vary_colors },
+            })
+            .collect()
+    };
+    // The secondary pair goes once no series is plotted on it.
+    prune_orphaned_axes(chart, &mut next);
     if let Some(format) = &patch.format {
         apply_format(&mut next, format)?;
     }
@@ -1339,8 +1502,7 @@ impl WasmDocument {
         else {
             return String::new();
         };
-        let mut view = chart_view(object, chart);
-        view.format.swatches = palette_swatches(self.document.definitions());
+        let view = chart_view(object, chart, self.document.definitions());
         serde_json::to_string(&view).unwrap_or_default()
     }
 
@@ -1476,7 +1638,7 @@ mod tests {
     /// `seed` IS the document's own `IdSpace`, which is what makes the imported /
     /// authored distinction testable here: a node built with `from_parts(seed, n)`
     /// is one the importer would have minted, and one `insert_chart` mints is not.
-    fn empty_body_document(seed: u64) -> (Document, NodeId) {
+    pub(super) fn empty_body_document(seed: u64) -> (Document, NodeId) {
         let paragraph = NodeId::from_parts(seed, 2).expect("a paragraph id");
         let document = Document::new(
             NodeId::from_parts(seed, 1).expect("a document id"),
@@ -1492,7 +1654,7 @@ mod tests {
     }
 
     /// A document holding one inserted chart, and that chart's object node.
-    fn document_with_a_chart(seed: u64, kind: &str) -> (WasmDocument, NodeId) {
+    pub(super) fn document_with_a_chart(seed: u64, kind: &str) -> (WasmDocument, NodeId) {
         let (document, paragraph) = empty_body_document(seed);
         let mut d = wasm_document(document);
         d.insert_chart(&paragraph.to_string(), 0, kind)
@@ -1547,7 +1709,7 @@ mod tests {
     /// renamed field.
     /// The patch the editor would send for `chart` unchanged.
     fn patch_of_chart(chart: &Chart, object: NodeId) -> ChartDataPatch {
-        let view = chart_view(object, chart);
+        let view = chart_view(object, chart, &Definitions::default());
         ChartDataPatch {
             kind: view.kind.to_owned(),
             title: view.title,
@@ -1559,7 +1721,7 @@ mod tests {
         }
     }
 
-    fn patch_of(d: &WasmDocument, object: NodeId) -> ChartDataPatch {
+    pub(super) fn patch_of(d: &WasmDocument, object: NodeId) -> ChartDataPatch {
         let json = d.chart_data(&object.to_string());
         assert!(!json.is_empty(), "the chart has no authoring view");
         let view: serde_json::Value = serde_json::from_str(&json).expect("the view parses");
@@ -1600,7 +1762,11 @@ mod tests {
     /// functions" instead of with the reason — and a guard whose red says nothing
     /// is half a guard. This is the same gate, the same patch and the same one
     /// operation, in the same order.
-    fn write(d: &mut WasmDocument, object: NodeId, patch: &ChartDataPatch) -> Result<(), String> {
+    pub(super) fn write(
+        d: &mut WasmDocument,
+        object: NodeId,
+        patch: &ChartDataPatch,
+    ) -> Result<(), String> {
         let (id, chart) = d
             .document
             .definitions()
@@ -1617,7 +1783,7 @@ mod tests {
         d.write_chart_definition(object, id, next).map(|_| ())
     }
 
-    fn projection(d: &WasmDocument) -> Chart {
+    pub(super) fn projection(d: &WasmDocument) -> Chart {
         d.document
             .definitions()
             .charts
@@ -1820,7 +1986,7 @@ mod tests {
         .expect("seeding the imported shape");
         assert!(!projection(&d).dirty, "the seed must start clean");
 
-        let view = chart_view(object, &projection(&d));
+        let view = chart_view(object, &projection(&d), d.document.definitions());
         assert!(
             view.editable,
             "an imported chart must be editable: {}",
@@ -1854,7 +2020,7 @@ mod tests {
 
     /// **The two refusals each say what they refused, and a workbook is not one.**
     #[test]
-    fn a_partial_or_combo_chart_refuses_with_its_own_reason() {
+    fn a_partial_or_scatter_combo_chart_refuses_with_its_own_reason() {
         let space = casual_doc_model::IdSpace::new(9_105);
         let object = NodeId::from_parts(casual_doc_model::IdSpace::local(space).get(), 5)
             .expect("an edit id");
@@ -1874,6 +2040,9 @@ mod tests {
             .plot_area
             .groups
             .push(base.plot_area.groups[0].clone());
+        let mut scatter_combo = combo.clone();
+        scatter_combo.plot_area.groups[1].kind =
+            chart_group_for_kind("scatter").expect("a scatter family");
         let mut workbook = base.clone();
         workbook.external_data = Some(EmbeddedPart {
             relationship_id: "rId9".to_owned(),
@@ -1883,7 +2052,11 @@ mod tests {
 
         for (chart, code, phrase) in [
             (&partial, "chart.partial-coverage", "does not model yet"),
-            (&combo, "chart.many-groups", "more than one chart type"),
+            (
+                &scatter_combo,
+                "chart.scatter-combo",
+                "cannot share one data grid",
+            ),
         ] {
             let refused =
                 chart_authoring_refusal(chart).unwrap_or_else(|| panic!("{code} must refuse"));
@@ -1899,6 +2072,11 @@ mod tests {
             "a workbook-backed chart is editable: the save replaces the workbook"
         );
         assert_eq!(chart_authoring_refusal(&base), None);
+        assert_eq!(
+            chart_authoring_refusal(&combo),
+            None,
+            "a column+column combination chart is editable (docs/155 §19)"
+        );
     }
 
     /// **A data edit keeps everything the grid does not show.**
@@ -2322,7 +2500,7 @@ mod tests {
     fn the_view_publishes_the_models_ceilings() {
         let (d, object) = document_with_a_chart(9_116, "column");
         let chart = projection(&d);
-        let view = chart_view(object, &chart);
+        let view = chart_view(object, &chart, d.document.definitions());
         assert_eq!(view.max_series, 256);
         assert_eq!(view.max_rows, 32_768);
         assert_eq!(view.title_limit, 1_024);
@@ -2416,7 +2594,7 @@ mod tests {
     }
 
     /// Every chart primitive painted in the document, in paint order.
-    fn painted(d: &WasmDocument) -> Vec<ChartPrimitive> {
+    pub(super) fn painted(d: &WasmDocument) -> Vec<ChartPrimitive> {
         d.painted_layout()
             .pages
             .iter()
@@ -2432,7 +2610,11 @@ mod tests {
     }
 
     /// A data edit carrying only `format`.
-    fn format_edit(d: &mut WasmDocument, object: NodeId, format: &str) -> Result<(), String> {
+    pub(super) fn format_edit(
+        d: &mut WasmDocument,
+        object: NodeId,
+        format: &str,
+    ) -> Result<(), String> {
         let mut patch = patch_of(d, object);
         patch.format = Some(serde_json::from_str(format).map_err(|err| err.to_string())?);
         write(d, object, &patch)
