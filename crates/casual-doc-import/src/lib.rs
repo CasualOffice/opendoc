@@ -67,6 +67,8 @@ pub use opaque::{
     RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
 };
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use opaque::{InvalidatedPart, STALE_STYLES_WITH_EFFECTS, STALE_THUMBNAIL};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use recovery::{
     MAX_DETAIL_BYTES, MAX_REPAIRS, PartRole, RecoveryReport, Repair, RepairKind, Severity,
 };

@@ -294,13 +294,39 @@ impl FormatExporter for DocxAdapter {
                 let retained = matching_source
                     .map(|source| &source.retained_parts)
                     .unwrap_or(&empty_retained);
+                // A retained part DERIVED from the content (the thumbnail,
+                // Word 2010's `stylesWithEffects.xml`) contradicts an edited
+                // document, so after an edit it is left behind — with its
+                // relationship — and named, never carried stale and never dropped
+                // in silence (`105` FID-R-05). An unedited document keeps it: the
+                // picture is still of this document.
+                let (edited_retained, invalidated) = if request.source_unchanged {
+                    (None, Vec::new())
+                } else {
+                    let (kept, invalidated) = retained.invalidated_by_edit();
+                    (Some(kept), invalidated)
+                };
                 let exported = export_document_with_retained_parts(
                     request.document,
                     request.resources.as_map(),
-                    retained,
+                    edited_retained.as_ref().unwrap_or(retained),
                 )
                 .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
                 let mut report = convert_export_report(&exported.report);
+                for part in invalidated {
+                    report.entries.push(CompatibilityEntry {
+                        feature: part.feature.to_owned(),
+                        occurrences: 1,
+                        location: FeatureLocation {
+                            part_name: Some(part.part_name),
+                            namespace: None,
+                            local_name: None,
+                            attribute_name: None,
+                        },
+                        model_outcome: ModelOutcome::Omitted,
+                        retention_outcome: RetentionOutcome::NotRetained,
+                    });
+                }
                 if request.source.is_some() && matching_source.is_none() {
                     report.entries.push(CompatibilityEntry {
                         feature: "source_envelope".to_owned(),
@@ -1048,6 +1074,187 @@ mod tests {
             "the preserving save carries the part, so it must report nothing, got {:?}",
             preserving.report.entries
         );
+    }
+
+    /// A retained part DERIVED from the content is left behind once the content
+    /// changes, and the loss is named; an independent one is still carried
+    /// (`105` FID-R-05).
+    ///
+    /// Before this, the side-table carried every retained part through every
+    /// save: an edited document went out with a thumbnail of the text it no
+    /// longer had — the picture a file browser or document library shows AS the
+    /// document — and with Word 2010's `stylesWithEffects.xml`, which Word 2010
+    /// reads in preference to the regenerated `styles.xml`.
+    #[test]
+    fn an_edited_document_leaves_its_stale_derived_parts_behind_and_says_so() {
+        use std::io::{Cursor, Read as _, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/stylesWithEffects.xml" ContentType="application/vnd.ms-word.stylesWithEffects+xml"/><Override PartName="/customXml/item1.xml" ContentType="application/xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail" Target="docProps/thumbnail.jpeg"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.microsoft.com/office/2007/relationships/stylesWithEffects" Target="stylesWithEffects.xml"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/></Relationships>"#;
+        let styles_with_effects = br#"<w:styles xmlns:w="urn:w"><w:style w:type="paragraph" w:styleId="Normal"/></w:styles>"#;
+        let custom_xml = br#"<root><independent>value</independent></root>"#;
+        let thumbnail = b"\xFF\xD8\xFF\xE0 a picture of page one as it was";
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("word/stylesWithEffects.xml", styles_with_effects.as_slice()),
+            ("customXml/item1.xml", custom_xml.as_slice()),
+            ("docProps/thumbnail.jpeg", thumbnail.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("derived.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the package opens");
+        let save = |source_unchanged: bool| {
+            registry
+                .export(
+                    &FormatId::new(formats::DOCX).unwrap(),
+                    ExportRequest {
+                        document: &imported.document,
+                        resources: &imported.resources,
+                        source: Some(&imported.source),
+                        source_unchanged,
+                        mode: ExportMode::PreserveWhenSafe,
+                    },
+                )
+                .expect("it exports")
+        };
+        let parts = |bytes: &[u8]| -> std::collections::BTreeMap<String, String> {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("a ZIP");
+            (0..archive.len())
+                .map(|index| {
+                    let mut file = archive.by_index(index).unwrap();
+                    let mut text = Vec::new();
+                    file.read_to_end(&mut text).unwrap();
+                    (
+                        file.name().to_owned(),
+                        String::from_utf8_lossy(&text).into_owned(),
+                    )
+                })
+                .collect()
+        };
+
+        // Unedited: the picture is still of this document, so everything stays.
+        let unedited = save(true);
+        let unedited_parts = parts(&unedited.bytes);
+        for name in [
+            "docProps/thumbnail.jpeg",
+            "word/stylesWithEffects.xml",
+            "customXml/item1.xml",
+        ] {
+            assert!(
+                unedited_parts.contains_key(name),
+                "an unedited save keeps {name}"
+            );
+        }
+        assert!(
+            unedited.report.entries.is_empty(),
+            "nothing is lost from an unedited save, got {:?}",
+            unedited.report.entries
+        );
+
+        // Edited: the two derived parts leave WITH their relationships, the
+        // independent store stays, and each departure is named by part.
+        let edited = save(false);
+        let edited_parts = parts(&edited.bytes);
+        assert!(
+            !edited_parts.contains_key("docProps/thumbnail.jpeg"),
+            "an edited save must not carry a thumbnail of the text it replaced"
+        );
+        assert!(
+            !edited_parts.contains_key("word/stylesWithEffects.xml"),
+            "an edited save must not carry a style sheet Word 2010 prefers over the \
+             regenerated one"
+        );
+        assert!(
+            edited_parts.contains_key("customXml/item1.xml"),
+            "an independent retained part is still carried"
+        );
+        let root = &edited_parts["_rels/.rels"];
+        let document_rels = &edited_parts["word/_rels/document.xml.rels"];
+        let manifest = &edited_parts["[Content_Types].xml"];
+        assert!(
+            !root.contains("thumbnail"),
+            "no relationship is left pointing at the thumbnail: {root}"
+        );
+        assert!(
+            !document_rels.contains("stylesWithEffects"),
+            "no relationship is left pointing at stylesWithEffects: {document_rels}"
+        );
+        assert!(
+            !manifest.contains("stylesWithEffects"),
+            "no content type is declared for a part the package lacks: {manifest}"
+        );
+        assert!(
+            document_rels.contains("customXml/item1.xml"),
+            "the independent part keeps its relationship: {document_rels}"
+        );
+        let mut stale: Vec<(String, Option<String>, ModelOutcome, RetentionOutcome)> = edited
+            .report
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.feature.clone(),
+                    entry.location.part_name.clone(),
+                    entry.model_outcome,
+                    entry.retention_outcome,
+                )
+            })
+            .collect();
+        stale.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(
+            stale,
+            vec![
+                (
+                    casual_doc_import::STALE_STYLES_WITH_EFFECTS.to_owned(),
+                    Some("word/stylesWithEffects.xml".to_owned()),
+                    ModelOutcome::Omitted,
+                    RetentionOutcome::NotRetained,
+                ),
+                (
+                    casual_doc_import::STALE_THUMBNAIL.to_owned(),
+                    Some("docProps/thumbnail.jpeg".to_owned()),
+                    ModelOutcome::Omitted,
+                    RetentionOutcome::NotRetained,
+                ),
+            ],
+            "each part left behind is named, by part, and nothing else is reported"
+        );
+
+        // And the result is a package this engine opens again.
+        let reopened = registry.import(
+            DetectionRequest {
+                bytes: &edited.bytes,
+                selection: FormatSelection::Auto,
+                file_name_hint: Some("derived.docx"),
+                mime_hint: None,
+            },
+            false,
+        );
+        assert!(reopened.is_ok(), "the edited save reopens");
     }
 
     #[test]
