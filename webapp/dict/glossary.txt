@@ -464,7 +464,6 @@ mjs
 mousedown
 moveFrom
 moveTo
-multiset
 musl
 mut
 namespace
@@ -593,6 +592,7 @@ submenu
 subpath
 subpaths
 subsequence
+subsetted
 subsetter
 subsetting
 substitutable
