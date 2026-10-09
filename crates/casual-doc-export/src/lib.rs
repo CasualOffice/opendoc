@@ -33,6 +33,10 @@ pub use semantic::{
     PackageKind, export_document, export_document_with_retained_parts, export_package,
     write_document, write_document_with_retained_parts,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use semantic::{
+    DocumentStatistics, ExportOptions, STALE_STATISTICS, export_package_with_options,
+};
 
 /// A package-writing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -950,9 +954,15 @@ mod semantic_tests {
         let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
         let m1 = reopen(&pack(document_xml, document_rels));
 
+        // Both statements of each name agree here (Word's own shape), so no
+        // inner name is kept: that is the empty state FID-AT-08 defines.
         let named = |name: &str, title: Option<&str>| ObjectName {
             name: Some(name.to_owned()),
             title: title.map(str::to_owned),
+            inner_name: None,
+            inner_title: None,
+            // The fixture states no lock.
+            locks: casual_doc_model::v1::ObjectLocks::default(),
         };
         let BlockNode::Paragraph(first) = &m1.body()[0] else {
             panic!("expected a paragraph");
@@ -1003,6 +1013,409 @@ mod semantic_tests {
             m1,
             reopen(&written),
             "names survive write -> reopen on the same nodes"
+        );
+    }
+
+    /// A lone picture or text box whose inner element names it differently from
+    /// its frame keeps BOTH names through a save (`109` FID-AT-08).
+    ///
+    /// The picture is python-docx's shape, which `sample.docx` carries twice: the
+    /// frame is `Picture 1` — the writer's generic name, so the model's empty
+    /// state — and `pic:cNvPr` is the image FILE name. Before the model could
+    /// hold the second name it was reported and every save wrote `Picture 1`
+    /// into both elements. The title pair proves the other attribute, and the
+    /// text box proves the `wps:cNvPr` writer as well as the `pic:cNvPr` one.
+    #[test]
+    fn an_inner_name_that_differs_from_the_frames_survives_the_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Picture 1" title="Pipeline"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="diagram.png" title="Pipeline, as drawn"/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="2" name="Sidebar"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="3" name="Text Box 7"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        let BlockNode::Paragraph(first) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(picture) = &first.inlines[0] else {
+            panic!("expected an inline picture, got {:?}", first.inlines[0]);
+        };
+        let BlockNode::Paragraph(second) = &m1.body()[1] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::TextBox(text_box) = &second.inlines[0] else {
+            panic!("expected a text box, got {:?}", second.inlines[0]);
+        };
+        let names = &m1.definitions().object_names;
+        let picture_name = names.get(&picture.id).expect("the picture is named");
+        assert_eq!(
+            picture_name.name, None,
+            "`Picture 1` is the writer's generic name, so it is not stored"
+        );
+        assert_eq!(picture_name.inner_name.as_deref(), Some("diagram.png"));
+        assert_eq!(picture_name.title.as_deref(), Some("Pipeline"));
+        assert_eq!(
+            picture_name.inner_title.as_deref(),
+            Some("Pipeline, as drawn")
+        );
+        let box_name = names.get(&text_box.id).expect("the text box is named");
+        assert_eq!(box_name.name.as_deref(), Some("Sidebar"));
+        assert_eq!(box_name.inner_name.as_deref(), Some("Text Box 7"));
+
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        for (what, needle) in [
+            (
+                "the frame's generic name",
+                r#"<wp:docPr id="1" name="Picture 1""#,
+            ),
+            (
+                "the picture's own name and title",
+                r#"<pic:cNvPr id="1" name="diagram.png" title="Pipeline, as drawn"/>"#,
+            ),
+            ("the text box frame's name", r#"name="Sidebar""#),
+            (
+                "the text box's own name",
+                r#"<wps:cNvPr id="0" name="Text Box 7"/>"#,
+            ),
+        ] {
+            assert!(
+                written_xml.contains(needle),
+                "the writer keeps {what} ({needle}): {written_xml}"
+            );
+        }
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "both names survive write -> reopen on the same nodes"
+        );
+    }
+
+    /// A drawing object's DrawingML locks survive a save on every kind of object
+    /// that carries them — the frame's `a:graphicFrameLocks` and the object's
+    /// own `a:picLocks`/`a:spLocks`/`a:grpSpLocks` — and raise no finding
+    /// (`109` FID-AT-09).
+    ///
+    /// They were reported and dropped. `noChangeAspect` is on every picture Word
+    /// inserts and is what makes a corner drag proportional, so an edited save
+    /// turned every picture into one a corner drag distorts. The model exposes it
+    /// as `Definitions::locks_aspect_ratio`, which is asserted here because it is
+    /// the read a resize handle makes.
+    #[test]
+    fn a_drawing_objects_locks_survive_a_save_on_every_kind() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        let document_xml = concat!(
+            r#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body>"#,
+            // An inline picture: Word's own shape, both locks.
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Logo"/>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Logo"/>"#,
+            r#"<pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr>"#,
+            r#"<pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            // A floating group: the frame, the group, a shape child and a picture child.
+            r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="5" simplePos="0"><wp:simplePos x="0" y="0"/>"#,
+            r#"<wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="2" name="Org chart"/>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noMove="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:cNvPr id="2" name="Org chart"/>"#,
+            r#"<wpg:cNvGrpSpPr><a:grpSpLocks noUngrp="1"/></wpg:cNvGrpSpPr>"#,
+            r#"<wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr>"#,
+            r#"<wps:wsp><wps:cNvPr id="3" name="Box"/><wps:cNvSpPr><a:spLocks noTextEdit="1" noRot="1"/></wps:cNvSpPr>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>"#,
+            r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="4" name="Photo"/><pic:cNvPicPr><a:picLocks noCrop="1"/></pic:cNvPicPr></pic:nvPicPr>"#,
+            r#"<pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="457200" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
+            r#"</wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#,
+            // A lone text box: the frame and the shape.
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="5" name="Sidebar"/>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="6" name="Sidebar"/><wps:cNvSpPr><a:spLocks noSelect="1"/></wps:cNvSpPr>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>"#,
+            r#"<wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>"#,
+            r#"</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            r#"</w:body></w:document>"#,
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let source = pack(document_xml.as_bytes(), document_rels);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let lock_findings: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .filter(|feature| feature.contains("Locks"))
+            .collect();
+        assert!(
+            lock_findings.is_empty(),
+            "a carried lock is not a loss: {lock_findings:?}"
+        );
+        let m1 = import.document;
+
+        let inline = |index: usize| {
+            let BlockNode::Paragraph(paragraph) = &m1.body()[index] else {
+                panic!("expected a paragraph");
+            };
+            paragraph.inlines[0].clone()
+        };
+        let InlineNode::Drawing(picture) = inline(0) else {
+            panic!("expected an inline picture");
+        };
+        let InlineNode::Group(group) = inline(1) else {
+            panic!("expected a group");
+        };
+        let InlineNode::TextBox(text_box) = inline(2) else {
+            panic!("expected a text box");
+        };
+        let (shape, child_picture) = match (&group.children[0], &group.children[1]) {
+            (GroupChild::Shape(shape), GroupChild::Picture(picture)) => (shape.id, picture.id),
+            other => panic!("expected a shape and a picture, got {other:?}"),
+        };
+        let defs = m1.definitions();
+        let locks = |id| {
+            defs.object_names
+                .get(&id)
+                .map(|entry| entry.locks)
+                .unwrap_or_default()
+        };
+        assert!(locks(picture.id).frame.no_change_aspect);
+        assert!(locks(picture.id).object.no_change_aspect);
+        assert!(locks(picture.id).object.no_change_arrowheads);
+        assert!(
+            defs.locks_aspect_ratio(picture.id),
+            "the resize handle's read: a corner drag keeps the picture's proportions"
+        );
+        assert!(locks(group.id).frame.no_move);
+        assert!(locks(group.id).object.no_ungrp);
+        assert!(
+            !defs.locks_aspect_ratio(group.id),
+            "the group's aspect is free"
+        );
+        assert!(locks(shape).object.no_text_edit && locks(shape).object.no_rot);
+        assert!(locks(child_picture).object.no_crop);
+        assert!(locks(text_box.id).frame.no_change_aspect);
+        assert!(locks(text_box.id).object.no_select);
+
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        for needle in [
+            r#"<wp:docPr id="1" name="Logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic>"#,
+            r#"<pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr>"#,
+            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noMove="1"/></wp:cNvGraphicFramePr>"#,
+            r#"<wpg:cNvGrpSpPr><a:grpSpLocks noUngrp="1"/></wpg:cNvGrpSpPr>"#,
+            r#"<wps:cNvSpPr><a:spLocks noRot="1" noTextEdit="1"/></wps:cNvSpPr>"#,
+            r#"<pic:cNvPicPr><a:picLocks noCrop="1"/></pic:cNvPicPr>"#,
+            r#"<wps:cNvSpPr><a:spLocks noSelect="1"/></wps:cNvSpPr>"#,
+        ] {
+            assert!(
+                written_xml.contains(needle),
+                "the writer keeps {needle}: {written_xml}"
+            );
+        }
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "every lock survives write -> reopen on the same node"
+        );
+    }
+
+    /// A lock attribute the element's schema type does not list is reported
+    /// rather than stored, so the writer is never handed a flag the element it
+    /// writes cannot carry (`109` FID-AT-09).
+    #[test]
+    fn a_lock_the_element_cannot_carry_is_reported_not_stored() {
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Logo"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Logo"/><pic:cNvPicPr><a:picLocks noTextEdit="1" noCrop="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let source = pack(document_xml, document_rels);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "picLocks/@noTextEdit"),
+            "a shape-only lock on a picture is named: {:?}",
+            import.report.entries
+        );
+        let (_, entry) = import
+            .document
+            .definitions()
+            .object_names
+            .iter()
+            .next()
+            .expect("the picture is recorded");
+        assert!(!entry.locks.object.no_text_edit, "and not stored");
+        assert!(entry.locks.object.no_crop, "the lock it can carry is");
+    }
+
+    /// Each section's `w:formProt` survives a save with its value, and a section
+    /// that states none still states none (`109` FID-AT-06).
+    ///
+    /// It was reported and dropped — the one remaining finding in every
+    /// LibreOffice-produced document of the corpus, as `w:val="false"`. That is
+    /// not a no-op: with `w:documentProtection w:edit="forms"` enforced, a
+    /// section without the element is protected and one stating `false` is not,
+    /// so dropping `false` locked a section the author had left editable.
+    #[test]
+    fn each_sections_form_protection_survives_a_save_and_absent_stays_absent() {
+        let document_xml = concat!(
+            r#"<w:document xmlns:w="urn:w"><w:body>"#,
+            r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:cols w:space="720"/><w:formProt w:val="false"/><w:titlePg/></w:sectPr></w:pPr><w:r><w:t>open</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:formProt/></w:sectPr></w:pPr><w:r><w:t>protected</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>says nothing</w:t></w:r></w:p>"#,
+            r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+            r#"</w:body></w:document>"#,
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let source = pack(document_xml.as_bytes(), document_rels);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(
+            !import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "formProt"),
+            "a carried setting is not a loss: {:?}",
+            import.report.entries
+        );
+        let m1 = import.document;
+        let defs = m1.definitions();
+        let sections: Vec<Option<bool>> = defs
+            .sections
+            .iter()
+            .map(|section| defs.section_form_protection(section.id))
+            .collect();
+        assert_eq!(
+            sections,
+            vec![Some(false), Some(true), None],
+            "false, true, and NOT stated are three different statements"
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let xml = String::from_utf8(written_package.read_part("word/document.xml").unwrap())
+            .expect("utf-8");
+        assert_eq!(
+            xml.matches("<w:formProt").count(),
+            2,
+            "only the two sections that stated it write it: {xml}"
+        );
+        assert!(
+            xml.contains(r#"<w:formProt w:val="false"/><w:titlePg/>"#),
+            "false is written, before w:titlePg as CT_SectPr orders it: {xml}"
+        );
+        assert!(xml.contains(r#"<w:formProt w:val="true"/>"#), "{xml}");
+        assert_eq!(m1, reopen(&written), "write -> reopen is a fixed point");
+    }
+
+    /// A NESTED group's own `wpg:cNvPr` name lands on the nested group, not on
+    /// the top-level frame, and an unnamed group saves to a fixed point
+    /// (`109` FID-AT-08).
+    ///
+    /// Before, every `cNvPr` inside a drawing with no group child open was
+    /// merged into the frame's name: a nested group's name became the frame's
+    /// when the frame had none, and was reported as a disagreement when it had
+    /// one. The writer also wrote the top-level `wpg:cNvPr` as `Group` beside a
+    /// `Group 1` frame, which only stayed a fixed point because the second name
+    /// was thrown away on reopen.
+    #[test]
+    fn a_nested_group_keeps_its_own_name_and_an_unnamed_group_is_a_fixed_point() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        let shape = |id: u32| {
+            format!(
+                r#"<wps:wsp><wps:cNvPr id="{id}" name="Box {id}"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>"#
+            )
+        };
+        let group = |frame: &str, own: &str| {
+            format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="5" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" {frame}/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:cNvPr id="2" {own}/><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr>{first}<wpg:grpSp><wpg:cNvPr id="4" name="Board" title="The board"/><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="457200"/><a:ext cx="457200" cy="457200"/><a:chOff x="0" y="0"/><a:chExt cx="457200" cy="457200"/></a:xfrm></wpg:grpSpPr>{second}</wpg:grpSp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#,
+                first = shape(3),
+                second = shape(5),
+            )
+        };
+        let document_xml = format!(
+            r#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body>{}{}</w:body></w:document>"#,
+            group(r#"name="Org chart""#, r#"name="Org chart""#),
+            // No name anywhere: the model's empty state.
+            group("", ""),
+        );
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let m1 = reopen(&pack(document_xml.as_bytes(), document_rels));
+
+        let top_and_nested = |index: usize| {
+            let BlockNode::Paragraph(paragraph) = &m1.body()[index] else {
+                panic!("expected a paragraph");
+            };
+            let InlineNode::Group(top) = &paragraph.inlines[0] else {
+                panic!("expected a group, got {:?}", paragraph.inlines[0]);
+            };
+            let nested = top
+                .children
+                .iter()
+                .find_map(|child| match child {
+                    GroupChild::Group(nested) => Some(nested.id),
+                    _ => None,
+                })
+                .expect("a nested group");
+            (top.id, nested)
+        };
+        let names = &m1.definitions().object_names;
+        let (top, nested) = top_and_nested(0);
+        let top_name = names.get(&top).expect("the frame is named");
+        assert_eq!(top_name.name.as_deref(), Some("Org chart"));
+        assert_eq!(
+            top_name.inner_name, None,
+            "the nested group's name is not the frame's inner statement"
+        );
+        let nested_name = names.get(&nested).expect("the nested group is named");
+        assert_eq!(nested_name.name.as_deref(), Some("Board"));
+        assert_eq!(nested_name.title.as_deref(), Some("The board"));
+        let (unnamed_top, unnamed_nested) = top_and_nested(1);
+        assert_eq!(
+            names.get(&unnamed_top),
+            None,
+            "an unnamed frame says nothing"
+        );
+        assert_eq!(
+            names
+                .get(&unnamed_nested)
+                .and_then(|name| name.name.as_deref()),
+            Some("Board")
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        assert!(
+            written_xml.contains(r#"<wpg:cNvPr id="0" name="Board" title="The board"/>"#),
+            "the nested group's own name and title are written: {written_xml}"
+        );
+        assert!(
+            written_xml.contains(r#"<wpg:wgp><wpg:cNvPr id="0" name="Group 1"/>"#),
+            "an unnamed group's inner statement is its frame's name: {written_xml}"
+        );
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "group names survive write -> reopen on the same nodes"
         );
     }
 
@@ -4825,6 +5238,412 @@ mod semantic_tests {
         );
     }
 
+    /// The `w:settings` root Word writes, with every namespace the settings
+    /// below use bound to its real URI.
+    const WORD_SETTINGS_ROOT: &str = concat!(
+        r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+        r#" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#,
+        r#" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml""#,
+        r#" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#,
+        r#" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml""#,
+        r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15">"#,
+    );
+
+    /// The settings Word writes into every document it saves were reported and
+    /// dropped by every edited save (`109` FID-AT-10, found on `sample.docx`);
+    /// Track Changes was read from an element that is in no schema and written
+    /// back as one (FID-AT-11). All of them now survive a save, are written in
+    /// `CT_Settings` order, and raise no finding.
+    ///
+    /// The order is asserted because it is part of the format: a
+    /// schema-validating consumer refuses a settings part out of sequence, and
+    /// the writer had `w:updateFields` and `w:evenAndOddHeaders` before
+    /// `w:defaultTableStyle` until this change.
+    #[test]
+    fn the_settings_word_writes_into_every_document_survive_a_save_in_schema_order() {
+        let settings = format!(
+            "{WORD_SETTINGS_ROOT}{}</w:settings>",
+            concat!(
+                r#"<w:trackRevisions/><w:defaultTabStop w:val="720"/>"#,
+                r#"<w:defaultTableStyle w:val="Grid"/><w:evenAndOddHeaders/>"#,
+                r#"<w:savePreviewPicture/><w:updateFields w:val="true"/>"#,
+                r#"<w:compat><w:useFELayout/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
+                r#"<m:mathPr><m:mathFont m:val="Cambria Math"/><m:dispDef/><m:wrapIndent m:val="1440"/></m:mathPr>"#,
+                r#"<w:themeFontLang w:val="en-US"/><w:doNotAutoCompressPictures/>"#,
+                r#"<w:shapeDefaults><o:shapedefaults v:ext="edit" spidmax="2049"/><o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="1"/></o:shapelayout></w:shapeDefaults>"#,
+                r#"<w:decimalSymbol w:val=","/><w:listSeparator w:val=";"/>"#,
+                r#"<w14:docId w14:val="1A2B3C4D"/><w14:defaultImageDpi w14:val="220"/>"#,
+                r#"<w15:docId w15:val="{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}"/>"#,
+            )
+        );
+        let source = package_with_settings(settings.as_bytes());
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let settings = &import.document.definitions().settings;
+        assert!(settings.track_changes, "w:trackRevisions is read");
+        assert!(settings.save_preview_picture);
+        assert!(settings.use_fe_layout);
+        assert!(settings.do_not_auto_compress_pictures);
+        assert_eq!(settings.decimal_symbol.as_deref(), Some(","));
+        assert_eq!(settings.list_separator.as_deref(), Some(";"));
+        assert_eq!(settings.document_id_w14.as_deref(), Some("1A2B3C4D"));
+        assert_eq!(
+            settings.document_id_w15.as_deref(),
+            Some("{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}")
+        );
+        assert_eq!(settings.default_image_dpi, Some(220));
+        assert_eq!(
+            settings.math_properties_xml.as_deref(),
+            Some(
+                r#"<m:mathPr><m:mathFont m:val="Cambria Math"/><m:dispDef/><m:wrapIndent m:val="1440"/></m:mathPr>"#
+            )
+        );
+        assert!(
+            settings
+                .shape_defaults_xml
+                .as_deref()
+                .is_some_and(|xml| xml.contains(r#"spidmax="2049""#)),
+            "w:shapeDefaults is retained: {:?}",
+            settings.shape_defaults_xml
+        );
+        assert!(
+            import.report.entries.is_empty(),
+            "everything here is carried, so nothing is a loss: {:?}",
+            import
+                .report
+                .entries
+                .iter()
+                .map(|entry| entry.feature.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/settings.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        // CT_Settings order, restricted to what this document carries; the
+        // Office extensions in the order Word writes them.
+        let sequence = [
+            "<w:trackRevisions/>",
+            "<w:defaultTabStop ",
+            "<w:defaultTableStyle ",
+            "<w:evenAndOddHeaders/>",
+            "<w:savePreviewPicture/>",
+            "<w:updateFields/>",
+            "<w:compat><w:useFELayout/><w:compatSetting ",
+            r#"<m:mathPr><m:mathFont m:val="Cambria Math"/>"#,
+            "<w:themeFontLang ",
+            "<w:doNotAutoCompressPictures/>",
+            r#"<w:shapeDefaults><o:shapedefaults v:ext="edit" spidmax="2049"/>"#,
+            r#"<w:decimalSymbol w:val=","/>"#,
+            r#"<w:listSeparator w:val=";"/>"#,
+            r#"<w14:docId w14:val="1A2B3C4D"/>"#,
+            r#"<w14:defaultImageDpi w14:val="220"/>"#,
+            r#"<w15:docId w15:val="{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}"/>"#,
+        ];
+        let positions: Vec<usize> = sequence
+            .iter()
+            .map(|needle| {
+                written
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("{needle} is written: {written}"))
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "written in CT_Settings order {sequence:?}: {written}"
+        );
+        for declaration in [
+            r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#,
+            r#"xmlns:o="urn:schemas-microsoft-com:office:office""#,
+            r#"xmlns:v="urn:schemas-microsoft-com:vml""#,
+            r#"xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#,
+            r#"xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml""#,
+            r#"mc:Ignorable="w14 w15""#,
+        ] {
+            assert!(
+                written.contains(declaration),
+                "the root declares {declaration}: {written}"
+            );
+        }
+        assert_eq!(
+            reopen(&bytes),
+            import.document,
+            "the settings survive write -> reopen"
+        );
+    }
+
+    /// A verbatim settings fragment is retained only when it would mean the
+    /// same thing written under the writer's own declarations (`109` FID-AT-10).
+    /// One that names an element in a namespace the writer does not declare is
+    /// reported, as it always was, rather than written back unbound — and a
+    /// `mathPr` whose prefix is not the math namespace is not a `m:mathPr` at
+    /// all.
+    #[test]
+    fn a_settings_fragment_in_a_namespace_the_writer_does_not_declare_is_reported() {
+        let foreign = format!(
+            "{WORD_SETTINGS_ROOT}{}</w:settings>",
+            r#"<m:mathPr><m:mathFont m:val="Cambria Math"/><x:extra xmlns:x="urn:x"/></m:mathPr>"#,
+        );
+        let source = package_with_settings(foreign.as_bytes());
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert_eq!(
+            import.document.definitions().settings.math_properties_xml,
+            None,
+            "a fragment naming an undeclared namespace is not retained"
+        );
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "mathPr"),
+            "it is reported instead"
+        );
+
+        let impostor = concat!(
+            r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="urn:not-math">"#,
+            r#"<m:mathPr><m:mathFont m:val="Cambria Math"/></m:mathPr></w:settings>"#,
+        );
+        let source = package_with_settings(impostor.as_bytes());
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert_eq!(
+            import.document.definitions().settings.math_properties_xml,
+            None
+        );
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "mathPr"),
+            "an element merely CALLED mathPr is reported as it always was"
+        );
+    }
+
+    /// The writer splices a verbatim fragment into the part as raw bytes, so it
+    /// re-checks one it did not capture: a snapshot is untrusted input, and a
+    /// string that closes the element it sits in would rewrite the part. Refused,
+    /// left out, and named (`109` FID-AT-10).
+    #[test]
+    fn a_settings_fragment_that_would_escape_its_element_is_refused_and_named() {
+        let source = package_with_settings(
+            format!("{WORD_SETTINGS_ROOT}<w:decimalSymbol w:val=\".\"/></w:settings>").as_bytes(),
+        );
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let mut document = import_package(&mut package, ImportConfig::default())
+            .unwrap()
+            .document;
+        document.definitions_mut().settings.math_properties_xml =
+            Some(r#"<m:mathPr/></w:settings><w:injected/><w:settings>"#.to_owned());
+        document
+            .validate()
+            .expect("the model's own check is a bound, not a parser");
+        let export = crate::export_document(&document, &BTreeMap::new()).unwrap();
+        let written = String::from_utf8(
+            DocxPackage::open(&export.bytes, PackageLimits::default())
+                .unwrap()
+                .read_part("word/settings.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !written.contains("injected") && !written.contains("mathPr"),
+            "the fragment is not spliced in: {written}"
+        );
+        assert!(
+            written.contains(r#"<w:decimalSymbol w:val="."/>"#),
+            "the rest of the part is written: {written}"
+        );
+        assert!(
+            export.report.entries.iter().any(|entry| entry.feature
+                == "docx.export.settings.fragment_refused"
+                && entry.location.element.as_deref() == Some("mathPr")),
+            "the refusal is named: {:?}",
+            export.report.entries
+        );
+    }
+
+    /// A theme Word would write: a named theme, a named font scheme, a colour
+    /// scheme the model reads, and a POPULATED `a:objectDefaults` and
+    /// `a:custClrLst` the model does not carry.
+    const NAMED_THEME: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        "\n",
+        r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Facet">"#,
+        r#"<a:themeElements><a:clrScheme name="Facet">"#,
+        r#"<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>"#,
+        r#"<a:dk2><a:srgbClr val="2C3C43"/></a:dk2><a:lt2><a:srgbClr val="EBEBEB"/></a:lt2>"#,
+        r#"<a:accent1><a:srgbClr val="90C226"/></a:accent1><a:accent2><a:srgbClr val="54A021"/></a:accent2>"#,
+        r#"<a:accent3><a:srgbClr val="E6B91E"/></a:accent3><a:accent4><a:srgbClr val="E76618"/></a:accent4>"#,
+        r#"<a:accent5><a:srgbClr val="C42F1A"/></a:accent5><a:accent6><a:srgbClr val="918655"/></a:accent6>"#,
+        r#"<a:hlink><a:srgbClr val="99CA3C"/></a:hlink><a:folHlink><a:srgbClr val="B9D181"/></a:folHlink></a:clrScheme>"#,
+        r#"<a:fontScheme name="Facet"><a:majorFont><a:latin typeface="Trebuchet MS"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>"#,
+        r#"<a:minorFont><a:latin typeface="Trebuchet MS"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>"#,
+        r#"</a:themeElements><a:objectDefaults><a:spDef><a:spPr/><a:bodyPr/><a:lstStyle/></a:spDef></a:objectDefaults>"#,
+        r#"<a:extraClrSchemeLst/><a:custClrLst><a:custClr name="Brand"><a:srgbClr val="123456"/></a:custClr></a:custClrLst></a:theme>"#,
+    );
+
+    /// A package carrying `theme` (and, when given, a relationships part of the
+    /// theme's own).
+    fn package_with_theme(theme: &[u8], theme_rels: Option<&[u8]>) -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/></Relationships>"#;
+        let mut parts: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/theme/theme1.xml", theme),
+        ];
+        if let Some(rels) = theme_rels {
+            parts.push(("word/theme/_rels/theme1.xml.rels", rels));
+        }
+        zip_named(&parts)
+    }
+
+    /// The theme part is copy-on-write (`109` FID-AT-03): a save writes the
+    /// source part back byte for byte while the model's theme is unchanged, so
+    /// its name, its font scheme's name, its object defaults and its custom
+    /// colours survive — and the import says `preserved` for them against the
+    /// part's own ledger record. Once the model's theme changes, the part is
+    /// regenerated and the save names every one of those findings.
+    #[test]
+    fn an_unchanged_theme_is_written_back_verbatim_and_a_changed_one_names_its_losses() {
+        use casual_doc_import::{PreservationKind, RetentionOutcome as ImportRetention};
+        let source = package_with_theme(NAMED_THEME.as_bytes(), None);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let theme_findings: Vec<_> = import
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.location.part_name.as_deref() == Some("word/theme/theme1.xml"))
+            .collect();
+        let features: Vec<&str> = theme_findings
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        for expected in [
+            "theme/@name",
+            "fontScheme/@name",
+            "objectDefaults",
+            "custClrLst",
+        ] {
+            assert!(
+                features.contains(&expected),
+                "{expected} is still a finding — the model does not carry it: {features:?}"
+            );
+        }
+        for entry in &theme_findings {
+            assert_eq!(
+                entry.retention_outcome(),
+                ImportRetention::Preserved,
+                "{} is kept by the verbatim part, even on the semantic path",
+                entry.feature
+            );
+            let record = import
+                .ledger
+                .get(entry.ledger_id.expect("a preserved finding cites a record"))
+                .expect("the record exists");
+            assert_eq!(record.kind, PreservationKind::OpaquePart);
+            assert_eq!(record.covers.as_deref(), Some("word/theme/theme1.xml"));
+        }
+
+        // Unchanged: the part is the source's bytes, and nothing is lost.
+        let unchanged = crate::export_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut written = DocxPackage::open(&unchanged.bytes, PackageLimits::default()).unwrap();
+        assert_eq!(
+            written.read_part("word/theme/theme1.xml").unwrap(),
+            NAMED_THEME.as_bytes(),
+            "an unchanged theme is written back byte for byte"
+        );
+        assert!(
+            unchanged.report.entries.is_empty(),
+            "nothing is lost: {:?}",
+            unchanged.report.entries
+        );
+
+        // Changed: the model's accent 1 is recoloured, so the source bytes no
+        // longer describe it. The part is regenerated with the new colour, and
+        // what only the source bytes held is named.
+        let mut changed = import.document.clone();
+        changed
+            .definitions_mut()
+            .color_scheme
+            .as_mut()
+            .expect("the colour scheme is modelled")
+            .accent1 = casual_doc_model::v1::SchemeColor::Srgb(casual_doc_model::v1::RgbColor {
+            r: 0xFF,
+            g: 0x00,
+            b: 0x00,
+        });
+        let regenerated = crate::export_document_with_retained_parts(
+            &changed,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut written = DocxPackage::open(&regenerated.bytes, PackageLimits::default()).unwrap();
+        let theme = String::from_utf8(written.read_part("word/theme/theme1.xml").unwrap()).unwrap();
+        assert!(
+            theme.contains("FF0000") && !theme.contains("90C226"),
+            "a changed theme is regenerated from the model: {theme}"
+        );
+        let named: Vec<&str> = regenerated
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.retention_outcome() == ImportRetention::NotRetained)
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        for expected in [
+            "theme/@name",
+            "fontScheme/@name",
+            "objectDefaults",
+            "custClrLst",
+        ] {
+            assert!(
+                named.contains(&expected),
+                "the regenerating save names {expected}: {named:?}"
+            );
+        }
+    }
+
+    /// A theme that owns relationships (a picture fill in its format scheme) is
+    /// regenerated as before, and its findings stay `not-retained` on the
+    /// semantic path: a verbatim copy would point at targets the writer does not
+    /// carry (`109` FID-AT-03).
+    #[test]
+    fn a_theme_with_relationships_of_its_own_is_not_carried_verbatim() {
+        use casual_doc_import::RetentionOutcome as ImportRetention;
+        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.jpeg"/></Relationships>"#;
+        let source = package_with_theme(NAMED_THEME.as_bytes(), Some(rels));
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(import.retained_parts.theme.is_none());
+        let name = import
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "theme/@name")
+            .expect("the theme's name is a finding");
+        assert_eq!(name.retention_outcome(), ImportRetention::NotRetained);
+    }
+
     /// LibreOffice writes `<w:themeFontLang w:val="" w:eastAsia="" w:bidi=""/>`
     /// into every document: three empty languages, which state exactly what an
     /// absent element states. It was reported as a lost setting in 3 of the 37
@@ -5727,6 +6546,59 @@ mod semantic_tests {
         // The picture still round-trips through a re-import.
         let m2 = reopen(&written);
         assert_eq!(m1, m2, "the header picture survives write -> reopen");
+    }
+
+    /// Every frame in the package gets its own `wp:docPr/@id`, across the body
+    /// and the running parts (`109` FID-SH-05).
+    ///
+    /// ECMA-376 §20.4.2.5 makes the id unique within the document; Word numbers
+    /// 1, 2, 3, … across every part. The writer stamped `1` on every frame, so a
+    /// document with a picture in its header and two in its body wrote three
+    /// drawings all claiming to be object 1.
+    #[test]
+    fn every_frame_in_the_package_has_its_own_doc_pr_id() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let picture = r#"<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/><wp:docPr id="7" name="Logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let text_box = r#"<w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="7" name="Sidebar"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="0" name="Sidebar"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let namespaces = r#"xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps""#;
+        let document = format!(
+            r#"<w:document {namespaces}><w:body><w:p>{picture}</w:p><w:p>{text_box}</w:p><w:p>{picture}</w:p><w:sectPr><w:headerReference w:type="default" r:id="rId5"/></w:sectPr></w:body></w:document>"#
+        );
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>"#;
+        let header = format!(r#"<w:hdr {namespaces}><w:p>{picture}</w:p></w:hdr>"#);
+        let header_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/header1.xml", header.as_bytes()),
+            ("word/_rels/header1.xml.rels", header_rels),
+            ("word/media/logo.png", b"PNGDATA"),
+        ]);
+        let m1 = reopen(&source);
+        let written = write_document(
+            &m1,
+            &BTreeMap::from([("word/media/logo.png".to_owned(), b"PNGDATA".to_vec())]),
+        )
+        .unwrap();
+        let mut package = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        let mut ids: Vec<u32> = Vec::new();
+        for part in ["word/document.xml", "word/header1.xml"] {
+            let xml = String::from_utf8(package.read_part(part).unwrap()).unwrap();
+            for (index, _) in xml.match_indices("<wp:docPr id=\"") {
+                let rest = &xml[index + "<wp:docPr id=\"".len()..];
+                let id = rest[..rest.find('"').unwrap()].parse().unwrap();
+                ids.push(id);
+            }
+        }
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec![1, 2, 3, 4],
+            "four frames — three in the body, one in the header — are 1..4"
+        );
     }
 
     #[test]

@@ -796,6 +796,8 @@ fn the_chart_parts_own_rels_is_written_only_when_the_workbook_is_there() {
     // `word/`-relative form `document.xml.rels` uses. Getting that wrong points
     // Word at `word/charts/embeddings/Book1.xlsx`, which is nowhere.
     let retained = RetainedParts {
+        // A chart's part, not a theme: no verbatim theme is carried.
+        theme: None,
         parts: vec![RetainedPart {
             part_name: workbook.part_name.clone(),
             content_type: Some(

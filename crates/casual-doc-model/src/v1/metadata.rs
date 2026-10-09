@@ -175,6 +175,12 @@ pub struct AppProperties {
     /// `SharedDoc`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_doc: Option<bool>,
+    /// `HyperlinksChanged` — one or more hyperlinks in the document were
+    /// changed by the producer and the consumer should update them. Word writes
+    /// it into every document; it was reported and dropped by every edited save
+    /// until `109` FID-AT-10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlinks_changed: Option<bool>,
     /// `TitlesOfParts` — the `vt:vector` of document-part titles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub titles_of_parts: Vec<String>,

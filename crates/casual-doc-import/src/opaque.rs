@@ -91,6 +91,64 @@ pub struct RetainedParts {
     /// Root/document relationships targeting a retained part, ordered
     /// deterministically.
     pub relationships: Vec<RetainedRelationship>,
+    /// The source theme part, carried verbatim while the model's theme is
+    /// unchanged (`109` FID-AT-03). `None` when the package had no theme, when
+    /// it could not be read whole, or when it owns relationships of its own.
+    pub theme: Option<RetainedTheme>,
+}
+
+/// The source theme part, held so a save can write it back byte for byte
+/// instead of regenerating it — copy-on-write, the pattern a chart part
+/// already follows until `Chart::dirty` says the model changed it (#811).
+///
+/// # Why (`109` FID-AT-03)
+///
+/// The model carries the theme's font scheme, colour scheme and format scheme,
+/// which is what resolves `w:themeColor` and `+mn-lt`. It does not carry the
+/// theme's NAME, its font scheme's name, populated object defaults, custom
+/// colours or extensions, and the regenerated part dropped them all on every
+/// save. A theme nobody edited is the overwhelming case, so the source bytes
+/// are kept beside what they parsed to, and the writer emits them for as long
+/// as the model's theme still equals that — [`RetainedTheme::still_describes`].
+/// Equality of values rather than a dirty flag, because nothing then has to
+/// remember to set the flag: any path that changes the theme, today or later,
+/// makes the comparison fail and the theme regenerate.
+///
+/// When it does regenerate, the detail only these bytes held is gone, and the
+/// writer names it from [`RetainedTheme::unmodeled`] — the findings the import
+/// raised against the part, which the import report called `preserved`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetainedTheme {
+    /// The source part name (`word/theme/theme1.xml` from Word).
+    pub part_name: String,
+    /// The source part, byte for byte.
+    pub bytes: Vec<u8>,
+    /// What the part parsed to: the model's theme at import.
+    pub font_scheme: Option<casual_doc_model::v1::FontScheme>,
+    /// See [`RetainedTheme::font_scheme`].
+    pub color_scheme: Option<casual_doc_model::v1::ColorScheme>,
+    /// See [`RetainedTheme::font_scheme`].
+    pub format_scheme: Option<casual_doc_model::v1::FormatScheme>,
+    /// See [`RetainedTheme::font_scheme`].
+    pub format_scheme_xml: Option<String>,
+    /// The import findings charged to the part: what the model does not carry
+    /// and a regenerated theme therefore loses.
+    pub unmodeled: Vec<crate::CompatibilityEntry>,
+}
+
+impl RetainedTheme {
+    /// Whether the model's theme is still the one these bytes parsed to, so
+    /// writing them back describes the document.
+    ///
+    /// Complexity: O(theme) — a field-by-field comparison of the three
+    /// schemes, once per save.
+    #[must_use]
+    pub fn still_describes(&self, definitions: &casual_doc_model::v1::Definitions) -> bool {
+        definitions.font_scheme == self.font_scheme
+            && definitions.color_scheme == self.color_scheme
+            && definitions.format_scheme == self.format_scheme
+            && definitions.format_scheme_xml == self.format_scheme_xml
+    }
 }
 
 impl RetainedParts {
@@ -193,6 +251,10 @@ impl RetainedParts {
             .collect();
         invalidated.sort_by(|left, right| left.part_name.cmp(&right.part_name));
         let kept = RetainedParts {
+            // The theme is not derived from the text, so an edit leaves it as
+            // it was; whether it still describes the model is the writer's
+            // check (`RetainedTheme::still_describes`).
+            theme: self.theme.clone(),
             parts: self
                 .parts
                 .iter()

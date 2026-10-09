@@ -136,9 +136,12 @@ pub(crate) fn carries_no_meaning_when(
         // (a shadow, a glow, a reflection) is a real loss and still reports.
         b"effectLst" => self_closing,
         // `<a:spLocks/>` with no attributes locks nothing. Each attribute is a
-        // separate lock (`noChangeArrowheads`, `noResize`, `noEditPoints`, …) and
-        // this engine honours none of them, so a populated one is a restriction the
-        // document asked for and did not get: still reported.
+        // separate lock (`noChangeArrowheads`, `noResize`, `noEditPoints`, …). A
+        // populated one is a restriction the document asked for: since `109`
+        // FID-AT-09 it is modelled (`ObjectName::locks`) and written back by the
+        // body parser before it reaches the reporter, so this arm decides only
+        // what the coverage guard counts — the empty form, which the writer
+        // rightly omits, is not a loss.
         b"spLocks" => element.attributes().next().is_none(),
         // `<a14:useLocalDpi val="0"/>` — the Office 2010 drawing extension asking
         // that a picture NOT be rescaled to the authoring machine's DPI. Off is the
@@ -184,14 +187,16 @@ pub(crate) fn carries_no_meaning_when(
         b"effectExtent" => [b"l".as_slice(), b"t", b"r", b"b"]
             .iter()
             .all(|edge| is_zero_or_absent(element, edge)),
-        // `a:graphicFrameLocks` / `a:picLocks` — the same rule `a:spLocks` above
-        // already states, for the frame and the picture flavours of the lock
-        // element. No attributes locks nothing; each attribute
+        // `a:graphicFrameLocks` / `a:picLocks` / `a:grpSpLocks` — the same rule
+        // `a:spLocks` above states, for the frame, picture and group flavours of
+        // the lock element. No attributes locks nothing; each attribute
         // (`noChangeAspect`, `noResize`, `noChangeArrowheads`, …) is one
-        // restriction the document asked for and this engine does not honour, so
-        // a populated one is a loss and reports. Both were unconditionally silent
-        // until FID-P-03 measured them.
-        b"graphicFrameLocks" | b"picLocks" => element.attributes().next().is_none(),
+        // restriction the document asked for. The first two were unconditionally
+        // silent until FID-P-03 measured them, then reported; since `109`
+        // FID-AT-09 a populated one is modelled and written back, and an empty
+        // `a:grpSpLocks` — which used to raise a finding describing no loss — is
+        // a no-op like its siblings.
+        b"graphicFrameLocks" | b"picLocks" | b"grpSpLocks" => element.attributes().next().is_none(),
         // `w:themeFontLang` with every language empty or absent. LibreOffice
         // writes `w:val="" w:eastAsia="" w:bidi=""` into every document, which
         // states exactly what an absent element does — it was 3 of the committed
@@ -358,6 +363,7 @@ mod tests {
                 "a:picLocks",
                 r#"a:picLocks noChangeAspect="1" noChangeArrowheads="1""#,
             ),
+            (b"grpSpLocks", "a:grpSpLocks", r#"a:grpSpLocks noUngrp="1""#),
             (
                 b"effectExtent",
                 r#"wp:effectExtent l="0" t="0" r="0" b="0""#,

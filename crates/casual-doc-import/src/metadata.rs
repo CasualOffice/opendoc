@@ -325,6 +325,7 @@ fn assign_app_scalar(app: &mut AppProperties, local: &[u8], value: String) -> bo
         b"ScaleCrop" => app.scale_crop = Some(parse_bool(&value)),
         b"LinksUpToDate" => app.links_up_to_date = Some(parse_bool(&value)),
         b"SharedDoc" => app.shared_doc = Some(parse_bool(&value)),
+        b"HyperlinksChanged" => app.hyperlinks_changed = Some(parse_bool(&value)),
         _ => return false,
     }
     true
@@ -532,6 +533,38 @@ mod tests {
                 value: "single".to_owned()
             }
         );
+    }
+
+    /// `HyperlinksChanged` is in every `app.xml` Word writes, and it was
+    /// reported and dropped by every edited save (`109` FID-AT-10, found on
+    /// `sample.docx`). Both values are carried, because `false` is what Word
+    /// writes and an absent element is not the same statement.
+    #[test]
+    fn hyperlinks_changed_is_carried_not_reported() {
+        for (source, expected) in [("false", Some(false)), ("true", Some(true))] {
+            let sources = DocPropsSources {
+                core: None,
+                app: Some(
+                    format!(
+                        r#"<Properties xmlns="urn:app"><HyperlinkBase/><HyperlinksChanged>{source}</HyperlinksChanged></Properties>"#
+                    )
+                    .into_bytes(),
+                ),
+                custom: None,
+            };
+            let mut reporter = Reporter::new(crate::report::SourceRetention::Regenerated);
+            let properties = parse(&sources, ImportConfig::default(), &mut reporter)
+                .unwrap()
+                .expect("properties");
+            assert_eq!(properties.app.hyperlinks_changed, expected, "{source}");
+            let mut ledger = crate::report::PreservationLedger::default();
+            let report = reporter.into_report(&mut ledger);
+            assert!(
+                report.entries.is_empty(),
+                "a carried property is not a loss: {:?}",
+                report.entries
+            );
+        }
     }
 
     #[test]

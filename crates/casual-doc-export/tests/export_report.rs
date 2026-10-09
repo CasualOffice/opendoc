@@ -506,6 +506,8 @@ fn an_embedded_object_part_the_package_lacks_is_reported() {
 fn an_embedded_object_part_carried_verbatim_reports_nothing() {
     let document = document_with_chart();
     let retained = RetainedParts {
+        // A chart's part, not a theme: no verbatim theme is carried.
+        theme: None,
         parts: vec![RetainedPart {
             part_name: "word/charts/chart1.xml".to_owned(),
             content_type: Some(
