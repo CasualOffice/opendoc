@@ -128,6 +128,7 @@ fn chart_paragraph(seed: u64, extra: Vec<InlineNode>) -> BlockNode {
 /// for ("its type, series, categories, title and legend intact").
 fn projection(object: NodeId, coverage: ChartCoverage) -> Chart {
     Chart {
+        font: None,
         chart_retained: Default::default(),
         namespaces: Default::default(),
         space_retained: Default::default(),
@@ -193,6 +194,7 @@ fn projection(object: NodeId, coverage: ChartCoverage) -> Chart {
             ],
         },
         legend: Some(Legend {
+            font: None,
             retained: Default::default(),
             position: LegendPosition::Bottom,
             overlay: false,

@@ -3092,11 +3092,17 @@ fn check_chart(chart: &Chart) -> Result<(), ModelError> {
         chart.plot_area.axes.len() <= MAX_CHART_AXES,
         "chart.plotArea.axes",
     )?;
-    if let Some(title) = &chart.title
-        && let Some(text) = &title.text
-    {
-        check_chart_text(text, "chart.title")?;
+    if let Some(title) = &chart.title {
+        check_chart_title(title, "chart.title")?;
     }
+    check_chart_font(chart.font.as_ref(), "chart.font")?;
+    check_chart_font(
+        chart
+            .legend
+            .as_ref()
+            .and_then(|legend| legend.font.as_ref()),
+        "chart.legend.font",
+    )?;
     if let Some(part) = &chart.external_data {
         check_embedded_part_shape(part, "chart.externalData")?;
     }
@@ -3134,6 +3140,7 @@ fn check_chart(chart: &Chart) -> Result<(), ModelError> {
             if let Some(name) = &series.name {
                 check_chart_text(name, "chart.series.name")?;
             }
+            check_chart_series_extras(series)?;
         }
     }
     // Every range in one place, so a field added to `Series` that holds one is
@@ -3158,6 +3165,10 @@ fn check_chart(chart: &Chart) -> Result<(), ModelError> {
                 "chart.axis.numberFormat",
             )?;
         }
+        if let Some(title) = &axis.title {
+            check_chart_title(title, "chart.axis.title")?;
+        }
+        check_chart_font(axis.font.as_ref(), "chart.axis.font")?;
     }
     Ok(())
 }
@@ -3192,6 +3203,83 @@ fn check_data_range(range: &DataRange) -> Result<(), ModelError> {
             )?,
             ChartValue::Blank => {}
         }
+    }
+    Ok(())
+}
+
+/// Validates a chart or axis title: its text and its font.
+fn check_chart_title(
+    title: &crate::v1::ChartTitle,
+    property: &'static str,
+) -> Result<(), ModelError> {
+    if let Some(text) = &title.text {
+        check_chart_text(text, property)?;
+    }
+    check_chart_font(title.font.as_ref(), property)
+}
+
+/// Validates a chart text font's domains: a bounded, non-empty face name and
+/// a size inside `ST_TextFontSize`.
+fn check_chart_font(
+    font: Option<&crate::v1::ChartFont>,
+    property: &'static str,
+) -> Result<(), ModelError> {
+    let Some(font) = font else {
+        return Ok(());
+    };
+    if let Some(face) = &font.typeface {
+        check_domain(
+            !face.is_empty() && face.len() <= crate::v1::MAX_CHART_TYPEFACE_BYTES,
+            property,
+        )?;
+    }
+    if let Some(size) = font.size {
+        check_domain(crate::v1::CHART_FONT_SIZE_RANGE.contains(&size), property)?;
+    }
+    Ok(())
+}
+
+/// Validates a series' trendlines and error bars: counts, and each number's
+/// verbatim form. Their custom data ranges are checked with every other range
+/// through `Chart::data_ranges`.
+fn check_chart_series_extras(series: &crate::v1::Series) -> Result<(), ModelError> {
+    use crate::v1::TrendlineKind;
+    check_domain(
+        series.trendlines.len() <= crate::v1::MAX_CHART_TRENDLINES,
+        "chart.series.trendlines",
+    )?;
+    check_domain(
+        series.error_bars.len() <= crate::v1::MAX_CHART_ERROR_BARS,
+        "chart.series.errorBars",
+    )?;
+    let number = |text: &Option<String>| {
+        text.as_ref()
+            .is_none_or(|text| !text.is_empty() && text.len() <= MAX_CHART_NUMBER_BYTES)
+    };
+    for line in &series.trendlines {
+        check_domain(
+            number(&line.forward) && number(&line.backward) && number(&line.intercept),
+            "chart.series.trendline",
+        )?;
+        check_domain(
+            line.name
+                .as_ref()
+                .is_none_or(|name| name.len() <= MAX_CHART_TEXT_BYTES),
+            "chart.series.trendline.name",
+        )?;
+        check_domain(
+            line.order.is_none_or(|order| (2..=6).contains(&order))
+                && (line.kind != TrendlineKind::Polynomial || line.order.is_some()),
+            "chart.series.trendline.order",
+        )?;
+        check_domain(
+            line.period.is_none_or(|period| (2..=255).contains(&period))
+                && (line.kind != TrendlineKind::MovingAverage || line.period.is_some()),
+            "chart.series.trendline.period",
+        )?;
+    }
+    for bars in &series.error_bars {
+        check_domain(number(&bars.value), "chart.series.errorBars.value")?;
     }
     Ok(())
 }

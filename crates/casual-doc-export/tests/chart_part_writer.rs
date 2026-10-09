@@ -151,6 +151,7 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
     );
     let scatter = matches!(group, ChartGroupKind::Scatter { .. });
     Chart {
+        font: None,
         chart_retained: Default::default(),
         namespaces: Default::default(),
         space_retained: Default::default(),
@@ -189,6 +190,7 @@ fn projection(object: NodeId, group: ChartGroupKind) -> Chart {
             axes: if pie { Vec::new() } else { axes() },
         },
         legend: Some(Legend {
+            font: None,
             retained: Default::default(),
             position: LegendPosition::Bottom,
             overlay: false,
@@ -478,6 +480,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
         },
     );
     before.title = Some(ChartTitle {
+        font: None,
         retained: Default::default(),
         text: Some(ChartText {
             text: "Quarterly revenue".to_owned(),
@@ -489,6 +492,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
     before.plot_visible_only = false;
     before.display_blanks_as = DisplayBlanks::Span;
     before.legend = Some(Legend {
+        font: None,
         retained: Default::default(),
         position: LegendPosition::TopRight,
         overlay: true,
@@ -500,6 +504,7 @@ fn a_fully_dressed_chart_round_trips_its_formatting_labels_and_axis_bounds() {
         b: 0xC4,
     }));
     series.line = Some(ChartLine {
+        dash: None,
         color: Some(Color::Theme(ThemeColor {
             slot: ThemeColorRef::Accent3,
             theme_tint: None,
@@ -1227,6 +1232,7 @@ fn every_generated_chart_part_is_in_ecma_376_child_order() {
         // a guard over the bare projection would only ever see five elements.
         let mut chart = projection(id(3), group);
         chart.title = Some(ChartTitle {
+            font: None,
             retained: Default::default(),
             text: Some(ChartText {
                 text: "Revenue".to_owned(),
@@ -1242,6 +1248,7 @@ fn every_generated_chart_part_is_in_ecma_376_child_order() {
             b: 0xC4,
         }));
         series.line = Some(ChartLine {
+            dash: None,
             color: Some(Color::Theme(ThemeColor {
                 slot: ThemeColorRef::Accent1,
                 theme_tint: Some(0x7F),

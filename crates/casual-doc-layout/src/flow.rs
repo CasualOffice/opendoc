@@ -11566,6 +11566,7 @@ mod tests {
             ChartGroup, ChartGroupKind, ChartValue, DataRange, DisplayBlanks, PlotArea, Series,
         };
         Chart {
+            font: None,
             chart_retained: Default::default(),
             namespaces: Default::default(),
             space_retained: Default::default(),

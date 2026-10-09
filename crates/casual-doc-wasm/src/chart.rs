@@ -1166,7 +1166,21 @@ fn apply_chart_patch(chart: &Chart, patch: &ChartDataPatch) -> Result<Chart, Str
                 }
             }),
         );
+        // Trendlines and error bars belong to the series, so they survive a
+        // data edit — but only into a family whose series admit them (a pie's
+        // do not, and Word rejects a `c:trendline` inside a `c:pieSer`).
+        let admits = |name| chart_child_rank(ChartContainer::Series(kind), name).is_some();
         series.push(Series {
+            trendlines: if admits("trendline") {
+                old.map_or_else(Vec::new, |old| old.trendlines.clone())
+            } else {
+                Vec::new()
+            },
+            error_bars: if admits("errBars") {
+                old.map_or_else(Vec::new, |old| old.error_bars.clone())
+            } else {
+                Vec::new()
+            },
             // What the model does not hold at all — Word's per-series formatting,
             // a trendline — filtered to what the (possibly new) family's series
             // admits.
@@ -1240,6 +1254,7 @@ fn apply_chart_patch(chart: &Chart, patch: &ChartDataPatch) -> Result<Chart, Str
             .and_then(|title| title.text.as_ref())
             .is_some_and(|text| text.text == patch.title && text.formula.is_none());
         Some(ChartTitle {
+            font: previous_title.and_then(|title| title.font.clone()),
             // The title's own formatting is kept; its verbatim TEXT (`tx`) only
             // while the text is unchanged, or the old words would be saved.
             retained: previous_title.map_or_else(Vec::new, |title| {
@@ -1262,6 +1277,7 @@ fn apply_chart_patch(chart: &Chart, patch: &ChartDataPatch) -> Result<Chart, Str
     // cannot edit here.
     next.auto_title_deleted = next.title.is_none();
     next.legend = legend_position(&patch.legend)?.map(|position| Legend {
+        font: chart.legend.as_ref().and_then(|legend| legend.font.clone()),
         // Word's legend font and fill, kept across a position change.
         retained: chart.legend.as_ref().map_or_else(Vec::new, |legend| {
             keep_carried(&legend.retained, ChartContainer::Legend, &[])
@@ -2338,6 +2354,7 @@ mod tests {
         chart.legend.as_mut().expect("a legend").retained =
             vec![fragment("txPr", "<c:txPr><a:bodyPr/></c:txPr>")];
         chart.title = Some(ChartTitle {
+            font: None,
             text: Some(ChartText {
                 text: "Old".to_owned(),
                 formula: None,

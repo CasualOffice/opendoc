@@ -1795,6 +1795,7 @@ impl Parser {
         let draft = std::mem::take(&mut self.chart);
         ChartRead {
             projection: Some(Chart {
+                font: None,
                 chart_retained: draft.chart_retained,
                 namespaces: draft.namespaces,
                 space_retained: draft.space_retained,
