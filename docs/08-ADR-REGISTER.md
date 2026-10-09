@@ -4149,3 +4149,42 @@ selection and a scroll.
 - Removed tables, rows and headers/footers are still listed rather than painted (body
   paragraphs only, for `classify_change`'s reason).
 - A worker. Still the main thread in slices, for the reason `diff.rs` gives.
+
+## ADR-066 — HTML export is resolved by the renderer's resolver: one cascade, one palette, a normalized stylesheet
+
+**Status:** accepted. Asked for by the owner: "HTML export fidelity is way too weak." Design and
+measurement: `docs/167`. Tracker: `109` HF-283.
+
+### The decision
+
+The single-file HTML exporter (`casual-doc-io` `html`) no longer reads direct formatting alone.
+Every paragraph, run and table cell is resolved through `casual_doc_layout`'s `StyleCascade` —
+document defaults, table style and its conditional regions, paragraph style chain, character
+style, direct — and every colour, fill and border through the renderer's palette and
+border-conflict rules, exposed read-only as `casual_doc_layout::paint_values`. Each function
+there **delegates** to the one the flow engine calls (`cell_shading_rgba` was extracted from
+`flow.rs` so both call it); none re-implements a rule. The page and the export therefore cannot
+disagree about what a document looks like, and a fix to one is a fix to both.
+
+The stylesheet is **normalized**: one class per paragraph style with its resolved declarations,
+each element carrying only its delta (`initial` where it undoes what its class sets). Vertical
+spacing is Word's additive arithmetic, not CSS margin collapsing. Lists are nested `<ul>`/`<ol>`
+whose items carry the label the page prints; tables carry grid widths, resolved borders, fills
+and padding, and a `<thead>` only for rows the document marks as repeating headers; footnotes
+and endnotes are written after the body and linked both ways; `@page` carries the first
+section's size and margins.
+
+### Alternatives rejected
+
+- **A second resolver inside the exporter.** It is how the import, the model validator and the
+  renderer came to answer one numbering question three ways (`docs/142` LST-10/LST-34). One
+  resolver, read through a narrow public door, is the fix for that class.
+- **Inline every resolved declaration on every element.** Exact, but each paragraph would repeat
+  its style's dozen declarations; the class-plus-delta form is the same picture at a fraction of
+  the size and is what an editor of the HTML expects to find.
+- **Absolute positioning from the paginated layout** (one `<div>` per line at its page
+  coordinate). Pixel-faithful and useless as a web page: no reflow, no selection order, no
+  accessibility. HTML is the flowed format; PDF is the paginated one.
+- **Writing headers and footers into the body.** A "Page 1 of 14" footer on a page that has no
+  pages is a wrong fact; they are reported (`html.header_footer`) instead of — as before —
+  silently dropped.

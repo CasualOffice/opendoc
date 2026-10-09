@@ -58,6 +58,7 @@ pub mod numbering;
 pub mod page;
 mod page_border;
 pub mod paginate;
+pub mod paint_values;
 // Own line (anti-conflict): the user-facing measurement-unit layer.
 pub mod quantity;
 // Own line (anti-conflict): what a reflowed column approximates in a document.
