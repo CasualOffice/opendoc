@@ -918,6 +918,7 @@ function head({ title, description, canonical, headline, breadcrumb }) {
     '    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />',
     `    <link rel="canonical" href="${canonical}" />`,
     '    <link rel="stylesheet" href="../src/fonts.css" />',
+    '    <script src="../src/analytics.js"></script>',
     "",
     '    <meta property="og:type" content="article" />',
     '    <meta property="og:site_name" content="OpenDoc" />',
