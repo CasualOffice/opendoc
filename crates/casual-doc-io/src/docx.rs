@@ -330,6 +330,23 @@ impl FormatExporter for DocxAdapter {
                     report
                         .entries
                         .extend(source.lost_on_regeneration.iter().cloned());
+                    // This save carries no side-table, so the theme is
+                    // regenerated however unchanged it is, and the detail only
+                    // its source bytes held — which the import called
+                    // `preserved` against the theme part's own record, so it is
+                    // not in `lost_on_regeneration` — is not in it either
+                    // (`109` FID-AT-03).
+                    if let Some(theme) = &source.retained_parts.theme {
+                        report.entries.extend(theme.unmodeled.iter().map(|entry| {
+                            CompatibilityEntry {
+                                feature: entry.feature.clone(),
+                                occurrences: entry.occurrences,
+                                location: convert_location(&entry.location, None),
+                                model_outcome: convert_model_outcome(entry.model_outcome()),
+                                retention_outcome: RetentionOutcome::NotRetained,
+                            }
+                        }));
+                    }
                 }
                 (exported.bytes, report)
             }

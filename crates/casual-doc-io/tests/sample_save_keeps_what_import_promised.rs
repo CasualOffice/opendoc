@@ -452,6 +452,28 @@ fn a_regenerating_save_of_an_unchanged_document_names_the_same_losses() {
     }
 }
 
+/// A `semantic` save carries no side-table, so it regenerates even an unchanged
+/// theme — and must name the theme's detail it therefore loses, which the
+/// import called `preserved` against the theme part's own record (FID-AT-03).
+#[test]
+fn a_semantic_save_names_the_theme_detail_it_regenerates() {
+    let imported = import();
+    let (bytes, report) = save(&imported, ExportMode::Semantic, true);
+    let saved = unzip(&bytes);
+    let source = unzip(SAMPLE);
+    assert!(
+        !same_theme_part(&saved, &source),
+        "a semantic save regenerates the theme"
+    );
+    for feature in ["theme/@name", "fontScheme/@name", "objectDefaults"] {
+        assert!(
+            names_as_not_retained(&report, feature),
+            "{feature} is named by the semantic save: {:#?}",
+            report.entries
+        );
+    }
+}
+
 fn import() -> ImportArtifact {
     builtin_registry()
         .import(
