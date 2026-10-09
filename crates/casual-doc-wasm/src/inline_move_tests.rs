@@ -562,3 +562,112 @@ fn a_picture_can_be_dropped_into_a_text_boxs_text() {
         .expect("a text box's own text is text in the same story, as in Word");
     assert_eq!(flow(&d, ids.inside_box), format!("Inside{{{p}}}"));
 }
+
+/// A picture in a table cell is picked up, and edited, exactly as one in the
+/// body is (`docs/109` UX-OB-03).
+///
+/// The object-box correlation walked the page's top-level paragraph fragments
+/// only, so a picture in a cell painted and had no object box: a click on it
+/// selected nothing, and no command that starts from a selection — resize,
+/// crop, alt text, wrap, the drag — could reach it. UX-OB-02 made that easy to
+/// meet, because a drag could now put a picture into a cell it could not then
+/// be picked up from. This asserts the click lands where the picture was
+/// PAINTED — the box agrees with the caret geometry the hit test produces — and
+/// then that every edit a selection offers applies.
+#[test]
+fn a_picture_in_a_table_cell_is_picked_up_and_edited_like_one_in_the_body() {
+    let (mut d, ids) = fixture();
+    let p = ids.picture;
+    let node = p.to_string();
+    d.move_inline_object_inner(&node, &ids.cell.to_string(), 4, false)
+        .expect("a drag into the cell");
+    assert_eq!(flow(&d, ids.cell), format!("Cell{{{p}}}"));
+
+    let placed = d
+        .object_boxes()
+        .into_iter()
+        .find(|object| object.subject == p)
+        .expect("the picture in the cell has an object box (UX-OB-03)");
+    assert!(!placed.anchored);
+    let caps = placed.capabilities;
+    assert!(
+        caps.can_resize
+            && caps.can_crop
+            && caps.can_alt_text
+            && caps.can_stroke
+            && caps.can_delete
+            && caps.can_move_in_text,
+        "the in-cell picture offers what a body picture offers: {caps:?}"
+    );
+
+    // Where it was PAINTED, by the hit test's own geometry rather than this
+    // walk's: the box sits inside the cell's border box (`cellRect`, the rect
+    // the active-cell outline is drawn from), and a point at its centre
+    // resolves, through the click hit test, into the cell's own paragraph.
+    let cell = d.cell_rect(&ids.cell.to_string());
+    assert_eq!(cell.len(), 5, "the cell is placed");
+    assert_eq!(i64::from(cell[0]), i64::from(placed.page));
+    let (x, y, w, h) = (
+        placed.rect.origin.x.raw(),
+        placed.rect.origin.y.raw(),
+        placed.rect.size.width.raw(),
+        placed.rect.size.height.raw(),
+    );
+    assert!(
+        x >= cell[1] && x < cell[1] + cell[3] && y >= cell[2] && y + h <= cell[2] + cell[4],
+        "the box [{x}, {y}, {w}, {h}] is inside the cell {cell:?}"
+    );
+    let under = d
+        .hit_test(placed.page, x + w / 2, y + h / 2)
+        .expect("the picture's centre is on a line");
+    assert_eq!(
+        under.node(),
+        ids.cell.to_string(),
+        "and on the cell's paragraph"
+    );
+    // And exactly where the picture is DRAWN: the page's own display list.
+    let page = d
+        .painted_layout()
+        .pages
+        .iter()
+        .find(|page| page.number == placed.page)
+        .expect("the page");
+    let drawn: Vec<_> = casual_doc_layout::compose::compose_page(page)
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            casual_doc_layout::display::PaintItem::Image { rect, .. } => Some(rect),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        drawn.contains(&placed.rect),
+        "the object box {:?} is a rectangle the page paints a picture into: {drawn:?}",
+        placed.rect
+    );
+    let hit = d
+        .object_at(placed.page, x + w / 2, y + h / 2)
+        .expect("a click on the picture where it is painted selects it");
+    assert_eq!(hit.subject(), node);
+
+    // And every edit a selected picture offers reaches it.
+    let emu = |twips: i32| f64::from(twips) * crate::EMU_PER_TWIP;
+    d.resize_object(&node, emu(x), emu(y), emu(w * 2), emu(h * 2))
+        .expect("resized from its grips");
+    let grown = d.object_rect(&node);
+    assert!(grown[3] > w + w / 2, "it is wider: {grown:?}");
+    d.set_image_crop(&node, Some(vec![0.25, 0.0, 0.0, 0.0]))
+        .expect("cropped");
+    assert_eq!(d.object_crop(&node).map(|c| c.len()), Some(4));
+    d.set_object_descr(&node, Some("A logo in a table".to_owned()))
+        .expect("given alt text");
+    assert_eq!(d.object_descr(&node).as_deref(), Some("A logo in a table"));
+    d.set_object_anchor_kind(&node, "floating")
+        .expect("given a text wrap");
+    assert!(
+        d.object_boxes()
+            .into_iter()
+            .any(|object| object.subject == p && object.anchored && object.capabilities.can_move),
+        "and once it floats it is a floating object, placed freely"
+    );
+}

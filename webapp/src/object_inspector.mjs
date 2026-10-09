@@ -151,7 +151,13 @@ export function createObjectInspector(io) {
       const left = Number(objectInspectorEl.querySelector("[data-object-prop=left]").value);
       const top = Number(objectInspectorEl.querySelector("[data-object-prop=top]").value);
       if (rect.length < 5 || ![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return;
-      io.runEdit(() => io.doc().resizeObject(io.selection().ref.root, left * TWIPS_PER_INCH * 635, top * TWIPS_PER_INCH * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
+      // An in-line object's position is the text's, not the panel's: send the
+      // origin it already has. The Left/Top fields show it rounded to 0.01in,
+      // and sending that back moved the origin by the rounding, which the engine
+      // refuses for an in-line object — so Apply could never resize one
+      // (`docs/109` UX-OB-05).
+      const origin = io.selection().anchored ? [left * TWIPS_PER_INCH, top * TWIPS_PER_INCH] : [rect[1], rect[2]];
+      io.runEdit(() => io.doc().resizeObject(io.selection().ref.root, origin[0] * 635, origin[1] * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
     });
     objectInspectorEl.querySelector("[data-object-inspector-rotation-apply]").addEventListener("click", () => {
       if (!io.doc() || !io.selection()?.canRotate || !objectInspectorMatchesSelection()) return;

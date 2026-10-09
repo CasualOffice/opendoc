@@ -177,6 +177,70 @@ test("Esc cancels the drag, and a picture dropped back where it came from does n
   expect(consoleErrors).toEqual([]);
 });
 
+test("a picture dropped into a table cell is picked up there, resized there, and dragged back out (UX-OB-03)", async ({
+  page,
+  consoleErrors,
+}) => {
+  const picture = await selectPicture(page);
+  // The fixture's nested table: drop the picture just after "Nested A".
+  const cellWord = await wordBox(page, "Nested A");
+  await page.mouse.click(picture.x, picture.y);
+  await drag(page, picture, { x: cellWord.x + cellWord.width + 1, y: cellWord.y + cellWord.height / 2 });
+  await expect.poll(() => mirror(page), { message: "the picture left the body paragraph" }).toEqual([
+    "h1:Rich Document",
+    "p:Paragraph with an image:",
+  ]);
+
+  // Still held, at its new place INSIDE the cell — a picture in a cell had no
+  // object box at all, so the selection used to vanish here.
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "image");
+  const inCell = await outline(page);
+  // After "Nested A" in reading order: beside it on its line, or — the cell is
+  // narrow — at the start of the next line of the same cell.
+  const besideIt = inCell.x >= cellWord.x + cellWord.width - 2 && inCell.y < cellWord.y + cellWord.height;
+  const belowIt = inCell.y >= cellWord.y + cellWord.height - 2 && Math.abs(inCell.x - cellWord.x) < 4;
+  expect(besideIt || belowIt, `after the words in the cell: ${JSON.stringify({ inCell, cellWord })}`).toBe(true);
+
+  // Let go of it, and pick it up again with a click where it is drawn.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pages")).not.toHaveAttribute("data-object-kind", "image");
+  const centre = { x: inCell.x + inCell.width / 2, y: inCell.y + inCell.height / 2 };
+  await page.mouse.click(centre.x, centre.y);
+  await expect(page.locator("#pages"), "a click on a picture in a cell selects it").toHaveAttribute(
+    "data-object-kind",
+    "image",
+  );
+
+  // Resized, in the cell, through its properties panel — the engine's resize
+  // starts from the object's placed box, which is exactly what a picture in a
+  // cell did not have. (The panel rather than a grip drag: grip drags on this
+  // 16px picture are the contention-flaky gesture `object-geometry.spec.mjs`
+  // already covers.)
+  await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
+  const width = page.locator(".object-inspector [data-object-prop=width]");
+  await width.fill("0.5");
+  await page.locator(".object-inspector [data-object-inspector-apply]").click();
+  await expect.poll(async () => (await outline(page)).width, { message: "it grew" }).toBeGreaterThan(inCell.width + 10);
+  await page.locator(".object-inspector .panel-close").click();
+  await expect(page.locator(".object-inspector")).toBeHidden();
+
+  // And dragged back out of the cell, into the heading. (A click on it first:
+  // the panel's close button had the keyboard focus, not the document.)
+  const grown = await outline(page);
+  const grownAt = { x: grown.x + grown.width / 2, y: grown.y + grown.height / 2 };
+  await page.mouse.click(grownAt.x, grownAt.y);
+  const heading = await wordBox(page, "Document");
+  await page.mouse.click(grownAt.x, grownAt.y);
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "image");
+  await drag(page, grownAt, { x: heading.x + 2, y: heading.y + heading.height / 2 });
+  await expect.poll(() => mirror(page), { message: "out of the cell, after the heading" }).toEqual([
+    "h1:Rich Document",
+    "img",
+    "p:Paragraph with an image:",
+  ]);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("F2 asks Move to where?, and Enter moves the picture to the insertion point (Word's keyboard move)", async ({
   page,
   consoleErrors,

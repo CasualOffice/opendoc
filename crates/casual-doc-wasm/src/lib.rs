@@ -16177,16 +16177,19 @@ impl WasmDocument {
         // correlation below (media-name match, then document order) is
         // layout-independent, so nothing else about this walk changes.
         for page in &self.painted_layout().pages {
-            for placed in &page.placed {
-                let BlockFragment::Paragraph {
-                    id,
-                    lines,
-                    box_metrics,
-                    ..
-                } = &placed.fragment
-                else {
-                    continue;
-                };
+            // Every paragraph painted on the page, table cells included — a
+            // picture in a cell paints exactly as one in the body does, and
+            // walking only the top-level paragraph fragments left it with no
+            // object box, so it could not be clicked, resized or dragged
+            // (`docs/109` UX-OB-03).
+            for &PlacedParagraph {
+                id,
+                lines,
+                box_metrics,
+                left,
+                top,
+            } in &placed_paragraphs(&page.placed)
+            {
                 // A fragment whose painted lines carry no object has nothing to
                 // correlate, and the `claimed` bookkeeping for it was never read.
                 let Some(nodes) = object_nodes.get(id) else {
@@ -16198,8 +16201,8 @@ impl WasmDocument {
                 // what a move in the text needs. O(wrapped), and `wrapped` is
                 // empty for almost every paragraph.
                 let directly = |node: NodeId| !nodes.wrapped.contains(&node);
-                let content_x = placed.rect.origin.x.raw() + box_metrics.indent_start.raw();
-                let content_y = placed.rect.origin.y.raw() + box_metrics.space_before.raw();
+                let content_x = left.raw() + box_metrics.indent_start.raw();
+                let content_y = top.raw() + box_metrics.space_before.raw();
                 let entry = claimed.entry(*id).or_insert_with(|| ClaimedObjectNodes {
                     images: vec![false; img_nodes.len()],
                     text_boxes: vec![false; tb_nodes.len()],
@@ -25662,6 +25665,86 @@ fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&Word
 /// one walk in [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph);
 /// no by-id lookup, so a click stays O(placed fragments) rather than
 /// O(fragments × document) (HF-184, `docs/116`).
+/// One paragraph fragment painted on a page, with the page-local origin of its
+/// box: what [`placed_paragraphs`] yields for the object-box correlation.
+#[derive(Clone, Copy)]
+struct PlacedParagraph<'a> {
+    id: &'a NodeId,
+    lines: &'a casual_doc_layout::text::LineLayout,
+    box_metrics: &'a casual_doc_layout::block::BoxMetrics,
+    /// The fragment box's page-local left edge (before its start indent).
+    left: Twip,
+    /// The fragment box's page-local top edge (before its space-before).
+    top: Twip,
+}
+
+/// Every paragraph fragment on a page — top-level ones AND the ones inside
+/// table cells, nested tables included — with the page-local origin each was
+/// painted at.
+///
+/// The cell geometry is the hit test's own (`casual_doc_layout::hittest`'s
+/// `collect_fragment`): a cell's content starts at the row's left plus the
+/// cell's `x` and its start margin, and at the row's top plus the cell spacing
+/// and the vertical-alignment offset for the cell's box height; the cell's
+/// blocks then stack by height. Restated rather than shared because that walk is
+/// private to the layout crate and produces line boxes, not fragments. That the
+/// two agree is asserted by `inline_move_tests.rs`: an in-cell picture's box is
+/// exactly a rectangle the page's display list paints a picture into, and the
+/// click hit test resolves its centre into the cell's paragraph.
+///
+/// Walking only the top-level fragments is why a picture in a table cell had no
+/// object box at all (`docs/109` UX-OB-03).
+///
+/// **O(fragments on the page, cell content included)**; no document walk.
+fn placed_paragraphs(
+    placed: &[casual_doc_layout::page::PlacedFragment],
+) -> Vec<PlacedParagraph<'_>> {
+    fn walk<'a>(
+        fragment: &'a BlockFragment,
+        left: Twip,
+        top: Twip,
+        out: &mut Vec<PlacedParagraph<'a>>,
+    ) {
+        match fragment {
+            BlockFragment::Paragraph {
+                id,
+                lines,
+                box_metrics,
+                ..
+            } => out.push(PlacedParagraph {
+                id,
+                lines,
+                box_metrics,
+                left,
+                top,
+            }),
+            BlockFragment::TableRow { cells, .. } => {
+                let row_height = fragment.height();
+                for cell in cells {
+                    let cell_left = left + cell.x + cell.margins.start;
+                    let box_top = top + cell.cell_spacing.top;
+                    let mut block_top =
+                        box_top + cell.content_y_offset(cell.box_height(row_height));
+                    for block in &cell.blocks {
+                        walk(block, cell_left, block_top, out);
+                        block_top = block_top + block.height();
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for fragment in placed {
+        walk(
+            &fragment.fragment,
+            fragment.rect.origin.x,
+            fragment.rect.origin.y,
+            &mut out,
+        );
+    }
+    out
+}
+
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
