@@ -292,6 +292,22 @@ pub(crate) const INLINE_RESIZE_MOVED: &str = refused!(
      where it sits. Give it a text wrap to move it freely."
 );
 
+/// Change Picture aimed at something that is not a picture.
+pub(crate) const NOT_A_PICTURE: &str = refused!(
+    "object.not-a-picture",
+    "Only a picture can have its image changed."
+);
+
+/// Change Picture handed a file this editor cannot place.
+pub(crate) const IMAGE_UNSUPPORTED: &str = refused!(
+    "object.image-unsupported",
+    "That file can't be used as a picture here. Choose a PNG, JPEG, GIF, BMP, TIFF or \
+     WebP image."
+);
+
+/// Change Picture handed an empty file.
+pub(crate) const IMAGE_EMPTY: &str = refused!("object.image-empty", "That image file is empty.");
+
 /// Moving something that has no anchor to move.
 pub(crate) const NOT_FLOATING_MOVE: &str = refused!(
     "object.not-floating-move",
@@ -722,22 +738,16 @@ fn top_level_anchor(inlines: &[InlineNode], object: NodeId) -> Option<Option<Dra
                 return Some(text_box.anchor.clone());
             }
             InlineNode::Group(group) if group.id == object => return Some(group.anchor.clone()),
-            InlineNode::Hyperlink(link) => {
-                if let Some(found) = top_level_anchor(&link.inlines, object) {
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = crate::contained_inlines(other)
+                    && let Some(found) = top_level_anchor(nested, object)
+                {
                     return Some(found);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(found) = top_level_anchor(&revision.inlines, object) {
-                    return Some(found);
-                }
-            }
-            InlineNode::Sdt(sdt) => {
-                if let Some(found) = top_level_anchor(&sdt.inlines, object) {
-                    return Some(found);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -754,22 +764,16 @@ fn top_level_z(inlines: &[InlineNode], object: NodeId) -> Option<u32> {
                 return text_box.relative_height;
             }
             InlineNode::Group(group) if group.id == object => return group.relative_height,
-            InlineNode::Hyperlink(link) => {
-                if let Some(found) = top_level_z(&link.inlines, object) {
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = crate::contained_inlines(other)
+                    && let Some(found) = top_level_z(nested, object)
+                {
                     return Some(found);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(found) = top_level_z(&revision.inlines, object) {
-                    return Some(found);
-                }
-            }
-            InlineNode::Sdt(sdt) => {
-                if let Some(found) = top_level_z(&sdt.inlines, object) {
-                    return Some(found);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -794,13 +798,10 @@ fn with_top_level<R>(
         if matched {
             return Some(edit(inline));
         }
-        let nested = match inline {
-            InlineNode::Hyperlink(link) => Some(&mut link.inlines),
-            InlineNode::Revision(revision) => Some(&mut revision.inlines),
-            InlineNode::Sdt(sdt) => Some(&mut sdt.inlines),
-            _ => None,
-        };
-        if let Some(nested) = nested
+        // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`, `Sdt`
+        // — so an object inside a field result can be moved, wrapped and
+        // restacked once it can be selected (`109` HF-166, HF-214).
+        if let Some(nested) = crate::contained_inlines_mut(inline)
             && let Some(result) = with_top_level(nested, object, edit)
         {
             return Some(result);
@@ -1902,6 +1903,290 @@ impl WasmDocument {
         self.edit_transform(node, TransformEdit::Flip { flip_h, flip_v })
             .map_err(to_js)
     }
+
+    /// Word's Delete on a shape or picture selected INSIDE a group: removes that
+    /// one member and keeps the rest of the group exactly where it was, as one
+    /// undoable action.
+    ///
+    /// The host used to send every Delete to the selection's ROOT, so deleting
+    /// one of two grouped logos deleted both (`docs/109` HF-214: "cannot be
+    /// removed" was the mild reading — the picture was removed along with
+    /// everything grouped with it). The remaining members keep their child-space
+    /// offsets, so nothing else moves. Deleting the LAST member deletes the group
+    /// itself, because a group with nothing in it is not an object anyone can
+    /// see or select; a nested group emptied by the removal goes with it.
+    ///
+    /// # Errors
+    ///
+    /// When `node` is not a member of a group (`object.not-group-child`).
+    ///
+    /// **O(document), ONE walk** to resolve the group, then O(its members).
+    #[wasm_bindgen(js_name = deleteGroupMember)]
+    pub fn delete_group_member(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        self.delete_group_member_inner(node).map_err(to_js)
+    }
+
+    /// [`delete_group_member`](Self::delete_group_member) with a plain error.
+    pub(crate) fn delete_group_member_inner(&mut self, node: &str) -> Result<EditResult, String> {
+        let object = node
+            .parse::<NodeId>()
+            .map_err(|_| "invalid node id".to_owned())?;
+        let reference = crate::body_group_object_ref(self.document.body(), object)
+            .filter(|reference| reference.root != object)
+            .ok_or_else(|| NOT_A_GROUP_CHILD.to_owned())?;
+        if reference.leaf_count <= 1 {
+            // The last thing in the group: the group goes with it.
+            // The same operation, and the same caret rule, as `deleteObject`.
+            return self.apply_action(vec![Operation::DeleteObject {
+                object: reference.root,
+            }]);
+        }
+        let paragraph = self
+            .paragraph_of_object(reference.root)
+            .ok_or_else(|| NOT_A_GROUP_CHILD.to_owned())?;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| NOT_A_GROUP_CHILD.to_owned())?;
+        let mut inlines = source.inlines.clone();
+        let removed = with_top_level(&mut inlines, reference.root, &mut |inline| match inline {
+            InlineNode::Group(group) => remove_group_member(&mut group.children, object),
+            _ => false,
+        });
+        if removed != Some(true) {
+            return Err(NOT_A_GROUP_CHILD.to_owned());
+        }
+        self.apply_action_caret_as(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            Pos::new(reference.root, 0),
+            HistoryKind::ObjectDelete,
+        )
+    }
+
+    /// Word's **Change Picture** and Docs' **Replace image**: swaps the picture
+    /// `node`'s image for `bytes` (a `mime` of the kinds `insertImage` takes,
+    /// whose natural size is `width_emu` x `height_emu`) as ONE undoable action,
+    /// keeping everything the user set on the object.
+    ///
+    /// Kept: the anchor and the position, the text wrap, the stacking order, the
+    /// rotation and flips, the border, the hyperlink and the alt text — every
+    /// field but the three below, because the picture node itself is kept and
+    /// only those three are rewritten. The workaround this replaces (delete, then
+    /// insert) lost all of them (`docs/109` HF-252).
+    ///
+    /// Rewritten, each deliberately:
+    ///
+    /// * the media reference, to a newly registered part (the old part stays in
+    ///   the package until nothing references it, which is export's rule);
+    /// * the extent, to the new image FITTED INSIDE the old frame at the new
+    ///   image's own proportions, so a portrait photo replacing a landscape one is
+    ///   neither stretched nor allowed to grow the layout — Word's behaviour;
+    /// * the crop, cleared: it is a fraction of the OLD image's pixels and means
+    ///   nothing about the new one.
+    ///
+    /// The registration and the rewrite are one transaction, registration first,
+    /// for the reason `insertImage` gives: an operation must never be ordered
+    /// before the thing it references.
+    ///
+    /// # Errors
+    ///
+    /// An unsupported `mime`, empty bytes, a non-positive size, or a `node` that
+    /// is not a picture.
+    ///
+    /// **O(document), ONE walk** to resolve the paragraph, then O(its inlines).
+    #[wasm_bindgen(js_name = replacePicture)]
+    pub fn replace_picture(
+        &mut self,
+        node: &str,
+        bytes: Vec<u8>,
+        width_emu: f64,
+        height_emu: f64,
+        mime: String,
+    ) -> Result<EditResult, JsValue> {
+        self.replace_picture_inner(node, bytes, width_emu, height_emu, &mime)
+            .map_err(to_js)
+    }
+
+    /// [`replace_picture`](Self::replace_picture) with a plain error, so it is
+    /// reachable from a native test.
+    pub(crate) fn replace_picture_inner(
+        &mut self,
+        node: &str,
+        bytes: Vec<u8>,
+        width_emu: f64,
+        height_emu: f64,
+        mime: &str,
+    ) -> Result<EditResult, String> {
+        use casual_doc_model::v1::{MediaId, MediaReference};
+        let object = node
+            .parse::<NodeId>()
+            .map_err(|_| "invalid node id".to_owned())?;
+        let (media_type, ext) =
+            crate::image_part_type(mime).ok_or_else(|| IMAGE_UNSUPPORTED.to_owned())?;
+        if bytes.is_empty() {
+            return Err(IMAGE_EMPTY.to_owned());
+        }
+        let natural = Extent {
+            width_emu: crate::bounded_emu_reason(width_emu, 1, MAX_EMU, "width")?,
+            height_emu: crate::bounded_emu_reason(height_emu, 1, MAX_EMU, "height")?,
+        };
+        let paragraph = self
+            .paragraph_of_object(object)
+            .or_else(|| self.paragraph_containing_inline_deep(object))
+            .ok_or_else(|| NOT_A_PICTURE.to_owned())?;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| NOT_A_PICTURE.to_owned())?;
+        let mut inlines = source.inlines.clone();
+        let media_seq = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| "id space exhausted".to_owned())?;
+        let media = MediaId::new(media_seq);
+        if !replace_picture_in_inlines(&mut inlines, object, media, natural) {
+            return Err(NOT_A_PICTURE.to_owned());
+        }
+        // The same editor-owned part naming `insertImage` uses, so a replaced
+        // picture can never collide with an imported part.
+        let part_name = format!("word/media/editor-{media_seq}.{ext}");
+        self.resources.insert(part_name.clone(), bytes);
+        let reference = MediaReference {
+            relationship_id: format!("rIdEditorImg{media_seq}"),
+            media_type: media_type.to_owned(),
+            part_name,
+        };
+        self.apply_action_caret_as(
+            vec![
+                Operation::SetMediaReference {
+                    id: media,
+                    reference: Some(Box::new(reference)),
+                },
+                Operation::SetInlines {
+                    node: paragraph,
+                    inlines,
+                },
+            ],
+            Pos::new(object, 0),
+            HistoryKind::ObjectInsert,
+        )
+    }
+}
+
+/// Removes the member `object` from `children`, at any depth, and drops any
+/// nested group the removal leaves empty. Reports whether it was found.
+/// **O(members in the subtree)**.
+fn remove_group_member(children: &mut Vec<GroupChild>, object: NodeId) -> bool {
+    let id = |child: &GroupChild| match child {
+        GroupChild::Picture(picture) => picture.id,
+        GroupChild::TextBox(text_box) => text_box.id,
+        GroupChild::Shape(shape) => shape.id,
+        GroupChild::Group(group) => group.id,
+    };
+    if let Some(at) = children.iter().position(|child| id(child) == object) {
+        children.remove(at);
+        return true;
+    }
+    let found = children.iter_mut().any(|child| match child {
+        GroupChild::Group(nested) => remove_group_member(&mut nested.children, object),
+        GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => false,
+    });
+    if found {
+        children.retain(
+            |child| !matches!(child, GroupChild::Group(group) if group.children.is_empty()),
+        );
+    }
+    found
+}
+
+/// The largest box with `natural`'s proportions that fits inside `frame` — what
+/// Change Picture gives the new image. A frame with no area (or no authored
+/// frame at all) takes the natural size. **O(1)**.
+fn fit_within(natural: Extent, frame: Option<Extent>) -> Extent {
+    let Some(frame) = frame.filter(|f| f.width_emu > 0 && f.height_emu > 0) else {
+        return natural;
+    };
+    #[allow(clippy::cast_precision_loss)] // EMU are far below 2^53
+    let scale = (frame.width_emu as f64 / natural.width_emu as f64)
+        .min(frame.height_emu as f64 / natural.height_emu as f64);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    let scaled = |value: i64| ((value as f64 * scale).round() as i64).clamp(1, MAX_EMU);
+    Extent {
+        width_emu: scaled(natural.width_emu),
+        height_emu: scaled(natural.height_emu),
+    }
+}
+
+/// Rewrites the picture `object` in `inlines` — an inline `Drawing`, a floating
+/// `AnchoredDrawing`, or a picture inside a group at any depth — to show `media`
+/// fitted inside its current frame, with its crop cleared. Every other field of
+/// the node is left exactly as it was. Reports whether the picture was found.
+///
+/// Descends the declared inline wrappers and group members; a picture in a text
+/// box's own story is resolved to that story's paragraph by the caller.
+/// **O(inlines in this subtree)**.
+fn replace_picture_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    media: casual_doc_model::v1::MediaId,
+    natural: Extent,
+) -> bool {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                drawing.extent = Some(fit_within(natural, drawing.extent));
+                drawing.media = media;
+                drawing.crop = None;
+                return true;
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                drawing.extent = fit_within(natural, Some(drawing.extent));
+                drawing.media = media;
+                drawing.crop = None;
+                return true;
+            }
+            InlineNode::Group(group) => {
+                if replace_picture_in_group(&mut group.children, object, media, natural) {
+                    return true;
+                }
+            }
+            other => {
+                if let Some(nested) = crate::contained_inlines_mut(other)
+                    && replace_picture_in_inlines(nested, object, media, natural)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// [`replace_picture_in_inlines`] among a group's members. A grouped picture's
+/// extent is in its group's child space, and the fit is taken there — exact for
+/// a group that scales both axes alike, which is every group Word writes.
+fn replace_picture_in_group(
+    children: &mut [GroupChild],
+    object: NodeId,
+    media: casual_doc_model::v1::MediaId,
+    natural: Extent,
+) -> bool {
+    for child in children.iter_mut() {
+        match child {
+            GroupChild::Picture(picture) if picture.id == object => {
+                picture.extent = fit_within(natural, Some(picture.extent));
+                picture.media = media;
+                picture.crop = None;
+                return true;
+            }
+            GroupChild::Group(nested) => {
+                if replace_picture_in_group(&mut nested.children, object, media, natural) {
+                    return true;
+                }
+            }
+            GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
+        }
+    }
+    false
 }
 
 /// One floating object, as the z-order pass sees it.
@@ -2195,10 +2480,14 @@ fn collect_floats(inlines: &[InlineNode], paragraph: NodeId, out: &mut Vec<Float
                     });
                 }
             }
-            InlineNode::Hyperlink(link) => collect_floats(&link.inlines, paragraph, out),
-            InlineNode::Revision(revision) => collect_floats(&revision.inlines, paragraph, out),
-            InlineNode::Sdt(sdt) => collect_floats(&sdt.inlines, paragraph, out),
-            _ => {}
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = crate::contained_inlines(other) {
+                    collect_floats(nested, paragraph, out);
+                }
+            }
         }
     }
 }
@@ -2232,22 +2521,16 @@ fn restack_child_in_inlines(inlines: &mut [InlineNode], object: NodeId, step: ZS
                     return true;
                 }
             }
-            InlineNode::Hyperlink(link) => {
-                if restack_child_in_inlines(&mut link.inlines, object, step) {
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = crate::contained_inlines_mut(other)
+                    && restack_child_in_inlines(nested, object, step)
+                {
                     return true;
                 }
             }
-            InlineNode::Revision(revision) => {
-                if restack_child_in_inlines(&mut revision.inlines, object, step) {
-                    return true;
-                }
-            }
-            InlineNode::Sdt(sdt) => {
-                if restack_child_in_inlines(&mut sdt.inlines, object, step) {
-                    return true;
-                }
-            }
-            _ => {}
         }
     }
     false
@@ -2304,12 +2587,13 @@ fn add_text_in_inlines(
     for inline in inlines.iter_mut() {
         let found = match inline {
             InlineNode::Group(group) => add_text_in_group(group, object, body)?,
-            InlineNode::Hyperlink(link) => add_text_in_inlines(&mut link.inlines, object, body)?,
-            InlineNode::Revision(revision) => {
-                add_text_in_inlines(&mut revision.inlines, object, body)?
-            }
-            InlineNode::Sdt(sdt) => add_text_in_inlines(&mut sdt.inlines, object, body)?,
-            _ => AddText::NotAShape,
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => match crate::contained_inlines_mut(other) {
+                Some(nested) => add_text_in_inlines(nested, object, body)?,
+                None => AddText::NotAShape,
+            },
         };
         if !matches!(found, AddText::NotAShape) {
             return Ok(found);
@@ -2514,22 +2798,16 @@ fn read_transform_in_inlines(
                     return Some(found);
                 }
             }
-            InlineNode::Hyperlink(link) => {
-                if let Some(found) = read_transform_in_inlines(&link.inlines, object) {
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = crate::contained_inlines(other)
+                    && let Some(found) = read_transform_in_inlines(nested, object)
+                {
                     return Some(found);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(found) = read_transform_in_inlines(&revision.inlines, object) {
-                    return Some(found);
-                }
-            }
-            InlineNode::Sdt(sdt) => {
-                if let Some(found) = read_transform_in_inlines(&sdt.inlines, object) {
-                    return Some(found);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -2654,22 +2932,16 @@ fn edit_transform_in_inlines(
                     return true;
                 }
             }
-            InlineNode::Hyperlink(link) => {
-                if edit_transform_in_inlines(&mut link.inlines, object, edit) {
+            // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
+            // `Sdt` — so an object inside a field result is reached too (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = crate::contained_inlines_mut(other)
+                    && edit_transform_in_inlines(nested, object, edit)
+                {
                     return true;
                 }
             }
-            InlineNode::Revision(revision) => {
-                if edit_transform_in_inlines(&mut revision.inlines, object, edit) {
-                    return true;
-                }
-            }
-            InlineNode::Sdt(sdt) => {
-                if edit_transform_in_inlines(&mut sdt.inlines, object, edit) {
-                    return true;
-                }
-            }
-            _ => {}
         }
     }
     false
@@ -4311,3 +4583,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "objects_wrapped_tests.rs"]
+mod wrapped_tests;

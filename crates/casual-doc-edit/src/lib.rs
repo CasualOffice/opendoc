@@ -54,7 +54,7 @@ use casual_doc_model::v1::{NumberingInstance, NumberingInstanceId};
 // The paragraph-spanning field range (`docs/128`): its definition payload, its id,
 // and the two body markers that delimit it.
 use casual_doc_model::v1::{FieldRange, FieldRangeId};
-use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
+use casual_doc_model::v1::{Fill, GroupChild, GroupPicture, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 // Section-break authoring (`docs/130` §4.3): the boundary `SpliceSectionBoundary`
@@ -2834,9 +2834,18 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::SetShapeStroke { shape, stroke } => {
-            let target = find_shape_mut(doc, *shape).ok_or(EditError::NodeNotFound)?;
-            let previous = target.stroke;
-            target.stroke = *stroke;
+            // A picture's border is the SAME `a:ln` in its `pic:spPr` as a
+            // shape's outline, and the same `ShapeStroke` in the model, so Word's
+            // Picture Border is this operation aimed at a picture rather than a
+            // second operation that would have to agree with it (`docs/109`
+            // HF-254). A shape is tried first because that is what the name has
+            // always meant; a picture is the only other carrier of a stroke.
+            let previous = if let Some(target) = find_shape_mut(doc, *shape) {
+                core::mem::replace(&mut target.stroke, *stroke)
+            } else {
+                on_owning_surface_mut(doc, |blocks| set_picture_border(blocks, *shape, *stroke))
+                    .ok_or(EditError::NodeNotFound)?
+            };
             Ok(Operation::SetShapeStroke {
                 shape: *shape,
                 stroke: previous,
@@ -3791,6 +3800,91 @@ fn set_object_crop(
     None
 }
 
+/// Sets or clears the border (`pic:spPr/a:ln`) of the picture `object` — an
+/// inline `Drawing`, a floating `AnchoredDrawing` or a picture inside a group —
+/// searched the same way as [`set_object_crop`]. Returns the **previous** border;
+/// `None` if `object` is not a picture. The picture half of
+/// [`Operation::SetShapeStroke`] (`docs/109` HF-254).
+///
+/// **O(blocks in this surface)**, one walk.
+fn set_picture_border(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    border: Option<ShapeStroke>,
+) -> Option<Option<ShapeStroke>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) =
+                    set_picture_border_in_inlines(&mut paragraph.inlines, object, border)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_picture_border(&mut cell.blocks, object, border) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_picture_border(&mut sdt.blocks, object, border) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// The inline half of [`set_picture_border`], on the declared container set.
+/// **O(inlines in this subtree)**.
+fn set_picture_border_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    border: Option<ShapeStroke>,
+) -> Option<Option<ShapeStroke>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.border, border));
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.border, border));
+            }
+            _ => {}
+        }
+        match inline_descent_mut(inline) {
+            InlineDescentMut::Inlines(nested) => {
+                if let Some(prev) = set_picture_border_in_inlines(nested, object, border) {
+                    return Some(prev);
+                }
+            }
+            InlineDescentMut::Blocks(blocks) => {
+                if let Some(prev) = set_picture_border(blocks, object, border) {
+                    return Some(prev);
+                }
+            }
+            InlineDescentMut::Group(children) => {
+                if let Some(picture) = group_picture_mut(children, object) {
+                    return Some(core::mem::replace(&mut picture.border, border));
+                }
+                if let Some(prev) = find_in_group_block_stories_mut(children, &mut |blocks| {
+                    set_picture_border(blocks, object, border)
+                }) {
+                    return Some(prev);
+                }
+            }
+            InlineDescentMut::Leaf => {}
+        }
+    }
+    None
+}
+
 /// The inline half of [`set_object_crop`]. Descent is the one declared container
 /// set, so a picture inside a field result, an inline content control, or a text
 /// box nested in a shape group can be cropped (HF-214; it missed `Field`, `Sdt` and
@@ -3823,6 +3917,12 @@ fn set_object_crop_in_inlines(
                 }
             }
             InlineDescentMut::Group(children) => {
+                // A picture that is itself a member of the group (`GroupChild::
+                // Picture`) carries its own `a:srcRect`, so it is croppable like
+                // any other picture (`109` HF-214). Then the stories inside it.
+                if let Some(picture) = group_picture_mut(children, object) {
+                    return Some(core::mem::replace(&mut picture.crop, crop));
+                }
                 if let Some(prev) = find_in_group_block_stories_mut(children, &mut |blocks| {
                     set_object_crop(blocks, object, crop)
                 }) {
@@ -3906,6 +4006,13 @@ fn set_object_descr_in_inlines(
                 }
             }
             InlineDescentMut::Group(children) => {
+                // A grouped picture's own `pic:cNvPr@descr` (`109` HF-214): an
+                // accessibility hole as well as an editing one, since a logo in a
+                // group was otherwise a picture no screen reader could be told
+                // about.
+                if let Some(picture) = group_picture_mut(children, object) {
+                    return Some(core::mem::replace(&mut picture.descr, descr.clone()));
+                }
                 if let Some(prev) = find_in_group_block_stories_mut(children, &mut |blocks| {
                     set_object_descr(blocks, object, descr)
                 }) {
@@ -3932,6 +4039,66 @@ pub fn object_descr(document: &Document, object: NodeId) -> Option<String> {
     surface_block_lists(document)
         .into_iter()
         .find_map(|blocks| object_descr_in_blocks(blocks, object))
+}
+
+/// The border (`pic:spPr/a:ln`) of the picture `object` — `Some(None)` for a
+/// picture with no border, `None` when `object` is not a picture. The read face
+/// of the picture half of [`Operation::SetShapeStroke`] (`docs/109` HF-254), so a
+/// host reflects the border the picture HAS and a weight change inherits its
+/// colour and dash rather than rebuilding the stroke.
+///
+/// **O(document)**, one walk over every surface.
+#[must_use]
+pub fn picture_border(document: &Document, object: NodeId) -> Option<Option<ShapeStroke>> {
+    fn in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<Option<ShapeStroke>> {
+        for block in blocks {
+            let found = match block {
+                BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+                BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                    row.cells
+                        .iter()
+                        .find_map(|cell| in_blocks(&cell.blocks, object))
+                }),
+                BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+                BlockNode::AltChunk(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Option<ShapeStroke>> {
+        for inline in inlines {
+            match inline {
+                InlineNode::Drawing(drawing) if drawing.id == object => {
+                    return Some(drawing.border);
+                }
+                InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                    return Some(drawing.border);
+                }
+                _ => {}
+            }
+            let found = match inline_descent(inline) {
+                InlineDescent::Inlines(nested) => in_inlines(nested, object),
+                InlineDescent::Blocks(blocks) => in_blocks(blocks, object),
+                InlineDescent::Group(children) => match group_picture(children, object) {
+                    Some(picture) => return Some(picture.border),
+                    None => find_in_group_block_stories(children, &mut |blocks| {
+                        in_blocks(blocks, object)
+                    }),
+                },
+                InlineDescent::Leaf => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| in_blocks(blocks, object))
 }
 
 /// Returns authored text-box body properties from any document surface.
@@ -4043,15 +4210,57 @@ fn object_descr_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Str
         let found = match inline_descent(inline) {
             InlineDescent::Inlines(nested) => object_descr_in_inlines(nested, object),
             InlineDescent::Blocks(blocks) => object_descr_in_blocks(blocks, object),
-            InlineDescent::Group(children) => {
-                find_in_group_block_stories(children, &mut |blocks| {
+            InlineDescent::Group(children) => match group_picture(children, object) {
+                Some(picture) => return picture.descr.clone(),
+                None => find_in_group_block_stories(children, &mut |blocks| {
                     object_descr_in_blocks(blocks, object)
-                })
-            }
+                }),
+            },
             InlineDescent::Leaf => None,
         };
         if found.is_some() {
             return found;
+        }
+    }
+    None
+}
+
+/// The picture `object` among a group's members, at any nesting depth — the
+/// carrier a picture inside a shape group is ([`GroupChild::Picture`]).
+///
+/// A group's text boxes carry block stories, which
+/// `find_in_group_block_stories` reaches; its pictures are LEAVES of the group
+/// and carry no story, so nothing reached them, and a grouped picture could not
+/// be cropped, described or given a border (`docs/109` HF-214, HF-254).
+///
+/// **O(children in the group subtree)**; resolves no `NodeId`.
+fn group_picture(children: &[GroupChild], object: NodeId) -> Option<&GroupPicture> {
+    for child in children {
+        match child {
+            GroupChild::Picture(picture) if picture.id == object => return Some(picture),
+            GroupChild::Group(nested) => {
+                if let Some(found) = group_picture(&nested.children, object) {
+                    return Some(found);
+                }
+            }
+            GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
+        }
+    }
+    None
+}
+
+/// [`group_picture`] for a walk that writes what it finds.
+/// **O(children in the group subtree)**.
+fn group_picture_mut(children: &mut [GroupChild], object: NodeId) -> Option<&mut GroupPicture> {
+    for child in children.iter_mut() {
+        match child {
+            GroupChild::Picture(picture) if picture.id == object => return Some(picture),
+            GroupChild::Group(nested) => {
+                if let Some(found) = group_picture_mut(&mut nested.children, object) {
+                    return Some(found);
+                }
+            }
+            GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
         }
     }
     None

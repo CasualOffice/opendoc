@@ -413,8 +413,21 @@ const SRC = new URL("../src/", import.meta.url);
  *  own module (`region_focus`, `quick_styles`, `style_names`, `compat_findings`,
  *  `control_reasons`), so `main.js` carries their wiring and nothing else.
  *  MEASURED with `wc -l` from the tree AFTER rebasing onto `origin/main` 0e441fc
- *  (#809), not carried from the branch, which had read 16,066. */
-const MAIN_JS_LINE_CEILING = 16065;
+ *  (#809), not carried from the branch, which had read 16,066.
+ *
+ *  Lowered to 16,047 by the object-editing round (`109` HF-166, HF-214, HF-252,
+ *  HF-254, HF-106, HF-259, HF-253). The file was AT its ceiling with zero slack
+ *  again, and the round needed Change picture, the picture border, the crop
+ *  keyboard, the refused-drag reason and the group-member Delete wired in. Every
+ *  one of them is a module (`object_keys`, `object_refusal`, `picture_replace`,
+ *  `text_box_body`), so `main.js` carries their construction and call sites; it
+ *  paid by moving the image decode and the placeable-type list into
+ *  `picture_replace.mjs` (Insert ▸ Picture imports them back, so Insert and
+ *  Change cannot accept different files), by folding the crop session's
+ *  Enter/Escape block into `handleCropKey`, and by replacing the right-click
+ *  menu's hand-copied selected-object context with `selectedObjectContext()`.
+ *  MEASURED with `wc -l` on this branch; re-measure after any rebase. */
+const MAIN_JS_LINE_CEILING = 16047;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

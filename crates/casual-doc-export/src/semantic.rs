@@ -6981,6 +6981,7 @@ fn write_wgp(
                         &embed,
                         picture.offset,
                         picture.extent,
+                        picture.descr.as_deref(),
                         PictureAppearance {
                             crop: picture.crop.as_ref(),
                             opacity: picture.opacity,
@@ -7061,6 +7062,7 @@ fn write_group_picture(
     embed: &str,
     offset: PointEmu,
     extent: Extent,
+    descr: Option<&str>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -7070,6 +7072,13 @@ fn write_group_picture(
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
     c_nv_pr.push_attribute(("name", "Picture 1"));
+    // A grouped picture's alt text lives HERE — a group member has no
+    // `wp:docPr` of its own — and the importer reads it from here. Not writing
+    // it dropped every grouped logo's description on save (`docs/109` HF-214:
+    // found when grouped-picture alt text became editable and did not survive).
+    if let Some(descr) = descr {
+        c_nv_pr.push_attribute(("descr", descr));
+    }
     match look.hlink {
         // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
         // self-closing.

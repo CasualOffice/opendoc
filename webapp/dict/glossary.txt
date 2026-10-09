@@ -25,6 +25,7 @@ Bézier
 CBDT
 CBOR
 CDN
+CDP
 CFF
 CJK
 CKEditor
@@ -420,6 +421,7 @@ idempotent
 iframe
 impl
 incl
+includepicture
 injective
 inlines
 inspectable
