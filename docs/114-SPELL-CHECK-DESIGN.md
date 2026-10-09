@@ -569,7 +569,7 @@ Two more, found while building and stated here rather than discovered later:
   no browser equivalent for a canvas-rendered document, so the honest answer is a
   navigation command ("next misspelling") plus a live-region announcement — the same shape
   `review.next` already has for tracked changes, and the same follow-up problem `109`
-  HF-178 records for the accessibility mirror. Not in this PR.
+  HF-178 recorded (and has since closed) for the accessibility mirror. Not in this PR.
 
 ## 9. Open questions — answered where implementation forced an answer
 

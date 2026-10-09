@@ -2132,7 +2132,7 @@
   "viewingBanner.switchEditing": "Passer en mode édition",
   "viewingBanner.viewingDocumentReadOnly": "Lecture — le document est en lecture seule.",
   "viewport.commentsSuggestions.label": "Commentaires et suggestions",
-  "viewport.documentContentReadOnly.label": "Contenu du document (lecture seule pour les technologies d’assistance)",
+  "viewport.documentContent.label": "Contenu du document pour les technologies d’assistance (les cases à cocher du formulaire peuvent être cochées ici)",
   "viewport.documentEditingSurface.label": "Surface d’édition du document",
   "viewport.documentTextInput.label": "Saisie de texte du document",
   "watermark.fontDefault": "Police par défaut du document",

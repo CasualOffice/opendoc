@@ -2116,7 +2116,7 @@
   "viewingBanner.switchEditing": "편집으로 전환",
   "viewingBanner.viewingDocumentReadOnly": "보기 — 문서가 읽기 전용입니다.",
   "viewport.commentsSuggestions.label": "메모 및 제안",
-  "viewport.documentContentReadOnly.label": "문서 내용(보조 기술용 읽기 전용)",
+  "viewport.documentContent.label": "보조 기술용 문서 내용 (양식 확인란은 여기에서 선택할 수 있습니다)",
   "viewport.documentEditingSurface.label": "문서 편집 영역",
   "viewport.documentTextInput.label": "문서 텍스트 입력",
   "watermark.fontDefault": "문서 기본값",

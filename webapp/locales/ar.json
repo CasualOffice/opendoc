@@ -2156,7 +2156,7 @@
   "viewingBanner.switchEditing": "التبديل إلى التحرير",
   "viewingBanner.viewingDocumentReadOnly": "وضع العرض — المستند للقراءة فقط.",
   "viewport.commentsSuggestions.label": "التعليقات والاقتراحات",
-  "viewport.documentContentReadOnly.label": "محتوى المستند (للقراءة فقط للتقنيات المساعدة)",
+  "viewport.documentContent.label": "محتوى المستند للتقنيات المساعدة (يمكن تحديد خانات الاختيار في النموذج هنا)",
   "viewport.documentEditingSurface.label": "سطح تحرير المستند",
   "viewport.documentTextInput.label": "إدخال نص المستند",
   "watermark.fontDefault": "الخط الافتراضي للمستند",

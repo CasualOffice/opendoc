@@ -2116,7 +2116,7 @@
   "viewingBanner.switchEditing": "編集に切り替える",
   "viewingBanner.viewingDocumentReadOnly": "閲覧モード — 文書は読み取り専用です。",
   "viewport.commentsSuggestions.label": "コメントと提案",
-  "viewport.documentContentReadOnly.label": "文書の内容 (支援技術向けに読み取り専用)",
+  "viewport.documentContent.label": "支援技術向けの文書の内容 (フォームのチェック ボックスはここでオン/オフできます)",
   "viewport.documentEditingSurface.label": "文書の編集領域",
   "viewport.documentTextInput.label": "文書のテキスト入力",
   "watermark.fontDefault": "文書の既定",

@@ -2124,7 +2124,7 @@
   "viewingBanner.switchEditing": "Overschakelen naar bewerken",
   "viewingBanner.viewingDocumentReadOnly": "Weergeven — het document is alleen-lezen.",
   "viewport.commentsSuggestions.label": "Opmerkingen en suggesties",
-  "viewport.documentContentReadOnly.label": "Documentinhoud (alleen-lezen voor hulptechnologie)",
+  "viewport.documentContent.label": "Documentinhoud voor hulptechnologie (selectievakjes van formulieren kunnen hier worden aangevinkt)",
   "viewport.documentEditingSurface.label": "Bewerkingsgebied van document",
   "viewport.documentTextInput.label": "Tekstinvoer van document",
   "watermark.fontDefault": "Standaard van document",

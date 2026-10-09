@@ -2140,7 +2140,7 @@
   "viewingBanner.switchEditing": "Przełącz na edytowanie",
   "viewingBanner.viewingDocumentReadOnly": "Wyświetlanie — dokument jest tylko do odczytu.",
   "viewport.commentsSuggestions.label": "Komentarze i sugestie",
-  "viewport.documentContentReadOnly.label": "Zawartość dokumentu (tylko do odczytu dla technologii pomocniczych)",
+  "viewport.documentContent.label": "Zawartość dokumentu dla technologii wspomagających (tutaj można zaznaczać pola wyboru formularza)",
   "viewport.documentEditingSurface.label": "Obszar edycji dokumentu",
   "viewport.documentTextInput.label": "Wprowadzanie tekstu dokumentu",
   "watermark.fontDefault": "Domyślna dokumentu",

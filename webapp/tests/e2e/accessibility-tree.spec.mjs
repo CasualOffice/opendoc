@@ -14,7 +14,11 @@ test("the off-screen accessibility tree mirrors the document structure for a scr
 
   const a11y = page.locator("#a11yDocument");
   await expect(a11y).toHaveAttribute("role", "document");
-  await expect(a11y).toHaveAttribute("aria-label", /read-only for assistive technology/i);
+  // It used to say read-only. Since HF-178 a form check box can be ticked from
+  // here, so the label says that instead, and must not claim read-only.
+  await expect(a11y).toHaveAttribute("aria-label", /for assistive technology/i);
+  await expect(a11y).toHaveAttribute("aria-label", /check boxes can be ticked/i);
+  await expect(a11y).not.toHaveAttribute("aria-label", /read-only/i);
 
   // The corpus title "Rich Document" is a level-1 heading, exposed with the
   // heading role/level (not just styled big text on an opaque canvas).

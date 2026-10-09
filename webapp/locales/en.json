@@ -2708,7 +2708,7 @@
   "viewingBanner.switchEditing": "Switch to editing",
   "viewingBanner.viewingDocumentReadOnly": "Viewing — the document is read-only.",
   "viewport.commentsSuggestions.label": "Comments and suggestions",
-  "viewport.documentContentReadOnly.label": "Document content (read-only for assistive technology)",
+  "viewport.documentContent.label": "Document content for assistive technology (form check boxes can be ticked here)",
   "viewport.documentEditingSurface.label": "Document editing surface",
   "viewport.documentTextInput.label": "Document text input",
   "watermark.fontDefault": "Document default",

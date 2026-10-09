@@ -2116,7 +2116,7 @@
   "viewingBanner.switchEditing": "Beralih ke pengeditan",
   "viewingBanner.viewingDocumentReadOnly": "Melihat — dokumen bersifat baca-saja.",
   "viewport.commentsSuggestions.label": "Komentar dan saran",
-  "viewport.documentContentReadOnly.label": "Konten dokumen (baca-saja untuk teknologi bantu)",
+  "viewport.documentContent.label": "Konten dokumen untuk teknologi bantu (kotak centang formulir dapat dicentang di sini)",
   "viewport.documentEditingSurface.label": "Area pengeditan dokumen",
   "viewport.documentTextInput.label": "Masukan teks dokumen",
   "watermark.fontDefault": "Bawaan dokumen",

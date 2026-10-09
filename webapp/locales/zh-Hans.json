@@ -2116,7 +2116,7 @@
   "viewingBanner.switchEditing": "切换到编辑",
   "viewingBanner.viewingDocumentReadOnly": "查看模式 — 文档为只读。",
   "viewport.commentsSuggestions.label": "批注和建议",
-  "viewport.documentContentReadOnly.label": "文档内容（对辅助技术为只读）",
+  "viewport.documentContent.label": "供辅助技术使用的文档内容（可在此勾选表单复选框）",
   "viewport.documentEditingSurface.label": "文档编辑区",
   "viewport.documentTextInput.label": "文档文本输入",
   "watermark.fontDefault": "文档默认字体",
