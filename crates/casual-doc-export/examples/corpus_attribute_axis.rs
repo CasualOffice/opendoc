@@ -4,11 +4,14 @@
 //! `corpus_attribute_axis <dir>`.
 //!
 //! `tests/source_element_coverage.rs` asks "did an element *name* in the source
-//! vanish from the written package without a finding naming it?". Its own module
-//! doc records the limit: *"Attribute names are a separate axis"*, and that axis
-//! is not gated. So an attribute can vanish on import and the loss-coverage gate
-//! cannot see it — which is exactly what happened to `w:wrap@wrapText`, imported
-//! with a compatibility report of **zero** entries.
+//! vanish from the written package without a finding naming it?". When this
+//! harness was written its module doc recorded the limit — *"Attribute names are
+//! a separate axis"* — and that axis was not gated, so an attribute could vanish
+//! on import unseen, which is exactly what happened to `w:wrap@wrapText`, imported
+//! with a compatibility report of **zero** entries. The axis has been gated since
+//! by `casual-doc-import/tests/attribute_loss_coverage.rs` (`109` HF-243), over
+//! the committed corpus; this harness remains the way to measure it over a folder
+//! the operator supplies.
 //!
 //! This harness runs the same import → write → diff, over
 //! **(element, attribute) pairs** instead of element names. Pairs rather than

@@ -42,10 +42,16 @@
 //!   happen.
 //! - A finding aggregates by feature, so a finding raised for one occurrence of a
 //!   construct satisfies the guard for every occurrence of that name.
-//! - It is about **names**, not values. A construct emitted under a different name
-//!   with different content would pass. Attribute names are a separate axis, and
-//!   the measured reason they are not yet gated is recorded in
-//!   `35-DISPOSITION-TAXONOMY.md`.
+//! - It is about **element names**, not values. A construct emitted under a
+//!   different name with different content would pass. Attributes are a separate
+//!   axis, and that axis IS gated — not here, and not by diffing attribute names
+//!   (which `35-DISPOSITION-TAXONOMY.md` measured as dominated by spelling
+//!   equivalence and declined), but by
+//!   `crates/casual-doc-import/tests/attribute_loss_coverage.rs` (`109` HF-243),
+//!   which substitutes another corpus-authored value for each
+//!   `element/@attribute` and fails when nothing about the import changes. This
+//!   sentence said the axis was "not yet gated" until `109` HF-268; a doc that
+//!   understates a gate is how a reader concludes it is still open.
 //!
 //! What it does catch is the whole class that was invisible before: a construct the
 //! importer drops and nobody mentions.
