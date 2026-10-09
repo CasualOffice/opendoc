@@ -10,7 +10,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/line-end
 // model types the anchor paint content carries.
-use casual_doc_model::v1::{DashStyle, Fill, LineEnd};
+use casual_doc_model::v1::{DashStyle, Fill, LineEnd, PathFill};
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
@@ -155,25 +155,31 @@ pub enum AnchorContent {
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
-    /// A path whose page-local coordinates are already resolved — closed
-    /// (a filled figure) or open.
+    /// A DrawingML geometry resolved to page-local paths: every preset but the
+    /// rectangle, ellipse and line, and every authored `a:custGeom`.
+    ///
+    /// One variant for both because they ARE one thing — a preset is a geometry
+    /// the standard wrote in advance (`docs/119` §6) — and both arrive here
+    /// through `casual_doc_model::v1::GeometryProgram`.
     Path {
-        /// Commands in path order, beginning with a
-        /// [`PathCommand::MoveTo`]. A typed
-        /// preset resolves to a straight-line command list; a custom geometry
-        /// (`a:custGeom`) contributes its authored commands, curves included,
-        /// bounded by `MAX_SHAPE_PATH_COMMANDS` (docs/119).
-        commands: Vec<PathCommand>,
-        /// Whether the figure joins back to its subpath start (`a:close`, and every
-        /// typed preset). `false` strokes an open path, which is what an unclosed
-        /// `a:custGeom` means and what Word's own VML fallback for one writes
-        /// (docs/119 §4).
-        closed: bool,
-        /// The fill (solid or gradient), if filled.
+        /// The geometry's paths, in paint order: one for a freeform, up to six
+        /// for a preset (the lid of a `can`, the faces of a `cube`, a callout's
+        /// leader). Each carries its own fill mode and stroke switch.
+        paths: Vec<AnchorPath>,
+        /// The shape's fill (solid or gradient), which a path's fill mode paints
+        /// as is, lightened, darkened, or not at all.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fill: Option<Fill>,
-        /// The outline, if stroked.
+        /// The shape's outline, drawn on every path whose stroke switch is on.
         stroke: Option<AnchorStroke>,
+        /// The start (`a:headEnd`) arrowhead, drawn at the start of the first
+        /// open stroked path — a connector's, an `arc`'s.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head_end: Option<LineEnd>,
+        /// The end (`a:tailEnd`) arrowhead, drawn at the end of the last open
+        /// stroked path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tail_end: Option<LineEnd>,
     },
     /// A straight line / connector, from `from` to `to` (page-local twips).
     Line {
@@ -228,6 +234,25 @@ pub enum AnchorContent {
         /// The flowed rows, stacked from the anchor rectangle's origin.
         rows: Vec<BlockFragment>,
     },
+}
+
+/// One painted path of an [`AnchorContent::Path`] (`a:pathLst/a:path`), in
+/// page-local twips.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct AnchorPath {
+    /// The commands, beginning with a [`PathCommand::MoveTo`]; a
+    /// [`PathCommand::Close`] closes the subpath it ends, and a path may hold
+    /// several subpaths (a `donut`'s two rings, wound opposite ways).
+    pub commands: Vec<PathCommand>,
+    /// How the shape's fill paints this path (`a:path@fill`).
+    #[serde(default, skip_serializing_if = "is_norm_fill")]
+    pub fill: PathFill,
+    /// Whether the shape's outline is drawn on this path (`a:path@stroke`).
+    pub stroke: bool,
+}
+
+fn is_norm_fill(fill: &PathFill) -> bool {
+    *fill == PathFill::Norm
 }
 
 /// A floating object resolved to its absolute rectangle and stacking key on a

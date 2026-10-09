@@ -21,6 +21,8 @@ use super::FieldUpdateState;
 use super::NumberingResolver;
 // Same rule: the typed chart projection's own imports go on their own line.
 use super::{Chart, ChartId};
+// Own line (anti-conflict): the drawing-name side table (`docs/109` HF-267).
+use super::ObjectName;
 // Own line (anti-conflict): the shape theme-style side table's key.
 use crate::NodeId;
 
@@ -1471,6 +1473,12 @@ pub struct Definitions {
     /// byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub shape_styles: DefinitionMap<NodeId, ShapeStyleRef>,
+    /// Drawing object names and titles (`wp:docPr`/`*:cNvPr` `@name`/`@title`),
+    /// keyed by the object's node id — a side table for the reason
+    /// [`ObjectName`] gives. Additive: omitted when empty so existing snapshots
+    /// serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub object_names: DefinitionMap<NodeId, ObjectName>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]

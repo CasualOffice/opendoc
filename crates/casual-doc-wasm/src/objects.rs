@@ -3622,7 +3622,7 @@ mod tests {
     /// giving it text is REFUSED rather than silently flattening it.
     #[test]
     fn a_freeform_shape_refuses_text_instead_of_losing_its_path() {
-        use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+        use casual_doc_model::v1::{CustomGeometry, GeometryPoint, ShapePath, ShapePathCommand};
 
         let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
         let paragraph = first_paragraph(&document);
@@ -3645,16 +3645,13 @@ mod tests {
                             if let GroupChild::Shape(target) = child
                                 && target.id == shape
                             {
-                                target.path = Some(ShapePath {
-                                    width_emu: 0,
-                                    height_emu: 0,
-                                    commands: vec![
+                                target.path =
+                                    Some(CustomGeometry::single_path(ShapePath::new(vec![
                                         ShapePathCommand::MoveTo {
-                                            point: PointEmu { x_emu: 0, y_emu: 0 },
+                                            point: GeometryPoint::literal(0, 0),
                                         },
                                         ShapePathCommand::Close,
-                                    ],
-                                });
+                                    ])));
                             }
                         }
                     }

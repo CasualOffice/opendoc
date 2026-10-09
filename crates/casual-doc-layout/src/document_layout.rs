@@ -89,6 +89,8 @@ use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page
 use crate::units::{Point, Rect, Size, Twip, emu_to_twip_extent};
 // Own line (anti-conflict): the single wrap-side rule.
 use crate::wrap_side::band_exclusion;
+// Own line (anti-conflict): tight/through wrap to the authored contour.
+use crate::wrap_contour::{contour_exclusions, contour_span};
 use casual_doc_model::v1::SectionId;
 
 /// US-Letter page size in twips (8.5in × 11in), the fallback for a document that
@@ -2180,8 +2182,15 @@ fn paragraph_float_exclusions(
         }
         let left = wrap.rect.origin.x - emu_to_twip_extent(wrap.distances.start_emu);
         let right = wrap.rect.right() + emu_to_twip_extent(wrap.distances.end_emu);
-        let top = wrap.rect.origin.y - emu_to_twip_extent(wrap.distances.top_emu);
-        let bottom = wrap.rect.bottom() + emu_to_twip_extent(wrap.distances.bottom_emu);
+        // A contour bounds itself vertically: `distT`/`distB` do not apply to
+        // tight/through wrap (`crate::wrap_contour`).
+        let (top, bottom) = match wrap.contour.as_deref().and_then(contour_span) {
+            Some(span) => span,
+            None => (
+                wrap.rect.origin.y - emu_to_twip_extent(wrap.distances.top_emu),
+                wrap.rect.bottom() + emu_to_twip_extent(wrap.distances.bottom_emu),
+            ),
+        };
         for (page_index, paragraph, rect) in &paragraphs {
             // Page- and margin-relative objects can sit above their anchoring
             // paragraph (the right arrow in demo.docx is one such object), so
@@ -2206,6 +2215,37 @@ fn paragraph_float_exclusions(
             if *page_index != wrap.page_index || top >= rect.bottom() || bottom <= rect.origin.y {
                 continue;
             }
+            // A tight/through contour excludes band by band, each band from
+            // where it starts below this paragraph's top — the same rule, cut
+            // finer (`crate::wrap_contour`).
+            if let Some(bands) = &wrap.contour {
+                let values = exclusions.entry(*paragraph).or_default();
+                for band in contour_exclusions(
+                    bands,
+                    emu_to_twip_extent(wrap.distances.start_emu),
+                    emu_to_twip_extent(wrap.distances.end_emu),
+                    rect.origin.x,
+                    rect.right(),
+                    wrap.sides,
+                    rect.origin.y,
+                ) {
+                    // A band below this paragraph's bottom narrows none of its
+                    // lines; the next paragraph receives it.
+                    if band.top >= rect.size.height {
+                        continue;
+                    }
+                    let exclusion = ParagraphFloatExclusion {
+                        side: band.side,
+                        width: band.width,
+                        top: band.top,
+                        height: band.bottom,
+                    };
+                    if !values.contains(&exclusion) {
+                        values.push(exclusion);
+                    }
+                }
+                continue;
+            }
             // The side and width are the authored `w:wrap@wrapText` rule, shared
             // with the paragraph-local and carry paths in `crate::flow` so one
             // float cannot wrap two different ways depending on which pass saw
@@ -2219,6 +2259,7 @@ fn paragraph_float_exclusions(
             let exclusion = ParagraphFloatExclusion {
                 side: resolved.side,
                 width: resolved.width,
+                top: Twip::ZERO,
                 height: Twip((bottom.raw() - rect.origin.y.raw()).max(1)),
             };
             let values = exclusions.entry(*paragraph).or_default();
@@ -2296,10 +2337,11 @@ fn conservative_exclusions(
         for (paragraph, exclusions) in source {
             for exclusion in exclusions {
                 let values = result.entry(*paragraph).or_default();
-                if let Some(existing) = values
-                    .iter_mut()
-                    .find(|existing| existing.side == exclusion.side)
-                {
+                // Keyed by side AND start: the bands of one contour start at
+                // different heights and must not be merged into its bounding box.
+                if let Some(existing) = values.iter_mut().find(|existing| {
+                    existing.side == exclusion.side && existing.top == exclusion.top
+                }) {
                     existing.width = existing.width.max(exclusion.width);
                     existing.height = existing.height.max(exclusion.height);
                 } else {

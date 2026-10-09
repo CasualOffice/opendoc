@@ -80,7 +80,11 @@ use crate::projection::{Projector, StoryKey, ValueHashes};
 /// A stored digest from an older scheme is not upgraded and must not be
 /// reinterpreted: a caller compares digests only when both carry the same prefix,
 /// which [`content_digest_hex`] writes into the string.
-pub const CONTENT_IDENTITY_SCHEMA: u32 = 1;
+///
+/// Scheme 2 (2026-10-09) folds in `objectNames`, the drawing names and titles
+/// `Definitions` gained with `docs/109` HF-267; a scheme-1 digest of the same
+/// document is therefore a different string, never a false "unchanged".
+pub const CONTENT_IDENTITY_SCHEMA: u32 = 2;
 
 /// The `Definitions` fields [`content_digest`] folds in, in the order it folds
 /// them.
@@ -106,6 +110,7 @@ pub const DIGESTED_DEFINITION_FIELDS: &[&str] = &[
     "formatSchemeXml",
     "formatScheme",
     "shapeStyles",
+    "objectNames",
     "settings",
     "people",
 ];
@@ -294,6 +299,11 @@ fn hash_definitions(document: &Document, hasher: &mut ContentHasher) {
     field(
         "shapeStyles",
         values.hash_value(&definitions.shape_styles),
+        hasher,
+    );
+    field(
+        "objectNames",
+        values.hash_value(&definitions.object_names),
         hasher,
     );
     field("settings", values.hash_value(&definitions.settings), hasher);

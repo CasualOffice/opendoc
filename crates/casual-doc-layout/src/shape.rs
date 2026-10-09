@@ -762,6 +762,21 @@ fn alignment(alignment: TextAlignment, rtl: bool) -> Alignment {
 /// reached, the line's inline origin/width is reduced until the authored object
 /// height has cleared. The anchored object itself remains owned by the page float
 /// layer, so no duplicate paint item is emitted here.
+///
+/// An exclusion may also START part-way down (`InlineFloatSpec::top` — one band
+/// of a tight/through contour, `crate::wrap_contour`). Whether a band touches a
+/// line depends on the line's height, which is only known once the line is
+/// broken, so this is the standard exclusion-layout retry: break the line
+/// against the bands its top and an assumed height reach (the previous line's
+/// height, or none for the first line), and if the height it actually came out
+/// at reaches a band the assumption missed — or misses one it assumed — revert
+/// that line (`BreakLines::revert`) and break it once more against the bands its
+/// measured height reaches. One retry per line bounds the work; a line whose
+/// height changes again on the retry keeps the second result, which is the
+/// geometry its measured height asked for.
+///
+/// A square exclusion starts at or above every line it narrows, so the
+/// assumption is always right for one and nothing is ever retried for it.
 fn break_lines_around_floats(
     layout: &mut parley::Layout<RunBrush>,
     image_count: usize,
@@ -772,26 +787,33 @@ fn break_lines_around_floats(
     struct ActiveFloat {
         side: InlineFloatSide,
         width: f32,
+        start_y: f64,
         end_y: f64,
+    }
+
+    /// The left and right insets of a line whose top is `y` and whose height
+    /// is `height`: every active float whose band overlaps the line.
+    fn insets(active: &[ActiveFloat], y: f64, height: f64) -> (f32, f32) {
+        let bottom = y + height;
+        let overlapping = active
+            .iter()
+            .filter(|float| float.end_y > y && (float.start_y <= y || float.start_y < bottom));
+        let mut left = 0.0_f32;
+        let mut right = 0.0_f32;
+        for float in overlapping {
+            match float.side {
+                InlineFloatSide::Left => left = left.max(float.width),
+                InlineFloatSide::Right => right = right.max(float.width),
+            }
+        }
+        (left, right)
     }
 
     fn apply_geometry(
         breaker: &mut parley::BreakLines<'_, RunBrush>,
-        active: &mut Vec<ActiveFloat>,
-        y: f64,
+        (left, right): (f32, f32),
         full_width: f32,
     ) {
-        active.retain(|float| float.end_y > y);
-        let left = active
-            .iter()
-            .filter(|float| float.side == InlineFloatSide::Left)
-            .map(|float| float.width)
-            .fold(0.0_f32, f32::max);
-        let right = active
-            .iter()
-            .filter(|float| float.side == InlineFloatSide::Right)
-            .map(|float| float.width)
-            .fold(0.0_f32, f32::max);
         let available = (full_width - left - right).max(1.0);
         breaker.state_mut().set_line_x(left);
         breaker.state_mut().set_line_max_advance(available);
@@ -801,7 +823,13 @@ fn break_lines_around_floats(
     let mut breaker = layout.break_lines();
     breaker.state_mut().set_layout_max_advance(full_width);
     breaker.state_mut().set_line_max_advance(full_width);
-    let mut active = Vec::new();
+    let mut active: Vec<ActiveFloat> = Vec::new();
+    // Which markers have been placed: a reverted line re-yields the markers it
+    // held, and a float must not be placed twice.
+    let mut placed = vec![false; floats.len()];
+    // The height the line being broken is assumed to have.
+    let mut assumed_height = 0.0_f64;
+    let mut retried = false;
 
     while let Some(event) = breaker.break_next() {
         match event {
@@ -821,18 +849,41 @@ fn break_lines_around_floats(
                     continue;
                 };
                 let y = breaker.committed_y();
-                active.push(ActiveFloat {
-                    side: float.side,
-                    width: float.width.raw().max(0) as f32,
-                    end_y: y + f64::from(float.height.raw().max(0)),
-                });
+                if !placed[index] {
+                    placed[index] = true;
+                    active.push(ActiveFloat {
+                        side: float.side,
+                        width: float.width.raw().max(0) as f32,
+                        start_y: y + f64::from(float.top.raw().max(0)),
+                        end_y: y + f64::from(float.height.raw().max(0)),
+                    });
+                }
                 breaker
                     .state_mut()
                     .append_inline_box_to_line(data.advance, 0.0);
-                apply_geometry(&mut breaker, &mut active, y, full_width);
+                apply_geometry(&mut breaker, insets(&active, y, assumed_height), full_width);
             }
             YieldData::LineBreak(data) => {
-                apply_geometry(&mut breaker, &mut active, data.line_y_end, full_width);
+                let measured = data.line_y_end - data.line_y_start;
+                let needed = insets(&active, data.line_y_start, measured);
+                if !retried
+                    && needed != insets(&active, data.line_y_start, assumed_height)
+                    && breaker.revert()
+                {
+                    retried = true;
+                    assumed_height = measured;
+                    apply_geometry(&mut breaker, needed, full_width);
+                    continue;
+                }
+                retried = false;
+                // The next line is assumed to be as tall as this one.
+                assumed_height = measured;
+                active.retain(|float| float.end_y > data.line_y_end);
+                apply_geometry(
+                    &mut breaker,
+                    insets(&active, data.line_y_end, assumed_height),
+                    full_width,
+                );
             }
             YieldData::MaxHeightExceeded(_) => {
                 // No line-height bound is installed by this paragraph layout, so
@@ -1894,6 +1945,7 @@ mod tests {
                 index: 0,
                 side: InlineFloatSide::Right,
                 width: exclusion,
+                top: Twip::ZERO,
                 height: float_height,
             }],
             LineConstraints {
@@ -1954,12 +2006,14 @@ mod tests {
                     index: 0,
                     side: InlineFloatSide::Left,
                     width: left,
+                    top: Twip::ZERO,
                     height: float_height,
                 },
                 InlineFloatSpec {
                     index: 0,
                     side: InlineFloatSide::Right,
                     width: right,
+                    top: Twip::ZERO,
                     height: float_height,
                 },
             ],

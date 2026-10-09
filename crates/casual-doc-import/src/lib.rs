@@ -1877,6 +1877,7 @@ pub(crate) fn import_with_sources(
         format_scheme: theme.format_scheme,
         format_scheme_xml: theme.format_scheme_xml,
         shape_styles: parsed_defs.shape_styles,
+        object_names: parsed_defs.object_names,
         settings,
         people,
     };

@@ -824,6 +824,73 @@ pub struct ShapeStyleRef {
     pub line_color: Option<Rgba>,
 }
 
+/// Maximum UTF-8 length of a drawing object's name or title.
+pub const MAX_OBJECT_NAME_BYTES: usize = 1024;
+
+/// A drawing object's author-visible identity (`wp:docPr`, or a group child's
+/// `pic:cNvPr`/`wps:cNvPr`): its NAME — the handle Word's Selection Pane lists it
+/// by and an author renames it by — and its TITLE, the short accessible label a
+/// screen reader announces beside the `@descr` alt text (`docs/109` HF-267).
+///
+/// A side table keyed by the object's node id, for the reason [`ShapeStyleRef`]
+/// gives: the drawing types are constructed by literal across six crates, and a
+/// new field on each is a breaking change to every literal with nothing for a
+/// merge to conflict on (`SKILL` §5a shape 1).
+///
+/// The cost of the side table is the one it always has: an object duplicated by
+/// an edit gets a new id and starts unnamed, and Word then names it on save the
+/// way it names any new object. Recorded rather than hidden.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObjectName {
+    /// `@name` — "Picture 3", "Text Box 7", or whatever the author typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `@title` — the accessible title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl ObjectName {
+    /// The name a writer gives a picture that has no modelled name — Word's own
+    /// default for the first picture in a document.
+    pub const GENERIC_PICTURE: &'static str = "Picture 1";
+    /// The `wp:docPr` name for an unnamed group.
+    pub const GENERIC_GROUP: &'static str = "Group 1";
+    /// The `wp:docPr` name for an unnamed chart, diagram or other object.
+    pub const GENERIC_OBJECT: &'static str = "Object 1";
+    /// The `wp:docPr` name for an unnamed text box.
+    pub const GENERIC_TEXT_BOX: &'static str = "Text Box 1";
+    /// The `wps:cNvPr` name for an unnamed shape inside a group.
+    pub const GENERIC_SHAPE: &'static str = "Shape";
+    /// The `wps:cNvPr` name for an unnamed text box inside a group.
+    pub const GENERIC_CHILD_TEXT_BOX: &'static str = "Text Box";
+    /// The `wpg:cNvPr` name for an unnamed nested group.
+    pub const GENERIC_CHILD_GROUP: &'static str = "Group";
+
+    /// Whether neither part is set — an entry that says nothing and is not kept.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none() && self.title.is_none()
+    }
+
+    /// `self` with a name equal to `generic` dropped.
+    ///
+    /// The writer names an object that has no modelled name with the `GENERIC_*`
+    /// name for its kind, so that name IS the model's empty state, written out —
+    /// `docs/35`'s no-op rule, the same reason an absent `@wrapText` is not
+    /// normalized to `bothSides`. Keeping it would make a document with no names
+    /// grow one on every save and stop being a fixed point of write → reopen;
+    /// dropping it loses nothing, because the writer puts the same string back.
+    #[must_use]
+    pub fn without_generic(mut self, generic: &str) -> Self {
+        if self.name.as_deref() == Some(generic) {
+            self.name = None;
+        }
+        self
+    }
+}
+
 impl FormatScheme {
     /// The modeled fill style a one-based `a:fillRef@idx` selects.
     ///

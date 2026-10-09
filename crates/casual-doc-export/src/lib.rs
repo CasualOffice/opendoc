@@ -935,6 +935,77 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the anchored drawing survives write -> reopen");
     }
 
+    /// A drawing object's NAME and TITLE survive the round trip (`docs/109`
+    /// HF-267): the inline picture's, the group's, and a group child's own. Before
+    /// the side table every object was written back as "Picture 1"/"Group 1"/
+    /// "Shape", so an author's Selection Pane names were rewritten on every save
+    /// and the accessible title was dropped — the assertion on the written BYTES
+    /// is what tells that apart, since a model compare alone cannot see a name the
+    /// importer never kept.
+    #[test]
+    fn drawing_object_names_and_titles_survive_the_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ObjectName};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Company logo" descr="The logo, in blue" title="Logo"/><a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Company logo"/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="5" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="2" name="Org chart"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="3" name="Box: CEO" title="Chief executive"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        let named = |name: &str, title: Option<&str>| ObjectName {
+            name: Some(name.to_owned()),
+            title: title.map(str::to_owned),
+        };
+        let BlockNode::Paragraph(first) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(picture) = &first.inlines[0] else {
+            panic!("expected an inline picture, got {:?}", first.inlines[0]);
+        };
+        let BlockNode::Paragraph(second) = &m1.body()[1] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &second.inlines[0] else {
+            panic!("expected a group, got {:?}", second.inlines[0]);
+        };
+        let GroupChild::Shape(child) = &group.children[0] else {
+            panic!("expected a shape child");
+        };
+        let names = &m1.definitions().object_names;
+        assert_eq!(
+            names.get(&picture.id),
+            Some(&named("Company logo", Some("Logo")))
+        );
+        assert_eq!(names.get(&group.id), Some(&named("Org chart", None)));
+        assert_eq!(
+            names.get(&child.id),
+            Some(&named("Box: CEO", Some("Chief executive")))
+        );
+
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        for attribute in [
+            r#"name="Company logo""#,
+            r#"title="Logo""#,
+            r#"name="Org chart""#,
+            r#"name="Box: CEO""#,
+            r#"title="Chief executive""#,
+        ] {
+            assert!(
+                written_xml.contains(attribute),
+                "the writer keeps {attribute}: {written_xml}"
+            );
+        }
+        assert_eq!(
+            m1,
+            reopen(&written),
+            "names survive write -> reopen on the same nodes"
+        );
+    }
+
     #[test]
     fn tight_wrap_polygon_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, InlineNode, PointEmu, WrapMode};
@@ -1164,7 +1235,9 @@ mod semantic_tests {
     /// why this checks the emitted substring rather than comparing models.
     #[test]
     fn a_curve_round_trips_with_its_control_points_in_order() {
-        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, PointEmu, ShapePathCommand};
+        use casual_doc_model::v1::{
+            BlockNode, GeometryPoint, GroupChild, InlineNode, ShapePathCommand,
+        };
         use std::io::Read;
 
         let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Curve"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:custGeom><a:avLst/><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:cubicBezTo><a:pt x="30" y="80"/><a:pt x="70" y="80"/><a:pt x="100" y="0"/></a:cubicBezTo><a:quadBezTo><a:pt x="50" y="100"/><a:pt x="0" y="0"/></a:quadBezTo><a:close/></a:path></a:pathLst></a:custGeom></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
@@ -1185,34 +1258,22 @@ mod semantic_tests {
 
         let expected = vec![
             ShapePathCommand::MoveTo {
-                point: PointEmu { x_emu: 0, y_emu: 0 },
+                point: GeometryPoint::literal(0, 0),
             },
             ShapePathCommand::CubicBezTo {
-                control1: PointEmu {
-                    x_emu: 30,
-                    y_emu: 80,
-                },
-                control2: PointEmu {
-                    x_emu: 70,
-                    y_emu: 80,
-                },
-                point: PointEmu {
-                    x_emu: 100,
-                    y_emu: 0,
-                },
+                control1: GeometryPoint::literal(30, 80),
+                control2: GeometryPoint::literal(70, 80),
+                point: GeometryPoint::literal(100, 0),
             },
             ShapePathCommand::QuadBezTo {
-                control: PointEmu {
-                    x_emu: 50,
-                    y_emu: 100,
-                },
-                point: PointEmu { x_emu: 0, y_emu: 0 },
+                control: GeometryPoint::literal(50, 100),
+                point: GeometryPoint::literal(0, 0),
             },
             ShapePathCommand::Close,
         ];
-        assert_eq!(path_of(&m1).commands, expected, "import");
+        assert_eq!(path_of(&m1).paths[0].commands, expected, "import");
         assert_eq!(
-            path_of(&m2).commands,
+            path_of(&m2).paths[0].commands,
             expected,
             "and again after export and re-import"
         );
@@ -1240,6 +1301,51 @@ mod semantic_tests {
         );
     }
 
+    /// The WHOLE custom-geometry grammar survives the round trip (`109` FID-G-02):
+    /// adjust values and guide formulas by name, an adjust handle, a connection
+    /// site, a guide-named text rectangle, and two paths carrying their own
+    /// `@fill`/`@stroke`/`@extrusionOk`, one of them drawn with an `a:arcTo` whose
+    /// radii and angles are guide NAMES.
+    ///
+    /// This is what Word writes when an author uses Edit Points on a preset — the
+    /// preset's definition copied into the file — so a writer that evaluated the
+    /// names, or dropped the handle list, would save a shape that no longer scales
+    /// or no longer offers its handle. The byte assertions are the ones a model
+    /// compare cannot make: an evaluated coordinate and a named one import alike
+    /// at one box size.
+    #[test]
+    fn a_full_custom_geometry_survives_the_semantic_round_trip() {
+        use std::io::Read;
+
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="7" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Group 4"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="914400"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Freeform 1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:custGeom><a:avLst><a:gd name="adj" fmla="val 16667"/></a:avLst><a:gdLst><a:gd name="a" fmla="pin 0 adj 50000"/><a:gd name="x1" fmla="*/ ss a 100000"/><a:gd name="x2" fmla="+- r 0 x1"/></a:gdLst><a:ahLst><a:ahXY gdRefX="adj" minX="0" maxX="50000"><a:pos x="x1" y="t"/></a:ahXY></a:ahLst><a:cxnLst><a:cxn ang="3cd4"><a:pos x="hc" y="t"/></a:cxn></a:cxnLst><a:rect l="x1" t="t" r="x2" b="b"/><a:pathLst><a:path stroke="0" extrusionOk="0"><a:moveTo><a:pt x="l" y="x1"/></a:moveTo><a:arcTo wR="x1" hR="x1" stAng="cd2" swAng="cd4"/><a:lnTo><a:pt x="x2" y="t"/></a:lnTo><a:lnTo><a:pt x="r" y="b"/></a:lnTo><a:close/></a:path><a:path w="100" h="100" fill="none"><a:moveTo><a:pt x="0" y="100"/></a:moveTo><a:lnTo><a:pt x="100" y="0"/></a:lnTo></a:path></a:pathLst></a:custGeom><a:solidFill><a:srgbClr val="336699"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the geometry is a fixed point of write -> reopen");
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut written = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut written)
+            .unwrap();
+        for fragment in [
+            r#"<a:avLst><a:gd name="adj" fmla="val 16667"/></a:avLst>"#,
+            r#"<a:gd name="x1" fmla="*/ ss a 100000"/>"#,
+            r#"<a:ahXY gdRefX="adj" minX="0" maxX="50000"><a:pos x="x1" y="t"/></a:ahXY>"#,
+            r#"<a:cxn ang="3cd4"><a:pos x="hc" y="t"/></a:cxn>"#,
+            r#"<a:rect l="x1" t="t" r="x2" b="b"/>"#,
+            r#"<a:path stroke="0" extrusionOk="0">"#,
+            r#"<a:arcTo wR="x1" hR="x1" stAng="cd2" swAng="cd4"/>"#,
+            r#"<a:path w="100" h="100" fill="none">"#,
+        ] {
+            assert!(
+                written.contains(fragment),
+                "the writer keeps {fragment} as authored: {written}"
+            );
+        }
+    }
+
     /// A recovered `a:custGeom` is re-emitted as `a:custGeom`, not rewritten to
     /// `prst="rect"` (docs/119 §2, `109` FID-G-01).
     ///
@@ -1249,7 +1355,7 @@ mod semantic_tests {
     #[test]
     fn a_custom_geometry_path_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{
-            BlockNode, GroupChild, InlineNode, PointEmu, ShapeGeometry, ShapePathCommand,
+            BlockNode, GeometryPoint, GroupChild, InlineNode, ShapeGeometry, ShapePathCommand,
         };
         use std::io::Read;
 
@@ -1268,19 +1374,16 @@ mod semantic_tests {
             panic!("expected a shape");
         };
         assert_eq!(rule.geometry, ShapeGeometry::Other);
-        let path = rule.path.as_ref().expect("the rule's path");
+        let path = &rule.path.as_ref().expect("the rule's path").paths[0];
         assert_eq!((path.width_emu, path.height_emu), (6_660_515, 0));
         assert_eq!(
             path.commands,
             vec![
                 ShapePathCommand::MoveTo {
-                    point: PointEmu { x_emu: 0, y_emu: 0 },
+                    point: GeometryPoint::literal(0, 0),
                 },
                 ShapePathCommand::LineTo {
-                    point: PointEmu {
-                        x_emu: 6_660_057,
-                        y_emu: 0,
-                    },
+                    point: GeometryPoint::literal(6_660_057, 0),
                 },
             ]
         );
