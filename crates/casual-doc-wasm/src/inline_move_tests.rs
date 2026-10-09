@@ -186,8 +186,10 @@ fn fixture() -> (WasmDocument, Ids) {
         },
     );
     // A side-table entry keyed by the picture's id: a move that changed the id
-    // would orphan it, and the picture would be renamed "Picture 1" and lose the
-    // aspect lock its frame carries (Word's, `109` FID-AT-09) on save.
+    // would orphan it and the picture would be renamed "Picture 1" on save. Every
+    // field is populated — the picture-level name and the locks share the entry
+    // (FID-AT-08, FID-AT-09), so a move that kept only the frame's name would
+    // still fail the whole-entry comparison below.
     definitions.object_names.insert(
         ids.picture,
         ObjectName {
@@ -200,7 +202,10 @@ fn fixture() -> (WasmDocument, Ids) {
                     no_change_aspect: true,
                     ..LockFlags::default()
                 },
-                object: LockFlags::default(),
+                object: LockFlags {
+                    no_change_aspect: true,
+                    ..LockFlags::default()
+                },
             },
         },
     );

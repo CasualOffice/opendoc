@@ -1,11 +1,11 @@
-// ADR-061: a comparison is TRACKED CHANGES ON THE CANVAS, not a count in a panel.
+// ADR-061 behind ADR-065: "Keep as tracked changes" writes a comparison INTO the
+// document.
 //
-// The owner asked about this four times. `applyDiffAsRevisions` merged in #755 and
-// `compare_documents.mjs` never called it, so the panel kept reporting
-// "Differences: 1 / Text edits: 1 / Removed" while the document on screen was
-// untouched. `compare.spec.mjs` covers the LIST — reachability, direction, every
-// entry naming its object. This file covers the one thing that spec cannot see:
-// whether anything reached the document.
+// A comparison is first SHOWN, read-only, as a redline on the page
+// (`compare.spec.mjs` covers that). Keeping it is the reader's explicit second
+// step, and this file covers what that step must do: put real tracked changes
+// into the reader's document, refuse — in its own words — a document that
+// already has some, and report what tracked changes cannot express.
 //
 // SO THE ASSERTIONS ARE ABOUT WHAT THE CANVAS PAINTS. `apply_revision_markup`
 // (`casual-doc-layout/src/flow.rs:168`) stamps an author hue from a ten-colour
@@ -84,16 +84,19 @@ async function saturatedInk(page) {
   });
 }
 
-/** Opens Compare from the rail and runs a comparison against `other`, waiting on
- *  a state change rather than on a clock. */
-async function compareAgainst(page, other) {
+/** Opens Compare from the rail, runs a comparison against `other`, waits for
+ *  the redline on the page, and KEEPS it — the explicit step that writes it into
+ *  the document. Waits on state changes rather than on a clock. */
+async function compareAndKeep(page, other) {
   await page.locator("#railCompare").click();
   await expect(page.locator("#comparePanel")).toBeVisible();
   await expect(page.locator('#compareBody [data-compare-action="choose-file"]')).toBeEnabled();
   await page.locator("#compareFile").setInputFiles(other);
+  await expect(page.locator("#compareBody [data-compare-view]")).toBeVisible({ timeout: 45_000 });
+  await page.locator('#compareBody [data-compare-action="keep"]').click();
 }
 
-test("one text edit shows as a tracked change IN THE DOCUMENT", async ({ page, consoleErrors }) => {
+test("Keep writes one text edit into the document as a tracked change", async ({ page, consoleErrors }) => {
   // One word replaced, which is the fixture the owner's report was about: a
   // `text` difference, the kind that has somewhere in this document to be
   // marked. ("Delta" is the other document's word and "gamma" is ours, so the
@@ -107,7 +110,8 @@ test("one text edit shows as a tracked change IN THE DOCUMENT", async ({ page, c
   expect(before, "a plain black-text document must paint no author-coloured ink").toBe(0);
   await expect(page.locator("#reviewSidebar .review-margin-revision")).toHaveCount(0);
 
-  await compareAgainst(page, textFile("theirs.txt", "Alpha beta delta\n"));
+  await compareAndKeep(page, textFile("theirs.txt", "Alpha beta delta\n"));
+  await expect(page.locator("#compareBody [data-compare-marked]")).toBeVisible({ timeout: 45_000 });
 
   // THE MILESTONE. Author-coloured ink is now on the page, which means
   // `apply_revision_markup` ran over a revision this comparison wrote — the
@@ -160,15 +164,10 @@ test("one text edit shows as a tracked change IN THE DOCUMENT", async ({ page, c
   // document rather than with a bare count.
   await expect(page.locator("#compareBody [data-compare-marked]")).toBeVisible();
   await expect(page.locator("#compareBody")).toContainText(/tracked changes in this document/i);
-  // The chooser's old promise is gone: it used to say the differences "cannot be
-  // accepted or rejected", which this change makes false.
-  await expect(page.locator("#compareBody")).not.toContainText(
-    /cannot be accepted or rejected/i,
-  );
   expect(consoleErrors).toEqual([]);
 });
 
-test("a document that already carries revisions is refused, in its own words", async ({
+test("Keep refuses a document that already carries revisions, in its own words", async ({
   page,
   consoleErrors,
 }) => {
@@ -185,7 +184,10 @@ test("a document that already carries revisions is refused, in its own words", a
   await expect(page.locator("#reviewAcceptAll")).toBeEnabled();
   const bodyBefore = await mirrorBlocks(page);
 
-  await compareAgainst(page, textFile("theirs.txt", "Alpha beta delta\n"));
+  // VIEWING the comparison is not refused (ADR-065): nothing is decided on a
+  // redline, so the reviewer's suggestion and the comparison's marks cannot
+  // decide each other. Only Keep writes, and Keep is what refuses.
+  await compareAndKeep(page, textFile("theirs.txt", "Alpha beta delta\n"));
 
   // ITS OWN SENTENCE, routed by the engine's `compare.document-has-revisions`
   // code — and it says what we refuse and why rather than apologising.
@@ -219,7 +221,7 @@ test("a difference a tracked change cannot express is REPORTED, not swallowed", 
   // report would be the only thing on screen and could not be mistaken for
   // silent: the extra sentence in "mine" gives it one insertion to land.
   await openText(page, textFile("mine.txt", "Alpha\nBeta\nGamma only in mine\n"));
-  await compareAgainst(
+  await compareAndKeep(
     page,
     textFile("theirs.txt", "Alpha\nBeta\nDelta only in theirs\nEpsilon only in theirs\n"),
   );
@@ -264,7 +266,7 @@ test("the refusal is the READER's language, not the engine's English", async ({
   await page.keyboard.insertText("Vorgeschlagen. ");
   await expect(page.locator("#reviewAcceptAll")).toBeEnabled();
 
-  await compareAgainst(page, textFile("theirs.txt", "Alpha beta delta\n"));
+  await compareAndKeep(page, textFile("theirs.txt", "Alpha beta delta\n"));
 
   const refusal = page.locator("#compareBody [data-compare-refused]");
   await expect(refusal).toBeVisible({ timeout: 45_000 });

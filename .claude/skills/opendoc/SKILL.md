@@ -1,523 +1,225 @@
 ---
 name: opendoc
-description: The working contract for the opendoc repository — an Apache-2.0 document runtime and editor aiming to replace ONLYOFFICE for documents. Load this BEFORE touching anything in this repo: it carries the product goal, the non-negotiable engineering gates (including the two CI gates a normal test run misses), the PR and branching rules, how to parallelise with agents, the known-flaky tests, and the specific mistakes that have already been made here so they are not repeated. Use it for any task in this repo — fixing a bug, adding a feature, auditing, reviewing, or answering a question about direction.
+description: Working contract for the opendoc repo (Apache-2.0 document editor and runtime replacing ONLYOFFICE for documents). Load BEFORE any task here (bug, feature, audit, review, direction question). Carries the goal, the CI gates a plain `cargo test` misses, PR and branch rules, agent fan-out rules, flaky tests, and repo traps.
 ---
 
 # opendoc — working contract
 
-Read this first. It exists so the owner does not have to repeat the same instructions
-every session. If something here conflicts with a stale doc in the repo, this file and
-`AGENTS.md` win; if it conflicts with something the owner says now, **the owner wins** —
-then update this file.
+Precedence: what the owner says now > this file > `AGENTS.md` > other docs. When a rule
+changes, edit this file. Code cites these sections (`SKILL §8`), so **keep the numbers
+stable**. The *why* behind each rule (incidents, measurements, competitive evidence) is in
+`references/why.md`, keyed by the same §. Read it only to argue for, or extend, a rule.
 
-## 1. The goal, in one sentence
+## 1. Goal
 
-> opendoc is the **Apache-2.0 alternative to ONLYOFFICE Docs for documents and document
-> collaboration**.
+Apache-2.0 alternative to ONLYOFFICE Docs for **documents and document collaboration**.
 
-| In scope | Out of scope |
-| --- | --- |
-| Word-processing documents: DOCX, ODT, TXT, JSON snapshot, and remaining document interchange formats | **Spreadsheets** — the sibling `opencalc` (`../sheets`) owns these |
-| Document **collaboration** — multi-user editing, presence, review, versions, roles | **Presentations** — a future sibling |
-| Embedding as a library; local-first; no mandatory server | PDF *editing* and PDF forms |
-| Desktop, browser, mobile browser, headless | Native mobile app shells |
+- **In:** DOCX, ODT, TXT, JSON snapshot; multi-user editing, presence, review, versions,
+  roles; an embeddable library; local-first; desktop, browser, mobile browser, headless.
+- **Out:** spreadsheets (sibling `opencalc`), presentations, PDF editing and forms, native
+  mobile shells.
+- Production and enterprise grade is the baseline. Never call it an MVP or a prototype.
+- **Embeddability is the product.** ONLYOFFICE is AGPL and gates host customisation
+  behind a licence.
+- Never close a parity row at the cost of: **local-first** (no server to open or edit),
+  **direct OOXML with verbatim retention** (only real if loss is *detected and reported*),
+  **no mandatory server**.
+- **`docs/109-BACKLOG.md` is the only queue**, in fix-first order. `docs/104`, `105`, `106`,
+  `99` and `14` are archives closed to new rows (`tracker_single_queue.test.mjs` enforces
+  this). Cite row ids (UX-001, HF-011) in commits and PRs. Roadmap: `docs/106`.
+- Competitive facts (their co-editing, spell check, text input, gaps) are in
+  `references/why.md` §1. Use those, not their marketing pages.
 
-**Never describe this project as an MVP, prototype, or side project.** Production and
-enterprise grade is the baseline, not an aspiration. Phasing is delivery order only.
+## 2. Collaboration is OT (ADR-033) — decided
 
-The roadmap is `docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md` (8 phases + a cross-cutting
-quality track). **The one queue you work from is `docs/109-BACKLOG.md`** — 192 rows in
-fix-first order. `docs/104` (defects), `docs/105` (the 2026-09 audit rows), `docs/106`
-(the roadmap), `docs/99` (unfinished capability) and `docs/14` (per-slice execution state)
-are **archives, closed to new rows**: they hold the evidence and `109` holds the order.
-`webapp/tests/tracker_single_queue.test.mjs` fails the build if a row open in any of the
-five is not reachable from `109`. Cite row ids (UX-001, FID-L-03, CQ-002, HF-011) in
-commits and PRs.
+Transactions carry OT; versioning is snapshot plus replay (`docs/107`). Do not reopen OT
+versus CRDT. First blocker: the live editing path in `casual-doc-wasm` bypasses
+`casual_doc_transaction` (ADR-005 is not honoured), so unify the two op sets first.
+**Editing stays light:** per-keystroke work is O(1) in document size (seven budgets in
+`docs/107` §4).
 
-### Why Apache-2.0 is the whole wedge
-
-ONLYOFFICE is **AGPL-3.0-only** with assets under CC-BY-SA-4.0, commercial tiers from
-$1,500/$3,500, Developer Edition billed **per concurrent browser tab**, and the
-host-customization API gated *in code* (`LayoutManager._applyCustomization` early-returns
-when `!_licensed`). Permissive licence + real DOCX fidelity + embeddability is an
-unoccupied position — which is why **embeddability is the product**, not a late-phase
-nicety.
-
-### Three structural advantages to protect
-
-Do not close a parity row in a way that costs any of these.
-
-1. **Local-first.** ONLYOFFICE's web client *cannot* open a file offline: format I/O is
-   `x2t`, and `core/X2tConverter/build/` has only `Android/` and `Qt/` — **no WASM build**.
-   They do not ship the native core as an embeddable library. We are local by construction.
-2. **Direct OOXML with verbatim retention.** They convert `DOCX → Editor.bin → DOCX`, so
-   whatever the intermediate model lacks is dropped. **But this advantage is only real if
-   loss is detected and reported** — which is why loss-reporting work is competitive work,
-   not hygiene.
-3. **No mandatory server.** Any collaboration relay is additive and optional.
-
-### Competitive facts that are commonly reported wrong
-
-Use these instead of ONLYOFFICE marketing pages:
-
-- Their co-editing is **neither OT nor a CRDT** — zero `transform` hits in
-  `DocsCoServer.js`. It is a server-ordered change log + pessimistic object locks +
-  client rollback/replay. Transport is socket.io.
-- Spell check is **client-side WASM** now (`spell.wasm`); their server service is retired.
-  So spell check is provably a client-side problem for us too.
-- Their text input is a **hidden `<textarea>`** whose id matches `/area_id/` — zero
-  functional `contenteditable` in 171 KLOC.
-- **Gaps they have:** no table sorting, no decimal/bar tab stops, only 14 field codes, no
-  page-borders dialog, no accessibility checker, no native citation manager, SmartArt
-  editing is formatting-only. We already ship table sorting and decimal tabs.
-
-## 2. Collaboration is decided: OT (ADR-033)
-
-Operational transformation, carried by transactions, with snapshot-plus-replay versioning.
-Designed in `docs/107`. **Do not reopen the OT-vs-CRDT question.**
-
-The blocker is not the algorithm — it is that **the live editing path bypasses the
-transaction engine**: `casual-doc-wasm` references `casual_doc_transaction` zero times and
-applies `casual-doc-edit`'s 47 ops directly with a flat undo stack and no revision chain.
-So **ADR-005 is not honoured in practice**, and unifying the two op sets comes first.
-
-Owner constraint: **editing must stay light** — seven measurable budgets in `docs/107` §4.
-Per-keystroke work is O(1) in document size.
-
-## 3. Non-negotiable engineering gates
-
-Run **all** of these locally before pushing. Two of them are missed by a normal
-`cargo test` sweep and have broken CI on three separate branches:
+## 3. Gates — run every one, each as its own command
 
 ```sh
-cargo +1.96.0 fmt --check                                      # PINNED toolchain
+cargo +1.96.0 fmt --all --check        # PINNED toolchain; plain `cargo fmt` differs from CI
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 cargo test --workspace --all-features --locked
 cargo test --doc --workspace --all-features --locked
 cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
-
-cd webapp && ./build.sh                                        # needed before any e2e
-npm run test:unit                                              # node --test tests/*.test.mjs
-npm run test:e2e                                               # playwright
+node webapp/tools/build-glossary.mjs   # whenever docs/ or any string changed; NOT in build.sh
+cd webapp && ./build.sh                # pages, SEO, embed docs, site + their --check; before e2e
+npm run test:unit                      # from webapp/
+npm run test:e2e                       # from webapp/ (Playwright)
 ```
 
-**The two that bite:**
+- Never `gate | tail -2 && echo OK`: that tests `tail`'s exit code. Branch on the gate's own
+  status (`if cargo +1.96.0 fmt --all --check; then …`).
+- A public doc comment must not link to a private item (`[`Self::private_fn`]`). Write the
+  name as plain code text, or make the item `pub`.
+- CI jobs: `format lint test benchmark-smoke fuzz-build docs wasm browser-smoke platform
+  dependency-policy repository-policy`.
 
-- **Never pipe a gate into `tail`/`grep` and then `&& echo OK`.** `a | tail -2 && echo OK`
-  tests TAIL's exit code, not the gate's, so a failing gate prints OK. That is how a
-  formatting failure reached CI green-looking locally (#552). Run each gate as its own
-  command and branch on its real status: `if cargo +1.96.0 fmt --all --check; then …`.
-- **`cargo +1.96.0 fmt`, not plain `cargo fmt`.** Plain fmt passes locally and fails CI —
-  the pinned toolchain formats differently.
-- **`RUSTDOCFLAGS="-D warnings" cargo doc`.** A public doc comment must **not** link to a
-  private item (`[\`Self::private_fn\`]`). This failed three branches in one session. Write
-  the name as plain code text instead, or make the item `pub`.
+## 4. Every guard must be seen to fail
 
-Full CI job list: `format lint test benchmark-smoke fuzz-build docs wasm browser-smoke
-platform dependency-policy repository-policy`.
+Write the guard → mutate the production code to reintroduce the bug → run it and **see it
+go red** (keep the output) → restore and confirm green → put the mutation and the red output
+in the commit or PR. If it cannot be driven red, rewrite it or drop it. Known false greens:
+an expected string the app never shows, `keyboard.type` swallowing printable input,
+synthetic events no real user or IME produces, an assertion that cannot tell two candidates
+apart.
 
-## 4. Tests must be able to fail — this is the house rule
+## 5. Branches, PRs, commits
 
-A guard that cannot fail is worse than no guard, because it gets cited as evidence.
-This repo has shipped green-but-wrong tests more than once (`docs/105` CQ-003).
+- Always a feature branch and a PR; never commit or merge to `main`. **One combined PR** for
+  related work, not a stream of small ones.
+- Fix forward; never revert to get green. Never hand-edit a golden or blessed reference and
+  never inflate a tolerance. A moved golden (`geometry_snapshot.golden`) must be intentional
+  and explained.
+- **No AI attribution** in commits or PRs: no `Co-Authored-By`, no "Generated with" footer.
+- A commit message is prose: why, the mechanism, the evidence, the mutation proof, the row
+  ids, and what you deliberately did not do.
+- Never dispatch a workflow against `main` that can turn CI red. Prove it green on a branch.
 
-**The procedure, every time:**
+## 5a. Check the combination, not just your branch
 
-1. Write the guard.
-2. **Mutate the production code** to reintroduce the bug.
-3. **Run it and SEE IT GO RED.** Record the actual failure output.
-4. Restore, confirm green.
-5. Report the mutation and the red output in the commit/PR.
+Two green PRs can merge into a red `main`: a field added to a struct whose literals live on
+another branch, a generated page staled by a doc edit, two branches minting the same number.
 
-If a guard cannot be driven red, rewrite it or drop it. **A test that passes on arrival
-tells you less than you think.** Real examples from this repo:
-
-- A spec asserted `not.toHaveText(/no results/i)` while the app's string is `"No match"` —
-  it passed no matter what happened.
-- A spec used `keyboard.type`, which `preventDefault`s printable characters, so the element
-  under test never received input.
-- The IME spec dispatched synthetic `CompositionEvent`s at `document` — a shape no real IME
-  produces — and stayed green for months while the feature was unreachable.
-- An agent's guard passed because two sections inherited the same header, so the assertion
-  could not tell which section it was charged to.
-
-## 5. Branching, PRs, and commits
-
-- **Always a feature branch + PR. Never commit or merge directly to `main`.**
-- **One combined PR for related work.** Do not raise a stream of small PRs. Batch the
-  lanes, verify them together, open one.
-- **Never revert to get green when you can fix forward.** If a gate goes red, diagnose and
-  fix it; reverting hides the finding. (Asked once, told clearly: *fix it, don't revert.*)
-- **No Claude/AI attribution** in commit messages or PR bodies. No `Co-Authored-By`
-  trailers, no "Generated with" footers.
-- Commit messages: prose explaining **why**, the mechanism, the evidence, and the mutation
-  proof. Cite row ids. State what you deliberately did **not** do.
-- **Never dispatch a workflow against `main` that can turn CI red.** Run it on a branch,
-  verify the gate is green with its output, *then* let it land. This was learned the hard
-  way: arming a gate on `main` broke CI for everyone.
-- **Never hand-edit a blessed reference or golden** to make a test pass, and never inflate
-  a tolerance to green a red edge. Both make the gate worthless.
-- If a golden (`geometry_snapshot.golden`) moves, the diff must be intentional and
-  explained.
-
-## 5a. Two green PRs can make `main` red — check the COMBINATION
-
-This happened **three times on 2026-09-27**, and no reviewer reading either diff
-could have caught the third. A PR is verified against `main` as it was when the
-branch was cut; nothing verifies the merge.
-
-The three shapes, all real:
-
-1. **A type change breaks a literal in a file the other branch owns.** #646 added a
-   field to `Field`/`FieldRange`; #645 wrote new fixtures constructing both, in a
-   crate #646 deliberately stayed out of. Git had nothing to conflict on — the
-   incompatibility is in the type system, not in the text — and `main` failed with
-   three `E0063`. Adding a field to a struct is a breaking change to every literal
-   and Rust has no source-compatible way to do it.
-2. **A generated artifact goes stale.** A *published* document's page is generated,
-   so editing `docs/126` on one branch staled a page committed on another and
-   `build.sh --check` failed on `main`.
-3. **Two branches mint the same number.** Two ADR-034s met, and the merge resolved
-   the conflict by **deleting two published ADRs** while five documents went on
-   citing them. There are now uniqueness guards for doc numbers and ADR numbers.
-
-**What to do:**
-
-- **Rebase immediately before the PR and re-run the gates** — this is already the
-  rule and it is the main defence. It only works if you rebase *last*, not first.
-- **Run `cargo check --workspace --all-targets --all-features`, not just your
-  crate's tests.** A literal in another crate's `#[cfg(test)]` module is exactly
-  what breaks, and a crate-scoped run cannot see it.
-- **Re-measure every ratchet from the MERGED file**, never carry your branch's
-  number forward. `main.js` went 16,616 -> 16,589 -> 16,579 across three branches
-  in one day; arithmetic on two branches' numbers is always wrong.
-- **If you edit a document the site publishes, run `webapp/build.sh` and commit the
-  regenerated pages in the same commit.** The published list is in
-  `webapp/tools/build-doc-pages.mjs`.
-- **Claim a number by writing it into the tree in the same commit as the citation.**
-  A "proposed" id is not a reserved id — several lanes reached for `HF-190`/`HF-191`
-  within an hour of each other.
-- **When the compiler demands a field, do not reach for `Default::default()`
-  reflexively.** In the fixture whose whole purpose was proving a paste carries
-  every inline kind, defaulting would have satisfied `cargo check` while testing
-  nothing about the new field — which is how a field added on one branch becomes a
-  silent drop on another.
+- **Rebase last**, immediately before the PR, then re-run the gates.
+- Run `cargo check --workspace --all-targets --all-features`, not just your crate's tests.
+- Re-measure every ratchet (for example the `main.js` line ceiling) from the merged file.
+- Editing a published doc ⇒ run `webapp/build.sh` and commit the regenerated pages in the
+  same commit (the list is in `webapp/tools/build-doc-pages.mjs`).
+- Claim a number (doc, ADR, row id) by writing it into the tree in the commit that cites it.
+- When the compiler demands a new field, do not reflexively reach for `Default::default()`:
+  set it where the fixture's purpose needs it. A widely constructed model struct should be
+  `#[non_exhaustive]` with a builder.
 
 ## 6. Verify before you claim
 
-- **Never bisect with single runs of a possibly-flaky test.** Repeat 5× per ref. A false
-  "this PR broke it" wastes more time than the bug.
-- **Known flaky under worker contention** — re-run in isolation before calling a failure a
-  regression: `context-menu.spec.mjs`, `header-footer-editing.spec.mjs`,
-  `object-command-reach.spec.mjs`, `table-editing-ux.spec.mjs`. Roughly 5 of 15
-  fail under `--repeat-each=3 --workers=4` on *clean main*.
-- **Clock-bound tests are a different failure, and retries do not help.** These wait on a
-  wall clock rather than on a state change, so they degrade under load no matter how
-  sound the code is: `draft-recovery.spec.mjs` (a 5 s autosave quiesce) and the Rust test
-  `an_absurdly_large_input_is_refused_quickly` (a 2 s budget — measured at 4.9 s in a full
-  workspace sweep and 0.21 s alone). Both failed once in a full parallel run and passed
-  3/3 isolated. Prefer waiting on an observable state change when writing a new one.
-- Distinguish *your* regression from pre-existing failure with evidence: stash, rebuild,
-  run the same specs on `main`, compare.
-- Do not take a subagent's report at face value. Re-verify its load-bearing claim yourself.
-  Agents in this repo have been right when I was wrong, and wrong when confident.
+- Bisect a possibly flaky test with 5 runs per ref, never one.
+- Flaky under worker contention, so re-run in isolation first: `context-menu`,
+  `header-footer-editing`, `object-command-reach`, `table-editing-ux` specs.
+- Clock-bound, where retries do not help: `draft-recovery.spec.mjs` and the Rust test
+  `an_absurdly_large_input_is_refused_quickly`. New tests wait on a state change, not time.
+- Prove a failure is pre-existing with evidence: stash, rebuild, run the same specs on `main`.
+- Re-verify a subagent's load-bearing claim yourself.
 
-## 6a. The six mistakes this session made repeatedly, and what closes each
+## 6a. Habits with mechanical closes
 
-These are written down because the owner had to name each of them **more than once in a
-single session** — in one case fifteen times. They are not advice. Each one has a
-mechanical close, and the close is the point: a rule the coordinator has to remember is a
-rule that will break again.
+1. A lane's hand-back is not the end of its programme: raise the PR **and** relaunch the lane
+   in the same message.
+2. A verified gap is a work item: a finding ships with its change, or names the lane that
+   will build it.
+3. "Fixed" means merged; otherwise say "the fix is in #N". No CI verdict until every check
+   has reported.
+4. A diff touching `docs/` or any string ⇒ run the glossary **and** `build.sh` (§3). Turn a
+   hand-maintained number into a generated artifact.
+5. Adding a field to a model struct ⇒ `cargo check --workspace --all-targets` first, and
+   expect a sibling-branch collision.
+6. Check free disk before fanning out, cap concurrency to what the disk holds, and tell the
+   owner which lane is paused and why.
 
-1. **A lane's hand-back is not the end of its programme.** The coordinator kept relaying a
-   report, raising the PR, and stopping — so "carry on" had to come from the owner every
-   time. Co-editing stopped **four** times this way. **Close: raise the PR and relaunch the
-   lane in the same message.** Every lane brief now ends with "report and I will raise it,
-   and relaunch you in the same breath". If a lane's domain is contested, say which lane it
-   queues behind — do not silently drop it.
+## 7. Parallelise by default
 
-2. **A verified gap is a work item, not a deliverable.** Analysis is visible immediately
-   and shipping is not, so a finding kept getting delivered *as if it were the fix*.
-   ADR-061 named the one function Compare needed and it sat unbuilt for hours while its
-   analysis was reported twice. **Close: a lane that produces a finding also produces the
-   change, or names the lane that will, in the same report.**
+Independent pieces ⇒ fan out without being asked. Scope lanes by **file domain**, not by
+feature: layout `crates/casual-doc-layout/**` · import `crates/casual-doc-import/**` ·
+export/io `crates/casual-doc-export/**`, `crates/casual-doc-io/**` · wasm
+`crates/casual-doc-wasm/**` · webapp `webapp/**`. Only **one** agent may own
+`webapp/src/main.js`, and only one `crates/casual-doc-wasm/src/lib.rs`.
 
-3. **"Fixed" must mean merged, not "the fix is in a PR".** The owner carried that
-   difference. And a CI verdict was twice called from a run still in flight — once
-   reporting one failure where there were **eight** across three shards. **Close: no verdict
-   until every check has reported; say "the fix is in #N" when that is what is true.**
+- Always `isolation: "worktree"` with absolute scratchpad paths. Each worktree carries a
+  multi-GB `target/`; push an unmerged branch before `git worktree remove --force`.
+- Every lane prompt says: commit on your branch; do not merge; do not open a PR; **add your
+  row to `docs/109-BACKLOG.md` in the implementation commit** (resolve a conflict by
+  rebasing; never impose a no-tracker-edits rule); follow the §4 mutation rule and the full
+  §3 gate list including `cargo doc` and the browser suite; "report, and I will raise it
+  and relaunch you".
 
-4. **A scoped test run must still cover the derived artifacts the change FEEDS.** Scoping
-   tests to the change is right (§6) and is not the same as scoping past a generated file.
-   The glossary derives from **every** `docs/*.md` and reddened `main` five times in one
-   day — the last time because the coordinator ran `fmt` plus two crates, skipped
-   `build.sh`, and broke every open PR at once. The `main.js` line ceiling churned
-   **four** times the same way. **Close: if the diff touches `docs/` or any string, run
-   `node webapp/tools/build-glossary.mjs` AND `cd webapp && ./build.sh` — the glossary
-   generator is NOT part of the build (see the correction below), and the build runs the
-   remaining generators and their
-   `--check`. A hand-maintained number is a defect; make it a generated artifact that
-   refuses to write a worse value.**
+## 8. Design first, and name the pattern
 
-   **CORRECTION, measured 2026-10-04: `build.sh` is NOT a superset of every
-   generator's check.** `webapp/tools/build-glossary.mjs` sits outside it —
-   `grep -n glossary webapp/build.sh` returns nothing — so a lane that runs the
-   full build and nothing else STILL ships a stale glossary, and `build.sh`
-   passed green while the committed glossary was stale. That is how this
-   recurred after the rule was written. The instruction is therefore:
+Per `AGENTS.md`: read the docs → design → discuss a substantial design → add the `109` row →
+implement in small increments → test → update docs and ADRs.
 
-   ```sh
-   node webapp/tools/build-glossary.mjs   # then commit the result
-   cd webapp && ./build.sh                # pages, SEO, embed docs, brand, site
-   ```
+- **Name the known pattern before inventing one** (caching, interning/flyweight,
+  virtualization, copy-on-write, normalization, indexing, streaming, back-pressure), or say
+  why none applies. Increments that each buy less than the last mean the wrong axis.
+- Design every interaction from Word and Google Docs first. Prefer one mechanism over two
+  parallel paths.
+- Durable knowledge → a numbered doc in `docs/`. Decisions → an ADR in
+  `docs/08-ADR-REGISTER.md`. Execution state → `109`. Record open questions. Where behaviour
+  deliberately differs from Word, say so in the code. Counts in docs are derived, never
+  hand-maintained.
+- **Performance (there is no CI perf job yet):** state the complexity of anything that
+  touches the document in its doc comment; never call a lookup-by-id (`paragraph_properties`,
+  `find_paragraph`, which are linear scans) inside a loop; per-interaction work is O(1) in
+  document size; anything O(document) runs off the main thread with progress and cancel;
+  guard complexity with n-versus-2n doubling tests, not millisecond thresholds; measure time
+  to interactive, not "completes in a harness".
 
-   both, as separate commands, whenever the diff touches `docs/` or any string.
-   The glossary derives from **every** `docs/*.md`, so a prose sentence in any
-   numbered doc moves it.
+## 9. Evidence
 
-5. **Two green PRs can merge into a red main.** #738 added struct literals, #739 added the
-   field and swept 33 of them; each was green, the merge did not compile, and the opposite
-   order breaks identically. Same shape as #645/#646. **Close: a widely-constructed model
-   struct gets `#[non_exhaustive]` plus a builder with defaults, so a literal added on a
-   sibling branch cannot be wrong.** Until then, run `cargo check --workspace
-   --all-targets` **first** when adding a field, and expect the collision.
+1. A published number is generated from a committed artifact, or it is not published.
+2. Prose calling a gate "CI-enforced" names the workflow, and a test asserts it is armed.
+3. Support matrices enumerate families, not successes. Absence is overstatement.
+4. Modeled is not shipped; built is not reachable. Before marking done, check a user can
+   reach it.
+5. Dated audits (`44`/`46`/`55`/`60`) understate the engine. `webapp/src/fidelity.js` is
+   current and honesty-guarded.
+6. Every number on `index.page.html` is `data-claim` tagged and re-derived by
+   `tests/site_claims.test.mjs`. A "Not yet" cites a family graded `none` or an open row.
+   Understating is also false; re-verify a pinned cell before trusting it.
+7. Design prototypes are not evidence: adopt the visuals, re-derive every claim.
 
-6. **The machine is a constraint to plan around, not an interruption.** The disk filled
-   **seven** times, killed lanes repeatedly, and cost unrecoverable work three times —
-   because eight Rust lanes were started on one volume. **Close: check free space before
-   fanning out, keep concurrency to what the disk supports, and tell the owner which lane
-   is paused and why rather than discovering it as an ENOSPC.** One lane's work was only
-   recovered by diffing a dead worktree against its own commit.
+## 10. Enterprise grade means fixing the class
 
-## 7. Parallelise with agents — by default, not on request
+- The same failure in several places ⇒ fix the pattern and add a guard that fails the build
+  if it returns (for example `expectEditorFocused()` plus `focus_contract.test.mjs`).
+- Assert the guarantee, not the mechanism.
+- Every capability is reachable from ≥2 surfaces (ribbon, menu, context menu, palette,
+  shortcut).
+- Never a dead control: an unbuilt command ships disabled **with a reason**.
+- UI floor: keyboard and screen-reader operable, localised, themed, touch-usable, and it
+  says something when it refuses. No `aria-hidden` on anything focusable.
+- A file over ~2,000 lines needs a recorded exception.
 
-The owner expects parallel work and should not have to ask. When there is more than one
-independent piece, fan out.
+## 11. Repo traps
 
-**Scope agents by FILE DOMAIN, not by feature**, or they collide. Domains that don't
-overlap:
+- Design tokens are deliberate (`--radius: 3px`, `--accent: #3355c4`, an AA sweep in both
+  themes). Adopt the structure; propose visual changes to the owner instead of making them.
+- Fonts are self-hosted (Inter, Material Symbols Outlined) and `chrome_fonts.test.mjs`
+  forbids the Google Fonts CDN. Never add a CDN font.
+- The ribbon must fit 1280px. Do not quote a headroom figure: `ribbon-width-budget.spec.mjs`
+  derives it and holds a 120px floor. Overflow shows up as a horizontal scrollbar on the
+  band, not as the `⋯` button.
+- `main.js` has zero exports and binds ~360 fixed DOM ids at import; no mount seam (HF-109).
+- `pages[]` holds page records; the sheet element is `page.wrap`; `scaleOf(page)` gives its
+  rect.
+- The oracle geometry gate compares the text region only, and only Latin-only fixtures may
+  be in it.
+- `.docm` is rejected at open: the policy is undecided, not an oversight.
+- Never symlink `node_modules` into a worktree (git commits the link as a blob and the Pages
+  deploy dies). Run `npm ci` there instead.
+- `webapp/pkg` is not committed: run `./webapp/build.sh` after a rebase or a Rust change
+  before trusting an e2e result.
+- Chrome built at boot must not call `t()` until it is shown: the catalogue lands later,
+  and `chrome-raw-keys.spec.mjs` reads `title`/`aria-label` on HIDDEN elements too. A
+  scoped e2e run missed this and turned `main` red (#815 → HF-281); before pushing UI, run
+  the whole browser suite, not just the specs named after the feature.
+- Run Playwright from `webapp/`. Specs never assert Mac glyphs; use the `shortcutHint`
+  fixture.
+- A relative `git worktree add name` lands inside the repo. Use absolute paths.
 
-| Lane | Files |
-| --- | --- |
-| layout engine | `crates/casual-doc-layout/**` |
-| import | `crates/casual-doc-import/**` |
-| export / io | `crates/casual-doc-export/**`, `crates/casual-doc-io/**` |
-| wasm facade | `crates/casual-doc-wasm/**` |
-| webapp | `webapp/**` |
+## 12. Priority order
 
-**Only ONE agent may own `webapp/src/main.js`** — it is a 15,951-line module and two agents
-in it will conflict badly. Same for `casual-doc-wasm/src/lib.rs` (26,374 lines).
-
-**Always use `isolation: "worktree"`.** Each worktree carries its own `target/` (~2–7 GB),
-so remove finished ones (`git worktree remove --force`) — but **push any unmerged branch to
-origin first**, because removing the worktree is easy to do before noticing the work was
-never merged.
-
-**Every agent prompt must say:** commit your work on your branch; do NOT merge; do NOT open
-a PR; **add your one row to `docs/109-BACKLOG.md` in the implementation commit, and resolve
-any conflict there by rebasing.** Agents have left work uncommitted and have taken
-unrequested actions. Also tell them the mutation rule and the full gate list — they will
-otherwise skip `cargo doc` and the browser suite.
-
-**This instruction used to read "do NOT edit `docs/105` or any tracker", and that was the
-cause of a failure the owner reported repeatedly.** It was written to stop parallel lanes
-conflicting inside one table, and it silently cancelled a standing instruction: eighteen
-pieces of work, eight of them already merged, existed only in commit messages and PR
-bodies. A conflict in a tracker is resolved by rebasing — it is a Markdown table, and the
-cost of a rebase is nothing beside the cost of work nobody can see. **Do not reintroduce a
-no-tracker-edits rule for any lane.**
-
-## 8. Design first, and document as you go
-
-Per `AGENTS.md`: read the docs, design, discuss substantial designs, update
-the tracker, implement in reviewable increments, test, keep docs and ADRs current.
-`AGENTS.md` step 4 still names `docs/14-EXECUTION-TRACKER.md`; **`14` is an archive closed
-to new rows since 2026-10-04 and the tracker to update is `docs/109-BACKLOG.md`** — one
-row, in the same PR as the work, including when the work is a newly discovered issue.
-
-### Name the known pattern before inventing an approach
-
-**Before designing anything structural, say what the established solution is.** Most
-problems here are not new: they are caching, interning, virtualization, copy-on-write,
-normalization, indexing, streaming, back-pressure. Write down which one applies, or why
-none does, *before* writing code. A design that does not name its prior art is usually
-about to rediscover it badly.
-
-This is here because the owner had to supply it, twice in one session, on work that had
-already shipped three increments:
-
-- **Model memory.** Every `Paragraph` and `Run` stored its properties **by value**, so a
-  1.3M-paragraph plain-text document held 1.3 million copies of one distinct
-  `RunProperties`. Three rounds of work boxed rarely-populated *fields* — each measured
-  less than projected — while the actual defect was duplication, not struct width. The
-  owner named it: *"minimising repeated properties… normalization/denormalization, people
-  study it first year of college."* **Flyweight/interning**: properties in a side table,
-  nodes holding a handle, copy-on-write on mutation. ~1,000 B/paragraph to ~150–200 B —
-  a change of kind, not of degree, and unreachable by shrinking fields.
-- The same session raised a viewer ceiling three times by measurement alone before asking
-  what the *shape* of the cost was.
-
-The tell is a sequence of increments each buying less than the last. That is not a hard
-problem being ground down; it is the wrong axis. Stop and ask what the textbook does.
-
-Corollaries that follow from the same habit:
-
-- **Quote the competitive standard for interaction design**, not just for features — §1
-  and the editing-standard rule already say every interaction is designed from Word/Docs
-  first. A dropdown holding every style in the document fails that test before any code
-  is written.
-- **Prefer one mechanism over two.** The windowed-layout work kept a single paginator
-  generic over a trait rather than writing a second height-only one, because two
-  implementations of one rule diverge. When a design needs a parallel path, that is
-  evidence the abstraction is wrong.
-
-- Durable knowledge goes in a **numbered doc** under `docs/`. Decisions go in an **ADR**
-  (`docs/08-ADR-REGISTER.md`). Execution state goes in the **tracker**.
-- **Record open questions rather than hiding uncertainty.** Where behaviour deliberately
-  differs from Word, say so in the code — do not leave it ambiguous.
-- Counts in docs must be **derived, not hand-maintained**. Hand-maintained numbers have
-  drifted into false public claims twice (`104` read 114/47 against an actual 146/54).
-
-### Performance is a gate, not a hope
-
-This repository enforces correctness six ways and performance not at all. There is no
-CI job that would notice an O(n²) in a core path, and that is exactly how one shipped:
-`documentOutline` called `paragraph_properties` per node, and that helper walks the
-document linearly to find one paragraph — 1.3M × 1.3M block visits on a real customer
-file, for a panel that returned an empty list. The owner found it by waiting minutes for
-a panel to open. No test was ever going to.
-
-So, until a perf job exists in CI, these are the rules:
-
-- **State the complexity of anything that touches the document, in the doc comment.**
-  If it is not O(1) or O(viewport), say what it is and why that is acceptable.
-- **Never call a lookup-by-id inside a loop over ids.** `paragraph_properties`,
-  `find_paragraph` and their siblings are **linear scans**; they look like accessors at
-  the call site. Walk once and carry what you need.
-- **Per-interaction work is O(1) in document size** (`docs/107` §4, an owner constraint).
-  A click, a keystroke, a scroll. If an interaction is O(document) anywhere, that is a
-  defect regardless of how fast it feels on the fixture.
-- **Anything O(document) must not run on the main thread**, must show real progress, and
-  must be cancellable. Opening, panels that enumerate the document, find-all, counts,
-  export. A frozen tab is a hung tab whatever the profiler says.
-- **Guard complexity, not milliseconds.** Build documents of *n* and *2n* and assert the
-  work roughly doubles. A timing threshold is flaky and cannot tell a slow constant from
-  a quadratic; a doubling test catches the thing that actually kills a large document.
-- **"Completes in a harness" is not "usable in a tab."** Measure time to *interactive*.
-  `MAX_VIEWER_BLOCKS` was raised to 1,800,000 on a Playwright run that merely finished,
-  which admitted documents that freeze the tab for 30–110 seconds — strictly worse than
-  the honest refusal it replaced.
-
-## 9. Evidence rules — these exist because the public page lied twice
-
-`webapp/fidelity.html` carried fabricated claims on two separate occasions.
-
-1. **A published number is generated from a committed artifact, or it is not published.**
-2. **Prose describing a CI gate must name the workflow, and a test must assert the gate is
-   armed.** A gate claimed as "CI-enforced" had never executed.
-3. **Absence from a support matrix is an overstatement by omission** — enumerate families,
-   not successes.
-4. **"Modeled" is not "shipped", and "built" is not "reachable."** Constructs are typed and
-   round-tripped with no layout consumer; a whole subsystem is built and unreachable from
-   the product. This is the most expensive recurring pattern here — when you mark something
-   done, check a user can reach it.
-5. Dated audits (`44`/`46`/`55`/`60`) are ~1000 commits stale and **understate** the engine.
-   `webapp/src/fidelity.js` is the current artifact and is under an honesty guard.
-6. **The landing page lied a third time, in both directions** (`105` EV-007): a "three of
-   five" parity figure contradicting the fidelity page's sourced 4/5, a corpus file that does
-   not exist, a "sub-10 ms" repaint claim with no benchmark, and three shipped features
-   listed as "Not yet". Every number on `index.page.html` is now tagged `data-claim` and
-   re-derived by `tests/site_claims.test.mjs`; every "Not yet" item must cite a family graded
-   `none` or an open `105` row. **Understating is also false** — check a gap is still open
-   before you publish it. And a guard can pin a lie: `fidelity_data.test.mjs` was holding two
-   grades at values the code had already outgrown, so re-verify a pinned cell before
-   trusting it.
-7. **Design prototypes are not evidence.** A prototype's numbers, API snippets and
-   "live application" labels are placeholders. Its `doc.transaction()`/`doc.writeDocx()`
-   APIs did not exist, and it booted a live editor iframe on page load. Adopt the visual
-   system; re-derive every claim.
-
-## 10. Enterprise-grade means fixing the class, not the instance
-
-The owner asked for production/enterprise quality in code **and** UI/UX. Concretely:
-
-- When the same failure appears in several places, **fix the pattern and add a guard that
-  fails the build if it returns.** Six specs asserted `expect(#pages).toBeFocused()` and
-  were being patched one CI failure at a time; the fix was a shared
-  `expectEditorFocused()` plus `tests/focus_contract.test.mjs` to prevent drift.
-- Tests should assert the **guarantee**, not the mechanism. "The editor can receive text",
-  not "element X has focus."
-- **Every capability must be reachable from ≥2 surfaces** (ribbon / menu / context menu /
-  palette / shortcut). Single-surface capability is a recurring defect (`docs/105` UX-004).
-- **Never a dead control.** A command that does not exist yet ships **disabled with a
-  reason**, never as a button that does nothing.
-- UI floor per phase: keyboard-operable, screen-reader-operable, localised, themed,
-  touch-usable, and able to **say something** when it refuses.
-- No `aria-hidden` on anything focusable (axe `aria-hidden-focus`).
-- No file should exceed ~2,000 lines without a recorded exception.
-
-## 11. Repo-specific traps
-
-- **Design tokens are deliberate. Do not restyle.** `--radius: 3px` is a considered flat
-  redesign (`docs/63`), `--accent: #3355c4`, 140 tokens, one raw hex in 6,481 CSS lines, and
-  an AA contrast sweep over every text node in both themes. Adopt structure; propose visual
-  changes to the owner rather than making them.
-- **Fonts are self-hosted and guarded.** `webapp/src/fonts.css` self-hosts **Inter** and
-  **Material Symbols Outlined**; `tests/chrome_fonts.test.mjs` asserts no
-  `fonts.googleapis.com`/`gstatic.com` reference. Never add a CDN font link — it breaks
-  local-first.
-- **The ribbon must fit 1280px**, and the budget is bigger than this file used to claim.
-  Measured in Chromium: the Home band has **~288px of growth headroom** at 1280 and fits
-  down to a **1017px** viewport; the other six bands fit down to 702-743px. This file said
-  "~55px of slack" and `ribbon-home.spec.mjs` said "10px" — both wrong, and the figure was
-  being quoted to reject ribbon additions, so a five-fold underestimate was keeping
-  capabilities unreachable on purpose.
-  **The mechanism was wrong too, which matters more than the number.** Widening a control
-  does *not* exile a group into the `⋯` overflow: that button tracks VIEWPORT width, not
-  content width. What breaks first is a **horizontal scrollbar** on the band. So the guard
-  that protects you is the no-horizontal-scroll rule, not the overflow button.
-  **Do not quote a number from here — derive it.** `webapp/tests/e2e/ribbon-width-budget.spec.mjs`
-  measures the headroom, publishes it, and holds a 120px floor; a budget that can be spent is
-  the point, and spending it to nothing silently is what the floor prevents.
-- `webapp/src/main.js` has **zero exports** and binds ~360 fixed DOM ids at import. There is
-  no mount seam yet (HF-109).
-- **`pages[]` holds page RECORDS, not elements.** The sheet element is `page.wrap`, and
-  `scaleOf(page)` already returns its rect.
-- The oracle geometry gate compares the **text region** (pen extents + baseline ±
-  ascent/descent), and **only Latin-only fixtures** may be in it — substituted text of a
-  different width changes where the rest of the paragraph *wraps*, so excluding the
-  offending line is not enough.
-- `.docm` is rejected at open; that policy is undecided, not an oversight.
-- **Never symlink `node_modules` into a worktree.** `.gitignore`'s `node_modules/` matches a
-  *directory*; git treats a symlink as a file, so `git add -A` commits it as a `120000` blob
-  pointing at one machine's absolute path. CI stays green, and the Pages deploy dies in
-  `tar: ./node_modules: File removed before we read it`. Worse, checking out a branch that
-  carries the blob replaces the real `node_modules` with a self-referential link. Run
-  `npm ci` in the worktree instead. `repository-policy` now refuses any tracked symlink.
-- **`webapp/pkg` is not committed.** The browser suite silently runs against whatever engine
-  was last built; after a rebase or a Rust change, `./webapp/build.sh` before trusting an
-  e2e result. A spec failed here for no reason but a stale wasm.
-- **Run Playwright from `webapp/`.** From the repo root it picks up no config and fails to
-  collect with "did not expect test() to be called here".
-- **Specs must not assert Mac glyphs.** `formatShortcut` renders `⌘P` as `Ctrl+P` on the
-  Linux runner; derive expectations with the `shortcutHint` fixture (`105` UX-009).
-- **Relative worktree paths land inside the repo.** `git -C <repo> worktree add name` creates
-  `<repo>/name`. Use absolute scratchpad paths.
-
-## 12. Engineering priority order
-
-From `AGENTS.md`, in order: correctness and document safety → deterministic behaviour →
-security and resource bounds → compatibility and round-trip fidelity → performance → API
-stability → UX quality → maintainability.
-
-Hard rules: public mutation goes through commands and transactions; the runtime must not
-depend on the browser DOM as source of truth; unsupported document data is preserved where
-safe or reported explicitly; **no silent data loss**; no mandatory server, React, or
-collaboration provider dependency.
+Correctness and document safety → determinism → security and resource bounds →
+compatibility and round-trip fidelity → performance → API stability → UX → maintainability.
+Public mutation goes through commands and transactions; the DOM is never the source of
+truth; unsupported data is preserved or reported; **no silent data loss**; no mandatory
+server, React or collaboration provider.
 
 ## 13. Communication
 
-Be direct and factual. Surface risks early. **Do not overstate support or fidelity.** If a
-feature is partial, say so. When you get something wrong, correct it plainly with the
-evidence and move on — do not bury it or over-apologise.
+Direct and factual. Surface risks early. Never overstate support or fidelity: a partial
+feature is described as partial. Correct a mistake plainly with the evidence and move on.

@@ -598,6 +598,15 @@ export class VersionCapturePolicy {
     if (revision === this.lastRevision) {
       return { capture: false, kind: null, why: HISTORY_STATUS.UNCHANGED };
     }
+    // THE TAB IS GOING AWAY, so the interval no longer protects anything: it
+    // exists to stop a pause in typing spending the count ceiling, and there is
+    // no next pause after `pagehide`. Waiting for it lost up to ten minutes of
+    // the last session's edits — the ones a reader is likeliest to want back.
+    // A tab merely switched away from (`hidden`) still waits, because that
+    // happens many times an hour.
+    if (reason === CAPTURE_REASON.PAGEHIDE) {
+      return { capture: true, kind: VERSION_KIND.AUTO, why: HISTORY_STATUS.RECORDED };
+    }
     if (this.lastAt !== 0 && now - this.lastAt < this.intervalMs) {
       return { capture: false, kind: null, why: HISTORY_STATUS.NOT_DUE };
     }
@@ -917,6 +926,7 @@ export async function openHistoryStore({
       expectedHead = undefined,
       skipIfUnchanged = false,
       contentId = "",
+      words = null,
     }) {
       if (!bytes || bytes.length === 0) return result(HISTORY_STATUS.MISSING_CHECKPOINT);
       const named = sanitiseVersionName(name);
@@ -1056,6 +1066,10 @@ export async function openHistoryStore({
           // the checkpoint's storage key, and two rows may legitimately share one
           // artifact (Save, then Name this version).
           contentId,
+          // The document's word count at capture, or null when the host gave
+          // none (an older row, a host without stats): what lets a row say
+          // "Words added: 12" without parsing a checkpoint.
+          words: Number.isFinite(words) ? words : null,
           parentVersionId: lineage.headVersionId ?? null,
           createdAt: now,
           kind,
@@ -1357,6 +1371,7 @@ export async function openHistoryStore({
         // definition. Recomputing would need a parse of bytes this transaction is
         // only moving a pointer to.
         contentId: source?.contentId ?? "",
+        words: source?.words ?? null,
         parentVersionId: lineage.headVersionId ?? null,
         restoredFromVersionId: operation.targetVersionId,
         createdAt: now,
@@ -1464,10 +1479,16 @@ export async function openHistoryStore({
      * `evicted` is the disclosure `docs/139` §13 asks for: a browser may drop an
      * origin's IndexedDB, and history that is gone must be described as gone
      * rather than as an empty timeline. O(versions in the store).
+     *
+     * `lineageId` scopes the counts to ONE document. The panel used to call this
+     * unscoped and print the whole browser's totals under one document's list —
+     * "47 versions kept" over six rows, and "18 of 15 named" against a limit that
+     * is per document — which read as a broken count to anyone who checked.
      */
-    async storageStatus({ expectVersions = 0 } = {}) {
+    async storageStatus({ expectVersions = 0, lineageId = null } = {}) {
       const tx = db.transaction([VERSION_META_STORE, DOCUMENTS_STORE], "readonly");
-      const rows = await idbRequest(tx.objectStore(VERSION_META_STORE).getAll());
+      const all = await idbRequest(tx.objectStore(VERSION_META_STORE).getAll());
+      const rows = lineageId ? all.filter((row) => row.lineageId === lineageId) : all;
       const lineages = await idbRequest(tx.objectStore(DOCUMENTS_STORE).count());
       let usage = null;
       let quota = null;

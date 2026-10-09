@@ -505,6 +505,7 @@ pointerdown
 pointermove
 polyline
 populatable
+positionally
 postMessage
 pre
 preedit

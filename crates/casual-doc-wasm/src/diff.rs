@@ -119,6 +119,10 @@ pub struct WasmVersionDiff {
     right: Option<Side>,
     job: DiffJob,
     result: Option<String>,
+    /// The finished sidecar as a value, kept beside the two parsed sides so a
+    /// redline view can be painted from them without re-parsing either
+    /// (`WasmDocument::showComparison`, ADR-065).
+    diff: Option<VersionDiff>,
     cancelled: bool,
     total_blocks: u32,
     projected: u64,
@@ -150,6 +154,7 @@ pub fn begin_version_diff(left: Vec<u8>, right: Vec<u8>) -> WasmVersionDiff {
         right: None,
         job: DiffJob::new(),
         result: None,
+        diff: None,
         cancelled: false,
         total_blocks: 0,
         projected: 0,
@@ -219,6 +224,7 @@ impl WasmVersionDiff {
         self.cancelled = true;
         self.job.cancel();
         self.result = None;
+        self.diff = None;
         // The bytes are the largest thing held, and a cancelled job will not
         // need them again.
         self.left_bytes = Vec::new();
@@ -287,6 +293,16 @@ impl WasmVersionDiff {
 }
 
 impl WasmVersionDiff {
+    /// The older side, the newer side and the sidecar of a FINISHED
+    /// comparison, or `None` before completion and after a cancel.
+    pub(crate) fn finished(&self) -> Option<(&Document, &Document, &VersionDiff)> {
+        Some((
+            &self.left.as_ref()?.document,
+            &self.right.as_ref()?.document,
+            self.diff.as_ref()?,
+        ))
+    }
+
     /// [`WasmVersionDiff::step`] without the `JsValue`.
     pub(crate) fn step_inner(&mut self, budget: u32) -> Result<String, String> {
         if self.cancelled {
@@ -343,6 +359,7 @@ impl WasmVersionDiff {
                     diff.to_json()
                         .map_err(|error| format!("serialize diff: {error}"))?,
                 );
+                self.diff = Some(diff);
                 // THE TWO PARSED DOCUMENTS ARE KEPT, and this used to drop them
                 // here with the note that "the sidecar does not reference them".
                 // That was true of the sidecar and not of the reader: a unified
@@ -471,13 +488,13 @@ const VERBATIM_TEXT_BYTES: usize = casual_doc_diff::job::EXCERPT_BYTES;
 /// One paragraph-local edit a comparison asks for, already translated into the
 /// **review anchor** offsets the review primitives take.
 #[derive(Clone, Debug)]
-struct ComparisonEdit {
+pub(crate) struct ComparisonEdit {
     /// The paragraph in THIS document, resolved from the change's right-hand
     /// path (the only coordinate that survives the comparison's re-import).
-    node: NodeId,
+    pub(crate) node: NodeId,
     /// Review-anchor range of text this document has and the compared one did
     /// not. `start == end` for a pure deletion, which adds no text here.
-    start: u32,
+    pub(crate) start: u32,
     /// End of that range.
     end: u32,
     /// What to mark `start..end` as, or `None` when nothing here is new.
@@ -626,15 +643,35 @@ fn verbatim_removed_text(change: &DiffChange) -> Option<String> {
     (text.len() == span && span <= VERBATIM_TEXT_BYTES).then(|| text.clone())
 }
 
+/// The removed text of a change, read from the OLDER DOCUMENT itself when the
+/// caller still holds it, else [`verbatim_removed_text`].
+///
+/// A redline view holds both parsed sides (ADR-065), so it is not limited to
+/// what the record's excerpt carries: the left anchor's byte range is sliced
+/// out of the left block's projected text, which is the same space the anchor
+/// was recorded in. A range that does not fall on character boundaries is
+/// refused rather than repaired. **O(the block)**.
+fn removed_text(change: &DiffChange, left: Option<&Document>) -> Option<String> {
+    let Some(document) = left else {
+        return verbatim_removed_text(change);
+    };
+    let anchor = change.left.as_ref()?;
+    let text = block_text(block_at_path(document, &anchor.story, &anchor.path)?)?;
+    text.get(anchor.start as usize..anchor.end as usize)
+        .filter(|removed| !removed.is_empty())
+        .map(str::to_owned)
+}
+
 /// Turns one change into the edit it asks for, or reports why it cannot be one.
 ///
 /// Every `None` has recorded a key first: a comparison that quietly applied
 /// three of its five changes and reported "done" is the silent loss `AGENTS.md`
 /// forbids.
-fn classify_change(
+pub(crate) fn classify_change(
     document: &Document,
     notes: &NoteAnchorLengths,
     change: &DiffChange,
+    left: Option<&Document>,
     loss: &mut BTreeSet<&'static str>,
 ) -> Option<ComparisonEdit> {
     // What this document's own text can be marked as. `UpdateReviewState`
@@ -702,7 +739,7 @@ fn classify_change(
         }
     };
 
-    let removed = verbatim_removed_text(change);
+    let removed = removed_text(change, left);
     if removed.is_none() && change.left_text.is_some() {
         // The record carries the removed text only as an excerpt, so the
         // deletion half of this change is reported rather than invented. The
@@ -916,7 +953,7 @@ impl WasmDocument {
         }
         let mut edits: Vec<ComparisonEdit> = Vec::new();
         for change in &diff.changes {
-            if let Some(edit) = classify_change(&self.document, &notes, change, &mut loss) {
+            if let Some(edit) = classify_change(&self.document, &notes, change, None, &mut loss) {
                 edits.push(edit);
             }
         }
@@ -924,7 +961,47 @@ impl WasmDocument {
             || Pos::new(self.document.id(), 0),
             |edit| Pos::new(edit.node, edit.start),
         );
+        let operation =
+            match self.comparison_review_operation(&notes, edits, author, &date, &mut loss)? {
+                Some(operation) => operation,
+                // Nothing in the comparison could be expressed. The document is
+                // reported UNCHANGED rather than routed through an empty edit, which
+                // would bump the revision and enable Save for a comparison that
+                // changed nothing — and `loss` says why.
+                None => {
+                    return Ok(EditResult {
+                        node: caret.node.to_string(),
+                        offset: caret.offset,
+                        revision: self.revision,
+                        page_count: self.page_count(),
+                        dirty: Vec::new(),
+                        paste_loss: loss.into_iter().map(str::to_owned).collect(),
+                        placed_object: String::new(),
+                    });
+                }
+            };
+        let mut result = self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)?;
+        result.paste_loss = loss.into_iter().map(str::to_owned).collect();
+        Ok(result)
+    }
 
+    /// The ONE review operation that marks a comparison's paragraph-local
+    /// edits, or `None` when nothing in them could be expressed.
+    ///
+    /// Shared by Review ▸ Compare (`apply_diff_as_revisions`, ADR-061) and the
+    /// redline view (`show_comparison`, ADR-065), so the two cannot mark the
+    /// same change differently.
+    ///
+    /// Complexity: **O(edits + the paragraphs they touch)**, plus one paragraph
+    /// index.
+    pub(crate) fn comparison_review_operation(
+        &mut self,
+        notes: &NoteAnchorLengths,
+        edits: Vec<ComparisonEdit>,
+        author: &str,
+        date: &Option<String>,
+        loss: &mut BTreeSet<&'static str>,
+    ) -> Result<Option<casual_doc_edit::Operation>, String> {
         // Grouped by paragraph, and applied within one in DESCENDING offset
         // order: a recorded deletion inserts the removed text as new inlines, so
         // working from the end means no later edit's offsets have moved by the
@@ -958,34 +1035,14 @@ impl WasmDocument {
         let mut bodies: Vec<Vec<BlockNode>> = Vec::new();
         for (group, mut body) in planned {
             for edit in group {
-                self.apply_comparison_edit(&notes, &mut body, &edit, author, &date, &mut loss)?;
+                self.apply_comparison_edit(notes, &mut body, &edit, author, date, loss)?;
             }
             bodies.push(body);
         }
 
         // ONE operation for the whole comparison, so accepting it, rejecting it
         // and undoing it are each a single act.
-        let operation = match update_review_operation_across(&self.document, &bodies, None) {
-            Ok(operation) => operation,
-            // Nothing in the comparison could be expressed. The document is
-            // reported UNCHANGED rather than routed through an empty edit, which
-            // would bump the revision and enable Save for a comparison that
-            // changed nothing — and `loss` says why.
-            Err(_) => {
-                return Ok(EditResult {
-                    node: caret.node.to_string(),
-                    offset: caret.offset,
-                    revision: self.revision,
-                    page_count: self.page_count(),
-                    dirty: Vec::new(),
-                    paste_loss: loss.into_iter().map(str::to_owned).collect(),
-                    placed_object: String::new(),
-                });
-            }
-        };
-        let mut result = self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)?;
-        result.paste_loss = loss.into_iter().map(str::to_owned).collect();
-        Ok(result)
+        Ok(update_review_operation_across(&self.document, &bodies, None).ok())
     }
 
     /// One change's share of the review body: the insertion wrapper, then the

@@ -16,7 +16,7 @@
 //   * the rail's captions were 9px and "Comments" ellipsised to "Comme…";
 //   * the margin "add a comment" button sat beside the page dimmed, round-less
 //     and with a `title` that never said what was missing.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, gotoSampleDocument, clickIntoFirstPage } from "./fixtures.mjs";
 
 test("the header is two bands: the document over the application", async ({
   page,
@@ -75,7 +75,8 @@ test("the header is two bands: the document over the application", async ({
 });
 
 test("the import-finding count reads as status, not as an alert", async ({ page }) => {
-  await gotoEditor(page);
+  // `sample.docx`: the rich fixture has no findings left to count (FID-AT-08/09/10).
+  await gotoSampleDocument(page);
   const chip = page.locator("#compatibilityStatus");
   await expect(chip).toBeVisible();
   // It was `color-mix(--accent-text 82%, --ink)` body text with no container,
