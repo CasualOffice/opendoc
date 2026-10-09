@@ -614,6 +614,11 @@ fn hidden_text_is_in_the_file_and_not_on_screen() {
 /// A minimal `.docx` with a styles part, built in memory, for what a body
 /// alone cannot carry.
 fn docx_with_styles(body: &str, styles: &str) -> Vec<u8> {
+    docx_package(body, styles, "", &[])
+}
+
+/// [`docx_with_styles`] with extra document relationships and parts.
+fn docx_package(body: &str, styles: &str, relationships: &str, extra: &[(&str, &[u8])]) -> Vec<u8> {
     use std::io::{Cursor, Write};
     use zip::write::SimpleFileOptions;
     let parts: [(&str, String); 5] = [
@@ -623,6 +628,8 @@ fn docx_with_styles(body: &str, styles: &str) -> Vec<u8> {
                 "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
                 "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
                 "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+                "<Default Extension=\"png\" ContentType=\"image/png\"/>",
+                "<Default Extension=\"bin\" ContentType=\"application/vnd.openxmlformats-officedocument.oleObject\"/>",
                 "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>",
                 "<Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>",
                 "</Types>"
@@ -640,17 +647,19 @@ fn docx_with_styles(body: &str, styles: &str) -> Vec<u8> {
         ),
         (
             "word/_rels/document.xml.rels",
-            concat!(
-                "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
-                "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>",
-                "</Relationships>"
-            )
-            .to_owned(),
+            format!(
+                "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+                 <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>\
+                 {relationships}</Relationships>"
+            ),
         ),
         (
             "word/document.xml",
             format!(
-                "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>{body}</w:body></w:document>"
+                "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+                 xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+                 xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\
+                 <w:body>{body}</w:body></w:document>"
             ),
         ),
         (
@@ -666,6 +675,12 @@ fn docx_with_styles(body: &str, styles: &str) -> Vec<u8> {
             .start_file(name, SimpleFileOptions::default())
             .expect("zip entry");
         writer.write_all(bytes.as_bytes()).expect("zip write");
+    }
+    for (name, bytes) in extra {
+        writer
+            .start_file(*name, SimpleFileOptions::default())
+            .expect("zip entry");
+        writer.write_all(bytes).expect("zip write");
     }
     writer.finish().expect("zip").into_inner()
 }
@@ -701,5 +716,78 @@ fn the_document_language_is_declared_when_the_document_declares_it() {
     assert!(
         text.starts_with("<!DOCTYPE html>\n<html lang=\"en-US\">\n"),
         "{text}"
+    );
+}
+
+/// A 1×1 PNG, the smallest real picture.
+const PNG_1X1: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+    0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+#[test]
+fn an_embedded_object_shows_the_picture_word_stored_for_it() {
+    // A chart, SmartArt or OLE object used to vanish from the file. Each
+    // carries the picture Word drew of it; that picture, at the object's size,
+    // is what a reader without the application sees — in Word too.
+    let package = docx_package(
+        concat!(
+            "<w:p><w:r><w:object w:dxaOrig=\"2000\" w:dyaOrig=\"1000\">",
+            "<v:shape style=\"width:100pt;height:50pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>",
+            "<o:OLEObject Type=\"Embed\" ProgID=\"Excel.Sheet.12\" r:id=\"rIdOle\"/>",
+            "</w:object></w:r></w:p>",
+        ),
+        "",
+        concat!(
+            "<Relationship Id=\"rIdImg\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/image1.png\"/>",
+            "<Relationship Id=\"rIdOle\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject\" Target=\"embeddings/oleObject1.bin\"/>",
+        ),
+        &[
+            ("word/media/image1.png", PNG_1X1),
+            ("word/embeddings/oleObject1.bin", b"not a real workbook"),
+        ],
+    );
+    let (text, report) = export_fixture(&package);
+    // 2000 twips is 100pt.
+    assert!(
+        text.contains("<img alt=\"Embedded object\" style=\"aspect-ratio:1270000 / 635000;width:100pt\" src=\"data:image/png;base64,"),
+        "{text}"
+    );
+    assert!(
+        report.contains(&"html.embedded_object_as_picture".to_owned()),
+        "{report:?}"
+    );
+    assert!(
+        !report.contains(&"html.embedded_object".to_owned()),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_text_box_keeps_its_size_and_margins_and_no_block_sits_in_a_paragraph() {
+    let floating = export_fixture(include_bytes!(
+        "../../../../fixtures/generated/floating-text-box.docx"
+    ))
+    .0;
+    assert!(
+        floating
+            .contains("max-width:100%;min-height:60pt;padding:3.6pt 7.2pt 3.6pt 7.2pt;width:216pt"),
+        "{floating}"
+    );
+    let inline = export_fixture(include_bytes!(
+        "../../../../fixtures/generated/inline-text-box.docx"
+    ))
+    .0;
+    // A `<div>` inside a `<p>` is closed early by every browser, which leaves
+    // a stray empty paragraph behind. The paragraph holding the box is a div.
+    for text in [&floating, &inline] {
+        assert!(!text.contains("<p class=\"s-default\"><div"), "{text}");
+    }
+    assert!(
+        inline.contains("<div class=\"s-default\"><div style=\"display:inline-block;"),
+        "{inline}"
     );
 }

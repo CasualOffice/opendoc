@@ -289,6 +289,7 @@ const FEATURES: &[&str] = &[
     "html.dangling_note",
     "html.document_author",
     "html.embedded_object",
+    "html.embedded_object_as_picture",
     "html.field_instruction",
     "html.group_shape",
     "html.grouped_drawing",

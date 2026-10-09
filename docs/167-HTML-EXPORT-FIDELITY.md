@@ -55,6 +55,8 @@ all; a bold run in a body paragraph is `<strong>` and nothing else.
 | numbered heading | the heading, with its label as a leading `<span class="marker">` |
 | table | `<colgroup>` from the grid; width, fixed layout, indent, alignment, cell spacing; `<thead>`/`<th>` only for rows marked as repeating headers; each cell's resolved borders (`nil` as `hidden`), fill, padding, vertical alignment, width, text direction; merges by grid column |
 | picture | its extent as `width` and `aspect-ratio`; crop as a clipping frame; rotation, flip, opacity; an anchored picture floats to its side for square/tight/through wrap and stands on its own line for top-and-bottom |
+| text box | a box with its size (`width`, `min-height`), fill, outline and inner margins, its vertical anchoring, floated to its side when anchored; the paragraph holding it is a `<div>`, because a `<p>` cannot hold blocks and a browser would close it early |
+| chart, SmartArt, OLE object | the picture Word stored for it, at the object's size (`html.embedded_object_as_picture`); with no stored picture, reported (`html.embedded_object`) |
 | footnote / endnote | a superscript link labelled as the page labels it (`note_numbering`); the notes written after the body, each linking back |
 | page and section | `@page` with the first section's size and margins; the body's measure is that section's text column; a multi-column section is CSS columns; a section, page-break-before or page break becomes `break-before`/`break-after: page` |
 | document | `lang` from the document's default language — none claimed when none is declared; its background colour |
@@ -66,7 +68,7 @@ all; a bold run in a body paragraph is `<strong>` and nothing else.
 — right-aligned, centred, with a leader — has no CSS equivalent; a tab advances on the default
 grid via `tab-size`), `html.break_within_paragraph`, `html.anchor_position` (a page coordinate),
 `html.table_float_position`, `html.text_box`, `html.grouped_drawing`, `html.group_shape`,
-`html.math_markup` (OMML, not MathML), `html.field_instruction` (the cached result is shown),
+`html.math_markup` (OMML, not MathML), `html.embedded_object` (a chart or object with no stored picture — the page draws charts itself, and that drawing is shaped glyphs, not text; `109` HF-285), `html.field_instruction` (the cached result is shown),
 `html.content_control`, `html.embedded_object`, `html.symbol_font` (only when the symbol map has
 no Unicode for the glyph), `html.picture_*`, `html.range_or_comment_marker`,
 `html.document_author`, `html.source_envelope`, `html.dangling_*`, `html.alt_chunk`.
@@ -80,6 +82,10 @@ no Unicode for the glyph), `html.picture_*`, `html.range_or_comment_marker`,
 - **List markers** sit outside the item's content edge, so the item's text starts exactly where
   the page starts it and wrapped lines align beneath it; the marker itself ends at that edge
   rather than starting at the hanging indent.
+- **Fonts are named, not embedded.** The file asks for the document's family and then its
+  metric-compatible partner (`'Calibri','Carlito',sans-serif`); a reader whose machine has
+  neither sees the generic class. Embedding the faces would make every export megabytes
+  larger for the reader who already has them; it is an option, not the default.
 - **Headers and footers** are reported, not written. Writing a "Page 1 of 14" footer into a page
   that has no pages would be a wrong fact, not a lost one.
 

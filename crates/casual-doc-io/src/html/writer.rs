@@ -35,11 +35,11 @@ use casual_doc_layout::paint_values::{
 };
 use casual_doc_model::v1::{
     BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Definitions, Document, DrawingAnchor,
-    Extent, GroupChild, HeightRule, HorizontalAlign, HorizontalPosition, HyperlinkTarget,
-    InlineNode, LevelSuffix, MediaId, NoteId, NoteKind, NumberFormat, Paragraph,
+    EmbeddedKind, Extent, GroupChild, HeightRule, HorizontalAlign, HorizontalPosition,
+    HyperlinkTarget, InlineNode, LevelSuffix, MediaId, NoteId, NoteKind, NumberFormat, Paragraph,
     ParagraphProperties, RevisionKind, RunProperties, SectionBoundary, SectionType, StyleId, Table,
-    TableWidth, TextDirection, VerticalAlignment, VerticalMerge, WidthType, WordprocessingGroup,
-    WrapMode,
+    TableWidth, TextBoxVerticalAnchor, TextDirection, VerticalAlignment, VerticalMerge, WidthType,
+    WordprocessingGroup, WrapMode,
 };
 
 use super::css::{
@@ -601,8 +601,13 @@ impl<'d> Writer<'d> {
             self.losses.record("html.tab_stop", ModelOutcome::Degraded);
         }
 
+        // A `<p>` or `<hN>` may hold only phrasing content, and a browser
+        // closes it early at a nested block — leaving a stray empty paragraph
+        // behind. A paragraph carrying a text box or a group is a `<div>`.
+        let holds_blocks = holds_blocks(&paragraph.inlines);
         let tag = match (&item, heading) {
             (Some(_), _) => "li".to_owned(),
+            (None, _) if holds_blocks => "div".to_owned(),
             (None, Some(level)) => format!("h{level}"),
             (None, None) => "p".to_owned(),
         };
@@ -1082,8 +1087,63 @@ impl<'d> Writer<'d> {
                 self.inlines(&field.inlines, cx, context)
             }
             InlineNode::TextBox(text_box) => {
+                // The box keeps its size, fill, outline and inner margins; what
+                // a web page cannot keep is a page position (it floats to its
+                // side instead) and Word's shrink-text-on-overflow.
                 self.losses.record("html.text_box", ModelOutcome::Degraded);
-                self.nested_blocks(&text_box.blocks, cx)
+                let mut css = Declarations::default();
+                if let Some(extent) = text_box
+                    .extent
+                    .filter(|extent| extent.width_emu > 0 && extent.height_emu > 0)
+                {
+                    css.set("width", emu(extent.width_emu));
+                    css.set("max-width", "100%");
+                    css.set("min-height", emu(extent.height_emu));
+                }
+                if let Some(fill) = &text_box.fill {
+                    css.set("background-color", rgba_css(fill.flat_color()));
+                }
+                if let Some(border) = text_box
+                    .border
+                    .as_ref()
+                    .filter(|border| border.width_emu > 0)
+                {
+                    css.set("border", stroke_css(border));
+                }
+                let insets = text_box.body_properties.insets;
+                css.set(
+                    "padding",
+                    format!(
+                        "{} {} {} {}",
+                        emu(i64::from(insets.top_emu)),
+                        emu(i64::from(insets.right_emu)),
+                        emu(i64::from(insets.bottom_emu)),
+                        emu(i64::from(insets.left_emu))
+                    ),
+                );
+                match text_box.body_properties.vertical_anchor {
+                    TextBoxVerticalAnchor::Center => {
+                        css.set("display", "flex");
+                        css.set("flex-direction", "column");
+                        css.set("justify-content", "center");
+                    }
+                    TextBoxVerticalAnchor::Bottom => {
+                        css.set("display", "flex");
+                        css.set("flex-direction", "column");
+                        css.set("justify-content", "flex-end");
+                    }
+                    TextBoxVerticalAnchor::Top => {}
+                }
+                match &text_box.anchor {
+                    Some(anchor) => anchor_css(anchor, &mut css),
+                    None => {
+                        if css.get("display").is_none() {
+                            css.set("display", "inline-block");
+                        }
+                        css.set("vertical-align", "top");
+                    }
+                }
+                self.nested_blocks_in(&text_box.blocks, cx, &css)
             }
             InlineNode::Group(group) => self.group(group, cx),
             InlineNode::Revision(revision) => {
@@ -1129,11 +1189,40 @@ impl<'d> Writer<'d> {
             }
             InlineNode::NoBreakHyphen(_) => self.push("&#8209;"),
             InlineNode::SoftHyphen(_) => self.push("&shy;"),
-            InlineNode::EmbeddedObject(_) => {
-                self.losses
-                    .record("html.embedded_object", ModelOutcome::Omitted);
-                Ok(())
-            }
+            InlineNode::EmbeddedObject(object) => match object.preview {
+                // A chart, SmartArt diagram or OLE object carries the picture
+                // Word drew of it. That picture, at the object's size, is what
+                // a reader without the application sees — in Word as well.
+                Some(preview) => {
+                    self.losses
+                        .record("html.embedded_object_as_picture", ModelOutcome::Degraded);
+                    let description = match &object.kind {
+                        EmbeddedKind::Chart => "Chart",
+                        EmbeddedKind::Diagram => "Diagram",
+                        EmbeddedKind::OleObject | EmbeddedKind::Other(_) => "Embedded object",
+                    };
+                    self.picture(
+                        &Picture {
+                            media: preview,
+                            description: Some(description),
+                            extent: Some(object.extent),
+                            crop: None,
+                            rotation: None,
+                            flip_h: false,
+                            flip_v: false,
+                            opacity: None,
+                            anchor: None,
+                            link: None,
+                        },
+                        cx,
+                    )
+                }
+                None => {
+                    self.losses
+                        .record("html.embedded_object", ModelOutcome::Omitted);
+                    Ok(())
+                }
+            },
             InlineNode::NoteReference(reference) => {
                 self.note_reference(reference.kind, reference.note)
             }
@@ -1276,6 +1365,16 @@ impl<'d> Writer<'d> {
 
     /// Blocks inside an inline container (a text box): a nested flow.
     fn nested_blocks(&mut self, blocks: &[BlockNode], cx: Cx<'_>) -> Result<(), AdapterError> {
+        self.nested_blocks_in(blocks, cx, &Declarations::default())
+    }
+
+    /// [`Self::nested_blocks`] in a box with its own declarations.
+    fn nested_blocks_in(
+        &mut self,
+        blocks: &[BlockNode],
+        cx: Cx<'_>,
+        css: &Declarations,
+    ) -> Result<(), AdapterError> {
         if cx.depth >= self.limits.max_nesting_depth {
             return Err(AdapterError::new(
                 "limit html_nesting_depth exceeded while walking a text box",
@@ -1285,7 +1384,13 @@ impl<'d> Writer<'d> {
             depth: cx.depth + 1,
             layer: None,
         };
-        self.push("<div>\n")?;
+        if css.is_empty() {
+            self.push("<div>\n")?;
+        } else {
+            self.push("<div style=\"")?;
+            self.push(&escape_attribute(&css.to_css()))?;
+            self.push("\">\n")?;
+        }
         let mut flow = Flow::default();
         self.blocks(blocks, deeper, &mut flow)?;
         self.push("</div>\n")
@@ -1634,6 +1739,36 @@ fn anchor_css(anchor: &DrawingAnchor, css: &mut Declarations) {
     }
 }
 
+/// A drawing colour, with its alpha when it has one.
+fn rgba_css(color: casual_doc_model::v1::Rgba) -> String {
+    if color.a == 255 {
+        hex([color.r, color.g, color.b, 255])
+    } else {
+        format!(
+            "rgba({},{},{},{})",
+            color.r,
+            color.g,
+            color.b,
+            round3(f64::from(color.a) / 255.0)
+        )
+    }
+}
+
+/// A shape outline as a CSS border: its width, a dash family, its colour.
+fn stroke_css(stroke: &casual_doc_model::v1::ShapeStroke) -> String {
+    use casual_doc_model::v1::DashStyle;
+    let style = match stroke.dash {
+        Some(DashStyle::Dot) => "dotted",
+        Some(DashStyle::Solid) | None => "solid",
+        Some(_) => "dashed",
+    };
+    format!(
+        "{} {style} {}",
+        emu(stroke.width_emu.max(1)),
+        rgba_css(stroke.color)
+    )
+}
+
 /// EMUs (914,400 to the inch, 12,700 to the point) as points.
 fn emu(value: i64) -> String {
     points(value as f64 / 12_700.0)
@@ -1768,6 +1903,19 @@ fn has_visible_content(inlines: &[InlineNode]) -> bool {
         | InlineNode::MoveRangeEnd(_)
         | InlineNode::EmbeddedObject(_) => false,
         _ => true,
+    })
+}
+
+/// Whether a paragraph's inlines include a container of blocks (a text box,
+/// a group), which phrasing content cannot hold.
+fn holds_blocks(inlines: &[InlineNode]) -> bool {
+    inlines.iter().any(|inline| match inline {
+        InlineNode::TextBox(_) | InlineNode::Group(_) => true,
+        InlineNode::Hyperlink(link) => holds_blocks(&link.inlines),
+        InlineNode::Field(field) => holds_blocks(&field.inlines),
+        InlineNode::Sdt(sdt) => holds_blocks(&sdt.inlines),
+        InlineNode::Revision(revision) => holds_blocks(&revision.inlines),
+        _ => false,
     })
 }
 
