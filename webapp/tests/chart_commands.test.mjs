@@ -37,6 +37,10 @@ function view(overrides = {}) {
       palette: "colorful",
       palettes: ["colorful", "mono-1"],
       swatches: [],
+      combinable: ["column", "column-stacked", "line", "line-markers", "area", "area-stacked"],
+      series: [
+        { name: "S1", kind: "column", secondary: false, admitsTrendline: true, admitsErrorBars: true, trendline: { kind: "none" }, errorBars: { kind: "none" } },
+      ],
       ...overrides.format,
     },
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "format")),
@@ -139,4 +143,89 @@ test("a family with no axes disables the axis and gridline rows, saying so", () 
   const { command } = patchWrittenBy("chart.gridlines.vertical", pie);
   assert.equal(command.enabled, false);
   assert.equal(command.disabledReason, "chart.noAxes");
+});
+
+const twoSeries = (extra = {}) =>
+  view({
+    series: ["S1", "S2"],
+    cells: [["1", "3"], ["2", "4"]],
+    format: {
+      series: [
+        { name: "S1", kind: "column", secondary: false, admitsTrendline: true, admitsErrorBars: true, trendline: { kind: "none" }, errorBars: { kind: "none" } },
+        { name: "S2", kind: "column", secondary: false, admitsTrendline: true, admitsErrorBars: true, trendline: { kind: "none" }, errorBars: { kind: "none" } },
+      ],
+      ...extra,
+    },
+  });
+
+test("an axis title row turns the title on with Word's placeholder, and off again", () => {
+  assert.deepEqual(patchWrittenBy("chart.axisTitle.vertical").patch.format, {
+    verticalAxis: { title: "chart.defaultAxisTitle" },
+  });
+  const titled = view({ format: { horizontalAxis: { present: true, visible: true, title: "Quarter" } } });
+  const { patch, command } = patchWrittenBy("chart.axisTitle.horizontal", titled);
+  assert.deepEqual(patch.format, { horizontalAxis: { title: "" } });
+  assert.equal(command.shortcut, "✓");
+});
+
+test("a trendline row writes that trendline to every series that can carry one, and only those", () => {
+  const mixed = twoSeries();
+  mixed.format.series[1].admitsTrendline = false;
+  assert.deepEqual(patchWrittenBy("chart.trendline.movingAvg", mixed).patch.format, {
+    series: [{ index: 0, trendline: { kind: "movingAvg", period: 2 } }],
+  });
+  assert.deepEqual(patchWrittenBy("chart.trendline.poly", twoSeries()).patch.format.series, [
+    { index: 0, trendline: { kind: "poly", order: 2 } },
+    { index: 1, trendline: { kind: "poly", order: 2 } },
+  ]);
+});
+
+test("error-bar rows write Word's default amounts", () => {
+  assert.deepEqual(patchWrittenBy("chart.errorBars.percentage").patch.format.series, [
+    { index: 0, errorBars: { kind: "percentage", value: "5", type: "both" } },
+  ]);
+  assert.deepEqual(patchWrittenBy("chart.errorBars.stdDev").patch.format.series[0].errorBars.value, "1");
+  assert.deepEqual(patchWrittenBy("chart.errorBars.none").patch.format.series, [{ index: 0, errorBars: { kind: "none" } }]);
+});
+
+test("a family with no trendlines disables the rows, saying why", () => {
+  const pie = view({ kind: "pie", format: { series: [{ name: "S1", kind: "pie", admitsTrendline: false, admitsErrorBars: false }] } });
+  const { command } = patchWrittenBy("chart.trendline.linear", pie);
+  assert.equal(command.enabled, false);
+  assert.equal(command.disabledReason, "chart.noTrendline");
+  assert.equal(patchWrittenBy("chart.errorBars.stdErr", pie).command.disabledReason, "chart.noErrorBars");
+  // "More options" still opens the panel, where the reason is shown.
+  assert.deepEqual(patchWrittenBy("chart.trendline.more", pie).opened, [["settings", "n1"]]);
+});
+
+test("a combo preset writes each series' type and axis, keeping the last series apart", () => {
+  assert.deepEqual(patchWrittenBy("chart.type.combo.columnLineSecondary", twoSeries()).patch.format, {
+    series: [
+      { index: 0, kind: "column", secondary: false },
+      { index: 1, kind: "line", secondary: true },
+    ],
+  });
+  assert.deepEqual(
+    patchWrittenBy("chart.type.combo.areaColumn", twoSeries()).patch.format.series.map((entry) => entry.kind),
+    ["area-stacked", "column"],
+  );
+});
+
+test("a combination of one series is refused before it is offered", () => {
+  const { command } = patchWrittenBy("chart.type.combo.columnLine");
+  assert.equal(command.enabled, false);
+  assert.equal(command.disabledReason, "chart.combo.needsTwoSeries");
+});
+
+test("the combo preset in use is checked", () => {
+  const combo = twoSeries({
+    combo: true,
+    series: [
+      { name: "S1", kind: "column", secondary: false },
+      { name: "S2", kind: "line", secondary: false },
+    ],
+  });
+  assert.equal(patchWrittenBy("chart.type.combo.columnLine", combo).command.shortcut, "✓");
+  assert.equal(patchWrittenBy("chart.type.combo.columnLineSecondary", combo).command.shortcut, "");
+  assert.equal(patchWrittenBy("chart.type.combo.custom", combo).command.shortcut, "");
 });

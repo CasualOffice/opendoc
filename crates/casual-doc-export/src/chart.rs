@@ -70,6 +70,13 @@ use crate::chart_workbook::{self, GeneratedWorkbook};
 use crate::report::{Disposition, Reporter};
 use crate::semantic::{finish, new_writer, pkg, start};
 use casual_doc_model::v1::{ChartContainer, ChartXml, chart_child_rank};
+// Own lines: the chart-formatting writers (`docs/155` §19), in `chart/format.rs`.
+use casual_doc_model::v1::ChartFont;
+mod format;
+use format::{
+    write_body_properties, write_error_bars, write_line, write_run_font, write_series_extras,
+    write_text_properties, write_trendline,
+};
 
 /// The content type of a `word/charts/chartN.xml` part.
 pub(crate) const CHART_PART_CT: &str =
@@ -240,13 +247,26 @@ pub(crate) fn generate_chart_parts(
             supersedes.push(workbook.part_name.clone());
         }
         let (bytes, dropped) = write_chart_part(&chart)?;
-        if dropped > 0 {
+        if dropped.fragments > 0 {
             // A carried fragment that was not one well-formed element of its
             // declared name, or that its container cannot hold — reachable only
             // through a hand-built snapshot. Left out, and said so.
             reporter.record_part(
                 "docx.export.chart.fragment_dropped",
                 &object.part.part_name,
+                Disposition::DegradedNotRetained,
+            );
+        }
+        for element in &dropped.elements {
+            // A typed element the series' family has no schema slot for (a
+            // trendline on a pie series, a second error-bar set on a bar
+            // series). The same finding as a dropped fragment, addressed to the
+            // element so the reader learns WHAT went.
+            reporter.record_construct(
+                "docx.export.chart.fragment_dropped",
+                &object.part.part_name,
+                element,
+                None,
                 Disposition::DegradedNotRetained,
             );
         }
@@ -434,6 +454,16 @@ impl<'a> Carry<'a> {
             .find(|fragment| fragment.name == name)
     }
 
+    /// Every carried fragment named `name`, in source order — for a shadowed
+    /// element that may repeat (`c:trendline`).
+    fn carried(&self, name: &str) -> impl Iterator<Item = &'a ChartXml> + '_ {
+        let name = name.to_owned();
+        self.pending
+            .iter()
+            .map(|(_, fragment)| *fragment)
+            .filter(move |fragment| fragment.name == name)
+    }
+
     /// Writes every remaining non-shadow fragment.
     fn rest(&mut self, w: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError> {
         self.before(w, "\u{0}")
@@ -488,6 +518,25 @@ fn is_one_element(xml: &str, name: &str) -> bool {
     }
 }
 
+/// What [`write_chart_part`] had to leave out, for the caller to report.
+#[derive(Debug, Default)]
+pub(crate) struct Drops {
+    /// Carried fragments that were malformed, unplaceable, or superseded by
+    /// the typed element of the same name.
+    pub(crate) fragments: usize,
+    /// Typed elements (by local name) the container's schema sequence has no
+    /// slot for, in first-seen order without repeats.
+    pub(crate) elements: Vec<&'static str>,
+}
+
+impl Drops {
+    fn element(&mut self, name: &'static str) {
+        if !self.elements.contains(&name) {
+            self.elements.push(name);
+        }
+    }
+}
+
 /// Serializes one projection as a `c:chartSpace` part.
 ///
 /// `CT_ChartSpace` sequence: `date1904?`, `lang?`, `roundedCorners?`, `style?`,
@@ -498,8 +547,8 @@ fn is_one_element(xml: &str, name: &str) -> bool {
 /// or unplaceable, which the caller reports.
 ///
 /// Complexity: O(points in the chart).
-pub(crate) fn write_chart_part(chart: &Chart) -> Result<(Vec<u8>, usize), ExportError> {
-    let mut dropped = 0_usize;
+pub(crate) fn write_chart_part(chart: &Chart) -> Result<(Vec<u8>, Drops), ExportError> {
+    let mut dropped = Drops::default();
     let mut w = new_writer();
     let mut space = start("c:chartSpace");
     space.push_attribute(("xmlns:c", CHART_NS));
@@ -535,11 +584,14 @@ pub(crate) fn write_chart_part(chart: &Chart) -> Result<(Vec<u8>, usize), Export
     let mut carry = Carry::new(
         ChartContainer::Space,
         &chart.space_retained,
-        &[],
-        &mut dropped,
+        &["txPr"],
+        &mut dropped.fragments,
     );
     carry.before(&mut w, "chart")?;
     write_chart(&mut w, chart, &mut dropped)?;
+    carry.before(&mut w, "txPr")?;
+    // The chart-wide text default every title, legend and axis inherits.
+    write_text_properties(&mut w, &carry, chart.font.as_ref(), false)?;
     carry.before(&mut w, "externalData")?;
     if let Some(external) = &chart.external_data {
         write_external_data(&mut w, external)?;
@@ -622,13 +674,18 @@ fn chart_relative_target(part_name: &str) -> String {
 fn write_chart(
     w: &mut Writer<Cursor<Vec<u8>>>,
     chart: &Chart,
-    dropped: &mut usize,
+    dropped: &mut Drops,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:chart"))).map_err(pkg)?;
-    let mut carry = Carry::new(ChartContainer::Chart, &chart.chart_retained, &[], dropped);
+    let mut carry = Carry::new(
+        ChartContainer::Chart,
+        &chart.chart_retained,
+        &[],
+        &mut dropped.fragments,
+    );
     carry.before(w, "title")?;
     if let Some(title) = &chart.title {
-        write_title(w, title, dropped)?;
+        write_title(w, title, dropped, false)?;
     }
     carry.before(w, "autoTitleDeleted")?;
     if chart.auto_title_deleted {
@@ -667,20 +724,43 @@ fn write_chart(
 }
 
 /// `CT_Title` sequence: `tx?`, `layout?`, `overlay?`, `spPr?`, `txPr?`.
+///
+/// One writer for the chart's own title and an axis title (`CT_Title` is the
+/// same type in both places); `vertical` rotates a generated rich body a
+/// quarter turn, which is how Word lays out the title of a left or right axis.
+///
+/// # Where the font goes
+///
+/// A title whose text this writes as `c:rich` carries [`ChartTitle::font`] in
+/// that body — the paragraph's `a:defRPr` and the run's `a:rPr`, as Word
+/// writes it. A title with no text (Word's automatic "Chart Title") or with a
+/// cell reference has no body of its own, so its font goes in the title's
+/// `c:txPr`. A carried `c:tx` holds its own formatting and wins outright; a
+/// carried `c:txPr` replaces the generated one.
 fn write_title(
     w: &mut Writer<Cursor<Vec<u8>>>,
     title: &ChartTitle,
-    dropped: &mut usize,
+    dropped: &mut Drops,
+    vertical: bool,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:title"))).map_err(pkg)?;
-    let mut carry = Carry::new(ChartContainer::Title, &title.retained, &["tx"], dropped);
+    let mut carry = Carry::new(
+        ChartContainer::Title,
+        &title.retained,
+        &["tx", "txPr"],
+        &mut dropped.fragments,
+    );
     carry.before(w, "tx")?;
     let verbatim = title.text.as_ref().and(carry.shadow("tx"));
+    // Whether the font has already been written into a rich body, so a
+    // generated `c:txPr` would only repeat it.
+    let mut font_in_body = false;
     if let Some(fragment) = verbatim {
         // The title's own rich text — its font, size and colour — exactly as it
         // was read. An edit to the text drops this fragment, so it can only be
         // the text the model holds.
         raw(w, &fragment.xml)?;
+        font_in_body = fragment.xml.contains("rich");
     } else if let Some(text) = &title.text {
         w.write_event(Event::Start(start("c:tx"))).map_err(pkg)?;
         match &text.formula {
@@ -691,13 +771,23 @@ fn write_title(
             // Literal text has no `c:v` spelling inside `CT_Tx` — that variant is
             // `CT_SerTx`, for a series name. A title's literal text is a `c:rich`
             // DrawingML body, which is also what Word writes.
-            None => write_rich_text(w, &text.text)?,
+            None => {
+                write_rich_text(w, &text.text, title.font.as_ref(), vertical)?;
+                font_in_body = true;
+            }
         }
         w.write_event(Event::End(BytesEnd::new("c:tx")))
             .map_err(pkg)?;
     }
     carry.before(w, "overlay")?;
     write_val(w, "c:overlay", bool_val(title.overlay))?;
+    carry.before(w, "txPr")?;
+    write_text_properties(
+        w,
+        &carry,
+        title.font.as_ref().filter(|_| !font_in_body),
+        vertical,
+    )?;
     carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new("c:title")))
         .map_err(pkg)
@@ -707,14 +797,35 @@ fn write_title(
 /// flattened away is not reconstructed, because the model holds one string
 /// (`ChartText::text`, `docs/155` §4.2 admits cached rich text only). Writing one
 /// run is therefore the whole of what is known, not a simplification of it.
-fn write_rich_text(w: &mut Writer<Cursor<Vec<u8>>>, text: &str) -> Result<(), ExportError> {
+///
+/// `font` is written twice, as Word does: as the paragraph default
+/// (`a:pPr/a:defRPr`) and on the run (`a:rPr`), so a consumer that reads only
+/// one of them still sees it. `vertical` writes `a:bodyPr rot="-5400000"`.
+fn write_rich_text(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    text: &str,
+    font: Option<&ChartFont>,
+    vertical: bool,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:rich"))).map_err(pkg)?;
-    w.write_event(Event::Empty(start("a:bodyPr")))
-        .map_err(pkg)?;
+    write_body_properties(w, vertical)?;
     w.write_event(Event::Empty(start("a:lstStyle")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("a:p"))).map_err(pkg)?;
+    let font = font.filter(|font| !font.is_empty());
+    if let Some(font) = font {
+        // `CT_TextParagraphProperties`: lnSpc?, spcBef?, spcAft?, bullets…,
+        // tabLst?, defRPr?, extLst? — `defRPr` is the only child written.
+        w.write_event(Event::Start(start("a:pPr"))).map_err(pkg)?;
+        write_run_font(w, "a:defRPr", font)?;
+        w.write_event(Event::End(BytesEnd::new("a:pPr")))
+            .map_err(pkg)?;
+    }
+    // `CT_RegularTextRun`: rPr?, t.
     w.write_event(Event::Start(start("a:r"))).map_err(pkg)?;
+    if let Some(font) = font {
+        write_run_font(w, "a:rPr", font)?;
+    }
     write_text_element(w, "a:t", text)?;
     w.write_event(Event::End(BytesEnd::new("a:r")))
         .map_err(pkg)?;
@@ -734,7 +845,7 @@ fn write_rich_text(w: &mut Writer<Cursor<Vec<u8>>>, text: &str) -> Result<(), Ex
 fn write_plot_area(
     w: &mut Writer<Cursor<Vec<u8>>>,
     plot: &PlotArea,
-    dropped: &mut usize,
+    dropped: &mut Drops,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:plotArea")))
         .map_err(pkg)?;
@@ -742,7 +853,7 @@ fn write_plot_area(
         ChartContainer::PlotArea,
         &plot.retained,
         &["layout"],
-        dropped,
+        &mut dropped.fragments,
     );
     match carry.shadow("layout") {
         // A manual layout, verbatim.
@@ -775,7 +886,7 @@ fn write_plot_area(
 fn write_group(
     w: &mut Writer<Cursor<Vec<u8>>>,
     group: &ChartGroup,
-    dropped: &mut usize,
+    dropped: &mut Drops,
 ) -> Result<(), ExportError> {
     let element = group_element(group.kind);
     w.write_event(Event::Start(start(element))).map_err(pkg)?;
@@ -783,7 +894,7 @@ fn write_group(
         ChartContainer::Group(group.kind),
         &group.retained,
         &[],
-        dropped,
+        &mut dropped.fragments,
     );
     // The leading, family-specific children.
     match group.kind {
@@ -927,14 +1038,14 @@ fn write_series(
     w: &mut Writer<Cursor<Vec<u8>>>,
     series: &Series,
     kind: ChartGroupKind,
-    dropped: &mut usize,
+    dropped: &mut Drops,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:ser"))).map_err(pkg)?;
     let mut carry = Carry::new(
         ChartContainer::Series(kind),
         &series.retained,
-        &["spPr", "dLbls"],
-        dropped,
+        &["spPr", "dLbls", "trendline", "errBars"],
+        &mut dropped.fragments,
     );
     write_val(w, "c:idx", &series.index.to_string())?;
     write_val(w, "c:order", &series.order.to_string())?;
@@ -957,6 +1068,26 @@ fn write_series(
             None => write_data_labels(w, labels)?,
         }
     }
+    carry.before(w, "trendline")?;
+    write_series_extras(
+        w,
+        &carry,
+        kind,
+        "trendline",
+        &series.trendlines,
+        dropped,
+        write_trendline,
+    )?;
+    carry.before(w, "errBars")?;
+    write_series_extras(
+        w,
+        &carry,
+        kind,
+        "errBars",
+        &series.error_bars,
+        dropped,
+        write_error_bars,
+    )?;
     let scatter = matches!(kind, ChartGroupKind::Scatter { .. });
     carry.before(w, if scatter { "xVal" } else { "cat" })?;
     if scatter {
@@ -1012,8 +1143,9 @@ fn write_shape_properties(
     line: Option<&ChartLine>,
 ) -> Result<(), ExportError> {
     let fill_element = fill.filter(|color| !matches!(color, Color::Auto));
-    let has_line =
-        line.is_some_and(|line| line.no_fill || line.color.is_some() || line.width_emu.is_some());
+    let has_line = line.is_some_and(|line| {
+        line.no_fill || line.color.is_some() || line.width_emu.is_some() || line.dash.is_some()
+    });
     if fill_element.is_none() && !has_line {
         return Ok(());
     }
@@ -1022,25 +1154,7 @@ fn write_shape_properties(
         write_solid_fill(w, color)?;
     }
     if let Some(line) = line.filter(|_| has_line) {
-        let mut element = start("a:ln");
-        let width = line.width_emu.map(|emu| emu.to_string());
-        if let Some(width) = &width {
-            element.push_attribute(("w", width.as_str()));
-        }
-        if line.no_fill {
-            w.write_event(Event::Start(element)).map_err(pkg)?;
-            w.write_event(Event::Empty(start("a:noFill")))
-                .map_err(pkg)?;
-            w.write_event(Event::End(BytesEnd::new("a:ln")))
-                .map_err(pkg)?;
-        } else if let Some(color) = line.color.as_ref().filter(|c| !matches!(c, Color::Auto)) {
-            w.write_event(Event::Start(element)).map_err(pkg)?;
-            write_solid_fill(w, color)?;
-            w.write_event(Event::End(BytesEnd::new("a:ln")))
-                .map_err(pkg)?;
-        } else {
-            w.write_event(Event::Empty(element)).map_err(pkg)?;
-        }
+        write_line(w, line)?;
     }
     w.write_event(Event::End(BytesEnd::new("c:spPr")))
         .map_err(pkg)
@@ -1138,6 +1252,13 @@ const fn scheme_token(slot: ThemeColorRef) -> &'static str {
 /// does not model (`showLegendKey`, `showBubbleSize`, `separator`) are left out
 /// rather than written as `0`: `0` is a claim that the producer turned them off,
 /// and the projection never knew either way.
+///
+/// No `c:numFmt` is written, deliberately. An absent label `numFmt` means
+/// "source-linked": Word formats a value label with its series' cache
+/// `c:formatCode`, which [`write_num_data`] writes. `DataLabels` holds no format
+/// of its own, so writing `<c:numFmt sourceLinked="1"/>` would restate the
+/// default, and writing a code would invent one. A carried `c:dLbls` keeps a
+/// producer's own label format verbatim.
 fn write_data_labels(
     w: &mut Writer<Cursor<Vec<u8>>>,
     labels: &DataLabels,
@@ -1173,11 +1294,16 @@ fn write_data_labels(
 fn write_legend(
     w: &mut Writer<Cursor<Vec<u8>>>,
     legend: &Legend,
-    dropped: &mut usize,
+    dropped: &mut Drops,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:legend")))
         .map_err(pkg)?;
-    let mut carry = Carry::new(ChartContainer::Legend, &legend.retained, &[], dropped);
+    let mut carry = Carry::new(
+        ChartContainer::Legend,
+        &legend.retained,
+        &["txPr"],
+        &mut dropped.fragments,
+    );
     write_val(
         w,
         "c:legendPos",
@@ -1191,6 +1317,8 @@ fn write_legend(
     )?;
     carry.before(w, "overlay")?;
     write_val(w, "c:overlay", bool_val(legend.overlay))?;
+    carry.before(w, "txPr")?;
+    write_text_properties(w, &carry, legend.font.as_ref(), false)?;
     carry.rest(w)?;
     w.write_event(Event::End(BytesEnd::new("c:legend")))
         .map_err(pkg)
@@ -1211,13 +1339,13 @@ fn write_axis(
     w: &mut Writer<Cursor<Vec<u8>>>,
     axis: &Axis,
     plot: &PlotArea,
-    dropped: &mut usize,
+    dropped: &mut Drops,
 ) -> Result<(), ExportError> {
     let mut carry = Carry::new(
         ChartContainer::Axis(axis.kind),
         &axis.retained,
-        &["majorGridlines", "minorGridlines"],
-        dropped,
+        &["majorGridlines", "minorGridlines", "title", "txPr"],
+        &mut dropped.fragments,
     );
     let element = match axis.kind {
         AxisKind::Category => "c:catAx",
@@ -1250,20 +1378,17 @@ fn write_axis(
     // The fallback: a category axis sits at the bottom and a value axis at the
     // left, which is Word's own default pair and the only placement the rest of
     // the projection is consistent with.
-    write_val(
-        w,
-        "c:axPos",
-        match axis.position {
-            Some(AxisPosition::Bottom) => "b",
-            Some(AxisPosition::Left) => "l",
-            Some(AxisPosition::Right) => "r",
-            Some(AxisPosition::Top) => "t",
-            None => match axis.kind {
-                AxisKind::Value => "l",
-                AxisKind::Category | AxisKind::Date => "b",
-            },
+    let position = match axis.position {
+        Some(AxisPosition::Bottom) => "b",
+        Some(AxisPosition::Left) => "l",
+        Some(AxisPosition::Right) => "r",
+        Some(AxisPosition::Top) => "t",
+        None => match axis.kind {
+            AxisKind::Value => "l",
+            AxisKind::Category | AxisKind::Date => "b",
         },
-    )?;
+    };
+    write_val(w, "c:axPos", position)?;
     // Present or absent by the MODEL; verbatim (their line colour and width)
     // when the source carried them — so "gridlines off" removes both.
     if axis.major_gridlines {
@@ -1281,6 +1406,22 @@ fn write_axis(
                 .write_event(Event::Empty(start("c:minorGridlines")))
                 .map_err(pkg)?,
         }
+    }
+    carry.before(w, "title")?;
+    // The typed title is the authority. A title carried verbatim on the axis
+    // (what a reader that did not type axis titles kept) is written only when
+    // the model holds none; holding both would put two `c:title` children in
+    // one axis, which the schema does not admit, so the carried copy is then
+    // dropped and counted.
+    match (&axis.title, carry.shadow("title")) {
+        (Some(title), carried) => {
+            if carried.is_some() {
+                dropped.fragments += 1;
+            }
+            write_title(w, title, dropped, matches!(position, "l" | "r"))?;
+        }
+        (None, Some(fragment)) => raw(w, &fragment.xml)?,
+        (None, None) => {}
     }
     carry.before(w, "numFmt")?;
     if let Some(format) = &axis.number_format {
@@ -1306,6 +1447,9 @@ fn write_axis(
             TickLabelPosition::None => "none",
         },
     )?;
+    carry.before(w, "txPr")?;
+    // The tick labels' font.
+    write_text_properties(w, &carry, axis.font.as_ref(), false)?;
     // The fallback: the first OTHER axis in the plot area. A one-axis plot area
     // has nothing to cross, and `crossAx` is still required, so it names itself —
     // which is what Word writes for a lone axis and keeps the part readable

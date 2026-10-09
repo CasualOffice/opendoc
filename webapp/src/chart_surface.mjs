@@ -40,7 +40,7 @@ export function createChartSurface(io) {
     t: io.t,
     write: (node, mutate) => bridge.write(node, mutate),
     openData: (node) => dialog.open(node),
-    openSettings: (node) => panel.open(node),
+    openSettings: (node, at) => panel.open(node, at),
     blockedReason: () => io.blockedReason(),
   };
   const dialog = createChartDataDialog({

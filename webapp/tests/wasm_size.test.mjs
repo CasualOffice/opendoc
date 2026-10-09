@@ -58,10 +58,21 @@ import test from "node:test";
 
 const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta.url));
 
-/** What a visitor downloads for `editor.html`. Measured: 24,297,780 B. */
-const MAX_TOTAL_BYTES = 25_300_000;
-/** What the browser then compiles. Measured: 10,594,266 B. opt-level 3: 12,376,042 B. */
-const MAX_CODE_BYTES = 11_500_000;
+/** What a visitor downloads for `editor.html`. Measured: 24,297,780 B (#805).
+ *
+ *  Both ceilings raised on 2026-10-10 for `docs/155` §19 (chart fonts, axis
+ *  titles, number formats, combinations, trendlines and error bars, engine to
+ *  page), measured both sides with `build.sh`: `main` at 9d4653f2 (#820) is
+ *  25,241,354 B with a 11,373,143 B code section; the branch is 25,461,630 B
+ *  with 11,585,101 B — +220,276 B, +211,958 B of it code. `build.sh` still
+ *  exports opt-level `z`, so this is the engine growing, decided and recorded
+ *  rather than absorbed; the next feature of this size meets the same
+ *  decision. */
+const MAX_TOTAL_BYTES = 25_700_000;
+/** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
+ *  after §19. opt-level 3 measured 12,376,042 B on the smaller #805 engine, so
+ *  a dropped `z` still lands far outside this. */
+const MAX_CODE_BYTES = 11_800_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

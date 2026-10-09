@@ -119,6 +119,13 @@ pub(crate) fn bind(
                 .name
                 .as_ref()
                 .is_some_and(|name| name.formula.is_some())
+            // Custom error-bar lengths that name cells name them in the
+            // producer's workbook, which this one would replace; the sheet
+            // written here has no error-bar columns to point them at instead.
+            || series
+                .error_bars
+                .iter()
+                .any(|bars| has_formula(bars.plus.as_ref()) || has_formula(bars.minus.as_ref()))
             || labels_of(series).map(|range| range.points)
                 != labels.as_ref().map(|range| range.points.clone())
         {

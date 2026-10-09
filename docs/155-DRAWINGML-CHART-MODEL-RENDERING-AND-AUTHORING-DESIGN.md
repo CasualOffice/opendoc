@@ -1221,7 +1221,7 @@ that do not share one category column, or a name collision.
 
 Series colours and line styles, data labels, axis options and bounds, number
 formats, gridlines, chart styles, combo charts, secondary axes, trendlines and
-error bars are kept, drawn and saved, and not editable. Most charts Word writes
+error bars are kept, drawn and saved, and not editable (at the time — §18 and §19 make them editable). Most charts Word writes
 projected `Partial` at the time of this increment, so they opened read-only —
 superseded by §17, which makes them editable. The undo label is passed to `apply_group`
 directly ("Chart data") rather than through a `HistoryKind` variant.
@@ -1297,6 +1297,43 @@ document with no theme now draws a chart's theme colours in Word's default Offic
 theme instead of black, and the panel's swatches show the document's own theme
 colours, resolved by the engine.
 
-Not yet, and named: an individual series' colour and line style, number formats,
-chart text fonts, axis titles, combination charts, secondary axes, trendlines and
-error bars — all kept, drawn where drawn, and saved.
+Not yet, and named, at the time: an individual series' colour and line style,
+number formats, chart text fonts, axis titles, combination charts, secondary axes,
+trendlines and error bars — all kept, drawn where drawn, and saved. §19 builds them.
+
+## 19. Formatting: series, axes, text, combinations, trendlines, error bars (2026-10-10)
+
+The §18 "not yet" list, built end to end in one lane set: model, import, export,
+renderer, facade, surfaces. The pattern is the one §17 already established for
+anything Word writes that the model now understands — **the model is the
+authority once edited, the verbatim fragment is the authority until then** (a
+*shadow*): the importer reads the element into typed fields AND keeps the source
+bytes when the typed fields cannot say everything they said; the writer emits the
+shadow while it is there; an edit through the facade drops it.
+
+| Gap | Model (`v1/chart.rs`) | Shadowed element | Surfaces |
+| --- | --- | --- | --- |
+| A series' colour, line width, dash | `Series.fill`, `Series.line` (+ `ChartLine.dash`) | series `c:spPr` | Settings ▸ Series |
+| Number formats | `Axis.number_format`, the values' `DataRange.number_format` | — | Settings ▸ axis, Settings ▸ Series |
+| Chart text fonts | `ChartFont` on `Chart`, `ChartTitle`, `Legend`, `Axis` | `c:txPr`, a title's `c:tx` | Settings ▸ Text |
+| Axis titles | `Axis.title: Option<ChartTitle>` | the axis title's own `tx`/`txPr` | Chart elements ▸ Axis titles; Settings ▸ axis |
+| Combination charts, secondary axes | already lists (§8: groups, `axis_ids`); the facade regroups by (type, axis) | — | Chart type ▸ combo presets; Settings ▸ Series (type, secondary axis) |
+| Trendlines | `Series.trendlines: Vec<Trendline>` (`ChartContainer::Trendline` carry) | the trendline's `c:spPr`, `c:trendlineLbl` | Chart elements ▸ Trendline; Settings ▸ Series |
+| Error bars | `Series.error_bars: Vec<ErrorBars>` (`ChartContainer::ErrorBars` carry) | the bars' `c:spPr` | Chart elements ▸ Error bars; Settings ▸ Series |
+
+Word's Chart Elements and ONLYOFFICE's Chart tab offer trendlines and error bars
+for the chart as a whole and apply them to every series that can carry one; the
+per-series choice is in the Format pane / Advanced Settings. Both are here: the
+Chart elements rows write every admitting series, the Series section one. Combo
+presets are Word's three (Clustered column – line, the same on a secondary axis,
+Stacked area – clustered column), plus Custom, which opens the Series section.
+Only column, line and area families combine — ONLYOFFICE's rule too; a pie,
+scatter or horizontal bar in a combination is refused with a reason.
+
+Fonts follow Word's inheritance: an element's font is its own fields over the
+chart-space font over Word's defaults. Custom error bars (per-point lengths) are
+read, drawn and saved, and shown read-only: authoring per-point data is a
+spreadsheet's job (§5.2).
+
+SmartArt is not a chart and is not in this lane.
+

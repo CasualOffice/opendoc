@@ -290,9 +290,11 @@ fn alpha(value: u8) -> f64 {
 }
 
 /// A chart, drawn as the page composes it, as a complete `<svg>` of
-/// `width`×`height` twips. Labels are set as text in the document's font at
-/// the page's label size. `name` is what a screen reader announces: a drawing
-/// with `role="img"` hides its own text from it.
+/// `width`×`height` twips. Labels are set as text in the document's font, each
+/// at its own size, weight, slant and face (`docs/155` §19); a vertical axis
+/// title is turned a quarter about its centre, as the page turns it. `name` is
+/// what a screen reader announces: a drawing with `role="img"` hides its own
+/// text from it.
 pub(super) fn chart(drawing: &ChartDrawing, name: &str, width: Twip, height: Twip) -> String {
     let (w, h) = (px(i64::from(width.raw())), px(i64::from(height.raw())));
     let mut out = format!(
@@ -300,7 +302,6 @@ pub(super) fn chart(drawing: &ChartDrawing, name: &str, width: Twip, height: Twi
          viewBox=\"0 0 {w} {h}\" style=\"max-width:100%;height:auto;vertical-align:baseline\">",
         escape_attribute(name)
     );
-    let label_size = px(i64::from(drawing.label_size.raw()));
     for primitive in &drawing.primitives {
         match primitive {
             ChartPrimitive::Rect { rect, fill, stroke } => {
@@ -357,26 +358,68 @@ pub(super) fn chart(drawing: &ChartDrawing, name: &str, width: Twip, height: Twi
                     chart_stroke(stroke.as_ref())
                 );
             }
-            ChartPrimitive::Text { run } => {
-                // The run's font is the label's index (`ChartDrawing::labels`).
-                let Some(label) = usize::try_from(run.font.0)
-                    .ok()
-                    .and_then(|index| drawing.labels.get(index))
-                else {
-                    continue;
-                };
-                let (x, y) = point(run.origin);
-                let _ = write!(
-                    out,
-                    "<text x=\"{x}\" y=\"{y}\" font-size=\"{label_size}\" fill=\"{}\">{}</text>",
-                    hex_rgba(run.color),
-                    escape_text(label)
+            ChartPrimitive::Text { run } => chart_text(&mut out, drawing, run, ""),
+            ChartPrimitive::RotatedText {
+                runs,
+                center,
+                quarter_turns,
+            } => {
+                let (cx, cy) = point(*center);
+                let transform = format!(
+                    " transform=\"rotate({} {cx} {cy})\"",
+                    i32::from(*quarter_turns) * 90
                 );
+                for run in runs {
+                    chart_text(&mut out, drawing, run, &transform);
+                }
             }
         }
     }
     out.push_str("</svg>");
     out
+}
+
+/// One chart label run as `<text>`, in its label's own style. The run's font is
+/// the label's index (`ChartDrawing::labels`); a run naming no label is skipped.
+fn chart_text(
+    out: &mut String,
+    drawing: &ChartDrawing,
+    run: &casual_doc_layout::text::GlyphRun,
+    transform: &str,
+) {
+    let Some(label) = usize::try_from(run.font.0)
+        .ok()
+        .and_then(|index| drawing.labels.get(index))
+    else {
+        return;
+    };
+    let (x, y) = point(run.origin);
+    let mut attributes = format!(
+        " font-size=\"{}\" fill=\"{}\"",
+        px(i64::from(run.size.raw())),
+        hex_rgba(run.color)
+    );
+    if label.style.bold {
+        attributes.push_str(" font-weight=\"bold\"");
+    }
+    if label.style.italic {
+        attributes.push_str(" font-style=\"italic\"");
+    }
+    // A named face only: a theme reference (`+mn-lt`) is the document's own
+    // body face, which the page's stylesheet already sets.
+    if let Some(face) = label
+        .style
+        .typeface
+        .as_deref()
+        .filter(|face| !face.is_empty() && !face.starts_with('+'))
+    {
+        let _ = write!(attributes, " font-family=\"{}\"", escape_attribute(face));
+    }
+    let _ = write!(
+        out,
+        "<text x=\"{x}\" y=\"{y}\"{attributes}{transform}>{}</text>",
+        escape_text(&label.text)
+    );
 }
 
 fn chart_fill(fill: Option<[u8; 4]>) -> String {
@@ -394,11 +437,23 @@ fn chart_fill(fill: Option<[u8; 4]>) -> String {
 
 fn chart_stroke(stroke: Option<&ChartStroke>) -> String {
     match stroke {
-        Some(stroke) => format!(
-            " stroke=\"{}\" stroke-width=\"{}\"",
-            hex_rgba(stroke.color),
-            px(i64::from(stroke.width.raw())).max(0.75)
-        ),
+        Some(stroke) => {
+            let width = px(i64::from(stroke.width.raw())).max(0.75);
+            let mut out = format!(
+                " stroke=\"{}\" stroke-width=\"{width}\"",
+                hex_rgba(stroke.color)
+            );
+            // A series, trendline or error-bar dash, in the same multiples of
+            // the width the page's own outlines use.
+            if let Some(pattern) = dash_pattern(stroke.dash) {
+                let scaled: Vec<String> = pattern
+                    .iter()
+                    .map(|unit| format!("{}", round2(unit * width)))
+                    .collect();
+                let _ = write!(out, " stroke-dasharray=\"{}\"", scaled.join(" "));
+            }
+            out
+        }
         None => " stroke=\"none\"".to_owned(),
     }
 }
