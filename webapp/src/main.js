@@ -1519,7 +1519,7 @@ function setReviewMode(mode, { restoreFocus = true } = {}) {
   if (reviewMode === "suggesting" && !showingChanges) {
     void setShowingChanges(true);
   }
-  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus, caret: selection?.focus, runEdit }); // HF-131; HF-283
+  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus && !hostSession?.executing, caret: selection?.focus, runEdit }); // HF-131; HF-283: a host's switch is not the reader's
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,

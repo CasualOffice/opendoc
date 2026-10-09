@@ -96,6 +96,13 @@ export function createHostSession({
   let statusSeq = 0;
   let lastRefusal = null;
   let ready = false;
+  // How many host-issued commands are running now. A command a HOST runs is
+  // not the reader's own gesture, and the editor needs to tell the two apart
+  // where that difference is the rule — a review-mode change the reader makes
+  // writes the document's Track Changes setting, one the host makes does not
+  // (`docs/109` HF-283; `host-contract.spec.mjs` holds a host granted nothing
+  // to changing nothing).
+  let executing = 0;
 
   function emit(name, detail) {
     const set = listeners.get(name);
@@ -157,6 +164,11 @@ export function createHostSession({
   }
 
   const session = {
+    /** Whether a host-issued command is running right now. O(1). */
+    get executing() {
+      return executing > 0;
+    },
+
     /** The contract, resolved against the live registry.
      *
      *  This is what a host enumerates to build its own UI, and what the
@@ -235,6 +247,7 @@ export function createHostSession({
         );
       }
       const before = statusSeq;
+      executing += 1;
       try {
         await descriptor.run(...(Array.isArray(args) ? args : [args]));
       } catch (err) {
@@ -242,6 +255,8 @@ export function createHostSession({
           no(commandId, "threw", String(err?.message ?? err), { revision: revision() }),
           true,
         );
+      } finally {
+        executing -= 1;
       }
       // Did the editor refuse it while it ran? `lastRefusal` is only set by a
       // status the editor itself classified as a failure, so this reports the

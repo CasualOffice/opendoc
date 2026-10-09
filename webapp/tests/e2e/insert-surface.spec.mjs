@@ -564,11 +564,16 @@ test("Suggesting mode refuses an untracked drop-cap edit before opening its dial
 }) => {
   await gotoEditor(page);
   await setReviewMode(page, "suggesting");
+  // The reader's switch to Suggesting is itself one undoable step — it writes the
+  // document's Track Changes setting (`docs/109` HF-283) — so the guarantee here
+  // is that the REFUSED drop cap adds nothing on top of it: the Undo control
+  // offers exactly what it offered before the attempt.
+  const undoBefore = await page.locator("#undoBtn").getAttribute("aria-label");
   await openInsertTab(page);
   await page.locator("#insertDropCapBtn").click();
   await expect(page.locator("#dropCapDialog")).toBeHidden();
   await expect(page.locator("#status")).toContainText("cannot be tracked yet");
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", undoBefore);
   expect(consoleErrors).toEqual([]);
 });
 
