@@ -171,7 +171,7 @@ test("Tab in the last cell appends a row and puts the caret in it", async ({
   // The gesture under test. It used to reach an empty `catch {}`: no row, no
   // refusal, no status line — the only table gesture that said nothing at all.
   await page.keyboard.press("Tab");
-  await expect(page.locator("#tableContext")).toContainText("3×2 table");
+  await expect(page.locator("#tableContext")).toContainText("2 × 3 table");
   await expect.poll(() => modelRows(page)).toEqual([2, 2, 2]);
   expect(await statusText(page)).toBe("Row added at the end of the table");
 

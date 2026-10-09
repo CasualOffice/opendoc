@@ -66,6 +66,28 @@ export async function gotoEditor(page, query = "") {
 }
 
 /**
+ * Opens the shipped `sample.docx` — what `/editor.html` opens with no fixture —
+ * and waits until it is painted with its real faces.
+ *
+ * The document a spec reaches for when it needs COMPATIBILITY FINDINGS: since
+ * `109` FID-AT-08/09/10 the engine carries everything `?fixture=rich` used to
+ * report, so that fixture opens with none and no findings chip, while
+ * `sample.docx` still reports its custom XML parts and theme details. Not on an
+ * empty status line, as `gotoEditor` does: `sample.docx` asks for script faces a
+ * checkout that has not provisioned them reports as unavailable there, and that
+ * note is not these specs' subject.
+ */
+export async function gotoSampleDocument(page, query = "") {
+  await page.goto(`/editor.html${query}`);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".page-wrap").length > 0 && document.body.dataset.fontsReady === "true",
+    null,
+    { timeout: 45_000 },
+  );
+}
+
+/**
  * Waits for a FRAMED editor to have booted the engine, opened its document and
  * finished its first render — `gotoEditor`'s condition, asked of a frame.
  *
@@ -355,10 +377,30 @@ export async function typeMoveFindUndo(page, marker) {
 export async function useCompactChrome(page) {
   // Already showing the bar is enough — and it is showing in the ribbon chrome's
   // EMPTY state, where the band is hidden and the bar is the axis. Switching
-  // chrome there would change the thing under test for no reason.
+  // chrome there would change the thing under test for no reason. At the phone
+  // rung the bar sits behind the header's menus button (docs/148 §5.3b), and the
+  // chrome is compact by construction there.
   if (await page.locator("#appMenuBar").isVisible()) return;
+  if (await page.locator("#appMenusBtn").isVisible()) return;
   await page.locator("#modeCompact").click();
   await expect(page.locator("#appMenuBar")).toBeVisible();
+}
+
+/** The menu bar's button for `menu`, reachable.
+ *
+ *  At the phone rung the eight names live in a sheet behind the header's menus
+ *  button (`menu_sheet.mjs`, docs/148 §5.3b), so a spec that clicked
+ *  `.app-menu-button[data-menu=…]` directly would wait sixty seconds on a button
+ *  it can see in the DOM and a reader cannot see on the screen — the folded-row
+ *  failure `revealMenuRow` exists for, one level up. This opens the sheet first
+ *  when there is one, and is a plain lookup everywhere else. */
+export async function appMenuButton(page, menu) {
+  const door = page.locator("#appMenusBtn");
+  if (await door.isVisible()) {
+    if ((await door.getAttribute("aria-expanded")) !== "true") await door.click();
+    await expect(page.locator("#appMenuBar")).toBeVisible();
+  }
+  return page.locator(`.app-menu-button[data-menu="${menu}"]`);
 }
 
 /** Opens one of the application menus and returns its popover locator.
@@ -370,7 +412,7 @@ export async function useCompactChrome(page) {
  *  own axis. */
 export async function openAppMenu(page, menu) {
   await useCompactChrome(page);
-  await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+  await (await appMenuButton(page, menu)).click();
   const popover = page.locator("#appMenuPopover");
   await expect(popover).toBeVisible();
   return popover;
@@ -432,7 +474,7 @@ export async function revealMenuRow(page, commandId) {
  *  allow is a dead control), and it is already in compact chrome anyway. */
 export async function menuCommandRow(page, menu, commandId) {
   await closeAppMenu(page);
-  await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+  await (await appMenuButton(page, menu)).click();
   await expect(page.locator("#appMenuPopover")).toBeVisible();
   const row = await revealMenuRow(page, commandId);
   await expect(row, `${commandId} should be reachable from the ${menu} menu`).toBeVisible();

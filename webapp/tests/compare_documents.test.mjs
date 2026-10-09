@@ -1,14 +1,15 @@
-// The comparison DRIVER and the sidecar summary, driven in node.
+// The comparison DRIVER, the redline builder and the loss vocabulary, in node.
 //
-// The reason these are testable at all is that `runComparison` takes its engine,
-// its slice budget, its scheduler and its cancellation flag as arguments. So the
-// three things that are hard to produce in a browser — a job that needs many
-// slices, a job that is cancelled mid-flight, and a job whose parse throws — are
-// three objects here rather than three fixtures nobody writes.
+// The reason these are testable at all is that `runComparison` and
+// `buildRedline` take their engine, slice budget, scheduler and cancellation
+// flag as arguments. So the things that are hard to produce in a browser — a job
+// that needs many slices, a job cancelled mid-flight, a parse that throws, a
+// paint that fails after the comparison finished — are objects here rather than
+// fixtures nobody writes.
 //
-// The e2e half (`compare.spec.mjs`) drives the real engine over two real
-// documents. What it CANNOT do is make the engine fail on command, which is why
-// the refusal paths live here.
+// The e2e half (`compare.spec.mjs`, `version-diff-canvas.spec.mjs`) drives the
+// real engine over real documents. What it CANNOT do is make the engine fail on
+// command, which is why the refusal and ownership paths live here.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -17,21 +18,14 @@ import {
   CANCELLED,
   COMPLETE,
   FAMILY_KEY,
-  FAMILY_ORDER,
   FINDING_KEY,
-  KIND_KEY,
   MAX_SLICES,
-  OBJECT_KEY,
   PARSING,
   REFUSAL_KEY,
   UNMARKED_KEY,
   WORKING,
-  changeFields,
-  changeObjectName,
-  changeText,
+  buildRedline,
   runComparison,
-  storyLabel,
-  summariseDiff,
   unmarkedReasons,
 } from "../src/compare_documents.mjs";
 import { EN_STRINGS } from "../src/en_strings.mjs";
@@ -155,91 +149,15 @@ test("a job that never converges is bounded rather than spinning the tab", async
   assert.equal(job.cancelled, true);
 });
 
-test("the summary counts by family and orders rows in reading order", () => {
-  const summary = summariseDiff({
-    complete: true,
-    left: { blocks: 12 },
-    right: { blocks: 14 },
-    changes: [
-      { id: "a", family: "metadata", kind: "property" },
-      { id: "b", family: "text", kind: "insertion", rightText: "new words" },
-      { id: "c", family: "block", kind: "deletion", leftText: "gone" },
-      { id: "d", family: "text", kind: "deletion", leftText: "cut" },
-    ],
-  });
-  assert.equal(summary.total, 4);
-  assert.equal(summary.complete, true);
-  assert.equal(summary.leftBlocks, 12);
-  assert.equal(summary.rightBlocks, 14);
-  // Blocks, then text, then metadata — the order a reader asks the questions in,
-  // which is `FAMILY_ORDER` and is deliberately not alphabetical.
-  assert.deepEqual(summary.families, [
-    { family: "block", count: 1 },
-    { family: "text", count: 2 },
-    { family: "metadata", count: 1 },
-  ]);
-  assert.deepEqual(summary.rows.map((row) => row.id), ["c", "b", "d", "a"]);
-});
-
-test("a family this build has never heard of is counted and sorted last, never dropped", () => {
-  // The engine may grow a thirteenth family. Dropping it would make the panel
-  // report fewer differences than the engine found, which is the one failure a
-  // comparison cannot be allowed: a reader would conclude the documents agree
-  // about something they do not.
-  const summary = summariseDiff({
-    changes: [
-      { id: "x", family: "somethingNew", kind: "property" },
-      { id: "y", family: "text", kind: "insertion" },
-    ],
-  });
-  assert.equal(summary.total, 2);
-  assert.deepEqual(summary.families.map((entry) => entry.family), ["text", "somethingNew"]);
-  assert.equal(summary.rows.at(-1).id, "x");
-});
-
-test("a malformed sidecar summarises as empty rather than throwing", () => {
-  for (const bad of [null, undefined, {}, { changes: "lots" }]) {
-    const summary = summariseDiff(bad);
-    assert.equal(summary.total, 0);
-    assert.equal(summary.complete, false, "absent is not complete");
-  }
-});
-
-test("the loss reports the engine aggregates survive into the summary", () => {
-  // These are the engine telling the reader what it could NOT compare
-  // (`record.rs`: "the reader is told *that* it changed and told that the detail
-  // is missing"). Collecting them and rendering only a change count would be the
-  // silent loss `SKILL` §12 forbids, and it is the exact shape of defect this
-  // repository has published twice — a surface claiming a completeness it has not
-  // got. So the summary carries them through, aggregated as the engine sent them.
-  const summary = summariseDiff({
-    complete: true,
-    changes: [],
-    findings: [
-      { code: "not_compared", construct: "drawing", count: 40_000 },
-      { code: "truncated", construct: "inlineTextBudget", count: 1 },
-    ],
-  });
-  assert.equal(summary.total, 0, "no CHANGES is still no changes");
-  assert.equal(
-    summary.findings.length,
-    2,
-    "a comparison that could not read part of the document must still say so",
-  );
-  assert.equal(summary.findings[0].count, 40_000, "the count is the engine's aggregate");
-});
-
-test("every family, kind and finding code the engine can report has a catalogue key", () => {
+test("every family and finding code the engine can report has a catalogue key", () => {
   // Read from the RUST, not from a list here, so a family added to
   // `casual-doc-diff` fails this test instead of rendering as a bare identifier
   // in eighteen languages. Both enums are `#[serde(rename_all = "snake_case")]`,
   // which is what makes the mapping from variant to key mechanical.
   const record = readRecordSource();
   const families = variants(record, "DiffFamily");
-  const kinds = variants(record, "DiffKind");
   const codes = variants(record, "FindingCode");
   assert.ok(families.length >= 12, `only ${families.length} families found; the scan has drifted`);
-  assert.ok(kinds.length >= 6, `only ${kinds.length} kinds found; the scan has drifted`);
   assert.ok(codes.length >= 4, `only ${codes.length} finding codes found; the scan has drifted`);
   assert.deepEqual(
     codes.filter((code) => !FINDING_KEY[code]),
@@ -252,28 +170,9 @@ test("every family, kind and finding code the engine can report has a catalogue 
     [],
     "a construct family with no catalogue key renders as a bare identifier",
   );
-  assert.deepEqual(
-    kinds.filter((kind) => !KIND_KEY[kind]),
-    [],
-    "a change kind with no catalogue key renders as a bare identifier",
-  );
-  assert.deepEqual(
-    families.filter((family) => !OBJECT_KEY[family]),
-    [],
-    "a construct family with no bracketed object name leaves a row that says only " +
-      "its kind — `Removed`, with nothing removed",
-  );
-  // And the order list is the family list, so a new family cannot be given a key
-  // and then left out of the panel's grouping.
-  assert.deepEqual([...FAMILY_ORDER].sort(), [...families].sort());
   // Every key really resolves. A `labelKey` pointing at nothing is the defect the
   // format catalogue's own guard exists for, one surface over.
-  for (const key of [
-    ...Object.values(FAMILY_KEY),
-    ...Object.values(KIND_KEY),
-    ...Object.values(FINDING_KEY),
-    ...Object.values(OBJECT_KEY),
-  ]) {
+  for (const key of [...Object.values(FAMILY_KEY), ...Object.values(FINDING_KEY)]) {
     assert.ok(Object.hasOwn(EN_STRINGS, key), `${key} is in no string table`);
   }
 });
@@ -289,6 +188,12 @@ test("every family, kind and finding code the engine can report has a catalogue 
 /** `crates/casual-doc-wasm/src/diff.rs`, where `applyDiffAsRevisions` lives. */
 function readApplySource() {
   return readFileSync(new URL("../../crates/casual-doc-wasm/src/diff.rs", import.meta.url), "utf8");
+}
+
+/** `crates/casual-doc-wasm/src/compare_view.rs`, where the redline is painted
+ *  (`showComparison`, ADR-065) — it reports loss in the same vocabulary. */
+function readViewSource() {
+  return readFileSync(new URL("../../crates/casual-doc-wasm/src/compare_view.rs", import.meta.url), "utf8");
 }
 
 test("every refusal `applyDiffAsRevisions` can throw has a catalogue sentence", () => {
@@ -323,12 +228,13 @@ test("every refusal `applyDiffAsRevisions` can throw has a catalogue sentence", 
   assert.doesNotMatch(refusal, /sorry|not supported|not yet|cannot be done/i);
 });
 
-test("every loss key `applyDiffAsRevisions` can report has a catalogue sentence", () => {
+test("every loss key `applyDiffAsRevisions` or the redline can report has a catalogue sentence", () => {
   // The three shapes the engine records one with: `loss.insert("key")`,
   // `unapplied(loss, "key")`, and `family_loss_key`'s twelve — which are the
   // `DiffFamily` variants and are read from `record.rs` so the two scans cannot
-  // disagree about how many families there are.
-  const source = readApplySource();
+  // disagree about how many families there are. The redline (`compare_view.rs`)
+  // reports in the same vocabulary, so it is scanned too.
+  const source = readApplySource() + readViewSource();
   const keys = new Set([
     ...[...source.matchAll(/loss\.insert\(\s*"([A-Za-z][A-Za-z0-9]*)"/g)].map(([, key]) => key),
     ...[...source.matchAll(/unapplied\(\s*loss,\s*"([A-Za-z][A-Za-z0-9]*)"/g)].map(([, key]) => key),
@@ -336,7 +242,7 @@ test("every loss key `applyDiffAsRevisions` can report has a catalogue sentence"
   ]);
   assert.ok(keys.size >= 22, `only ${keys.size} loss keys found; the scan has drifted`);
   assert.deepEqual(
-    [...keys].filter((key) => !UNMARKED_KEY[key]),
+    [...keys].filter((key) => !UNMARKED_KEY[key] && !FAMILY_KEY[key]),
     [],
     "a loss key with no catalogue sentence is a difference the reader is never told about",
   );
@@ -349,7 +255,9 @@ test("a loss report reaches the reader, and an unknown key is not quietly droppe
   // THE RULE: nothing is swallowed. A comparison that applied nine of twelve
   // changes and said "done" is the worst outcome available, and the engine
   // computes this report precisely so a host can say it.
-  const rows = unmarkedReasons(["blockDeletion", "formatting", "somethingNewInTheEngine"]);
+  const rows = unmarkedReasons(["blockDeletion", "formatting", "somethingNewInTheEngine"], {
+    familyCounts: [["formatting", 3]],
+  });
   assert.deepEqual(
     rows.map((row) => row.key),
     ["blockDeletion", "formatting", "somethingNewInTheEngine"],
@@ -358,9 +266,10 @@ test("a loss report reaches the reader, and an unknown key is not quietly droppe
   // A real sentence, not a key and not a bare identifier.
   assert.match(rows[0].label, /paragraphs/i);
   assert.ok(!rows[0].label.includes("compare.unmarked"));
-  // The twelve family keys route through `OBJECT_KEY`, which every catalogue
-  // already answers — so `formatting` is a noun, not `formatting`.
-  assert.equal(rows[1].label, t("compare.object.formatting"));
+  // A family key is said as the family's own COUNTED sentence ("Formatting
+  // changes: 3"), never as an identifier or a bracketed noun.
+  assert.equal(rows[1].label, t("compare.family.formatting", { count: "3" }));
+  assert.match(rows[1].label, /3/);
   // And a key this build has never heard of still SHOWS, under its own name.
   assert.equal(rows[2].label, "somethingNewInTheEngine");
 
@@ -394,97 +303,6 @@ test("the comparison driver carries the engine's own sidecar TEXT, not a re-seri
     assert.notEqual(outcome.sidecar, JSON.stringify(outcome.diff));
   });
 });
-
-test("no change can render as its kind label and nothing else", () => {
-  // THE DEFECT, measured in Chromium on 2026-10-04: bold one word in the demo
-  // document and compare, and three of the four rows named nothing at all.
-  //
-  //   <li data-compare-kind="formatting"><span class="compare-kind">Reformatted</span></li>
-  //   <li data-compare-kind="property" data-compare-change-family="object">
-  //     <span class="compare-kind">Property changed</span></li>
-  //
-  // "Reformatted." That was the whole entry. `changeText`'s own doc comment said
-  // the field list carried such a row — and `renderResult` never rendered
-  // `change.fields`, so the intention was written down and not implemented, which
-  // is why reading the module made the surface look finished.
-  //
-  // The rule is a disjunction and this is the guard on it: text, or typed fields,
-  // or a bracketed object name. The third is total over `OBJECT_KEY`, so the
-  // disjunction cannot fail — which is what lets this assert over every shape the
-  // engine can produce rather than over the three the panel was tested with.
-  const about = (change) =>
-    changeText(change) || changeFields(change).join(", ") || changeObjectName(change);
-
-  // Shapes taken from the real construction sites in `casual-doc-diff/src/job.rs`
-  // and `compare.rs`, including the ones that carry no text AND no fields.
-  const shapes = [
-    { family: "text", kind: "insertion", rightText: "BASELINE ", fields: [] },
-    { family: "text", kind: "deletion", leftText: "gone", fields: [] },
-    { family: "formatting", kind: "formatting", fields: ["runProperties"] },
-    { family: "object", kind: "property", fields: ["inlineObject"] },
-    { family: "section", kind: "property", fields: ["sections[0]", "id"] },
-    { family: "block", kind: "insertion", fields: ["story"] },
-    { family: "review", kind: "property", fields: ["revision"] },
-    // `excerpt_of` returns None for a block whose projected text is empty — an
-    // image-only paragraph, an empty paragraph, a table row — so these two are
-    // the shapes that used to read exactly "Removed" and "Added".
-    { family: "block", kind: "deletion", fields: [] },
-    { family: "table", kind: "insertion", fields: [] },
-    { family: "block", kind: "move_from", fields: [] },
-    // And a family this build has never heard of still names itself.
-    { family: "sparkline", kind: "deletion", fields: [] },
-  ];
-  for (const change of shapes) {
-    const words = about(change);
-    assert.ok(
-      words.length > 0,
-      `a ${change.kind} in ${change.family} renders as its kind label and nothing else`,
-    );
-  }
-
-  // Every family the engine declares, not just the shapes above: a family with no
-  // text and no fields is the worst case, so it is the one asserted over all of
-  // them.
-  for (const family of variants(readRecordSource(), "DiffFamily")) {
-    assert.ok(
-      about({ family, kind: "deletion", fields: [] }).length > 0,
-      `a deletion in ${family} with no text and no fields names nothing`,
-    );
-  }
-
-  // And the three parts are in priority order, so a row with text does not bury
-  // the words under a taxonomy label.
-  assert.equal(about({ family: "text", kind: "deletion", leftText: "x", fields: ["y"] }), "x");
-  assert.equal(about({ family: "object", kind: "property", fields: ["inlineObject"] }), "inlineObject");
-  assert.equal(about({ family: "table", kind: "deletion", fields: [] }), "<Table>");
-  assert.equal(about({ family: "nope", kind: "deletion", fields: [] }), "<nope>");
-  // A blank or non-string field is not a name. `fields` is untrusted on the way in
-  // for the same reason a stored version row is: it crossed a JSON boundary.
-  assert.deepEqual(changeFields({ fields: ["", null, 3, "alignment"] }), ["alignment"]);
-  assert.deepEqual(changeFields({}), []);
-});
-
-test("a story outside the body says where it is; the body says nothing", () => {
-  assert.equal(storyLabel({ kind: "body" }), null, "saying 'in the body' on every row is noise");
-  assert.equal(storyLabel(undefined), null);
-  assert.equal(storyLabel({ kind: "header", section: 0 }), "in the header of section 1");
-  assert.equal(storyLabel({ kind: "footer", section: 2 }), "in the footer of section 3");
-  assert.equal(storyLabel({ kind: "footnote", index: 0 }), "in footnote 1");
-  assert.equal(storyLabel({ kind: "endnote", index: 4 }), "in endnote 5");
-  assert.equal(storyLabel({ kind: "comment", id: "abc" }), "in a comment");
-  assert.equal(storyLabel({ kind: "definitions" }), "in the document's definitions");
-});
-
-test("a change shows the side that exists", () => {
-  // An insertion has only a right side and a deletion only a left, so this is not
-  // "prefer one": picking the wrong side would render a deletion blank.
-  assert.equal(changeText({ kind: "insertion", rightText: "added" }), "added");
-  assert.equal(changeText({ kind: "deletion", leftText: "removed" }), "removed");
-  assert.equal(changeText({ kind: "formatting", leftText: "same", rightText: "same" }), "same");
-  assert.equal(changeText({ kind: "property" }), "", "a property change has no text of its own");
-});
-
-// ---- helpers ---------------------------------------------------------------
 
 function readRecordSource() {
   return readFileSync(

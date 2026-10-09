@@ -1,4 +1,5 @@
 import {
+  appMenuButton,
   test,
   expect,
   gotoEditor,
@@ -275,9 +276,14 @@ for (const width of [720, 390]) {
     expect(phoneRung, `phone chrome is on at ${width}px exactly when the rung says so`).toBe(
       width <= 620,
     );
-    await expect(
-      phoneRung ? page.locator('.app-menu-button[data-menu="file"]') : page.locator("#tabFile"),
-    ).toBeVisible();
+    // At the phone rung the File button lives in the header's menus sheet
+    // (docs/148 §5.3b), so the route is the door to it, and then File itself.
+    if (phoneRung) {
+      await expect(page.locator("#appMenusBtn")).toBeVisible();
+      await expect(await appMenuButton(page, "file")).toBeVisible();
+    } else {
+      await expect(page.locator("#tabFile")).toBeVisible();
+    }
     await expect(page.locator("#railOutline")).toContainText("Outline");
     expect(consoleErrors).toEqual([]);
   });

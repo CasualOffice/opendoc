@@ -305,8 +305,9 @@ test("two version rows do not read the same", async ({ page }) => {
   // The owner's second report: "still no improvement in versions". Every row read
   // `Saved · 16 KB`, so the panel answered when and never what, and a timeline
   // whose rows are indistinguishable is one a reader cannot use. The row now
-  // carries what changed — the engine's edit count, the byte delta, the author —
-  // all derived from stored metadata with no document parse.
+  // carries what changed in words a reader recognises — "Words added: 2" — from
+  // the word count recorded at capture, with no document parse. (It carried the
+  // compressed file's byte delta until 2026-10-09; see `versionChangeText`.)
   await gotoEditor(page);
   await expectVersions(page, 1);
   await realEdit(page, "first change");
@@ -328,9 +329,10 @@ test("two version rows do not read the same", async ({ page }) => {
     `all three rows read the same (${details.join(" / ")}) — a timeline whose rows ` +
       "cannot be told apart answers when and never what",
   ).toBe(3);
-  // At least one row says how many edits went into it, which is the fact that is
-  // actually about the work rather than about the file.
-  expect(details.join(" ")).toMatch(/\d+ edits?/);
+  // At least one row says how many words changed, which is the fact that is
+  // actually about the work rather than about the file — and none speaks bytes.
+  expect(details.join(" ")).toMatch(/Words added: \d+/);
+  expect(details.join(" ")).not.toMatch(/\bKB\b|larger|smaller/);
 
   // The accessible name carries it too: a sighted reader can now tell two rows
   // apart and a screen-reader reader could not.
@@ -338,5 +340,5 @@ test("two version rows do not read the same", async ({ page }) => {
     cells.map((cell) => cell.getAttribute("aria-label") ?? ""),
   );
   expect(new Set(names).size).toBe(3);
-  expect(names.join(" ")).toMatch(/\d+ edits?/);
+  expect(names.join(" ")).toMatch(/Words added: \d+/);
 });

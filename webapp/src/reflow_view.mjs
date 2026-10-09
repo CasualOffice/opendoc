@@ -234,22 +234,32 @@ export const FULL_WIDTH_ADVANCE_EM = 0.7;
 export const READING_TARGET_CHARS = 80;
 export const READING_TARGET_CHARS_CJK = 40;
 
-/** The four width steps, per-viewer, and what each one caps the column at.
+/** The five width steps, per-viewer, and what each one caps the column at.
  *
- *  FOUR because WCAG 1.4.8 asks for "a mechanism" and does not say how many
- *  rungs it has: Google Docs offers three (Narrow/Medium/Wide), Word's Immersive
- *  Reader four (Very Narrow/Narrow/Moderate/Wide). Four, labelled by what they
- *  do rather than by a number, with the targets stated here in the code.
+ *  WCAG 1.4.8 asks for "a mechanism" and does not say how many rungs it has:
+ *  Google Docs offers Narrow/Medium/Wide (secondary sources add Full), Word's
+ *  Immersive Reader four (Very Narrow/Narrow/Moderate/Wide). Labelled by what
+ *  they do rather than by a number, with the targets stated here in the code.
  *
- *  Each step is one `X` in `min(available, X)` — **ONE mechanism, four values**,
- *  not four layout paths. `LayoutView::Reflow` is untouched by all of them.
+ *  Each step is one `X` in `min(available, X)` — **ONE mechanism, five values**,
+ *  not five layout paths. `LayoutView::Reflow` is untouched by all of them.
  *
  *  | step | `X` | where the number comes from |
  *  | --- | --- | --- |
  *  | `narrow` | 55 characters | NOT a sourced number; see below |
- *  | `reading` | 80 characters (40 CJK) | WCAG 2.1 SC 1.4.8 (AAA). **The default.** |
+ *  | `reading` | 80 characters (40 CJK) | WCAG 2.1 SC 1.4.8 (AAA) |
  *  | `fit` | the document's own text measure | the document. Invents no constant. |
+ *  | `wide` | the document's own PAGE width | the document. **The default.** |
  *  | `full` | uncapped | the pre-cap behaviour, named on purpose |
+ *
+ *  `wide` is the page with its margins taken away, which is how pageless is
+ *  described: Google's announcement says it adds *"more horizontal space for
+ *  content like tables and images"*, and TechRepublic's walk-through (secondary)
+ *  that it *"removes both the empty space around the page and the rigid
+ *  page-based margins"* (`docs/166` §5, §7). Like `fit` it is DERIVED from the
+ *  document rather than invented: the author's sheet, edge to edge. On Letter at
+ *  100% that is 816 CSS px of text where `reading` gave 468 — which is the
+ *  difference the owner reported as "the width of the page is too small".
  *
  *  `narrow`'s 55 is the one number here with no normative source, and it is a
  *  STEP and never a default for exactly that reason. It is offered because a
@@ -306,6 +316,15 @@ export const REFLOW_WIDTH_STEPS = Object.freeze([
     commandKey: "textWidth.fit.command",
   }),
   Object.freeze({
+    id: "wide",
+    chars: null,
+    charsCjk: null,
+    shortKey: "textWidth.wide.short",
+    rowKey: "textWidth.wide.row",
+    titleKey: "textWidth.wide.title",
+    commandKey: "textWidth.wide.command",
+  }),
+  Object.freeze({
     id: "full",
     chars: Infinity,
     charsCjk: Infinity,
@@ -318,12 +337,19 @@ export const REFLOW_WIDTH_STEPS = Object.freeze([
 
 /** THE DESKTOP DEFAULT, and the ONE LINE that changes it.
  *
- *  `reading`. A reader who opens a document on a 1440px screen and turns the
- *  pages off should get 80 characters, not 241 — that is the whole finding of
- *  `154` §3.2, and defaulting to `full` would ship the measurement and not the
- *  fix. `154` §5 left this call open and ADR-048 records it as the owner's; it
- *  is implemented as Reading, and changing it to `"fit"` or `"full"` is this one
- *  assignment and nothing else.
+ *  `wide` — the document's own page width (`docs/151` §6.2a, ADR-048 as amended
+ *  2026-10-06). It was `reading`, and ADR-048 recorded that call as the owner's;
+ *  the owner has now made it: *"at present width of page is too small"*, against
+ *  Google Docs' pageless view as the reference. Measured at 1440px, Reading gave
+ *  a 469px column — NARROWER than the 624px text column the same document shows
+ *  on paper, so turning the pages off took width away, which is the opposite of
+ *  what pageless is for. Wide gives the page edge to edge (816px on Letter at
+ *  100%), never asks for more than the window, and leaves the WCAG 1.4.8 step
+ *  one click away for a reader who wants it.
+ *
+ *  Not `full`: an uncapped column at 1920px is 300+ characters, which `154`
+ *  §3.2 measured and nobody wants by default. Not `fit`: the paper's own text
+ *  column is what the reader was already looking at, so it is not "more room".
  *
  *  It is ONE default and not a per-device pair on purpose: on a phone every step
  *  reduces to `available` anyway, because a 390px window is narrower than the
@@ -331,7 +357,7 @@ export const REFLOW_WIDTH_STEPS = Object.freeze([
  *  horizontal-scroll exemption are untouched by this value whatever it is. A
  *  phone-only evaluation is precisely what hid the missing cap (`154` §3.2), so
  *  the defaults are deliberately not split by device again. */
-export const REFLOW_WIDTH_DEFAULT = "reading";
+export const REFLOW_WIDTH_DEFAULT = "wide";
 
 /** Where the width step lives: per-viewer, beside `docReflow`.
  *
@@ -395,17 +421,20 @@ export function charTargetTwip(chars, fontSizePt, advanceEm) {
  * Complexity: O(1). Safe to call once per render pass; it reads no document.
  *
  * @param {string} stepId one of `REFLOW_WIDTH_STEPS`.
- * @param {{face?: string|null, fontSizePt?: number, docMeasureTwip?: number|null}} doc
- *        the document's default face and size (`stylePreview("Normal")`), and its
- *        own text measure for the `fit` step. Each may be missing: a cap is a
- *        reading comfort and must never be the reason a document fails to lay
- *        out, so an unknown face falls back and an unknown measure falls through
- *        to `Infinity` — i.e. to `available`, which is where this started.
+ * @param {{face?: string|null, fontSizePt?: number, docMeasureTwip?: number|null,
+ *          docPageTwip?: number|null}} doc
+ *        the document's default face and size (`stylePreview("Normal")`), its
+ *        own text measure for the `fit` step and its page width for `wide`. Each
+ *        may be missing: a cap is a reading comfort and must never be the reason
+ *        a document fails to lay out, so an unknown face falls back and an
+ *        unknown measure falls through to `Infinity` — i.e. to `available`,
+ *        which is where this started.
  * @returns {number} twips, possibly `Infinity`.
  */
-export function reflowCapTwip(stepId, { face, fontSizePt, docMeasureTwip } = {}) {
+export function reflowCapTwip(stepId, { face, fontSizePt, docMeasureTwip, docPageTwip } = {}) {
   const step = reflowWidthStep(stepId);
   if (step.id === "fit") return docMeasureTwip > 0 ? docMeasureTwip : Infinity;
+  if (step.id === "wide") return docPageTwip > 0 ? docPageTwip : Infinity;
   const advanceEm = meanAdvanceEm(face);
   const chars = advanceEm >= FULL_WIDTH_ADVANCE_EM ? step.charsCjk : step.chars;
   return charTargetTwip(chars, fontSizePt > 0 ? fontSizePt : 11, advanceEm);

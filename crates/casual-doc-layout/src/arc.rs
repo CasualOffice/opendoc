@@ -320,6 +320,9 @@ mod tests {
                     pen = (f64::from(point.x.raw()), f64::from(point.y.raw()));
                     out.push(pen);
                 }
+                // A sector is closed by its `closed` flag, never mid-path, so a
+                // close adds no sampled point here.
+                PathCommand::Close => {}
             }
         }
         out

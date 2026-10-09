@@ -2339,9 +2339,9 @@ fn an_anchored_arrival_is_resolved_before_it_is_applied() {
 /// fields are indented eight.
 ///
 /// CRLF-normalised first and cut at the test module, for the reason `containers.rs` records in
-/// full: `include_str!` hands back the bytes as they sit on disk, this repository has no
-/// `.gitattributes`, and a pattern spanning a line break silently stops matching on a Windows
-/// checkout.
+/// full: `include_str!` hands back the bytes as they sit on disk, this repository's
+/// `.gitattributes` pins only the preset shape table to LF, and a pattern spanning a line break
+/// silently stops matching on a Windows checkout.
 fn declared_variants(source: &str, declaration: &str) -> usize {
     let source = source.replace("\r\n", "\n");
     let production = source

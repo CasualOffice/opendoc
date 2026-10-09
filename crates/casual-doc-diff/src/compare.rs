@@ -77,6 +77,8 @@ pub const DEFINITION_FIELDS: &[&str] = &[
     "themes",
     "shapeStyles",
     "shapeFillDetail",
+    "objectNames",
+    "formProtection",
     "settings",
     "people",
 ];
@@ -105,6 +107,14 @@ pub const OPAQUE_CONSTRUCTS: &[&str] = &[
     // shape's picture, pattern, gradient and line geometry, and a shape that moved
     // between two drafts changes its node id without changing its appearance.
     "shapeFillDetail",
+    // A drawing object's name and title (`wp:docPr`/`cNvPr` `@name`/`@title`)
+    // are keyed by the drawing's parse-minted `NodeId`, for the same reason and
+    // with the same consequence as `shapeStyles`.
+    "objectNames",
+    // A section's `w:formProt` (`109` FID-AT-06) is keyed by the section's
+    // parse-minted `SectionId`, for the same reason and with the same
+    // consequence as `objectNames`.
+    "formProtection",
     // A chart projection, for both of the reasons this list exists at once. It is
     // keyed by a `ChartId` the parse minted, so two files' projections cannot be
     // paired — the same reason `numbering` and `fieldRanges` are here. And it is a
@@ -472,6 +482,26 @@ pub fn compare_definitions(
         "shapeFillDetail",
         &left_definitions.shape_fill_detail,
         &right_definitions.shape_fill_detail,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // Drawing object names and titles: located, not characterised, per
+    // `OPAQUE_CONSTRUCTS` above.
+    compare_field(
+        "objectNames",
+        &left_definitions.object_names,
+        &right_definitions.object_names,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // Each section's forms protection: located, not characterised, per
+    // `OPAQUE_CONSTRUCTS` above.
+    compare_field(
+        "formProtection",
+        &left_definitions.form_protection,
+        &right_definitions.form_protection,
         DiffFamily::Definition,
         &mut changes,
         findings,

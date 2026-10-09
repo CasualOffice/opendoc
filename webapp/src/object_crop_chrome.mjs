@@ -92,20 +92,33 @@ export function cropFromDrag(startCrop, handleKind, dxFraction, dyFraction) {
  * O(1).
  *
  * @param {PointerEvent} event the pointerdown on the grip
- * @param {{onMove: (event: PointerEvent) => void, onEnd: () => void}} io
+ * @param {{onMove: (event: PointerEvent) => void, onEnd: (cancelled: boolean) => void}} io
  */
 export function beginGripDrag(event, io) {
   event.preventDefault();
   event.stopPropagation();
   const move = (e) => io.onMove(e);
-  const up = (e) => {
+  const finish = (cancelled) => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
-    io.onEnd();
+    window.removeEventListener("pointercancel", cancel);
+    window.removeEventListener("blur", cancel);
+    io.onEnd(cancelled);
+  };
+  const up = (e) => {
+    finish(false);
     e.preventDefault();
   };
+  // A gesture the BROWSER ends — a touch it takes over for scrolling, a pen
+  // lifted out of range, the window losing focus mid-drag — never sends a
+  // `pointerup`. Listening for `pointerup` alone left the kept rectangle
+  // following the pointer until Escape (`docs/104` HF-106); `onEnd(true)` lets
+  // the caller put the crop back where the gesture started.
+  const cancel = () => finish(true);
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", cancel);
+  window.addEventListener("blur", cancel);
 }
 
 /**

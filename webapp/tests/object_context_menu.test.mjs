@@ -352,3 +352,67 @@ test("the wrap submenu ticks the mode the object is actually in", () => {
 test("Delete is marked destructive so the menu can paint it as such", () => {
   assert.equal(row(picture, "object.delete", host()).danger, true);
 });
+
+// ---- Word's Picture Format rows (`docs/109` HF-252, HF-254) -------------------
+//
+// The fixtures above call a picture `kind: "picture"`, which is not a kind the
+// engine reports — it says `"image"` — so they could not see a row gated on the
+// real kind. This is the engine's own shape: a picture that publishes
+// `canStroke`, because its border is the same `a:ln` a shape's outline is.
+
+const image = { ...picture, kind: "image", canStroke: true };
+
+test("a picture offers Change picture, and nothing else does", () => {
+  const changeRow = (context) => row(context, "object.changePicture", { ...host(), changePicture: () => {} });
+  assert.ok(changeRow(image), "a picture offers Change picture");
+  for (const other of [textBox, shape, { ...image, kind: "chart" }]) {
+    assert.equal(changeRow(other), undefined, `${other.kind} has no image of its own to change`);
+  }
+  // A host that wires no Change picture verb gets no row, rather than a dead one.
+  assert.equal(row(image, "object.changePicture", host()), undefined);
+});
+
+test("Change picture refuses in Viewing and Suggesting, with the reason", () => {
+  const viewing = row(image, "object.changePicture", { ...host({ reviewMode: "viewing" }), changePicture: () => {} });
+  assert.equal(viewing.enabled, false);
+  assert.equal(viewing.disabledReason, "Turn on Editing to change this object");
+  const suggesting = row(image, "object.changePicture", {
+    ...host({ reviewMode: "suggesting" }),
+    changePicture: () => {},
+  });
+  assert.equal(suggesting.disabledReason, "Object changes cannot be tracked in Suggesting mode");
+});
+
+test("a picture's outline row is Word's Picture border, and it has no fill row", () => {
+  const border = row(image, "object.outline");
+  assert.ok(border, "a picture whose engine publishes canStroke offers a border");
+  assert.equal(border.label, "object.pictureBorder", "named as Word names it");
+  assert.equal(border.submenu[0].id, "object.outline.none");
+  assert.equal(row(image, "object.fill"), undefined, "a picture has no fill");
+  // A picture the engine says cannot carry a border gets no row at all.
+  assert.equal(row({ ...image, canStroke: false }, "object.outline"), undefined);
+  // And a shape's row keeps its own name.
+  assert.equal(row(shape, "object.outline").label, "Shape outline");
+});
+
+// ---- Word's F2, "Move to where?" (`docs/109` UX-OB-02) ------------------------
+//
+// The drag that moves an in-line picture to another place in the text is a
+// pointer gesture, so on its own it is a capability a keyboard or screen-reader
+// user cannot reach (`SKILL` §10). The menu row is the second surface, and the
+// palette inherits it.
+
+test("an object that moves in the text offers Move to… with Word's F2, and only that object", () => {
+  const io = { ...host(), moveInText: () => {} };
+  const inline = { ...image, canMoveInText: true };
+  const move = row(inline, "object.moveInText", io);
+  assert.ok(move, "an in-line picture offers Move to…");
+  assert.equal(move.label, "object.moveTo.menu");
+  assert.equal(move.shortcut, "F2", "and names the key that does the same");
+  assert.equal(move.enabled, true);
+  assert.equal(row(image, "object.moveInText", io), undefined, "an object that cannot move in the text has no row");
+  assert.equal(row(inline, "object.moveInText", host()), undefined, "a host with no verb gets no dead row");
+  const viewing = row(inline, "object.moveInText", { ...host({ reviewMode: "viewing" }), moveInText: () => {} });
+  assert.equal(viewing.enabled, false);
+  assert.equal(viewing.disabledReason, "Turn on Editing to change this object");
+});

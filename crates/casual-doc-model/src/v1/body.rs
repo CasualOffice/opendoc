@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::SharedParagraphProperties;
 use super::SharedRunProperties;
-use super::{BookmarkId, BreakKind, CommentId, MediaId, NoteId, RunProperties, Table};
+use super::{
+    BookmarkId, BreakKind, CommentId, CustomGeometry, MediaId, NoteId, RunProperties, Table,
+};
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared model file.
 use super::FieldRangeId;
@@ -533,11 +535,15 @@ pub struct DrawingAnchor {
     #[serde(default, skip_serializing_if = "WrapDistances::is_zero")]
     pub wrap_distances: WrapDistances,
     /// The tight/through wrap contour (`wp:wrapTight`/`wp:wrapThrough` >
-    /// `wp:wrapPolygon`): its ordered vertices (`wp:start` + `wp:lineTo`) in EMU,
-    /// relative to the object's extent. `None` unless the producer authored a
-    /// polygon; only meaningful for [`WrapMode::Tight`]/[`WrapMode::Through`].
-    /// Carried through round-trips; layout still wraps to the bounding box (using
-    /// the contour for exclusion geometry is a follow-up).
+    /// `wp:wrapPolygon`): its ordered vertices (`wp:start` + `wp:lineTo`) exactly
+    /// as authored. `None` unless the producer authored a polygon; only
+    /// meaningful for [`WrapMode::Tight`]/[`WrapMode::Through`].
+    ///
+    /// The schema types the coordinates as EMU, but Word writes them in a
+    /// 21,600 × 21,600 space spanning the object's extent, and that is how
+    /// layout reads them when it wraps text to the contour
+    /// (`casual-doc-layout`'s `wrap_contour`, `docs/109` FID-L-12). The model
+    /// keeps the authored numbers, so a round trip writes back what was read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap_polygon: Option<Vec<PointEmu>>,
     /// Whether the drawing paints behind the document text (`@behindDoc`),
@@ -1323,28 +1329,30 @@ fn is_top_left_alignment(value: &RectAlignment) -> bool {
     matches!(value, RectAlignment::TopLeft)
 }
 
-/// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the
-/// bounded primitive subset implemented by layout/render is distinguished;
-/// every other preset is [`ShapeGeometry::Other`] (drawn as its bounding
-/// rectangle while its original token is retained by [`GroupShape::preset`]).
+/// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`), as a
+/// TYPED token for the presets the editor names and inserts; every other preset
+/// is [`ShapeGeometry::Other`] with its `ST_ShapeType` token retained beside it
+/// (`GroupShape::preset`).
 ///
-/// A variant is added here **only** when layout can draw the preset's real
-/// outline. A variant that painted its bounding rectangle would be
-/// [`ShapeGeometry::Other`] with a longer name and no more fidelity, so the
-/// typed set is exactly the set of presets a reader sees the right shape for.
+/// **This enum no longer decides how a shape is drawn.** Every one of the
+/// standard's 187 presets — typed or retained by token — is drawn from its
+/// ECMA-376 definition through [`crate::v1::preset_shape`] and the same
+/// [`crate::v1::GeometryProgram`] an authored `a:custGeom` uses, with every
+/// adjust guide honoured (`docs/119` "Landed since: the standard's 187
+/// presets"). The typed set is what the import/export/insert token table and the
+/// editor's commands name; `Other` with a token is not a lesser shape, and `Other`
+/// with NO token (an unknown or missing `@prst`) is the one case still drawn as
+/// its bounding rectangle.
 ///
 /// Every variant names the `ST_ShapeType` token it maps to (ECMA-376 Part 1
-/// §20.1.10.56) and, where the preset's outline is governed by an `a:avLst`
-/// adjustment guide, says which guide is honored and what the preset default is
-/// when the document authors none.
+/// §20.1.10.56).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ShapeGeometry {
     /// A rectangle (`rect`).
     #[default]
     Rectangle,
-    /// A rounded rectangle (`roundRect`). Honors `adj` (corner radius as a
-    /// 100000-based fraction of the shorter side); preset default `16667`.
+    /// A rounded rectangle (`roundRect`).
     RoundRectangle,
     /// An ellipse (`ellipse`).
     Ellipse,
@@ -1356,71 +1364,40 @@ pub enum ShapeGeometry {
     Diamond,
     /// A straight line / connector (`line`, or a `wps:cxnSp` straight connector).
     Line,
-    /// A regular pentagon, apex up (`pentagon`). The preset declares no
-    /// adjustment guide: its outline is fixed, inscribed so it fills the
-    /// bounding box exactly.
+    /// A regular pentagon, apex up (`pentagon`).
     Pentagon,
     /// A hexagon with its two points on the left and right edges (`hexagon`).
-    /// Honors `adj` (the horizontal inset of the four corner vertices, as a
-    /// 100000-based fraction of the shorter side, clamped to half the width);
-    /// preset default `25000`. The `vf` guide, which stretches the preset
-    /// vertically, is not honored — the hexagon is fitted to the shape's own
-    /// box instead.
     Hexagon,
-    /// An octagon (`octagon`). Honors `adj` (the corner cut, as a 100000-based
-    /// fraction of the shorter side, clamped to `50000`); preset default
-    /// `29289`, which is the regular octagon when the box is square.
+    /// An octagon (`octagon`).
     Octagon,
-    /// A five-pointed star (`star5`). Honors `adj` (the inner radius, as a
-    /// fraction `adj / 50000` of the outer radius); preset default `19098`,
-    /// which is the regular pentagram. The `hf`/`vf` guides are not honored:
-    /// the star is fitted to the shape's own box, which is what they encode.
+    /// A five-pointed star (`star5`).
     Star5,
-    /// A four-pointed star (`star4`). Honors `adj` (the inner radius, as a
-    /// fraction `adj / 50000` of the outer radius); preset default `12500`.
+    /// A four-pointed star (`star4`).
     Star4,
-    /// A block arrow pointing right (`rightArrow`). Honors `adj1` (shaft
-    /// thickness as a 200000-based fraction of the height) and `adj2` (head
-    /// length as a 100000-based fraction of the shorter side); preset defaults
-    /// `50000` and `50000`.
+    /// A block arrow pointing right (`rightArrow`).
     RightArrow,
-    /// A block arrow pointing left (`leftArrow`); guides as
-    /// [`ShapeGeometry::RightArrow`].
+    /// A block arrow pointing left (`leftArrow`).
     LeftArrow,
-    /// A block arrow pointing up (`upArrow`). Honors `adj1` (shaft thickness as
-    /// a 200000-based fraction of the width) and `adj2` (head length as a
-    /// 100000-based fraction of the shorter side); preset defaults `50000`.
+    /// A block arrow pointing up (`upArrow`).
     UpArrow,
-    /// A block arrow pointing down (`downArrow`); guides as
-    /// [`ShapeGeometry::UpArrow`].
+    /// A block arrow pointing down (`downArrow`).
     DownArrow,
-    /// A double-headed block arrow (`leftRightArrow`). Honors `adj1` (shaft
-    /// thickness as a 200000-based fraction of the height) and `adj2` (each
-    /// head's length as a 100000-based fraction of the shorter side); preset
-    /// defaults `50000`.
+    /// A double-headed block arrow (`leftRightArrow`).
     LeftRightArrow,
-    /// A parallelogram leaning right (`parallelogram`). Honors `adj` (the
-    /// horizontal offset of the top edge, as a 100000-based fraction of the
-    /// shorter side); preset default `25000`.
+    /// A parallelogram leaning right (`parallelogram`).
     Parallelogram,
     /// An isosceles trapezoid with the wide edge at the bottom (`trapezoid`).
-    /// Honors `adj` (each top inset, as a 100000-based fraction of the shorter
-    /// side); preset default `25000`.
     Trapezoid,
-    /// A chevron — an arrow head with a notched back (`chevron`). Honors `adj`
-    /// (the point depth, as a 100000-based fraction of the shorter side);
-    /// preset default `50000`.
+    /// A chevron — an arrow head with a notched back (`chevron`).
     Chevron,
     /// The "pentagon" block arrow of Word's shape gallery — a rectangle with a
     /// pointed right end (`homePlate`, which is the OOXML token; the regular
-    /// pentagon is [`ShapeGeometry::Pentagon`]). Honors `adj` (the point depth,
-    /// as a 100000-based fraction of the shorter side); preset default `50000`.
+    /// pentagon is [`ShapeGeometry::Pentagon`]).
     HomePlate,
-    /// A cross / plus sign (`plus`). Honors `adj` (the arm thickness inset, as
-    /// a 100000-based fraction of the shorter side, clamped to `50000`); preset
-    /// default `25000`.
+    /// A cross / plus sign (`plus`).
     Plus,
-    /// Any other preset, drawn as its bounding rectangle.
+    /// Any other preset: drawn from its ECMA-376 definition when its token is
+    /// retained, and as its bounding rectangle when there is no token to draw.
     Other,
 }
 
@@ -1494,9 +1471,9 @@ impl ShapeGeometry {
         })
     }
 
-    /// The geometry an `a:prstGeom@prst` token names, or `None` when this build
-    /// has no typed primitive for it (the caller then keeps the token verbatim
-    /// in `GroupShape::preset` and paints the bounding rectangle).
+    /// The geometry an `a:prstGeom@prst` token names, or `None` when it is not
+    /// one of the typed tokens (the caller then keeps the token verbatim in
+    /// `GroupShape::preset`, and layout draws it from the standard's table).
     ///
     /// Accepts the aliases a real producer writes as well as the canonical
     /// token — `straightConnector1` is the `wps:cxnSp` spelling of a line.
@@ -1525,119 +1502,6 @@ pub const MAX_SHAPE_GUIDE_NAME_BYTES: usize = 64;
 
 /// Maximum UTF-8 length of an adjustment-guide formula.
 pub const MAX_SHAPE_FORMULA_BYTES: usize = 256;
-
-/// Maximum path commands retained for one custom shape geometry
-/// (`a:custGeom/a:pathLst/a:path`). A bound, not a fidelity target: a hand-drawn
-/// freeform is tens of points, and the cap stops a hostile package from turning
-/// one shape into an unbounded vertex list (docs/119 §6).
-pub const MAX_SHAPE_PATH_COMMANDS: usize = 1024;
-
-/// One command of a custom shape geometry path (`a:custGeom/a:pathLst/a:path`).
-///
-/// Modeled: `a:moveTo`, `a:lnTo`, `a:cubicBezTo`, `a:quadBezTo` and `a:close`.
-/// Still deliberately absent, and still `109` FID-G-02: `a:arcTo`, which needs
-/// `wR`/`hR`/`stAng`/`swAng` and an angle-to-Bézier conversion, and any coordinate
-/// that is a guide NAME rather than an integer, which needs the `a:gdLst` formula
-/// language. A geometry using either is not imported as a path at all, so this enum
-/// never half-describes one (docs/119 §6).
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum ShapePathCommand {
-    /// Start a subpath at a point (`a:moveTo/a:pt`).
-    MoveTo {
-        /// The point, in the path's own coordinate space.
-        point: PointEmu,
-    },
-    /// Draw a straight segment to a point (`a:lnTo/a:pt`).
-    LineTo {
-        /// The point, in the path's own coordinate space.
-        point: PointEmu,
-    },
-    /// Draw a cubic Bézier (`a:cubicBezTo`): two control points, then the
-    /// endpoint, in the authored order.
-    CubicBezTo {
-        /// The control point leaving the previous endpoint.
-        control1: PointEmu,
-        /// The control point entering `point`.
-        control2: PointEmu,
-        /// The curve's endpoint.
-        point: PointEmu,
-    },
-    /// Draw a quadratic Bézier (`a:quadBezTo`): one control point, then the
-    /// endpoint.
-    ///
-    /// Kept distinct from [`ShapePathCommand::CubicBezTo`] rather than promoted on
-    /// import, so the authored command round-trips as itself. A backend with no
-    /// quadratic operator promotes it instead; PDF does.
-    QuadBezTo {
-        /// The single control point.
-        control: PointEmu,
-        /// The curve's endpoint.
-        point: PointEmu,
-    },
-    /// Close the subpath back to its starting point (`a:close`).
-    Close,
-}
-
-impl ShapePathCommand {
-    /// Whether this command draws, as opposed to only moving the pen or closing.
-    ///
-    /// Import uses this to decide whether a path draws anything at all. It is a
-    /// method rather than a `matches!` at the call site because that call site
-    /// tested for `LineTo` specifically, which silently rejected every curve-only
-    /// geometry the moment curves existed.
-    #[must_use]
-    pub fn is_segment(&self) -> bool {
-        matches!(
-            self,
-            Self::LineTo { .. } | Self::CubicBezTo { .. } | Self::QuadBezTo { .. }
-        )
-    }
-
-    /// Every point the command names, control points included.
-    ///
-    /// Validation and layout's coordinate resolution both go through this rather
-    /// than re-enumerating the variants, because a missed control point would
-    /// validate a path and then paint it wrong — the two places that must agree on
-    /// what "every coordinate" means.
-    pub fn points(&self) -> impl Iterator<Item = PointEmu> + '_ {
-        let (a, b, c) = match *self {
-            Self::MoveTo { point } | Self::LineTo { point } => (Some(point), None, None),
-            Self::CubicBezTo {
-                control1,
-                control2,
-                point,
-            } => (Some(control1), Some(control2), Some(point)),
-            Self::QuadBezTo { control, point } => (Some(control), Some(point), None),
-            Self::Close => (None, None, None),
-        };
-        a.into_iter().chain(b).chain(c)
-    }
-}
-
-/// A custom shape geometry path (`a:custGeom/a:pathLst/a:path`): an ordered
-/// command list in its own coordinate space.
-///
-/// [`width_emu`](Self::width_emu) / [`height_emu`](Self::height_emu) are
-/// `a:path@w` / `@h`. Per ECMA-376 Part 1 §20.1.9.15 they default to `0`, and
-/// the default is meaningful: a **positive** value is the extent of the path's
-/// own coordinate space, so a coordinate maps to the shape box by
-/// `x / width_emu`; **zero** means the coordinates are absolute EMU offsets from
-/// the shape's top-left and do NOT scale with the box. The two axes are
-/// independent — the loan-agreement rules in docs/119 set `@w` and omit `@h`.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ShapePath {
-    /// `a:path@w`: the path coordinate space's width, or `0` for absolute EMU.
-    #[serde(default)]
-    pub width_emu: i64,
-    /// `a:path@h`: the path coordinate space's height, or `0` for absolute EMU.
-    #[serde(default)]
-    pub height_emu: i64,
-    /// The commands, in path order. Always starts with a
-    /// [`ShapePathCommand::MoveTo`].
-    pub commands: Vec<ShapePathCommand>,
-}
 
 /// One ordered DrawingML preset adjustment (`a:avLst/a:gd`).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -2045,9 +1909,10 @@ pub struct GroupTextBox {
     /// what a snapshot written before this field carried implicitly.
     #[serde(default, skip_serializing_if = "is_rectangle_geometry")]
     pub geometry: ShapeGeometry,
-    /// Original bounded preset token when [`geometry`](Self::geometry) is
-    /// [`ShapeGeometry::Other`] because no typed primitive covers it yet.
-    /// Semantic export re-emits it instead of rewriting to `rect`.
+    /// The authored preset token when [`geometry`](Self::geometry) is
+    /// [`ShapeGeometry::Other`]: the shape is drawn from this token's ECMA-376
+    /// definition ([`crate::v1::preset_shape`]), and semantic export re-emits it
+    /// instead of rewriting to `rect`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
     /// Ordered preset adjustment guides (`a:avLst/a:gd`).
@@ -2095,22 +1960,28 @@ pub struct GroupShape {
     pub extent: Extent,
     /// The preset geometry (`a:prstGeom@prst`).
     pub geometry: ShapeGeometry,
-    /// Original bounded preset token when [`ShapeGeometry::Other`] has no typed
-    /// primitive yet. Semantic export re-emits it instead of rewriting to `rect`.
+    /// The authored preset token when the geometry is [`ShapeGeometry::Other`]:
+    /// drawn from its ECMA-376 definition ([`crate::v1::preset_shape`]), and
+    /// re-emitted by semantic export instead of `rect`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
     /// Ordered preset adjustment guides (`a:avLst/a:gd`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adjustments: Vec<ShapeAdjustment>,
-    /// The authored custom geometry (`a:custGeom/a:pathLst/a:path`), when the
-    /// shape declares one this build can draw. `Some` always wins over
+    /// The authored custom geometry (`a:custGeom`): guides, adjust handles,
+    /// connection sites, text rectangle and every path. `Some` always wins over
     /// [`geometry`](Self::geometry), which stays [`ShapeGeometry::Other`] so
-    /// nothing mistakes a freeform for a preset. `None` for a preset shape, and
-    /// also for a custom geometry outside the modeled subset — which keeps
-    /// painting its bounding rectangle and keeps reporting the loss
-    /// (docs/119 §6).
+    /// nothing mistakes a freeform for a preset; its adjust values are
+    /// [`adjustments`](Self::adjustments), the same list a preset's live in.
+    /// `None` for a preset shape, and for a custom geometry that does not
+    /// compile — which keeps painting its bounding rectangle and keeps reporting
+    /// the loss (`docs/119` §6).
+    ///
+    /// Named `path` because the field predates multiple paths and guides; a
+    /// snapshot written then holds the single-path object here, which still
+    /// reads (see [`CustomGeometry`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<ShapePath>,
+    pub path: Option<CustomGeometry>,
     /// The fill (`a:solidFill`/`a:gradFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Fill>,

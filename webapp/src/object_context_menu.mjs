@@ -41,11 +41,15 @@
 //                          that also makes the ribbon button and the palette row
 //   `setObjectWrap(v)`     apply a wrap mode
 //   `openAltText()`        open the alt-text dialog
+//   `chartCommands()`      the selected chart's command tree (`chart_commands.mjs`)
 //   `applyShapeFill(hex)`  `null` clears the fill
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
+//   `changePicture()`      Word's Change Picture: pick a file for the picture
 //   `openProperties()`     open the object inspector
 //   `deleteObject()`       delete the selected object
+//   `moveInText()`         Word's F2, "Move to where?" — move an in-line object
+//                          to another place in the text by keyboard
 export function buildObjectContextCommands(context, io) {
   // Object edits are untrackable, so they are read-only in Viewing and blocked
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
@@ -189,6 +193,34 @@ export function buildObjectContextCommands(context, io) {
     });
   }
 
+  // A chart's own commands — Edit data, Type, Elements, Style, Settings — the
+  // SAME tree the contextual Chart tab and the settings panel run
+  // (`chart_commands.mjs`), so the right-click menu and the ribbon cannot drift.
+  // Each row carries its own enablement and reason: the data is readable in
+  // Viewing even though nothing in it can change.
+  if (context.kind === "chart") {
+    commands.push(...(io.chartCommands?.() ?? []));
+  }
+
+  // Move to… — Word's F2 ("Move to where?") for an in-line object: the keyboard
+  // and menu surface of the drag that puts it at another place in the text
+  // (`docs/109` UX-OB-02). The drag alone would leave a keyboard or screen-reader
+  // user no way to move a picture at all.
+  if (context.canMoveInText && typeof io.moveInText === "function") {
+    commands.push({
+      id: "object.moveInText",
+      label: io.text("object.moveTo.menu"),
+      group: "arrange",
+      // A move in the text is a cut and a paste in one step; the scissors are
+      // the glyph that already means that.
+      icon: "cut",
+      shortcut: "F2",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => io.moveInText(),
+    });
+  }
+
   // Alt text — opens the shared alt-text dialog (its Apply pre-checks the gate).
   if (context.canAltText) {
     commands.push({
@@ -204,8 +236,10 @@ export function buildObjectContextCommands(context, io) {
 
   // Shape Fill / Shape Outline — the two live controls of Word's Shape Format
   // tab, reachable from the menu as well as the bar so neither surface is the
-  // only way in.
-  if (context.kind === "shape" && (context.canFill || context.canStroke)) {
+  // only way in. A PICTURE has the outline half, under Word's own name for it,
+  // Picture Border (`docs/109` HF-254): the same `a:ln`, the same command.
+  const picture = context.kind === "image";
+  if ((context.kind === "shape" || picture) && (context.canFill || context.canStroke)) {
     const swatch = (hex) => ({
       id: `object.fill.${hex}`,
       label: hex.toUpperCase(),
@@ -213,7 +247,7 @@ export function buildObjectContextCommands(context, io) {
       enabled: mutationEnabled,
       disabledReason: mutationReason,
     });
-    if (context.canFill) {
+    if (context.canFill && !picture) {
       commands.push({
         id: "object.fill",
         label: "Shape fill",
@@ -238,12 +272,13 @@ export function buildObjectContextCommands(context, io) {
     if (context.canStroke) {
       commands.push({
         id: "object.outline",
-        label: "Shape outline",
+        label: picture ? io.text("object.pictureBorder") : "Shape outline",
         group: "arrange",
         icon: "format",
         submenu: [
           {
             id: "object.outline.none",
+            // Word's Picture Border menu says "No Outline" too.
             label: "No outline",
             group: "reset",
             enabled: mutationEnabled,
@@ -270,6 +305,20 @@ export function buildObjectContextCommands(context, io) {
       enabled: mutationEnabled,
       disabledReason: mutationReason,
       run: () => io.enterCrop(),
+    });
+  }
+
+  // Change Picture — Word's right-click row, Docs' Replace image. A picture
+  // only: a chart or an embedded object has no image of its own to swap.
+  if (picture && typeof io.changePicture === "function") {
+    commands.push({
+      id: "object.changePicture",
+      label: io.text("object.changePicture.menu"),
+      group: "arrange",
+      icon: "picture",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => io.changePicture(),
     });
   }
 

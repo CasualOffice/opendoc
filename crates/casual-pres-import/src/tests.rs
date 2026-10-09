@@ -574,7 +574,9 @@ fn a_custom_geometry_keeps_its_authored_path_commands() {
             _ => None,
         })
         .expect("slide 10 carries an a:custGeom");
-    let path = freeform.path.as_ref().expect("the path is modelled");
+    let geometry = freeform.path.as_ref().expect("the path is modelled");
+    assert_eq!(geometry.paths.len(), 1, "the fixture authors one a:path");
+    let path = &geometry.paths[0];
 
     assert_eq!(
         freeform.geometry,

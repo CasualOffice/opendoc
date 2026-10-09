@@ -48,6 +48,8 @@ use casual_doc_model::v1::{
     MAX_SHAPE_PRESET_BYTES, MediaId, PointEmu, ShapeAdjustment, ShapeGeometry, ShapePath,
     ShapePathCommand, ShapeStyleRef, WordprocessingGroup,
 };
+// Own line (anti-conflict): the shared geometry model a freeform is read into.
+use casual_doc_model::v1::{CustomGeometry, GeometryPoint, PathFill};
 use casual_pres_model::{
     Placeholder, PlaceholderKind, PlaceholderOrientation, PlaceholderSize, ShapeTree, SlideNode,
     SlidePaint, TextBody,
@@ -646,7 +648,7 @@ struct Geometry {
     geometry: ShapeGeometry,
     preset: Option<String>,
     adjustments: Vec<ShapeAdjustment>,
-    path: Option<ShapePath>,
+    path: Option<CustomGeometry>,
 }
 
 /// A shape's `p:spPr`: transform, geometry, fill, outline.
@@ -1359,14 +1361,19 @@ fn read_preset_geometry(
     Ok(())
 }
 
-/// Reads an `a:custGeom`'s first `a:path`.
+/// Reads an `a:custGeom`'s paths into the document model's [`CustomGeometry`],
+/// the type the shared geometry engine draws.
 ///
 /// `geometry` stays [`ShapeGeometry::Other`] so nothing mistakes a freeform for a
-/// preset; `ShapePath` always wins over it where both are set.
+/// preset; the custom geometry always wins over it where both are set.
 ///
-/// `a:arcTo` is not modelled (`109` FID-G-02) and a path containing one is
-/// refused as a whole rather than silently drawn with a straight segment in place
-/// of the arc, which would be a different shape presented as the authored one.
+/// Literal coordinates only. The DOCX importer reads the whole `a:custGeom`
+/// grammar — guides, `a:arcTo`, handles, the text rectangle — but inside its own
+/// streaming parser, where this reader cannot call it. Until that reader is lifted
+/// into a crate both importers share, a guide list is reported and a path
+/// containing `a:arcTo` or a guide-named coordinate is refused as a whole rather
+/// than drawn with a straight segment in place of the arc, which would be a
+/// different shape presented as the authored one.
 fn read_custom_geometry(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
@@ -1374,7 +1381,7 @@ fn read_custom_geometry(
 ) -> Result<(), ImportError> {
     let part = cursor.part().to_owned();
     geometry.geometry = ShapeGeometry::Other;
-    let mut path: Option<ShapePath> = None;
+    let mut paths: Vec<ShapePath> = Vec::new();
     let mut refused = false;
 
     children(cursor, |cursor, element, empty| {
@@ -1388,17 +1395,13 @@ fn read_custom_geometry(
                     if local_name(path_element) != b"path" || path_empty {
                         return Ok(false);
                     }
-                    if path.is_some() {
-                        // `v1::GroupShape::path` holds ONE path. A multi-subpath
-                        // freeform (a letter with a counter, say) loses every
-                        // path after the first, which is reported rather than
-                        // drawn as a solid blob.
+                    if paths.len() >= MAX_CUSTOM_GEOMETRY_PATHS {
                         reporter.degraded(&part, b"pathLst");
                         return Ok(false);
                     }
                     let (read, path_refused) = read_path(cursor, reporter, path_element)?;
                     refused |= path_refused;
-                    path = read;
+                    paths.extend(read);
                     Ok(true)
                 })?;
                 Ok(true)
@@ -1417,13 +1420,27 @@ fn read_custom_geometry(
         }
     })?;
 
-    if refused {
+    let custom = CustomGeometry {
+        paths,
+        ..CustomGeometry::default()
+    };
+    // The model's own check, which compiles the geometry: a geometry that will
+    // not compile would paint a rectangle while claiming to be drawn.
+    if refused || custom.paths.is_empty() || custom.check(&geometry.adjustments).is_err() {
+        if !refused && !custom.paths.is_empty() {
+            reporter.invalid(&part, b"custGeom");
+        }
         geometry.path = None;
     } else {
-        geometry.path = path;
+        geometry.path = Some(custom);
     }
     Ok(())
 }
+
+/// How many `a:path`s one custom geometry may carry before the rest are reported
+/// rather than read. A freeform with a counter (a letter `O`) needs two; the
+/// bound exists only so a hostile file cannot grow the vector without limit.
+const MAX_CUSTOM_GEOMETRY_PATHS: usize = 64;
 
 /// Reads one `a:path`, returning it and whether an unmodelled command refused it.
 fn read_path(
@@ -1434,8 +1451,31 @@ fn read_path(
     let part = cursor.part().to_owned();
     // `a:path@w`/`@h` are the path's own coordinate space; zero means the
     // coordinates are absolute EMU, which is what `ShapePath` documents.
-    let width_emu = integer_attribute(element, b"w", &part)?.unwrap_or(0);
-    let height_emu = integer_attribute(element, b"h", &part)?.unwrap_or(0);
+    let width_emu = integer_attribute(element, b"w", &part)?
+        .filter(|value| *value > 0)
+        .unwrap_or(0);
+    let height_emu = integer_attribute(element, b"h", &part)?
+        .filter(|value| *value > 0)
+        .unwrap_or(0);
+    // `@fill`, `@stroke` and `@extrusionOk` are per path: the unfilled leader of
+    // a callout and the stroked outline over a filled face are two paths of one
+    // freeform, and the shared engine paints each by its own switches.
+    let fill = match attribute(element, b"fill", &part)? {
+        None => Some(PathFill::Norm),
+        Some(token) => PathFill::from_token(&token),
+    };
+    let stroke = boolean_attribute(element, b"stroke", &part)?;
+    let extrusion_ok = boolean_attribute(element, b"extrusionOk", &part)?;
+    let stated_stroke = attribute(element, b"stroke", &part)?.is_some();
+    let stated_extrusion = attribute(element, b"extrusionOk", &part)?.is_some();
+    let (Some(fill), true, true) = (
+        fill,
+        stroke.is_some() || !stated_stroke,
+        extrusion_ok.is_some() || !stated_extrusion,
+    ) else {
+        reporter.invalid(&part, b"path");
+        return Ok((None, true));
+    };
     let mut commands: Vec<ShapePathCommand> = Vec::new();
     let mut refused = false;
     let mut overflowed = false;
@@ -1464,7 +1504,8 @@ fn read_path(
             reporter.invalid(&part, local);
             return Ok(false);
         }
-        let mut points: Vec<PointEmu> = Vec::new();
+        let mut points: Vec<GeometryPoint> = Vec::new();
+        let mut refused_point = false;
         children(cursor, |cursor, point, _point_empty| {
             if local_name(point) != b"pt" {
                 return Ok(false);
@@ -1475,34 +1516,31 @@ fn read_path(
             let x = integer_attribute(point, b"x", cursor.part())?;
             let y = integer_attribute(point, b"y", cursor.part())?;
             match (x, y) {
-                (Some(x_emu), Some(y_emu)) => points.push(PointEmu { x_emu, y_emu }),
-                _ => points.push(PointEmu {
-                    x_emu: i64::MIN,
-                    y_emu: i64::MIN,
-                }),
+                (Some(x), Some(y)) => points.push(GeometryPoint::literal(x, y)),
+                _ => refused_point = true,
             }
             Ok(false)
         })?;
-        if points.len() != expected
-            || points
-                .iter()
-                .any(|point| point.x_emu == i64::MIN || point.y_emu == i64::MIN)
-        {
+        if points.len() != expected || refused_point {
             reporter.invalid(&part, local);
             refused = true;
             return Ok(true);
         }
         let command = match (local, points.as_slice()) {
-            (b"moveTo", [point]) => ShapePathCommand::MoveTo { point: *point },
-            (b"lnTo", [point]) => ShapePathCommand::LineTo { point: *point },
+            (b"moveTo", [point]) => ShapePathCommand::MoveTo {
+                point: point.clone(),
+            },
+            (b"lnTo", [point]) => ShapePathCommand::LineTo {
+                point: point.clone(),
+            },
             (b"quadBezTo", [control, point]) => ShapePathCommand::QuadBezTo {
-                control: *control,
-                point: *point,
+                control: control.clone(),
+                point: point.clone(),
             },
             (b"cubicBezTo", [control1, control2, point]) => ShapePathCommand::CubicBezTo {
-                control1: *control1,
-                control2: *control2,
-                point: *point,
+                control1: control1.clone(),
+                control2: control2.clone(),
+                point: point.clone(),
             },
             _ => {
                 refused = true;
@@ -1530,6 +1568,9 @@ fn read_path(
         Some(ShapePath {
             width_emu,
             height_emu,
+            fill,
+            stroke: stroke.unwrap_or(true),
+            extrusion_ok: extrusion_ok.unwrap_or(true),
             commands,
         }),
         refused,

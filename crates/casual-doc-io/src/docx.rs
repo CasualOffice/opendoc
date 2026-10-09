@@ -2,19 +2,27 @@
 
 use std::sync::Arc;
 
-use casual_doc_export::{export_document, export_document_with_retained_parts};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_export::{
+    DocumentStatistics, ExportOptions, PackageKind, export_package_with_options,
+};
 use casual_doc_import::{ImportConfig, ImportMode, RetainedParts, import_package};
+// Own lines, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_import::{RecoveryReport as DocxRecoveryReport, Severity as DocxSeverity};
 use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
+use casual_doc_ooxml::{PackageRepair, repair_archive};
 use casual_doc_rtf::RtfLimits;
 
 use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, Disposition, DocumentResources,
     ExportArtifact, ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter,
     FormatId, FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest,
-    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, PreservationLedger,
-    ProbeRequest, ProbeResult, SourceEnvelope, formats,
+    ModelOutcome, NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits,
+    PreservationLedger, ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::{RecoveryReport, RepairSeverity, SourceRepair};
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -22,6 +30,20 @@ const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordproce
 struct DocxSourceState {
     original_bytes: Option<Vec<u8>>,
     retained_parts: RetainedParts,
+    /// The import findings whose `preserved` claim only the verbatim source
+    /// snapshot licensed, restated as what a regenerating save does to them:
+    /// `not-retained` (`109` FID-AT-07).
+    ///
+    /// The import report says `preserved` for these because an unchanged file
+    /// saved exactly keeps them. A save that regenerates the parts from the
+    /// model — every save except [`ExportMode::ExactIfUnchanged`] — does not,
+    /// so that save's report names each one. Empty for a semantic import, whose
+    /// report already says `not-retained` for the same detail.
+    lost_on_regeneration: Vec<CompatibilityEntry>,
+    /// The `docProps/app.xml` statistics as they were read, so a save of an
+    /// EDITED document can leave out the ones that still hold them (`109`
+    /// FID-AT-04). `None` when the source had no application properties.
+    source_statistics: Option<DocumentStatistics>,
 }
 
 /// Built-in adapter that delegates to the existing bounded DOCX pipeline.
@@ -64,24 +86,86 @@ impl FormatImporter for DocxAdapter {
         &self.descriptor
     }
 
+    /// # Detection of damaged input
+    ///
+    /// A strict admission is tried first, and a damaged package falls through to
+    /// the same best-effort open [`FormatImporter::import`] performs. Without
+    /// that second attempt the recovery below would be unreachable: detection
+    /// runs before import, so a truncated `.docx` would be reported as an
+    /// unrecognised format and never reach an importer that could recover it.
+    ///
+    /// It does not widen what this adapter claims. The best-effort open still
+    /// has to find a part that could be a WordprocessingML main document, which
+    /// no ODF, RTF or plain-text source has — so a damaged file of another
+    /// format still gets `no_match` here and is still detected by its own
+    /// adapter.
     fn probe(&self, request: ProbeRequest<'_>) -> ProbeResult {
-        match DocxPackage::open(request.bytes, self.package_limits) {
-            Ok(_) => ProbeResult::definite("docx.opc.office-document"),
+        if DocxPackage::open(request.bytes, self.package_limits).is_ok() {
+            return ProbeResult::definite("docx.opc.office-document");
+        }
+        let repaired = repair_archive(request.bytes);
+        let bytes = repaired.as_deref().unwrap_or(request.bytes);
+        match DocxPackage::open_recovering(bytes, self.package_limits) {
+            Ok(_) => ProbeResult::definite("docx.opc.office-document.recovered"),
             Err(_) => ProbeResult::no_match("docx.opc.not-admitted"),
         }
     }
 
+    /// # Opening damaged input
+    ///
+    /// A damaged `.docx` **opens**, and what was repaired is reported in
+    /// [`ImportArtifact::recovery`]. The ladder is: strict admission; a rebuilt
+    /// ZIP directory ([`repair_archive`]) for a truncated file; a best-effort
+    /// OPC open that infers a missing content-type manifest or relationship
+    /// index; then the importer's own recovery
+    /// ([`ImportConfig::recover`]) for damaged XML inside the parts.
+    ///
+    /// Each rung runs only after the one above it fails, so a well-formed file
+    /// takes exactly the path it took before any of this existed.
+    ///
+    /// Three refusals remain, and each is a sentence rather than a retry: a
+    /// macro project part (undecided policy, not an oversight), an encrypted
+    /// entry (there is no password to try), and bytes holding nothing that could
+    /// be a Word document.
     fn import(&self, request: ImportRequest<'_>) -> Result<ImportArtifact, AdapterError> {
-        let mut package = DocxPackage::open(request.bytes, self.package_limits)
-            .map_err(|error| AdapterError::new(format!("package admission: {error}")))?;
+        let strict = DocxPackage::open(request.bytes, self.package_limits);
+        let repaired_archive = match &strict {
+            Ok(_) => None,
+            Err(_) => repair_archive(request.bytes),
+        };
+        let bytes = repaired_archive.as_deref().unwrap_or(request.bytes);
+        let mut package_repairs: Vec<PackageRepair> = Vec::new();
+        let mut package = match strict {
+            Ok(package) => package,
+            Err(_) => {
+                // The one refusal left, and the sentence a reader gets for it:
+                // `PackageError::summary` rather than its `Display`, because a
+                // host renders this verbatim and "DOCX ZIP structure is
+                // malformed" in front of someone who double-clicked a file is
+                // the same defect as showing them an internal error name.
+                let (package, repairs) = DocxPackage::open_recovering(bytes, self.package_limits)
+                    .map_err(|error| AdapterError::new(error.summary()))?;
+                if repaired_archive.is_some() {
+                    package_repairs.push(PackageRepair::ArchiveDirectoryRebuilt {
+                        entries: u32::try_from(package.entries().len()).unwrap_or(u32::MAX),
+                    });
+                }
+                package_repairs.extend(repairs);
+                package
+            }
+        };
         let mut config = self.import_config;
         config.mode = if request.retain_source {
             ImportMode::Retention
         } else {
             ImportMode::Semantic
         };
+        // A package that needed repairing is a file whose parts are likely
+        // damaged too, so the importer recovers from the start rather than
+        // refusing once and being retried.
+        config.recover = true;
         let imported = import_package(&mut package, config)
-            .map_err(|error| AdapterError::new(format!("semantic import: {error}")))?;
+            .map_err(|error| AdapterError::new(error.summary()))?;
 
         let mut resources = DocumentResources::default();
         // A media part the package cannot hand back was previously dropped by an
@@ -130,6 +214,9 @@ impl FormatImporter for DocxAdapter {
                 }
             }
         }
+        // The import findings a regenerating save will not deliver, taken before
+        // the report moves (`109` FID-AT-07).
+        let lost_on_regeneration = lost_on_regeneration(&imported.report, &imported.ledger);
         // The importer's report and ledger travel to the host as they are. There
         // is no conversion step here any more and that is the point: the DOCX
         // importer already speaks the only taxonomy there is, so re-encoding it
@@ -160,12 +247,18 @@ impl FormatImporter for DocxAdapter {
         report
             .validate(&ledger)
             .map_err(|violation| AdapterError::new(format!("import disposition: {violation}")))?;
+        let source_statistics = imported
+            .document
+            .properties()
+            .map(|properties| DocumentStatistics::of(&properties.app));
         let source = SourceEnvelope::new(
             self.descriptor.id.clone(),
             env!("CARGO_PKG_VERSION").to_owned(),
             DocxSourceState {
                 original_bytes: request.retain_source.then(|| request.bytes.to_vec()),
                 retained_parts: imported.retained_parts,
+                lost_on_regeneration,
+                source_statistics,
             },
         );
         Ok(ImportArtifact {
@@ -174,6 +267,7 @@ impl FormatImporter for DocxAdapter {
             source,
             report,
             ledger,
+            recovery: convert_recovery(&package_repairs, &imported.recovery),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: None,
@@ -194,6 +288,14 @@ impl FormatExporter for DocxAdapter {
             .filter(|source| source.format() == &self.descriptor.id)
             .and_then(SourceEnvelope::state::<DocxSourceState>);
 
+        // An edited document's source statistics describe the text it no longer
+        // has (`109` FID-AT-04); every regenerating save is told which they were.
+        let options = match matching_source.and_then(|source| source.source_statistics) {
+            Some(statistics) if !request.source_unchanged => {
+                ExportOptions::default().statistics_stale_since(statistics)
+            }
+            _ => ExportOptions::default(),
+        };
         let (bytes, mut report) = match request.mode {
             // Semantic: regenerate everything from the model and carry no opaque
             // part. The writer's own findings now travel with the bytes instead of
@@ -202,8 +304,14 @@ impl FormatExporter for DocxAdapter {
             // is named too, because "the user asked for a semantic save" does not
             // make the dropped parts less dropped.
             ExportMode::Semantic => {
-                let exported = export_document(request.document, request.resources.as_map())
-                    .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
+                let exported = export_package_with_options(
+                    request.document,
+                    request.resources.as_map(),
+                    &empty_retained,
+                    PackageKind::Document,
+                    options,
+                )
+                .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
                 let mut report = convert_export_report(&exported.report);
                 let dropped = matching_source
                     .map(|source| source.retained_parts.parts.len())
@@ -218,19 +326,70 @@ impl FormatExporter for DocxAdapter {
                         part: None,
                     });
                 }
+                if let Some(source) = matching_source {
+                    report
+                        .entries
+                        .extend(source.lost_on_regeneration.iter().cloned());
+                    // This save carries no side-table, so the theme is
+                    // regenerated however unchanged it is, and the detail only
+                    // its source bytes held — which the import called
+                    // `preserved` against the theme part's own record, so it is
+                    // not in `lost_on_regeneration` — is not in it either
+                    // (`109` FID-AT-03).
+                    if let Some(theme) = &source.retained_parts.theme {
+                        report
+                            .entries
+                            .extend(theme.unmodeled.iter().filter_map(not_retained));
+                    }
+                }
                 (exported.bytes, report)
             }
             ExportMode::PreserveWhenSafe => {
                 let retained = matching_source
                     .map(|source| &source.retained_parts)
                     .unwrap_or(&empty_retained);
-                let exported = export_document_with_retained_parts(
+                // A retained part DERIVED from the content (the thumbnail,
+                // Word 2010's `stylesWithEffects.xml`) contradicts an edited
+                // document, so after an edit it is left behind — with its
+                // relationship — and named, never carried stale and never dropped
+                // in silence (`105` FID-R-05). An unedited document keeps it: the
+                // picture is still of this document.
+                let (edited_retained, invalidated) = if request.source_unchanged {
+                    (None, Vec::new())
+                } else {
+                    let (kept, invalidated) = retained.invalidated_by_edit();
+                    (Some(kept), invalidated)
+                };
+                let exported = export_package_with_options(
                     request.document,
                     request.resources.as_map(),
-                    retained,
+                    edited_retained.as_ref().unwrap_or(retained),
+                    PackageKind::Document,
+                    options,
                 )
                 .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
                 let mut report = convert_export_report(&exported.report);
+                for part in invalidated {
+                    report.entries.push(CompatibilityEntry {
+                        feature: part.feature.to_owned(),
+                        occurrences: 1,
+                        location: FeatureLocation::for_part(&part.part_name),
+                        disposition: Disposition::OmittedNotRetained,
+                        ledger_id: None,
+                        part: None,
+                    });
+                }
+                // This save regenerated every consumed part from the model, so
+                // the detail only the source snapshot held is not in it — edited
+                // or not, because `source_unchanged` decides which DERIVED parts
+                // travel, not whether the body is regenerated. The import report
+                // called that detail `preserved`; this is where the reader learns
+                // it was not (`109` FID-AT-07).
+                if let Some(source) = matching_source {
+                    report
+                        .entries
+                        .extend(source.lost_on_regeneration.iter().cloned());
+                }
                 if request.source.is_some() && matching_source.is_none() {
                     report.entries.push(CompatibilityEntry {
                         feature: "source_envelope".to_owned(),
@@ -387,13 +546,6 @@ pub fn builtin_registry_with_format_limits(
     registry
 }
 
-/// Lifts a DOCX-layer location into the format-neutral one.
-///
-/// `fallback_local_name` supplies a local name for a finding the DOCX layer
-/// located only by part or not at all — the stable `docx.export.*` id's last
-/// dotted segment, which is what the adapter surfaced before the DOCX layer had
-/// an element/attribute vocabulary at all (FID-R-03). Where the DOCX layer now
-/// names the element, that name wins, because it is the real one.
 /// Widens the DOCX writer's export findings into the shared report entry.
 ///
 /// Nothing about the taxonomy is re-decided: the writer's `Disposition` is the
@@ -408,9 +560,8 @@ pub fn builtin_registry_with_format_limits(
 /// feature id (`docx.export.signature` -> `signature`). That is a synthesized
 /// name rather than an observed one, which `35` disapproves of ("an invented
 /// location is worse than none"), and it is kept here **only** because changing
-/// it would change the published report — a behaviour change does not belong in
-/// a refactor whose whole claim is that nothing changed. It is written down so
-/// the next lane can decide it on purpose.
+/// it would change the published report. It is written down so the next lane
+/// can decide it on purpose.
 pub(crate) fn convert_export_report(
     report: &casual_doc_export::CompatibilityReport,
 ) -> CompatibilityReport {
@@ -440,10 +591,98 @@ pub(crate) fn convert_export_report(
     converted
 }
 
+/// `entry` restated as what a save that regenerates its part does to it: the
+/// model outcome the import stated, now `not-retained`, with no ledger record.
+///
+/// `None` for a construct the model maps: there is no remainder to lose, and
+/// `35` admits no `mapped` + `not-retained` pair.
+fn not_retained(entry: &CompatibilityEntry) -> Option<CompatibilityEntry> {
+    let disposition = match entry.model_outcome() {
+        ModelOutcome::Mapped => return None,
+        ModelOutcome::Degraded => Disposition::DegradedNotRetained,
+        ModelOutcome::Omitted => Disposition::OmittedNotRetained,
+    };
+    Some(CompatibilityEntry {
+        feature: entry.feature.clone(),
+        occurrences: entry.occurrences,
+        location: entry.location.clone(),
+        disposition,
+        ledger_id: None,
+        part: None,
+    })
+}
+
+/// The import findings a save that regenerates the package from the model does
+/// not deliver, as that save reports them (`109` FID-AT-07).
+///
+/// Exactly the entries [`CompatibilityReport::held_only_by_source_snapshot`]
+/// returns, with the model outcome the import stated and the retention outcome
+/// the save produces. The feature identifier and the location are the import's
+/// own, so a host that already describes a finding in words describes the save's
+/// statement of it the same way.
+///
+/// Complexity: O(import entries), once per import.
+fn lost_on_regeneration(
+    report: &CompatibilityReport,
+    ledger: &PreservationLedger,
+) -> Vec<CompatibilityEntry> {
+    report
+        .held_only_by_source_snapshot(ledger)
+        .filter_map(not_retained)
+        .collect()
+}
+
+/// Lifts the package-level and importer-level repairs into one format-neutral
+/// recovery report.
+///
+/// Both halves render their own sentence, because both own their vocabulary: the
+/// package layer knows what a rebuilt ZIP directory means and the importer knows
+/// what a truncated body means, and a translation table in this crate would be a
+/// third copy of each fact that could drift from either.
+///
+/// Order is package repairs first, then importer repairs. That is the order the
+/// damage occurred in, and it is the order a reader needs: "this file's index was
+/// rebuilt" explains why the part after it was missing.
+fn convert_recovery(
+    package_repairs: &[PackageRepair],
+    recovery: &DocxRecoveryReport,
+) -> RecoveryReport {
+    let mut repairs: Vec<SourceRepair> = package_repairs
+        .iter()
+        .map(|repair| SourceRepair {
+            token: repair.token().to_owned(),
+            summary: repair.summary(),
+            // Every package-level repair is plumbing: the archive index and the
+            // OPC manifests carry no document meaning, so rebuilding them puts
+            // none at risk. What the rebuild may not have *found* is reported by
+            // the importer, as a missing part.
+            severity: RepairSeverity::Structural,
+            part_name: None,
+            occurrences: 1,
+        })
+        .collect();
+    repairs.extend(recovery.repairs().iter().map(|repair| SourceRepair {
+        token: repair.kind.token().to_owned(),
+        summary: repair.summary(),
+        severity: convert_severity(repair.severity()),
+        part_name: repair.part.clone(),
+        occurrences: repair.occurrences,
+    }));
+    RecoveryReport { repairs }
+}
+
+const fn convert_severity(severity: DocxSeverity) -> RepairSeverity {
+    match severity {
+        DocxSeverity::Structural => RepairSeverity::Structural,
+        DocxSeverity::ContentDropped => RepairSeverity::ContentDropped,
+        DocxSeverity::BodyLost => RepairSeverity::BodyLost,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DetectionRequest, ExportRequest, FormatSelection, ModelOutcome, RetentionOutcome};
+    use crate::{DetectionRequest, ExportRequest, FormatSelection, RetentionOutcome};
 
     const MINIMAL_DOCX: &[u8] = include_bytes!("../../../fixtures/generated/minimal-valid.docx");
 
@@ -909,6 +1148,358 @@ mod tests {
             preserving.report.entries.is_empty(),
             "the preserving save carries the part, so it must report nothing, got {:?}",
             preserving.report.entries
+        );
+    }
+
+    /// The part a finding came from survives the lift into the format-neutral
+    /// report, which is what every host — and the webapp's findings dialog, via
+    /// `importReportJson` — reads (`109` HF-047). The importer splitting a count
+    /// by part is worth nothing if this boundary collapses or blanks it.
+    #[test]
+    fn a_findings_part_survives_the_adapter_boundary() {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let lost = r#"<w:r><w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rIdGone"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let ns = r#"xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic""#;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = format!(
+            r#"<w:document {ns}><w:body><w:p>{lost}</w:p><w:p>{lost}</w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr></w:body></w:document>"#
+        );
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+        let header = format!(r#"<w:hdr {ns}><w:p>{lost}</w:p></w:hdr>"#);
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("word/header1.xml", header.as_bytes()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let imported = import_docx(&zw.finish().unwrap().into_inner());
+        let mut drawings: Vec<(Option<String>, u32)> = imported
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.feature == "drawing")
+            .map(|entry| (entry.location.part_name.clone(), entry.occurrences))
+            .collect();
+        drawings.sort();
+        assert_eq!(
+            drawings,
+            vec![
+                (Some("word/document.xml".to_owned()), 2),
+                (Some("word/header1.xml".to_owned()), 1),
+            ],
+            "each part's count, named by part, at the boundary hosts read"
+        );
+    }
+
+    /// A retained part DERIVED from the content is left behind once the content
+    /// changes, and the loss is named; an independent one is still carried
+    /// (`105` FID-R-05).
+    ///
+    /// Before this, the side-table carried every retained part through every
+    /// save: an edited document went out with a thumbnail of the text it no
+    /// longer had — the picture a file browser or document library shows AS the
+    /// document — and with Word 2010's `stylesWithEffects.xml`, which Word 2010
+    /// reads in preference to the regenerated `styles.xml`.
+    #[test]
+    fn an_edited_document_leaves_its_stale_derived_parts_behind_and_says_so() {
+        use std::io::{Cursor, Read as _, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/stylesWithEffects.xml" ContentType="application/vnd.ms-word.stylesWithEffects+xml"/><Override PartName="/customXml/item1.xml" ContentType="application/xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail" Target="docProps/thumbnail.jpeg"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.microsoft.com/office/2007/relationships/stylesWithEffects" Target="stylesWithEffects.xml"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/></Relationships>"#;
+        let styles_with_effects = br#"<w:styles xmlns:w="urn:w"><w:style w:type="paragraph" w:styleId="Normal"/></w:styles>"#;
+        let custom_xml = br#"<root><independent>value</independent></root>"#;
+        let thumbnail = b"\xFF\xD8\xFF\xE0 a picture of page one as it was";
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("word/stylesWithEffects.xml", styles_with_effects.as_slice()),
+            ("customXml/item1.xml", custom_xml.as_slice()),
+            ("docProps/thumbnail.jpeg", thumbnail.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("derived.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the package opens");
+        let save = |source_unchanged: bool| {
+            registry
+                .export(
+                    &FormatId::new(formats::DOCX).unwrap(),
+                    ExportRequest {
+                        document: &imported.document,
+                        resources: &imported.resources,
+                        source: Some(&imported.source),
+                        source_unchanged,
+                        mode: ExportMode::PreserveWhenSafe,
+                    },
+                )
+                .expect("it exports")
+        };
+        let parts = |bytes: &[u8]| -> std::collections::BTreeMap<String, String> {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("a ZIP");
+            (0..archive.len())
+                .map(|index| {
+                    let mut file = archive.by_index(index).unwrap();
+                    let mut text = Vec::new();
+                    file.read_to_end(&mut text).unwrap();
+                    (
+                        file.name().to_owned(),
+                        String::from_utf8_lossy(&text).into_owned(),
+                    )
+                })
+                .collect()
+        };
+
+        // Unedited: the picture is still of this document, so everything stays.
+        let unedited = save(true);
+        let unedited_parts = parts(&unedited.bytes);
+        for name in [
+            "docProps/thumbnail.jpeg",
+            "word/stylesWithEffects.xml",
+            "customXml/item1.xml",
+        ] {
+            assert!(
+                unedited_parts.contains_key(name),
+                "an unedited save keeps {name}"
+            );
+        }
+        assert!(
+            unedited.report.entries.is_empty(),
+            "nothing is lost from an unedited save, got {:?}",
+            unedited.report.entries
+        );
+
+        // Edited: the two derived parts leave WITH their relationships, the
+        // independent store stays, and each departure is named by part.
+        let edited = save(false);
+        let edited_parts = parts(&edited.bytes);
+        assert!(
+            !edited_parts.contains_key("docProps/thumbnail.jpeg"),
+            "an edited save must not carry a thumbnail of the text it replaced"
+        );
+        assert!(
+            !edited_parts.contains_key("word/stylesWithEffects.xml"),
+            "an edited save must not carry a style sheet Word 2010 prefers over the \
+             regenerated one"
+        );
+        assert!(
+            edited_parts.contains_key("customXml/item1.xml"),
+            "an independent retained part is still carried"
+        );
+        let root = &edited_parts["_rels/.rels"];
+        let document_rels = &edited_parts["word/_rels/document.xml.rels"];
+        let manifest = &edited_parts["[Content_Types].xml"];
+        assert!(
+            !root.contains("thumbnail"),
+            "no relationship is left pointing at the thumbnail: {root}"
+        );
+        assert!(
+            !document_rels.contains("stylesWithEffects"),
+            "no relationship is left pointing at stylesWithEffects: {document_rels}"
+        );
+        assert!(
+            !manifest.contains("stylesWithEffects"),
+            "no content type is declared for a part the package lacks: {manifest}"
+        );
+        assert!(
+            document_rels.contains("customXml/item1.xml"),
+            "the independent part keeps its relationship: {document_rels}"
+        );
+        let mut stale: Vec<(String, Option<String>, ModelOutcome, RetentionOutcome)> = edited
+            .report
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.feature.clone(),
+                    entry.location.part_name.clone(),
+                    entry.model_outcome(),
+                    entry.retention_outcome(),
+                )
+            })
+            .collect();
+        stale.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(
+            stale,
+            vec![
+                (
+                    casual_doc_import::STALE_STYLES_WITH_EFFECTS.to_owned(),
+                    Some("word/stylesWithEffects.xml".to_owned()),
+                    ModelOutcome::Omitted,
+                    RetentionOutcome::NotRetained,
+                ),
+                (
+                    casual_doc_import::STALE_THUMBNAIL.to_owned(),
+                    Some("docProps/thumbnail.jpeg".to_owned()),
+                    ModelOutcome::Omitted,
+                    RetentionOutcome::NotRetained,
+                ),
+            ],
+            "each part left behind is named, by part, and nothing else is reported"
+        );
+
+        // And the result is a package this engine opens again.
+        let reopened = registry.import(
+            DetectionRequest {
+                bytes: &edited.bytes,
+                selection: FormatSelection::Auto,
+                file_name_hint: Some("derived.docx"),
+                mime_hint: None,
+            },
+            false,
+        );
+        assert!(reopened.is_ok(), "the edited save reopens");
+    }
+
+    /// `docProps/app.xml`'s statistics are derived from the content, so an
+    /// edited save leaves out the ones still holding the source's values and
+    /// names them, while one a host refreshed is written (`109` FID-AT-04).
+    ///
+    /// Before, an edited save wrote the page and word counts the file had when
+    /// it was opened — what a file browser or document library shows AS the
+    /// document — exactly as it carried a stale thumbnail before FID-R-05.
+    #[test]
+    fn an_edited_save_leaves_its_stale_statistics_out_and_says_so() {
+        use std::io::{Cursor, Read as _, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let app = br#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Template>Normal.dotm</Template><Pages>3</Pages><Words>1200</Words><Characters>6400</Characters><Lines>90</Lines><Paragraphs>30</Paragraphs><CharactersWithSpaces>7500</CharactersWithSpaces><Application>Microsoft Office Word</Application></Properties>"#;
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("docProps/app.xml", app.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("statistics.docx"),
+                    mime_hint: None,
+                },
+                true,
+            )
+            .expect("the package opens");
+        let save = |document: &casual_doc_model::v1::Document, source_unchanged: bool| {
+            registry
+                .export(
+                    &FormatId::new(formats::DOCX).unwrap(),
+                    ExportRequest {
+                        document,
+                        resources: &imported.resources,
+                        source: Some(&imported.source),
+                        source_unchanged,
+                        mode: ExportMode::PreserveWhenSafe,
+                    },
+                )
+                .expect("it exports")
+        };
+        let app_xml = |bytes: &[u8]| {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("a ZIP");
+            let mut text = String::new();
+            archive
+                .by_name("docProps/app.xml")
+                .expect("app.xml is written")
+                .read_to_string(&mut text)
+                .unwrap();
+            text
+        };
+        let names_stale = |report: &CompatibilityReport| {
+            report.entries.iter().any(|entry| {
+                entry.feature == casual_doc_export::STALE_STATISTICS
+                    && entry.retention_outcome() == RetentionOutcome::NotRetained
+            })
+        };
+        let statistics = [
+            "<Pages>3</Pages>",
+            "<Words>1200</Words>",
+            "<Characters>6400</Characters>",
+            "<Lines>90</Lines>",
+            "<Paragraphs>30</Paragraphs>",
+            "<CharactersWithSpaces>7500</CharactersWithSpaces>",
+        ];
+
+        // Unedited: the counts still describe the document.
+        let unedited = save(&imported.document, true);
+        let written = app_xml(&unedited.bytes);
+        for statistic in statistics {
+            assert!(
+                written.contains(statistic),
+                "an unedited save keeps {statistic}"
+            );
+        }
+        assert!(!names_stale(&unedited.report));
+
+        // Edited: every count that still holds the source's value is left out,
+        // the rest of the part is written, and the save says so.
+        let edited = save(&imported.document, false);
+        let written = app_xml(&edited.bytes);
+        for statistic in statistics {
+            assert!(
+                !written.contains(statistic),
+                "an edited save leaves out {statistic}: {written}"
+            );
+        }
+        assert!(written.contains("<Application>Microsoft Office Word</Application>"));
+        assert!(
+            names_stale(&edited.report),
+            "the save names the left-out statistics: {:?}",
+            edited.report.entries
+        );
+
+        // A host that refreshed a count gets it written.
+        let mut refreshed = imported.document.clone();
+        refreshed.properties_mut().app.words = Some(1201);
+        let written = app_xml(&save(&refreshed, false).bytes);
+        assert!(
+            written.contains("<Words>1201</Words>") && !written.contains("<Pages>3</Pages>"),
+            "a refreshed count is written, a stale one is not: {written}"
         );
     }
 

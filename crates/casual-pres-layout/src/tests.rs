@@ -483,28 +483,32 @@ fn a_slide_shape_with_a_custom_geometry_paints_its_path_not_its_preset() {
     // The importer attaches a path only for a custom geometry inside the drawable
     // subset and leaves `geometry` as `Other` beside it (docs/119 §6), which is
     // exactly the shape built here.
-    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+    use casual_doc_model::v1::{
+        CustomGeometry, GeometryPoint, PathFill, ShapePath, ShapePathCommand,
+    };
 
     let size = SlideSize::DEFAULT_16X9;
-    let path = ShapePath {
-        width_emu: 914_400,
-        height_emu: 914_400,
-        commands: vec![
-            ShapePathCommand::MoveTo { point: ORIGIN },
-            ShapePathCommand::LineTo {
-                point: PointEmu {
-                    x_emu: 914_400,
-                    y_emu: 0,
+    let path = CustomGeometry {
+        paths: vec![ShapePath {
+            width_emu: 914_400,
+            height_emu: 914_400,
+            fill: PathFill::Norm,
+            stroke: true,
+            extrusion_ok: true,
+            commands: vec![
+                ShapePathCommand::MoveTo {
+                    point: GeometryPoint::literal(0, 0),
                 },
-            },
-            ShapePathCommand::LineTo {
-                point: PointEmu {
-                    x_emu: 0,
-                    y_emu: 914_400,
+                ShapePathCommand::LineTo {
+                    point: GeometryPoint::literal(914_400, 0),
                 },
-            },
-            ShapePathCommand::Close,
-        ],
+                ShapePathCommand::LineTo {
+                    point: GeometryPoint::literal(0, 914_400),
+                },
+                ShapePathCommand::Close,
+            ],
+        }],
+        ..CustomGeometry::default()
     };
     let mut freeform = match shape_at(id(60), 0, 0, 914_400, 914_400) {
         GroupChild::Shape(shape) => shape,
@@ -554,13 +558,15 @@ fn a_slide_shape_with_a_custom_geometry_paints_its_path_not_its_preset() {
 
     let canvas = lay_out_slide(&presentation, 0, &shaper()).expect("slide 0");
     match &canvas.anchors[0].content {
-        AnchorContent::Path { commands, .. } => {
-            // Three vertices and a close: a triangle, not the four-corner rectangle
-            // the bounding preset would have produced.
+        AnchorContent::Path { paths, .. } => {
+            // One path of three vertices and a close: a triangle, not the
+            // four-corner rectangle the bounding preset would have produced.
+            assert_eq!(paths.len(), 1, "one authored path: {paths:?}");
+            let commands = &paths[0].commands;
             assert_eq!(
                 commands.len(),
-                3,
-                "the authored path's own commands: {commands:?}"
+                4,
+                "the authored path's own commands, its close explicit: {commands:?}"
             );
         }
         other => panic!(

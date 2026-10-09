@@ -51,6 +51,47 @@ impl ContentTypes {
         Ok(this)
     }
 
+    /// The extension mappings every OPC producer writes, for a package whose
+    /// `[Content_Types].xml` is missing or unreadable.
+    ///
+    /// Inferring them is sound for the same reason `35-DISPOSITION-TAXONOMY.md`
+    /// places the manifest outside the disposition taxonomy: it is plumbing the
+    /// writer regenerates deterministically, so nothing in it is information the
+    /// parts do not already carry. The one type that is **not** inferred here is
+    /// the main document's own — a part's extension cannot distinguish
+    /// `word/document.xml` from `word/settings.xml` — and that is why the lenient
+    /// main-document discovery reports its content type as ignored rather than
+    /// inventing an override for it.
+    pub(crate) fn inferred() -> Self {
+        let mut this = Self::default();
+        for (extension, content_type) in [
+            (
+                "rels",
+                "application/vnd.openxmlformats-package.relationships+xml",
+            ),
+            ("xml", "application/xml"),
+            ("png", "image/png"),
+            ("jpeg", "image/jpeg"),
+            ("jpg", "image/jpeg"),
+            ("gif", "image/gif"),
+            ("bmp", "image/bmp"),
+            ("tiff", "image/tiff"),
+            ("tif", "image/tiff"),
+            ("svg", "image/svg+xml"),
+            ("webp", "image/webp"),
+            ("emf", "image/x-emf"),
+            ("wmf", "image/x-wmf"),
+            (
+                "bin",
+                "application/vnd.openxmlformats-officedocument.oleObject",
+            ),
+        ] {
+            this.defaults
+                .insert(extension.to_owned(), content_type.to_owned());
+        }
+        this
+    }
+
     /// Resolves the content type of a normalized package part, if declared.
     pub(crate) fn content_type_of(&self, part_name: &str) -> Option<&str> {
         let absolute = format!("/{part_name}");

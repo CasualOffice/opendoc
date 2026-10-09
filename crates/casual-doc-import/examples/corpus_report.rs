@@ -114,6 +114,10 @@ fn main() {
         imported_documents += 1;
 
         let mut lost: Vec<String> = Vec::new();
+        // A feature is charged once per DOCUMENT however many parts it occurs in:
+        // the report splits one construct's findings by part (`109` HF-047), and
+        // counting entries would rank a header-and-body loss as two documents.
+        let mut counted: BTreeSet<&str> = BTreeSet::new();
         for entry in &imported.report.entries {
             let unmapped = entry.disposition.model_outcome() != ModelOutcome::Mapped;
             let unretained = matches!(
@@ -125,9 +129,16 @@ fn main() {
             if !(unmapped || unretained) {
                 continue;
             }
-            lost.push(format!("{}x{}", entry.feature, entry.occurrences));
+            lost.push(match &entry.location.part_name {
+                Some(part) if part != &entry.feature => {
+                    format!("{}x{}@{part}", entry.feature, entry.occurrences)
+                }
+                _ => format!("{}x{}", entry.feature, entry.occurrences),
+            });
             let slot = roll.entry(entry.feature.clone()).or_default();
-            slot.documents += 1;
+            if counted.insert(entry.feature.as_str()) {
+                slot.documents += 1;
+            }
             slot.occurrences += u64::from(entry.occurrences);
             slot.dispositions
                 .insert(disposition_name(entry.disposition));

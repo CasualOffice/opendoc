@@ -26,9 +26,11 @@ use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
     ColorTransform, DashStyle, Definitions, Extent, Fill, GroupChild, GroupPicture, GroupShape,
-    GroupTransform, LineEndKind, PointEmu, Rgba, ShapePath, ShapePathCommand, ShapeStroke,
+    GroupTransform, LineEndKind, PointEmu, Rgba, ShapePathCommand, ShapeStroke,
     StyleColor,
 };
+// Own line (anti-conflict): the shared custom-geometry model a freeform is written from.
+use casual_doc_model::v1::{CustomGeometry, GeometryPoint, PathFill};
 use casual_pres_model::{Placeholder, ShapeTree, Slide, SlideNode, SlidePaint};
 
 use crate::opc::{Relationships, rel};
@@ -569,62 +571,94 @@ fn group_transform_xml(transform: &GroupTransform) -> String {
     xml
 }
 
-/// `a:custGeom` with one subpath.
+/// `a:custGeom`, every path with its own fill, stroke and extrusion switches.
 ///
-/// One subpath because that is what the model carries: the importer admits a
-/// single-subpath `a:custGeom` and reports anything wider, so writing a second
-/// `a:path` would be writing geometry no model ever held.
-fn custom_geometry_xml(path: &ShapePath) -> String {
+/// The guide lists are written empty because the slide importer reads literal
+/// coordinates only (`casual_pres_import`'s `read_custom_geometry` says why), so
+/// no geometry this writer is handed names a guide; a coordinate token is written
+/// as the model holds it either way.
+fn custom_geometry_xml(geometry: &CustomGeometry) -> String {
     let mut xml = String::from(
-        "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst><a:path",
+        "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst>",
     );
-    // `@w`/`@h` are the path's own coordinate space; zero means the points are
-    // absolute EMU, and the attributes are omitted in that case because writing
-    // `w="0"` would declare a degenerate space rather than no space.
-    if path.width_emu != 0 {
-        xml.push_str(&format!(r#" w="{}""#, path.width_emu));
-    }
-    if path.height_emu != 0 {
-        xml.push_str(&format!(r#" h="{}""#, path.height_emu));
-    }
-    xml.push('>');
-    for command in &path.commands {
-        match command {
-            ShapePathCommand::MoveTo { point } => {
-                xml.push_str(&format!("<a:moveTo>{}</a:moveTo>", point_xml(*point)));
-            }
-            ShapePathCommand::LineTo { point } => {
-                xml.push_str(&format!("<a:lnTo>{}</a:lnTo>", point_xml(*point)));
-            }
-            ShapePathCommand::CubicBezTo {
-                control1,
-                control2,
-                point,
-            } => {
-                xml.push_str(&format!(
-                    "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
-                    point_xml(*control1),
-                    point_xml(*control2),
-                    point_xml(*point)
-                ));
-            }
-            ShapePathCommand::QuadBezTo { control, point } => {
-                xml.push_str(&format!(
-                    "<a:quadBezTo>{}{}</a:quadBezTo>",
-                    point_xml(*control),
-                    point_xml(*point)
-                ));
-            }
-            ShapePathCommand::Close => xml.push_str("<a:close/>"),
+    for path in &geometry.paths {
+        xml.push_str("<a:path");
+        // `@w`/`@h` are the path's own coordinate space; zero means the points
+        // are absolute EMU, and the attributes are omitted in that case because
+        // writing `w="0"` would declare a degenerate space rather than no space.
+        if path.width_emu != 0 {
+            xml.push_str(&format!(r#" w="{}""#, path.width_emu));
         }
+        if path.height_emu != 0 {
+            xml.push_str(&format!(r#" h="{}""#, path.height_emu));
+        }
+        if path.fill != PathFill::Norm {
+            xml.push_str(&format!(r#" fill="{}""#, path.fill.token()));
+        }
+        if !path.stroke {
+            xml.push_str(r#" stroke="0""#);
+        }
+        if !path.extrusion_ok {
+            xml.push_str(r#" extrusionOk="0""#);
+        }
+        xml.push('>');
+        for command in &path.commands {
+            match command {
+                ShapePathCommand::MoveTo { point } => {
+                    xml.push_str(&format!("<a:moveTo>{}</a:moveTo>", point_xml(point)));
+                }
+                ShapePathCommand::LineTo { point } => {
+                    xml.push_str(&format!("<a:lnTo>{}</a:lnTo>", point_xml(point)));
+                }
+                ShapePathCommand::ArcTo {
+                    width_radius,
+                    height_radius,
+                    start_angle,
+                    swing_angle,
+                } => {
+                    xml.push_str(&format!(
+                        r#"<a:arcTo wR="{}" hR="{}" stAng="{}" swAng="{}"/>"#,
+                        text::escape(&width_radius.token()),
+                        text::escape(&height_radius.token()),
+                        text::escape(&start_angle.token()),
+                        text::escape(&swing_angle.token()),
+                    ));
+                }
+                ShapePathCommand::CubicBezTo {
+                    control1,
+                    control2,
+                    point,
+                } => {
+                    xml.push_str(&format!(
+                        "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
+                        point_xml(control1),
+                        point_xml(control2),
+                        point_xml(point)
+                    ));
+                }
+                ShapePathCommand::QuadBezTo { control, point } => {
+                    xml.push_str(&format!(
+                        "<a:quadBezTo>{}{}</a:quadBezTo>",
+                        point_xml(control),
+                        point_xml(point)
+                    ));
+                }
+                ShapePathCommand::Close => xml.push_str("<a:close/>"),
+            }
+        }
+        xml.push_str("</a:path>");
     }
-    xml.push_str("</a:path></a:pathLst></a:custGeom>");
+    xml.push_str("</a:pathLst></a:custGeom>");
     xml
 }
 
 /// An `a:pt` inside a path command.
-fn point_xml(point: PointEmu) -> String {
-    format!(r#"<a:pt x="{}" y="{}"/>"#, point.x_emu, point.y_emu)
+fn point_xml(point: &GeometryPoint) -> String {
+    format!(
+        r#"<a:pt x="{}" y="{}"/>"#,
+        text::escape(&point.x.token()),
+        text::escape(&point.y.token())
+    )
 }
 
 /// A shape or background fill.

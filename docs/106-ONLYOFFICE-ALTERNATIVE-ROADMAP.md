@@ -358,7 +358,7 @@ directly, with a flat capped undo stack and no revision chain. `casual-doc-edit`
 dependency on `casual-doc-transaction`. Unifying them (`107` §2.1) is therefore step one —
 and it is debt that was owed anyway, because it is what ADR-005 already requires.
 
-**What makes 60 operations tractable** (`107` §3): most of the op set addresses *nodes*, not
+**What makes 63 operations tractable** (`107` §3): most of the op set addresses *nodes*, not
 text offsets, so it needs anchor-validity checking rather than pairwise transform. Three
 tiers — **T1 positional** (~9 ops: text, split/join, inline format — full pairwise transform,
 the hot path, and `PositionMap` already covers 4 of its step kinds); **T2 node-addressed**

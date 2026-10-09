@@ -25,6 +25,7 @@ Bézier
 CBDT
 CBOR
 CDN
+CDP
 CFF
 CJK
 CKEditor
@@ -62,6 +63,7 @@ ECMA
 EMF
 EOF
 EPUB
+EditResult
 Embeddability
 Embeddable
 Embeddings
@@ -85,6 +87,7 @@ HLD
 HTML
 HTTP
 HarfBuzz
+HiDPI
 Hocuspocus
 Hotfix
 Hunspell
@@ -174,6 +177,7 @@ Prev
 ProseMirror
 README
 RFC
+RFL
 RGB
 RGBA
 RSS
@@ -283,7 +287,6 @@ autosave
 autoshape
 backend
 backends
-backoff
 backpressure
 basedOn
 bbox
@@ -404,6 +407,7 @@ goldens
 grapheme
 grep
 gridSpan
+gridlines
 gzip
 handoff
 hardcoded
@@ -420,6 +424,7 @@ idempotent
 iframe
 impl
 incl
+includepicture
 injective
 inlines
 inspectable
@@ -502,6 +507,7 @@ pointerdown
 pointermove
 polyline
 populatable
+positionally
 postMessage
 pre
 preedit
@@ -515,7 +521,9 @@ rAF
 rPr
 radiogroup
 rastered
+rasterised
 rasteriser
+rasterises
 rasterization
 rasterized
 rasterizer
@@ -607,7 +615,9 @@ tombstoning
 toolchain
 tooltip
 tooltips
+trackpad
 trendline
+trendlines
 tri
 twip
 twips
@@ -632,6 +642,7 @@ unmerged
 unmodeled
 unmodelled
 unobservable
+unpaintable
 unpassworded
 unreferenced
 unrepresentable

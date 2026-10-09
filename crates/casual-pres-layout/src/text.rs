@@ -564,7 +564,7 @@ fn flow_paragraph(
         // The loop that used to be here advanced the cursor by `line.height` once
         // per line *inside* the segment, so a segment's second line was shifted by
         // both the shaper's offset and this crate's copy of it and painted a whole
-        // line box too low, over the paragraph below (`docs/109` HF-265). A
+        // line box too low, over the paragraph below (`docs/109` HF-287). A
         // segment that held one line — which is every segment of a paragraph
         // written as `text <a:br/> text` — was unaffected, so the guards passed.
         // `stack_lines` takes the batch and advances the cursor once, after it.

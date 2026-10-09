@@ -320,7 +320,12 @@ pub struct InlineFloatSpec {
     pub side: InlineFloatSide,
     /// Horizontal exclusion including authored wrap distances.
     pub width: Twip,
-    /// Vertical exclusion from the anchor paragraph's top.
+    /// Where the exclusion STARTS, measured down from the same origin as
+    /// `height`. Zero for a square wrap, which excludes from the top; one band
+    /// of a tight/through contour starts part-way down (`docs/109` FID-L-12).
+    pub top: Twip,
+    /// Where the exclusion ends, measured down from the anchor paragraph's top
+    /// (the line the marker sits on, for a marker past the paragraph start).
     pub height: Twip,
 }
 
@@ -785,7 +790,7 @@ impl LineLayout {
 /// paragraph whose every batch holds one line reads as correct, and only a batch
 /// that *wrapped* paints its second line a whole line box too low — over the top
 /// of whatever follows the paragraph. That shipped on the slide path, which had
-/// hand-rolled this loop (`docs/109` HF-265), which is why there is now one
+/// hand-rolled this loop (`docs/109` HF-287), which is why there is now one
 /// function and both paths call it.
 ///
 /// Complexity: O(lines in the batch × their paintable children).

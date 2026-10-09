@@ -352,12 +352,18 @@ test("the grant is handed to the engine, identity before capabilities", () => {
   // intends to share (`152` §4.2).
   const calls = [];
   const doc = {
-    adoptParticipantIdentity: (n) => calls.push(["identity", n]),
+    // Shaped like the wasm-bindgen export, which takes a `u64` and throws on a
+    // plain number. A fake that accepted any value is how every real grant came
+    // to throw in the browser while this test stayed green.
+    adoptParticipantIdentity: (n) => {
+      if (typeof n !== "bigint") throw new TypeError(`Cannot convert ${n} to a BigInt`);
+      calls.push(["identity", n]);
+    },
     adoptParticipantCapabilities: (names) => calls.push(["capabilities", [...names]]),
   };
   assert.equal(sessionAccess({ granted: "comment,edit", participant: "7" }, keys).adopt(doc), "");
   assert.deepEqual(calls, [
-    ["identity", 7],
+    ["identity", 7n],
     ["capabilities", ["comment", "edit"]],
   ]);
 

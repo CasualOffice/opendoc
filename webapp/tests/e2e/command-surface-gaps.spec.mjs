@@ -93,7 +93,7 @@ test("Insert table no longer claims to be 3x3, and opens the size picker", async
   // The pages are painted, not DOM tables, so the size is read from the
   // contextual Table tab's own readout of the caret's table.
   await page.locator("#tabTable").click();
-  await expect(page.locator("#tableContext")).toContainText("2×4 table");
+  await expect(page.locator("#tableContext")).toContainText("4 × 2 table");
   expect(consoleErrors).toEqual([]);
 });
 

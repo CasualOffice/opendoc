@@ -27,6 +27,8 @@ use super::ShapeFillDetail;
 use super::document::check_domain;
 use super::{SchemeColor, Theme, ThemeId, ThemeView};
 use crate::ModelError;
+// Own line (anti-conflict): the drawing-name side table (`docs/109` HF-267).
+use super::ObjectName;
 // Own line (anti-conflict): the shape theme-style side table's key.
 use crate::NodeId;
 
@@ -1201,6 +1203,64 @@ impl Zoom {
     }
 }
 
+/// The view a document opens in (`w:view/@w:val`, `ST_View`).
+///
+/// Modeled so it survives a save: before `109` FID-AT-01 it was reported and
+/// dropped, so a document its author had left in Web Layout or Outline came back
+/// in Word's default view after any edit here. This engine has one paged layout
+/// and one reflow layout and does not switch between them on this value.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DocumentView {
+    /// No view stated (`none`): the application's default.
+    None,
+    /// Print Layout (`print`).
+    Print,
+    /// Outline (`outline`).
+    Outline,
+    /// Master document view (`masterPages`).
+    MasterPages,
+    /// Draft, Word's old "Normal" view (`normal`).
+    Normal,
+    /// Web Layout (`web`).
+    Web,
+}
+
+/// The languages a theme font reference resolves against (`w:themeFontLang`).
+///
+/// A run whose font is a theme slot (`+mn-ea`, `+mj-cs`, …) is resolved by Word
+/// through the theme's per-script font list (`a:font script="Jpan"`), and THIS is
+/// what says which script each slot means: `w:eastAsia="ja-JP"` makes the East
+/// Asian minor font the theme's Japanese face, `zh-CN` its Simplified Chinese
+/// one. Dropping it hands Word the language of whatever machine opens the file, so
+/// the same document picks a different East Asian face on a different computer.
+///
+/// Each language is a BCP 47 tag as the producer wrote it, non-empty and bounded
+/// to 255 bytes. An empty attribute says nothing, and is read as absent: a
+/// producer that writes `w:val=""` on all three (LibreOffice does) has stated no
+/// language at all, which is the state an absent element leaves too.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThemeFontLanguages {
+    /// The language for the Latin slots (`w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latin: Option<String>,
+    /// The language for the East Asian slots (`w:eastAsia`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub east_asia: Option<String>,
+    /// The language for the complex-script slots (`w:bidi`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bidi: Option<String>,
+}
+
+impl ThemeFontLanguages {
+    /// Whether no language is stated (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.latin.is_none() && self.east_asia.is_none() && self.bidi.is_none()
+    }
+}
+
 /// One `w:compatSetting` — a named compatibility flag scoped by a URI, carrying an
 /// opaque value. The triple is retained verbatim (bounded) so a producer's
 /// compatibility contract survives the semantic round trip.
@@ -1239,7 +1299,9 @@ pub struct DocumentSettings {
     /// `w:mirrorMargins` — mirror inner/outer margins for two-sided printing.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub mirror_margins: bool,
-    /// `w:trackChanges` — revision tracking is on.
+    /// `w:trackRevisions` — revision tracking is on. (The field keeps its
+    /// snapshot name; the importer read a `w:trackChanges` element that is not
+    /// in the schema until `109` FID-AT-11.)
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub track_changes: bool,
     /// `w:updateFields` — recalculate all fields (TOC, page numbers, refs) when
@@ -1301,13 +1363,118 @@ pub struct DocumentSettings {
     /// (`w:background`). When off, the modeled background is not painted.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub display_background_shape: bool,
+    /// `w:view` — the view the document opens in. Additive: omitted when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<DocumentView>,
+    /// `w:themeFontLang` — the languages theme font references resolve against.
+    /// Additive: omitted when no language is stated.
+    #[serde(default, skip_serializing_if = "ThemeFontLanguages::is_empty")]
+    pub theme_font_languages: ThemeFontLanguages,
+    /// `w:savePreviewPicture` — store a picture of the first page with the
+    /// document, for file browsers. Additive (`109` FID-AT-10).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub save_preview_picture: bool,
+    /// `w:compat/w:useFELayout` — lay out East Asian text with Word's
+    /// East Asian rules regardless of the run's language. Additive.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub use_fe_layout: bool,
+    /// `w:doNotAutoCompressPictures` — do not recompress pictures on save.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub do_not_auto_compress_pictures: bool,
+    /// `w:decimalSymbol` — the decimal separator field codes and table
+    /// formulas use (`.` in `en-US`, `,` in most of Europe). Non-empty and
+    /// bounded to [`MAX_SETTINGS_TOKEN_BYTES`]. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimal_symbol: Option<String>,
+    /// `w:listSeparator` — the list separator field codes and table formulas
+    /// use (`,` in `en-US`, `;` where the decimal symbol is `,`). Non-empty and
+    /// bounded to [`MAX_SETTINGS_TOKEN_BYTES`]. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_separator: Option<String>,
+    /// `w14:docId` — the document's Word 2010 identity, eight hexadecimal
+    /// digits (`ST_LongHexNumber`). Word keeps it across saves; a save that
+    /// dropped it made the edited file a different document to Word. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id_w14: Option<String>,
+    /// `w15:docId` — the document's Word 2013 identity, a braced GUID.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id_w15: Option<String>,
+    /// `w14:defaultImageDpi` — the resolution pictures are compressed to when
+    /// they are compressed (`220`, `150`, `96`, …), bounded 1..=10,000.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_image_dpi: Option<u32>,
+    /// `m:mathPr` — the document's equation defaults (math font, break rules,
+    /// margins, limit placement), retained VERBATIM as one serialized element.
+    ///
+    /// Verbatim rather than typed because nothing in this engine consumes it
+    /// yet and fourteen typed fields would be modelling for its own sake; the
+    /// one thing that matters is that a save keeps it. Written back between
+    /// `w:compat` and `w:themeFontLang`, where `CT_Settings` puts it. Bounded to
+    /// [`MAX_SETTINGS_FRAGMENT_BYTES`] and checked again by the writer, which
+    /// refuses a fragment that is not one well-formed `m:mathPr` element in
+    /// the four namespaces it declares. Additive (`109` FID-AT-10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub math_properties_xml: Option<String>,
+    /// `w:shapeDefaults` — the VML defaults for new shapes (`o:shapedefaults`,
+    /// `o:shapelayout`), retained VERBATIM as one serialized element, for the
+    /// reason and under the bounds [`DocumentSettings::math_properties_xml`]
+    /// states. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape_defaults_xml: Option<String>,
 }
+
+/// Maximum UTF-8 length of a settings token (`w:decimalSymbol`,
+/// `w:listSeparator`).
+pub const MAX_SETTINGS_TOKEN_BYTES: usize = 255;
+
+/// Maximum UTF-8 length of a verbatim settings fragment
+/// ([`DocumentSettings::math_properties_xml`],
+/// [`DocumentSettings::shape_defaults_xml`]). Word's own are a few hundred
+/// bytes; this bounds a hostile snapshot.
+pub const MAX_SETTINGS_FRAGMENT_BYTES: usize = 64 * 1024;
 
 impl DocumentSettings {
     /// True when no setting departs from the default (so the part is omitted).
     #[must_use]
     pub fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Whether `token` is a storable `w:decimalSymbol`/`w:listSeparator`
+    /// value: non-empty and within [`MAX_SETTINGS_TOKEN_BYTES`].
+    #[must_use]
+    pub fn is_valid_token(token: &str) -> bool {
+        !token.is_empty() && token.len() <= MAX_SETTINGS_TOKEN_BYTES
+    }
+
+    /// Whether `id` is a `w14:docId` value: `ST_LongHexNumber`, one to eight
+    /// hexadecimal digits (Word writes eight).
+    #[must_use]
+    pub fn is_valid_document_id_w14(id: &str) -> bool {
+        (1..=8).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
+    /// Whether `id` is a `w15:docId` value: a braced GUID,
+    /// `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`.
+    #[must_use]
+    pub fn is_valid_document_id_w15(id: &str) -> bool {
+        let Some(inner) = id.strip_prefix('{').and_then(|rest| rest.strip_suffix('}')) else {
+            return false;
+        };
+        let groups: Vec<&str> = inner.split('-').collect();
+        groups.len() == 5
+            && groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, length)| {
+                group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+    }
+
+    /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=10,000.
+    #[must_use]
+    pub const fn is_valid_image_dpi(dpi: u32) -> bool {
+        dpi >= 1 && dpi <= 10_000
     }
 }
 
@@ -1510,6 +1677,33 @@ pub struct Definitions {
     /// snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub shape_fill_detail: DefinitionMap<NodeId, ShapeFillDetail>,
+    /// Drawing object names and titles (`wp:docPr`/`*:cNvPr` `@name`/`@title`),
+    /// keyed by the object's node id — a side table for the reason
+    /// [`ObjectName`] gives. Additive: omitted when empty so existing snapshots
+    /// serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub object_names: DefinitionMap<NodeId, ObjectName>,
+    /// Each section's `w:formProt` — whether the section is protected when the
+    /// document's forms protection is in force — keyed by the section's id, for
+    /// the sections whose `w:sectPr` states it (`109` FID-AT-06).
+    ///
+    /// A side table rather than a field on `SectionBoundary`, for the reason
+    /// [`ObjectName`] gives: that struct has 78 literal construction sites
+    /// across eight crates, and a new field breaks every one with nothing for a
+    /// merge to conflict on (`SKILL` §5a shape 1). Read
+    /// [`Definitions::section_form_protection`]. An absent entry is an absent
+    /// element, which is NOT the same statement as `false`: with
+    /// `w:documentProtection w:edit="forms"` enforced, a section without
+    /// `w:formProt` is protected and one with `w:formProt w:val="false"` is not.
+    ///
+    /// Keys are not validated against `sections`: an edit that removes a
+    /// section does not know this table, and refusing the edited document over
+    /// an entry nothing reads would be worse than the entry. The writer looks
+    /// each section up, so an orphan is simply never written.
+    /// Additive: omitted when empty so existing snapshots serialize
+    /// byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub form_protection: DefinitionMap<SectionId, bool>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
@@ -1530,6 +1724,85 @@ impl Definitions {
     #[must_use]
     pub fn numbering_resolver(&self) -> NumberingResolver<'_> {
         NumberingResolver::new(&self.styles, &self.numbering, &self.abstract_numbering)
+    }
+
+    /// Whether a resize of drawing object `id` must keep its aspect ratio —
+    /// DrawingML's `noChangeAspect`, on the object's frame or on the object
+    /// itself (`ObjectLocks::locks_aspect_ratio`, `109` FID-AT-09).
+    ///
+    /// This is the flag Word uses to make a corner drag of a picture
+    /// proportional; Word writes it on every picture it inserts. `id` is the
+    /// drawing node's id (`Drawing::id`, `AnchoredDrawing::id`, a group's or a
+    /// group child's id). An object with no recorded locks is unlocked.
+    ///
+    /// Complexity: one side-table lookup, O(log n) in named or locked objects —
+    /// fit for a per-interaction call.
+    #[must_use]
+    pub fn locks_aspect_ratio(&self, id: NodeId) -> bool {
+        self.object_names
+            .get(&id)
+            .is_some_and(|entry| entry.locks.locks_aspect_ratio())
+    }
+
+    /// `section`'s `w:formProt` (`109` FID-AT-06): `Some(true)` or
+    /// `Some(false)` where the section states it, `None` where it does not.
+    ///
+    /// `None` is not `Some(false)`. With `w:documentProtection w:edit="forms"`
+    /// enforced, Word protects a section that states nothing and leaves one
+    /// stating `false` editable, so a forms-protection check (`docs/165` M6)
+    /// reads this per section rather than treating `forms` as document-wide.
+    ///
+    /// Complexity: one side-table lookup, O(log n) in sections.
+    #[must_use]
+    pub fn section_form_protection(&self, section: SectionId) -> Option<bool> {
+        self.form_protection.get(&section).copied()
+    }
+
+    /// Whether `style` is **locked** — `w:locked`, ECMA-376 §17.7.4.6 "Style
+    /// Cannot Be Applied".
+    ///
+    /// # What the attribute means, and the one condition it depends on
+    ///
+    /// `w:locked` is not an unconditional lock. It takes effect only while
+    /// document protection is enforced **and** the formatting restriction
+    /// (`w:documentProtection/@w:formatting`) is on; outside that, every style
+    /// is applicable. This function answers only "is the flag set", because the
+    /// condition belongs to the caller that holds the protection —
+    /// `casual_doc_edit::protection`, which is this method's reason to exist.
+    ///
+    /// # Why it is a method here and not a field read at the call site
+    ///
+    /// Because the answer for a style the table does **not** define is not on
+    /// any `Style`. `w:latentStyles/@w:defLockedState` is the declared default
+    /// `w:locked` for the built-in styles a part leaves latent, so a style id
+    /// that resolves to nothing inherits it. A caller reading `style.locked`
+    /// directly would get `false` for that case by not looking, which is the
+    /// shape of answer that reads as a decision and is an omission.
+    ///
+    /// `w:lsdException/@w:locked` — the per-style latent override — is
+    /// deliberately **not** consulted, and this is a recorded limit rather than
+    /// an oversight: an `LsdException` is keyed by the built-in style's
+    /// `w:name` ("heading 1"), a [`StyleId`] carries a [`NodeId`] and no name,
+    /// and the `w:name` that would bridge them lives on the `Style` that is by
+    /// definition absent in exactly this case. Guessing that an id spells its
+    /// own name would be a heuristic in an access decision, so the block's
+    /// declared default is used and the exception list is not searched.
+    ///
+    /// # Complexity
+    ///
+    /// O(log n) in the style table — one `BTreeMap` lookup, no document walk.
+    /// It runs on the edit path, so it may not scan (`docs/107` §4 B1); the
+    /// exception list is never traversed, which is also why.
+    #[must_use]
+    pub fn style_locked(&self, style: StyleId) -> bool {
+        match self.styles.get(&style) {
+            Some(defined) => defined.locked,
+            None => self
+                .latent_styles
+                .as_ref()
+                .and_then(|latent| latent.default_locked_state)
+                .unwrap_or(false),
+        }
     }
 
     /// The theme in force for one holder: `None` for the document's own theme,

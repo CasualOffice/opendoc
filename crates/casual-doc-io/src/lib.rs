@@ -53,5 +53,7 @@ pub use report::{
     Finding, LedgerId, LedgerRecord, LossReporter, ModelOutcome, PartConstructDisposition,
     PartDisposition, PreservationKind, PreservationLedger, RetentionOutcome, SourceRetention,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use report::{RecoveryReport, RepairSeverity, SourceRepair};
 pub use rtf::RtfAdapter;
 pub use text::{PlainTextAdapter, PlainTextLimits};

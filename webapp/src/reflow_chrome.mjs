@@ -38,16 +38,23 @@
 // forgotten by a second caller (`file.export.pdf` is that second caller).
 
 // WHAT THE WIDTH CONTROL OWNS (`docs/154` §5.1, ADR-048). The measure is a
-// per-viewer choice with four steps and an explicit Full, because WCAG 2.1 SC
+// per-viewer choice with five steps and an explicit Full, because WCAG 2.1 SC
 // 1.4.8 asks for "a mechanism" and a capped default with no control satisfies
 // the criterion in exactly one configuration. The steps and their targets are
 // `reflow_view.mjs`'s, where they can be answered in `node`; what is here is the
-// popover, the ribbon face, the three command rows and the preference.
+// popover, the ribbon face, the command rows and the preference.
+//
+// AND THE WIDE TABLES (`docs/151` §6.3d): a table wider than the column keeps
+// its widths and scrolls sideways in a scroller of its own, as in Google Docs'
+// pageless view. The scroller is `reflow_table_scroll.mjs`; it is created and
+// told about the view here, because this is the one place that knows whether
+// the band on screen is reflowed and at what scale.
 
 import { t } from "./i18n.mjs";
 import { PHONE_MAX_WIDTH } from "./phone_chrome.mjs";
 import { registerPopover } from "./popover_manager.mjs";
 import { readPref, writePref } from "./prefs.mjs";
+import { createReflowTableScroll } from "./reflow_table_scroll.mjs";
 import {
   REFLOW_PREF_KEY,
   REFLOW_WIDTH_DEFAULT,
@@ -74,6 +81,7 @@ import {
  *   view?: Window,
  *   widthButton?: HTMLButtonElement|null,
  *   widthMenu?: HTMLElement|null,
+ *   redraw?: (() => void)|null,
  * }} deps
  *
  * `openOutline` is called once each time reflow TURNS ON, above the phone rung.
@@ -82,6 +90,12 @@ import {
  * arbitrate between themselves so the canvas is never squeezed from both sides,
  * and a view asking for a panel must not win that argument. Omit it and reflow
  * changes no panel at all, which is what a non-DOM host wants.
+ *
+ * `redraw` repaints the overlay (caret, selection, table chrome) — `main.js`'s
+ * `drawSelection`. A wide table's scroller calls it after the table moves, so
+ * the caret stays on the column it is in. Optional: without it the scroller
+ * falls back to `onChanged` once the gesture settles, which is correct and
+ * heavier (`reflow_table_scroll.mjs`).
  */
 export function createReflowChrome({
   button,
@@ -94,6 +108,7 @@ export function createReflowChrome({
   view = window,
   widthButton = view.document?.getElementById("viewTextWidthBtn") ?? null,
   widthMenu = view.document?.getElementById("textWidthMenu") ?? null,
+  redraw = null,
 }) {
   /** `null` until the reader chooses, which is what lets the phone rung supply
    *  a default without overriding anybody. Re-read from the rung on every
@@ -107,6 +122,8 @@ export function createReflowChrome({
   /** The last thing the ENGINE was told, so `sync` is a no-op when nothing moved
    *  and the O(document) re-shape happens once per real change. */
   let applied = null;
+  /** WHICH engine document `applied` was told to — see `sync`. */
+  let appliedTo = null;
   /** The zoom the last `sync` ran at, so the `resize` listener can measure the
    *  same column the render pass would. Without it the feed would compare a
    *  CAPPED painted width against a RAW window width and schedule a pass on
@@ -162,13 +179,14 @@ export function createReflowChrome({
     const step = activeWidth();
     let preview = null;
     try {
-      if (step === "fit") {
+      if (step === "fit" || step === "wide") {
         const setup = JSON.parse(doc.pageSetup() ?? "null");
         const size = setup?.pageSize;
         const margins = setup?.pageMargins;
         if (!size || !margins) return Infinity;
         return reflowCapTwip(step, {
           docMeasureTwip: size.widthTwips - margins.startTwips - margins.endTwips,
+          docPageTwip: size.widthTwips,
         });
       }
       preview = doc.stylePreview?.("Normal");
@@ -252,6 +270,25 @@ export function createReflowChrome({
     return Math.max(0, Math.floor((viewport.clientWidth - lastMeasure.totalPx) / 2));
   }
 
+  /** The wide tables' scrollers (`docs/151` §6.3d). Built once; told the view
+   *  on every `sync`, and settling through the same full render a width change
+   *  takes when the host gave no cheap overlay repaint. */
+  const tables = createReflowTableScroll({
+    viewport,
+    getDoc,
+    redraw,
+    settle: () => onChanged(),
+    view,
+  });
+
+  /** How far past a tile the overlay may paint, CSS px: enough for the fold
+   *  chevron that lives in the surface beside the measure (`fold_chrome.mjs`),
+   *  never more than that surface, and zero on paper and at the phone rung. A
+   *  scrolled table's caret, selection and cell outline can sit wholly outside
+   *  the tile; clipped here, they cannot paint into the margin or widen the
+   *  viewport into the horizontal scroll this view exists to retire. */
+  const OVERLAY_SPILL_PX = 24;
+
   const feed = createWidthFeed({
     onSettled: () => {
       // The width bucket moved and the gesture has settled: this is the only
@@ -286,6 +323,10 @@ export function createReflowChrome({
 
   function reflect() {
     viewport.classList.toggle("is-reflow", isOn());
+    viewport.style.setProperty(
+      "--reflow-overlay-spill",
+      `${Math.min(OVERLAY_SPILL_PX, surfaceSlackPx())}px`,
+    );
     reflectWidth();
     if (!button) return;
     const { available, reason } = availability();
@@ -323,10 +364,25 @@ export function createReflowChrome({
     const next = measure
       ? [measure.contentWidthTwip, 0, measure.gutterTwip]
       : [0, 0, 0];
-    if (applied && next.every((value, i) => value === applied[i])) return on && applied[0] > 0;
+    // What the engine was told is a fact about ONE document. A newly opened
+    // document starts on its own paper whatever the last one was told, so the
+    // short-circuit below must not fire across documents: it did, and a second
+    // document opened in reflow — every file a phone reader opens after the
+    // startup sample — was laid out on PAPER under a chrome that said reflow
+    // was on, a 816px sheet panning sideways in a 390px window. Measured on
+    // `main` before this line: tiles 816px wide with `#viewport.is-reflow` set.
+    if (doc !== appliedTo) applied = null;
+    if (applied && next.every((value, i) => value === applied[i])) {
+      // The measure in TWIPS can stand still while the zoom moves (above the
+      // cap it does not track the window at all), so the scrollers are told
+      // the scale on every pass, not only on a re-shape.
+      tables.sync({ on: on && applied[0] > 0, cssPerTwip });
+      return on && applied[0] > 0;
+    }
     try {
       approximations = JSON.parse(doc.setLayoutView(...next))?.approximations ?? [];
       applied = next;
+      appliedTo = doc;
       feed.adopt(measure ? measure.totalPx : 0);
     } catch (error) {
       // The engine refused. Fall back to paper and say why in its own words —
@@ -337,6 +393,7 @@ export function createReflowChrome({
       setStatus(String(error?.message ?? error), "error");
     }
     reflect();
+    tables.sync({ on: !!applied && applied[0] > 0, cssPerTwip });
     return !!applied && applied[0] > 0;
   }
 
@@ -373,11 +430,15 @@ export function createReflowChrome({
 
   button?.addEventListener("click", () => set(!isOn()));
   if (widthButton && widthMenu) {
-    registerPopover(widthButton, widthMenu, reflectWidth);
+    const popover = registerPopover(widthButton, widthMenu, reflectWidth);
     widthMenu.addEventListener("click", (event) => {
       const row = event.target.closest("[data-text-width]");
       if (!row) return;
       setWidth(row.dataset.textWidth);
+      // A `menuitemradio` choice closes its menu, as View ▸ Text width does in
+      // Docs. Left open, the menu sat over the very column the reader had just
+      // re-measured — and, with a fifth row, over the surface beside it.
+      popover.close();
     });
   }
   view.addEventListener("resize", () => {
@@ -406,8 +467,8 @@ export function createReflowChrome({
      *  does not have. Declared here rather than in `main.js` because the labels,
      *  the state and the refusal all live with the control; `main.js` spreads the
      *  result into its registry. */
-    commands: () =>
-      REFLOW_WIDTH_STEPS.map((step) => ({
+    commands: () => [
+      ...REFLOW_WIDTH_STEPS.map((step) => ({
         id: `view.textWidth.${step.id}`,
         label: t(step.commandKey),
         group: "View",
@@ -416,6 +477,44 @@ export function createReflowChrome({
         disabledReason: t("textWidth.pagedWithheld"),
         run: () => setWidth(step.id),
       })),
+      // What the view is approximating, said out loud. Until now the engine
+      // collected this list and NOTHING asked for it: `approximations()` above
+      // had no caller in the product, so a reader was never told that a
+      // page-anchored drawing had moved, that a footnote had landed at a tile
+      // boundary, or — the one that loses content — that a table had been fitted
+      // to the measure (`docs/166` R-7 and R-1).
+      //
+      // ENABLED IN BOTH VIEWS, never disabled. On paper the honest answer is
+      // "nothing", and that is an answer rather than a refusal — a greyed row
+      // here would be the "never a dead control" rule broken the quiet way, and
+      // a reader asking "what is this view not showing me?" about the page view
+      // deserves to be told it is showing everything.
+      //
+      // THE STATUS CHANNEL, not a dialog, and the reason is competitive: the
+      // nearest prior art in the field is ONLYOFFICE's snackbar naming a mode
+      // change, Google Docs put theirs on a help page, and `docs/166` §10 item 3
+      // records that no product has a "what this view is withholding" surface at
+      // all. A modal for a question a reader asks in passing is heavier than
+      // either reference, and `createStatusChannel` already routes one message to
+      // the live region, the toast and the status line — so this is spoken to a
+      // screen reader as well as shown, which a tooltip would not be.
+      //
+      // The sentences themselves are the ENGINE's English and are not routed
+      // through `i18n` — a pre-existing gap recorded rather than hidden: they are
+      // built in `casual-doc-layout`, which has no catalogue. Only the two
+      // sentences this module owns are localised.
+      {
+        id: "view.reflowApproximations",
+        label: t("reflowNotes.command"),
+        group: "View",
+        kw: "approximations approximate reflow pageless missing withheld report what is not shown fidelity notes wide table image fitted",
+        enabled: true,
+        run: () => {
+          const found = approximations;
+          setStatus(found.length ? found.join(" ") : t("reflowNotes.none"));
+        },
+      },
+    ],
     // Two withholdings, two sentences. One shared "reflow withholds things"
     // string would be cheaper and would tell a reader who reached for the ruler
     // about a panel they were not reaching for; each control says what IT is and
@@ -426,7 +525,8 @@ export function createReflowChrome({
     rulerWithheldReason: () => (isOn() ? t("reflow.rulerWithheld") : ""),
     /** Paintable surface beside the measure, per side, in CSS px. See above. */
     surfaceSlackPx,
-    /** What the engine says reflow approximates — surfaced, not hidden. */
+    /** What the engine says reflow approximates, for THIS document at THIS
+     *  measure — surfaced, not hidden. */
     approximations: () => approximations,
     setEnabled: reflect,
   };

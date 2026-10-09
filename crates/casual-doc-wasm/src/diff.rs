@@ -58,6 +58,10 @@ use casual_doc_diff::{DiffJob, DiffSides, MediaDigests, Progress};
 use casual_doc_diff::identity::content_digest_hex;
 use casual_doc_diff::projection::{block_at_path, block_text};
 use casual_doc_diff::record::{DIFF_SCHEMA, DiffChange, DiffFamily, DiffKind, Story, VersionDiff};
+// The path type, as its own `use` line rather than folded into the sorted block
+// above: the parallel-lane import rule (`SKILL` §7) keeps a new import off a
+// shared line so two lanes cannot conflict inside one brace list.
+use casual_doc_diff::record::PathSegment;
 use casual_doc_edit::ParagraphIndex;
 use casual_doc_edit::Pos;
 use casual_doc_edit::refused;
@@ -115,6 +119,10 @@ pub struct WasmVersionDiff {
     right: Option<Side>,
     job: DiffJob,
     result: Option<String>,
+    /// The finished sidecar as a value, kept beside the two parsed sides so a
+    /// redline view can be painted from them without re-parsing either
+    /// (`WasmDocument::showComparison`, ADR-065).
+    diff: Option<VersionDiff>,
     cancelled: bool,
     total_blocks: u32,
     projected: u64,
@@ -146,6 +154,7 @@ pub fn begin_version_diff(left: Vec<u8>, right: Vec<u8>) -> WasmVersionDiff {
         right: None,
         job: DiffJob::new(),
         result: None,
+        diff: None,
         cancelled: false,
         total_blocks: 0,
         projected: 0,
@@ -215,6 +224,7 @@ impl WasmVersionDiff {
         self.cancelled = true;
         self.job.cancel();
         self.result = None;
+        self.diff = None;
         // The bytes are the largest thing held, and a cancelled job will not
         // need them again.
         self.left_bytes = Vec::new();
@@ -236,9 +246,63 @@ impl WasmVersionDiff {
     pub fn blocks_total(&self) -> f64 {
         f64::from(self.total_blocks)
     }
+
+    /// The projected text of one block on one SIDE of this comparison — the
+    /// **context** a unified diff puts around a change.
+    ///
+    /// `side` is `"left"` (the older state) or `"right"` (the newer), matching
+    /// [`begin_version_diff`]'s orientation. `story` and `path` are the JSON of a
+    /// change record's `DiffAnchor.story` and `DiffAnchor.path`, which is what a
+    /// JS host already holds — so a caller walks a path's last index ±1, ±2 to
+    /// ask for the neighbours, and the `None` at the end of a sibling list is
+    /// what tells it where the document stops.
+    ///
+    /// # Why this and not a wider sidecar
+    ///
+    /// A change record names only what CHANGED. GitHub's unified diff is
+    /// recognisable because of the lines around each change, and those lines are
+    /// unchanged blocks: there is nothing in the sidecar to render them from, and
+    /// putting them there would mean emitting K neighbours per change for a
+    /// reader who expands none of them. This is the pull half of the same data,
+    /// and the engine is where it is cheap: the two parsed sides are already
+    /// resident.
+    ///
+    /// `None` when the side is not `"left"`/`"right"`, when either argument is
+    /// not readable as its type, when the path names a row or a cell rather than
+    /// a block, when it leaves the document's shape — which is exactly how a
+    /// caller discovers it has reached the first or last sibling — and when the
+    /// block it names is not a paragraph. Every one of those is a legitimate
+    /// answer to "is there a block here", so none of them throws.
+    ///
+    /// Complexity: **O(depth + the block's inlines)** per call. Deliberately not
+    /// O(document) and deliberately not cached: a reader expanding context is an
+    /// interaction, and `docs/107` §4 holds per-interaction work to O(1) in
+    /// document size.
+    #[wasm_bindgen(js_name = blockTextAt)]
+    #[must_use]
+    pub fn block_text_at(&self, side: &str, story: &str, path: &str) -> Option<String> {
+        let parsed = match side {
+            "left" => self.left.as_ref(),
+            "right" => self.right.as_ref(),
+            _ => None,
+        }?;
+        let story: Story = serde_json::from_str(story).ok()?;
+        let path: Vec<PathSegment> = serde_json::from_str(path).ok()?;
+        block_text(block_at_path(&parsed.document, &story, &path)?)
+    }
 }
 
 impl WasmVersionDiff {
+    /// The older side, the newer side and the sidecar of a FINISHED
+    /// comparison, or `None` before completion and after a cancel.
+    pub(crate) fn finished(&self) -> Option<(&Document, &Document, &VersionDiff)> {
+        Some((
+            &self.left.as_ref()?.document,
+            &self.right.as_ref()?.document,
+            self.diff.as_ref()?,
+        ))
+    }
+
     /// [`WasmVersionDiff::step`] without the `JsValue`.
     pub(crate) fn step_inner(&mut self, budget: u32) -> Result<String, String> {
         if self.cancelled {
@@ -295,10 +359,25 @@ impl WasmVersionDiff {
                     diff.to_json()
                         .map_err(|error| format!("serialize diff: {error}"))?,
                 );
-                // The two parsed documents are the largest thing held and the
-                // sidecar does not reference them.
-                self.left = None;
-                self.right = None;
+                self.diff = Some(diff);
+                // THE TWO PARSED DOCUMENTS ARE KEPT, and this used to drop them
+                // here with the note that "the sidecar does not reference them".
+                // That was true of the sidecar and not of the reader: a unified
+                // diff needs the **unchanged** blocks around each change, and
+                // those exist in neither side's sidecar — a change record names
+                // only what changed. `block_text_at` reads them from the side
+                // they belong to, lazily, O(depth) per request, which is what
+                // makes "expand further" O(1) in document size rather than a
+                // re-parse of a multi-megabyte checkpoint per click.
+                //
+                // The memory is not new and the duration is. The peak is
+                // unchanged — both sides were resident for the whole comparison
+                // already — and the release point is the handle: `free()` drops
+                // them, and `cancel()` still clears the byte arrays. A caller
+                // that wants nothing but the sidecar frees the handle the moment
+                // `result()` returns and pays exactly what it paid before, which
+                // is what `runComparison` in `compare_documents.mjs` does unless
+                // it was asked to retain.
                 Ok(PHASE_COMPLETE.to_owned())
             }
         }
@@ -409,13 +488,13 @@ const VERBATIM_TEXT_BYTES: usize = casual_doc_diff::job::EXCERPT_BYTES;
 /// One paragraph-local edit a comparison asks for, already translated into the
 /// **review anchor** offsets the review primitives take.
 #[derive(Clone, Debug)]
-struct ComparisonEdit {
+pub(crate) struct ComparisonEdit {
     /// The paragraph in THIS document, resolved from the change's right-hand
     /// path (the only coordinate that survives the comparison's re-import).
-    node: NodeId,
+    pub(crate) node: NodeId,
     /// Review-anchor range of text this document has and the compared one did
     /// not. `start == end` for a pure deletion, which adds no text here.
-    start: u32,
+    pub(crate) start: u32,
     /// End of that range.
     end: u32,
     /// What to mark `start..end` as, or `None` when nothing here is new.
@@ -564,15 +643,35 @@ fn verbatim_removed_text(change: &DiffChange) -> Option<String> {
     (text.len() == span && span <= VERBATIM_TEXT_BYTES).then(|| text.clone())
 }
 
+/// The removed text of a change, read from the OLDER DOCUMENT itself when the
+/// caller still holds it, else [`verbatim_removed_text`].
+///
+/// A redline view holds both parsed sides (ADR-065), so it is not limited to
+/// what the record's excerpt carries: the left anchor's byte range is sliced
+/// out of the left block's projected text, which is the same space the anchor
+/// was recorded in. A range that does not fall on character boundaries is
+/// refused rather than repaired. **O(the block)**.
+fn removed_text(change: &DiffChange, left: Option<&Document>) -> Option<String> {
+    let Some(document) = left else {
+        return verbatim_removed_text(change);
+    };
+    let anchor = change.left.as_ref()?;
+    let text = block_text(block_at_path(document, &anchor.story, &anchor.path)?)?;
+    text.get(anchor.start as usize..anchor.end as usize)
+        .filter(|removed| !removed.is_empty())
+        .map(str::to_owned)
+}
+
 /// Turns one change into the edit it asks for, or reports why it cannot be one.
 ///
 /// Every `None` has recorded a key first: a comparison that quietly applied
 /// three of its five changes and reported "done" is the silent loss `AGENTS.md`
 /// forbids.
-fn classify_change(
+pub(crate) fn classify_change(
     document: &Document,
     notes: &NoteAnchorLengths,
     change: &DiffChange,
+    left: Option<&Document>,
     loss: &mut BTreeSet<&'static str>,
 ) -> Option<ComparisonEdit> {
     // What this document's own text can be marked as. `UpdateReviewState`
@@ -640,7 +739,7 @@ fn classify_change(
         }
     };
 
-    let removed = verbatim_removed_text(change);
+    let removed = removed_text(change, left);
     if removed.is_none() && change.left_text.is_some() {
         // The record carries the removed text only as an excerpt, so the
         // deletion half of this change is reported rather than invented. The
@@ -698,6 +797,51 @@ impl WasmDocument {
     #[must_use]
     pub fn content_digest(&self) -> String {
         content_digest_hex(&self.document)
+    }
+
+    /// The **NodeId in THIS document** that a change record's story + path names
+    /// — the one coordinate a comparison carries that survives into a live
+    /// editing session.
+    ///
+    /// # Why a host cannot do this itself, and why it must not try
+    ///
+    /// `DiffAnchor` has a `node`, and it is a trap: both sides of a comparison
+    /// are parsed by the diff facade and ids are minted per import, so that id
+    /// addresses a throwaway parse whose counter restarted at 1. The editor's
+    /// own `navigateToReviewAnchor` takes `{node, start, end}` — a byte-for-byte
+    /// match for `DiffAnchor` — so handing it one scrolls silently to an
+    /// unrelated paragraph that happens to hold the same ordinal id. Wrong
+    /// destination, no error, and nothing to tell the reader from.
+    ///
+    /// `DiffAnchor::path` is the coordinate that survives, and resolving it is
+    /// not a walk a host should write: the projection's block sequence is not the
+    /// model's block list (a table contributes rows and cells, which are not
+    /// `BlockNode`s; a block-level content control contributes itself *and* is
+    /// descended into). `casual_doc_diff::projection::block_at_path` reuses the
+    /// walk that PRODUCED the path, so producer and resolver cannot disagree —
+    /// and `apply_diff_as_revisions` already goes through it. This is that
+    /// resolver, exposed, which is all that was ever missing.
+    ///
+    /// `story` and `path` are the JSON of the anchor's own two fields.
+    ///
+    /// `None` — never a guess — when either argument is unreadable, when the path
+    /// names a row or a cell rather than a block, when it leaves this document's
+    /// shape (a stale path against a document edited since the comparison), when
+    /// the story is one this document does not have, and when the block it names
+    /// is not a paragraph. A caller that gets `None` must decline to navigate;
+    /// that is the whole reason this returns an option rather than a best guess.
+    ///
+    /// Complexity: **O(depth)**. One call per click, so navigation is O(1) in
+    /// document size (`docs/107` §4).
+    #[wasm_bindgen(js_name = nodeAtStoryPath)]
+    #[must_use]
+    pub fn node_at_story_path(&self, story: &str, path: &str) -> Option<String> {
+        let story: Story = serde_json::from_str(story).ok()?;
+        let path: Vec<PathSegment> = serde_json::from_str(path).ok()?;
+        let BlockNode::Paragraph(paragraph) = block_at_path(&self.document, &story, &path)? else {
+            return None;
+        };
+        Some(paragraph.id.to_string())
     }
 
     /// Applies a comparison sidecar to this document as tracked changes
@@ -809,7 +953,7 @@ impl WasmDocument {
         }
         let mut edits: Vec<ComparisonEdit> = Vec::new();
         for change in &diff.changes {
-            if let Some(edit) = classify_change(&self.document, &notes, change, &mut loss) {
+            if let Some(edit) = classify_change(&self.document, &notes, change, None, &mut loss) {
                 edits.push(edit);
             }
         }
@@ -817,7 +961,47 @@ impl WasmDocument {
             || Pos::new(self.document.id(), 0),
             |edit| Pos::new(edit.node, edit.start),
         );
+        let operation =
+            match self.comparison_review_operation(&notes, edits, author, &date, &mut loss)? {
+                Some(operation) => operation,
+                // Nothing in the comparison could be expressed. The document is
+                // reported UNCHANGED rather than routed through an empty edit, which
+                // would bump the revision and enable Save for a comparison that
+                // changed nothing — and `loss` says why.
+                None => {
+                    return Ok(EditResult {
+                        node: caret.node.to_string(),
+                        offset: caret.offset,
+                        revision: self.revision,
+                        page_count: self.page_count(),
+                        dirty: Vec::new(),
+                        paste_loss: loss.into_iter().map(str::to_owned).collect(),
+                        placed_object: String::new(),
+                    });
+                }
+            };
+        let mut result = self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)?;
+        result.paste_loss = loss.into_iter().map(str::to_owned).collect();
+        Ok(result)
+    }
 
+    /// The ONE review operation that marks a comparison's paragraph-local
+    /// edits, or `None` when nothing in them could be expressed.
+    ///
+    /// Shared by Review ▸ Compare (`apply_diff_as_revisions`, ADR-061) and the
+    /// redline view (`show_comparison`, ADR-065), so the two cannot mark the
+    /// same change differently.
+    ///
+    /// Complexity: **O(edits + the paragraphs they touch)**, plus one paragraph
+    /// index.
+    pub(crate) fn comparison_review_operation(
+        &mut self,
+        notes: &NoteAnchorLengths,
+        edits: Vec<ComparisonEdit>,
+        author: &str,
+        date: &Option<String>,
+        loss: &mut BTreeSet<&'static str>,
+    ) -> Result<Option<casual_doc_edit::Operation>, String> {
         // Grouped by paragraph, and applied within one in DESCENDING offset
         // order: a recorded deletion inserts the removed text as new inlines, so
         // working from the end means no later edit's offsets have moved by the
@@ -851,33 +1035,14 @@ impl WasmDocument {
         let mut bodies: Vec<Vec<BlockNode>> = Vec::new();
         for (group, mut body) in planned {
             for edit in group {
-                self.apply_comparison_edit(&notes, &mut body, &edit, author, &date, &mut loss)?;
+                self.apply_comparison_edit(notes, &mut body, &edit, author, date, loss)?;
             }
             bodies.push(body);
         }
 
         // ONE operation for the whole comparison, so accepting it, rejecting it
         // and undoing it are each a single act.
-        let operation = match update_review_operation_across(&self.document, &bodies, None) {
-            Ok(operation) => operation,
-            // Nothing in the comparison could be expressed. The document is
-            // reported UNCHANGED rather than routed through an empty edit, which
-            // would bump the revision and enable Save for a comparison that
-            // changed nothing — and `loss` says why.
-            Err(_) => {
-                return Ok(EditResult {
-                    node: caret.node.to_string(),
-                    offset: caret.offset,
-                    revision: self.revision,
-                    page_count: self.page_count(),
-                    dirty: Vec::new(),
-                    paste_loss: loss.into_iter().map(str::to_owned).collect(),
-                });
-            }
-        };
-        let mut result = self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)?;
-        result.paste_loss = loss.into_iter().map(str::to_owned).collect();
-        Ok(result)
+        Ok(update_review_operation_across(&self.document, &bodies, None).ok())
     }
 
     /// One change's share of the review body: the insertion wrapper, then the
@@ -1059,6 +1224,188 @@ mod tests {
             "and this is why the bytes cannot be the identity: the import checkpoint holds the \
              original file verbatim and every later one is a re-export, so one unchanged \
              document has two different byte hashes"
+        );
+    }
+
+    /// A change record's path RESOLVES, against a live document, to the paragraph
+    /// the change is actually about — and to that paragraph's own model id, which
+    /// is what makes the answer usable by `navigateToReviewAnchor`.
+    ///
+    /// This is the whole reason `node_at_story_path` exists: `DiffAnchor::node`
+    /// addresses the throwaway parse the comparison ran on, and the editor's
+    /// `navigateToReviewAnchor` takes `{node, start, end}` — a byte-for-byte
+    /// match for `DiffAnchor` — so handing it one scrolls silently to whatever
+    /// paragraph holds that ordinal. The trap itself is already guarded twice
+    /// (`plain_text_checkpoints_share_no_node_ids_at_all` below, and
+    /// `casual-doc-diff`'s own DOCX id guard); what was missing and is guarded
+    /// HERE is the correct answer.
+    ///
+    /// MEASURED WHILE WRITING THIS, and worth recording because it narrowed the
+    /// claim: for plain text the id namespace is a hash of the whole text
+    /// (`casual_doc_io::text`), so re-parsing the *same* bytes hands out the
+    /// *same* ids — this fixture's `right.node` happens to equal the resolved id.
+    /// That is a property of one format and one fixture, not a guarantee, which
+    /// is exactly why the resolver and not the record's id is the supported route.
+    ///
+    /// The assertions are about the TEXT at the resolved position and about the
+    /// id matching the model's own, so an off-by-one or a wrong story in the walk
+    /// turns this red.
+    #[test]
+    fn a_change_path_resolves_to_the_paragraph_the_change_is_about() {
+        let older = text(&["alpha", "beta", "gamma"]);
+        let newer = text(&["alpha", "beta edited", "gamma"]);
+        let sidecar = diff_versions_inner(&older, &newer).expect("the comparison runs");
+        let diff: VersionDiff = serde_json::from_str(&sidecar).expect("valid sidecar");
+        let change = diff
+            .changes
+            .iter()
+            .find(|change| change.family == DiffFamily::Text)
+            .expect("the edited paragraph is reported");
+        let right = change
+            .right
+            .as_ref()
+            .expect("a text change has a right side");
+
+        // `newer` is the document the host holds, which is the comparison's right
+        // side — the only side a path is claimed to resolve against.
+        let live = open_document(&newer).expect("the newer state opens");
+        let story = serde_json::to_string(&right.story).expect("a story serializes");
+        let path = serde_json::to_string(&right.path).expect("a path serializes");
+        let resolved = live
+            .node_at_story_path(&story, &path)
+            .expect("the path resolves against the document it was produced from");
+
+        // THE PARAGRAPH AT THAT ID, found by id in the live model rather than by
+        // walking the path again — so this asserts the resolver's answer and not
+        // the walk restated.
+        let named = live
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph),
+                _ => None,
+            })
+            .find(|paragraph| paragraph.id.to_string() == resolved)
+            .expect("the id names a paragraph of this document");
+        assert_eq!(
+            block_text(&BlockNode::Paragraph(named.clone())).as_deref(),
+            Some("beta edited"),
+            "the resolved id is the paragraph the change is about, not a neighbour with the \
+             same ordinal"
+        );
+        assert!(
+            live.node_at_story_path(
+                &story,
+                &serde_json::to_string(&vec![PathSegment::Block { index: 0 }]).expect("serializes"),
+            )
+            .is_some_and(|other| other != resolved),
+            "and a different path resolves to a different paragraph, so the answer tracks the \
+             path rather than being the first block every time"
+        );
+    }
+
+    /// Every way a path can fail to name a paragraph returns `None` rather than a
+    /// guess, because a caller that gets a guess navigates somewhere wrong and is
+    /// told nothing.
+    #[test]
+    fn an_unresolvable_path_is_none_and_never_a_guess() {
+        let live = open_document(&text(&["alpha", "beta"])).expect("opens");
+        let body = serde_json::to_string(&Story::Body).expect("serializes");
+        let at = |index: u32| {
+            serde_json::to_string(&vec![PathSegment::Block { index }]).expect("serializes")
+        };
+
+        assert!(
+            live.node_at_story_path(&body, &at(0)).is_some(),
+            "the control: a real block resolves, so the Nones below mean something"
+        );
+        assert_eq!(
+            live.node_at_story_path(&body, &at(99)),
+            None,
+            "past the end of the sibling list"
+        );
+        assert_eq!(
+            live.node_at_story_path(&body, "[]"),
+            None,
+            "an empty path names no block"
+        );
+        assert_eq!(
+            live.node_at_story_path(
+                &body,
+                &serde_json::to_string(&vec![PathSegment::Row { index: 0 }]).expect("serializes"),
+            ),
+            None,
+            "a path that ends at a row names no block — `block_at_path` refuses it and so does this"
+        );
+        assert_eq!(
+            live.node_at_story_path(
+                &serde_json::to_string(&Story::Footnote { index: 7 }).expect("serializes"),
+                &at(0),
+            ),
+            None,
+            "a story this document does not have"
+        );
+        assert_eq!(
+            live.node_at_story_path("not json", &at(0)),
+            None,
+            "an unreadable story argument is an answer, not a throw"
+        );
+        assert_eq!(
+            live.node_at_story_path(&body, "not json"),
+            None,
+            "an unreadable path argument likewise"
+        );
+    }
+
+    /// The unified diff's CONTEXT: the unchanged blocks around a change, read from
+    /// the side they belong to, after the comparison has completed.
+    ///
+    /// Two things are asserted and the second is the one that used to be false:
+    /// the sides SURVIVE completion, so a reader can expand context without a
+    /// re-parse. `step_inner` used to null both out on `Progress::Complete`.
+    #[test]
+    fn context_blocks_are_readable_from_both_sides_after_the_diff_completes() {
+        let older = text(&["alpha", "beta", "gamma"]);
+        let newer = text(&["alpha", "beta edited", "gamma"]);
+        let mut job = begin_version_diff(older, newer);
+        for _ in 0..10_000 {
+            if job.step_inner(4_000).expect("no step fails") == PHASE_COMPLETE {
+                break;
+            }
+        }
+        assert!(job.result().is_some(), "the comparison completed");
+
+        let body = serde_json::to_string(&Story::Body).expect("serializes");
+        let at = |index: u32| {
+            serde_json::to_string(&vec![PathSegment::Block { index }]).expect("serializes")
+        };
+        // The context GitHub would show above and below the change, which is what
+        // a reader expands into.
+        assert_eq!(
+            job.block_text_at("right", &body, &at(0)).as_deref(),
+            Some("alpha"),
+            "the block above the change, on the newer side"
+        );
+        assert_eq!(
+            job.block_text_at("right", &body, &at(1)).as_deref(),
+            Some("beta edited"),
+            "the changed block itself, on the newer side"
+        );
+        assert_eq!(
+            job.block_text_at("left", &body, &at(1)).as_deref(),
+            Some("beta"),
+            "and the older side still reads as it was — two sides, not one"
+        );
+        assert_eq!(
+            job.block_text_at("right", &body, &at(3)),
+            None,
+            "past the last sibling, which is how an expand control learns the document stops"
+        );
+        assert_eq!(
+            job.block_text_at("middle", &body, &at(0)),
+            None,
+            "a side that is not left or right"
         );
     }
 

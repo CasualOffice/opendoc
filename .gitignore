@@ -52,3 +52,16 @@ fixtures/local/*
 /webapp/assets/fonts/script/NotoSansCJKsc-Regular.otf
 /webapp/assets/fonts/script/Noto-COLRv1.ttf
 
+# Competitor source read for competitive analysis, never vendored.
+#
+# ONLYOFFICE is AGPL-3.0-only and this project is Apache-2.0, so its source must
+# never enter this repository's history — `SKILL` §7. It is cloned here so lanes
+# can cite real identifiers instead of guessing, which is the whole point: a
+# brief that asks for citations from a source nobody can open invites invented
+# ones, and a fabricated competitive claim is the worst defect this repo ships
+# (`fidelity.html` carried fabricated claims twice).
+#
+# Clone with:
+#   git clone --depth 1 https://github.com/ONLYOFFICE/sdkjs reference/sdkjs
+#   git clone --depth 1 https://github.com/ONLYOFFICE/web-apps reference/web-apps
+reference/

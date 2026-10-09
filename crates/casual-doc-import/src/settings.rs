@@ -2,7 +2,15 @@
 //!
 //! The load-bearing settings are modeled (font-embedding flags, header parity,
 //! default tab stop, revision tracking, proof state, document/write protection,
-//! default table style, zoom, and the `w:compatSetting` triples). Every OTHER
+//! default table style, view, zoom, the theme font languages, and the
+//! `w:compatSetting` triples), and so are the ones Word writes into every
+//! document it saves (`109` FID-AT-10): the decimal symbol and list separator,
+//! the preview-picture and picture-compression flags, `w:compat/w:useFELayout`,
+//! the `w14`/`w15` document ids and default image resolution, and — retained
+//! VERBATIM, because nothing here consumes them — `m:mathPr` and
+//! `w:shapeDefaults`. A verbatim fragment is kept only when every name in it
+//! resolves to a namespace the writer declares under the same prefix; one that
+//! does not is reported as it always was. Every OTHER
 //! top-level setting is REPORTED (never silently dropped), so an unmodeled
 //! setting is auditable and — in Retention mode — preserved by the byte floor.
 //! Elements are matched by local name (namespace-agnostic); each `CT_OnOff` flag
@@ -18,6 +26,8 @@ use casual_doc_model::v1::{
     CompatSetting, DocumentProtection, DocumentProtectionEdit, DocumentSettings, NoteNumberRestart,
     NotePosition, NoteProperties, ProofState, WriteProtection, Zoom, ZoomMode,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::{DocumentView, ThemeFontLanguages};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -49,11 +59,52 @@ pub(crate) fn parse(
     // currently open, if any; its `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart`
     // children (level 2) route to the matching side of `settings`.
     let mut note_scope: Option<NoteScope> = None;
+    // The namespace bindings the root declares, read once from `w:settings`, so a
+    // `docId` can be told apart by namespace (`w14` and `w15` share the local
+    // name) and a verbatim fragment can be checked to mean what it says when it
+    // is written back under the writer's own declarations.
+    let mut bindings = Bindings::default();
+    // A `m:mathPr` or `w:shapeDefaults` being captured verbatim (`109` FID-AT-10).
+    let mut capture: Option<Capture> = None;
 
     loop {
         let event = reader
             .read_event_into(&mut buffer)
             .map_err(|_| ImportError::MalformedXml)?;
+        if let Some(open) = capture.as_mut() {
+            // Inside a captured fragment every event is the fragment's; the depth
+            // and element ceilings still apply, so a hostile fragment is bounded
+            // exactly as the rest of the part is.
+            match &event {
+                Event::Eof => return Err(ImportError::MalformedXml),
+                Event::DocType(_) => return Err(ImportError::MalformedXml),
+                Event::Start(element) => {
+                    depth += 1;
+                    if depth > config.max_depth {
+                        return Err(ImportError::LimitExceeded { limit: "xml_depth" });
+                    }
+                    bump(&mut elements, config.max_elements)?;
+                    open.nesting += 1;
+                    open.check(element, &bindings);
+                }
+                Event::Empty(element) => {
+                    bump(&mut elements, config.max_elements)?;
+                    open.check(element, &bindings);
+                }
+                Event::End(_) => {
+                    depth = depth.saturating_sub(1);
+                    open.nesting = open.nesting.saturating_sub(1);
+                }
+                _ => {}
+            }
+            open.write(&event);
+            if open.nesting == 0 {
+                let finished = capture.take().expect("a capture is open");
+                finished.finish(&mut settings, reporter);
+            }
+            buffer.clear();
+            continue;
+        }
         match event {
             Event::Eof => break,
             Event::DocType(_) => return Err(ImportError::MalformedXml),
@@ -65,16 +116,31 @@ pub(crate) fn parse(
                 }
                 bump(&mut elements, config.max_elements)?;
                 let local = element.local_name();
-                match (level, local.as_ref()) {
-                    (1, b"compat") => in_compat = true,
-                    (1, b"footnotePr") => note_scope = Some(NoteScope::Footnote),
-                    (1, b"endnotePr") => note_scope = Some(NoteScope::Endnote),
+                let fragment = if level == 1 {
+                    Fragment::of(&element, &bindings)
+                } else {
+                    None
+                };
+                match (level, local.as_ref(), fragment) {
+                    (0, _, _) => bindings = Bindings::of(&element),
+                    (1, b"compat", _) => in_compat = true,
+                    (1, b"footnotePr", _) => note_scope = Some(NoteScope::Footnote),
+                    (1, b"endnotePr", _) => note_scope = Some(NoteScope::Endnote),
+                    (_, _, Some(kind)) => {
+                        let mut open = Capture::new(kind);
+                        open.check(&element, &bindings);
+                        open.write(&Event::Start(element.borrow()));
+                        capture = Some(open);
+                    }
                     _ => on_setting(
-                        level,
-                        in_compat,
-                        note_scope,
+                        Position {
+                            level,
+                            in_compat,
+                            note_scope,
+                        },
                         &element,
                         false,
+                        &bindings,
                         &mut settings,
                         reporter,
                     ),
@@ -82,15 +148,26 @@ pub(crate) fn parse(
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
-                on_setting(
-                    depth,
-                    in_compat,
-                    note_scope,
-                    &element,
-                    true,
-                    &mut settings,
-                    reporter,
-                );
+                match Fragment::of(&element, &bindings) {
+                    Some(kind) if depth == 1 => {
+                        let mut open = Capture::new(kind);
+                        open.check(&element, &bindings);
+                        open.write(&Event::Empty(element.borrow()));
+                        open.finish(&mut settings, reporter);
+                    }
+                    _ => on_setting(
+                        Position {
+                            level: depth,
+                            in_compat,
+                            note_scope,
+                        },
+                        &element,
+                        true,
+                        &bindings,
+                        &mut settings,
+                        reporter,
+                    ),
+                }
             }
             Event::End(element) => {
                 match element.local_name().as_ref() {
@@ -107,6 +184,218 @@ pub(crate) fn parse(
     Ok(settings)
 }
 
+/// The namespace URIs a verbatim settings fragment may use, by the prefix the
+/// writer declares for each on `w:settings`. A fragment naming anything else is
+/// not retained — it is reported, as it was before it could be retained —
+/// because written under the writer's declarations it would no longer mean what
+/// it meant.
+const FRAGMENT_NAMESPACES: [(&[u8], &[u8]); 4] = [
+    (
+        b"w",
+        b"http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    ),
+    (
+        b"m",
+        b"http://schemas.openxmlformats.org/officeDocument/2006/math",
+    ),
+    (b"o", b"urn:schemas-microsoft-com:office:office"),
+    (b"v", b"urn:schemas-microsoft-com:vml"),
+];
+
+/// The Word 2010 and 2013 extension namespaces, which share the local name
+/// `docId`.
+const W14_NAMESPACE: &[u8] = b"http://schemas.microsoft.com/office/word/2010/wordml";
+const W15_NAMESPACE: &[u8] = b"http://schemas.microsoft.com/office/word/2012/wordml";
+
+/// The `xmlns:` declarations on the `w:settings` root.
+#[derive(Default)]
+struct Bindings {
+    declared: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+impl Bindings {
+    /// Reads every prefixed namespace declaration on `root`.
+    fn of(root: &BytesStart<'_>) -> Self {
+        let declared = root
+            .attributes()
+            .flatten()
+            .filter_map(|attribute| {
+                let key = attribute.key.as_ref();
+                let prefix = key.strip_prefix(b"xmlns:")?;
+                Some((prefix.to_vec(), attribute.value.into_owned()))
+            })
+            .collect();
+        Self { declared }
+    }
+
+    /// The URI `prefix` is bound to on the root, if it is.
+    fn uri(&self, prefix: &[u8]) -> Option<&[u8]> {
+        self.declared
+            .iter()
+            .find(|(declared, _)| declared == prefix)
+            .map(|(_, uri)| uri.as_slice())
+    }
+
+    /// The URI an element's own prefix is bound to on the root.
+    fn uri_of(&self, element: &BytesStart<'_>) -> Option<&[u8]> {
+        element
+            .name()
+            .prefix()
+            .and_then(|prefix| self.uri(prefix.as_ref()))
+    }
+}
+
+/// The two settings kept as verbatim fragments.
+#[derive(Clone, Copy)]
+enum Fragment {
+    /// `m:mathPr`.
+    MathProperties,
+    /// `w:shapeDefaults`.
+    ShapeDefaults,
+}
+
+impl Fragment {
+    /// Which fragment a top-level setting element is, if either. Matched by
+    /// local name AND namespace, so an extension element sharing a local name
+    /// is not mistaken for one.
+    fn of(element: &BytesStart<'_>, bindings: &Bindings) -> Option<Self> {
+        let uri = bindings.uri_of(element);
+        match element.local_name().as_ref() {
+            b"mathPr" if uri == Some(FRAGMENT_NAMESPACES[1].1) => Some(Self::MathProperties),
+            b"shapeDefaults" if uri == Some(FRAGMENT_NAMESPACES[0].1) => Some(Self::ShapeDefaults),
+            _ => None,
+        }
+    }
+
+    /// The element's local name, for the finding when it cannot be retained.
+    const fn local(self) -> &'static [u8] {
+        match self {
+            Self::MathProperties => b"mathPr",
+            Self::ShapeDefaults => b"shapeDefaults",
+        }
+    }
+}
+
+/// One verbatim fragment being captured: re-serialized event by event, as the
+/// OMML capture in `body` does, so the bytes the writer emits are exactly the
+/// events the source held.
+struct Capture {
+    kind: Fragment,
+    writer: quick_xml::Writer<std::io::Cursor<Vec<u8>>>,
+    /// Open elements inside the fragment, its own root included.
+    nesting: u32,
+    /// Whether every name in it resolves to a namespace the writer declares
+    /// under the same prefix, and it stayed within the size bound.
+    retainable: bool,
+}
+
+impl Capture {
+    fn new(kind: Fragment) -> Self {
+        Self {
+            kind,
+            writer: quick_xml::Writer::new(std::io::Cursor::new(Vec::new())),
+            nesting: 1,
+            retainable: true,
+        }
+    }
+
+    /// Checks one element of the fragment: its own prefix and each attribute's
+    /// must be one the writer declares, bound on the root (or on the element
+    /// itself) to the same URI the writer will declare for it.
+    fn check(&mut self, element: &BytesStart<'_>, bindings: &Bindings) {
+        let declared_here: Vec<(Vec<u8>, Vec<u8>)> = element
+            .attributes()
+            .flatten()
+            .filter_map(|attribute| {
+                let key = attribute.key.as_ref();
+                if key == b"xmlns" {
+                    // A default namespace inside the fragment would rebind every
+                    // unprefixed name beneath it; refuse rather than reason about it.
+                    return Some((Vec::new(), Vec::new()));
+                }
+                let prefix = key.strip_prefix(b"xmlns:")?;
+                Some((prefix.to_vec(), attribute.value.into_owned()))
+            })
+            .collect();
+        let resolves = |prefix: &[u8]| {
+            let Some((_, expected)) = FRAGMENT_NAMESPACES
+                .iter()
+                .find(|(allowed, _)| *allowed == prefix)
+            else {
+                return false;
+            };
+            let bound = declared_here
+                .iter()
+                .find(|(declared, _)| declared == prefix)
+                .map(|(_, uri)| uri.as_slice())
+                .or_else(|| bindings.uri(prefix));
+            bound == Some(*expected)
+        };
+        let declarations_are_canonical = declared_here
+            .iter()
+            .all(|(prefix, uri)| !prefix.is_empty() && resolves(prefix) && !uri.is_empty());
+        let element_resolves = element
+            .name()
+            .prefix()
+            .is_some_and(|prefix| resolves(prefix.as_ref()));
+        let attributes_resolve = element.attributes().flatten().all(|attribute| {
+            let key = attribute.key;
+            if key.as_ref() == b"xmlns" || key.as_ref().starts_with(b"xmlns:") {
+                return true;
+            }
+            key.prefix().is_none_or(|prefix| resolves(prefix.as_ref()))
+        });
+        if !(declarations_are_canonical && element_resolves && attributes_resolve) {
+            self.retainable = false;
+        }
+    }
+
+    /// Re-serializes one event into the fragment, refusing it once it outgrows
+    /// the model's bound.
+    fn write(&mut self, event: &Event<'_>) {
+        if !self.retainable {
+            return;
+        }
+        if self.writer.write_event(event.borrow()).is_err()
+            || self.writer.get_ref().get_ref().len()
+                > casual_doc_model::v1::MAX_SETTINGS_FRAGMENT_BYTES
+        {
+            self.retainable = false;
+        }
+    }
+
+    /// Stores the finished fragment, or reports the element as the unmodeled
+    /// setting it was before it could be retained.
+    fn finish(self, settings: &mut DocumentSettings, reporter: &mut Reporter) {
+        let kind = self.kind;
+        let fragment = self
+            .retainable
+            .then(|| String::from_utf8(self.writer.into_inner().into_inner()).ok())
+            .flatten();
+        let Some(fragment) = fragment else {
+            reporter.report(kind.local());
+            return;
+        };
+        match kind {
+            Fragment::MathProperties => settings.math_properties_xml = Some(fragment),
+            Fragment::ShapeDefaults => settings.shape_defaults_xml = Some(fragment),
+        }
+    }
+}
+
+/// Where in the part an element's event fired: its nesting level, and the
+/// container it sits in.
+#[derive(Clone, Copy)]
+struct Position {
+    /// The root `w:settings` is level 0, a setting level 1, a child of
+    /// `w:compat` or of a note container level 2.
+    level: u64,
+    /// Whether `w:compat` is open.
+    in_compat: bool,
+    /// Which document-default note container is open, if any.
+    note_scope: Option<NoteScope>,
+}
+
 /// Which document-default note container is currently open.
 #[derive(Clone, Copy)]
 enum NoteScope {
@@ -118,14 +407,18 @@ enum NoteScope {
 /// level 2 while `in_compat` is a `w:compat` child. Recognized settings mutate
 /// `settings`; everything else is reported.
 fn on_setting(
-    level: u64,
-    in_compat: bool,
-    note_scope: Option<NoteScope>,
+    position: Position,
     element: &BytesStart<'_>,
     self_closing: bool,
+    bindings: &Bindings,
     settings: &mut DocumentSettings,
     reporter: &mut Reporter,
 ) {
+    let Position {
+        level,
+        in_compat,
+        note_scope,
+    } = position;
     let local = element.local_name();
     let local = local.as_ref();
     if in_compat && level == 2 {
@@ -133,6 +426,7 @@ fn on_setting(
             b"adjustLineHeightInTable" => {
                 settings.adjust_line_height_in_table = on_off(element);
             }
+            b"useFELayout" => settings.use_fe_layout = on_off(element),
             b"compatSetting" => {
                 if !push_compat_setting(element, settings) {
                     reporter.report(local);
@@ -159,7 +453,7 @@ fn on_setting(
     if matches!(local, b"footnotePr" | b"endnotePr") {
         return;
     }
-    if apply_setting(local, element, settings) {
+    if apply_setting(local, element, bindings, settings) {
         report_unmodeled_attributes(reporter, local, element);
     } else {
         reporter.report_element(local, element, self_closing);
@@ -237,6 +531,16 @@ const PASSWORD_ATTRIBUTES: &[&[u8]] = &[
 /// 16-name comparison each, and there is at most one of each protection element
 /// per document. No document walk.
 fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
+    if local == b"themeFontLang" {
+        // A language the model's bound refuses is the one thing `w:themeFontLang`
+        // can lose; an empty one says nothing and is not a loss.
+        for attribute in THEME_FONT_LANGUAGE_ATTRIBUTES {
+            if attribute_value(element, attribute).is_some_and(|value| value.len() > 255) {
+                reporter.report_attribute(local, attribute);
+            }
+        }
+        return;
+    }
     if !matches!(local, b"documentProtection" | b"writeProtection") {
         return;
     }
@@ -313,14 +617,24 @@ fn note_number_restart(element: &BytesStart<'_>) -> Option<NoteNumberRestart> {
 }
 
 /// Applies a recognized top-level setting, returning whether it was consumed.
-fn apply_setting(local: &[u8], element: &BytesStart<'_>, settings: &mut DocumentSettings) -> bool {
+fn apply_setting(
+    local: &[u8],
+    element: &BytesStart<'_>,
+    bindings: &Bindings,
+    settings: &mut DocumentSettings,
+) -> bool {
     match local {
         b"embedTrueTypeFonts" => settings.embed_true_type_fonts = on_off(element),
         b"embedSystemFonts" => settings.embed_system_fonts = on_off(element),
         b"saveSubsetFonts" => settings.save_subset_fonts = on_off(element),
         b"evenAndOddHeaders" => settings.even_and_odd_headers = on_off(element),
         b"mirrorMargins" => settings.mirror_margins = on_off(element),
-        b"trackChanges" => settings.track_changes = on_off(element),
+        // `w:trackRevisions` is the schema's element (ECMA-376 §17.15.1.89).
+        // Only `trackChanges` — which is in no schema — was read until `109`
+        // FID-AT-11, so a document Word saved with Track Changes on reported the
+        // element and opened with it off. `trackChanges` stays readable, because
+        // the writer emitted it until the same change.
+        b"trackRevisions" | b"trackChanges" => settings.track_changes = on_off(element),
         b"updateFields" => settings.update_fields = on_off(element),
         b"defaultTabStop" => match tab_stop(element) {
             Some(value) => settings.default_tab_stop = Some(value),
@@ -374,9 +688,88 @@ fn apply_setting(local: &[u8], element: &BytesStart<'_>, settings: &mut Document
             }
             settings.zoom = zoom;
         }
+        // An unknown `ST_View` token is not a view this model can carry, so it
+        // falls to the catch-all and is reported rather than guessed at.
+        b"view" => match document_view(element) {
+            Some(view) => settings.view = Some(view),
+            None => return false,
+        },
+        // Consumed whatever it says: every attribute it can carry is kept, an
+        // empty one states nothing (LibreOffice writes all three empty), and an
+        // over-long one is reported by `report_unmodeled_attributes`.
+        b"themeFontLang" => settings.theme_font_languages = theme_font_languages(element),
+        // `109` FID-AT-10: settings Word writes into every document it saves,
+        // reported and dropped by every edited save until they were modelled.
+        b"savePreviewPicture" => settings.save_preview_picture = on_off(element),
+        b"doNotAutoCompressPictures" => settings.do_not_auto_compress_pictures = on_off(element),
+        b"decimalSymbol" | b"listSeparator" => {
+            let Some(token) = attribute_value(element, b"val")
+                .filter(|value| DocumentSettings::is_valid_token(value))
+            else {
+                return false;
+            };
+            if local == b"decimalSymbol" {
+                settings.decimal_symbol = Some(token);
+            } else {
+                settings.list_separator = Some(token);
+            }
+        }
+        // `w14:docId` and `w15:docId` share a local name; the namespace the root
+        // binds the element's prefix to decides which identity this is, and a
+        // value of the wrong shape for it is reported rather than stored.
+        b"docId" => {
+            let Some(id) = attribute_value(element, b"val") else {
+                return false;
+            };
+            match bindings.uri_of(element) {
+                Some(W14_NAMESPACE) if DocumentSettings::is_valid_document_id_w14(&id) => {
+                    settings.document_id_w14 = Some(id);
+                }
+                Some(W15_NAMESPACE) if DocumentSettings::is_valid_document_id_w15(&id) => {
+                    settings.document_id_w15 = Some(id);
+                }
+                _ => return false,
+            }
+        }
+        b"defaultImageDpi" => match attribute_value(element, b"val")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|dpi| DocumentSettings::is_valid_image_dpi(*dpi))
+        {
+            Some(dpi) => settings.default_image_dpi = Some(dpi),
+            None => return false,
+        },
         _ => return false,
     }
     true
+}
+
+/// `w:themeFontLang`'s three language attributes, in model field order.
+const THEME_FONT_LANGUAGE_ATTRIBUTES: [&[u8]; 3] = [b"val", b"eastAsia", b"bidi"];
+
+/// Reads `w:themeFontLang`: each attribute kept when non-empty and within the
+/// model's 255-byte bound.
+fn theme_font_languages(element: &BytesStart<'_>) -> ThemeFontLanguages {
+    let [latin, east_asia, bidi] = THEME_FONT_LANGUAGE_ATTRIBUTES.map(|attribute| {
+        attribute_value(element, attribute).filter(|value| !value.is_empty() && value.len() <= 255)
+    });
+    ThemeFontLanguages {
+        latin,
+        east_asia,
+        bidi,
+    }
+}
+
+/// Maps `w:view/@w:val` (`ST_View`) to a view.
+fn document_view(element: &BytesStart<'_>) -> Option<DocumentView> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("none") => Some(DocumentView::None),
+        Some("print") => Some(DocumentView::Print),
+        Some("outline") => Some(DocumentView::Outline),
+        Some("masterPages") => Some(DocumentView::MasterPages),
+        Some("normal") => Some(DocumentView::Normal),
+        Some("web") => Some(DocumentView::Web),
+        _ => None,
+    }
 }
 
 /// Parses a `w:compatSetting` triple, returning whether it was well-formed and

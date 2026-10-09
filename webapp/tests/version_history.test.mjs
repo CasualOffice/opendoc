@@ -262,6 +262,25 @@ test("an autosave tick does not capture a version until the interval has passed"
   }
 });
 
+test("closing the tab keeps the last edits as a version without waiting out the interval", () => {
+  // Ten minutes is the interval, and it used to apply to `pagehide` too — so a
+  // session's last eight minutes of edits were never kept, and those are the
+  // ones a reader is likeliest to want back.
+  const capture = new VersionCapturePolicy({ intervalMs: 10 * 60_000 });
+  capture.noteCaptured(NOW, 1);
+  const leaving = capture.shouldCapture({ reason: CAPTURE_REASON.PAGEHIDE, revision: 5, now: NOW + 60_000 });
+  assert.equal(leaving.capture, true, "the tab is going away; there is no next pause to wait for");
+  assert.equal(leaving.kind, VERSION_KIND.AUTO);
+  // A tab merely switched away from still waits: that happens many times an hour.
+  const switched = capture.shouldCapture({ reason: CAPTURE_REASON.HIDDEN, revision: 5, now: NOW + 60_000 });
+  assert.equal(switched.capture, false);
+  assert.equal(switched.why, HISTORY_STATUS.NOT_DUE);
+  // And nothing new is still nothing new.
+  const unchanged = capture.shouldCapture({ reason: CAPTURE_REASON.PAGEHIDE, revision: 1, now: NOW + 60_000 });
+  assert.equal(unchanged.capture, false);
+  assert.equal(unchanged.why, HISTORY_STATUS.UNCHANGED);
+});
+
 test("nothing changed means no version, and an explicit Save always means one", () => {
   const capture = new VersionCapturePolicy({ intervalMs: 60_000 });
   capture.noteCaptured(NOW, 7);
@@ -1160,6 +1179,31 @@ test("clearing history says how much it freed, and reports an eviction as an evi
   const evicted = await store.storageStatus({ expectVersions: 4 });
   assert.equal(evicted.status, HISTORY_STATUS.EVICTED);
   assert.equal(evicted.kind, "error");
+  store.close();
+});
+
+test("the counts under a document's list are THAT document's, not the whole browser's", async () => {
+  // The panel printed the store-wide totals under one document's list: "47
+  // versions kept" over six rows, and "18 of 15 named" against a per-document
+  // limit. Two documents here; each must see only its own.
+  const { store, lineageId } = await seeded(3);
+  const other = await store.openLineage({ docKey: "k2", name: "other.docx", now: NOW });
+  for (let i = 0; i < 2; i++) {
+    const outcome = await store.captureVersion({
+      lineageId: other.lineageId,
+      bytes: new Uint8Array(1024).fill(200 + i),
+      formatId: "org.openxmlformats.wordprocessingml.document",
+      exportMode: "preserve_when_safe",
+      revision: i + 1,
+      now: NOW + i * 60_000,
+      retention: policy(),
+      kind: VERSION_KIND.AUTO,
+    });
+    assert.equal(outcome.ok, true);
+  }
+  assert.equal((await store.storageStatus({ lineageId })).versions, 3);
+  assert.equal((await store.storageStatus({ lineageId: other.lineageId })).versions, 2);
+  assert.equal((await store.storageStatus()).versions, 5, "unscoped is still the whole store");
   store.close();
 });
 

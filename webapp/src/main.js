@@ -1,11 +1,11 @@
 // OpenDoc WASM viewer — P1G-001 harness.
 //
-// Loads the `casual-doc-wasm` module, opens a user-selected `.docx` fully
-// client-side, and blits each rendered page onto a canvas. This is the
+// Loads `casual-doc-wasm`, opens a local `.docx`, and paints pages on canvas: the
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
 import init, { open, beginVersionDiff, defaultDiffSlice, engineVersion } from "../pkg/casual_doc_wasm.js";
+import { toggleTextCheckboxAt } from "./text_checkbox.mjs";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
 // with nothing loaded — which is also why they are handed to
@@ -28,7 +28,7 @@ import {
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
-import { bindComparePanel, comparableBytes } from "./compare_documents.mjs";
+import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
 import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
@@ -46,6 +46,11 @@ import {
   ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
+import { handleCropKey, objectNudge } from "./object_keys.mjs";
+import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
+import { createKeyboardObjectMove, createObjectTextDrag } from "./object_text_move.mjs";
+import { edgeScrollStep } from "./edge_scroll.mjs";
+import { EMU_PER_PX, INSERTABLE_IMAGE_TYPES, canChangePicture, createPictureReplace, decodeImageBlob } from "./picture_replace.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
@@ -55,10 +60,13 @@ import { spellingContextCommands } from "./spell_check.mjs";
 import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { FONT_SIZE_STEPS, RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
-import { downloadBytes, populateSaveFormats, showCompatibilityFindings } from "./save_formats.mjs";
+import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
+import { createCompatibilityFindings, findingTotals } from "./compat_findings.mjs";
+import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
 import { createCompactToolbar } from "./compact_toolbar.mjs";
@@ -77,13 +85,11 @@ import {
   scrollToDoc,
 } from "./page_scroll.mjs";
 import {
-  compatibilityOccurrenceCount,
-  importFindingCount,
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
 import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, navigationShortcuts, wordDeletionDirection } from "./keyboard.mjs";
-import { chordCommand, shortcutForCommand } from "./keymap.mjs";
+import { chordCommand, chordTitle, shortcutForCommand } from "./keymap.mjs";
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import {
   focusMenuIndex,
@@ -148,9 +154,13 @@ import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { createAccessChrome } from "./access_chrome.mjs";
 import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 import { insertChartAtCaret } from "./chart_insert.mjs";
+// Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
+import { createChartSurface } from "./chart_surface.mjs";
+import { newestObject, placedObjectIds } from "./placed_objects.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
+import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollTargetFor } from "./scroll_into_view.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
@@ -252,6 +262,9 @@ import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
+import { createTableGridPicker } from "./table_grid_picker.mjs";
+import { createRegionCycle } from "./region_focus.mjs";
+import { quickStyleCommands } from "./quick_styles.mjs";
 import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
@@ -464,8 +477,6 @@ const reviewGrammarCheckBtn = document.getElementById("reviewGrammarCheckBtn");
 const reviewSmartQuotesBtn = document.getElementById("reviewSmartQuotesBtn");
 const reviewProofLanguagesBtn = document.getElementById("reviewProofLanguagesBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
-const gridPicker = document.getElementById("gridPicker");
-const gridLabel = document.getElementById("gridLabel");
 const ribbonTabs = [...document.querySelectorAll(".ribbon-tab")];
 const ribbonPanels = [...document.querySelectorAll(".ribbon-panel")];
 const tabTable = document.getElementById("tabTable");
@@ -623,11 +634,11 @@ const copyBtn = document.getElementById("copyBtn");
 const replaceBtn = document.getElementById("replaceBtn");
 // Clipboard buttons reuse the exact clipboard actions the command palette and
 // keyboard already invoke (`paste`/`cut`/`copySelection`), so they are never a
-// second code path. Replace opens the same Find & Replace panel as Find.
+// second code path. Replace opens the same Find & Replace panel on its replace field.
 pasteBtn.addEventListener("click", () => { paste(); });
 cutBtn.addEventListener("click", () => { cut(); });
 copyBtn.addEventListener("click", () => { copySelection(); });
-replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
+replaceBtn.addEventListener("click", () => { if (!replaceBtn.disabled) openFind({ replace: true }); });
 
 // The Styles control — the ONE control the band offers for paragraph styles (docs/115).
 // It replaces three: a `#paragraphStyle` select listing every style in the document
@@ -692,7 +703,7 @@ function makeStyleOption(name) {
   option.appendChild(check);
   const label = document.createElement("span");
   label.className = "style-option-name";
-  label.textContent = name;
+  label.textContent = styleDisplayName(name);
   applyStylePreview(label, name, (style) => doc?.stylePreview?.(style));
   option.appendChild(label);
   option.addEventListener("click", () => {
@@ -801,11 +812,11 @@ function syncStylesGalleryActive() {
   // A style outside the offered six is still shown on the trigger — it is what
   // the caret is in, and a control reporting something else is worse than one
   // reporting a style it cannot re-offer. `offeredStyles` gives it a slot anyway.
-  stylesTriggerLabel.textContent = active || "Normal";
+  stylesTriggerLabel.textContent = styleDisplayName(active || "Normal");
   stylesTrigger.classList.toggle("is-placeholder", !active);
   stylesTrigger.setAttribute(
     "aria-label",
-    active ? `Paragraph style: ${active}` : "Paragraph style",
+    active ? `Paragraph style: ${styleDisplayName(active)}` : "Paragraph style",
   );
   for (const option of stylesMenuList.querySelectorAll(".style-option")) {
     const selected = option.dataset.style === active;
@@ -897,7 +908,7 @@ async function updateStyleFromSelection(name) {
   await runToolbarEdit((a, b, c, d) => doc.updateStyleFromSelection(a, b, c, d, name));
   populateStyles();
   updateToolbar();
-  setStatus(`Updated “${name}” to match the selection`);
+  setStatus(`Updated “${styleDisplayName(name)}” to match the selection`);
 }
 
 /** Creates a new paragraph style from the selection and applies it (Word's
@@ -1250,6 +1261,7 @@ function chromeShows(region) {
  *  is correct — no host has been handed the session yet. */
 let hostSession = null;
 let reviewMode = HOST_MODE;
+const reviewTracking = createReviewTracking(); // the document's Track Changes setting and the mode (HF-283)
 /** Why this DOCUMENT cannot be edited at all, or "" when it can be.
  *
  *  The engine answers this (`editingUnavailableReason`), and exactly one
@@ -1507,11 +1519,7 @@ function setReviewMode(mode, { restoreFocus = true } = {}) {
   if (reviewMode === "suggesting" && !showingChanges) {
     void setShowingChanges(true);
   }
-  // Paragraph formatting is tracked for as long as Suggesting is on (HF-131).
-  // Every paragraph formatting command funnels through one engine choke point,
-  // and review decisions build their own operations, so this cannot accidentally
-  // track an Editing-mode change or a decision. Dated per command by the engine.
-  doc?.setParagraphTracking(reviewMode === "suggesting", undefined);
+  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus && !hostSession?.executing, caret: selection?.focus, runEdit }); // HF-131; HF-283: a host's switch is not the reader's
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
@@ -2438,7 +2446,8 @@ const paraControls = [
 ];
 const saveBtn = document.getElementById("save");
 const saveFormatEl = document.getElementById("saveFormat");
-const compatibilityStatusEl = document.getElementById("compatibilityStatus");
+// The findings chip is a button that opens them (`compat_findings.mjs`), not a count leading nowhere.
+const compatFindings = createCompatibilityFindings({ chip: document.getElementById("compatibilityStatus"), registerModal, fallbackFocus: () => pagesEl });
 // The two zoom steppers are looked up where they are USED, below: one reader
 // each, and a name in the widest scope in the product for it.
 const documentChrome = document.getElementById("documentChrome");
@@ -2476,6 +2485,8 @@ function backingDpr() {
 
 /** The currently open document handle (or null). Kept so a zoom change re-renders. */
 let doc = null;
+/** F6 / Shift+F6 between the window's regions (`region_focus.mjs`); early, because the registry reads it. */
+const regionCycle = createRegionCycle({ root: document, focusEditor: () => focusEditorSurface(), documentOpen: () => !!doc, modalOpen: modalIsOpen });
 /** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
 let collab = null;
 /** Arrivals paint one at a time: two must not interleave two `renderAll()`s. */
@@ -3030,6 +3041,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // one leaves the previous document open, because the previous document is
     // what the user still has.
     const next = open(bytes);
+    await versionHistory.closePreview(); await comparePanel.closeView(); // a borrowed canvas goes home first, or `doc.free()` below frees the preview and strands the live wrapper
     hideLinkChip();
     pointerHover.clear();
     // Only now that the new document has PARSED — a failed open leaves the
@@ -3110,7 +3122,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // mode and, now that chrome follows it, the reading chrome. Skipped only where
     // nothing can have changed — editing to editing.
     // ...narrowed by the ROOM's grant too: a read-only guest arrives in Viewing, as a `readonly` container does.
-    const openMode = readOnlyReason ? "viewing" : SESSION.openMode(HOST_MODE);
+    const openMode = readOnlyReason ? "viewing" : reviewTracking.openMode(SESSION.openMode(HOST_MODE), doc.trackRevisions);
     if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode, { restoreFocus: false });
     breakTypingSession();
     currentName = name;
@@ -3138,7 +3150,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // engine getter with zero consumers: loss was computed on every open and
     // thrown away, while export loss was reported. SKILL §1 names reporting as
     // the condition under which verbatim retention is an advantage at all.
-    showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
+    compatFindings.show(doc.importReportJson, "import");
     railOutline.disabled = railPages.disabled = false;
     reflowView.setEnabled();
     // The reader's formatting-mark preference, replayed onto the new handle: the
@@ -3181,6 +3193,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // real faces register. Word and Docs both show the document before every
     // font it references is resolved; so do browsers, for the same reason.
     await renderAll();
+    if (statusEl.textContent === `Opening ${name}…`) setStatus(spellChecker.statusNote()); // the render clears only its own line
     buildOutline();
     referenceCommands.numbering.refresh();
     tocCommands.fields.refresh();
@@ -3270,7 +3283,7 @@ docTitleEl.addEventListener("blur", commitRename);
 async function provisionFonts(name) {
   if (!doc) return [];
   const warnings = [];
-  setStatus(`Fetching web fonts for ${name}…`);
+  statusChannel.progress(`Fetching web fonts for ${name}…`);
 
   const named = await Promise.allSettled(
     NAMED_WEB_FONT_FACES.map((face) => fetchFontBytes(face.url, fontCache)),
@@ -3321,7 +3334,7 @@ async function provisionMissingFallbacks(label) {
     (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
   );
   if (keys.length === 0) return warnings;
-  setStatus(`Fetching fonts for ${label} (${keys.join(", ")})…`);
+  statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
   for (const key of keys) inFlightFallbackKeys.add(key);
   for (const key of keys) {
     const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
@@ -3612,7 +3625,7 @@ async function renderAll() {
   const sizes = [];
   const renderingStatus =
     `Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`;
-  setStatus(renderingStatus);
+  statusChannel.progress(renderingStatus); // background progress: never over the reader's message
 
   for (let i = 0; i < count; i++) {
     if (token !== renderToken) return;
@@ -3667,12 +3680,10 @@ async function renderAll() {
   if (runningEditBand) drawRunningBands(runningEditBand);
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
-    // A command may have reported a more important status while this async
-    // render was running. Clear only the progress message this render owns.
-    // Clearing it hands the line back to whatever standing condition still
-    // wants it — today, "this document is in a language we have no dictionary
-    // for", which would otherwise be wiped by the font-upgrade re-render and
-    // leave an unchecked document looking like a clean one.
+    // The progress above painted only if nobody held the line, so what a command
+    // just told the reader survives the render ("Footnote added" did not, when the
+    // font upgrade repainted). Clearing our own text hands the line back to any
+    // standing condition, e.g. "no dictionary for this document's language".
     if (statusEl.textContent === renderingStatus) setStatus(spellChecker.statusNote());
     updateStats();
     pagesPanelView.build();
@@ -3732,7 +3743,7 @@ function toggleFormCheckboxAt(node, offset) {
   } catch {
     return false;
   }
-  if (!control) return false;
+  if (!control) return toggleTextCheckboxAt(doc, node, offset, runEdit);
   runEdit(() => doc.toggleFormCheckbox(control));
   return true;
 }
@@ -4150,9 +4161,9 @@ function paintObjectSelection() {
   // already have it, or the browser starts scrolling at touch-start and the
   // move gesture is gone before any handler runs. Selected + movable only.
   const padPage = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  if (objectSelection.canMove && padPage?.overlay) {
+  if ((objectSelection.canMove || objectSelection.canMoveInText) && padPage?.overlay) {
     paintMovePad(padPage.overlay, rect.slice(1, 5), scaleOf(padPage), (event) =>
-      startObjectMove(event, padPage, node));
+      objectSelection.canMove ? startObjectMove(event, padPage, node) : objectTextDrag.arm(event, padPage, objectSelection));
   }
   // The angle comes with the frame, in ONE engine read: the grips are drawn at
   // the object's rotated corners, the cursors are turned with them, and the
@@ -4230,9 +4241,10 @@ function enterCropMode() {
  *  resolving which page and which scale, which only the editor can answer. */
 function paintObjectCrop() {
   const s = objectCropSession;
-  const [bx, by, bw, bh] = s.box;
   const rectFlat = doc.objectRect(s.node);
   if (rectFlat.length < 5) return;
+  s.box = rectFlat.slice(1, 5); // the picture as placed NOW, not at enterCropMode (HF-106)
+  const [bx, by, bw, bh] = s.box;
   const pageNumber = rectFlat[0];
   const page = pages[pageNumber - 1];
   if (!page?.overlay) return;
@@ -4257,8 +4269,12 @@ function startCropHandleDrag(event, page, handleKind) {
   };
   beginGripDrag(event, {
     onMove: updateCropHandleDrag,
-    onEnd: () => {
-      if (objectCropSession) objectCropSession.handleDrag = null;
+    onEnd: (cancelled) => {
+      if (!objectCropSession) return;
+      // A gesture the browser cancelled leaves the crop where it started.
+      if (cancelled) objectCropSession.crop = objectCropSession.handleDrag?.startCrop ?? objectCropSession.crop;
+      objectCropSession.handleDrag = null;
+      if (cancelled) drawSelection();
     },
   });
 }
@@ -4332,6 +4348,28 @@ const objectResize = createObjectResizeDrag({
   resetPointerGesture: () => resetPointerGesture(),
 });
 const objectRotate = createObjectRotateDrag(gestureIo);
+/** A drag on an object that cannot move says why, once (HF-259). */
+const refusedObjectDrag = createRefusedDrag({ setStatus: (text, kind) => setStatus(text, kind) });
+/** Dragging, or F2 ("Move to where?"), an in-line object to a new place in the text (`109` UX-OB-02). */
+const objectTextIo = {
+  doc: () => doc, pageAt: pageFromClientPoint, pageByNumber: (n) => pages[n - 1], pointToTwip, scaleOf, platform: EDITOR_KEYBOARD_PLATFORM, t, viewport: () => viewportEl,
+  blocked: () => objectEditBlocked(), runEdit: (thunk, options) => runEdit(thunk, options), setStatus: (text, kind) => setStatus(text, kind),
+  select: (node, held) => selectObject(node, held.kind, null, false, { ...held, ref: { ...held.ref, root: node, subject: node } }),
+  caret: () => selection?.focus ?? null,
+  selection: () => (objectSelection?.mode === "selected" ? objectSelection : null),
+  leaveObject: () => { objectSelection = null; clearObjectStatus(); drawSelection(); },
+  refusal: (held) => capabilityRefusal(held, held.anchored ? "canMove" : "canMoveInText", SESSION.sentenceFor),
+};
+const objectTextDrag = createObjectTextDrag(objectTextIo);
+const keyboardObjectMove = createKeyboardObjectMove(objectTextIo);
+/** The crop session's keyboard (`object_keys.mjs`). */
+const cropKeyIo = {
+  get session() { return objectCropSession; },
+  commit: () => commitCrop(),
+  cancel: () => cancelCrop(),
+  redraw: () => drawSelection(),
+  nothingToMove: () => setStatus(t("object.crop.nothingToMove")),
+};
 const sizeLabel = (widthTwip, heightTwip) =>
   resizeSizeLabel(t, widthTwip, heightTwip, measurement);
 
@@ -4345,7 +4383,7 @@ function updateObjectSelectionState() {
 
 /** Reflects a selected shape's own fill and outline onto `#pages`. */
 function reflectShapeFormatState() {
-  reflectShapeFormat(pagesEl, objectSelection?.kind === "shape" ? selectedShapeFormat() : null);
+  reflectShapeFormat(pagesEl, objectSelection?.canFill || objectSelection?.canStroke ? selectedShapeFormat() : null);
 }
 
 /** The object properties panel. Its 170 lines are `object_inspector.mjs`; what
@@ -4358,6 +4396,7 @@ const objectInspector = createObjectInspector({
   setStatus: (text, kind) => setStatus(text, kind),
   openShapeFill: () => shapeFillBtn.click(),
   openShapeOutline: () => shapeOutlineBtn.click(),
+  t,
 });
 const toggleObjectInspector = (open) => objectInspector.toggle(open);
 
@@ -4378,7 +4417,10 @@ const objectBar = createObjectBar({
   reflectInspector: () => objectInspector.reflect(),
   setWrap: (mode) => setObjectWrap(mode),
   openAltText: () => openAltTextDialog(),
+  openChartData: () => chartSurface.openData(),
   enterCrop: () => enterCropMode(),
+  canChangePicture,
+  changePicture: () => pictureReplace.choose(),
   deleteObject: () => deleteSelectedObject(),
   reflectShapeSwatches: () => reflectShapeSwatches(),
   fillButton: () => shapeFillBtn,
@@ -4387,7 +4429,24 @@ const objectBar = createObjectBar({
   arrangeButton: () => labelledObjectMenuButton(objectArrangeBtn),
   rotateButton: () => labelledObjectMenuButton(objectRotateBtn),
 });
-const updateObjectContextBar = () => objectBar.update();
+const updateObjectContextBar = () => (objectBar.update(), chartSurface.sync());
+/** The chart's Chart tab, settings panel, data dialog and command tree (`chart_surface.mjs`). */
+const chartSurface = createChartSurface({
+  doc: () => doc,
+  selection: () => objectSelection,
+  blocked: () => objectEditBlocked(),
+  blockedReason: () => readOnlyReason || (reviewMode === "viewing" ? t("chart.reason.viewing") : reviewMode === "suggesting" ? t("chart.reason.suggesting") : ""),
+  apply: (result) => applyEditResult(result, { keepView: true }),
+  setStatus: (text, kind) => setStatus(text, kind),
+  returnFocus: () => focusEditorSurface(),
+  registerModal,
+  showMenu: (button, commands) => { const box = button.getBoundingClientRect(); showContextMenu(box.left, box.bottom, { surface: "ribbon", commands }); },
+  reflectTab: (tab, state) => reflectEnablement(tab, state, EDITOR_KEYBOARD_PLATFORM),
+  selectTab: (name) => selectRibbonTab(name),
+  t,
+});
+/** Insert ▸ Chart, as ONLYOFFICE and Word do it: the chart lands SELECTED with its data open. */
+const insertChartWithData = () => chartSurface.insertAndOpen(() => insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }), (chart) => selectObject(chart.node, chart.kind, null, chart.anchored, chart));
 const positionObjectContextBar = () => objectBar.reposition();
 
 /** Every arrange fact about the selected object, gathered in ONE pass per
@@ -4466,13 +4525,16 @@ const OBJECT_CAPABILITY_KEYS = [
   "canFill",
   "canStroke",
   "canEditText",
+  "canMoveInText",
 ];
 
 /** Copies the engine-declared structural capabilities before a wasm hit payload
  *  is freed. JSON object-order entries use the same camelCase field names. */
 function objectCapabilities(source) {
   if (source && OBJECT_CAPABILITY_KEYS.some((key) => key in source)) {
-    return Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true]));
+    // The engine's reason for every `false` travels with the bits (HF-259), and so does the file's aspect lock (FID-AT-09).
+    const reasons = { capabilityReasons: readCapabilityReasons(source), locksAspectRatio: source.locksAspectRatio === true };
+    return Object.assign(Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true])), reasons);
   }
   // A missing or stale engine payload must never make an unsupported mutation
   // appear safe. A correctly built production bridge always supplies the bits.
@@ -5127,9 +5189,12 @@ function setObjectWrap(mode) {
 function deleteSelectedObject() {
   if (!objectSelection || objectSelection.mode !== "selected" || !objectSelection.canDelete) return;
   const root = objectSelection.ref.root;
+  // A member of a group is deleted ALONE, as in Word; sending it to the root
+  // deleted everything grouped with it (HF-214).
+  const member = insideGroupSelection() ? objectSelection.node : null;
   runEdit(
     () => {
-      const res = doc.deleteObject(root);
+      const res = member ? doc.deleteGroupMember(member) : doc.deleteObject(root);
       objectSelection = null;
       clearObjectStatus();
       return res;
@@ -5370,20 +5435,15 @@ function finishObjectMove(event) {
   return true;
 }
 
-// Arrow-nudge step in twips: a fine ~1/32in step, and a coarse ~1/8in step with
-// Shift (matching Word/Docs arrow-vs-Shift+arrow nudging).
-const NUDGE_TWIP = 45;
-const NUDGE_TWIP_LARGE = 180;
-
-/** Nudges the selected floating object by one step in the given direction, as a
- *  single `SetAnchor` op (gated in Viewing/Suggesting like a drag-move). */
-function nudgeSelectedObject(dx, dy, large) {
+/** Nudges the selected floating object one `objectNudge` step (`object_keys.mjs`
+ *  owns which key means which step), as a single `SetAnchor` op (gated in
+ *  Viewing/Suggesting like a drag-move). */
+function nudgeSelectedObject({ dx, dy, step }) {
   if (!doc || !objectSelection?.canMove) return;
   const subject = objectSelection.node;
   const root = objectSelection.ref.root;
   const rect = doc.objectRect(subject); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
-  const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
   if (insideGroupSelection()) {
     runEdit(
       () => doc.moveGroupChildBy(subject, dx * step * EMU_PER_TWIP, dy * step * EMU_PER_TWIP),
@@ -5742,7 +5802,7 @@ const pointerHover = createPointerHover({
     insideObjectNode: objectSelection?.mode === "editing" ? objectSelection.node : null,
     resizeDrag: objectResize.record(),
     cropDrag: objectCropSession?.handleDrag ?? null,
-    moveDrag: objectMoveDrag,
+    moveDrag: objectMoveDrag ?? (objectTextDrag.dragging() || null),
     tableDrag: tableChrome.dragKind(),
     tableStripDrag: tableGutter.dragKind(),
     textDrag: dragging,
@@ -5940,10 +6000,11 @@ function onPointerDown(page, event) {
     // records why, and ONLYOFFICE and Word agree.
     const objectLink = linkAt(page, event);
     if (objectLink) showLinkChip(objectLink, event);
-    // A floating object is movable: the same gesture that selects it can drag it
-    // (a bare click commits nothing). Inline objects flow with the text.
+    // The same gesture that selects an object drags it (a bare click commits
+    // nothing): a floating one anywhere on the page, an in-line one to another
+    // place in the text (UX-OB-02), and any other says why it cannot.
     if (descriptor.canMove) startObjectMove(event, page, node);
-    else startSelectionAutoScroll();
+    else if (!objectTextDrag.arm(event, page, objectSelection)) refusedObjectDrag.arm(event, objectTextIo.refusal({ ...descriptor, anchored }));
     event.preventDefault();
     return;
   }
@@ -6062,6 +6123,7 @@ function onPointerDown(page, event) {
 }
 
 function onPointerMove(page, event) {
+  if (objectTextDrag.active()) return; // the window listener drives it, once per event
   if (objectMoveDrag) {
     updateObjectMove(event);
     return;
@@ -6159,39 +6221,13 @@ function syncSelectionToCellRange() {
   drawSelection();
 }
 
-const AUTO_SCROLL_EDGE_PX = 56;
-const AUTO_SCROLL_MAX_PX = 24;
-
 function startSelectionAutoScroll() {
   if (selectionAutoScrollFrame) return;
   const tick = () => {
     selectionAutoScrollFrame = 0;
     if (!dragging || !pointerGesture) return;
-
-    const rect = viewportEl.getBoundingClientRect();
-    const y = pointerGesture.lastClientY;
-    let dy = 0;
-    if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX);
-      dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
-      dy = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    }
-
-    // The same rule on the other axis. Only `dy` existed, so at any zoom where
-    // the sheet is wider than the window a drag-selection simply stopped at the
-    // window edge and the end of the line was unreachable by mouse.
-    const x = pointerGesture.lastClientX;
-    let dx = 0;
-    if (x < rect.left + AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (rect.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX);
-      dx = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    } else if (x > rect.right - AUTO_SCROLL_EDGE_PX) {
-      const ratio = Math.min(1, (x - (rect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
-      dx = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
-    }
-
+    // Both axes (`edge_scroll.mjs`, shared with the in-text object drag).
+    const { dx, dy } = edgeScrollStep(viewportEl.getBoundingClientRect(), pointerGesture.lastClientX, pointerGesture.lastClientY);
     if (dy !== 0 || dx !== 0) {
       const beforeTop = viewportEl.scrollTop;
       const beforeLeft = viewportEl.scrollLeft;
@@ -6209,6 +6245,8 @@ function startSelectionAutoScroll() {
 
 function onPointerUp(event) {
   document.body.style.cursor = ""; // the gesture no longer owns the cursor
+  refusedObjectDrag.end();
+  if (objectTextDrag.finish(event)) return;
   if (shapeDrawMode.finish()) return;
   if (finishObjectMove(event)) return;
   if (objectRotate.finish(event)) return;
@@ -6379,6 +6417,8 @@ window.addEventListener("pointermove", (e) => {
   // off the sheet it started on — so the router runs here too, not only over
   // `#pages`. It short-circuits on the drag kind and asks the engine nothing.
   if (pointerHover.dragKind()) pointerHover.schedule(null, e);
+  if (refusedObjectDrag.move(e)) return; // a drag of an object that cannot move says why
+  if (objectTextDrag.move(e)) return; // an in-line object follows the drop caret (UX-OB-02)
   if (shapeDrawMode.dragging()) {
     shapeDrawMode.update(e);
     return;
@@ -6470,6 +6510,7 @@ pagesEl.addEventListener("dblclick", (e) => {
     // cropping it. The direct-manipulation crop chrome was already right; only
     // its doorway was missing, so crop was reachable solely by finding the Crop
     // button. A second double-click applies it, as the button turns into Apply.
+    if (objectSelection?.kind === "chart" && chartSurface.openData(objectSelection.node)) return e.preventDefault();
     if (objectSelection?.canCrop && !objectSelection.canEditText) {
       enterCropMode();
       e.preventDefault();
@@ -6539,6 +6580,7 @@ window.addEventListener("pointerup", onPointerUp);
  *  them and forgotten in the fourth. One list, named once. */
 function abortPointerGestures() {
   cancelObjectMove();
+  objectTextDrag.cancel();
   objectResize.cancel();
   objectRotate.cancel();
   tableChrome.cancelDrag();
@@ -6977,7 +7019,7 @@ function buildContextCommands(context) {
         ? "Link changes cannot be tracked in Suggesting mode"
         : context.hasRange
           ? "Links must stay within one paragraph"
-          : "Select text to add a link",
+          : t("insert.reason.linkNeedsText"),
       run: () => editSelectionLink(),
     });
   }
@@ -7195,11 +7237,14 @@ const objectContextMenuHost = {
   documentRows: () => referenceObjectMenuRows(),
   setObjectWrap,
   openAltText: () => openAltTextDialog(),
+  chartCommands: () => chartSurface.commandsFor(),
   applyShapeFill,
   applyShapeOutline,
   enterCrop: () => enterCropMode(),
+  changePicture: () => pictureReplace.choose(),
   openProperties: () => toggleObjectInspector(true),
   deleteObject: () => deleteSelectedObject(),
+  moveInText: () => keyboardObjectMove.begin(false),
 };
 
 // Resolves a pointer event to an OBJECT context (or null). Prefers a fresh
@@ -7208,7 +7253,12 @@ const objectContextMenuHost = {
 // caller selects the object before showing the menu.
 function objectContextAtEvent(page, event) {
   const { x, y } = pointToTwip(page, event);
-  const object = doc.objectAt(page.pageNumber, x, y);
+  let object = doc.objectAt(page.pageNumber, x, y);
+  // A right-click on the selected MEMBER of a group is about that member. The
+  // fresh hit answers with the group's root, which put the GROUP's menu — no
+  // alt text, no crop, no border — over the picture just selected (HF-214).
+  const selectedHere = objectSelection?.mode === "selected" && pointInsideObject(objectSelection.node, page, x, y);
+  if (object && selectedHere && object.root === objectSelection.ref.root) object = void object.free?.();
   if (object) {
     const capabilities = objectCapabilities(object);
     const ref = objectReference(object, object.node);
@@ -7223,30 +7273,9 @@ function objectContextAtEvent(page, event) {
     object.free?.();
     return ctx;
   }
-  // No fresh hit, but an object is selected and the point is inside its box.
-  if (objectSelection && objectSelection.mode === "selected") {
-    const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
-    if (
-      rect.length >= 5 &&
-      rect[0] === page.pageNumber &&
-      x >= rect[1] &&
-      x <= rect[1] + rect[3] &&
-      y >= rect[2] &&
-      y <= rect[2] + rect[4]
-    ) {
-      return {
-        surface: "object",
-        node: objectSelection.node,
-        ref: objectSelection.ref,
-        kind: objectSelection.kind,
-        anchored: objectSelection.anchored,
-        ...Object.fromEntries(
-          OBJECT_CAPABILITY_KEYS.map((key) => [key, objectSelection[key] === true]),
-        ),
-      };
-    }
-  }
-  return null;
+  // No fresh hit (or the selected member's), and the point is inside the
+  // selected object's box: the menu is about what is selected.
+  return selectedHere ? selectedObjectContext() : null;
 }
 
 // ---- Menu rendering engine (root context menu + nested submenu flyouts) -----
@@ -7368,7 +7397,7 @@ function showContextMenu(clientX, clientY, context) {
   hideContextMenu();
   contextMenuReturnFocus =
     document.activeElement instanceof HTMLElement ? document.activeElement : pagesEl;
-  const entries = normalizeMenuEntries(buildContextCommands(context));
+  const entries = normalizeMenuEntries(context.commands ?? buildContextCommands(context));
   if (entries.length === 0) {
     contextMenuReturnFocus = null;
     if (context.surface === "object") {
@@ -7550,7 +7579,7 @@ const reflowView = createReflowChrome({
   viewport: viewportEl,
   getDoc: () => doc,
   unavailableReason: () => readOnlyReason,
-  onChanged: () => renderAll(),
+  onChanged: () => renderAll(), redraw: () => drawSelection(),
   openOutline: () => void (outlinePanel.hidden && reviewSidebar.hidden && toggleOutline()),
   setStatus,
 });
@@ -7665,7 +7694,7 @@ const INSERT_SURFACE = [
   // galleries), so wiring `activate` here too would open it on mousedown and
   // immediately close it again.
   { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
-  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
+  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartWithData() },
   { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
   { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
@@ -8183,6 +8212,8 @@ function noteDocumentEdited(revision) {
   spellChecker.noteEdited();
   // And the host's, under the same constraint: one revision integer, one boolean.
   hostSession?.noteChange();
+  // An edit that changed the document's Track Changes setting — an Undo, a co-author — moves the mode with it (HF-283).
+  reviewTracking.follow(doc?.trackRevisions, reviewMode, (mode) => SESSION.modeAuthority?.allows(mode).allowed !== false && setReviewMode(mode, { restoreFocus: false }));
 }
 
 /** How many documents this tab has opened.
@@ -8287,20 +8318,22 @@ async function paintArrival({ dirty = [], pageCount, viewRevision }) {
   scheduleChromeRefresh({ stats: true, outline: true });
 }
 
-async function applyEditResult(res, { keepView = false } = {}) {
+async function applyEditResult(res, { keepView = false, keepSelection = false } = {}) {
   const node = res.node;
   const offset = res.offset;
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
   const revision = readRevision(res);
   res.free();
-  noteDocumentEdited(revision);
+  // The engine reports an edit that changed nothing — a picture dropped where it
+  // came from, an empty comparison — as the SAME revision and no dirty pages.
+  if (revision === null || revision !== currentRevision || dirty.length > 0) noteDocumentEdited(revision);
   // An edit has landed, so the caret the editor now shows is the result of the
   // user's own action — never the untouched load-time seed, even if the two
   // positions coincide.
   implicitCaretAt = null;
   verticalGoal.clear(); // an edit ends a run of vertical moves (HF-164)
-  selection = adoptEditPosition(node, offset);
+  if (!keepSelection || !selection) selection = adoptEditPosition(node, offset); // a setting keeps the reader's selection (HF-283)
   // A content mutation invalidates a row/column/table selection the same way it
   // invalidates an object selection. Without this the accent fill survives
   // typing, deleting, undo and arrow keys, so the editor claims a whole table is
@@ -8466,7 +8499,7 @@ function blockMutationInViewing() {
  *
  *  Returns whether the edit actually landed, so a caller chaining several edits
  *  can stop instead of continuing against a document that never changed. */
-async function runEdit(thunk, { typing = false, gate = false, keepView = false } = {}) {
+async function runEdit(thunk, { typing = false, gate = false, keepView = false, keepSelection = false } = {}) {
   if (blockMutationInViewing()) return false;
   if (!typing) breakTypingSession();
   if (gate && blockUntrackedInSuggesting()) return false;
@@ -8489,7 +8522,7 @@ async function runEdit(thunk, { typing = false, gate = false, keepView = false }
     setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason, routeRefusal: SESSION.sentenceFor }), "error");
     return false;
   }
-  await applyEditResult(res, { keepView });
+  await applyEditResult(res, { keepView, keepSelection });
   return true;
 }
 
@@ -8906,11 +8939,10 @@ function updateToolbar() {
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
   checkListBtn.setAttribute("aria-pressed", String(listKind === "checklist"));
-  restartListBtn.disabled = !hasSel || listKind !== "numbered";
-  // Continue numbering is available only when the caret's numbered item has an
-  // earlier numbered list at the same level to resume (the engine's own guard).
-  continueListBtn.disabled =
-    !hasSel || listKind !== "numbered" || !doc.canContinueList(selection.focus.node);
+  // Restart/Continue numbering, each saying WHY when unavailable — the palette's own sentences.
+  const numbering = listNumberingStates({ hasCaret: hasSel && !!doc, listKind, canContinue: () => doc.canContinueList(selection.focus.node) });
+  reflectEnablement(restartListBtn, numbering.restart, EDITOR_KEYBOARD_PLATFORM);
+  reflectEnablement(continueListBtn, numbering.continue, EDITOR_KEYBOARD_PLATFORM);
   // The contextual Table ribbon is enabled only inside a table; regular-grid
   // column commands stay unavailable on merged/spanned tables rather than
   // failing after the user clicks them. WITH A STATED REASON, from the same
@@ -8959,7 +8991,7 @@ if (unstampedFaces.length) console.warn("ribbon faces with no control:", unstamp
 
 for (const entry of INSERT_SURFACE) {
     const enabled = insertCommandEnabled(entry.command, { hasRange: range });
-    for (const button of entry.buttons) button.disabled = !enabled;
+    for (const button of entry.buttons) reflectEnablement(button, { enabled, reasonKey: INSERT_REASON_KEYS[entry.requires] }, EDITOR_KEYBOARD_PLATFORM);
   }
   // Layout and References take their enablement from the same tables their
   // palette rows read, for the same reason: one rule, one place.
@@ -9005,6 +9037,8 @@ for (const entry of INSERT_SURFACE) {
   undoBtn.title = localizeShortcutText(`${undoName} (⌘Z)`, EDITOR_KEYBOARD_PLATFORM);
   redoBtn.title = localizeShortcutText(`${redoName} (⌘⇧Z)`, EDITOR_KEYBOARD_PLATFORM);
   findBtn.disabled = replaceBtn.disabled = !doc;
+  // The chord comes from the keymap, per platform (Replace is ⌘⇧H on a Mac), never from markup.
+  for (const [button, id] of [[findBtn, "edit.find"], [replaceBtn, "edit.replace"]]) button.title = chordTitle(button.getAttribute("aria-label"), id, EDITOR_KEYBOARD_PLATFORM);
   // Clipboard buttons mirror the clipboard actions' own preconditions: copy/cut
   // need a range; paste needs a caret. The actions still fail closed in Viewing
   // mode, but the buttons also disable there so the affordance matches.
@@ -9021,7 +9055,7 @@ for (const entry of INSERT_SURFACE) {
   railReview.disabled = !doc;
   railReview.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   viewZoom.setEnabled(!!doc);
-  tabTable.disabled = !inTable;
+  reflectEnablement(tabTable, { enabled: !!inTable, reasonKey: "table.reason.caretOutsideTable" }, EDITOR_KEYBOARD_PLATFORM);
   // The compact bar's Table group is contextual for the same reason this tab is.
   compactToolbarUi?.setTableContext(inTable);
   if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
@@ -9037,7 +9071,7 @@ for (const entry of INSERT_SURFACE) {
 function populateStyles() {
   const styles = doc ? doc.listStyles() : [];
   paraPanelStyle.replaceChildren();
-  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
+  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, styleDisplayName(s)])]) {
     const opt = document.createElement("option");
     opt.value = value;
     opt.textContent = label;
@@ -9773,12 +9807,8 @@ const shapeOutlineMenu = document.getElementById("shapeOutlineMenu");
  *  no shape selected. Read from the model, never remembered from the last
  *  apply — the swatch must describe THIS shape. */
 function selectedShapeFormat() {
-  if (
-    !doc ||
-    !objectSelection ||
-    objectSelection.kind !== "shape" ||
-    (!objectSelection.canFill && !objectSelection.canStroke)
-  ) return {};
+  // A picture has the outline half — its border (HF-254) — read the same way.
+  if (!doc || !objectSelection || (!objectSelection.canFill && !objectSelection.canStroke)) return {};
   try {
     return doc.shapeFormat(objectSelection.node) ?? {};
   } catch {
@@ -9956,7 +9986,7 @@ function applyShapeFill(hex) {
 /** Applies an outline color and/or weight. Setting a weight on an unoutlined
  *  shape gives it Word's default black outline, so the weight is never a no-op. */
 function applyShapeOutline({ color, widthEmu }) {
-  if (!objectSelection?.canStroke || objectSelection.kind !== "shape") return;
+  if (!objectSelection?.canStroke) return; // a shape's outline or a picture's border
   const node = objectSelection.node;
   // Pass only what was chosen. The engine inherits the rest from the outline the
   // shape already has — including the dash pattern and line ends no control here
@@ -10551,12 +10581,13 @@ const documentProtection = createDocumentProtection({
   participantRefusal: () => SESSION.refusalFor("review.restrictEditing"),
   onChanged: () => updateToolbar(),
 });
-// ADR-061's three review seams are inline on purpose: `compare_documents.mjs`
-// owns the ORDER of "apply the sidecar, repaint, turn the markup on, re-render the
-// gutter" because that order is the decision, and this is the 93%-of-the-webapp
-// module with no mount seam (`109` HF-085). `landed` doubles as the capability
-// test — withheld, the panel claims no tracked changes it cannot write.
-const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); } });
+// Review ▸ Compare's seams (ADR-061, ADR-065), inline because this module has no
+// mount seam (`109` HF-085); `landed` is also the capability test for "Keep".
+const yieldFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+const redlineOf = (io) => buildRedline({ ...io, engine: { begin: beginVersionDiff, slice: defaultDiffSlice, open }, yieldToHost: yieldFrame });
+/** Takes the reader to one change on a redline (ADR-065): the selection and the scroll, focus left on the control they stepped with. */
+const showChange = (a) => { selection = { anchor: { node: a.node, offset: Number(a.start) || 0 }, focus: { node: a.node, offset: Number(a.end) || Number(a.start) || 0 } }; drawSelection(); if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer(); };
+const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), redline: redlineOf, showView: (view) => (view ? showVersionPreview(view, { markup: true, reason: t("compare.viewReadOnly") }) : showVersionPreview(null)), beforeView: () => versionHistory.closePreview(), yieldToHost: yieldFrame, setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); }, navigate: showChange });
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -10750,130 +10781,21 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// -- Insert table: a hover grid picker (Google-Docs style) --------------------
-// It is a real grid, not eighty anonymous buttons: rows carry `role="row"` (with
-// `display: contents`, so the ten-column CSS grid is untouched), every cell has
-// the size it inserts as its accessible name, and one roving tab stop plus arrow
-// keys makes it navigable. Insertion lives on the cell's `click`, so the pointer
-// and the keyboard travel the same path instead of the keyboard having none.
-const GRID_ROWS = 8;
-const GRID_COLS = 10;
-const gridCells = [];
-gridPicker.setAttribute("role", "grid");
-gridPicker.setAttribute("aria-label", "Table size");
-for (let r = 1; r <= GRID_ROWS; r++) {
-  const row = document.createElement("div");
-  row.setAttribute("role", "row");
-  row.style.display = "contents";
-  const cells = [];
-  for (let c = 1; c <= GRID_COLS; c++) {
-    const cell = document.createElement("button");
-    cell.type = "button";
-    cell.className = "gc";
-    cell.dataset.r = String(r);
-    cell.dataset.c = String(c);
-    cell.setAttribute("role", "gridcell");
-    cell.setAttribute("aria-label", `${c} by ${r} table`);
-    cell.tabIndex = r === 1 && c === 1 ? 0 : -1;
-    row.appendChild(cell);
-    cells.push(cell);
-  }
-  gridPicker.appendChild(row);
-  gridCells.push(cells);
-}
-/** The cell at 1-based `r`/`c`, or undefined outside the grid. */
-const gridCellAt = (r, c) => gridCells[r - 1]?.[c - 1];
-
-function highlightGrid(rows, cols) {
-  for (const row of gridCells) {
-    for (const cell of row) {
-      const on = Number(cell.dataset.r) <= rows && Number(cell.dataset.c) <= cols;
-      cell.classList.toggle("on", on);
-    }
-  }
-  gridLabel.textContent = rows ? `${cols} × ${rows}` : "Insert table";
-}
-
-/** Moves the single tab stop to `r`/`c`, previews that size, and focuses it —
- *  the roving-tabindex pattern, so Tab enters the grid once and the arrows do
- *  the rest. */
-function focusGridCell(r, c) {
-  const cell = gridCellAt(r, c);
-  if (!cell) return;
-  for (const row of gridCells) for (const other of row) other.tabIndex = other === cell ? 0 : -1;
-  highlightGrid(r, c);
-  cell.focus();
-}
-
-async function insertTableFromGrid(cell) {
-  if (!cell || !selection || !doc) return;
-  const rows = Number(cell.dataset.r);
-  const cols = Number(cell.dataset.c);
-  await runEdit(() => doc.insertTable(selection.focus.node, rows, cols), { gate: true });
-  closePopover(insertTablePopover);
-  focusEditorSurface();
-}
-
-gridPicker.addEventListener("pointermove", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
-});
-gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
-// Keep a pointer press from collapsing the document selection the table is
-// about to be inserted into; the click that follows is what inserts.
-gridPicker.addEventListener("pointerdown", (e) => {
-  if (e.target.closest(".gc")) e.preventDefault();
-});
-gridPicker.addEventListener("click", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) void insertTableFromGrid(cell);
-});
-gridPicker.addEventListener("focusin", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
-});
-gridPicker.addEventListener("keydown", (e) => {
-  const cell = e.target.closest(".gc");
-  if (!cell) return;
-  const r = Number(cell.dataset.r);
-  const c = Number(cell.dataset.c);
-  const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
-  if (step) {
-    const next = gridCellAt(r + step[0], c + step[1]);
-    if (!next) return; // at an edge: stay put rather than wrapping to a different size
-    e.preventDefault();
-    focusGridCell(r + step[0], c + step[1]);
-  } else if (e.key === "Home") {
-    e.preventDefault();
-    focusGridCell(e.ctrlKey || e.metaKey ? 1 : r, 1);
-  } else if (e.key === "End") {
-    e.preventDefault();
-    focusGridCell(e.ctrlKey || e.metaKey ? GRID_ROWS : r, GRID_COLS);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closePopover(insertTablePopover);
-    insertTableBtn.focus();
-  }
-  // Enter and Space need no handling: these are real buttons, so the browser
-  // turns them into the same `click` the pointer path uses.
-});
-// The grid picker is a dialog-opening insert, so it refuses BEFORE it opens —
-// the same as Symbol, Emoji, Field and Drop cap, and for the reason
-// `insert-surface.spec.mjs` states for those: a reader must never be led into
-// choosing a size that cannot be applied. Registered ahead of `registerPopover`
-// so it runs first on the same button, and it stops there; the refusal itself is
-// still `blockMutationInViewing()`, the one choke point, not a disabled control.
-insertTableBtn.addEventListener("click", (event) => {
-  if (!insertTableMenu.hidden || !blockMutationInViewing()) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-});
-const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => {
-  // Opening puts the keyboard inside the grid at 1×1. Without this the popover
-  // opened behind the focus ring and Tab walked past it into the rest of the
-  // page, which is what made the whole picker pointer-only.
-  focusGridCell(1, 1);
-  highlightGrid(0, 0);
+// -- Insert table: the size grid (`table_grid_picker.mjs`) --------------------
+createTableGridPicker({
+  picker: document.getElementById("gridPicker"),
+  label: document.getElementById("gridLabel"),
+  button: insertTableBtn,
+  menu: insertTableMenu,
+  registerPopover,
+  closePopover,
+  blocked: () => blockMutationInViewing(),
+  insert: async (rows, columns) => {
+    if (!selection || !doc) return false;
+    await runEdit(() => doc.insertTable(selection.focus.node, rows, columns), { gate: true });
+    return true;
+  },
+  focusEditor: focusEditorSurface,
 });
 
 /** Rebuilds the off-screen accessibility mirror for the caret's part of the
@@ -11686,6 +11608,7 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => selectAll(),
     },
     { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
+    { id: "edit.replace", label: t("find.replaceCommand"), group: "Edit", kw: "find substitute swap change text", run: () => openFind({ replace: true }) },
     { id: "format.bold", label: "Bold", group: "Format", kw: "strong", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("bold") },
     { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("italic") },
     { id: "format.underline", label: "Underline", group: "Format", kw: "", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("underline") },
@@ -11738,8 +11661,8 @@ function editorCommands(context = { surface: "palette" }) {
     // Restart/continue take the SAME predicate the ribbon buttons take
     // (`updateToolbar`), so a row can never be live in the menu while the button
     // for it is greyed — they are now on both surfaces (docs/104 HF-076).
-    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", enabled: numberedListAtCaret(), disabledReason: "Place the caret in a numbered list", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
-    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", enabled: numberedListAtCaret() && doc.canContinueList(selection.focus.node), disabledReason: "There is no earlier numbered list to continue", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
+    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", enabled: numberedListAtCaret(), disabledReason: t("list.reason.notNumbered"), run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
+    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", enabled: numberedListAtCaret() && doc.canContinueList(selection.focus.node), disabledReason: t(numberedListAtCaret() ? "list.reason.nothingToContinue" : "list.reason.notNumbered"), run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(-360) },
     // Insert commands take their `enabled` from `insertCommandEnabled`, the same
@@ -11766,7 +11689,7 @@ function editorCommands(context = { surface: "palette" }) {
     // are held at exact parity by `insert-surface.spec.mjs` and adding a control
     // to both is a chrome change, not this fix.
     { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", enabled: !!selection && reviewMode !== "suggesting", disabledReason: reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void insertLineBreakAtSelection() },
-    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: insertCommandEnabled("insert.link", context), disabledReason: t("insert.reason.linkNeedsText"), run: () => editSelectionLink() },
     { id: "layout.firstPageVariant", label: t("headerFooter.firstPageSwitch", { state: t(headerFooterSettings.variantState().firstPage ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.toggleVariant("firstPage") },
     { id: "layout.evenOddVariant", label: t("headerFooter.evenOddSwitch", { state: t(headerFooterSettings.variantState().evenOdd ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.toggleVariant("evenOdd") },
     { id: "layout.headerFooterSettings", label: t("headerFooter.settingsCommand"), group: "Layout", kw: "header footer position from top bottom distance page numbering number format start at continue link to previous", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.open(true) },
@@ -11779,7 +11702,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => dropCapDialog.open() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
     { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
-    { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!selection, disabledReason: t("paragraph.caretRequired"), run: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
+    { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!selection, disabledReason: t("paragraph.caretRequired"), run: () => void insertChartWithData() },
     { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
     { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: insertCommandEnabled("insert.symbol"), run: () => openSymbolPicker() },
     { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: insertCommandEnabled("insert.emoji"), run: () => openEmojiPicker() },
@@ -11919,7 +11842,7 @@ function editorCommands(context = { surface: "palette" }) {
   cmds.push(
     {
       id: "style.updateFromSelection",
-      label: styleTarget ? `Update “${styleTarget}” to match selection` : "Update style to match selection",
+      label: styleTarget ? `Update “${styleDisplayName(styleTarget)}” to match selection` : "Update style to match selection",
       group: "Style",
       kw: "redefine modify match formatting paragraph style",
       enabled: !!styleTarget,
@@ -12048,12 +11971,13 @@ function editorCommands(context = { surface: "palette" }) {
     });
   }
   if (doc) {
+    cmds.push(...quickStyleCommands({ styles: () => doc.listStyles(), hasCaret: () => !!selection, apply: (name) => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }) }));
     for (const name of doc.listStyles()) {
       cmds.push({
         id: `style.${name}`,
-        label: `Style: ${name}`,
+        label: `Style: ${styleDisplayName(name)}`,
         group: "Style",
-        kw: "paragraph heading",
+        kw: `paragraph heading ${name}`.toLowerCase(),
         run: () => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }),
       });
     }
@@ -12155,6 +12079,7 @@ function editorCommands(context = { surface: "palette" }) {
   // the compact bar's tooltip and the shortcut reference all read
   // `command.shortcut`, and the only thing that can set it is the table the
   // dispatcher matches against.
+  cmds.push(...compatFindings.commands(), ...regionCycle.commands());
   for (const command of cmds) command.shortcut = shortcutForCommand(command.id, EDITOR_KEYBOARD_PLATFORM);
   // Narrowed to the ROOM's grant HERE, once, for every surface this registry
   // feeds — palette, menu bar, compact bar, context menus — rather than by a
@@ -12326,7 +12251,7 @@ function toggleShortcutsReference(open) {
     shortcutsModal.close();
   }
 }
-shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
+for (const b of shortcutsDialog?.querySelectorAll("[data-shortcuts-dismiss]") ?? []) b.addEventListener("click", () => toggleShortcutsReference(false));
 
 // ---- About -----------------------------------------------------------------
 const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);
@@ -12416,30 +12341,10 @@ async function insertFieldAtCaret(kind) {
 
 // ---- Insert picture ----------------------------------------------------------
 // The engine owns no image codec (docs/85 §Q8), so the host decodes the image to
-// bytes + natural pixel size and hands them to the `insertImage` op. One EMU is
-// 1/914400in; at 96dpi a CSS px is 9525 EMU. A wide image is scaled down to fit
-// the text column, preserving aspect.
-const EMU_PER_PX = 9525;
+// bytes + natural pixel size (`picture_replace.mjs`, shared with Change Picture)
+// and hands them to the `insertImage` op. A wide image is scaled down to fit the
+// text column, preserving aspect.
 const MAX_IMAGE_WIDTH_EMU = 6 * 914_400; // ~6in, a sane default display width
-
-const INSERTABLE_IMAGE_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/bmp",
-  "image/tiff",
-  "image/webp",
-]);
-
-/** Decodes a File/Blob to `{ bytes, widthPx, heightPx, mime }` via the browser. */
-async function decodeImageBlob(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const bitmap = await createImageBitmap(blob);
-  const widthPx = bitmap.width;
-  const heightPx = bitmap.height;
-  bitmap.close?.();
-  return { bytes, widthPx, heightPx, mime: blob.type };
-}
 
 /** Inserts an already-decoded image at the caret as one undoable action, gated
  *  like the other object edits (read-only in Viewing, blocked in Suggesting). */
@@ -12499,7 +12404,7 @@ async function insertTextBoxObject() {
     setStatus("Inserting a text box cannot be tracked yet; switch to Editing", "error");
     return;
   }
-  const before = placedObjectIds();
+  const before = placedObjectIds(doc);
   let result;
   try {
     result = doc.insertTextBox(selection.focus.node, selection.focus.offset);
@@ -12510,37 +12415,13 @@ async function insertTextBoxObject() {
   await applyEditResult(result);
   // Land INSIDE the box through the SAME path a double-click uses, so entry can
   // never diverge between the two ways of getting there.
-  const box = newestObject(before, "textbox");
+  const box = newestObject(doc, before, "textbox");
   if (box) {
     selectObject(box.node, box.kind, null, box.anchored, box);
     enterObjectEditMode();
   }
   setStatus("Text box added — type its text");
   focusEditorSurface();
-}
-
-/** The object that appeared since `before` (a set of node ids), optionally of a
- *  given kind. Diffing the placed-object order is how a freshly inserted object
- *  is identified: the engine reports the caret, not the object it created. */
-function newestObject(before, kind) {
-  let objects;
-  try {
-    objects = JSON.parse(doc.objectOrder());
-  } catch {
-    return null;
-  }
-  return (
-    objects.find((entry) => !before.has(entry.node) && (!kind || entry.kind === kind)) ?? null
-  );
-}
-
-/** The node ids of every placed object right now — the "before" side of the diff. */
-function placedObjectIds() {
-  try {
-    return new Set(JSON.parse(doc.objectOrder()).map((entry) => entry.node));
-  } catch {
-    return new Set();
-  }
 }
 
 /** Word's Insert ▸ Shapes. Inserts a floating preset shape and leaves it
@@ -12558,7 +12439,7 @@ async function insertShapeObject(geometry, at = null) {
     setStatus("Inserting a shape cannot be tracked yet; switch to Editing", "error");
     return;
   }
-  const before = placedObjectIds();
+  const before = placedObjectIds(doc);
   let result;
   try {
     result = doc.insertShape(selection.focus.node, selection.focus.offset, geometry);
@@ -12569,7 +12450,7 @@ async function insertShapeObject(geometry, at = null) {
   await applyEditResult(result);
   // Word leaves a new shape SELECTED, not entered — which also puts Fill and
   // Outline within reach straight away.
-  const shape = newestObject(before, "shape");
+  const shape = newestObject(doc, before, "shape");
   if (shape) selectObject(shape.node, shape.kind, null, shape.anchored, shape);
   if (at && shape) {
     try {
@@ -12607,6 +12488,17 @@ function insertImageFromFile() {
   });
   input.click();
 }
+
+/** Word's Change Picture (`picture_replace.mjs`, HF-252). */
+const pictureReplace = createPictureReplace({
+  doc: () => doc,
+  selection: () => objectSelection,
+  runEdit: (thunk, options) => runEdit(thunk, { ...options, keepView: true }),
+  blocked: () => objectEditBlocked(),
+  setStatus: (text, kind) => setStatus(text, kind),
+  t,
+  createInput: () => document.createElement("input"),
+});
 
 const fieldDialog = document.getElementById("fieldDialog");
 const fieldList = document.getElementById("fieldList");
@@ -13417,15 +13309,17 @@ async function replaceAllMatches() {
   setFindStatus(`Replaced ${matches.length}`);
 }
 
-function openFind() {
+function openFind({ replace = false } = {}) {
   if (!doc) return;
   findPanel.hidden = false;
   if (findSelection.checked) findSelection.dispatchEvent(new Event("change"));
   const selected = selectedPlainText();
   if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
   updateFindStatus();
-  findInput.focus();
-  findInput.select();
+  // ⌘H lands on the replacement once there is a query to replace (VS Code's rule; Word's Replace tab).
+  const field = replace && findInput.value ? replaceInput : findInput;
+  field.focus();
+  field.select();
 }
 
 function closeFind() {
@@ -13614,12 +13508,13 @@ function exportDocumentAs(targetFormat, intent = "export") {
     const bytes = artifact.bytes;
     const mimeType = artifact.mimeType;
     const extension = artifact.suggestedExtension;
-    const findings = compatibilityOccurrenceCount(artifact.reportJson);
+    const report = artifact.reportJson;
+    const findings = findingTotals(report).headline; // the chip's count: Word's bookkeeping excluded (FID-FW-01)
     artifact.free();
     const saved = downloadBytes(bytes, mimeType, downloadNameForFormat(currentName, extension), document);
     hostSession?.noteWrite(intent, { format: targetFormat, name: saved, bytes: bytes.length });
     markDocumentSaved();
-    showCompatibilityFindings(compatibilityStatusEl, findings, "export");
+    compatFindings.show(report, "export");
     setStatus(
       findings === 0
         ? `Saved ${saved}`
@@ -14359,6 +14254,8 @@ document.addEventListener("keydown", async (e) => {
   // object is selected. Escape is the two-step exit (editing → selected → text);
   // Enter/Delete act on the object; a selected object swallows text keys so a
   // stale caret is never edited.
+  if (key === "Escape" && objectTextDrag.cancel()) return void e.preventDefault();
+  if (keyboardObjectMove.onKey(e)) return; // F2 / Shift+F2, "Move to where?" (UX-OB-02)
   if ((objectResize.active() || objectRotate.active() || objectMoveDrag) && key === "Escape") {
     e.preventDefault();
     objectResize.cancel();
@@ -14366,19 +14263,9 @@ document.addEventListener("keydown", async (e) => {
     cancelObjectMove();
     return;
   }
-  // Crop mode owns Enter (apply) and Escape (cancel) before the object grammar.
-  if (objectCropSession) {
-    if (key === "Enter") {
-      e.preventDefault();
-      commitCrop();
-      return;
-    }
-    if (key === "Escape") {
-      e.preventDefault();
-      cancelCrop();
-      return;
-    }
-  }
+  // Crop mode owns Enter, Escape and the arrows before the object grammar —
+  // an arrow let through moved the PICTURE under the crop (HF-106).
+  if (objectCropSession && handleCropKey(e, cropKeyIo)) return;
   // Esc leaves header/footer editing first: while that context is open it is the
   // thing Esc most obviously means, and Word closes the header on Esc too.
   if (runningEditBand && key === "Escape") {
@@ -14419,20 +14306,17 @@ document.addEventListener("keydown", async (e) => {
       }
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
-        if (objectSelection.canDelete) {
-          deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
-        } else {
-          setStatus("This nested object cannot be deleted separately yet", "error");
-        }
+        if (objectSelection.canDelete) deleteSelectedObject(); // one undoable delete; gated
+        else setStatus(capabilityRefusal(objectSelection, "canDelete", SESSION.sentenceFor), "error");
         return;
       }
-      // Arrow keys nudge a FLOATING object's position (Word/Docs); Shift takes a
-      // larger step. Only anchored objects have a position — an inline image has
-      // none, so its arrows still fall through to move the caret off it.
-      const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
-      if (nudge && objectSelection.canMove && !mod) {
+      // Arrow keys nudge a FLOATING object's position (Word/Docs): Shift a larger
+      // step, Ctrl/Option Word's one-pixel step. An inline image has no position,
+      // so its arrows still fall through to move the caret off it.
+      const nudge = objectNudge(e);
+      if (nudge && objectSelection.canMove) {
         e.preventDefault();
-        nudgeSelectedObject(nudge[0], nudge[1], e.shiftKey);
+        nudgeSelectedObject(nudge);
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so
@@ -15220,12 +15104,12 @@ function takeDraftSnapshot() {
       const bytes = artifact.bytes;
       let findings = 0;
       try {
-        findings = compatibilityOccurrenceCount(artifact.reportJson);
+        findings = findingTotals(artifact.reportJson).headline; // the chip's count (FID-FW-01)
       } catch {
         findings = 0; // a report we cannot parse must not lose us the draft
       }
       artifact.free();
-      return { bytes, formatId, mode, findings, contentId: doc.contentDigest() };
+      return { bytes, formatId, mode, findings, contentId: doc.contentDigest(), words: ((s) => { const words = s.words; s.free(); return words; })(doc.documentStats()) };
     } catch (err) {
       lastError = err;
     }
@@ -15735,35 +15619,29 @@ const versionNamePrompt = createNamePrompt({
 let versionPreviewHome = null;
 
 /**
- * Swaps the canvas onto a version preview, or (with `null`) back to the live
- * document.
- *
- * O(preview document) for the render, once per preview, and it never touches the
- * live document's model. The live wrapper is KEPT, not freed: it is the document
- * the user is editing and the only copy of their unsaved work.
+ * Swaps the canvas onto a read-only preview — a version, or a redline (ADR-065)
+ * with `markup` on — or (with `null`) back to the live document. O(preview) to
+ * render, once; the live wrapper is KEPT: it holds the reader's unsaved work.
  */
-async function showVersionPreview(previewDoc) {
+async function showVersionPreview(previewDoc, { markup = false, reason = t("versionHistory.preview.readOnly") } = {}) {
   if (previewDoc) {
-    if (!versionPreviewHome) {
-      versionPreviewHome = { doc, selection, reviewMode, readOnlyReason };
-    }
+    versionPreviewHome ??= { doc, selection, reviewMode, readOnlyReason, showingChanges, reviewSidebarPreference };
     doc = previewDoc;
-    readOnlyReason = t("versionHistory.preview.readOnly");
+    readOnlyReason = reason; if (markup) reviewSidebarPreference = false; // a redline's index is its own panel, not decision cards
+    // A redline IS its markup; one too large for the markup layout is shown plain, and says why.
+    try { showingChanges = markup && (previewDoc.setShowChanges(true) ?? true); } catch (error) { showingChanges = false; setStatus(String(error?.message ?? error), "error"); }
   } else {
     if (!versionPreviewHome) return;
-    ({ doc, selection, readOnlyReason } = versionPreviewHome);
+    ({ doc, selection, readOnlyReason, showingChanges, reviewSidebarPreference } = versionPreviewHome);
     const home = versionPreviewHome;
     versionPreviewHome = null;
-    // LEAVING keeps the default focus restore, unlike entering: the control the
-    // reader pressed — "Back to current" — is part of the preview banner and goes
-    // away with it, so declining to move focus would drop the keyboard onto
-    // `<body>` and make them Tab in from the top. Measured, both ways.
+    // LEAVING keeps the default focus restore: "Back to current" goes away with the
+    // banner, and declining to move focus would drop the keyboard onto `<body>`.
     setReviewMode(home.reviewMode);
   }
-  // A different document, so every answer cached about the last one is wrong: the
-  // remembered object presence, any table selection, the review card geometry,
-  // and the background measure ticker (which captures `doc`, so a late tick from
-  // the old one is already a no-op).
+  reflectShowingChangesState();
+  // A different document: every cached answer about the last one is wrong (object
+  // presence, table selection, card geometry; the measure ticker captures `doc`).
   objectPresence.forget();
   tableRange.clear();
   reviewLayout = [];
@@ -15790,7 +15668,7 @@ let activatingRestore = false;
 
 const versionHistory = createVersionHistory({
   parse: (bytes) => open(bytes),
-  showPreview: (previewDoc) => showVersionPreview(previewDoc),
+  showPreview: (previewDoc, _row, options) => showVersionPreview(previewDoc, options),
   // Through the ORDINARY open path, so a restored document is indistinguishable
   // from an opened one: same admission limits, dirty tracking and loss reporting.
   activateRestored: async (bytes, name) => {
@@ -15832,7 +15710,9 @@ const versionHistory = createVersionHistory({
     // never squeezed from both sides at once.
     if (isOpen && !reviewSidebar.hidden) toggleReview(false);
   },
-  showChanges: (bytes, name) => void comparePanel.compareWith(bytes, name),
+  redline: redlineOf,
+  navigateTo: showChange,
+  beforePreview: () => comparePanel.closeView(),
 });
 
 /**

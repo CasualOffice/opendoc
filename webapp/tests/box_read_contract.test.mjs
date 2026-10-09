@@ -29,14 +29,12 @@ import { fileURLToPath } from "node:url";
 const E2E = join(dirname(fileURLToPath(import.meta.url)), "e2e");
 
 /** Sites that read a box WITHOUT wanting the wait, each with its reason. A spec
- *  may only be here because a missing box is the expected answer. */
-const TOLERATES_NO_BOX = new Map([
-  [
-    "caret-alignment.spec.mjs",
-    "reads `.boundingBox().catch(() => null)` on purpose: it is asking whether " +
-      "the caret is painted at all, and absence is one of the answers it handles.",
-  ],
-]);
+ *  may only be here because a missing box is the expected answer.
+ *
+ *  Empty: its last entry, `caret-alignment.spec.mjs`, now reads the caret's box
+ *  in one page task — its locator round trip raced the overlay repaint and
+ *  reported "no caret" over a painted one. */
+const TOLERATES_NO_BOX = new Map([]);
 
 const specs = () => readdirSync(E2E).filter((n) => n.endsWith(".spec.mjs"));
 

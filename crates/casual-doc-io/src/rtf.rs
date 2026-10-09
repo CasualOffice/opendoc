@@ -18,6 +18,8 @@ use crate::{
     FeatureLocation, FormatDescriptor, FormatId, FormatImporter, FormatProfile, ImportArtifact,
     ImportRequest, PreservationLedger, ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::RecoveryReport;
 
 /// Source bytes retained so a future RTF writer can offer exact export.
 #[derive(Debug)]
@@ -120,6 +122,10 @@ impl FormatImporter for RtfAdapter {
             ),
             report: convert_report(&imported.report)?,
             ledger: PreservationLedger::default(),
+            // This adapter has no best-effort recovery path yet: its importer
+            // still refuses damaged source, so there is nothing it could have
+            // repaired. An empty report is the honest value, not a placeholder.
+            recovery: RecoveryReport::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some(version),

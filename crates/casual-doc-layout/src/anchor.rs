@@ -19,8 +19,9 @@
 //! A float is *positioned* against the geometry of the section that owns its
 //! anchoring paragraph. Paragraph/line-relative side wrapping is handled during
 //! ordinary flow; page/margin-relative square-family body wrapping is resolved
-//! by the document driver's bounded fixed point. Contour wrapping still uses the
-//! object's rectangular extent.
+//! by the document driver's bounded fixed point. Tight/through wrap follows the
+//! authored `wp:wrapPolygon` on every one of those paths, band by band
+//! (`crate::wrap_contour`, `docs/109` FID-L-12).
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
@@ -36,11 +37,18 @@ use casual_doc_model::v1::DashStyle;
 // above conflicts with every other branch doing the same.
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
 // Own `use` line, for the same anti-conflict reason as the two above: the
-// shared `GroupChild` walk needs the text-box type and the nesting bound.
-use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH, PictureFillMode, TextBoxBodyProperties};
+// shared `GroupChild` walk needs the nesting bound and the picture-fill mode.
+use casual_doc_model::v1::{MAX_GROUP_DEPTH, PictureFillMode, TextBoxBodyProperties};
 // Own `use` line (anti-conflict): the whole shape-keyed appearance row, which is now
 // what the content builders take instead of just its outline half.
 use casual_doc_model::v1::ShapeFillDetail;
+// Own line (anti-conflict): a clip takes only the geometry's filled paths.
+use casual_doc_model::v1::PathFill;
+// Own line (anti-conflict): the geometry engine and the preset table.
+use casual_doc_model::v1::{
+    CustomGeometry, GeometryProgram, GroupTextBox, ResolvedCommand, ResolvedGeometry,
+    ResolvedPoint, preset_shape,
+};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -48,12 +56,10 @@ use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
-    AnchorContent, AnchorFill, AnchorShadow, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor,
-    PlacedFragment,
+    AnchorContent, AnchorFill, AnchorPath, AnchorShadow, AnchorStroke, AnchorZ, PaginatedLayout,
+    PlacedAnchor, PlacedFragment,
 };
 use crate::paginate::PageConfig;
-use crate::shape_guide::{GuideBox, guide_value};
-use crate::shape_preset;
 // Own line (anti-conflict): the theme style resolution types.
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
@@ -116,7 +122,7 @@ pub fn place_floats(
 
 /// One top-level body float whose square-family wrap rectangle can exclude text
 /// in paragraphs beyond its anchor paragraph.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BodyWrapRect {
     pub(crate) page_index: usize,
     pub(crate) source: NodeId,
@@ -126,6 +132,10 @@ pub(crate) struct BodyWrapRect {
     /// here because the exclusion side is an authored property and not a
     /// geometric guess (see [`crate::wrap_side`]).
     pub(crate) sides: WrapSides,
+    /// The tight/through contour the text wraps to, mapped onto `rect` (page
+    /// coordinates) and cut into bands; `None` wraps to `rect` itself
+    /// (`crate::wrap_contour`, `docs/109` FID-L-12).
+    pub(crate) contour: Option<Vec<crate::wrap_contour::ContourBand>>,
 }
 
 /// Resolves the page-local wrap rectangles of eligible top-level body floats
@@ -136,6 +146,7 @@ pub(crate) fn body_wrap_rects(
     document: &Document,
     shaper: &dyn LineShaper,
     config: &PageConfig,
+    fit: crate::flow::MeasureFit,
 ) -> Vec<BodyWrapRect> {
     let ctx = FloatCtx {
         document,
@@ -165,7 +176,7 @@ pub(crate) fn body_wrap_rects(
     // drawing does, so it contributes to the same exclusion set rather than to a
     // parallel one (`docs/109` row 64 / `105` FID-L-07).
     out.extend(crate::table_float::wrap_rects(
-        layout, document, shaper, config,
+        layout, document, shaper, config, fit,
     ));
     out
 }
@@ -394,6 +405,7 @@ fn push_body_wrap_rect(
         rect,
         distances: anchor.wrap_distances,
         sides: wrap_sides(&anchor),
+        contour: crate::wrap_contour::anchor_contour(&anchor, rect),
     });
 }
 
@@ -1098,19 +1110,13 @@ pub fn place_group_child_tree(
                     );
                     continue;
                 }
-                let content = if let Some(path) = shape.path.as_ref() {
-                    custom_path_content(path, rect, fill.as_ref(), stroke, detail)
-                } else {
-                    preset_geometry_content(
-                        shape.geometry,
-                        shape.preset.as_deref(),
-                        &shape.adjustments,
-                        rect,
-                        fill.as_ref(),
-                        stroke,
-                        detail,
-                    )
-                };
+                let content = geometry_content(
+                    GeometryRef::of_shape(shape),
+                    rect,
+                    fill.as_ref(),
+                    stroke,
+                    detail,
+                );
                 host.emit(
                     shape.id,
                     content,
@@ -1197,6 +1203,7 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
 
     fn emit_text_box(&mut self, text_box: &GroupTextBox, rect: Rect) {
         let mut rect = rect;
+        let placed_size = rect.size;
         // `wps:bodyPr@vert` plus `@rot`: the text block's own rotation, which is NOT
         // the shape's `a:xfrm@rot`. A quarter turn means the text flows along the
         // box's SHORT axis, so it is measured against a transposed box — flowing it
@@ -1246,8 +1253,14 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
         // comes from the same mapping a text-free shape uses, and takes the
         // fill/outline with it so the rectangular box path below paints nothing over
         // it.
-        let backdrop =
-            text_box_backdrop(text_box, rect, themed_fill.as_ref(), themed_border, detail);
+        let backdrop = text_box_backdrop(
+            text_box,
+            grown_extent(text_box.extent, placed_size, rect.size),
+            rect,
+            themed_fill.as_ref(),
+            themed_border,
+            detail,
+        );
         push(
             self.layout,
             self.page_index,
@@ -1314,174 +1327,197 @@ fn place_group_children(
     place_group_child_tree(&group.children, origin, mapper, pose, 0, &mut host);
 }
 
-/// Resolves the common `roundRect` `adj` guide. DrawingML uses 100000-based
-/// percentages; the preset default is 16667 (one sixth of the shorter side).
-fn rounded_rectangle_radius(adjustments: &[ShapeAdjustment], rect: Rect) -> Twip {
-    let guides = GuideBox::new(
-        f64::from(rect.size.width.raw()),
-        f64::from(rect.size.height.raw()),
-    );
-    let adjustment = adjustment_value(adjustments, "adj", 16_667, guides).clamp(0, 50_000);
-    let shorter = i64::from(rect.size.width.raw().min(rect.size.height.raw()).max(0));
-    Twip((shorter * adjustment / 100_000).clamp(0, i64::from(i32::MAX)) as i32)
-}
-
-/// Resolves one `a:avLst` adjustment guide by name, falling back to the preset's
-/// documented default when the document authors none, or authors one that cannot be
-/// read at all. A guide that COMPUTES its value — `*/ h 1 2`, say — is evaluated
-/// through [`crate::shape_guide`] rather than passed over, which it previously was:
-/// every guide in the modeled preset set is a literal `val N`, so an authored formula
-/// hit the default and the shape drew with proportions nobody chose.
+/// The geometry a shape paints: its preset or its authored `a:custGeom`, the
+/// adjust values beside either, and the extent its guides are evaluated against.
 ///
-/// Complexity: O(g) over the shape's own guides, bounded by
-/// `MAX_SHAPE_ADJUSTMENTS` (32) at import — O(1) in document size.
-fn adjustment_value(
-    adjustments: &[ShapeAdjustment],
-    name: &str,
-    default: i64,
-    shape: GuideBox,
-) -> i64 {
-    // Through the formula evaluator rather than a `val ` prefix match, so an
-    // authored guide that computes its value is honoured instead of silently losing
-    // to the preset default. `val N` is simply the one-operand case.
-    //
-    // The unit convention is unchanged: a preset's `adj` is a 100000-based fraction
-    // and the caller scales it the same way whether it arrived as a literal or as an
-    // expression.
-    guide_value(adjustments, name, shape)
-        .map(|value| value.round() as i64)
-        .unwrap_or(default)
-}
-
-/// Maps a preset geometry onto the [`AnchorContent`] that paints it inside
-/// `rect`.
-///
-/// This is the ONE place a [`ShapeGeometry`] becomes something paintable. A
-/// `wps:wsp` that carries text and one that does not differ only in what is
-/// drawn *on top*, so both come through here; a second copy for text boxes
-/// would be a second answer to "what does `star5` look like", and the two would
-/// drift.
-///
-/// The painted content of a preset geometry.
-///
-/// # One mechanism, not two
-///
-/// Four of the twenty-two typed geometries stay as primitives because a path cannot
-/// express what they carry: a true ellipse rather than a four-bezier approximation, a
-/// rounded rectangle with its own corner radius, a line that carries head and tail
-/// arrow decorations, and the plain rectangle. **Every other preset — typed or not —
-/// is resolved from the committed ECMA-376 table**, which replaces the eighteen
-/// hand-written vertex lists that used to shadow their own table entries.
-///
-/// That collapse was measured before it was made, not assumed: for all eighteen, the
-/// hand-written vertices and the specification's own produce the **identical set of
-/// points**. Seven appeared to differ by up to the full width of the box until the
-/// comparison stopped treating a closed path as a sequence — they start at a
-/// different vertex and wind the other way, which is the same shape. So this deletes
-/// a duplicate rather than changing what is drawn, and
-/// `tests/typed_preset_outlines.rs` pins each of the eighteen so the table cannot
-/// quietly stop covering one.
-///
-/// Complexity: O(1) in document size — O(guides + commands) in the preset, both fixed
-/// per preset.
-fn preset_geometry_content(
+/// Borrowed from a [`GroupShape`] or a `GroupTextBox`, so both resolve through
+/// [`geometry_content`] — a text box that is a star is the same star.
+#[derive(Clone, Copy)]
+struct GeometryRef<'a> {
     geometry: ShapeGeometry,
-    preset: Option<&str>,
-    adjustments: &[ShapeAdjustment],
-    rect: Rect,
-    fill: Option<&Fill>,
-    stroke: Option<ShapeStroke>,
-    detail: Option<&ShapeFillDetail>,
-) -> AnchorContent {
-    match geometry {
-        ShapeGeometry::Line => {
-            return AnchorContent::Line {
-                from: rect.origin,
-                to: Point::new(rect.right(), rect.bottom()),
-                // A line without an explicit stroke still draws a hairline in its
-                // fill color (Word's connector default).
-                stroke: shape_stroke(stroke, detail).unwrap_or(AnchorStroke {
-                    color: fill.map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
-                    width: Twip::ZERO,
-                    dash: DashStyle::Solid,
-                    cap: None,
-                    join: None,
-                    custom_dash: Vec::new(),
-                }),
-                head_end: stroke.and_then(|s| s.head_end),
-                tail_end: stroke.and_then(|s| s.tail_end),
-            };
+    preset: Option<&'a str>,
+    adjustments: &'a [ShapeAdjustment],
+    custom: Option<&'a CustomGeometry>,
+    /// The shape's own extent (`a:ext`), in EMU: what the guides see as `w`/`h`.
+    /// Evaluating in the shape's own space and THEN mapping onto the painted
+    /// rectangle is what a group's scale does to its children, and it keeps an
+    /// authored literal meaning the EMU the file meant.
+    extent: Extent,
+}
+
+impl<'a> GeometryRef<'a> {
+    fn of_shape(shape: &'a GroupShape) -> Self {
+        Self {
+            geometry: shape.geometry,
+            preset: shape.preset.as_deref(),
+            adjustments: &shape.adjustments,
+            custom: shape.path.as_ref(),
+            extent: shape.extent,
         }
-        ShapeGeometry::Ellipse => {
-            return AnchorContent::Ellipse {
-                fill: shape_fill(fill, detail),
-                stroke: shape_stroke(stroke, detail),
-            };
-        }
-        ShapeGeometry::RoundRectangle => {
-            return AnchorContent::RoundedRectangle {
-                radius: rounded_rectangle_radius(adjustments, rect),
-                fill: shape_fill(fill, detail),
-                stroke: shape_stroke(stroke, detail),
-            };
-        }
-        ShapeGeometry::Rectangle => {
-            return AnchorContent::Rectangle {
-                fill: shape_fill(fill, detail),
-                stroke: shape_stroke(stroke, detail),
-            };
-        }
-        _ => {}
     }
 
-    // A typed geometry knows its own token, so the table serves it without the
-    // importer having to retain one; an untyped geometry carries the authored token
-    // verbatim in `preset`.
-    let token = geometry.preset_token().or(preset);
-    token
-        .and_then(|token| {
-            shape_preset::preset_outline(token, adjustments, rect).map(|commands| {
-                AnchorContent::Path {
-                    commands,
-                    closed: shape_preset::preset_is_closed(token),
-                    fill: shape_fill(fill, detail),
-                    stroke: shape_stroke(stroke, detail),
-                }
-            })
-        })
-        // A custom geometry outside the drawable subset paints its bounding
-        // rectangle. ONLYOFFICE paints NOTHING here (`Geometry.draw` early-returns on
-        // an invalid geometry); we deliberately differ, because silently erasing
-        // every unsupported freeform is a larger change than showing a box where an
-        // object is, and Word does not erase them either. Weighed in docs/119 §6
-        // "Rejected".
-        .unwrap_or_else(|| AnchorContent::Rectangle {
-            fill: shape_fill(fill, detail),
-            stroke: shape_stroke(stroke, detail),
-        })
+    fn of_text_box(text_box: &'a GroupTextBox, extent: Extent) -> Self {
+        Self {
+            geometry: text_box.geometry,
+            preset: text_box.preset.as_deref(),
+            adjustments: &text_box.adjustments,
+            custom: None,
+            extent,
+        }
+    }
+
+    /// Whether the shape is the plain rectangle a text box's own fill and border
+    /// already paint — a typed `rect`, or an `Other` with no token to draw.
+    fn is_plain_box(&self) -> bool {
+        self.custom.is_none()
+            && match self.geometry {
+                ShapeGeometry::Rectangle => true,
+                ShapeGeometry::Other => self.preset.and_then(preset_shape).is_none(),
+                _ => false,
+            }
+    }
 }
 
-/// The painted content of one preset or custom geometry, for a caller that is not
-/// paginating a document.
+/// Maps a shape's geometry onto the [`AnchorContent`] that paints it inside
+/// `rect`.
 ///
-/// The seam a slide's layout paints through (ADR-055 part 2). It wraps the same
-/// resolution a floating DOCX shape uses — the committed ECMA-376 preset table, the
-/// guide evaluator, and the four primitives kept because a path cannot express a true
-/// ellipse or an arrow end — so the two document classes cannot disagree about what a
-/// `prstGeom` looks like.
+/// This is the ONE place a geometry becomes something paintable, and there is one
+/// mechanism behind it: an authored `a:custGeom` and every one of the standard's
+/// 187 presets are the same data evaluated by the same
+/// [`GeometryProgram`](casual_doc_model::v1::GeometryProgram) (`docs/119` §6,
+/// `docs/109` FID-L-04). Three presets keep a closed-form primitive because the
+/// backends draw them exactly and the result is the same shape: the rectangle,
+/// the ellipse (an exact oval rather than four cubics), and the line, which
+/// carries its arrowheads.
 ///
-/// Complexity: O(1) in document size; O(guides + commands) in the preset, both fixed.
-#[must_use]
-pub fn shape_geometry_content(
-    geometry: ShapeGeometry,
-    preset: Option<&str>,
-    adjustments: &[ShapeAdjustment],
+/// `detail` is the shape-keyed appearance row the hot model types have nowhere
+/// to put — the `a:gradFill` geometry and the outline's cap, join and
+/// `a:custDash` — so both document classes paint it through the same mapping.
+///
+/// A `wps:wsp` that carries text and one that does not differ only in what is
+/// drawn *on top*, so both come through here.
+///
+/// Complexity: O(g + c) in the geometry's guides and commands — a preset compiles
+/// once per process, a custom geometry once per call — so O(1) in document size.
+fn geometry_content(
+    shape: GeometryRef<'_>,
     rect: Rect,
     fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
     detail: Option<&ShapeFillDetail>,
 ) -> AnchorContent {
-    preset_geometry_content(geometry, preset, adjustments, rect, fill, stroke, detail)
+    let rectangle = || AnchorContent::Rectangle {
+        fill: shape_fill(fill, detail),
+        stroke: shape_stroke(stroke, detail),
+    };
+    let resolved = resolve_geometry(shape, false);
+    if resolved.is_none() && shape.custom.is_none() {
+        match shape.geometry {
+            ShapeGeometry::Rectangle => return rectangle(),
+            ShapeGeometry::Ellipse => {
+                return AnchorContent::Ellipse {
+                    fill: shape_fill(fill, detail),
+                    stroke: shape_stroke(stroke, detail),
+                };
+            }
+            ShapeGeometry::Line => {
+                return AnchorContent::Line {
+                    from: rect.origin,
+                    to: Point::new(rect.right(), rect.bottom()),
+                    // A line without an explicit stroke still draws a hairline in
+                    // its fill color (Word's connector default).
+                    stroke: shape_stroke(stroke, detail).unwrap_or(AnchorStroke {
+                        color: fill.map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
+                        width: Twip::ZERO,
+                        dash: DashStyle::Solid,
+                        cap: None,
+                        join: None,
+                        custom_dash: Vec::new(),
+                    }),
+                    head_end: stroke.and_then(|s| s.head_end),
+                    tail_end: stroke.and_then(|s| s.tail_end),
+                };
+            }
+            _ => {}
+        }
+    }
+    // A token this build does not know, or a geometry with no answer at this box,
+    // paints its bounding rectangle. ONLYOFFICE paints NOTHING here
+    // (`Geometry.draw` early-returns on an invalid geometry); we deliberately
+    // differ, because silently erasing an object is a larger change than showing
+    // a box where it is, and Word does not erase them either (`docs/119` §6
+    // "Rejected"). With the standard's table loaded, only a token outside
+    // `ST_ShapeType` reaches this.
+    let Some(resolved) = resolved else {
+        return rectangle();
+    };
+    AnchorContent::Path {
+        paths: anchor_paths(&resolved, shape.extent, rect),
+        fill: shape_fill(fill, detail),
+        stroke: shape_stroke(stroke, detail),
+        head_end: stroke.and_then(|s| s.head_end),
+        tail_end: stroke.and_then(|s| s.tail_end),
+    }
+}
+
+/// The geometry's evaluated paths in the shape's own space, or `None` for a
+/// geometry with no answer at this box — and, unless `primitives` is set, for
+/// the three closed-form primitives (rectangle, ellipse, line), which paint
+/// exactly without a path. A clip needs their path, so it asks for it.
+///
+/// A custom geometry outranks the preset enum: the importer only attaches one
+/// that compiles, and `geometry` stays `Other` beside it. Every other preset is
+/// a table entry, typed or retained by token, and the shape's authored `a:avLst`
+/// overrides the definition's defaults by name.
+///
+/// Complexity: see [`geometry_content`].
+fn resolve_geometry(shape: GeometryRef<'_>, primitives: bool) -> Option<ResolvedGeometry> {
+    // Extents are validated to `0..=MAX_EMU`, inside f64's exact integer range.
+    #[allow(clippy::cast_precision_loss)]
+    let (width, height) = (
+        shape.extent.width_emu as f64,
+        shape.extent.height_emu as f64,
+    );
+    if let Some(custom) = shape.custom {
+        return GeometryProgram::compile(shape.adjustments, custom)
+            .ok()
+            .and_then(|program| program.evaluate(width, height, &[]));
+    }
+    if !primitives
+        && matches!(
+            shape.geometry,
+            ShapeGeometry::Rectangle | ShapeGeometry::Ellipse | ShapeGeometry::Line
+        )
+    {
+        return None;
+    }
+    shape
+        .geometry
+        .preset_token()
+        .or(shape.preset)
+        .and_then(preset_shape)
+        .and_then(|preset| preset.program().evaluate(width, height, shape.adjustments))
+}
+
+/// The painted content of one shape's preset or custom geometry, for a caller
+/// that is not paginating a document.
+///
+/// The seam a slide's layout paints through (ADR-055 part 2). It is the same
+/// resolution a floating DOCX shape uses — the standard's 187 presets and an
+/// authored `a:custGeom` through one [`GeometryProgram`], plus the three
+/// closed-form primitives — so the two document classes cannot disagree about
+/// what a `prstGeom` looks like.
+///
+/// Complexity: O(1) in document size; O(guides + commands) in the geometry.
+#[must_use]
+pub fn shape_geometry_content(
+    shape: &GroupShape,
+    rect: Rect,
+    fill: Option<&Fill>,
+    stroke: Option<ShapeStroke>,
+    detail: Option<&ShapeFillDetail>,
+) -> AnchorContent {
+    geometry_content(GeometryRef::of_shape(shape), rect, fill, stroke, detail)
 }
 
 /// A shape's fill and outline with its theme style reference resolved.
@@ -1501,53 +1537,120 @@ pub fn themed_shape_appearance(
     themed_appearance(shape, definitions)
 }
 
+/// Maps resolved paths from the shape's own space (EMU) onto `rect` (page twips).
+///
+/// The scale is the painted rectangle over the shape's own extent, per axis, so a
+/// group's non-uniform scale stretches the evaluated outline exactly as it
+/// stretches the box. A zero extent has no scale to take; its coordinates are
+/// already absolute EMU and convert at 635 per twip.
+///
+/// Complexity: O(c) in the resolved commands.
+fn anchor_paths(resolved: &ResolvedGeometry, extent: Extent, rect: Rect) -> Vec<AnchorPath> {
+    #[allow(clippy::cast_precision_loss)] // see `geometry_content`
+    let scale = |painted: Twip, own: i64| {
+        if own > 0 {
+            f64::from(painted.raw()) / own as f64
+        } else {
+            1.0 / crate::units::EMU_PER_TWIP as f64
+        }
+    };
+    let (sx, sy) = (
+        scale(rect.size.width, extent.width_emu),
+        scale(rect.size.height, extent.height_emu),
+    );
+    let (ox, oy) = (
+        f64::from(rect.origin.x.raw()),
+        f64::from(rect.origin.y.raw()),
+    );
+    let at = |point: ResolvedPoint| {
+        Point::new(
+            twip_rounded(ox + point.x * sx),
+            twip_rounded(oy + point.y * sy),
+        )
+    };
+    resolved
+        .paths
+        .iter()
+        .map(|path| AnchorPath {
+            commands: path
+                .commands
+                .iter()
+                .map(|command| match *command {
+                    ResolvedCommand::MoveTo(point) => PathCommand::MoveTo { point: at(point) },
+                    ResolvedCommand::LineTo(point) => PathCommand::LineTo { point: at(point) },
+                    ResolvedCommand::QuadTo { control, point } => PathCommand::QuadTo {
+                        control: at(control),
+                        point: at(point),
+                    },
+                    ResolvedCommand::CubicTo {
+                        control1,
+                        control2,
+                        point,
+                    } => PathCommand::CubicTo {
+                        control1: at(control1),
+                        control2: at(control2),
+                        point: at(point),
+                    },
+                    ResolvedCommand::Close => PathCommand::Close,
+                })
+                .collect(),
+            fill: path.fill,
+            stroke: path.stroke,
+        })
+        .collect()
+}
+
 /// The shape a grouped text box paints behind its text, or `None` when the box
 /// is the plain rectangle whose fill and outline the text-box content itself
 /// already draws.
 ///
-/// Complexity: O(1) in document size.
+/// `extent` is the box's own extent grown by whatever its text autofit added, so
+/// the outline is evaluated for the box actually painted. `detail` is the box's
+/// own appearance row: the importer files a text-bearing `wps:wsp`'s detail under
+/// the shape id the `GroupTextBox` keeps, which is the same reason its theme
+/// style reference resolves.
+///
+/// Complexity: O(1) in document size — see [`geometry_content`].
 fn text_box_backdrop(
-    text_box: &casual_doc_model::v1::GroupTextBox,
+    text_box: &GroupTextBox,
+    extent: Extent,
     rect: Rect,
     fill: Option<&Fill>,
     border: Option<ShapeStroke>,
     detail: Option<&ShapeFillDetail>,
 ) -> Option<Box<AnchorContent>> {
-    // A plain rectangle never needs a backdrop: the text-box content already paints
-    // its fill and outline, and a second rectangle over the top would just be the
-    // same shape twice.
-    if matches!(text_box.geometry, ShapeGeometry::Rectangle) {
+    let geometry = GeometryRef::of_text_box(text_box, extent);
+    if geometry.is_plain_box() {
         return None;
     }
-    // `Other` used to be refused here for the same reason — there was nothing to
-    // draw. Now the committed preset table may resolve the authored token, so a text
-    // box shaped like a callout paints the callout behind its text. It is resolved
-    // ONCE and the backdrop taken only if that succeeded: falling through to
-    // `preset_geometry_content` would hand back a plain rectangle for a token the
-    // table cannot draw, which is the redundant second rectangle this guard exists to
-    // avoid.
-    if matches!(text_box.geometry, ShapeGeometry::Other) {
-        let token = text_box.preset.as_deref()?;
-        let commands = shape_preset::preset_outline(token, &text_box.adjustments, rect)?;
-        return Some(Box::new(AnchorContent::Path {
-            commands,
-            closed: shape_preset::preset_is_closed(token),
-            // The row IS this text box's own: the importer files a text-bearing
-            // `wps:wsp`'s appearance detail under the shape id the `GroupTextBox`
-            // keeps, which is the same reason its theme style reference resolves.
-            fill: shape_fill(text_box.fill.as_ref(), detail),
-            stroke: shape_stroke(text_box.border, detail),
-        }));
-    }
-    Some(Box::new(preset_geometry_content(
-        text_box.geometry,
-        text_box.preset.as_deref(),
-        &text_box.adjustments,
-        rect,
-        fill,
-        border,
-        detail,
+    Some(Box::new(geometry_content(
+        geometry, rect, fill, border, detail,
     )))
+}
+
+/// A text box's own extent grown by the factor its text's autofit grew the
+/// painted box (`placed` → `grown`), so its outline is evaluated for the box
+/// actually painted rather than stretched from the one it was authored at — the
+/// proportions of a callout's tail are a function of the box's shorter side.
+///
+/// Complexity: O(1).
+fn grown_extent(extent: Extent, placed: Size, grown: Size) -> Extent {
+    let grow = |own: i64, before: Twip, after: Twip| {
+        if before.raw() > 0 && after != before {
+            // An extent is bounded by MAX_EMU, inside f64's exact range, and the
+            // growth factor is a ratio of two i32 twip sizes.
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+            {
+                (own as f64 * f64::from(after.raw()) / f64::from(before.raw())).round() as i64
+            }
+        } else {
+            own
+        }
+    };
+    Extent {
+        width_emu: grow(extent.width_emu, placed.width, grown.width),
+        height_emu: grow(extent.height_emu, placed.height, grown.height),
+    }
 }
 
 // --- Band walk -------------------------------------------------------------
@@ -2079,80 +2182,6 @@ fn themed_fill(style: &FillStyle, placeholder: Option<Rgba>) -> Option<Fill> {
     }
 }
 
-fn custom_path_content(
-    path: &casual_doc_model::v1::ShapePath,
-    rect: Rect,
-    fill: Option<&Fill>,
-    stroke: Option<ShapeStroke>,
-    detail: Option<&ShapeFillDetail>,
-) -> AnchorContent {
-    use casual_doc_model::v1::ShapePathCommand;
-
-    let resolve = |value: i64, space: i64, origin: Twip, size: Twip| -> Twip {
-        if space > 0 {
-            Twip(
-                (f64::from(size.raw()) * (value as f64 / space as f64))
-                    .round()
-                    .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
-            ) + origin
-        } else {
-            emu_to_twip_offset(value) + origin
-        }
-    };
-
-    let resolve_point = |point: casual_doc_model::v1::PointEmu| {
-        Point::new(
-            resolve(point.x_emu, path.width_emu, rect.origin.x, rect.size.width),
-            resolve(
-                point.y_emu,
-                path.height_emu,
-                rect.origin.y,
-                rect.size.height,
-            ),
-        )
-    };
-
-    let mut commands = Vec::with_capacity(path.commands.len());
-    let mut closed = false;
-    for command in &path.commands {
-        // Each arm resolves EVERY coordinate the command names, controls included:
-        // a control point left in the path's own space would bend the curve toward
-        // the page origin instead of toward where it was authored.
-        commands.push(match *command {
-            ShapePathCommand::MoveTo { point } => PathCommand::MoveTo {
-                point: resolve_point(point),
-            },
-            ShapePathCommand::LineTo { point } => PathCommand::LineTo {
-                point: resolve_point(point),
-            },
-            ShapePathCommand::CubicBezTo {
-                control1,
-                control2,
-                point,
-            } => PathCommand::CubicTo {
-                control1: resolve_point(control1),
-                control2: resolve_point(control2),
-                point: resolve_point(point),
-            },
-            ShapePathCommand::QuadBezTo { control, point } => PathCommand::QuadTo {
-                control: resolve_point(control),
-                point: resolve_point(point),
-            },
-            ShapePathCommand::Close => {
-                closed = true;
-                continue;
-            }
-        });
-    }
-
-    AnchorContent::Path {
-        commands,
-        closed,
-        fill: shape_fill(fill, detail),
-        stroke: shape_stroke(stroke, detail),
-    }
-}
-
 fn ratio(numerator: i64, denominator: i64) -> f64 {
     if denominator == 0 {
         1.0
@@ -2235,19 +2264,22 @@ fn picture_filled_shape_content(
 }
 
 /// A shape's outline as display-list commands, from its custom geometry or its
-/// preset token.
+/// preset's table entry — the filled paths only, since a clip is a fill.
+///
+/// The primitives are asked for their path too: a picture-filled rectangle or
+/// ellipse clips to exactly the outline its solid-filled twin paints.
+///
+/// The commands carry their own `Close`s, so `closed` is always `false`.
+///
+/// Complexity: O(guides + commands) in the geometry.
 fn shape_outline_commands(shape: &GroupShape, rect: Rect) -> Option<(Vec<PathCommand>, bool)> {
-    if let Some(path) = shape.path.as_ref() {
-        return match custom_path_content(path, rect, None, None, None) {
-            AnchorContent::Path {
-                commands, closed, ..
-            } => Some((commands, closed)),
-            _ => None,
-        };
-    }
-    let token = shape.geometry.preset_token().or(shape.preset.as_deref())?;
-    let commands = shape_preset::preset_outline(token, &shape.adjustments, rect)?;
-    Some((commands, shape_preset::preset_is_closed(token)))
+    let resolved = resolve_geometry(GeometryRef::of_shape(shape), true)?;
+    let commands: Vec<PathCommand> = anchor_paths(&resolved, shape.extent, rect)
+        .into_iter()
+        .filter(|path| path.fill != PathFill::None)
+        .flat_map(|path| path.commands)
+        .collect();
+    (!commands.is_empty()).then_some((commands, false))
 }
 
 /// The rotation a text box's CONTENT paints at: `wps:bodyPr@vert` combined with

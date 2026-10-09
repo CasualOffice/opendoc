@@ -71,7 +71,9 @@ list does.
 the source vanished without a finding. Its own module doc records the limit: *"Attribute
 names are a separate axis"* — and that axis is **not gated**. So an attribute can vanish on
 import with a compatibility report of zero entries, which is exactly what happened to
-`w:wrap@wrapText` (#739).
+`w:wrap@wrapText` (#739). *(Superseded since this measurement: the axis is gated by
+`casual-doc-import/tests/attribute_loss_coverage.rs`, `109` HF-243, and the coverage gate's
+module doc says so, `109` HF-268.)*
 
 ### 3.1 The reporting surface, enumerated
 

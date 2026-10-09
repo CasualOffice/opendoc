@@ -20,9 +20,11 @@
 
 import {
   MOD,
+  clickIntoFirstPage,
   documentPageCount,
   expect,
   gotoEditor,
+  moveCaretToDocStart,
   openCommandPalette,
   pageSheet,
   runAppMenuCommand,
@@ -540,4 +542,82 @@ test("a word list that cannot be fetched marks nothing, says so, and leaves gram
   expect(
     consoleErrors.filter((text) => !/Failed to load resource/.test(text)),
   ).toEqual([]);
+});
+
+test("the squiggle sits on the text's own box, at single AND at double spacing", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The owner's report: "the spelling zigzag is appear way below the content
+  // line". The marker was placed in a `selectionRects` box — the LINE box,
+  // `ascent + descent + leading` — and the wave is drawn at its bottom edge, so
+  // the mark walked away from the text as line spacing grew. Measured in the
+  // engine: 3.9 px below the painted baseline at single, 23.3 px at double.
+  //
+  // WHAT THIS ASSERTS, and why it is not "a squiggle exists": a squiggle has ink
+  // wherever it is drawn, so a presence check passes while it is 20 px too low.
+  // The CARET is the one thing on screen whose box is already proven to track
+  // the glyphs (`caret-geometry.spec.mjs`: its height does not change with line
+  // spacing), so what is asserted is that the mark and a caret on the SAME LINE
+  // occupy the same vertical band. At single spacing the line box and the text
+  // box nearly coincide and this says little; at double they differ by the whole
+  // of the leading, which is the case that was broken.
+  await openSpellingDocument(page);
+  const typo = spellingTypoForPage(1);
+
+  /** The mark's band and the caret's band, read from the same paint. */
+  async function bands() {
+    await expect(page.locator(marker(typo))).toHaveCount(1, { timeout: 20_000 });
+    await expect(page.locator(".overlay .caret")).toBeVisible();
+    return {
+      mark: await stableBox(page.locator(marker(typo))),
+      caret: await stableBox(page.locator(".overlay .caret")),
+    };
+  }
+
+  // The caret goes to the START of the line the typo is on — far enough from the
+  // word that the "don't flag what is being typed" rule cannot suppress the
+  // marker we are about to measure.
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.press("ArrowDown");
+  const single = await bands();
+  expect(
+    single.mark.y,
+    `mark top ${single.mark.y} vs caret top ${single.caret.y} at single spacing`,
+  ).toBeCloseTo(single.caret.y, 0);
+  expect(single.mark.height).toBeCloseTo(single.caret.height, 0);
+
+  // Double the whole document's line spacing. The typo's own line gains the
+  // leading, so a line-box mark drops by it and a text-box mark does not.
+  await page.keyboard.press(`${MOD}+a`);
+  await page.locator("#spacingBtn").click();
+  await expect(page.locator("#spacingMenu")).toBeVisible();
+  await page.locator('#spacingMenu .spacing-line[data-percent="200"]').click();
+  await expect(page.locator("#documentState")).toHaveAttribute("data-state", "edited");
+  await moveCaretToDocStart(page);
+  await page.keyboard.press("ArrowDown");
+  const double = await bands();
+
+  expect(
+    double.mark.height,
+    `the mark grew from ${single.mark.height.toFixed(2)}px to ` +
+      `${double.mark.height.toFixed(2)}px on text that did not change size — ` +
+      "it is measuring the line box, not the text",
+  ).toBeCloseTo(single.mark.height, 0);
+  expect(
+    double.mark.y,
+    `mark top ${double.mark.y} vs caret top ${double.caret.y} at double spacing`,
+  ).toBeCloseTo(double.caret.y, 0);
+  expect(double.mark.height).toBeCloseTo(double.caret.height, 0);
+
+  // The paired positive case: the edit really did add leading, so the invariance
+  // above is not passing because nothing happened. The typo is in the SECOND
+  // paragraph, so doubling the first one's spacing moves its line down the page.
+  expect(
+    Math.abs(double.caret.y - single.caret.y),
+    "the document must actually have re-laid out, or this test proves nothing",
+  ).toBeGreaterThan(2);
+
+  expect(consoleErrors).toEqual([]);
 });

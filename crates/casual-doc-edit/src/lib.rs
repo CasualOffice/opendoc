@@ -54,7 +54,7 @@ use casual_doc_model::v1::{NumberingInstance, NumberingInstanceId};
 // The paragraph-spanning field range (`docs/128`): its definition payload, its id,
 // and the two body markers that delimit it.
 use casual_doc_model::v1::{FieldRange, FieldRangeId};
-use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
+use casual_doc_model::v1::{Fill, GroupChild, GroupPicture, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 // Section-break authoring (`docs/130` §4.3): the boundary `SpliceSectionBoundary`
@@ -66,6 +66,9 @@ use casual_doc_model::v1::DocumentProtection;
 // The typed chart projection `SetChartDefinition` installs or removes (`docs/155`).
 // Its own `use` line, per the parallel-lane rule above.
 use casual_doc_model::v1::{Chart, ChartId};
+// A drawing object's DrawingML locks, which `SetObjectLocks` replaces (`109` FID-AT-09).
+// Its own `use` line, per the parallel-lane rule above.
+use casual_doc_model::v1::{ObjectLocks, ObjectName};
 
 // Captions and cross-references: the OOXML field markup (`SEQ`, `REF`, `PAGEREF`,
 // `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005). Its own module
@@ -1278,6 +1281,52 @@ pub enum Operation {
         object: NodeId,
         /// The complete replacement body-property value.
         properties: TextBoxBodyProperties,
+    },
+    /// Replace a drawing object's DrawingML locks — Word's "Lock aspect ratio" and
+    /// its siblings, held beside the object's name in `Definitions::object_names`
+    /// (`109` FID-AT-09). Self-inverse, carrying the previous locks (the
+    /// retained-value pattern).
+    ///
+    /// The side-table entry is created when the object had none and removed when it
+    /// ends up stating nothing (no name, no title, no lock) — the model keeps no
+    /// empty entry — so undoing the lock a fresh picture was inserted with leaves the
+    /// table exactly as it was. Rejected with [`EditError::NodeNotFound`] unless
+    /// `object` names a drawing object in some story's text: any surface, inside a
+    /// wrapper, a table cell or a text box's own text. A group's members keep the
+    /// locks their file gave them and are not addressed here.
+    ///
+    /// O(document): one walk to find the object, then one side-table write.
+    SetObjectLocks {
+        /// The drawing object whose locks are replaced.
+        object: NodeId,
+        /// The complete replacement locks.
+        locks: ObjectLocks,
+    },
+    /// Turn the document's Track Changes setting (`w:trackRevisions`, ECMA-376
+    /// §17.15.1.89) on or off — the flag a Word document is saved with, and opens
+    /// with, when tracking is on for it. Self-inverse, carrying the previous value,
+    /// like [`Operation::SetEvenAndOddHeaders`] beside it in the same settings
+    /// record. Never rejected by the operation itself; a `trackedChanges`
+    /// restriction refuses it at the choke point, as Word locks the control.
+    /// O(1).
+    SetTrackRevisions {
+        /// Whether revisions are tracked.
+        enabled: bool,
+    },
+    /// Set or clear one section's `w:formProt` (`Definitions::form_protection`,
+    /// `109` FID-AT-06): whether the section is protected when the document's
+    /// forms protection is in force. `Some(false)` leaves the section editable
+    /// under that protection, `Some(true)` and `None` (no element) protect it —
+    /// `None` is kept apart from `Some(false)` because the file keeps them apart.
+    /// Self-inverse, carrying the previous value. A section break carries the
+    /// split section's value to the new one with it, as Word copies `w:sectPr`.
+    /// Rejected with [`EditError::NodeNotFound`] when `section` names no section.
+    /// O(sections).
+    SetSectionFormProtection {
+        /// The section whose `w:formProt` is replaced.
+        section: SectionId,
+        /// The new value, or `None` for no element.
+        protected: Option<bool>,
     },
 }
 
@@ -2711,6 +2760,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let (node, offset, removed) = surface_block_lists(doc)
                 .into_iter()
                 .find_map(|blocks| locate_inline_object(blocks, *object))
+                .map(|(node, offset, removed)| (node, offset, removed.clone()))
                 .ok_or(EditError::NodeNotFound)?;
             let snapshot = find_paragraph_any(doc, node)
                 .ok_or(EditError::NodeNotFound)?
@@ -2834,9 +2884,18 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::SetShapeStroke { shape, stroke } => {
-            let target = find_shape_mut(doc, *shape).ok_or(EditError::NodeNotFound)?;
-            let previous = target.stroke;
-            target.stroke = *stroke;
+            // A picture's border is the SAME `a:ln` in its `pic:spPr` as a
+            // shape's outline, and the same `ShapeStroke` in the model, so Word's
+            // Picture Border is this operation aimed at a picture rather than a
+            // second operation that would have to agree with it (`docs/109`
+            // HF-254). A shape is tried first because that is what the name has
+            // always meant; a picture is the only other carrier of a stroke.
+            let previous = if let Some(target) = find_shape_mut(doc, *shape) {
+                core::mem::replace(&mut target.stroke, *stroke)
+            } else {
+                on_owning_surface_mut(doc, |blocks| set_picture_border(blocks, *shape, *stroke))
+                    .ok_or(EditError::NodeNotFound)?
+            };
             Ok(Operation::SetShapeStroke {
                 shape: *shape,
                 stroke: previous,
@@ -2850,6 +2909,26 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             Ok(Operation::SetTextBoxBody {
                 object: *object,
                 properties: previous,
+            })
+        }
+        Operation::SetObjectLocks { object, locks } => {
+            if !drawing_object_exists(doc, *object) {
+                return Err(EditError::NodeNotFound);
+            }
+            let names = &mut doc.definitions_mut().object_names;
+            let mut entry: ObjectName = names.get(object).cloned().unwrap_or_default();
+            let previous = core::mem::replace(&mut entry.locks, *locks);
+            // An entry that says nothing is not kept (`ObjectName::is_empty`, and
+            // `Document::validate` refuses one), so a lock cleared from an unnamed
+            // object takes its entry with it.
+            if entry.is_empty() {
+                names.remove(object);
+            } else {
+                names.insert(*object, entry);
+            }
+            Ok(Operation::SetObjectLocks {
+                object: *object,
+                locks: previous,
             })
         }
         Operation::SetSectionTitlePage {
@@ -2976,6 +3055,30 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let previous = settings.even_and_odd_headers;
             settings.even_and_odd_headers = *enabled;
             Ok(Operation::SetEvenAndOddHeaders { enabled: previous })
+        }
+        Operation::SetTrackRevisions { enabled } => {
+            let settings = &mut doc.definitions_mut().settings;
+            let previous = settings.track_changes;
+            settings.track_changes = *enabled;
+            Ok(Operation::SetTrackRevisions { enabled: previous })
+        }
+        Operation::SetSectionFormProtection { section, protected } => {
+            let definitions = doc.definitions_mut();
+            if !definitions
+                .sections
+                .iter()
+                .any(|candidate| candidate.id == *section)
+            {
+                return Err(EditError::NodeNotFound);
+            }
+            let previous = match protected {
+                Some(value) => definitions.form_protection.insert(*section, *value),
+                None => definitions.form_protection.remove(section),
+            };
+            Ok(Operation::SetSectionFormProtection {
+                section: *section,
+                protected: previous,
+            })
         }
         Operation::CreateHeaderFooterBody { region, id, blocks } => {
             // Refuse rather than overwrite: an existing body silently replaced
@@ -3791,6 +3894,91 @@ fn set_object_crop(
     None
 }
 
+/// Sets or clears the border (`pic:spPr/a:ln`) of the picture `object` — an
+/// inline `Drawing`, a floating `AnchoredDrawing` or a picture inside a group —
+/// searched the same way as [`set_object_crop`]. Returns the **previous** border;
+/// `None` if `object` is not a picture. The picture half of
+/// [`Operation::SetShapeStroke`] (`docs/109` HF-254).
+///
+/// **O(blocks in this surface)**, one walk.
+fn set_picture_border(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    border: Option<ShapeStroke>,
+) -> Option<Option<ShapeStroke>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) =
+                    set_picture_border_in_inlines(&mut paragraph.inlines, object, border)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_picture_border(&mut cell.blocks, object, border) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_picture_border(&mut sdt.blocks, object, border) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// The inline half of [`set_picture_border`], on the declared container set.
+/// **O(inlines in this subtree)**.
+fn set_picture_border_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    border: Option<ShapeStroke>,
+) -> Option<Option<ShapeStroke>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.border, border));
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.border, border));
+            }
+            _ => {}
+        }
+        match inline_descent_mut(inline) {
+            InlineDescentMut::Inlines(nested) => {
+                if let Some(prev) = set_picture_border_in_inlines(nested, object, border) {
+                    return Some(prev);
+                }
+            }
+            InlineDescentMut::Blocks(blocks) => {
+                if let Some(prev) = set_picture_border(blocks, object, border) {
+                    return Some(prev);
+                }
+            }
+            InlineDescentMut::Group(children) => {
+                if let Some(picture) = group_picture_mut(children, object) {
+                    return Some(core::mem::replace(&mut picture.border, border));
+                }
+                if let Some(prev) = find_in_group_block_stories_mut(children, &mut |blocks| {
+                    set_picture_border(blocks, object, border)
+                }) {
+                    return Some(prev);
+                }
+            }
+            InlineDescentMut::Leaf => {}
+        }
+    }
+    None
+}
+
 /// The inline half of [`set_object_crop`]. Descent is the one declared container
 /// set, so a picture inside a field result, an inline content control, or a text
 /// box nested in a shape group can be cropped (HF-214; it missed `Field`, `Sdt` and
@@ -3823,6 +4011,12 @@ fn set_object_crop_in_inlines(
                 }
             }
             InlineDescentMut::Group(children) => {
+                // A picture that is itself a member of the group (`GroupChild::
+                // Picture`) carries its own `a:srcRect`, so it is croppable like
+                // any other picture (`109` HF-214). Then the stories inside it.
+                if let Some(picture) = group_picture_mut(children, object) {
+                    return Some(core::mem::replace(&mut picture.crop, crop));
+                }
                 if let Some(prev) = find_in_group_block_stories_mut(children, &mut |blocks| {
                     set_object_crop(blocks, object, crop)
                 }) {
@@ -3906,6 +4100,13 @@ fn set_object_descr_in_inlines(
                 }
             }
             InlineDescentMut::Group(children) => {
+                // A grouped picture's own `pic:cNvPr@descr` (`109` HF-214): an
+                // accessibility hole as well as an editing one, since a logo in a
+                // group was otherwise a picture no screen reader could be told
+                // about.
+                if let Some(picture) = group_picture_mut(children, object) {
+                    return Some(core::mem::replace(&mut picture.descr, descr.clone()));
+                }
                 if let Some(prev) = find_in_group_block_stories_mut(children, &mut |blocks| {
                     set_object_descr(blocks, object, descr)
                 }) {
@@ -3916,6 +4117,58 @@ fn set_object_descr_in_inlines(
         }
     }
     None
+}
+
+/// Where an in-line object sits in the flow of text: the paragraph whose inline
+/// list holds it directly, and the byte offset it occupies there.
+///
+/// Returned by [`inline_object_position`]. An object is zero-width in offset
+/// space, so `offset` is both the position just before it and the position just
+/// after it — which is why "dropped back where it came from" is one comparison
+/// against this value.
+#[derive(Clone, Copy, Debug)]
+pub struct InlineObjectPosition<'a> {
+    /// The paragraph whose inline list holds the object at top level.
+    pub paragraph: NodeId,
+    /// The object's byte offset in that paragraph.
+    pub offset: u32,
+    /// The object node itself.
+    pub node: &'a InlineNode,
+}
+
+/// The position of the object `object` in the flow of text, when it is one
+/// [`Operation::RemoveInlineObject`] can lift out: a drawing, an embedded object,
+/// a text box or a group sitting **directly** in a paragraph's inline list, on
+/// any surface (body, table cell, header, footer, note, text-box story). A
+/// FLOATING object is found too — it sits in its anchor paragraph's list — so a
+/// caller that means "in the line of text" checks the node it gets back.
+///
+/// `None` for anything else — deliberately including an object nested in a
+/// hyperlink, a field result, an inline content control or a tracked change.
+/// Lifting one of those out would rewrite the wrapper around it, which is a
+/// different edit with its own consequences: an `INCLUDEPICTURE` field whose
+/// result is the picture would be left with no result. This reads through the
+/// same locator the removal uses, so "can this move in the text" and "will the
+/// move's first half succeed" cannot disagree.
+///
+/// **O(document)**: one walk over every surface, stopping at the object — the
+/// walk `RemoveInlineObject` itself makes.
+#[must_use]
+pub fn inline_object_position(
+    document: &Document,
+    object: NodeId,
+) -> Option<InlineObjectPosition<'_>> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| locate_inline_object(blocks, object))
+        // The locator also finds a `w:br` (the pair authors breaks too), and a
+        // break is not an object anybody can pick up.
+        .filter(|(_, _, node)| is_object_node(node))
+        .map(|(paragraph, offset, node)| InlineObjectPosition {
+            paragraph,
+            offset,
+            node,
+        })
 }
 
 /// The current alt text (`wp:docPr@descr`) of the drawing `object`, or `None`
@@ -3932,6 +4185,66 @@ pub fn object_descr(document: &Document, object: NodeId) -> Option<String> {
     surface_block_lists(document)
         .into_iter()
         .find_map(|blocks| object_descr_in_blocks(blocks, object))
+}
+
+/// The border (`pic:spPr/a:ln`) of the picture `object` — `Some(None)` for a
+/// picture with no border, `None` when `object` is not a picture. The read face
+/// of the picture half of [`Operation::SetShapeStroke`] (`docs/109` HF-254), so a
+/// host reflects the border the picture HAS and a weight change inherits its
+/// colour and dash rather than rebuilding the stroke.
+///
+/// **O(document)**, one walk over every surface.
+#[must_use]
+pub fn picture_border(document: &Document, object: NodeId) -> Option<Option<ShapeStroke>> {
+    fn in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<Option<ShapeStroke>> {
+        for block in blocks {
+            let found = match block {
+                BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+                BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                    row.cells
+                        .iter()
+                        .find_map(|cell| in_blocks(&cell.blocks, object))
+                }),
+                BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+                BlockNode::AltChunk(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Option<ShapeStroke>> {
+        for inline in inlines {
+            match inline {
+                InlineNode::Drawing(drawing) if drawing.id == object => {
+                    return Some(drawing.border);
+                }
+                InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                    return Some(drawing.border);
+                }
+                _ => {}
+            }
+            let found = match inline_descent(inline) {
+                InlineDescent::Inlines(nested) => in_inlines(nested, object),
+                InlineDescent::Blocks(blocks) => in_blocks(blocks, object),
+                InlineDescent::Group(children) => match group_picture(children, object) {
+                    Some(picture) => return Some(picture.border),
+                    None => find_in_group_block_stories(children, &mut |blocks| {
+                        in_blocks(blocks, object)
+                    }),
+                },
+                InlineDescent::Leaf => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| in_blocks(blocks, object))
 }
 
 /// Returns authored text-box body properties from any document surface.
@@ -4043,15 +4356,57 @@ fn object_descr_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Str
         let found = match inline_descent(inline) {
             InlineDescent::Inlines(nested) => object_descr_in_inlines(nested, object),
             InlineDescent::Blocks(blocks) => object_descr_in_blocks(blocks, object),
-            InlineDescent::Group(children) => {
-                find_in_group_block_stories(children, &mut |blocks| {
+            InlineDescent::Group(children) => match group_picture(children, object) {
+                Some(picture) => return picture.descr.clone(),
+                None => find_in_group_block_stories(children, &mut |blocks| {
                     object_descr_in_blocks(blocks, object)
-                })
-            }
+                }),
+            },
             InlineDescent::Leaf => None,
         };
         if found.is_some() {
             return found;
+        }
+    }
+    None
+}
+
+/// The picture `object` among a group's members, at any nesting depth — the
+/// carrier a picture inside a shape group is ([`GroupChild::Picture`]).
+///
+/// A group's text boxes carry block stories, which
+/// `find_in_group_block_stories` reaches; its pictures are LEAVES of the group
+/// and carry no story, so nothing reached them, and a grouped picture could not
+/// be cropped, described or given a border (`docs/109` HF-214, HF-254).
+///
+/// **O(children in the group subtree)**; resolves no `NodeId`.
+fn group_picture(children: &[GroupChild], object: NodeId) -> Option<&GroupPicture> {
+    for child in children {
+        match child {
+            GroupChild::Picture(picture) if picture.id == object => return Some(picture),
+            GroupChild::Group(nested) => {
+                if let Some(found) = group_picture(&nested.children, object) {
+                    return Some(found);
+                }
+            }
+            GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
+        }
+    }
+    None
+}
+
+/// [`group_picture`] for a walk that writes what it finds.
+/// **O(children in the group subtree)**.
+fn group_picture_mut(children: &mut [GroupChild], object: NodeId) -> Option<&mut GroupPicture> {
+    for child in children.iter_mut() {
+        match child {
+            GroupChild::Picture(picture) if picture.id == object => return Some(picture),
+            GroupChild::Group(nested) => {
+                if let Some(found) = group_picture_mut(&mut nested.children, object) {
+                    return Some(found);
+                }
+            }
+            GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
         }
     }
     None
@@ -4098,6 +4453,36 @@ fn is_object_node(node: &InlineNode) -> bool {
             | InlineNode::Group(_)
             | InlineNode::EmbeddedObject(_)
     )
+}
+
+/// Whether `object` names a drawing object (`is_object_node`) in some story's text:
+/// any surface, a table cell, a text box's own text, or inside a wrapper (a link, a
+/// field result, a content control, a tracked change) — [`Operation::SetObjectLocks`]'
+/// target. Group members are not inline nodes and are not found.
+///
+/// **O(document)**: one walk over every surface, stopping at the object.
+fn drawing_object_exists(document: &Document, object: NodeId) -> bool {
+    fn in_blocks(blocks: &[BlockNode], object: NodeId) -> bool {
+        blocks.iter().any(|block| match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+            BlockNode::Table(table) => table
+                .rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| in_blocks(&cell.blocks, object))),
+            BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+            BlockNode::AltChunk(_) => false,
+        })
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> bool {
+        inlines.iter().any(|inline| {
+            (inline.id() == object && is_object_node(inline))
+                || contained_inlines(inline).is_some_and(|nested| in_inlines(nested, object))
+        })
+    }
+    // `surface_block_lists` already lists every text box's own text as a story.
+    surface_block_lists(document)
+        .into_iter()
+        .any(|blocks| in_blocks(blocks, object))
 }
 
 /// Removes the object `object` from its inline container, searched the same way as
@@ -7175,17 +7560,21 @@ fn insert_inline_object_at(
 
 /// Locates the top-level inline object node with id `object` among the body's
 /// paragraph inlines (descending into tables and block SDTs), returning its
-/// paragraph, its byte offset in that paragraph, and a clone of the node (for
-/// [`Operation::RemoveInlineObject`]'s inverse). The read-side sibling of
+/// paragraph, its byte offset in that paragraph, and the node itself (which
+/// [`Operation::RemoveInlineObject`] clones for its inverse, and
+/// [`inline_object_position`] lends out). The read-side sibling of
 /// [`locate_field`].
-fn locate_inline_object(blocks: &[BlockNode], object: NodeId) -> Option<(NodeId, u32, InlineNode)> {
+fn locate_inline_object(
+    blocks: &[BlockNode],
+    object: NodeId,
+) -> Option<(NodeId, u32, &InlineNode)> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0u32;
                 for inline in &paragraph.inlines {
                     if is_removable_inline_node(inline) && inline.id() == object {
-                        return Some((paragraph.id, offset, inline.clone()));
+                        return Some((paragraph.id, offset, inline));
                     }
                     offset = offset.saturating_add(inline_text_len(inline));
                 }
@@ -8099,6 +8488,113 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         ));
+    }
+
+    /// `SetObjectLocks` (`109` FID-AT-09): the lock lands in the object-name side
+    /// table, its inverse puts back exactly what was there — including NO entry,
+    /// which the model requires of an unnamed, unlocked object — a named object
+    /// keeps its name when its lock is cleared, and a node that is not a drawing
+    /// object is refused rather than given an orphan entry.
+    #[test]
+    fn set_object_locks_writes_the_side_table_and_its_inverse_restores_it_exactly() {
+        use casual_doc_model::v1::{LockFlags, MediaId};
+        let media = MediaId::new(NodeId::from_parts(7, 902).unwrap());
+        let picture = n(50);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(2, vec![drawing(50, media, None, None)])],
+            media_defs(media),
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+        let word = ObjectLocks {
+            frame: LockFlags {
+                no_change_aspect: true,
+                ..LockFlags::default()
+            },
+            object: LockFlags::default(),
+        };
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectLocks {
+                object: picture,
+                locks: word,
+            },
+        )
+        .expect("lock the picture's aspect ratio");
+        assert!(
+            d.definitions().locks_aspect_ratio(picture),
+            "the lock is what the resize grips read"
+        );
+        assert_eq!(
+            inverse,
+            Operation::SetObjectLocks {
+                object: picture,
+                locks: ObjectLocks::default(),
+            }
+        );
+        d.validate()
+            .expect("the entry the lock created is a valid one");
+
+        // Undo: the picture had no entry at all, and has none again — an empty
+        // entry is not a state the model admits.
+        apply(&mut d, &mut ids, &inverse).expect("undo the lock");
+        assert!(!d.definitions().locks_aspect_ratio(picture));
+        assert!(
+            d.definitions().object_names.get(&picture).is_none(),
+            "no empty entry is left behind"
+        );
+        d.validate().expect("valid after the undo");
+
+        // A NAMED object keeps its name when its lock is cleared.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectLocks {
+                object: picture,
+                locks: word,
+            },
+        )
+        .expect("lock again");
+        d.definitions_mut()
+            .object_names
+            .get_mut(&picture)
+            .expect("the entry")
+            .name = Some("Logo".to_owned());
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectLocks {
+                object: picture,
+                locks: ObjectLocks::default(),
+            },
+        )
+        .expect("clear the lock");
+        assert_eq!(
+            d.definitions()
+                .object_names
+                .get(&picture)
+                .and_then(|entry| entry.name.clone()),
+            Some("Logo".to_owned())
+        );
+
+        // Not a drawing object: the paragraph, and an id nothing carries.
+        for stranger in [n(2), n(4040)] {
+            assert_eq!(
+                apply(
+                    &mut d,
+                    &mut ids,
+                    &Operation::SetObjectLocks {
+                        object: stranger,
+                        locks: word,
+                    },
+                ),
+                Err(EditError::NodeNotFound)
+            );
+            assert!(d.definitions().object_names.get(&stranger).is_none());
+        }
     }
 
     #[test]
@@ -11129,6 +11625,9 @@ mod tests {
             prog_id: None,
         }));
         let projection = Chart {
+            chart_retained: Default::default(),
+            namespaces: Default::default(),
+            space_retained: Default::default(),
             object,
             coverage: ChartCoverage::default(),
             title: None,
@@ -11139,6 +11638,7 @@ mod tests {
             display_blanks_as: DisplayBlanks::default(),
             vary_colors: false,
             external_data: None,
+            dirty: false,
         };
         (node, projection)
     }

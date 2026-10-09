@@ -10,12 +10,19 @@
 //! the `clrScheme`, so same-named elements elsewhere cannot leak in.
 //!
 //! Everything the part carries that is neither modeled nor retained is reported
-//! (FID-R-04). The theme part is *regenerated* by the semantic writer, so an
-//! unreported skip here is permanent, invisible loss: `a:objectDefaults`,
-//! `a:extraClrSchemeLst`, `a:custClrLst` and `a:extLst` are dropped, and the
-//! `a:theme`/`a:fontScheme` `@name` attributes are replaced by fixed writer
-//! defaults. A whole-subtree loss is reported once on its outermost element and
-//! its descendants are skipped, so one dropped construct is one finding.
+//! (FID-R-04): `a:objectDefaults`, `a:extraClrSchemeLst`, `a:custClrLst`,
+//! `a:extLst`, and the `a:theme`/`a:fontScheme` `@name` attributes. A
+//! whole-subtree loss is reported once on its outermost element and its
+//! descendants are skipped, so one dropped construct is one finding.
+//!
+//! The part itself is copy-on-write (`109` FID-AT-03): `import_package` keeps
+//! the source bytes beside what they parse to here (`RetainedTheme`), and the
+//! writer emits them unchanged for as long as the model's theme still equals
+//! that. So these findings are `preserved` against the part's own ledger record
+//! (`Reporter::retain_part`), and a save that has to regenerate the theme —
+//! because the model's theme changed — names each of them. A theme owning
+//! relationships of its own is regenerated as it always was, and its findings
+//! stay `not-retained` on the semantic path.
 
 use std::io::Cursor;
 
@@ -129,7 +136,7 @@ pub(crate) fn parse(
                     parser.skip_depth += 1;
                 } else if element.local_name().as_ref() == b"fmtScheme" {
                     parser.begin_capture(&event)?;
-                } else if parser.on_start(element, reporter) == Descend::No {
+                } else if parser.on_start(element, false, reporter) == Descend::No {
                     parser.skip_depth = 1;
                 }
             }
@@ -145,7 +152,7 @@ pub(crate) fn parse(
                 } else {
                     // An empty element opens no subtree, so a `Descend::No`
                     // answer has nothing to skip.
-                    parser.on_start(element, reporter);
+                    parser.on_start(element, true, reporter);
                 }
             }
             Event::End(element) => {
@@ -174,7 +181,15 @@ pub(crate) fn parse(
 }
 
 impl Parser {
-    fn on_start(&mut self, element: &BytesStart<'_>, reporter: &mut Reporter) -> Descend {
+    /// `self_closing` is whether the source wrote `<x/>`: an empty
+    /// `a:extraClrSchemeLst` or `a:objectDefaults` states nothing, and only the
+    /// element can say so (`noop::carries_no_meaning_when`).
+    fn on_start(
+        &mut self,
+        element: &BytesStart<'_>,
+        self_closing: bool,
+        reporter: &mut Reporter,
+    ) -> Descend {
         let local = element.local_name();
         let local = local.as_ref();
         match local {
@@ -268,9 +283,10 @@ impl Parser {
             // Everything else at theme scope: `a:objectDefaults`,
             // `a:extraClrSchemeLst`, `a:custClrLst`, `a:extLst` and any foreign
             // element. None is modeled and none is retained, so each is reported
-            // once and its subtree skipped.
+            // once and its subtree skipped — unless it is the EMPTY form, which
+            // states nothing (the no-op class's conditional half).
             _ => {
-                reporter.report(local);
+                reporter.report_element(local, element, self_closing);
                 Descend::No
             }
         }

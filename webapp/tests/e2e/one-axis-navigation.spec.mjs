@@ -56,6 +56,7 @@ test("the ribbon chrome shows ONE axis: the tab strip, File first, no menu bar",
     "Review",
     "View",
     "Table",
+    "Chart",
   ]);
   expect(consoleErrors).toEqual([]);
 });

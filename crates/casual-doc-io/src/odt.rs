@@ -13,6 +13,8 @@ use crate::{
     FormatId, FormatImporter, FormatProfile, ImportArtifact, ImportRequest, PreservationLedger,
     ProbeRequest, ProbeResult, SourceEnvelope, formats,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::RecoveryReport;
 
 #[derive(Debug)]
 struct OdtSourceState {
@@ -148,6 +150,10 @@ impl FormatImporter for OdtAdapter {
             ),
             report,
             ledger,
+            // This adapter has no best-effort recovery path yet: its importer
+            // still refuses damaged source, so there is nothing it could have
+            // repaired. An empty report is the honest value, not a placeholder.
+            recovery: RecoveryReport::default(),
             format: FormatProfile {
                 format: self.descriptor.id.clone(),
                 version: Some(version),

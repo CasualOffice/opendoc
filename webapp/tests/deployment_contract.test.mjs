@@ -1095,3 +1095,37 @@ test("every workflow action is pinned to a commit SHA, never to a tag", () => {
       "commit SHA with the version in a trailing comment",
   );
 });
+
+test("no workflow cancels an in-flight run on main", () => {
+  // `pages.yml` cancelled unconditionally, so at this repository's merge cadence
+  // every merge killed the previous deploy and `main` collected a row of
+  // `cancelled` runs — two consecutive main commits (`0547fdea`, `03b4a04b`) were
+  // cancelled within the same minute. `ci.yml` had already fixed this for itself
+  // and written down why: "`cancelled` reads as 'not a failure' at a glance, so a
+  // red `browser-smoke` sat on `main` unnoticed while three separate people and
+  // agents each independently re-derived whether it was theirs."
+  //
+  // One rule in two files is how the two drifted, so this asserts the rule rather
+  // than either file: a branch may supersede its own run, `main` may not be
+  // cancelled. A new workflow with a `concurrency` block joins this guard by
+  // existing.
+  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows");
+  const offenders = [];
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".yml"))) {
+    const text = readFileSync(join(dir, name), "utf8");
+    if (!/^concurrency:/m.test(text)) continue;
+    const m = text.match(/^\s*cancel-in-progress:\s*(.+)$/m);
+    if (!m) continue;
+    const value = m[1].trim();
+    if (value === "false") continue;
+    if (value.includes("github.ref != 'refs/heads/main'")) continue;
+    offenders.push(`${name}: cancel-in-progress: ${value}`);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "a workflow cancels in-flight runs without exempting main, so a merge can " +
+      "cancel main's own verdict and the cancellation reads as a failure:\n  " +
+      offenders.join("\n  "),
+  );
+});

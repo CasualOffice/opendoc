@@ -6,7 +6,7 @@ use std::fmt;
 
 use casual_doc_model::v1::Document;
 
-use crate::{CompatibilityReport, FormatId, PreservationLedger};
+use crate::{CompatibilityReport, FormatId, PreservationLedger, RecoveryReport};
 
 /// A concrete format plus its source or emitted profile version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,6 +134,12 @@ pub struct ImportArtifact {
     /// Empty for an adapter that retains nothing: an empty ledger beside a report
     /// with no `preserved` entry is the consistent, honest state.
     pub ledger: PreservationLedger,
+    /// What a best-effort open had to repair in damaged source.
+    ///
+    /// Empty for every well-formed source. A host shows its notice exactly when
+    /// this is non-empty — see [`crate::RecoveryReport`] for why that is a
+    /// separate report from [`ImportArtifact::report`].
+    pub recovery: RecoveryReport,
     /// Detected source format/profile.
     pub format: FormatProfile,
 }

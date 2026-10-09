@@ -134,12 +134,13 @@ export const HOME_FACES = Object.freeze([
   face("#formattingMarksBtn", "view.formattingMarks"),
   chooser("#formattingMarksMenuBtn", "view.formattingMarks."),
   chooser("#stylesTrigger", "style."),
-  // Find and Replace are two faces of ONE command: `#replaceBtn`'s handler is
-  // `findBtn.click()`, and the panel it opens is the same panel with the replace
-  // row focused. Declaring both against `edit.find` says that out loud; declaring
-  // a separate `edit.replace` would be a second name for one dialog.
+  // Find and Replace open ONE panel, but they are two commands, as they are in
+  // Word (Ctrl+F / Ctrl+H) and Google Docs: Replace lands on the replacement
+  // field, and it is the command ⌘H runs. They used to be declared as one, and
+  // that was the whole reason Ctrl+H could not exist — a chord binds to a command
+  // id, and a second chord on `edit.find` could never say "and land on Replace".
   face("#findBtn", "edit.find"),
-  face("#replaceBtn", "edit.find"),
+  face("#replaceBtn", "edit.replace"),
 ]);
 
 /** The View band. `#reviewBtn` is `review.toggle`'s second ribbon face — the
@@ -203,11 +204,24 @@ export const TABLE_FACES = Object.freeze([
   chooser("#tableStyleBtn", "table.style."),
 ]);
 
+/** The contextual Chart band (`chart_surface.mjs`). Edit Data and Chart
+ *  settings run one command each; Type and Elements open choosers over the
+ *  `chart.type.*` and `chart.elements` families, the same command tree the
+ *  right-click menu shows. The style swatches are built at run time and carry
+ *  their own `data-command` (`chart.style.*`). */
+export const CHART_FACES = Object.freeze([
+  face("#chartEditDataBtn", "chart.editData"),
+  face("#chartSettingsBtn", "chart.settings"),
+  chooser("#chartTypeBtn", "chart.type."),
+  chooser("#chartElementsBtn", "chart."),
+]);
+
 /** Every band this module speaks for, by ribbon panel id. */
 export const RIBBON_FACES = Object.freeze({
   panelHome: HOME_FACES,
   panelView: VIEW_FACES,
   panelTable: TABLE_FACES,
+  panelChart: CHART_FACES,
 });
 
 /** Stamps the declarations onto the live controls.

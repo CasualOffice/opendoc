@@ -99,10 +99,34 @@ fn attribute_location(element: &[u8], attribute: &[u8]) -> FeatureLocation {
 /// Holds a `casual_doc_loss::LossReporter` and adds the vocabulary: which byte
 /// slices are classes rather than constructs, which carry no meaning at all, and
 /// how a local name becomes a feature identifier and a bounded location.
+///
+/// It also carries the DOCX reader's recovery policy, which is not a loss
+/// taxonomy concern and so stays out of `casual-doc-loss`.
 #[derive(Debug)]
 pub(crate) struct Reporter {
     inner: LossReporter,
+    /// Whether the parsers reading through this reporter may recover from damage
+    /// instead of refusing ([`crate::ImportConfig::recover`]).
+    ///
+    /// The policy rides the reporter because the reporter is already threaded
+    /// through every parser in the crate, and because the two halves of a repair
+    /// are inseparable: a parser that may recover must also be able to *say* it
+    /// did. Putting the permission anywhere else makes a silent recovery
+    /// expressible, and a silent recovery is the one failure this whole path
+    /// exists to prevent.
+    recovering: bool,
+    /// Repairs applied while reading, in application order. Drained by
+    /// [`Reporter::take_repairs`] and aggregated into a
+    /// [`crate::RecoveryReport`]; bounded by that aggregation, and by
+    /// [`MAX_RECOVERY_REPAIRS`] here so adversarial input cannot grow the vector
+    /// without limit before it is aggregated.
+    repairs: Vec<crate::recovery::Repair>,
 }
+
+/// Ceiling on repairs retained before aggregation. Past it, repairs are counted
+/// but not individually kept; the aggregation's own overflow row carries the
+/// count, so a reader is never told a damaged file was clean.
+const MAX_RECOVERY_REPAIRS: usize = 4_096;
 
 impl Reporter {
     /// A reporter for source whose unconsumed detail is retained as `retention`
@@ -112,7 +136,66 @@ impl Reporter {
     pub(crate) fn new(retention: SourceRetention) -> Self {
         Self {
             inner: LossReporter::new(retention),
+            recovering: false,
+            repairs: Vec::new(),
         }
+    }
+
+    /// Declares that `part` is carried verbatim by a save for as long as the
+    /// model's projection of it is unchanged, under ledger record `record` — see
+    /// `casual_doc_loss::LossReporter::retain_part`.
+    pub(crate) fn retain_part(&mut self, part: &str, record: LedgerId) {
+        self.inner.retain_part(part, record);
+    }
+
+    /// The same reporter, permitted to recover from damage and to record it.
+    pub(crate) fn recovering(retention: SourceRetention) -> Self {
+        Self {
+            recovering: true,
+            ..Self::new(retention)
+        }
+    }
+
+    /// Names the package part the next findings come from — see
+    /// `casual_doc_loss::LossReporter::set_part`. Set by the import driver
+    /// before each part's parser runs, because the parsers are handed bytes and
+    /// cannot know it.
+    pub(crate) fn set_part(&mut self, part: Option<&str>) {
+        self.inner.set_part(part);
+    }
+
+    /// Whether a parser reading through this reporter may recover from damage
+    /// rather than refuse. A parser that answers `true` here **must** record a
+    /// repair for whatever it recovered from.
+    pub(crate) const fn may_recover(&self) -> bool {
+        self.recovering
+    }
+
+    /// Records one repair. Ignored when not recovering, so a call site cannot
+    /// claim a repair on the strict path.
+    pub(crate) fn repair(&mut self, repair: crate::recovery::Repair) {
+        if !self.recovering {
+            return;
+        }
+        if self.repairs.len() < MAX_RECOVERY_REPAIRS {
+            self.repairs.push(repair);
+        }
+    }
+
+    /// Records every repair in `repairs` (the byte-level XML repair pass hands
+    /// back a batch).
+    pub(crate) fn repair_all(
+        &mut self,
+        repairs: impl IntoIterator<Item = crate::recovery::Repair>,
+    ) {
+        for repair in repairs {
+            self.repair(repair);
+        }
+    }
+
+    /// Takes the recorded repairs, leaving the reporter's findings untouched.
+    pub(crate) fn take_repairs(&mut self) -> Vec<crate::recovery::Repair> {
+        std::mem::take(&mut self.repairs)
     }
 
     /// Reports an element the model does not represent.
@@ -217,7 +300,10 @@ impl Reporter {
     /// honest: `preserved` under the retention byte floor, `not-retained` on a
     /// semantic save. `35-DISPOSITION-TAXONOMY.md` records the decision.
     pub(crate) fn report_rsid(&mut self) {
-        self.inner.record(
+        // One class entry per DOCUMENT: the class spans `document.xml`,
+        // `styles.xml` and `settings.xml`, and splitting it by part would undo
+        // the aggregation this method exists for.
+        self.inner.record_unlocated(
             RSID_CLASS_FEATURE.to_owned(),
             FeatureLocation::default(),
             Finding::Omitted,

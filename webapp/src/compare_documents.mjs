@@ -1,116 +1,52 @@
 // Compare this document with another one: the chrome over `casual-doc-diff`.
 //
-// `docs/153` files this as `review.compare-documents`, rank 2, and it is the
-// third of the three capabilities that were fully built and completely
-// unreachable. `crates/casual-doc-diff` is a whole crate — Merkle projection,
-// patience anchoring plus Myers, move detection by hash join, grapheme-cluster
-// word diff, property comparison by serde reflection — and
-// `crates/casual-doc-wasm/src/diff.rs` exposes `beginVersionDiff`, `step`,
-// `result`, `cancel`, `blocksProjected`, `blocksTotal` and `defaultDiffSlice`.
-// `grep -r diffVersions webapp/` returned nothing. `version_panel.mjs` disabled
-// Show changes with a comment saying the structural diff "is not built", which
-// was wrong about which half was missing: the diff was built and the panel was
-// not. `docs/140` §8-13 already carries the accurate wording.
+// ## What a reader gets (ADR-065)
 //
-// ## WHAT "THE OTHER DOCUMENT" IS, decided and recorded
+// Review ▸ Compare (Word's route: pick a file off the disk) shows the two
+// documents' differences ON THE PAGE, read-only: the canvas swaps to a REDLINE —
+// this document with the other one's text struck back in where it was, what is
+// new underlined, moves double-lined at both ends — and the panel becomes a
+// plain list of those changes, each one a button that takes the reader to it.
+// Nothing in the reader's document changes until they press "Keep as tracked
+// changes", which applies the same comparison to it through ADR-061's
+// `applyDiffAsRevisions` (one undo step, refused on a document that already
+// carries tracked changes, and the refusal says why).
 //
-// The two references answer this differently and both answers are right, so both
-// ship, each where its own reference puts it:
+// ## Why this replaced what was here
 //
-//   * **Word's Review ▸ Compare** takes two documents off the disk. That is
-//     `review.compare` on the Review band and in the Review menu: pick a file,
-//     and it is compared against the document on screen.
-//   * **Google Docs' version history** compares a stored version with the
-//     current document — their "Show changes" checkbox. That is the version
-//     panel's own `version.changes` row, which hands this module the checkpoint's
-//     bytes.
+// The panel used to be a REPORT: a count, six category totals, an "unmarked"
+// list, findings, and a block-level unified diff of one-line rows in a 252px
+// column — while the comparison itself had already been written into the
+// reader's document as tracked changes, which no reference does on Compare's
+// first click and which a document with suggestions in it refused outright.
+// Every entry was jargon ("<Block>", "Property changed", `spacing.beforeTwips`)
+// and a removed paragraph could not be shown at all, because a tracked change
+// cannot add a paragraph. The redline can (`DiffChange::place`), so the page is
+// now the report and the panel is its index — Word's "compare into a new
+// document" and Google's version history, which are the same picture.
 //
-// One engine call serves both, because a comparison is two byte arrays and
-// nothing else (`diff.rs`: the facade "references nothing in the live session").
+// The loss reports are still here, under "What isn't highlighted": a difference
+// the page cannot mark (a page-setup change, a header, a picture in a removed
+// paragraph) is SAID, never silently dropped (`AGENTS.md`).
 //
-// ## THE DIFF IS ON THE CANVAS — ADR-061 (`docs/158`)
+// ## Which side is which
 //
-// A comparison is **applied to the open document as tracked changes**, through the
-// revision model that already existed, and read with the review surface that
-// already existed. `docs/158` measured all three references and found that none of
-// them presents a comparison as a count — ONLYOFFICE mutates the open document,
-// setting `reviewtype_Add`/`reviewtype_Remove` on runs with an author and a date
-// (`Comparison.js:3864`, `:179`), and its Compare button sits on the Review band
-// beside Accept, Reject, Previous and Next, which is the admission that a diff IS
-// review markup.
+// By default the other document is the older side and this one the newer, so
+// "added" means "this document has it": review's orientation, and the only one
+// "Keep as tracked changes" can apply to this document. "Swap order" reverses
+// it — "what did they change in the copy they sent back?" — and hides Keep,
+// because the result then describes the other file, not this one.
 //
-// So `compareWith` hands the sidecar to `applyDiffAsRevisions(sidecar, author,
-// date)` and turns `setShowChanges` on. Every downstream surface then inherits the
-// comparison with no further chrome: the author-coloured underline and
-// strikethrough on the canvas, `listRevisions`, the review gutter, accept/reject
-// per change and in bulk, next/previous, and `w:ins`/`w:del` on export. ONE
-// `Operation::UpdateReviewState` under `HistoryKind::Review`, so the whole
-// comparison is one undo step.
+// ## Where it runs
 //
-// The panel is the INDEX of that, in Google Docs' role — not the report. It says
-// how many differences are now tracked changes, names each one's object, and says
-// how to walk them; the differences themselves are read in the document.
+// On the main thread, in slices (`runComparison`), with progress and a Cancel —
+// `diff.rs` says at length why there is no Worker yet. The budget is BLOCKS, and
+// the engine owns the starting number (`defaultDiffSlice`).
 //
-// ## THREE THINGS THE PANEL MUST SAY, and why each is not optional
-//
-//   1. **A REFUSAL, in its own words.** Four coded refusals can come back
-//      (`REFUSAL_KEY`), and `compare.document-has-revisions` is the one a reader
-//      will actually meet. It is a DELIBERATE refusal, not a shortfall: one
-//      `reviewType` field cannot carry both "a person suggested this" and "a
-//      comparison computed this" without the two deciding each other, and
-//      ONLYOFFICE resolves that by accepting every existing change first
-//      (`Comparison.js:3910-3921`). Destroying a reviewer's suggestions to run a
-//      comparison is the loss `AGENTS.md` puts first, so we refuse — and the
-//      sentence says so rather than apologising.
-//   2. **WHAT COULD NOT BE MARKED** (`UNMARKED_KEY`). `EditResult.pasteLoss` names
-//      every difference the comparison found and tracked changes cannot express: a
-//      whole block only the other document has, a move's far half, a story outside
-//      the body, removed text the record carries only as an excerpt, and a
-//      comparison that stopped short of exhaustive. A comparison that silently
-//      applied nine of twelve changes and reported success is the worst outcome
-//      available, so the report is rendered, unknown keys included.
-//   3. **HOW TO WALK THEM.** Review ▸ Next / Previous, Accept and Reject. Which is
-//      the honest answer to the one part of ADR-061 that is still blocked below.
-//
-// ## WHAT IS STILL BLOCKED: clicking an entry cannot scroll to its change
-//
-// Not on effort. `diff.rs` imports BOTH sides freshly and this module's own
-// right-hand side is `comparableBytes(doc, …)`, a re-export of the live document,
-// so `right.node` belongs to a throwaway parse whose id counter restarted at 1.
-// Only `right.path` survives, and the facade exposes no `path → NodeId` resolver:
-// `blockIndexOf` is the inverse, `documentOutline` covers only headings.
-// `navigateToReviewAnchor` takes `{node, start, end}` — a byte-for-byte match for
-// `DiffAnchor` — so handing it one would silently scroll to an unrelated paragraph
-// holding the same ordinal id, which is worse than not navigating.
-//
-// The resolver itself EXISTS in Rust and is what makes this feature work:
-// `casual_doc_diff::projection::block_at_path(document, story, path)` reuses the
-// walk that produced the path, so the producer and the resolver cannot disagree
-// about `Sdt` wrappers or `AltChunk`. `applyDiffAsRevisions` calls it. What is
-// missing is only a wasm-exposed `nodeAtStoryPath(story, path) -> String` over it,
-// which is a `crates/` change. Until then the panel points at Review's own
-// next/previous, which navigates the revisions the comparison just wrote — the
-// same destination by a route that cannot land on the wrong paragraph.
-//
-// ## WHERE IT RUNS
-//
-// On the main thread, in slices. `diff.rs` says why at length: there is not one
-// `new Worker` in this tree, the wasm module is instantiated once by `main.js`
-// and holds the live document, and sharing that memory needs
-// `SharedArrayBuffer`, which needs COOP/COEP headers GitHub Pages cannot send. A
-// separate instance in a worker needs no shared memory and is the right home —
-// which is exactly why the facade takes bytes and returns JSON. Until then the
-// host drives it between frames, as `background_measure.mjs` already measures a
-// long document, and `cancel()` stops it at the next slice boundary.
-//
-// The budget is BLOCKS, not milliseconds, and the engine owns the starting
-// number (`defaultDiffSlice`) so a figure typed into this file cannot drift from
-// what a unit of its work costs.
-//
-// Pure except where it cannot be: the comparison DRIVER takes its engine, its
-// scheduler and its clock as arguments, so the whole of "parse two documents in
-// slices, report progress, cancel at a boundary" is drivable from node without a
-// browser. The DOM half is `bindComparePanel` at the bottom.
+// Pure except where it cannot be: the driver takes its engine, scheduler and
+// clock as arguments, so "parse two documents in slices, report progress, cancel
+// at a boundary" is drivable from node. The DOM half is `bindComparePanel`.
+import { createChangeNavigator, entryLabel, entryText, redlineEntries } from "./diff_canvas.mjs";
 import { editRefusalMessage } from "./edit_errors.mjs";
 import { n, t } from "./i18n.mjs";
 
@@ -268,6 +204,7 @@ export const NO_ANSWER = new Set([EXHAUSTED, COMPLETE]);
 export async function runComparison(io) {
   const job = io.begin();
   const budget = io.slice();
+  let retained = false;
   try {
     for (let slices = 0; slices < MAX_SLICES; slices += 1) {
       if (io.cancelled?.()) {
@@ -292,6 +229,15 @@ export async function runComparison(io) {
       if (phase === COMPLETE) {
         const json = job.result();
         if (!json) return { ok: false, reason: COMPLETE };
+        // RETAINED ONLY WHEN ASKED. The handle owns the two parsed sides, which
+        // is what `blockTextAt` reads a unified diff's context from, so a caller
+        // that wants context takes ownership of the handle and must `free()` it
+        // — the `finally` below is skipped for exactly that case. A caller that
+        // wants only the sidecar passes nothing and pays what it always paid.
+        if (io.retain) {
+          retained = true;
+          return { ok: true, diff: JSON.parse(json), sidecar: json, job };
+        }
         return { ok: true, diff: JSON.parse(json), sidecar: json };
       }
       // GIVE THE THREAD BACK between slices. Without this the loop is one long
@@ -304,30 +250,67 @@ export async function runComparison(io) {
     job.cancel();
     return { ok: false, reason: EXHAUSTED };
   } finally {
-    job.free?.();
+    if (!retained) job.free?.();
   }
 }
 
-/** The families, in the order the panel groups them.
+/**
+ * Compares `older` with `newer` and paints the result into a throwaway copy of
+ * `newer`.
  *
- *  Reading order of a document rather than alphabetical: what moved, then what
- *  the words say, then how they look, then the structures around them, then the
- *  things beside them. A reader scanning a comparison is asking "what actually
- *  changed" and the answer they want first is never "metadata". */
-export const FAMILY_ORDER = Object.freeze([
-  "block",
-  "text",
-  "formatting",
-  "style",
-  "table",
-  "object",
-  "section",
-  "definition",
-  "resource",
-  "comment",
-  "review",
-  "metadata",
-]);
+ * The copy is opened from `newer`'s own bytes, so it is the comparison's newer
+ * side by construction — the engine checks that rather than trusting it. The
+ * reader's document is never read or written: both sides are byte arrays the
+ * caller already held.
+ *
+ * Ownership: on success the caller owns `view` and must `free()` it; on every
+ * other path nothing is left allocated.
+ *
+ * Complexity: O(both documents) to parse and compare, in slices that yield to
+ * the host between them (`runComparison`), then one O(newer) open and one
+ * O(changes) paint. Never O(document) per interaction.
+ *
+ * @param {object} io
+ * @param {{begin: Function, slice: Function, open: Function}} io.engine
+ * @param {Uint8Array} io.older
+ * @param {Uint8Array} io.newer
+ * @param {string} io.author who the changes are attributed to (their colour).
+ * @param {string} io.date ISO stamp; with `author`, what marks THIS comparison.
+ * @param {() => Promise<void>} io.yieldToHost
+ * @param {(progress: object) => void} [io.onProgress]
+ * @param {() => boolean} [io.cancelled]
+ * @returns {Promise<{ok: true, view: object, diff: object, sidecar: string, summary: object}
+ *   | {ok: false, reason: string}>}
+ */
+export async function buildRedline(io) {
+  const outcome = await runComparison({
+    // Older LEFT, newer RIGHT: review's orientation, so an insertion is what the
+    // newer side has. Reversed, every addition would read as a removal.
+    begin: () => io.engine.begin(io.older, io.newer),
+    slice: () => io.engine.slice(),
+    yieldToHost: io.yieldToHost,
+    onProgress: io.onProgress,
+    cancelled: io.cancelled,
+    // The painted view reads the older side's removed paragraphs from the job,
+    // so the handle outlives the comparison until the paint is done.
+    retain: true,
+  });
+  if (!outcome.ok) return outcome;
+  let view = null;
+  try {
+    if (io.cancelled?.()) return { ok: false, reason: CANCELLED };
+    view = io.engine.open(io.newer);
+    const summary = JSON.parse(view.showComparison(outcome.job, io.author, io.date));
+    const done = { ok: true, view, diff: outcome.diff, sidecar: outcome.sidecar, summary };
+    view = null;
+    return done;
+  } catch (error) {
+    return { ok: false, reason: String(error?.message ?? error) };
+  } finally {
+    outcome.job?.free?.();
+    view?.free?.();
+  }
+}
 
 /** Family and kind -> catalogue key, WRITTEN OUT.
  *
@@ -372,168 +355,6 @@ export const FINDING_KEY = Object.freeze({
   missing_resource: "compare.finding.missingResource",
   truncated: "compare.finding.truncated",
 });
-
-/** The six kinds, in review's own vocabulary — which `record.rs` says is
- *  deliberate: "these strings are the ones review already uses". */
-export const KIND_KEY = Object.freeze({
-  insertion: "compare.kind.insertion",
-  deletion: "compare.kind.deletion",
-  move_from: "compare.kind.move_from",
-  move_to: "compare.kind.move_to",
-  formatting: "compare.kind.formatting",
-  property: "compare.kind.property",
-});
-
-/**
- * The sidecar, shaped for the panel.
- *
- * Pure. Takes the parsed JSON and returns counts plus a flat, ordered row list —
- * so what the panel renders is decided here, where a unit test can read it,
- * rather than inside a DOM loop.
- *
- * Complexity: O(changes), one pass plus one sort. A comparison that produced
- * 100,000 changes would cost one pass over them and no document walk, because
- * every anchor the engine returns is already resolved.
- */
-export function summariseDiff(diff) {
-  const changes = Array.isArray(diff?.changes) ? diff.changes : [];
-  const byFamily = new Map();
-  for (const change of changes) {
-    byFamily.set(change.family, (byFamily.get(change.family) ?? 0) + 1);
-  }
-  const rank = new Map(FAMILY_ORDER.map((family, index) => [family, index]));
-  // A family the engine grows and this list has not heard of sorts LAST rather
-  // than being dropped. Silently omitting an unknown family is how a comparison
-  // comes to report fewer changes than it found.
-  const unknown = FAMILY_ORDER.length;
-  return {
-    total: changes.length,
-    complete: diff?.complete === true,
-    leftBlocks: diff?.left?.blocks ?? 0,
-    rightBlocks: diff?.right?.blocks ?? 0,
-    findings: Array.isArray(diff?.findings) ? diff.findings : [],
-    families: [...byFamily.entries()]
-      .sort((a, b) => (rank.get(a[0]) ?? unknown) - (rank.get(b[0]) ?? unknown))
-      .map(([family, count]) => ({ family, count })),
-    rows: [...changes].sort(
-      (a, b) => (rank.get(a.family) ?? unknown) - (rank.get(b.family) ?? unknown),
-    ),
-  };
-}
-
-/** The story a change is in, as a sentence. `null` for the body, because saying
- *  "in the body" on every row of a body-only comparison is noise. */
-export function storyLabel(story) {
-  switch (story?.kind) {
-    case "header":
-      return t("compare.story.header", { section: n((story.section ?? 0) + 1) });
-    case "footer":
-      return t("compare.story.footer", { section: n((story.section ?? 0) + 1) });
-    case "footnote":
-      return t("compare.story.footnote", { number: n((story.index ?? 0) + 1) });
-    case "endnote":
-      return t("compare.story.endnote", { number: n((story.index ?? 0) + 1) });
-    case "comment":
-      return t("compare.story.comment");
-    case "definitions":
-      return t("compare.story.definitions");
-    default:
-      return null;
-  }
-}
-
-/** The TEXT a change is about, or `""`.
- *
- *  An insertion has only a right side and a deletion only a left, so this is not
- *  "prefer one": it is "whichever side exists", and a property change has
- *  neither, which is why the field list carries that row instead. */
-export function changeText(change) {
-  const text = change.kind === "deletion" ? change.leftText : change.rightText;
-  return String(text ?? change.leftText ?? change.rightText ?? "");
-}
-
-/**
- * WHAT A ROW IS ABOUT, when it is not about text.
- *
- * Measured in Chromium on 2026-10-04: bold one word and compare, and three of
- * the four rows name nothing at all.
- *
- *   <li data-compare-kind="formatting"><span class="compare-kind">Reformatted</span></li>
- *   <li data-compare-kind="property" data-compare-change-family="object">
- *     <span class="compare-kind">Property changed</span></li>
- *   <li data-compare-kind="property" data-compare-change-family="section">
- *     <span class="compare-kind">Property changed</span>
- *     <span class="compare-where">in the document's definitions</span></li>
- *
- * "Reformatted." That is the whole entry. The owner's words on this surface were
- * "what the fuck will i understand from this", and they are literally correct:
- * the row says a change happened and refuses to say what changed.
- *
- * `changeText`'s own doc comment already says where the answer lives — "a
- * property change has neither, which is why the field list carries that row
- * instead" — and `renderResult` never rendered `change.fields`. The intention was
- * written down and not implemented, which is why reading the code made the surface
- * look finished. `fields` is reflected from the model type's own serde names
- * (`record.rs`), so it is exactly the typed path that differs: `alignment`,
- * `spacing.beforeTwips`, `inlineObject`, `revision`, `story`, `runBoundary`.
- *
- * THE PATHS ARE SHOWN VERBATIM, and that is a decision rather than laziness. They
- * are engine identifiers, not prose, and this module has an established rule for
- * exactly that case: an unknown family and an unknown finding code both render
- * with their own name rather than blank, because a name a reader can search for
- * beats a sentence that says nothing. A hand-written English phrase per model
- * field would be a second place to update and the first to rot, and it would
- * silently omit every field added to the model after it was written.
- *
- * O(fields) over a list the engine bounds per change.
- */
-export function changeFields(change) {
-  const fields = Array.isArray(change?.fields) ? change.fields : [];
-  return fields.filter((field) => typeof field === "string" && field.length > 0);
-}
-
-/** The bracketed name for a row with no text and no typed fields.
- *
- *  ONLYOFFICE's convention, and a deliberate partial match to it. Theirs reads
- *  `<Image>`, `<Shape>`, `<Chart>` or `<Equation>`; ours can only be as specific
- *  as the sidecar, and the sidecar's `DiffFamily` does not distinguish a picture
- *  from a shape from a chart — `family_of` in `casual-doc-diff/src/job.rs` maps a
- *  row or cell to `table` and EVERYTHING ELSE to `block`. So a deleted
- *  image-only paragraph is `<Block>` here and `<Image>` there.
- *
- *  That gap is the engine's and is reported as such rather than guessed at: the
- *  comparison would have to tag an untexted block with its construct for us to
- *  say "Image". Printing `<Image>` on a `block` row because images are the
- *  commonest untexted block would be the fabrication this repository has
- *  published twice (SKILL §9).
- *
- *  Enumerated over every family rather than defaulted, per SKILL §9.3 — absence
- *  from a matrix is an overstatement by omission — and
- *  `compare_documents.test.mjs` fails if a family the engine can report has no
- *  entry here. O(1). */
-export const OBJECT_KEY = Object.freeze({
-  block: "compare.object.block",
-  text: "compare.object.text",
-  formatting: "compare.object.formatting",
-  style: "compare.object.style",
-  table: "compare.object.table",
-  object: "compare.object.object",
-  section: "compare.object.section",
-  definition: "compare.object.definition",
-  resource: "compare.object.resource",
-  comment: "compare.object.comment",
-  review: "compare.object.review",
-  metadata: "compare.object.metadata",
-});
-
-/** The bracketed object name for a change, or `""` when the family is unknown to
- *  this build — in which case the raw family name is shown instead, by the same
- *  rule the rest of this module follows. O(1). */
-export function changeObjectName(change) {
-  const family = String(change?.family ?? "");
-  if (!family) return "";
-  return OBJECT_KEY[family] ? t(OBJECT_KEY[family]) : `<${family}>`;
-}
 
 /** `applyDiffAsRevisions`' coded refusals -> catalogue key.
  *
@@ -591,14 +412,14 @@ function routeCompareRefusal(code) {
  *  exists to prevent. Two vocabularies, two mappings; the mechanism they share is
  *  "stable key in, localised noun out, unknown keys still shown".
  *
- *  **Twelve of the twenty-two keys are the engine's `DiffFamily` names**
- *  (`family_loss_key`), reported when a family has no inline revision form at all
- *  — `RevisionKind` is Insertion/Deletion/MoveFrom/MoveTo and nothing else, so a
- *  formatting, style, section, definition, resource, comment or metadata
- *  difference cannot be EXPRESSED however faithfully it was detected. Those route
- *  through `OBJECT_KEY`, which already names all twelve in all nineteen
- *  catalogues: a thirteenth noun for `formatting` would be a second spelling of
- *  one thing in one panel.
+ *  **Twelve more keys are the engine's `DiffFamily` names** (`family_loss_key`),
+ *  reported when a family has no inline revision form at all — `RevisionKind` is
+ *  Insertion/Deletion/MoveFrom/MoveTo and nothing else, so a formatting, style,
+ *  section, definition, resource, comment or metadata difference cannot be
+ *  EXPRESSED however faithfully it was detected. Those are said with the
+ *  family's own counted sentence (`FAMILY_KEY`: "Formatting changes: 3"), which
+ *  is what a reader can act on — the bracketed object nouns this used to print
+ *  ("<Formatting>") were the jargon ADR-065 removed.
  *
  *  `otherStory` is here because the engine applies a comparison to the BODY only,
  *  deliberately: the right-hand side is a re-export of this document, so a body
@@ -625,7 +446,7 @@ export const UNMARKED_KEY = Object.freeze({
   nonParagraphBlock: "compare.unmarked.notMarkable",
   notParagraphText: "compare.unmarked.notMarkable",
   insertionNotText: "compare.unmarked.notMarkable",
-  ...OBJECT_KEY,
+  removedObject: "compare.unmarked.removedObject",
 });
 
 /**
@@ -650,21 +471,31 @@ export const UNMARKED_KEY = Object.freeze({
  *
  * O(keys).
  *
- * @param {readonly string[] | undefined | null} keys `EditResult.pasteLoss`.
+ * @param {readonly string[] | undefined | null} keys `EditResult.pasteLoss`, or
+ *   a redline summary's `unmarked`.
+ * @param {object} [diff] the sidecar, whose `familyCounts` give a family key its
+ *   count.
  * @returns {{key: string, label: string}[]}
  */
-export function unmarkedReasons(keys) {
+export function unmarkedReasons(keys, diff = null) {
   if (!Array.isArray(keys)) return [];
+  const counts = new Map(Array.isArray(diff?.familyCounts) ? diff.familyCounts : []);
   const rows = [];
   const seen = new Set();
   for (const raw of keys) {
     const key = String(raw ?? "");
     if (!key) continue;
-    const catalogue = UNMARKED_KEY[key];
+    const family = FAMILY_KEY[key];
+    const catalogue = family ?? UNMARKED_KEY[key];
     const dedupe = catalogue ?? `raw:${key}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    rows.push({ key, label: catalogue ? t(catalogue) : key });
+    const label = family
+      ? t(family, { count: n(counts.get(key) ?? 0) })
+      : catalogue
+        ? t(catalogue)
+        : key;
+    rows.push({ key, label });
   }
   return rows;
 }
@@ -675,47 +506,52 @@ export function unmarkedReasons(keys) {
  * @param {object} io
  * @param {() => object|null} io.doc the live document.
  * @param {() => Uint8Array|null} io.currentBytes this document, exported.
- * @param {object} io.engine `{ begin, slice }` — the two wasm free functions.
+ * @param {(io: object) => Promise<object>} io.redline `buildRedline`, bound to
+ *   the engine: `{older, newer, author, date, onProgress, cancelled}`.
+ * @param {(view: object|null) => Promise<void>} io.showView puts a redline on
+ *   the canvas read-only, or (with `null`) gives the canvas back to the live
+ *   document.
+ * @param {() => Promise<void>} [io.beforeView] lets another borrower of the
+ *   canvas (a version preview) let go first, and BEFORE the export — or the
+ *   export would be of the preview.
  * @param {() => Promise<void>} io.yieldToHost
  * @param {(text: string, kind?: string) => void} io.setStatus
  * @param {() => boolean} io.allowed whether the host granted what this needs.
  * @param {string} io.refusedReason what to say when it did not.
- * @param {(res: object) => Promise<void>} [io.landed] ADR-061's one new seam:
- *   repaint, turn the markup view on, re-render the review gutter — in that
- *   order, for an `EditResult` this module has already read `pasteLoss` off.
- *   OPTIONAL, and absence is not a second code path: a composition that withheld
- *   it (no review chrome) gets the index with no "now tracked changes" claim on
- *   it, which is the one sentence that would be false there.
+ * @param {(res: object) => Promise<void>} [io.landed] ADR-061's seam for
+ *   "Keep as tracked changes": repaint, markup on, gutter. Absent (a composition
+ *   without review chrome), Keep is not offered.
  * @param {() => string} [io.blockedReason] the sentence for a mutation the host
- *   blocks before the engine sees it (Viewing mode), or `""`. A comparison WRITES
- *   revisions, so it is a mutation and goes through that gate like every other.
+ *   blocks before the engine sees it (Viewing mode), or `""`. Keep WRITES
+ *   revisions, so it goes through that gate like every other mutation; viewing
+ *   the comparison does not.
  * @param {() => string} [io.readOnlyReason] the engine's own
  *   `editingUnavailableReason`, for a document no edit can ever apply to.
+ * @param {(anchor: {node: string, start: number, end: number}) => unknown} io.navigate
+ *   takes the reader to one change on the redline.
  */
 export function bindComparePanel(io) {
   const panel = document.getElementById("comparePanel");
   const body = document.getElementById("compareBody");
   const fileInput = document.getElementById("compareFile");
-  // BOTH faces of `review.compare`, owned here. The Review band's button and the
-  // rail's entry are one command, so one thing owns both their clicks and both
-  // their pressed states — the argument `version_panel.mjs` makes for its own
-  // pair: two owners of one button is how a control comes to say one thing and do
-  // another, and two buttons for one command with two owners is that twice. Their
-  // DISABLED state is the surface table's, which is why the row declares
-  // `ownsClick` and lists both.
+  // BOTH faces of `review.compare`, owned here: one command, one owner of both
+  // clicks and both pressed states. Their DISABLED state is the surface
+  // table's, which is why the row declares `ownsClick` and lists both.
   const entryPoints = [
     document.getElementById("reviewCompareBtn"),
     document.getElementById("railCompare"),
   ].filter(Boolean);
   if (!panel || !body || !fileInput || entryPoints.length === 0) {
     // No surface in this composition — an embed built without the Compare panel.
-    // `compareWith: null` is what the version panel's Show changes row tests, so
-    // it reports the capability as unavailable rather than throwing on click.
-    return { open: () => {}, compareWith: null };
+    return { open: () => {}, compareWith: null, closeView: async () => {} };
   }
 
   let cancelled = false;
   let running = false;
+  /** The redline on the canvas, owned here until it is given back. */
+  let view = null;
+  /** The comparison on screen: both byte arrays, so Swap needs no re-export. */
+  let current = null;
 
   function setOpen(open) {
     panel.hidden = !open;
@@ -733,36 +569,28 @@ export function bindComparePanel(io) {
     return element;
   }
 
+  function actionButton(text, action, run, primary = false) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = primary ? "dialog-button dialog-button-primary" : "dialog-button";
+    button.dataset.compareAction = action;
+    button.textContent = text;
+    button.addEventListener("click", run);
+    return button;
+  }
+
   /** The chooser: what to compare against. Word's Compare dialog in one panel. */
   function renderChooser() {
-    const choose = document.createElement("button");
-    choose.type = "button";
-    choose.className = "dialog-button dialog-button-primary";
-    choose.dataset.compareAction = "choose-file";
-    choose.textContent = t("compare.chooseFile");
+    const choose = actionButton(t("compare.chooseFile"), "choose-file", () => fileInput.click(), true);
     choose.disabled = !io.allowed();
     if (!io.allowed()) choose.title = io.refusedReason;
-    choose.addEventListener("click", () => fileInput.click());
-    render([
-      paragraph(t("compare.intro"), "muted"),
-      choose,
-      // Said up front, not discovered afterwards — and it now says what ADR-061
-      // decided rather than what the previous shape could manage. Word and Google
-      // Docs build a merged THIRD document; we mutate the open one, which is
-      // ONLYOFFICE's answer, and the difference is visible to the reader the
-      // moment they pick a file. It is also the warning that matters: this writes
-      // tracked changes into the document on screen.
-      paragraph(t("compare.writesTrackedChanges"), "muted"),
-    ]);
+    // Said up front: the differences are SHOWN, and nothing is written into this
+    // document unless the reader keeps them.
+    render([paragraph(t("compare.intro"), "muted"), choose, paragraph(t("compare.showsOnPage"), "muted")]);
   }
 
   function renderProgress(progress) {
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "dialog-button";
-    cancel.dataset.compareAction = "cancel";
-    cancel.textContent = t("compare.cancel");
-    cancel.addEventListener("click", () => {
+    const cancel = actionButton(t("compare.cancel"), "cancel", () => {
       cancelled = true;
     });
     // Indeterminate until the SECOND side has been parsed, because
@@ -781,23 +609,19 @@ export function bindComparePanel(io) {
     ]);
   }
 
-  /** The loss reports, as elements — empty when there are none.
-   *
-   *  `record.rs` aggregates these on purpose (one row per construct, with a
-   *  count), so a document with forty thousand drawings produces one line. The
-   *  engine does that work precisely so a host can SAY what it could not compare,
-   *  and collecting them without rendering them would be the silent loss `SKILL`
-   *  §12 forbids. */
-  function findingNotes(summary) {
-    if (summary.findings.length === 0) return [];
+  /** WHAT COULD NOT BE COMPARED, as elements — empty when there is nothing.
+   *  `record.rs` aggregates these (one row per construct, with a count), so the
+   *  engine did that work precisely so a host could SAY it. */
+  function findingNotes(diff) {
+    const findings = Array.isArray(diff?.findings) ? diff.findings : [];
+    if (findings.length === 0) return [];
     const notes = document.createElement("ul");
     notes.className = "compare-list";
-    for (const finding of summary.findings) {
+    for (const finding of findings) {
       const item = document.createElement("li");
       item.dataset.compareFinding = finding.code;
       const key = FINDING_KEY[finding.code];
-      // An unknown code still SHOWS, with its own name and count: a loss report
-      // dropped because this build has no sentence for it is the defect twice.
+      // An unknown code still SHOWS, with its own name and count.
       item.textContent = key
         ? t(key, { construct: finding.construct, count: finding.count })
         : `${finding.construct}: ${finding.code} (${n(finding.count)})`;
@@ -806,16 +630,11 @@ export function bindComparePanel(io) {
     return [paragraph(t("compare.findingsTitle"), "muted"), notes];
   }
 
-  /** WHAT THE COMPARISON FOUND AND COULD NOT MARK, as elements.
-   *
-   *  Rendered above the index and below the "now tracked changes" sentence,
-   *  because that sentence is a claim about the document and this is its
-   *  qualification: a reader who is told nine differences are in the document
-   *  needs to know in the same breath that three of twelve are not. The engine
-   *  computed the report so a host could say it; collecting it and not rendering
-   *  it is the silent loss `AGENTS.md` puts first. */
-  function unmarkedNotes(loss) {
-    const rows = unmarkedReasons(loss);
+  /** WHAT WAS FOUND AND COULD NOT BE MARKED, as elements — empty when nothing.
+   *  Collecting the report and not rendering it is the silent loss `AGENTS.md`
+   *  puts first, so an unknown key still shows by its own name. */
+  function unmarkedNotes(loss, diff) {
+    const rows = unmarkedReasons(loss, diff);
     if (rows.length === 0) return [];
     const notes = document.createElement("ul");
     notes.className = "compare-list";
@@ -828,128 +647,179 @@ export function bindComparePanel(io) {
     return [paragraph(t("compare.unmarkedTitle"), "muted"), notes];
   }
 
-  function renderResult(summary, otherName, applied = null) {
-    const children = [
-      paragraph(t("compare.against", { name: otherName })),
-    ];
-    // "No differences" is a CLAIM, and it is only honest when the comparison
-    // actually compared everything. A document whose drawings this build has no
-    // typed comparison for can produce zero changes and a `not_compared`
-    // finding — saying "No differences" there would tell a reader the two files
-    // agree about something the engine never looked at. So the finding wins, and
-    // the sentence becomes "no differences in what could be compared".
-    if (summary.total === 0) {
-      children.push(
-        paragraph(summary.findings.length > 0 ? t("compare.identicalPartly") : t("compare.identical")),
-      );
-      if (summary.findings.length > 0) children.push(...findingNotes(summary));
-      render(children);
+  /** Gives the canvas back to the live document and frees the redline.
+   *  Idempotent: closing the panel, a new comparison, Keep, a version preview
+   *  and opening another file all reach it. */
+  async function closeView() {
+    if (!view) return;
+    const closing = view;
+    view = null;
+    await io.showView(null);
+    closing.free?.();
+  }
+
+  /** Runs `current` in its current orientation and puts the redline on screen. */
+  async function show() {
+    const { other, mine, otherName, swapped } = current;
+    const older = swapped ? mine : other;
+    const newer = swapped ? other : mine;
+    // The changes are attributed to the OTHER document either way — ADR-061's
+    // author, so Keep paints them in the same colour the view did.
+    const author = String(otherName ?? "").trim().slice(0, 80) || t("compare.author");
+    const date = new Date().toISOString();
+    renderProgress({ phase: PARSING, done: 0, total: 0 });
+    const result = await io.redline({
+      older,
+      newer,
+      author,
+      date,
+      onProgress: renderProgress,
+      cancelled: () => cancelled,
+    });
+    if (!result.ok) {
+      if (result.reason === CANCELLED) {
+        render([paragraph(t("compare.cancelled"), "muted")]);
+        return;
+      }
+      // `NO_ANSWER` is this module's own vocabulary, not English; anything else
+      // is a sentence the engine wrote about one of the documents.
+      const message = NO_ANSWER.has(result.reason)
+        ? t("compare.noAnswer")
+        : t("compare.failed", { reason: result.reason });
+      render([paragraph(message, "muted")]);
+      io.setStatus(message, "error");
       return;
     }
-    // THE ANSWER FIRST, and it is a sentence about the DOCUMENT rather than a
-    // number about the panel. ADR-061: the differences are tracked changes now,
-    // so the reader's next move is to read the document, and the second sentence
-    // says which controls walk them — Review's own next/previous, which navigate
-    // the revisions the comparison just wrote.
-    //
-    // Only when a comparison was actually applied. A refusal renders its own
-    // sentence instead and never reaches here, and a composition with no
-    // `applyAsRevisions` gets the index alone: claiming a document holds tracked
-    // changes it does not hold is the overstatement SKILL §9 exists for.
-    if (applied) {
-      const marked = document.createElement("p");
-      // The count stays an ATTRIBUTE here and a sentence one line down: see
-      // `compare.marked`, which lost its `{count}` after rendering "1
-      // differences". A guard still reads the number off this.
-      marked.dataset.compareMarked = String(summary.total);
-      marked.textContent = t("compare.marked");
-      children.push(marked, paragraph(t("compare.reviewNav"), "muted"));
-      children.push(...unmarkedNotes(applied.loss));
-    }
-    const total = document.createElement("p");
-    total.dataset.compareTotal = String(summary.total);
-    total.textContent = t("compare.changeCount", { count: summary.total });
-    children.push(total);
-    // CORRECTED 2026-10-04, and the comment it replaces was wrong about the
-    // engine. It said "`complete: false` only happens on a cancelled job, which
-    // this code never renders". `record.rs` says the opposite in as many words:
-    // `complete` is "**False whenever `findings` is non-empty**". So every
-    // ordinary comparison that met one construct this build has no typed
-    // comparison for was being labelled with "This comparison did not finish, so
-    // the list below is incomplete" — measured on bolding one word in the demo
-    // document, which produces one `not_compared` finding for an inline object.
-    //
-    // A comparison that finished and skipped something is not a comparison that
-    // did not finish, and telling a reader their comparison broke when it did not
-    // is the fastest way to make a working surface untrustworthy. The sentence now
-    // says what the flag means, and the findings list immediately below says which
-    // constructs. A genuinely interrupted job is the `CANCELLED` branch in
-    // `compareWith` and has its own sentence.
-    if (!summary.complete) children.push(paragraph(t("compare.partial"), "muted"));
-    const list = document.createElement("ul");
-    list.className = "compare-list";
-    for (const { family, count } of summary.families) {
+    const entries = redlineEntries(JSON.parse(result.view.listRevisions()), result.diff, result.summary, {
+      author,
+      date,
+    });
+    await closeView();
+    view = result.view;
+    await io.showView(view);
+    current.result = result;
+    renderView(entries, author);
+  }
+
+  /** The panel while a redline is on the canvas: what is compared with what,
+   *  "3 of 12" with previous/next, the list, and the three ways on. */
+  function renderView(entries, author) {
+    const { otherName, swapped, result } = current;
+    const mineName = t("compare.thisDocument");
+    const heading = paragraph(
+      t("compare.changesFrom", {
+        older: swapped ? mineName : otherName,
+        newer: swapped ? otherName : mineName,
+      }),
+      "compare-heading",
+    );
+    heading.dataset.compareView = "";
+
+    const list = document.createElement("ol");
+    list.className = "compare-changes";
+    const rows = new Map();
+    const navRoot = document.createElement("div");
+    const navigator = createChangeNavigator(navRoot, {
+      navigate: (entry) => {
+        for (const [candidate, row] of rows) row.classList.toggle("is-current", candidate === entry);
+        io.navigate(entry.anchor);
+      },
+    });
+    for (const entry of entries) {
       const item = document.createElement("li");
-      item.dataset.compareFamily = family;
-      // A family this build has no key for still SHOWS, with its own name and
-      // its count, rather than rendering blank. The guard fails the build for it;
-      // this is what the reader sees meanwhile, and it is strictly better than a
-      // row that says nothing about changes that are really there.
-      item.textContent = FAMILY_KEY[family]
-        ? t(FAMILY_KEY[family], { count })
-        : `${family}: ${n(count)}`;
-      list.append(item);
-    }
-    children.push(list);
-    // WHAT COULD NOT BE COMPARED, before the changes themselves: a reader
-    // deciding whether to trust this list needs its limits before they start
-    // reading, not after.
-    children.push(...findingNotes(summary));
-    const rows = document.createElement("ol");
-    rows.className = "compare-changes";
-    for (const change of summary.rows) {
-      const item = document.createElement("li");
-      item.dataset.compareKind = change.kind;
-      item.dataset.compareChangeFamily = change.family;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "compare-change";
+      button.dataset.diffKind = entry.replaced ? "replaced" : entry.kind;
       const kind = document.createElement("span");
-      kind.className = "compare-kind";
-      kind.textContent = KIND_KEY[change.kind] ? t(KIND_KEY[change.kind]) : change.kind;
-      item.append(kind);
-      // WHAT THE ROW IS ABOUT, and never nothing. Text first, because an excerpt
-      // of the words is what a reader recognises; then the typed field paths,
-      // which are what a formatting or property change actually is; then the
-      // bracketed object name, so a row about an untexted block still names a
-      // thing. A row that carried only its kind label is the defect this order
-      // closes, and `compare_documents.test.mjs` fails if one can still happen.
-      const text = changeText(change);
-      const fields = changeFields(change);
-      if (text) {
-        const quote = document.createElement("q");
-        quote.textContent = text;
-        item.append(quote);
-      } else if (fields.length > 0) {
-        const named = document.createElement("span");
-        named.className = "compare-object";
-        named.dataset.compareFields = fields.join(",");
-        named.textContent = fields.join(", ");
-        item.append(named);
-      } else {
-        const named = document.createElement("span");
-        named.className = "compare-object";
-        named.textContent = changeObjectName(change);
-        item.append(named);
-      }
-      const where = storyLabel(change.left?.story ?? change.right?.story);
-      if (where) {
-        const story = document.createElement("span");
-        story.className = "compare-where";
-        story.textContent = where;
-        item.append(story);
-      }
-      rows.append(item);
+      kind.className = "compare-change-kind";
+      kind.textContent = entryLabel(entry);
+      const text = document.createElement("span");
+      text.className = "compare-change-text";
+      text.textContent = entryText(entry);
+      button.append(kind, text);
+      button.addEventListener("click", () => {
+        navigator.select(entry);
+        for (const [candidate, row] of rows) row.classList.toggle("is-current", candidate === entry);
+        io.navigate(entry.anchor);
+      });
+      item.append(button);
+      list.append(item);
+      rows.set(entry, button);
     }
-    children.push(rows);
+    navigator.show(entries, { author });
+
+    const actions = document.createElement("div");
+    actions.className = "compare-actions";
+    // Keep applies to THIS document, so it exists only in the orientation in
+    // which the redline describes this document — and only where the host can
+    // repaint review markup at all.
+    if (!swapped && io.landed && entries.length > 0) {
+      actions.append(actionButton(t("compare.keep"), "keep", () => void keep(), true));
+    }
+    actions.append(
+      actionButton(t("compare.swap"), "swap", () => void swap()),
+      actionButton(t("compare.closeView"), "close", () => void closeAll()),
+    );
+
+    const details = [...unmarkedNotes(result.summary?.unmarked, result.diff), ...findingNotes(result.diff)];
+    const children = [heading, paragraph(t("compare.viewReadOnly"), "muted"), navRoot];
+    children.push(entries.length > 0 ? list : paragraph(t("compare.identical")));
+    children.push(actions);
+    if (details.length > 0) {
+      const more = document.createElement("details");
+      more.className = "compare-details";
+      const summary = document.createElement("summary");
+      summary.textContent = t("diffCanvas.details");
+      more.append(summary, ...details);
+      children.push(more);
+    }
     render(children);
+  }
+
+  async function swap() {
+    if (running || !current) return;
+    running = true;
+    cancelled = false;
+    try {
+      current.swapped = !current.swapped;
+      await show();
+    } finally {
+      running = false;
+    }
+  }
+
+  /** "Keep as tracked changes": the redline's comparison, applied to THIS
+   *  document (ADR-061). The view is closed first, so the edit lands on the
+   *  live document and not on the throwaway one. */
+  async function keep() {
+    if (running || !current?.result) return;
+    const { result, otherName } = current;
+    await closeView();
+    const outcome = await applyAsRevisions(result.sidecar, otherName);
+    current = null;
+    if (!outcome.ok) {
+      const note = paragraph(outcome.message || t("compare.noAnswer"));
+      note.dataset.compareRefused = String(outcome.code ?? "");
+      render([paragraph(t("compare.against", { name: otherName })), note]);
+      io.setStatus(outcome.message || t("compare.noAnswer"), "error");
+      return;
+    }
+    const marked = paragraph(t("compare.marked"));
+    marked.dataset.compareMarked = "";
+    render([
+      paragraph(t("compare.against", { name: otherName })),
+      marked,
+      paragraph(t("compare.reviewNav"), "muted"),
+      ...unmarkedNotes(outcome.loss, result.diff),
+    ]);
+  }
+
+  async function closeAll() {
+    current = null;
+    cancelled = true;
+    setOpen(false);
+    await closeView();
   }
 
   /** ADR-061: applies the sidecar to the open document as tracked changes.
@@ -1003,33 +873,19 @@ export function bindComparePanel(io) {
     return { ok: true, loss };
   }
 
-  /** Compares the live document against `bytes`, named `otherName`. */
+  /** Compares the live document against `bytes`, named `otherName`, and puts
+   *  the result on the canvas. */
   async function compareWith(bytes, otherName) {
-    // NO capability gate here, deliberately. Comparing reads nothing the caller
-    // did not already have: the version-history route arrives with bytes the
-    // checkpoint store already held, so gating this on `open` would take the
-    // whole capability away from a host that withheld file access while granting
-    // review — and the grant it would be enforcing is about READING A FILE FROM
-    // THE VISITOR'S DISK, which is the chooser's business and is gated there.
+    // NO capability gate here: comparing reads nothing the caller did not
+    // already have. The FILE route is what `open` gates, at the chooser.
     if (running) return;
     setOpen(true);
     running = true;
     cancelled = false;
     try {
-      // PAINT AND ARM CANCEL BEFORE THE BLOCK, which this did not used to do.
-      // `io.currentBytes()` is `comparableBytes` — one synchronous, O(document)
-      // export into wasm, measured at 44 ms per 20,000 paragraphs and linear in
-      // document size — and it ran first, with the chooser (or the previous
-      // result) still on screen and no Cancel anywhere. SKILL §8 is explicit:
-      // anything O(document) must show real progress and be cancellable. One
-      // yielded frame is what makes both true, and it costs a frame on a gesture
-      // that is already about to take longer than one.
-      //
-      // The export itself still cannot be interrupted — it is one call into the
-      // engine — so a Cancel pressed during it takes effect at the first slice
-      // boundary afterwards, which is where `runComparison` already asks. That is
-      // the honest limit of what the chrome can do; moving the export off the
-      // thread needs a worker, and the module header says why there is not one.
+      // PAINT AND ARM CANCEL BEFORE THE BLOCK. `io.currentBytes()` is one
+      // synchronous O(document) export (`comparableBytes`); one yielded frame
+      // is what makes progress and Cancel real before it (SKILL §8).
       renderProgress({ phase: PARSING, done: 0, total: 0 });
       mark("opendoc.compare.progress");
       await io.yieldToHost();
@@ -1037,74 +893,17 @@ export function bindComparePanel(io) {
         render([paragraph(t("compare.cancelled"), "muted")]);
         return;
       }
+      // The canvas goes home FIRST: an export taken while a preview or an
+      // earlier redline is on screen would be of that, not of this document.
+      await closeView();
+      await io.beforeView?.();
       const mine = io.currentBytes();
       if (!mine) {
         render([paragraph(t("compare.cannotExport"), "muted")]);
         return;
       }
-      const outcome = await runComparison({
-        // The ORDER is review's: the other document is the left (older) side and
-        // this one is the right, so an insertion is what this document has and
-        // the other does not. Getting it the other way round would report every
-        // addition as a deletion, which is the kind of mistake a reader cannot
-        // detect from the output.
-        begin: () => io.engine.begin(bytes, mine),
-        slice: () => io.engine.slice(),
-        yieldToHost: io.yieldToHost,
-        onProgress: renderProgress,
-        cancelled: () => cancelled,
-      });
-      if (!outcome.ok) {
-        if (outcome.reason === CANCELLED) {
-          render([paragraph(t("compare.cancelled"), "muted")]);
-          return;
-        }
-        // TWO kinds of reason, and only one of them is a sentence.
-        //
-        // `NO_ANSWER` holds this module's own internal outcomes — it ran out of
-        // slices, or the engine said complete and handed back nothing. Those are
-        // vocabulary, not English a reader should see: "The comparison failed:
-        // budget" is exactly the raw engine token `edit_errors.mjs` exists to keep
-        // off the status bar.
-        //
-        // Anything else is a MESSAGE THE ENGINE WROTE about this document —
-        // admission limits, a corrupt package — and it passes through, because
-        // "the comparison failed" without naming the cause sends a reader looking
-        // for a problem with the wrong file. That is the same split
-        // `editRefusalMessage` makes for `refused:`-coded refusals.
-        const message = NO_ANSWER.has(outcome.reason)
-          ? t("compare.noAnswer")
-          : t("compare.failed", { reason: outcome.reason });
-        render([paragraph(message, "muted")]);
-        io.setStatus(message, "error");
-        return;
-      }
-      const summary = summariseDiff(outcome.diff);
-      // ADR-061, and the whole point of this lane: the differences go INTO the
-      // document as tracked changes, and the panel becomes their index.
-      //
-      // Nothing is applied for a comparison that found nothing — an empty
-      // `UpdateReviewState` would bump the revision and enable Save for a
-      // comparison that changed no text, which the engine refuses to do for the
-      // same reason.
-      let applied = null;
-      if (summary.total > 0 && io.landed) {
-        const result = await applyAsRevisions(outcome.sidecar, otherName);
-        if (!result?.ok) {
-          // The sentence `applyAsRevisions` already routed — NOT a second lookup
-          // of the same code. Two places deciding one mapping is the drift this
-          // repository keeps fixing, and here it would be two places deciding
-          // whether a refusal is read in the reader's language.
-          const message = result?.message || t("compare.noAnswer");
-          const note = paragraph(message);
-          note.dataset.compareRefused = String(result?.code ?? "");
-          render([paragraph(t("compare.against", { name: otherName })), note]);
-          io.setStatus(message, "error");
-          return;
-        }
-        applied = result;
-      }
-      renderResult(summary, otherName, applied);
+      current = { other: bytes, otherName, mine, swapped: false, result: null };
+      await show();
     } finally {
       running = false;
     }
@@ -1114,11 +913,8 @@ export function bindComparePanel(io) {
     const file = fileInput.files?.[0];
     fileInput.value = "";
     if (!file) return;
-    // THE FILE ROUTE is what `open` gates, and it is gated twice on purpose: the
-    // chooser is disabled with its reason, and a file that arrives anyway — a
-    // host driving the input directly, a drop handler added later — is refused
-    // here rather than silently read. The first is the affordance and the second
-    // is the rule.
+    // Gated twice on purpose: the chooser is disabled with its reason, and a
+    // file that arrives anyway is refused here rather than silently read.
     if (!io.allowed()) {
       io.setStatus(io.refusedReason, "error");
       return;
@@ -1126,24 +922,28 @@ export function bindComparePanel(io) {
     await compareWith(new Uint8Array(await file.arrayBuffer()), file.name);
   });
 
-  // Both faces TOGGLE, and both do the same thing — which is what makes them one
-  // command rather than two controls that happen to open the same panel. A
-  // surface opened by a control stays closable by it (the rule `modal.mjs`
-  // already follows for chords).
+  // Both faces TOGGLE: a surface opened by a control stays closable by it.
   for (const button of entryPoints) {
     button.addEventListener("click", () => {
-      const open = panel.hidden;
-      setOpen(open);
-      if (open && !running) renderChooser();
+      if (!panel.hidden) return void closeAll();
+      setOpen(true);
+      if (!running) renderChooser();
     });
   }
-  document.getElementById("compareClose")?.addEventListener("click", () => setOpen(false));
+  document.getElementById("compareClose")?.addEventListener("click", () => void closeAll());
 
   return {
     open: () => {
       setOpen(true);
-      if (!running) renderChooser();
+      if (!running && !view) renderChooser();
     },
     compareWith,
+    /** Gives the canvas back (a version preview or an open is taking it). */
+    closeView: async () => {
+      if (!view) return;
+      current = null;
+      await closeView();
+      if (!panel.hidden && !running) renderChooser();
+    },
   };
 }

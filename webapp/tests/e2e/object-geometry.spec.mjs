@@ -245,8 +245,10 @@ test("Shift on a SHAPE corner constrains it, the same direction it does everywhe
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  // A shape, not a picture: a picture is proportional by DEFAULT, so it cannot
-  // tell whether Shift added the constraint or the default did.
+  // A shape inserted here, not the fixture's picture: that picture's file locks
+  // its aspect ratio (Word's `noChangeAspect`, FID-AT-09), so it cannot tell
+  // whether Shift added the constraint or the lock did. A shape inserted here
+  // carries no lock, as in Word.
   await page.locator("#tabInsert").click();
   await expect(page.locator("#panelInsert")).toBeVisible();
   await page.locator("#insertShapeBtn").click();
@@ -322,5 +324,25 @@ test("object resize is blocked (fail-closed) in Suggesting mode", async ({
   expect(Math.abs(after.h - before.h)).toBeLessThanOrEqual(3);
   await expect(page.locator("#status")).toContainText("switch to Editing");
 
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the properties panel resizes an in-line picture, which it could not (UX-OB-05)", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The panel's Left/Top show the picture's origin rounded to 0.01in, and
+  // Apply sent that rounding back — a moved origin, which the engine rightly
+  // refuses for a picture in the line of text, so Apply said "can be resized
+  // but not moved" and resized nothing.
+  await gotoEditor(page);
+  await selectImage(page);
+  await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
+  const before = await outlineSize(page);
+  await page.locator(".object-inspector [data-object-prop=width]").fill("0.5");
+  await page.locator(".object-inspector [data-object-prop=height]").fill("0.5");
+  await page.locator(".object-inspector [data-object-inspector-apply]").click();
+  await expect.poll(async () => (await outlineSize(page)).w, { message: "Apply resized it" }).toBeGreaterThan(before.w * 2);
+  await expect(page.locator("#status")).not.toContainText("not moved");
   expect(consoleErrors).toEqual([]);
 });

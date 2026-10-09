@@ -35,6 +35,8 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// Separate `use` line (anti-conflict): a move's double underline in the markup view.
+use casual_doc_model::v1::UnderlineStyle;
 // Separate `use` line (anti-conflict): the note's in-body auto-number mark.
 use casual_doc_model::v1::NoteNumberMark;
 // Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
@@ -95,6 +97,8 @@ use crate::units::emu_to_twip_offset;
 use crate::units::{Point, Size, Twip};
 // Own line (anti-conflict): the single wrap-side rule.
 use crate::wrap_side::{band_exclusion, wrap_sides};
+// Own line (anti-conflict): tight/through wrap to the authored contour.
+use crate::wrap_contour::{anchor_contour, contour_exclusions};
 
 /// One page-derived edge exclusion applied at the start of a body paragraph.
 /// These are produced by the bounded cross-paragraph float pass after an initial
@@ -103,6 +107,11 @@ use crate::wrap_side::{band_exclusion, wrap_sides};
 pub(crate) struct ParagraphFloatExclusion {
     pub(crate) side: InlineFloatSide,
     pub(crate) width: Twip,
+    /// Where the exclusion starts below the paragraph's top: zero for a square
+    /// wrap, a band's top for one band of a tight/through contour
+    /// (`crate::wrap_contour`).
+    pub(crate) top: Twip,
+    /// Where the exclusion ends below the paragraph's top.
     pub(crate) height: Twip,
 }
 
@@ -168,26 +177,119 @@ fn review_author_color(author: Option<&str>) -> [u8; 4] {
 }
 
 /// Stamps the author color and the kind's decoration onto the runs just emitted
-/// for a revision in the read-only markup view: underline for an insertion or
-/// move-to, strikethrough for a deletion or move-from (docs/93).
+/// for a revision in the read-only markup view (docs/93): underline for an
+/// insertion, strikethrough for a deletion, and the DOUBLE form of each for a
+/// move — double underline where text moved to, double strikethrough where it
+/// moved from. That is Word's own default for moves, and it is the only cue a
+/// reader has that struck text is not gone but elsewhere (ADR-065); colour
+/// cannot carry it, because colour is the author's.
 fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author: Option<&str>) {
     let color = review_author_color(author);
-    let struck = matches!(kind, RevisionKind::Deletion | RevisionKind::MoveFrom);
     for item in items {
         if let FlowItem::Run(run) = item {
             run.color = color;
-            if struck {
-                run.decoration.strikethrough = true;
-            } else {
-                run.decoration.underline = true;
+            match kind {
+                RevisionKind::Deletion => run.decoration.strikethrough = true,
+                RevisionKind::MoveFrom => run.decoration.double_strike = true,
+                RevisionKind::Insertion => run.decoration.underline = true,
+                RevisionKind::MoveTo => {
+                    run.decoration.underline = true;
+                    run.decoration.underline_style = UnderlineStyle::Double;
+                }
             }
         }
+    }
+}
+
+/// Whether content that declares itself wider than the measure may be laid out
+/// outside it — the one question paper and a reflowed column answer differently,
+/// and the whole of `docs/166` R-1.
+///
+/// On paper the measure is the *text column* and there is paper beyond it: a
+/// table with an explicit `w:tblW` in `dxa`, or an inline image with a declared
+/// extent, that is wider than the column bleeds into the margin and is still
+/// rasterised, because the page raster is the whole sheet. Word and ONLYOFFICE
+/// both bleed, so [`Bleed`](Self::Bleed) is what fidelity requires there.
+///
+/// In a reflowed column the measure is the *surface*: a tile's raster is exactly
+/// `content_width + 2 x gutter` (`document_layout`'s `reflow_page_config`), there
+/// is no margin past it, and the host guarantees no horizontal scroll — so
+/// anything laid out past the measure is not clipped-but-reachable, it is **not
+/// drawn at all**. [`Fit`](Self::Fit) is therefore not a preference there, it is
+/// the difference between showing the author's content and losing it
+/// (`AGENTS.md`: *no silent data loss*).
+///
+/// This is `max-width: 100%` — the rule every browser already applies to tables
+/// and replaced elements — scoped to the surface that needs it, and it is the
+/// cheapest of the three answers the field offers (Google Docs give the table its
+/// own scroller; ONLYOFFICE scale the whole table down; Word refits with columns
+/// and larger type). It loses nothing and needs no new paint primitive.
+///
+/// **[`Scroll`](Self::Scroll) is Google's answer, and it is what the body of a
+/// reflowed column now gets** (`docs/151` §6.3d). Fitting a table narrows the
+/// columns the author chose, which is the wrong trade for a wide data table; a
+/// scroller keeps every column at its declared width and contains the overflow in
+/// the one element that genuinely cannot fit. The engine half is only the layout
+/// decision — lay a top-level body table out at its own width — plus the per-table
+/// horizontal offset in `reflow_scroll`; the scroller itself is the host's.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MeasureFit {
+    /// Declared widths stand, and content wider than the measure is laid out
+    /// past it. The paper default, and byte-for-byte the behaviour that preceded
+    /// this type.
+    #[default]
+    Bleed,
+    /// Declared widths are clamped to the measure: a table's target width, and an
+    /// inline drawing's painted extent (aspect ratio preserved), resolve against
+    /// the width the content is being flowed at.
+    Fit,
+    /// A reflowed BODY with per-table horizontal scrolling: an inline drawing is
+    /// fitted exactly as under [`Fit`](Self::Fit) (*"images will adjust to your
+    /// screen size"*), while a **top-level** table keeps the width the document
+    /// declares, as under [`Bleed`](Self::Bleed), and the host reaches its
+    /// overflow with a scroller of its own (*"you can create wide tables and view
+    /// them by scrolling left and right"* — both from Google's pageless help,
+    /// answer 11528737).
+    ///
+    /// Only a top-level table scrolls, because only a top-level table row is a
+    /// placed fragment the scroller can address. A table nested in a cell is
+    /// fitted to its cell — under the outer table's scroller that is still the
+    /// whole of it — and every context with no scroller of its own (note bodies,
+    /// positioned tables, text boxes) is handed [`Self::without_scroll`], i.e.
+    /// [`Fit`](Self::Fit), so nothing anywhere reverts to being laid out past a
+    /// raster nobody can scroll.
+    Scroll,
+}
+
+impl MeasureFit {
+    /// This policy for a context that has no scroller of its own: [`Scroll`]
+    /// becomes [`Fit`], everything else is unchanged.
+    ///
+    /// [`Scroll`]: Self::Scroll
+    /// [`Fit`]: Self::Fit
+    #[must_use]
+    pub const fn without_scroll(self) -> Self {
+        match self {
+            Self::Scroll => Self::Fit,
+            other => other,
+        }
+    }
+
+    /// Whether an inline drawing is fitted to the width it is flowed at.
+    const fn fits_images(self) -> bool {
+        matches!(self, Self::Fit | Self::Scroll)
     }
 }
 
 struct FlowCtx<'a> {
     /// The review presentation policy for this galley (docs/93).
     review_view: ReviewView,
+    /// Whether content wider than the measure may be laid out outside it. The
+    /// fourth per-viewer view parameter, and the one that is derived from
+    /// [`LayoutView`](crate::document_layout::LayoutView) rather than chosen: a
+    /// reflowed surface has nothing past the measure, so it is
+    /// [`MeasureFit::Fit`], and paper is [`MeasureFit::Bleed`].
+    fit: MeasureFit,
     /// The headings this viewer has collapsed (ADR-049). The third per-viewer
     /// view parameter, beside [`ReviewView`] and
     /// [`LayoutView`](crate::document_layout::LayoutView), and empty for every
@@ -443,6 +545,7 @@ pub fn build_galley_with_report_view(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit: MeasureFit::Bleed,
         review_view,
         resolver: &resolver,
         scheme: document.definitions().theme(None).font_scheme,
@@ -499,6 +602,7 @@ pub fn build_galley_for_blocks(
         NoteFlow::default(),
         single_section_line_grid(document),
         &FoldSet::EMPTY,
+        MeasureFit::Bleed,
     )
 }
 
@@ -538,6 +642,7 @@ pub(crate) fn build_galley_for_note_blocks(
     content_width: Twip,
     label: &str,
     labels: Option<&NoteLabels>,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     build_galley_for_blocks_inner(
         document,
@@ -554,6 +659,10 @@ pub(crate) fn build_galley_for_note_blocks(
         // A note's own body is not part of the outline, so nothing in it can be
         // folded: there is no heading tree to fold against.
         &FoldSet::EMPTY,
+        // A note body is body content and flows through the same pipeline, so it
+        // gets the same answer about the measure. A table too wide for a reflowed
+        // footnote band would otherwise be lost exactly as one in the body was.
+        fit,
     )
 }
 
@@ -568,6 +677,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
     flow_body_into(
@@ -580,6 +690,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         notes,
         line_grid,
         folds,
+        fit,
         MeasureResume::default(),
         &mut galley,
         BlockMarks::Skip,
@@ -641,6 +752,7 @@ pub(crate) fn flow_body_range(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
     resume: MeasureResume,
 ) -> (Vec<BlockFragment>, u32) {
     let from_block = from_block.min(blocks.len());
@@ -669,6 +781,7 @@ pub(crate) fn flow_body_range(
         notes,
         line_grid,
         folds,
+        fit,
         resume,
         &mut sink,
         BlockMarks::Skip,
@@ -699,6 +812,7 @@ pub fn flow_body_into_sink<S: GalleySink + ?Sized>(
         NoteFlow::default(),
         single_section_line_grid(document),
         &FoldSet::EMPTY,
+        MeasureFit::Bleed,
         MeasureResume::default(),
         sink,
         BlockMarks::Record,
@@ -731,6 +845,7 @@ pub(crate) fn build_measures_for_blocks_inner(
         notes,
         line_grid,
         folds,
+        MeasureFit::Bleed,
         MeasureResume::default(),
     );
     (measures, block_starts)
@@ -786,6 +901,7 @@ pub(crate) fn build_measures_for_blocks_resumed(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
     resume: MeasureResume,
 ) -> (Vec<FragmentMeasure>, Vec<u32>, MeasureResume) {
     let mut sink = MeasureSink::new();
@@ -799,6 +915,7 @@ pub(crate) fn build_measures_for_blocks_resumed(
         notes,
         line_grid,
         folds,
+        fit,
         resume,
         &mut sink,
         BlockMarks::Record,
@@ -824,6 +941,7 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
     folds: &FoldSet,
+    fit: MeasureFit,
     resume: MeasureResume,
     sink: &mut S,
     marks: BlockMarks,
@@ -837,6 +955,7 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit,
         review_view,
         resolver: &resolver,
         scheme: document.definitions().theme(None).font_scheme,
@@ -951,6 +1070,7 @@ fn flow_running_blocks(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit: MeasureFit::Bleed,
         review_view: ReviewView::Editing,
         resolver: &resolver,
         scheme: document.definitions().theme(None).font_scheme,
@@ -1013,6 +1133,7 @@ pub fn build_galley_cached(
         NoteFlow::default(),
         ReviewView::Editing,
         &FoldSet::EMPTY,
+        MeasureFit::Bleed,
     )
 }
 
@@ -1038,6 +1159,7 @@ pub(crate) fn build_galley_cached_labeled(
     notes: NoteFlow<'_>,
     review_view: ReviewView,
     folds: &FoldSet,
+    fit: MeasureFit,
 ) -> Vec<BlockFragment> {
     // A drop-cap paragraph and its following body paragraph are one coupled flow
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
@@ -1058,6 +1180,7 @@ pub(crate) fn build_galley_cached_labeled(
             notes,
             single_section_line_grid(document),
             folds,
+            fit,
         );
     }
     // The cache path resolves fonts exactly like the fresh path so a reused
@@ -1077,6 +1200,7 @@ pub(crate) fn build_galley_cached_labeled(
         .map(resolve_palette);
     let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
+        fit,
         review_view,
         resolver: &resolver,
         scheme: document.definitions().theme(None).font_scheme,
@@ -1542,11 +1666,13 @@ fn paragraph_hash(
             FlowItem::FloatExclusion {
                 side,
                 width,
+                top,
                 height,
             } => {
                 9u8.hash(&mut hasher);
                 (*side as u8).hash(&mut hasher);
                 width.0.hash(&mut hasher);
+                top.0.hash(&mut hasher);
                 height.0.hash(&mut hasher);
             }
             FlowItem::NoteReference(marker) => {
@@ -1995,6 +2121,7 @@ fn flow_paragraph_with_carries(
             active_carries.push(ParagraphFloatExclusion {
                 side: float.side,
                 width: float.width,
+                top: Twip((float.top.raw() - consumed.raw()).max(0)),
                 height: remaining,
             });
         }
@@ -2006,6 +2133,7 @@ fn flow_paragraph_with_carries(
 /// dropping those whose clearance is exhausted.
 fn decrement_wrap_carries(active_carries: &mut Vec<ParagraphFloatExclusion>, consumed: Twip) {
     for carry in active_carries.iter_mut() {
+        carry.top = Twip((carry.top.raw() - consumed.raw()).max(0));
         carry.height = Twip((carry.height.raw() - consumed.raw()).max(0));
     }
     active_carries.retain(|carry| carry.height.raw() > 0);
@@ -2153,6 +2281,7 @@ fn collapse_drop_cap_fragment(
     (frame.mode == DropCapMode::Drop).then_some(ParagraphFloatExclusion {
         side: InlineFloatSide::Left,
         width,
+        top: Twip::ZERO,
         height,
     })
 }
@@ -3068,7 +3197,15 @@ fn solve_table_columns(
         Some(TableLayout::Fixed) => TableLayout::Fixed,
         _ => TableLayout::Autofit,
     };
-    solve_column_widths(&cols, spec, available, layout)
+    // A nested table has no scroller of its own — only a placed, top-level row
+    // is something the host can scroll — so under `Scroll` it is fitted to its
+    // cell exactly as it would be under `Fit` (see `MeasureFit::Scroll`).
+    let fit = if ctx.table_depth > 0 {
+        ctx.fit.without_scroll()
+    } else {
+        ctx.fit
+    };
+    solve_column_widths(&cols, spec, available, layout, fit)
         .into_iter()
         .map(Twip)
         .collect()
@@ -3083,6 +3220,7 @@ fn solve_column_widths(
     spec: WidthSpec,
     available: i32,
     layout: TableLayout,
+    fit: MeasureFit,
 ) -> Vec<i32> {
     let n = cols.len();
     if n == 0 {
@@ -3103,6 +3241,22 @@ fn solve_column_widths(
             // width nor narrower than the content minimum.
             TableLayout::Autofit => pref_sum.clamp(min_sum, available.max(min_sum)),
         },
+    };
+    // `docs/166` R-1. Two of the three arms above can land past `available`: a
+    // `dxa` preferred width is the author's number and consults nothing, and a
+    // fixed layout with a declared grid takes `grid_sum`. On paper that is
+    // correct — the table bleeds into the margin and the page raster still holds
+    // it — and under [`MeasureFit::Fit`] it is silent data loss, because the
+    // surface ends at the measure. `distribute_width` below only ever shrinks
+    // when `sum > target`, so clamping the TARGET is the whole of the fix: the
+    // deficit comes out of each column's slack above its content minimum first,
+    // which is Word's AutoFit-to-window and keeps the type at full size (rather
+    // than ONLYOFFICE's `GetScaleBySection`, which shrinks the glyphs too).
+    // `Scroll` keeps the author's width here: the overflow is the host's
+    // scroller's to reach (`MeasureFit::Scroll`, `docs/151` §6.3d).
+    let target = match fit {
+        MeasureFit::Bleed | MeasureFit::Scroll => target,
+        MeasureFit::Fit => target.min(available),
     };
 
     let base: Vec<i32> = match layout {
@@ -3209,6 +3363,7 @@ fn block_intrinsic(
 ) -> (i32, i32) {
     let mut scratch = FontResolutionReport::new();
     let mut mctx = FlowCtx {
+        fit: MeasureFit::Bleed,
         review_view: ReviewView::Editing,
         resolver: ctx.resolver,
         scheme: ctx.scheme,
@@ -3875,7 +4030,14 @@ fn collect_items_with_measure<'a>(
             InlineNode::Symbol(symbol) => out.push(FlowItem::Run(symbol_glyph_run(symbol, ctx))),
             InlineNode::Break(node) => out.push(FlowItem::Break(node.kind)),
             InlineNode::Drawing(drawing) => {
-                if let Some(item) = image_item(drawing, ctx) {
+                // The intrinsic passes measure what the drawing WANTS, so they
+                // are handed no measure at all; the real pass clamps it to the
+                // width it got, and only on a surface with nothing past it.
+                let measure = match intrinsic {
+                    None if ctx.fit.fits_images() => Some(width),
+                    _ => None,
+                };
+                if let Some(item) = image_item(drawing, measure, ctx) {
                     out.push(item);
                 }
             }
@@ -3883,10 +4045,8 @@ fn collect_items_with_measure<'a>(
                 embedded_object_items(object, out, shaper, ctx);
             }
             InlineNode::AnchoredDrawing(drawing) => {
-                if intrinsic.is_none()
-                    && let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent, width)
-                {
-                    out.push(item);
+                if intrinsic.is_none() {
+                    out.extend(float_flow_items(&drawing.anchor, &drawing.extent, width));
                 }
             }
             InlineNode::Field(field) => {
@@ -3945,17 +4105,15 @@ fn collect_items_with_measure<'a>(
             InlineNode::TextBox(text_box) => {
                 if intrinsic.is_none()
                     && let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
-                    && let Some(item) = float_flow_item(anchor, extent, width)
                 {
-                    out.push(item);
+                    out.extend(float_flow_items(anchor, extent, width));
                 }
             }
             InlineNode::Group(group) => {
                 if intrinsic.is_none()
                     && let Some(anchor) = &group.anchor
-                    && let Some(item) = float_flow_item(anchor, &group.extent, width)
                 {
-                    out.push(item);
+                    out.extend(float_flow_items(anchor, &group.extent, width));
                 }
             }
             InlineNode::Hyperlink(hyperlink) => {
@@ -4156,7 +4314,13 @@ fn chart_item<'a>(
     if !chart::has_drawable_content(chart) {
         return None;
     }
-    let style = chart_style(ctx.palette);
+    // A document that declares no theme still draws its chart in Word's default
+    // Office theme, which is what Word does and what `ChartStyle::default`
+    // already assumes for the accents. Without this, a chart coloured with a
+    // THEME slot (every palette the chart panel offers) resolved to black in a
+    // document with no `a:clrScheme` — every new blank document.
+    let chart_palette = ctx.palette.or(Some(&OFFICE_PALETTE));
+    let style = chart_style(chart_palette);
     // The label shaper resolves fonts through the document's own cascade, so chart
     // text uses the document's fonts rather than a hard-coded face. It is handed a
     // CLONE of the projection's text only; nothing in the closure touches the
@@ -4168,8 +4332,7 @@ fn chart_item<'a>(
     // Copied out before the shaping closure borrows `ctx` mutably: a chart's
     // authored colour may name a THEME slot, and `run_color` is the document's one
     // resolution of that — the chart module deliberately holds no second copy.
-    let palette = ctx.palette;
-    let colors = |color: Color| run_color(Some(color), palette);
+    let colors = |color: Color| run_color(Some(color), chart_palette);
     let primitives = {
         let mut shape_label = |text: &str| chart_label(text, &base, shaper, ctx);
         chart::compose_chart(chart, size, &style, &colors, &mut shape_label)
@@ -4369,6 +4532,56 @@ fn float_band(anchor: &DrawingAnchor, extent: &Extent, content_width: Twip) -> (
     )
 }
 
+/// The contour a paragraph-anchored tight/through float wraps to, cut into
+/// bands measured from the anchoring paragraph's top and its container's
+/// leading edge — the object's own box placed exactly where [`float_band`] and
+/// [`float_clearance`] place it. `None` for every float that wraps to its box.
+///
+/// O(n log n) in the contour's vertices (`crate::wrap_contour`).
+fn float_contour(
+    anchor: &DrawingAnchor,
+    extent: &Extent,
+    content_width: Twip,
+) -> Option<Vec<crate::wrap_contour::ContourBand>> {
+    let offset_emu = match anchor.vertical.position {
+        VerticalPosition::Offset(offset) => offset,
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
+        _ => return None,
+    };
+    let (band_start, _) = float_band(anchor, extent, content_width);
+    let object = crate::units::Rect::new(
+        Point::new(
+            band_start + emu_to_twip_extent(anchor.wrap_distances.start_emu),
+            emu_to_twip_offset(offset_emu),
+        ),
+        Size::new(
+            emu_to_twip_extent(extent.width_emu),
+            emu_to_twip_extent(extent.height_emu),
+        ),
+    );
+    anchor_contour(anchor, object)
+}
+
+/// A tight/through float's contour bands as paragraph-relative exclusions.
+/// Empty when the contour reaches into nothing; `None` when the float wraps to
+/// its box.
+fn float_contour_exclusions(
+    anchor: &DrawingAnchor,
+    extent: &Extent,
+    content_width: Twip,
+) -> Option<Vec<crate::wrap_contour::BandExclusion>> {
+    let bands = float_contour(anchor, extent, content_width)?;
+    Some(contour_exclusions(
+        &bands,
+        emu_to_twip_extent(anchor.wrap_distances.start_emu),
+        emu_to_twip_extent(anchor.wrap_distances.end_emu),
+        Twip::ZERO,
+        content_width,
+        wrap_sides(anchor),
+        Twip::ZERO,
+    ))
+}
+
 /// Converts a paragraph-local anchored object into its non-painting flow marker.
 /// Top-and-bottom wrapping reserves vertical space; square-family wrapping
 /// narrows only lines that intersect the object's vertical clearance, on the
@@ -4378,15 +4591,21 @@ fn float_band(anchor: &DrawingAnchor, extent: &Extent, content_width: Twip) -> (
 /// longer wrap two different ways depending on which pass saw it.
 /// Page-relative exclusions remain outside this local slice.
 ///
-/// O(1).
-fn float_flow_item(
+/// A tight/through float with an authored contour yields one exclusion per
+/// band of it (`crate::wrap_contour`), each starting where its band does; every
+/// other float yields at most one marker.
+///
+/// O(1) for a box; O(n log n) in a contour's vertices.
+fn float_flow_items<'a>(
     anchor: &DrawingAnchor,
     extent: &Extent,
     content_width: Twip,
-) -> Option<FlowItem<'static>> {
-    let height = float_clearance(anchor, extent)?;
+) -> Vec<FlowItem<'a>> {
+    let Some(height) = float_clearance(anchor, extent) else {
+        return Vec::new();
+    };
     if anchor.wrap == WrapMode::TopAndBottom {
-        return Some(FlowItem::FloatBarrier { height });
+        return vec![FlowItem::FloatBarrier { height }];
     }
     if !matches!(
         anchor.wrap,
@@ -4395,21 +4614,35 @@ fn float_flow_item(
         anchor.horizontal.relative_from,
         HorizontalAnchor::Margin | HorizontalAnchor::Column
     ) {
-        return None;
+        return Vec::new();
+    }
+    if let Some(bands) = float_contour_exclusions(anchor, extent, content_width) {
+        return bands
+            .into_iter()
+            .map(|band| FlowItem::FloatExclusion {
+                side: band.side,
+                width: band.width,
+                top: band.top,
+                height: band.bottom,
+            })
+            .collect();
     }
     let (band_start, band_end) = float_band(anchor, extent, content_width);
-    let exclusion = band_exclusion(
+    band_exclusion(
         band_start,
         band_end,
         Twip::ZERO,
         content_width,
         wrap_sides(anchor),
-    )?;
-    Some(FlowItem::FloatExclusion {
+    )
+    .map(|exclusion| FlowItem::FloatExclusion {
         side: exclusion.side,
         width: exclusion.width,
+        top: Twip::ZERO,
         height,
     })
+    .into_iter()
+    .collect()
 }
 
 /// The square-family wrap exclusion each of a paragraph's anchored floats imposes,
@@ -4426,7 +4659,7 @@ fn paragraph_wrap_carries(
     for inline in &paragraph.inlines {
         let carry = match inline {
             InlineNode::AnchoredDrawing(drawing) => {
-                wrap_carry(&drawing.anchor, drawing.extent, content_width)
+                wrap_carries(&drawing.anchor, drawing.extent, content_width)
             }
             // A FLOATING text box carries exactly as a drawing or a group does.
             // It used to be omitted here while `collect_items` and
@@ -4441,18 +4674,16 @@ fn paragraph_wrap_carries(
             // shape `SKILL.md` §8 forbids. A box with no authored extent
             // therefore carries nothing, which is what it did before.
             InlineNode::TextBox(text_box) => match (&text_box.anchor, &text_box.extent) {
-                (Some(anchor), Some(extent)) => wrap_carry(anchor, *extent, content_width),
-                _ => None,
+                (Some(anchor), Some(extent)) => wrap_carries(anchor, *extent, content_width),
+                _ => Vec::new(),
             },
             InlineNode::Group(group) => match &group.anchor {
-                Some(anchor) => wrap_carry(anchor, group.extent, content_width),
-                None => None,
+                Some(anchor) => wrap_carries(anchor, group.extent, content_width),
+                None => Vec::new(),
             },
-            _ => None,
+            _ => Vec::new(),
         };
-        if let Some(carry) = carry {
-            carries.push(carry);
-        }
+        carries.extend(carry);
     }
     carries
 }
@@ -4471,12 +4702,15 @@ fn paragraph_wrap_carries(
 /// the float, and crossing the column centre flipped the text from one side to
 /// the other.
 ///
-/// O(1).
-fn wrap_carry(
+/// A tight/through float with an authored contour carries one exclusion per
+/// band of it instead, each with its own start and end (`crate::wrap_contour`).
+///
+/// O(1) for a box; O(n log n) in a contour's vertices.
+fn wrap_carries(
     anchor: &DrawingAnchor,
     extent: Extent,
     content_width: Twip,
-) -> Option<ParagraphFloatExclusion> {
+) -> Vec<ParagraphFloatExclusion> {
     if anchor.behind_doc
         || !matches!(
             anchor.wrap,
@@ -4487,22 +4721,38 @@ fn wrap_carry(
             HorizontalAnchor::Margin | HorizontalAnchor::Column
         )
     {
-        return None;
+        return Vec::new();
     }
-    let height = float_clearance(anchor, &extent)?;
+    let Some(height) = float_clearance(anchor, &extent) else {
+        return Vec::new();
+    };
+    if let Some(bands) = float_contour_exclusions(anchor, &extent, content_width) {
+        return bands
+            .into_iter()
+            .map(|band| ParagraphFloatExclusion {
+                side: band.side,
+                width: band.width,
+                top: band.top,
+                height: band.bottom,
+            })
+            .collect();
+    }
     let (band_start, band_end) = float_band(anchor, &extent, content_width);
-    let exclusion = band_exclusion(
+    band_exclusion(
         band_start,
         band_end,
         Twip::ZERO,
         content_width,
         wrap_sides(anchor),
-    )?;
-    Some(ParagraphFloatExclusion {
+    )
+    .map(|exclusion| ParagraphFloatExclusion {
         side: exclusion.side,
         width: exclusion.width,
+        top: Twip::ZERO,
         height,
     })
+    .into_iter()
+    .collect()
 }
 
 fn prepend_paragraph_float_exclusions<'a>(
@@ -4525,12 +4775,13 @@ fn prepend_explicit_float_exclusions<'a>(
 ) {
     // Insert in reverse so the stable, page-derived order is preserved at byte 0.
     for exclusion in exclusions.iter().rev() {
-        if exclusion.width.raw() > 0 && exclusion.height.raw() > 0 {
+        if exclusion.width.raw() > 0 && exclusion.height > exclusion.top {
             items.insert(
                 0,
                 FlowItem::FloatExclusion {
                     side: exclusion.side,
                     width: exclusion.width,
+                    top: exclusion.top,
                     height: exclusion.height,
                 },
             );
@@ -4699,7 +4950,12 @@ fn flow_text_box_with_ctx(
     ctx.text_scale = ((u64::from(previous_scale) * u64::from(local_scale)) / 100_000)
         .min(u64::from(u32::MAX)) as u32;
     ctx.line_spacing_reduction = combine_percentage_reductions(previous_reduction, local_reduction);
+    // A text box is not a placed body block, so a table inside one has no
+    // scroller to reach its overflow: fit it instead (`MeasureFit::Scroll`).
+    let previous_fit = ctx.fit;
+    ctx.fit = previous_fit.without_scroll();
     let (flowed, _float_floor) = flow_blocks(blocks, shaper, inner_width, ctx);
+    ctx.fit = previous_fit;
     ctx.text_scale = previous_scale;
     ctx.line_spacing_reduction = previous_reduction;
     ctx.para_style = previous_para_style;
@@ -5153,9 +5409,24 @@ fn field_style(inlines: &[InlineNode], value: &str, ctx: &mut FlowCtx) -> FieldS
 /// drawing declares no extent (so it cannot be sized here) or its media id is
 /// absent from the table. Anchored/floating placement is a later slice
 /// (`P1F-28`); this is the inline case.
-fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
+///
+/// `measure` is the width the drawing is being flowed at — the body column, or a
+/// cell's or a text box's inner width — and is consulted only under
+/// [`MeasureFit::Fit`], where a declared extent wider than it would be laid out
+/// past the raster and lost (`docs/166` R-1). This is what `hr_item` next door
+/// already does with its `width`, and what Google document for pageless:
+/// *"images will adjust to your screen size"*. `None` for the intrinsic-width
+/// passes, which must see the drawing's natural extent — that IS the preferred
+/// width the column solver is asking them for.
+///
+/// Complexity: `O(1)`; the clamp is one integer multiply-divide.
+fn image_item(
+    drawing: &Drawing,
+    measure: Option<Twip>,
+    ctx: &FlowCtx,
+) -> Option<FlowItem<'static>> {
     let part = ctx.media.get(&drawing.media)?.part_name.clone();
-    let size = extent_to_size(drawing.extent.as_ref()?);
+    let size = fit_box_to_measure(extent_to_size(drawing.extent.as_ref()?), measure);
     (size.width.raw() > 0 && size.height.raw() > 0).then_some(FlowItem::Image {
         media: part,
         size,
@@ -5192,6 +5463,28 @@ fn hr_item(rule: &ModelHorizontalRule, width: Twip) -> FlowItem<'static> {
         size: Size::new(rule_width, thickness),
         color: [rule.color.r, rule.color.g, rule.color.b, rule.color.a],
     })
+}
+
+/// Scales `size` down so it is no wider than `measure`, **preserving the aspect
+/// ratio**. Returns it unchanged when it already fits, when `measure` is `None`
+/// (no clamp asked for), or when either dimension is degenerate.
+///
+/// Scaling rather than cropping is the point: a 7in image in a 3.25in reading
+/// column becomes a 3.25in image of the whole picture, not a 3.25in slice of it.
+/// The height is derived from the clamped width by the integer ratio, so the
+/// shape survives to within one twip (1/1440in).
+///
+/// Complexity: `O(1)`.
+fn fit_box_to_measure(size: Size, measure: Option<Twip>) -> Size {
+    let Some(measure) = measure else {
+        return size;
+    };
+    let (w, h, m) = (size.width.raw(), size.height.raw(), measure.raw());
+    if m <= 0 || w <= m || w <= 0 || h <= 0 {
+        return size;
+    }
+    let scaled_h = ((i64::from(h) * i64::from(m)) / i64::from(w)).max(1) as i32;
+    Size::new(Twip(m), Twip(scaled_h))
 }
 
 /// Converts a drawing's EMU extent to a twip box size.
@@ -5418,11 +5711,13 @@ fn shape_text_with_objects(
             FlowItem::FloatExclusion {
                 side,
                 width,
+                top,
                 height,
             } => floats.push(InlineFloatSpec {
                 index: byte,
                 side: *side,
                 width: *width,
+                top: *top,
                 height: *height,
             }),
             _ => {}
@@ -7575,6 +7870,37 @@ fn theme_slot_index(slot: ThemeColorRef) -> usize {
     }
 }
 
+/// Word's default Office theme (2013 and later), slot for slot — what a chart
+/// is drawn in when its document declares no `a:clrScheme`.
+const OFFICE_PALETTE: ResolvedPalette = ResolvedPalette {
+    slots: [
+        [0x00, 0x00, 0x00, 0xFF],
+        [0xFF, 0xFF, 0xFF, 0xFF],
+        [0x44, 0x54, 0x6A, 0xFF],
+        [0xE7, 0xE6, 0xE6, 0xFF],
+        [0x44, 0x72, 0xC4, 0xFF],
+        [0xED, 0x7D, 0x31, 0xFF],
+        [0xA5, 0xA5, 0xA5, 0xFF],
+        [0xFF, 0xC0, 0x00, 0xFF],
+        [0x5B, 0x9B, 0xD5, 0xFF],
+        [0x70, 0xAD, 0x47, 0xFF],
+        [0x05, 0x63, 0xC1, 0xFF],
+        [0x95, 0x4F, 0x72, 0xFF],
+    ],
+};
+
+/// A chart colour as the page paints it: theme slots resolved against the
+/// document's theme, or Word's default Office theme when it declares none, with
+/// the colour's tint and shade applied.
+///
+/// For a host that has to SHOW a colour the engine will paint (a palette
+/// swatch) and must not guess it. O(1) after the theme is resolved.
+#[must_use]
+pub fn chart_color_rgba(definitions: &casual_doc_model::v1::Definitions, color: Color) -> [u8; 4] {
+    let resolved = definitions.color_scheme.as_ref().map(resolve_palette);
+    run_color(Some(color), resolved.as_ref().or(Some(&OFFICE_PALETTE)))
+}
+
 /// Resolves a document's [`ColorScheme`] to a [`ResolvedPalette`]: each slot's
 /// `a:srgbClr` becomes its RGB and each `a:sysClr` resolves to its `lastClr` (or a
 /// sensible default for the named system color when none was recorded).
@@ -8505,6 +8831,7 @@ mod tests {
                 NoteFlow::default(),
                 None,
                 &FoldSet::EMPTY,
+                MeasureFit::Bleed,
                 MeasureResume::default(),
             );
             assert_eq!(
@@ -8567,6 +8894,7 @@ mod tests {
                 NoteFlow::default(),
                 None,
                 &FoldSet::EMPTY,
+                MeasureFit::Bleed,
                 MeasureResume::default(),
             );
             assert_eq!(base as usize, from);
@@ -8665,6 +8993,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let mut report = FontResolutionReport::new();
         let mut ctx = FlowCtx {
+            fit: MeasureFit::Bleed,
             review_view,
             resolver: &resolver,
             scheme: definitions.theme(None).font_scheme,
@@ -8727,6 +9056,7 @@ mod tests {
         let resolver = FontResolver::new();
         let mut report = FontResolutionReport::new();
         let mut ctx = FlowCtx {
+            fit: MeasureFit::Bleed,
             review_view: ReviewView::Editing,
             resolver: &resolver,
             scheme: definitions.theme(None).font_scheme,
@@ -9542,6 +9872,12 @@ mod tests {
             height_emu: 800 * 635,
         };
         let content_width = Twip(9000);
+        // A float that wraps to its box carries exactly one exclusion.
+        let wrap_carry = |anchor: &DrawingAnchor, extent: Extent, width: Twip| {
+            let mut carries = wrap_carries(anchor, extent, width);
+            assert!(carries.len() <= 1, "a box carries one exclusion");
+            carries.pop()
+        };
 
         let offset = wrap_carry(
             &anchor(HorizontalPosition::Offset(-7)),
@@ -10934,6 +11270,57 @@ mod tests {
         assert_eq!(del.color, ins.color, "the same author gets the same color");
     }
 
+    /// A move is drawn with the DOUBLE form of insert/delete (ADR-065): a
+    /// reader must be able to tell "struck because it is gone" from "struck
+    /// because it is somewhere else", and colour is already the author's.
+    #[test]
+    fn markup_view_draws_moves_with_double_lines() {
+        use casual_doc_model::v1::Revision;
+
+        let rev = |id: u64, run: u64, kind: RevisionKind, text: &str| {
+            InlineNode::Revision(Box::new(Revision {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                kind,
+                author: Some("Ann".to_owned()),
+                date: None,
+                revision_id: None,
+                editor_group: None,
+                inlines: vec![run_node(run, text, RunProperties::default())],
+            }))
+        };
+        let inlines = vec![
+            rev(20, 5, RevisionKind::MoveFrom, "from"),
+            rev(21, 6, RevisionKind::MoveTo, "to"),
+            rev(22, 7, RevisionKind::Deletion, "del"),
+        ];
+        let definitions = Definitions::default();
+        let items = collected_items_view(&definitions, &inlines, ReviewView::Markup);
+        let run = |text: &str| {
+            items
+                .iter()
+                .find_map(|item| match item {
+                    FlowItem::Run(run) if run.text == text => Some(run),
+                    _ => None,
+                })
+                .expect("run present")
+        };
+        let from = run("from");
+        assert!(
+            from.decoration.double_strike && !from.decoration.strikethrough,
+            "a move origin is double-struck, not single-struck like a deletion"
+        );
+        let to = run("to");
+        assert!(
+            to.decoration.underline && to.decoration.underline_style == UnderlineStyle::Double,
+            "a move destination is double-underlined"
+        );
+        let del = run("del");
+        assert!(
+            del.decoration.strikethrough && !del.decoration.double_strike,
+            "a deletion keeps its single strike"
+        );
+    }
+
     #[test]
     fn typed_fraction_is_an_atomic_inline_box_with_a_painted_rule() {
         let math = InlineNode::Math(Box::new(Math {
@@ -11399,12 +11786,17 @@ mod tests {
             ChartGroup, ChartGroupKind, ChartValue, DataRange, DisplayBlanks, PlotArea, Series,
         };
         Chart {
+            chart_retained: Default::default(),
+            namespaces: Default::default(),
+            space_retained: Default::default(),
             object: NodeId::from_parts(1, 1).unwrap(),
             coverage: ChartCoverage::Partial,
             title: None,
             auto_title_deleted: true,
             plot_area: PlotArea {
+                retained: Default::default(),
                 groups: vec![ChartGroup {
+                    retained: Default::default(),
                     kind: ChartGroupKind::Bar {
                         direction: BarDirection::Column,
                         grouping: BarGrouping::Clustered,
@@ -11449,6 +11841,7 @@ mod tests {
             display_blanks_as: DisplayBlanks::Gap,
             vary_colors: false,
             external_data: None,
+            dirty: false,
         }
     }
 
@@ -12235,7 +12628,13 @@ mod tests {
                 preferred: 2000,
             },
         ];
-        let w = solve_column_widths(&cols, WidthSpec::Dxa(8000), 10_000, TableLayout::Autofit);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Dxa(8000),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(
             w.iter().sum::<i32>(),
             8000,
@@ -12259,10 +12658,22 @@ mod tests {
             },
         ];
         // 100% (5000 fiftieths) of a 10_000-twip content width.
-        let w = solve_column_widths(&cols, WidthSpec::Pct(5000), 10_000, TableLayout::Autofit);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Pct(5000),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(w.iter().sum::<i32>(), 10_000, "the table fills the width");
         // 50% resolves to half.
-        let half = solve_column_widths(&cols, WidthSpec::Pct(2500), 10_000, TableLayout::Autofit);
+        let half = solve_column_widths(
+            &cols,
+            WidthSpec::Pct(2500),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(half.iter().sum::<i32>(), 5000);
     }
 
@@ -12282,12 +12693,99 @@ mod tests {
                 preferred: 3000,
             },
         ];
-        let w = solve_column_widths(&cols, WidthSpec::Dxa(4000), 10_000, TableLayout::Autofit);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Dxa(4000),
+            10_000,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
         assert_eq!(w.iter().sum::<i32>(), 4000);
         assert!(
             w[0] >= 2500,
             "the narrow-min column keeps its minimum: {w:?}"
         );
+    }
+
+    /// An over-wide table is **fitted to the measure** under
+    /// [`MeasureFit::Fit`] and **keeps the author's width** under
+    /// [`MeasureFit::Bleed`] — and the fit comes out of each column's slack, not
+    /// out of its content.
+    ///
+    /// Both over-wide arms are covered, because either one alone produces the
+    /// loss: an explicit `dxa` preferred width (which consults nothing) and a
+    /// declared grid under a fixed layout (which is taken verbatim).
+    ///
+    /// MUTATION PROOF, both halves:
+    ///
+    /// - deleting the clamp (`MeasureFit::Fit => target`) fails with
+    ///   `a reflowed table must fit the 5400-twip measure, not [3240, 3240, 3240,
+    ///   3240]`;
+    /// - fitting by truncation instead — walking the base widths and giving each
+    ///   overflowing column `max(1)` of what is left — fails with
+    ///   `a reflowed table must fit the 5400-twip measure, not [3240, 2160, 1, 1]
+    ///   (an explicit dxa width) / left: 5402 right: 5400`, and the minimum
+    ///   assertion below it is what names the crushed columns.
+    #[test]
+    fn solver_fits_an_over_wide_table_to_the_measure_without_crushing_a_column() {
+        const MEASURE: i32 = 5_400;
+        const MIN: i32 = 500;
+        let cols: Vec<ColumnConstraint> = (0..4)
+            .map(|_| ColumnConstraint {
+                grid: Some(3_240),
+                min: MIN,
+                preferred: 3_240,
+            })
+            .collect();
+
+        let bleed = solve_column_widths(
+            &cols,
+            WidthSpec::Dxa(12_960),
+            MEASURE,
+            TableLayout::Autofit,
+            MeasureFit::Bleed,
+        );
+        assert_eq!(
+            bleed.iter().sum::<i32>(),
+            12_960,
+            "on paper the author's `w:tblW` stands and the table bleeds into the margin: {bleed:?}"
+        );
+
+        for (name, widths) in [
+            (
+                "an explicit dxa width",
+                solve_column_widths(
+                    &cols,
+                    WidthSpec::Dxa(12_960),
+                    MEASURE,
+                    TableLayout::Autofit,
+                    MeasureFit::Fit,
+                ),
+            ),
+            (
+                "a declared grid under a fixed layout",
+                solve_column_widths(
+                    &cols,
+                    WidthSpec::Auto,
+                    MEASURE,
+                    TableLayout::Fixed,
+                    MeasureFit::Fit,
+                ),
+            ),
+        ] {
+            assert_eq!(
+                widths.iter().sum::<i32>(),
+                MEASURE,
+                "a reflowed table must fit the {MEASURE}-twip measure, not {widths:?} ({name})"
+            );
+            for (index, width) in widths.iter().enumerate() {
+                assert!(
+                    *width >= MIN,
+                    "column {index} was crushed to {width} twips, below its {MIN}-twip content \
+                     minimum: {widths:?} ({name})"
+                );
+            }
+        }
     }
 
     #[test]
@@ -12304,7 +12802,13 @@ mod tests {
                 preferred: 5000,
             },
         ];
-        let w = solve_column_widths(&cols, WidthSpec::Auto, 12_000, TableLayout::Fixed);
+        let w = solve_column_widths(
+            &cols,
+            WidthSpec::Auto,
+            12_000,
+            TableLayout::Fixed,
+            MeasureFit::Bleed,
+        );
         assert_eq!(w, vec![3000, 5000], "fixed layout keeps the declared grid");
     }
 
@@ -12965,6 +13469,7 @@ mod tests {
             let resolver = FontResolver::new();
             let mut report = FontResolutionReport::new();
             let ctx = FlowCtx {
+                fit: MeasureFit::Bleed,
                 review_view: ReviewView::Editing,
                 resolver: &resolver,
                 scheme: definitions.theme(None).font_scheme,
@@ -16452,23 +16957,26 @@ mod tests {
             wrap_polygon: None,
             behind_doc: false,
         };
-        let item = float_flow_item(
+        let items = float_flow_items(
             &anchor,
             &Extent {
                 width_emu: 1500 * 635,
                 height_emu: 1500 * 635,
             },
             Twip(9_000),
-        )
-        .expect("supported paragraph-local square wrap");
-        assert!(matches!(
-            item,
-            FlowItem::FloatExclusion {
-                side: InlineFloatSide::Right,
-                width: Twip(1680),
-                height: Twip(1500),
-            }
-        ));
+        );
+        assert!(
+            matches!(
+                items.as_slice(),
+                [FlowItem::FloatExclusion {
+                    side: InlineFloatSide::Right,
+                    width: Twip(1680),
+                    top: Twip(0),
+                    height: Twip(1500),
+                }]
+            ),
+            "supported paragraph-local square wrap"
+        );
     }
 
     fn hr_model(align: HorizontalRuleAlign, width_permille: u16) -> ModelHorizontalRule {

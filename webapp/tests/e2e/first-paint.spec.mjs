@@ -21,6 +21,30 @@ import { test, expect } from "./fixtures.mjs";
 // become a spec that silently tested nothing.
 const FONT_CDN = "**/assets/fonts/script/*";
 
+/** What a reader would notice moving under them when the upgrade lands.
+ *
+ *  `caret` is the local signal: where the engine draws the caret for the model
+ *  position the reader themselves chose.
+ *
+ *  `band` and `scrollHeight` are the GLOBAL one, and they are why this is not
+ *  just a caret assertion. `.page-band`'s height is the whole document's scroll
+ *  space — every page's box plus its gap, for all 14 pages of the fixture, not
+ *  just the two sheets that are materialized near the viewport. So a line that
+ *  re-wrapped anywhere in the document, on any page, moves this number. A guard
+ *  that watched only the caret would be a guard about the first screen. */
+async function documentShape(page) {
+  return page.evaluate(() => {
+    const rect = document.querySelector("#pages .overlay .caret")?.getBoundingClientRect();
+    return {
+      caret: rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.height)] : null,
+      sheets: document.querySelectorAll(".page-wrap").length,
+      scrollHeight: document.querySelector("#pages")?.scrollHeight ?? 0,
+      band: Math.round(document.querySelector(".page-band")?.getBoundingClientRect().height ?? 0),
+      text: (document.getElementById("a11yDocument")?.textContent ?? "").slice(0, 600),
+    };
+  });
+}
+
 test("the document renders while the named web fonts are still in flight", async ({ page }) => {
   // Hold every font request open for the life of the test: nothing resolves, so
   // any code path that awaits provisioning can never complete.
@@ -58,6 +82,70 @@ test("the editor stays usable when the font CDN is unreachable", async ({ page }
   await page.locator("#pages").focus();
   await page.keyboard.type("Z");
   await expect(page.locator("#a11yDocument")).toContainText("Z");
+});
+
+// The whole justification for fetching 9.28 MB of named faces before anyone
+// asked is that the upgrade is INVISIBLE — that the first paint is already laid
+// out on the right advance widths, so when the real faces register nothing
+// moves. That claim had never been measured, and the cost of it being wrong is
+// specific: a reader who clicked during the window would find their caret
+// somewhere else once the fonts landed, which reads as the editor losing their
+// cursor.
+//
+// So it is measured here rather than asserted in a comment,
+// and it holds for the whole of our own origin's font directory — all 22 faces
+// an editor load asks for, 11.09 MB, the six named families plus every
+// coverage-driven script face the fixture's own scalars need. Both mechanisms
+// are in the window at once, which is the honest version of the reader's
+// experience; nothing is excluded to make the assertion easier.
+//
+// What makes the answer trustworthy is `font_substitution.rs`: a run naming a
+// font we do not have is laid out on its metric partner's advances — Arial on
+// Liberation Sans, Calibri on Carlito — so the first paint is the final layout
+// for every family that has a partner, and `sample.docx`'s families all do.
+//
+// WHICH IS ALSO THE LIMIT OF WHAT THIS PROVES, and it is written down because
+// the measurement is easy to over-read. The invisibility is CONDITIONAL on the
+// document's families having metric partners. A document that names `Noto Sans`
+// or `Noto Serif` outright gets Liberation Sans/Serif on the first paint —
+// `GenericFamily`'s sans/serif default, not a metric partner of either — so when
+// the real face registers that document necessarily re-wraps, and a caret
+// placed in the window moves with the text it is in. No fixture in the tree
+// does that, which is why it is not asserted here rather than why it is
+// untrue.
+test("the font upgrade does not move the document under the reader", async ({ page }) => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route(FONT_CDN, async (route) => {
+    await held;
+    await route.fallback();
+  });
+
+  await page.goto("/editor.html");
+  await expect(page.locator(".page-wrap").first()).toBeVisible({ timeout: 45_000 });
+  // The upgrade has NOT happened, so what follows is the pre-font paint. This is
+  // the assertion that stops the rest being a comparison of one moment with
+  // itself, and the reason the route holds rather than aborts.
+  expect(await page.evaluate(() => document.body.dataset.fontsReady)).toBeUndefined();
+
+  // A reader puts their caret in the middle of a paragraph, exactly as they
+  // would while the editor is still settling.
+  await page.locator("#pages").click({ position: { x: 220, y: 180 } });
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+  const before = await documentShape(page);
+  expect(before.caret).not.toBeNull();
+  expect(before.band).toBeGreaterThan(0);
+
+  release();
+  await page.waitForFunction(() => document.body.dataset.fontsReady === "true", null, {
+    timeout: 45_000,
+  });
+  // `fontsReady` is set after the upgrade's own `renderAll` + `drawSelection`,
+  // so there is nothing left to wait for; a `waitForTimeout` here would only
+  // hide a repaint that arrives later than it should.
+  expect(await documentShape(page)).toEqual(before);
 });
 
 test("the editor preloads the engine at parse time", async ({ page }) => {

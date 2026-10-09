@@ -49,4 +49,42 @@ impl fmt::Display for ImportError {
     }
 }
 
+impl ImportError {
+    /// One sentence a reader can act on, for the refusals that survive a
+    /// best-effort open.
+    ///
+    /// `Display` stays as it is — it names the limit and the rule, which is what
+    /// a log needs. This is the other audience, and it exists for the same reason
+    /// [`casual_doc_ooxml::PackageError::summary`] does: a host renders this
+    /// verbatim, and "document XML is malformed" in front of someone who
+    /// double-clicked a file is the same defect as showing them an internal error
+    /// name. This repository already has one of those and does not need two.
+    ///
+    /// With [`crate::ImportConfig::recover`] on, only the bounds and the internal
+    /// invariants can reach here at all; the damage variants are recovered from
+    /// and reported instead.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        match self {
+            Self::InvalidConfig => {
+                "This application asked for a limit the document engine does not allow. This \
+                 is a configuration problem, not a problem with the file."
+                    .to_owned()
+            }
+            Self::Package(error) => error.summary(),
+            Self::MalformedXml => "This document's text is damaged beyond reading.".to_owned(),
+            Self::LimitExceeded { limit } => format!(
+                "This document is too large to open safely: it exceeds the limit on {limit}. \
+                 The limit protects against a file that would expand without bound once \
+                 opened."
+            ),
+            Self::Model(_) | Self::Disposition(_) => {
+                "This document could not be opened because of a fault in the document \
+                 engine rather than in the file. The file itself is most likely fine."
+                    .to_owned()
+            }
+        }
+    }
+}
+
 impl Error for ImportError {}

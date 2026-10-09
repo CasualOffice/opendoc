@@ -542,15 +542,17 @@ impl SlideHost<'_> {
                 stroke: stroke.filter(|_| !no_outline),
             },
             AnchorContent::Path {
-                commands,
-                closed,
+                paths,
                 fill,
                 stroke,
+                head_end,
+                tail_end,
             } => AnchorContent::Path {
-                commands,
-                closed,
+                paths,
                 fill: fill.filter(|_| !no_fill),
                 stroke: stroke.filter(|_| !no_outline),
+                head_end,
+                tail_end,
             },
             // A `p:pic`: its image is its `p:blipFill`, not its `p:spPr` fill, so
             // only the frame outline is suppressible here. A `p:spPr/a:noFill` on a

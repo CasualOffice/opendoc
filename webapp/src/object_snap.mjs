@@ -50,9 +50,17 @@ const RESIZE_FACTORS = [
  * FREED a picture and LOCKED a text box. Word, Google Docs and ONLYOFFICE all
  * agree that Shift CONSTRAINS and never frees — ONLYOFFICE's
  * `ResizeTracks.js` reads `ShiftKey === true || getNoChangeAspect()`, an OR, so
- * holding Shift can only add the constraint. A picture's proportions are its
- * default (`getNoChangeAspect()` is true for images), which is the part we had
- * right. Distorting a picture stays reachable — through the inspector's width
+ * holding Shift can only add the constraint.
+ *
+ * What constrains WITHOUT Shift is the object's own "Lock aspect ratio" —
+ * DrawingML's `noChangeAspect`, which the engine publishes with the selection
+ * as `locksAspectRatio` (`docs/109` FID-AT-09) — and not its kind. Word honours
+ * the flag both ways: a picture whose file states no lock stretches on a corner
+ * drag, and a shape whose file locks its ratio keeps it. An ABSENT flag is
+ * unlocked, because that is how Word reads the same file. Word writes the lock
+ * on every picture it inserts, and so does this editor's own Insert ▸ Picture,
+ * so an inserted picture keeps its proportions exactly as it always has here.
+ * Distorting a locked picture stays reachable — through the inspector's width
  * and height fields, which is where Word and ONLYOFFICE put it too.
  *
  * Ctrl (or Cmd) resizes about the object's CENTRE, both edges moving together;
@@ -60,13 +68,13 @@ const RESIZE_FACTORS = [
  *
  * O(1).
  *
- * @param {{kind: string|null|undefined, shiftKey: boolean, ctrlKey: boolean, metaKey: boolean}} at
+ * @param {{kind?: string|null, locksAspect?: boolean, shiftKey: boolean, ctrlKey: boolean, metaKey: boolean}} at
  * @param {number} minEdge the smallest edge a drag may leave, in twips
  * @returns {{lockAspect: boolean, fromCentre: boolean, minEdge: number}}
  */
 export function resizeRulesFor(at, minEdge) {
   return {
-    lockAspect: at.kind === "image" || at.shiftKey === true,
+    lockAspect: at.locksAspect === true || at.shiftKey === true,
     fromCentre: at.ctrlKey === true || at.metaKey === true,
     minEdge,
   };

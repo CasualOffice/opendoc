@@ -68,7 +68,10 @@ const EXPECTED = Object.freeze({
     'class="object-handle"',
     'class="object-bar-actions"',
   ],
-  menu: ['id="appMenuBar"'],
+  // The bar, and the phone header's door to it (`menu_sheet.mjs`, docs/148
+  // §5.3b): a host that withholds the menus and leaves the door would ship a
+  // button that opens nothing.
+  menu: ['id="appMenuBar"', 'id="appMenusBtn"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
   // Both durable entry points, not just the View band's: the rail's Versions
@@ -84,8 +87,11 @@ const EXPECTED = Object.freeze({
   // The Editing / Suggesting / Read-only switcher (ONLYOFFICE
   // `customization.review.hideReviewDisplay`). One element: the segmented
   // control is a `role="group"` holding the three buttons, so removing it
-  // removes all three and cannot leave one behind.
-  review: ['id="reviewModeControl"'],
+  // removes all three and cannot leave one behind. Its second face is the
+  // header's mode selector (`109` UX-025) and the menu it opens: withholding
+  // the region has to take all of it, or a host who said `chrome=-review` still
+  // ships a switch at the top right.
+  review: ['id="reviewModeControl"', 'id="headerModeControl"', 'id="headerModeMenu"'],
   status: ['class="footer"', 'id="statusToast"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],

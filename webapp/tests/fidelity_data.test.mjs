@@ -135,8 +135,9 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // authoring are follow-ups — partial, not none.
   assert.equal(by["Text boxes & shapes"].editable, "partial");
   // Common shape model (fill/gradient, outline/dash/arrows, rotation/flip, wrap
-  // contour, preset geometry) is fully typed as of Layer 1; custGeom stays
-  // retained-not-typed, so semantic-mode round-trip remains partial.
+  // contour, all 187 preset geometries and the whole custGeom grammar, object
+  // names) is fully typed. Semantic-mode round-trip stays partial for shape
+  // effects (shadow/glow/3-D), linked boxes and renumbered drawing ids.
   assert.equal(by["Text boxes & shapes"].modeled, "full");
   assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
   // Notes can be inserted and their bodies edited like any other surface;
@@ -153,11 +154,27 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // facade's mutation choke point, `readOnly`/`comments`/`trackedChanges` at
   // the operation in `casual-doc-edit`. The pin used to say the other three
   // were NOT enforced, which had been false since ADR-052 landed: a guard can
-  // pin a lie (SKILL §9 rule 6), so this one now states what keeps the cell off
-  // "full" - `w:formatting` style locking is not enforced, and a
-  // `trackedChanges`-protected document does not force Suggesting on open.
+  // pin a lie (SKILL §9 rule 6), so this one states what keeps the cell off
+  // "full". `w:formatting` style locking WAS one of the two reasons and is no
+  // longer: it is enforced at the operation, with `w:style/@w:locked` and
+  // `w:latentStyles/@w:defLockedState` as its whitelist. What keeps the cell
+  // off "full" now is the one Word obligation still unmet - a
+  // `trackedChanges`-protected document does not force Suggesting on open and
+  // its Track Changes control stays live, so a reader can reach a state where
+  // every keystroke is refused.
   assert.equal(by["Document protection & forms"].editable, "partial");
   assert.equal(by["Document protection & forms"].rendered, "none");
+  // `modeled` was "full" and that was an overstatement by omission (SKILL §9
+  // rule 3), by its own note's admission in the same object: `w:permStart` /
+  // `w:permEnd` have no typed model at all, `w:sectPr/w:formProt` has none
+  // either, and the sixteen password attributes have none. `grep -rn
+  // "permStart\|formProt" crates/ --include="*.rs"` returns one comment in a
+  // test and no model, importer arm or exporter arm. Three unmodelled
+  // constructs in one family is "partial", and the note now says which three
+  // rather than leaving the cell to imply there are none. Pinned so the cell
+  // cannot drift back to "full" the way the editable cell drifted into a lie.
+  assert.equal(by["Document protection & forms"].modeled, "partial");
+  assert.notEqual(by["Document protection & forms"].modeled, "full");
   // Round-trip is NOT full, and it never was: the sixteen `AG_Password` /
   // `AG_TransitionalPassword` attributes on `w:documentProtection` and
   // `w:writeProtection` have no home in the model, and `word/settings.xml` is a
@@ -647,6 +664,31 @@ test("every Charts grade is derived from the painter, the writer and the host su
       charts.note,
       /no host surface calls the engine's `insertChart`/,
       "a host surface now calls insertChart and the note still denies it",
+    );
+  }
+  // The data editor. `chart_data.mjs` is the surface that calls the engine's
+  // `setChartData`; while the host reaches it, the note may not say nothing
+  // changes a chart's data (the understatement this row carried after the
+  // editor shipped), and while it does not, the note may not claim it.
+  // The seam is the bridge every chart surface shares (`chart_commands.mjs`),
+  // and the host reaches it through `createChartSurface`.
+  const editsData =
+    /js_name = setChartData/.test(read("casual-doc-wasm/src/chart.rs")) &&
+    readFileSync(new URL("../src/chart_commands.mjs", import.meta.url), "utf8").includes("setChartData(") &&
+    host.includes("createChartSurface(");
+  if (editsData) {
+    assert.doesNotMatch(
+      charts.note,
+      /nothing changes a chart's data|no chart data editor/i,
+      "the chart panel edits a chart's data and the note still denies it",
+    );
+    assert.match(charts.note, /Edit Data/, "the note must say what the data editor is");
+    assert.notEqual(charts.editable, "full", "series formatting, axes and combos are not editable");
+  } else {
+    assert.doesNotMatch(
+      charts.note,
+      /Chart Data window/,
+      "no host surface reaches setChartData, so the note may not claim a data editor",
     );
   }
   // And the other half of "partial": an existing chart is published as an

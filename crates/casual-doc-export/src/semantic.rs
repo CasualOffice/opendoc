@@ -31,20 +31,24 @@ use std::io::{Cursor, Write};
 
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::strip_xml_forbidden;
+// Own line (anti-conflict): the drawing-name side table is keyed by node id.
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::BookmarkId;
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::FieldUpdateState;
+use casual_doc_model::v1::ObjectName;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
 use casual_doc_model::v1::PageSize;
 use casual_doc_model::v1::SectionId;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::WatermarkContent;
 use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
+use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
-// Own line (anti-conflict): the shape fill/line side table re-emitted by
-// `write_shape_fill`/`write_outline` (`docs/156` §6 row 0.3).
-use casual_doc_model::NodeId;
+// Own line (anti-conflict): `w:view`, FID-AT-01.
+use casual_doc_model::v1::DocumentView;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -86,10 +90,12 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::ExportError;
-use crate::report::{Disposition, DocxExport, Reporter};
+use crate::report::{Disposition, DocxExport, ModelOutcome, Reporter};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding imports here do not collide in one list.
 use crate::chart::{GeneratedChartPart, generate_chart_parts};
+// Own line (anti-conflict): the embedded workbook's content type.
+use crate::chart_workbook::WORKBOOK_CT;
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -436,6 +442,11 @@ struct IdTokens {
     /// part written into the package are derived from the same computation and
     /// cannot name different relationships. See `watermark_plan`.
     watermark_headers: BTreeMap<SectionId, Vec<(HeaderFooterKind, String)>>,
+    /// Each section's `w:formProt` (`Definitions::form_protection`, `109`
+    /// FID-AT-06), here for the reason `watermark_headers` is: this is the one
+    /// per-section table already threaded to every depth a `w:sectPr` is written
+    /// from.
+    form_protection: BTreeMap<SectionId, bool>,
 }
 
 impl IdTokens {
@@ -471,7 +482,17 @@ impl IdTokens {
             comments: number(&defs.comments),
             bookmarks: number(&defs.bookmarks),
             watermark_headers,
+            form_protection: defs
+                .form_protection
+                .iter()
+                .map(|(id, protected)| (*id, *protected))
+                .collect(),
         }
+    }
+
+    /// `section`'s `w:formProt`, when its source stated one.
+    fn form_protection(&self, section: SectionId) -> Option<bool> {
+        self.form_protection.get(&section).copied()
     }
 
     /// The `(page type, relationship id)` pairs for the header parts synthesized to
@@ -549,6 +570,30 @@ struct Ctx<'a> {
     embedded_parts: Option<&'a BTreeSet<String>>,
     rels: RelBuilder,
     tokens: IdTokens,
+    /// The one counter every part's frames take their `wp:docPr/@id` from
+    /// (`109` FID-SH-05).
+    doc_pr_ids: &'a DocPrIds,
+}
+
+/// The `wp:docPr/@id` counter for one written package (`109` FID-SH-05).
+///
+/// ECMA-376 §20.4.2.5 makes `@id` a unique identifier for the drawing object
+/// in the document, and Word writes 1, 2, 3, … across the body, the headers,
+/// the footers and the notes. This writer stamped `1` on every frame. One
+/// counter shared by every part's `Ctx` — a `Cell`, because the parts are
+/// written one after another and each holds it by shared reference — numbers
+/// them in write order, which is deterministic. Nothing reads the id back (the
+/// importer does not), so the round trip stays a fixed point.
+#[derive(Debug, Default)]
+struct DocPrIds(std::cell::Cell<u32>);
+
+impl DocPrIds {
+    /// The next id: 1 for the first frame written.
+    fn next(&self) -> u32 {
+        let id = self.0.get().saturating_add(1);
+        self.0.set(id);
+        id
+    }
 }
 
 /// Serializes a v1 `Document` to a DOCX package. `media` supplies binary image
@@ -651,6 +696,97 @@ pub fn export_package(
     retained_parts: &RetainedParts,
     kind: PackageKind,
 ) -> Result<DocxExport, ExportError> {
+    export_package_with_options(
+        document,
+        media,
+        retained_parts,
+        kind,
+        ExportOptions::default(),
+    )
+}
+
+/// What a caller knows about the document that the model does not say.
+///
+/// `#[non_exhaustive]` with builder methods, so a field added here later is not
+/// a breaking change to every caller (`SKILL` §6a.5).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct ExportOptions {
+    /// The `docProps/app.xml` statistics the SOURCE carried, given when the
+    /// content has been edited since, so that they no longer describe it
+    /// (`109` FID-AT-04). `None` when the content is unchanged or unknown.
+    pub stale_statistics: Option<DocumentStatistics>,
+}
+
+impl ExportOptions {
+    /// These options, stating that the content was edited since `source` —
+    /// the statistics as they were read — was written.
+    #[must_use]
+    pub const fn statistics_stale_since(mut self, source: DocumentStatistics) -> Self {
+        self.stale_statistics = Some(source);
+        self
+    }
+}
+
+/// The six statistics Word derives from a document's content and writes into
+/// `docProps/app.xml` (`109` FID-AT-04).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DocumentStatistics {
+    /// `Pages`.
+    pub pages: Option<i64>,
+    /// `Words`.
+    pub words: Option<i64>,
+    /// `Characters`.
+    pub characters: Option<i64>,
+    /// `CharactersWithSpaces`.
+    pub characters_with_spaces: Option<i64>,
+    /// `Lines`.
+    pub lines: Option<i64>,
+    /// `Paragraphs`.
+    pub paragraphs: Option<i64>,
+}
+
+impl DocumentStatistics {
+    /// The statistics `app` states.
+    #[must_use]
+    pub const fn of(app: &AppProperties) -> Self {
+        Self {
+            pages: app.pages,
+            words: app.words,
+            characters: app.characters,
+            characters_with_spaces: app.characters_with_spaces,
+            lines: app.lines,
+            paragraphs: app.paragraphs,
+        }
+    }
+}
+
+/// Report feature for `docProps/app.xml` statistics an edit made stale and the
+/// save therefore left out (`109` FID-AT-04).
+pub const STALE_STATISTICS: &str = "docx.export.stale.statistics";
+
+/// [`export_package`] with what the caller knows beyond the model.
+///
+/// With [`ExportOptions::stale_statistics`], `docProps/app.xml` is written
+/// without each of the six statistics Word derives from the content that still
+/// holds the value the source carried, and the save names them
+/// ([`STALE_STATISTICS`]): those values describe the document as it was, and a
+/// file browser or document library shows them AS the document. It is the
+/// thumbnail's rule (`105` FID-R-05) one part over. A statistic the model holds
+/// a DIFFERENT value for was set since — a host that knows the current counts
+/// (the webapp computes them, pages included, for its status bar) can put them
+/// in the model before saving — and is written.
+///
+/// # Errors
+///
+/// Returns [`ExportError`] when the package cannot be assembled.
+pub fn export_package_with_options(
+    document: &Document,
+    media: &BTreeMap<String, Vec<u8>>,
+    retained_parts: &RetainedParts,
+    kind: PackageKind,
+    options: ExportOptions,
+) -> Result<DocxExport, ExportError> {
     let definitions = document.definitions();
     let mut reporter = Reporter::default();
     // The media the package will contain. An entry whose bytes the caller did
@@ -691,11 +827,14 @@ pub fn export_package(
     for (id, _, _, _) in &embedded_rels {
         reserved_rel_ids.insert(id.clone());
     }
+    // One `wp:docPr/@id` sequence for the whole package (`109` FID-SH-05).
+    let doc_pr_ids = DocPrIds::default();
     let (document_xml, rels) = document_xml(
         document,
         &available_media,
         &available_embedded,
         reserved_rel_ids,
+        &doc_pr_ids,
     )?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
@@ -715,7 +854,25 @@ pub fn export_package(
         ));
     }
     let has_embedded_fonts = !font_rels.is_empty();
-    if definitions.font_scheme.is_some()
+    // The theme is copy-on-write (`109` FID-AT-03): the source part's own bytes
+    // while the model's theme still equals what they parsed to — which keeps the
+    // theme's name, its font scheme's name, object defaults, custom colours and
+    // extensions the model does not carry — and a part regenerated from the
+    // model only once the theme changed. Then the detail only those bytes held
+    // is gone, and each finding the import raised against the part is named.
+    let retained_theme = retained_parts
+        .theme
+        .as_ref()
+        .filter(|theme| theme.still_describes(definitions));
+    if let Some(theme) = retained_theme {
+        extras.push(ExtraPart::new(
+            "word/theme/theme1.xml",
+            THEME_CT,
+            THEME_REL_TYPE,
+            "theme/theme1.xml",
+            theme.bytes.clone(),
+        ));
+    } else if definitions.font_scheme.is_some()
         || definitions.color_scheme.is_some()
         || definitions.format_scheme_xml.is_some()
     {
@@ -731,13 +888,29 @@ pub fn export_package(
             )?,
         ));
     }
+    if retained_theme.is_none()
+        && let Some(theme) = &retained_parts.theme
+    {
+        for entry in &theme.unmodeled {
+            let disposition = match entry.model_outcome() {
+                ModelOutcome::Degraded => Disposition::DegradedNotRetained,
+                _ => Disposition::OmittedNotRetained,
+            };
+            reporter.record_import_finding(
+                &entry.feature,
+                entry.location.clone(),
+                disposition,
+                entry.occurrences,
+            );
+        }
+    }
     if !definitions.settings.is_default() {
         extras.push(ExtraPart::new(
             "word/settings.xml",
             SETTINGS_CT,
             SETTINGS_REL_TYPE,
             "settings.xml",
-            settings_xml(&definitions.settings)?,
+            settings_xml(&definitions.settings, &mut reporter)?,
         ));
     }
     if !definitions.styles.is_empty()
@@ -789,6 +962,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -822,6 +996,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -853,6 +1028,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1008,6 +1184,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1064,6 +1241,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &[],
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1099,6 +1277,7 @@ pub fn export_package(
                 available: &available_embedded,
                 own: &own_embedded,
             },
+            &doc_pr_ids,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1119,7 +1298,7 @@ pub fn export_package(
     // relationships (not `document.xml.rels`). A group is emitted only when the
     // model carries it, so an unedited package without metadata is byte-identical
     // to the earlier slices.
-    let docprops = docprop_parts(document)?;
+    let docprops = docprop_parts(document, options.stale_statistics, &mut reporter)?;
 
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible.
@@ -1174,9 +1353,18 @@ pub fn export_package(
     // emitted from the node's verbatim relationship id by `embedded_rels`, so
     // only the part itself and its own `_rels` companion are added here; the
     // content-type `Override` went in with the manifest above.
+    // Retained parts a generated chart REPLACES (an edited imported chart and
+    // the workbook it names). Collected before the generated parts are moved.
+    let superseded: BTreeSet<String> = generated_charts
+        .iter()
+        .flat_map(|generated| generated.supersedes.iter().cloned())
+        .collect();
     for generated in generated_charts {
         if let Some((rels_name, rels_bytes)) = generated.rels {
             parts.push(rels_name, rels_bytes);
+        }
+        if let Some(workbook) = generated.workbook {
+            parts.push(workbook.part_name, workbook.bytes);
         }
         parts.push(generated.part_name, generated.bytes);
     }
@@ -1185,6 +1373,11 @@ pub fn export_package(
     // and root/document referencing relationships are merged into the generated
     // manifests above.
     for retained in &retained_parts.parts {
+        if superseded.contains(&retained.part_name) {
+            // Its replacement — and the replacement's own `_rels` — went in
+            // above. Writing this too would be a second entry under one name.
+            continue;
+        }
         if let Some(rels) = &retained.rels {
             parts.push(rels.part_name.clone(), rels.bytes.clone());
         }
@@ -1461,12 +1654,21 @@ fn content_types_xml(
     // Generated chart parts. A chart part has no extension `Default` to fall
     // back on (`.xml` maps to `application/xml`), so without this Override Word
     // reads the part as generic XML and reports the package as unreadable.
+    let mut superseded: BTreeSet<&str> = BTreeSet::new();
     for generated in generated_charts {
         let part_name = format!("/{}", generated.part_name);
         let mut over = start("Override");
         over.push_attribute(("PartName", part_name.as_str()));
         over.push_attribute(("ContentType", generated.content_type));
         w.write_event(Event::Empty(over)).map_err(pkg)?;
+        if let Some(workbook) = &generated.workbook {
+            let part_name = format!("/{}", workbook.part_name);
+            let mut over = start("Override");
+            over.push_attribute(("PartName", part_name.as_str()));
+            over.push_attribute(("ContentType", WORKBOOK_CT));
+            w.write_event(Event::Empty(over)).map_err(pkg)?;
+        }
+        superseded.extend(generated.supersedes.iter().map(String::as_str));
     }
     // Opaque preserved parts (P1F-2): merge each part's declared content type as
     // an `Override` so it re-imports to the same type. A part whose source type
@@ -1474,6 +1676,11 @@ fn content_types_xml(
     // A part with no declared type falls back to the extension `Default`s above
     // (e.g. `xml`, `rels`); it gets no `Override`.
     for retained in &retained_parts.parts {
+        // A replaced part's `Override` was written above; a second one for the
+        // same `PartName` is an invalid manifest.
+        if superseded.contains(retained.part_name.as_str()) {
+            continue;
+        }
         let Some(content_type) = &retained.content_type else {
             continue;
         };
@@ -1552,7 +1759,11 @@ fn write_retained_relationships(
 /// Builds the `docProps/*` parts from the document's metadata, one per non-empty
 /// group, in core/app/custom order. Returns an empty vector when the document
 /// carries no metadata.
-fn docprop_parts(document: &Document) -> Result<Vec<DocPropPart>, ExportError> {
+fn docprop_parts(
+    document: &Document,
+    stale_statistics: Option<DocumentStatistics>,
+    reporter: &mut Reporter,
+) -> Result<Vec<DocPropPart>, ExportError> {
     let mut parts = Vec::new();
     let Some(properties) = document.properties() else {
         return Ok(parts);
@@ -1572,7 +1783,7 @@ fn docprop_parts(document: &Document) -> Result<Vec<DocPropPart>, ExportError> {
             content_type: APP_PROPS_CT,
             rel_type: APP_PROPS_REL_TYPE,
             target: "docProps/app.xml",
-            bytes: app_properties_xml(&properties.app)?,
+            bytes: app_properties_xml(&properties.app, stale_statistics, reporter)?,
         });
     }
     if !properties.custom.is_empty() {
@@ -1661,7 +1872,44 @@ fn core_properties_xml(core: &CoreProperties) -> Result<Vec<u8>, ExportError> {
 
 /// Emits `docProps/app.xml` (extended properties) in the ECMA-376 CT_Properties
 /// element order. Each field is omitted when unset.
-fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
+fn app_properties_xml(
+    app: &AppProperties,
+    stale_statistics: Option<DocumentStatistics>,
+    reporter: &mut Reporter,
+) -> Result<Vec<u8>, ExportError> {
+    // A statistic still holding the source's value after an edit is stale, so it
+    // is left out and named (`109` FID-AT-04, `export_package_with_options`).
+    let stale = stale_statistics.unwrap_or_default();
+    let current = |value: Option<i64>, source: Option<i64>| {
+        if stale_statistics.is_some() && value.is_some() && value == source {
+            None
+        } else {
+            value
+        }
+    };
+    let pages = current(app.pages, stale.pages);
+    let words = current(app.words, stale.words);
+    let characters = current(app.characters, stale.characters);
+    let characters_with_spaces = current(app.characters_with_spaces, stale.characters_with_spaces);
+    let lines = current(app.lines, stale.lines);
+    let paragraphs = current(app.paragraphs, stale.paragraphs);
+    let dropped = [
+        (app.pages, pages),
+        (app.words, words),
+        (app.characters, characters),
+        (app.characters_with_spaces, characters_with_spaces),
+        (app.lines, lines),
+        (app.paragraphs, paragraphs),
+    ]
+    .iter()
+    .any(|(model, written)| model.is_some() && written.is_none());
+    if dropped {
+        reporter.record_part(
+            STALE_STATISTICS,
+            "docProps/app.xml",
+            Disposition::OmittedNotRetained,
+        );
+    }
     let mut w = new_writer();
     let mut root = start("Properties");
     root.push_attribute(("xmlns", EXT_PROPS_NS));
@@ -1677,11 +1925,11 @@ fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
         }
     }
     for (value, tag) in [
-        (app.pages, "Pages"),
-        (app.words, "Words"),
-        (app.characters, "Characters"),
-        (app.lines, "Lines"),
-        (app.paragraphs, "Paragraphs"),
+        (pages, "Pages"),
+        (words, "Words"),
+        (characters, "Characters"),
+        (lines, "Lines"),
+        (paragraphs, "Paragraphs"),
         (app.total_time, "TotalTime"),
     ] {
         if let Some(value) = value {
@@ -1736,7 +1984,7 @@ fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
     if let Some(value) = app.links_up_to_date {
         write_text_element(&mut w, "LinksUpToDate", bool_token(value))?;
     }
-    if let Some(value) = app.characters_with_spaces {
+    if let Some(value) = characters_with_spaces {
         write_text_element(&mut w, "CharactersWithSpaces", &value.to_string())?;
     }
     if let Some(value) = app.shared_doc {
@@ -1744,6 +1992,11 @@ fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
     }
     if let Some(value) = &app.hyperlink_base {
         write_text_element(&mut w, "HyperlinkBase", value)?;
+    }
+    // `109` FID-AT-10. After `HyperlinkBase`, where Word writes it; the schema's
+    // `CT_Properties` is an `xsd:all`, so the order is Word's, not a rule.
+    if let Some(value) = app.hyperlinks_changed {
+        write_text_element(&mut w, "HyperlinksChanged", bool_token(value))?;
     }
     if let Some(value) = &app.application {
         write_text_element(&mut w, "Application", value)?;
@@ -1975,6 +2228,7 @@ fn notes_xml(
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
     surface: &SurfaceEmbedded<'_>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images these notes use, declared by this part and reserved so a
@@ -1993,6 +2247,7 @@ fn notes_xml(
         embedded_parts: Some(surface.available),
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
+        doc_pr_ids,
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -2024,6 +2279,7 @@ fn comments_xml(
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
     surface: &SurfaceEmbedded<'_>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     let mut own_media: Vec<MediaRel> = Vec::new();
@@ -2040,6 +2296,7 @@ fn comments_xml(
         embedded_parts: Some(surface.available),
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
+        doc_pr_ids,
     };
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
@@ -2206,6 +2463,7 @@ fn header_footer_xml(
     available_media: &DefinitionMap<MediaId, MediaReference>,
     watermark: Option<&WatermarkShape<'_>>,
     surface: &SurfaceEmbedded<'_>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images this part uses, reserved so a hyperlink minted inside the part
@@ -2225,6 +2483,7 @@ fn header_footer_xml(
         embedded_parts: Some(surface.available),
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
+        doc_pr_ids,
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -3504,16 +3763,69 @@ fn table_style_region_token(region: TableStyleRegion) -> &'static str {
 /// it departs from the default, and the importer reads the same shapes back — so
 /// the round trip is a fixed point. Emitted only when `settings.is_default()` is
 /// false, matching the importer.
-fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
+///
+/// The root declares a namespace only when an element in it is written, so a
+/// document with none of the `109` FID-AT-10 settings writes the bytes it always
+/// did. The two verbatim fragments (`m:mathPr`, `w:shapeDefaults`) are checked
+/// before they are written ([`settings_fragment_is_writable`]): a snapshot is
+/// untrusted input, and raw bytes spliced into a part are the one place a model
+/// string could end the element it sits in. A fragment that fails is not
+/// written and is named in `reporter`.
+///
+/// Complexity: O(settings), plus one parse of each fragment.
+fn settings_xml(
+    settings: &DocumentSettings,
+    reporter: &mut Reporter,
+) -> Result<Vec<u8>, ExportError> {
+    let math_properties = settings
+        .math_properties_xml
+        .as_deref()
+        .filter(|xml| settings_fragment_is_writable(xml, "mathPr", reporter));
+    let shape_defaults = settings
+        .shape_defaults_xml
+        .as_deref()
+        .filter(|xml| settings_fragment_is_writable(xml, "shapeDefaults", reporter));
+    let w14 = settings.document_id_w14.is_some() || settings.default_image_dpi.is_some();
+    let w15 = settings.document_id_w15.is_some();
     let mut w = new_writer();
     let mut root = start("w:settings");
     root.push_attribute(("xmlns:w", W_NS));
+    if math_properties.is_some() {
+        root.push_attribute(("xmlns:m", M_NS));
+    }
+    if shape_defaults.is_some() {
+        root.push_attribute(("xmlns:o", O_NS));
+        root.push_attribute(("xmlns:v", V_NS));
+    }
+    if w14 || w15 {
+        // Both are Office extensions a strict ECMA-376 consumer does not know,
+        // so they are declared ignorable, exactly as Word declares them.
+        root.push_attribute(("xmlns:mc", MC_NS));
+        if w14 {
+            root.push_attribute(("xmlns:w14", W14_NS));
+        }
+        if w15 {
+            root.push_attribute(("xmlns:w15", W15_NS));
+        }
+        let ignorable = match (w14, w15) {
+            (true, true) => "w14 w15",
+            (true, false) => "w14",
+            _ => "w15",
+        };
+        root.push_attribute(("mc:Ignorable", ignorable));
+    }
     w.write_event(Event::Start(root)).map_err(pkg)?;
     if let Some(protection) = &settings.write_protection {
         let mut el = start("w:writeProtection");
         if protection.recommended {
             el.push_attribute(("w:recommended", "1"));
         }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:view` sits between `w:writeProtection` and `w:zoom` in CT_Settings.
+    if let Some(view) = settings.view {
+        let mut el = start("w:view");
+        el.push_attribute(("w:val", document_view_token(view)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     write_zoom(&mut w, &settings.zoom)?;
@@ -3546,8 +3858,11 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:trackRevisions` (ECMA-376 §17.15.1.89). This wrote `w:trackChanges`,
+    // which is in no schema, until `109` FID-AT-11: a strict consumer refuses
+    // an unknown element in the main namespace, and Word ignored it.
     if settings.track_changes {
-        w.write_event(Event::Empty(start("w:trackChanges")))
+        w.write_event(Event::Empty(start("w:trackRevisions")))
             .map_err(pkg)?;
     }
     if let Some(protection) = &settings.document_protection {
@@ -3596,26 +3911,42 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::Empty(start("w:doNotHyphenateCaps")))
             .map_err(pkg)?;
     }
+    // `CT_Settings` order: `w:defaultTableStyle`, `w:evenAndOddHeaders`, …,
+    // `w:savePreviewPicture`, …, `w:updateFields`. This wrote
+    // `w:evenAndOddHeaders`, `w:updateFields`, `w:defaultTableStyle` until `109`
+    // FID-AT-10 put the sequence right, which a schema-validating consumer
+    // refuses whenever two of the three are present.
+    if let Some(style) = &settings.default_table_style {
+        let mut el = start("w:defaultTableStyle");
+        el.push_attribute(("w:val", style.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if settings.even_and_odd_headers {
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
+            .map_err(pkg)?;
+    }
+    if settings.save_preview_picture {
+        w.write_event(Event::Empty(start("w:savePreviewPicture")))
             .map_err(pkg)?;
     }
     if settings.update_fields {
         w.write_event(Event::Empty(start("w:updateFields")))
             .map_err(pkg)?;
     }
-    if let Some(style) = &settings.default_table_style {
-        let mut el = start("w:defaultTableStyle");
-        el.push_attribute(("w:val", style.as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
-    }
     write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
     write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
-    if settings.adjust_line_height_in_table || !settings.compat.is_empty() {
+    if settings.adjust_line_height_in_table || settings.use_fe_layout || !settings.compat.is_empty()
+    {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
+        // `CT_Compat` order: `w:adjustLineHeightInTable`, …, `w:useFELayout`,
+        // …, then the `w:compatSetting` triples last.
         if settings.adjust_line_height_in_table {
             w.write_event(Event::Empty(start("w:adjustLineHeightInTable")))
+                .map_err(pkg)?;
+        }
+        if settings.use_fe_layout {
+            w.write_event(Event::Empty(start("w:useFELayout")))
                 .map_err(pkg)?;
         }
         for setting in &settings.compat {
@@ -3628,9 +3959,180 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::End(BytesEnd::new("w:compat")))
             .map_err(pkg)?;
     }
+    // `m:mathPr` follows `w:compat` (and the `w:docVars`/`w:rsids` this writer
+    // does not emit), and precedes `w:themeFontLang`. Verbatim, already checked.
+    if let Some(xml) = math_properties {
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
+    // `w:themeFontLang` follows `m:mathPr` (and the `w:attachedSchema` this
+    // writer does not emit) in CT_Settings.
+    let languages = &settings.theme_font_languages;
+    if !languages.is_empty() {
+        let mut el = start("w:themeFontLang");
+        for (value, attribute) in [
+            (&languages.latin, "w:val"),
+            (&languages.east_asia, "w:eastAsia"),
+            (&languages.bidi, "w:bidi"),
+        ] {
+            if let Some(value) = value {
+                el.push_attribute((attribute, value.as_str()));
+            }
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // The tail of CT_Settings, in its order: `w:doNotAutoCompressPictures`,
+    // `w:shapeDefaults`, `w:decimalSymbol`, `w:listSeparator`, then the Office
+    // extensions in the order Word writes them (`w14:docId`,
+    // `w14:defaultImageDpi`, `w15:docId`). `109` FID-AT-10.
+    if settings.do_not_auto_compress_pictures {
+        w.write_event(Event::Empty(start("w:doNotAutoCompressPictures")))
+            .map_err(pkg)?;
+    }
+    if let Some(xml) = shape_defaults {
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
+    for (name, value) in [
+        ("w:decimalSymbol", &settings.decimal_symbol),
+        ("w:listSeparator", &settings.list_separator),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if let Some(id) = &settings.document_id_w14 {
+        let mut el = start("w14:docId");
+        el.push_attribute(("w14:val", id.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(dpi) = settings.default_image_dpi {
+        let mut el = start("w14:defaultImageDpi");
+        el.push_attribute(("w14:val", dpi.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(id) = &settings.document_id_w15 {
+        let mut el = start("w15:docId");
+        el.push_attribute(("w15:val", id.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:settings")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The prefixes a verbatim settings fragment may use, with the URI
+/// [`settings_xml`] declares for each — the same four the importer accepts a
+/// fragment in (`casual-doc-import` `settings::FRAGMENT_NAMESPACES`).
+const SETTINGS_FRAGMENT_NAMESPACES: [(&[u8], &str); 4] =
+    [(b"w", W_NS), (b"m", M_NS), (b"o", O_NS), (b"v", V_NS)];
+
+/// Whether a verbatim settings fragment (`m:mathPr`, `w:shapeDefaults`) may be
+/// spliced into `word/settings.xml` as it is: exactly one well-formed element,
+/// named `local` in the namespace the writer binds its prefix to, every name in
+/// it in one of [`SETTINGS_FRAGMENT_NAMESPACES`], and nothing after it.
+///
+/// A fragment the importer captured always passes. One that does not came from
+/// somewhere else — a snapshot is untrusted input — and raw bytes are the one
+/// place a model string could close the element it sits in, so it is refused,
+/// left out of the part, and named in `reporter` as not retained.
+///
+/// Complexity: O(fragment bytes), one streaming parse.
+fn settings_fragment_is_writable(xml: &str, local: &'static str, reporter: &mut Reporter) -> bool {
+    let writable = settings_fragment_is_well_formed(xml, local.as_bytes());
+    if !writable {
+        reporter.record_construct(
+            "docx.export.settings.fragment_refused",
+            "word/settings.xml",
+            local,
+            None,
+            Disposition::OmittedNotRetained,
+        );
+    }
+    writable
+}
+
+/// The structural half of [`settings_fragment_is_writable`].
+fn settings_fragment_is_well_formed(xml: &str, local: &[u8]) -> bool {
+    let resolves = |prefix: &[u8]| {
+        SETTINGS_FRAGMENT_NAMESPACES
+            .iter()
+            .any(|(allowed, _)| *allowed == prefix)
+    };
+    let names_resolve = |element: &BytesStart<'_>| {
+        element
+            .name()
+            .prefix()
+            .is_some_and(|p| resolves(p.as_ref()))
+            && element.attributes().all(|attribute| {
+                let Ok(attribute) = attribute else {
+                    return false;
+                };
+                let key = attribute.key.as_ref();
+                if key == b"xmlns" {
+                    return false;
+                }
+                if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                    // A declaration inside the fragment must agree with the one
+                    // the writer puts on the root.
+                    return SETTINGS_FRAGMENT_NAMESPACES.iter().any(|(allowed, uri)| {
+                        *allowed == prefix && attribute.value.as_ref() == uri.as_bytes()
+                    });
+                }
+                attribute.key.prefix().is_none_or(|p| resolves(p.as_ref()))
+            })
+    };
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth = 0_u32;
+    let mut closed = false;
+    loop {
+        let Ok(event) = reader.read_event() else {
+            return false;
+        };
+        match event {
+            Event::Eof => return closed,
+            _ if closed => return false,
+            Event::Start(element) | Event::Empty(element)
+                if depth == 0 && element.local_name().as_ref() != local =>
+            {
+                return false;
+            }
+            Event::Start(element) => {
+                if !names_resolve(&element) {
+                    return false;
+                }
+                depth += 1;
+            }
+            Event::Empty(element) => {
+                if !names_resolve(&element) {
+                    return false;
+                }
+                closed = depth == 0;
+            }
+            Event::End(_) => {
+                let Some(open) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = open;
+                closed = depth == 0;
+            }
+            Event::Text(_) | Event::GeneralRef(_) | Event::CData(_) | Event::Comment(_)
+                if depth > 0 => {}
+            _ => return false,
+        }
+    }
+}
+
+/// The `ST_View` token for a view.
+const fn document_view_token(view: DocumentView) -> &'static str {
+    match view {
+        DocumentView::None => "none",
+        DocumentView::Print => "print",
+        DocumentView::Outline => "outline",
+        DocumentView::MasterPages => "masterPages",
+        DocumentView::Normal => "normal",
+        DocumentView::Web => "web",
+    }
 }
 
 /// Emits `w:zoom` when the model carries a mode and/or an explicit percent.
@@ -3888,6 +4390,7 @@ fn document_xml(
     available_media: &DefinitionMap<MediaId, MediaReference>,
     available_embedded: &BTreeSet<String>,
     media_rel_ids: BTreeSet<String>,
+    doc_pr_ids: &DocPrIds,
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut doc = start("w:document");
@@ -3937,6 +4440,7 @@ fn document_xml(
         embedded_parts: Some(available_embedded),
         rels: RelBuilder::new(media_rel_ids),
         tokens: IdTokens::new(document.definitions(), available_media),
+        doc_pr_ids,
     };
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
@@ -3944,7 +4448,12 @@ fn document_xml(
     // The body-level section (the last, in the common single-section case). Its
     // header/footer references land in a later slice.
     if let Some(section) = document.definitions().sections.last() {
-        write_section_properties(&mut w, section, ctx.tokens.watermark_headers(section.id))?;
+        write_section_properties(
+            &mut w,
+            section,
+            ctx.tokens.watermark_headers(section.id),
+            ctx.tokens.form_protection(section.id),
+        )?;
     }
 
     w.write_event(Event::End(BytesEnd::new("w:body")))
@@ -3965,6 +4474,7 @@ fn write_section_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     section: &SectionBoundary,
     watermark_headers: &[(HeaderFooterKind, String)],
+    form_protection: Option<bool>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:sectPr")))
         .map_err(pkg)?;
@@ -4158,6 +4668,15 @@ fn write_section_properties(
         w.write_event(Event::End(BytesEnd::new("w:cols")))
             .map_err(pkg)?;
     }
+    // `w:formProt` sits between `w:cols` and `w:vAlign` in `CT_SectPr` (`109`
+    // FID-AT-06). Written with its value whichever it is: `false` is the
+    // statement LibreOffice makes in every document, and it is not what an
+    // absent element says.
+    if let Some(protected) = form_protection {
+        let mut el = start("w:formProt");
+        el.push_attribute(("w:val", if protected { "true" } else { "false" }));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(alignment) = section.vertical_alignment {
         let mut el = start("w:vAlign");
         el.push_attribute((
@@ -4232,7 +4751,9 @@ fn write_section_properties(
         // section properties were before a tracked format change, and a header part
         // synthesized by this export was not part of that history. Claiming it here
         // would fabricate a reference in a revision record.
-        write_section_properties(w, change.prior.as_ref(), &[])?;
+        // The prior snapshot is not a section of the document; its `w:formProt`
+        // is reported at import rather than carried.
+        write_section_properties(w, change.prior.as_ref(), &[], None)?;
         w.write_event(Event::End(BytesEnd::new("w:sectPrChange")))
             .map_err(pkg)?;
     }
@@ -5607,7 +6128,12 @@ fn write_paragraph_properties(
     // The section break precedes `w:pPrChange` in CT_PPr; it marks this paragraph
     // as a section's end.
     if let Some(section) = section {
-        write_section_properties(w, section, tokens.watermark_headers(section.id))?;
+        write_section_properties(
+            w,
+            section,
+            tokens.watermark_headers(section.id),
+            tokens.form_protection(section.id),
+        )?;
     }
     // `w:pPrChange` is the last child of `w:pPr` (after `w:sectPr`); its `w:pPr`
     // is the prior snapshot (CT_PPrBase — no mark rPr, sectPr, or nested change,
@@ -6345,6 +6871,12 @@ fn write_inline(
                 &embed,
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
+                ObjectLabel::frame(
+                    ctx.defs,
+                    ctx.doc_pr_ids,
+                    drawing.id,
+                    ObjectName::GENERIC_PICTURE,
+                ),
                 PictureAppearance {
                     crop: drawing.crop.as_ref(),
                     opacity: drawing.opacity,
@@ -6375,6 +6907,12 @@ fn write_inline(
                 hlink
                     .as_ref()
                     .map(|(id, tip)| (id.as_str(), tip.as_deref())),
+                ObjectLabel::frame(
+                    ctx.defs,
+                    ctx.doc_pr_ids,
+                    drawing.id,
+                    ObjectName::GENERIC_PICTURE,
+                ),
             )?;
         }
         // An embedded object (chart / SmartArt diagram / OLE): the drawing wrapper
@@ -6512,11 +7050,150 @@ fn write_inline(
 /// Emits an inline `w:drawing` (embedded picture) referencing `embed` — the
 /// media relationship id the importer resolves through the media table. Only
 /// `wp:extent` and `a:blip@r:embed` are read back; the rest is fixed scaffold.
+/// The `@name`/`@title` a drawing object is written back with (`docs/109`
+/// HF-267): its modelled name (`Definitions::object_names`) when it has one,
+/// otherwise the generic name Word itself gives a new object of that kind —
+/// which is what EVERY object was written with before the name was modelled, so
+/// an object that never had one saves exactly as it did.
+#[derive(Clone, Copy)]
+struct ObjectLabel<'a> {
+    name: &'a str,
+    title: Option<&'a str>,
+    /// The inner element's own name where it differs from the frame's
+    /// (`ObjectName::inner_name`, `109` FID-AT-08).
+    inner_name: Option<&'a str>,
+    /// The inner element's own title where it differs from the frame's.
+    inner_title: Option<&'a str>,
+    /// The object's DrawingML locks (`ObjectName::locks`, `109` FID-AT-09).
+    locks: ObjectLocks,
+    /// The frame's `wp:docPr/@id` (`109` FID-SH-05); `0` for a label that
+    /// names no frame (a group child), which never writes a `wp:docPr`.
+    doc_pr_id: u32,
+}
+
+impl<'a> ObjectLabel<'a> {
+    /// The label of object `id`, or `fallback` as its name.
+    ///
+    /// Complexity: one side-table lookup.
+    fn of(defs: &'a Definitions, id: NodeId, fallback: &'a str) -> Self {
+        let entry = defs.object_names.get(&id);
+        Self {
+            name: entry
+                .and_then(|entry| entry.name.as_deref())
+                .unwrap_or(fallback),
+            title: entry.and_then(|entry| entry.title.as_deref()),
+            inner_name: entry.and_then(|entry| entry.inner_name.as_deref()),
+            inner_title: entry.and_then(|entry| entry.inner_title.as_deref()),
+            locks: entry.map(|entry| entry.locks).unwrap_or_default(),
+            doc_pr_id: 0,
+        }
+    }
+
+    /// The label of a FRAME (`wp:inline`/`wp:anchor`): [`ObjectLabel::of`],
+    /// numbered from the package's one `wp:docPr/@id` counter.
+    fn frame(defs: &'a Definitions, ids: &DocPrIds, id: NodeId, fallback: &'a str) -> Self {
+        Self {
+            doc_pr_id: ids.next(),
+            ..Self::of(defs, id, fallback)
+        }
+    }
+
+    /// Writes the frame's `wp:docPr/@id`.
+    fn push_doc_pr_id(self, element: &mut BytesStart<'_>) {
+        element.push_attribute(("id", self.doc_pr_id.to_string().as_str()));
+    }
+
+    /// Writes the frame's `wp:cNvGraphicFramePr`, which sits between
+    /// `wp:docPr` and `a:graphic` in `CT_Inline` and `CT_Anchor` — only when the
+    /// frame is locked, since an empty one states nothing and the writer never
+    /// emitted it.
+    fn write_frame_locks(self, w: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError> {
+        let Some(locks) = lock_element(self.locks.frame, LockElement::Frame) else {
+            return Ok(());
+        };
+        w.write_event(Event::Start(start("wp:cNvGraphicFramePr")))
+            .map_err(pkg)?;
+        w.write_event(Event::Empty(locks)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("wp:cNvGraphicFramePr")))
+            .map_err(pkg)?;
+        Ok(())
+    }
+
+    /// Writes the object's own non-visual drawing properties element
+    /// (`pic:cNvPicPr`, `wps:cNvSpPr`, `wpg:cNvGrpSpPr`), holding its lock
+    /// element when the object is locked and empty otherwise — exactly what it
+    /// wrote before the locks were modelled.
+    fn write_object_locks(
+        self,
+        w: &mut Writer<Cursor<Vec<u8>>>,
+        wrapper: &str,
+        kind: LockElement,
+    ) -> Result<(), ExportError> {
+        match lock_element(self.locks.object, kind) {
+            Some(locks) => {
+                w.write_event(Event::Start(start(wrapper))).map_err(pkg)?;
+                w.write_event(Event::Empty(locks)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new(wrapper)))
+                    .map_err(pkg)?;
+            }
+            None => w.write_event(Event::Empty(start(wrapper))).map_err(pkg)?,
+        }
+        Ok(())
+    }
+
+    /// Writes `@name`, in the position the schema lists it.
+    fn push_name(self, element: &mut BytesStart<'_>) {
+        element.push_attribute(("name", self.name));
+    }
+
+    /// Writes `@title`, if the object has one.
+    fn push_title(self, element: &mut BytesStart<'_>) {
+        if let Some(title) = self.title {
+            element.push_attribute(("title", title));
+        }
+    }
+
+    /// Writes the INNER element's `@name` (`pic:cNvPr`, `wps:cNvPr` of a lone
+    /// picture or text box): its own where the source gave it one that differs
+    /// from the frame's, otherwise the frame's — Word's own shape.
+    fn push_inner_name(self, element: &mut BytesStart<'_>) {
+        element.push_attribute(("name", self.inner_name.unwrap_or(self.name)));
+    }
+
+    /// Writes the inner element's own `@title`, where it has one that differs
+    /// from the frame's. Nothing otherwise: the frame carries the title.
+    fn push_inner_title(self, element: &mut BytesStart<'_>) {
+        if let Some(title) = self.inner_title {
+            element.push_attribute(("title", title));
+        }
+    }
+}
+
+/// The lock element `kind` holding `flags`, or `None` when it would lock
+/// nothing (`109` FID-AT-09).
+///
+/// Only the attributes `kind`'s schema type lists are written
+/// (`LockElement::carries`). The importer stores only those, so a flag outside
+/// them can reach here only from a constructed model, and writing it would make
+/// the part schema-invalid.
+fn lock_element(flags: LockFlags, kind: LockElement) -> Option<BytesStart<'static>> {
+    let mut element = start(kind.qualified_name());
+    let mut any = false;
+    for (name, on) in flags.attributes() {
+        if on && kind.carries(name.as_bytes()) {
+            element.push_attribute((name, "1"));
+            any = true;
+        }
+    }
+    any.then_some(element)
+}
+
 fn write_drawing(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     extent: Option<&Extent>,
     descr: Option<&str>,
+    label: ObjectLabel<'_>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -6536,13 +7213,15 @@ fn write_drawing(
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Picture 1"));
+    label.push_doc_pr_id(&mut doc_pr);
+    label.push_name(&mut doc_pr);
     if let Some(descr) = descr {
         doc_pr.push_attribute(("descr", descr));
     }
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, look, xfrm)?;
+    label.write_frame_locks(w)?;
+    write_pic_graphic(w, embed, cx, cy, label, look, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -6667,6 +7346,7 @@ fn write_pic_graphic(
     embed: &str,
     cx: i64,
     cy: i64,
+    label: ObjectLabel<'_>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -6680,7 +7360,8 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
-    c_nv_pr.push_attribute(("name", "Picture 1"));
+    label.push_inner_name(&mut c_nv_pr);
+    label.push_inner_title(&mut c_nv_pr);
     match look.hlink {
         // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
         // self-closing.
@@ -6692,8 +7373,7 @@ fn write_pic_graphic(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("pic:cNvPicPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "pic:cNvPicPr", LockElement::Picture)?;
     w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:blipFill")))
@@ -6768,6 +7448,7 @@ fn write_anchored_drawing(
     embed: &str,
     drawing: &AnchoredDrawing,
     hlink: Option<(&str, Option<&str>)>,
+    label: ObjectLabel<'_>,
 ) -> Result<(), ExportError> {
     let anchor = &drawing.anchor;
     let (cx, cy) = (drawing.extent.width_emu, drawing.extent.height_emu);
@@ -6814,17 +7495,20 @@ fn write_anchored_drawing(
         anchor.wrap_polygon.as_deref(),
     )?;
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Picture 1"));
+    label.push_doc_pr_id(&mut doc_pr);
+    label.push_name(&mut doc_pr);
     if let Some(descr) = &drawing.descr {
         doc_pr.push_attribute(("descr", descr.as_str()));
     }
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     write_pic_graphic(
         w,
         embed,
         cx,
         cy,
+        label,
         PictureAppearance {
             crop: drawing.crop.as_ref(),
             opacity: drawing.opacity,
@@ -6905,6 +7589,12 @@ fn write_group(
             anchor.wrap,
             anchor.wrap_text,
             anchor.wrap_polygon.as_deref(),
+            ObjectLabel::frame(
+                ctx.defs,
+                ctx.doc_pr_ids,
+                group.id,
+                ObjectName::GENERIC_GROUP,
+            ),
         )?;
     } else {
         write_extent_only(w, group)?;
@@ -6937,13 +7627,16 @@ fn write_wrap_after_extent(
     wrap: WrapMode,
     side: Option<WrapSide>,
     polygon: Option<&[PointEmu]>,
+    label: ObjectLabel<'_>,
 ) -> Result<(), ExportError> {
     write_extent_only(w, group)?;
     write_wrap(w, wrap, side, polygon)?;
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Group 1"));
+    label.push_doc_pr_id(&mut doc_pr);
+    label.push_name(&mut doc_pr);
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     Ok(())
 }
 
@@ -6978,10 +7671,25 @@ fn write_wgp(
     w.write_event(Event::Start(start(tag))).map_err(pkg)?;
     let mut c_nv_pr = start("wpg:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Group"));
+    // The group's own locks do not depend on which generic name it falls back
+    // to, so either label carries them.
+    let locks_label = ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_GROUP);
+    if tag == "wpg:wgp" {
+        // The top-level group's `wpg:cNvPr` is the inner statement of the name
+        // its frame (`wp:docPr`) carries, so an unnamed group writes the frame's
+        // `Group 1` in both — writing the nested-group default `Group` here made
+        // every reopen see two names that disagree (`109` FID-AT-08).
+        let label = ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_GROUP);
+        label.push_inner_name(&mut c_nv_pr);
+        label.push_inner_title(&mut c_nv_pr);
+    } else {
+        // A nested group has no frame: this is its only name.
+        let label = ObjectLabel::of(ctx.defs, group.id, ObjectName::GENERIC_CHILD_GROUP);
+        label.push_name(&mut c_nv_pr);
+        label.push_title(&mut c_nv_pr);
+    }
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
-    w.write_event(Event::Empty(start("wpg:cNvGrpSpPr")))
-        .map_err(pkg)?;
+    locks_label.write_object_locks(w, "wpg:cNvGrpSpPr", LockElement::Group)?;
     w.write_event(Event::Start(start("wpg:grpSpPr")))
         .map_err(pkg)?;
     write_group_xfrm(w, &group.transform)?;
@@ -6999,8 +7707,10 @@ fn write_wgp(
                     write_group_picture(
                         w,
                         &embed,
+                        ObjectLabel::of(ctx.defs, picture.id, ObjectName::GENERIC_PICTURE),
                         picture.offset,
                         picture.extent,
+                        picture.descr.as_deref(),
                         PictureAppearance {
                             crop: picture.crop.as_ref(),
                             opacity: picture.opacity,
@@ -7030,6 +7740,7 @@ fn write_wgp(
                         detail: ctx.defs.shape_fill_detail.get(&shape.id),
                         media: ctx.media,
                     },
+                    ObjectLabel::of(ctx.defs, shape.id, ObjectName::GENERIC_SHAPE),
                 )?;
             }
             GroupChild::Group(nested) => write_wgp(w, nested, "wpg:grpSp", ctx)?,
@@ -7080,11 +7791,18 @@ fn write_ext(w: &mut Writer<Cursor<Vec<u8>>>, tag: &str, ext: Extent) -> Result<
 }
 
 /// Emits a group child `pic:pic` positioned at `offset`, sized `extent`.
+///
+/// Eight arguments since the object's name/title (`label`, HF-267) and its alt
+/// text (`descr`, HF-214) both reach `pic:cNvPr` here — the same pair
+/// `write_drawing` takes separately for `wp:docPr`.
+#[allow(clippy::too_many_arguments)]
 fn write_group_picture(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
+    label: ObjectLabel<'_>,
     offset: PointEmu,
     extent: Extent,
+    descr: Option<&str>,
     look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
@@ -7093,7 +7811,14 @@ fn write_group_picture(
         .map_err(pkg)?;
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
-    c_nv_pr.push_attribute(("name", "Picture 1"));
+    label.push_name(&mut c_nv_pr);
+    // A grouped picture's alt text lives HERE — a group member has no
+    // `wp:docPr` of its own — and the importer reads it from here. Not writing
+    // it dropped every grouped logo's description on save (`docs/109` HF-214:
+    // found when grouped-picture alt text became editable and did not survive).
+    if let Some(descr) = descr {
+        c_nv_pr.push_attribute(("descr", descr));
+    }
     match look.hlink {
         // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
         // self-closing.
@@ -7105,8 +7830,7 @@ fn write_group_picture(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("pic:cNvPicPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "pic:cNvPicPr", LockElement::Picture)?;
     w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:blipFill")))
@@ -7165,11 +7889,13 @@ fn write_group_shape(
     shape: &GroupShape,
     hlink: Option<(&str, Option<&str>)>,
     appearance: ShapeAppearance<'_>,
+    label: ObjectLabel<'_>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Shape"));
+    label.push_name(&mut c_nv_pr);
+    label.push_title(&mut c_nv_pr);
     match hlink {
         // A link is a CHILD, so a linked shape's `cNvPr` can no longer be
         // self-closing.
@@ -7181,8 +7907,7 @@ fn write_group_shape(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("wps:cNvSpPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "wps:cNvSpPr", LockElement::Shape)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(
@@ -7198,7 +7923,7 @@ fn write_group_shape(
     // is the one place this row actually DESTROYS data rather than mis-drawing
     // it (docs/119 §2).
     if let Some(path) = &shape.path {
-        write_cust_geom(w, path)?;
+        write_cust_geom(w, path, &shape.adjustments)?;
     } else {
         let preset = shape
             .preset
@@ -7238,7 +7963,9 @@ fn write_group_text_box(
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Text Box"));
+    let label = ObjectLabel::of(ctx.defs, text_box.id, ObjectName::GENERIC_CHILD_TEXT_BOX);
+    label.push_name(&mut c_nv_pr);
+    label.push_title(&mut c_nv_pr);
     match hlink {
         // A link is a CHILD, so a linked shape's `cNvPr` can no longer be
         // self-closing.
@@ -7250,8 +7977,7 @@ fn write_group_text_box(
         }
         None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
     }
-    w.write_event(Event::Empty(start("wps:cNvSpPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "wps:cNvSpPr", LockElement::Shape)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(
@@ -7377,61 +8103,202 @@ fn write_prst_geom_with_adjustments(
     Ok(())
 }
 
-/// Emits an `a:custGeom` for a recovered custom path (docs/119).
+/// Emits an `a:custGeom` for a recovered custom geometry (`docs/119`): its adjust
+/// values, guides, adjust handles, connection sites, text rectangle and every
+/// path, in the schema's element order.
 ///
-/// The empty `a:avLst`/`a:gdLst`/`a:ahLst`/`a:cxnLst` are written because Word
-/// writes them and an empty DrawingML container states that the feature is
-/// absent, so emitting them asserts nothing that was not in the source. `@w` /
-/// `@h` are written only when non-zero, which is exactly the "no path
-/// coordinate space" default of ECMA-376 §20.1.9.15.
+/// An empty list is written as the empty element Word writes, because an empty
+/// DrawingML container states that the feature is absent, so emitting it asserts
+/// nothing that was not in the source. Attributes at their ECMA-376 default are
+/// omitted — `@w`/`@h` of `0`, `@fill="norm"`, `@stroke`/`@extrusionOk` true —
+/// which is exactly what §20.1.9.15 says an absent attribute means. Coordinates
+/// are written as authored: a guide NAME stays a name, so the geometry still
+/// scales when the file is reopened.
 fn write_cust_geom(
     w: &mut Writer<Cursor<Vec<u8>>>,
-    path: &casual_doc_model::v1::ShapePath,
+    geometry: &casual_doc_model::v1::CustomGeometry,
+    adjustments: &[ShapeAdjustment],
 ) -> Result<(), ExportError> {
-    use casual_doc_model::v1::ShapePathCommand;
+    use casual_doc_model::v1::{AdjustHandle, GeometryValue, PathFill, ShapePathCommand};
+
+    let guides = |w: &mut Writer<Cursor<Vec<u8>>>,
+                  name: &str,
+                  list: &[ShapeAdjustment]|
+     -> Result<(), ExportError> {
+        if list.is_empty() {
+            return w.write_event(Event::Empty(start(name))).map_err(pkg);
+        }
+        w.write_event(Event::Start(start(name))).map_err(pkg)?;
+        for guide in list {
+            let mut element = start("a:gd");
+            element.push_attribute(("name", guide.name.as_str()));
+            element.push_attribute(("fmla", guide.formula.as_str()));
+            w.write_event(Event::Empty(element)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new(name))).map_err(pkg)
+    };
+    let pos = |w: &mut Writer<Cursor<Vec<u8>>>,
+               name: &str,
+               point: &casual_doc_model::v1::GeometryPoint|
+     -> Result<(), ExportError> {
+        let mut element = start(name);
+        element.push_attribute(("x", point.x.token().as_str()));
+        element.push_attribute(("y", point.y.token().as_str()));
+        w.write_event(Event::Empty(element)).map_err(pkg)
+    };
 
     w.write_event(Event::Start(start("a:custGeom")))
         .map_err(pkg)?;
-    for empty in ["a:avLst", "a:gdLst", "a:ahLst", "a:cxnLst"] {
-        w.write_event(Event::Empty(start(empty))).map_err(pkg)?;
-    }
-    w.write_event(Event::Start(start("a:pathLst")))
-        .map_err(pkg)?;
-    let mut path_element = start("a:path");
-    if path.width_emu > 0 {
-        path_element.push_attribute(("w", path.width_emu.to_string().as_str()));
-    }
-    if path.height_emu > 0 {
-        path_element.push_attribute(("h", path.height_emu.to_string().as_str()));
-    }
-    w.write_event(Event::Start(path_element)).map_err(pkg)?;
-    for command in &path.commands {
-        // A curve writes its points in the SAME order the model holds them, which
-        // is the authored order: controls first, endpoint last. DrawingML reads
-        // `a:cubicBezTo`'s three `a:pt` positionally, so a reordering here would
-        // round-trip a different curve while staying schema-valid.
-        let name = match command {
-            ShapePathCommand::MoveTo { .. } => "a:moveTo",
-            ShapePathCommand::LineTo { .. } => "a:lnTo",
-            ShapePathCommand::CubicBezTo { .. } => "a:cubicBezTo",
-            ShapePathCommand::QuadBezTo { .. } => "a:quadBezTo",
-            ShapePathCommand::Close => {
-                w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
-                continue;
+    guides(w, "a:avLst", adjustments)?;
+    guides(w, "a:gdLst", &geometry.guides)?;
+
+    if geometry.handles.is_empty() {
+        w.write_event(Event::Empty(start("a:ahLst"))).map_err(pkg)?;
+    } else {
+        w.write_event(Event::Start(start("a:ahLst"))).map_err(pkg)?;
+        for handle in &geometry.handles {
+            let (name, attributes) = match handle {
+                AdjustHandle::Xy {
+                    guide_x,
+                    min_x,
+                    max_x,
+                    guide_y,
+                    min_y,
+                    max_y,
+                    ..
+                } => (
+                    "a:ahXY",
+                    [
+                        ("gdRefX", guide_x.clone()),
+                        ("minX", min_x.as_ref().map(GeometryValue::token)),
+                        ("maxX", max_x.as_ref().map(GeometryValue::token)),
+                        ("gdRefY", guide_y.clone()),
+                        ("minY", min_y.as_ref().map(GeometryValue::token)),
+                        ("maxY", max_y.as_ref().map(GeometryValue::token)),
+                    ],
+                ),
+                AdjustHandle::Polar {
+                    guide_radius,
+                    min_radius,
+                    max_radius,
+                    guide_angle,
+                    min_angle,
+                    max_angle,
+                    ..
+                } => (
+                    "a:ahPolar",
+                    [
+                        ("gdRefR", guide_radius.clone()),
+                        ("minR", min_radius.as_ref().map(GeometryValue::token)),
+                        ("maxR", max_radius.as_ref().map(GeometryValue::token)),
+                        ("gdRefAng", guide_angle.clone()),
+                        ("minAng", min_angle.as_ref().map(GeometryValue::token)),
+                        ("maxAng", max_angle.as_ref().map(GeometryValue::token)),
+                    ],
+                ),
+            };
+            let mut element = start(name);
+            for (attribute, value) in &attributes {
+                if let Some(value) = value {
+                    element.push_attribute((*attribute, value.as_str()));
+                }
             }
-        };
-        w.write_event(Event::Start(start(name))).map_err(pkg)?;
-        for point in command.points() {
-            let mut pt = start("a:pt");
-            pt.push_attribute(("x", point.x_emu.to_string().as_str()));
-            pt.push_attribute(("y", point.y_emu.to_string().as_str()));
-            w.write_event(Event::Empty(pt)).map_err(pkg)?;
+            w.write_event(Event::Start(element)).map_err(pkg)?;
+            pos(w, "a:pos", handle.position())?;
+            w.write_event(Event::End(BytesEnd::new(name)))
+                .map_err(pkg)?;
         }
-        w.write_event(Event::End(BytesEnd::new(name)))
+        w.write_event(Event::End(BytesEnd::new("a:ahLst")))
             .map_err(pkg)?;
     }
-    w.write_event(Event::End(BytesEnd::new("a:path")))
+
+    if geometry.connections.is_empty() {
+        w.write_event(Event::Empty(start("a:cxnLst")))
+            .map_err(pkg)?;
+    } else {
+        w.write_event(Event::Start(start("a:cxnLst")))
+            .map_err(pkg)?;
+        for site in &geometry.connections {
+            let mut element = start("a:cxn");
+            element.push_attribute(("ang", site.angle.token().as_str()));
+            w.write_event(Event::Start(element)).map_err(pkg)?;
+            pos(w, "a:pos", &site.position)?;
+            w.write_event(Event::End(BytesEnd::new("a:cxn")))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("a:cxnLst")))
+            .map_err(pkg)?;
+    }
+
+    if let Some(rect) = &geometry.text_rect {
+        let mut element = start("a:rect");
+        element.push_attribute(("l", rect.left.token().as_str()));
+        element.push_attribute(("t", rect.top.token().as_str()));
+        element.push_attribute(("r", rect.right.token().as_str()));
+        element.push_attribute(("b", rect.bottom.token().as_str()));
+        w.write_event(Event::Empty(element)).map_err(pkg)?;
+    }
+
+    w.write_event(Event::Start(start("a:pathLst")))
         .map_err(pkg)?;
+    for path in &geometry.paths {
+        let mut element = start("a:path");
+        if path.width_emu > 0 {
+            element.push_attribute(("w", path.width_emu.to_string().as_str()));
+        }
+        if path.height_emu > 0 {
+            element.push_attribute(("h", path.height_emu.to_string().as_str()));
+        }
+        if path.fill != PathFill::Norm {
+            element.push_attribute(("fill", path.fill.token()));
+        }
+        if !path.stroke {
+            element.push_attribute(("stroke", "0"));
+        }
+        if !path.extrusion_ok {
+            element.push_attribute(("extrusionOk", "0"));
+        }
+        w.write_event(Event::Start(element)).map_err(pkg)?;
+        for command in &path.commands {
+            // A curve writes its points in the SAME order the model holds them,
+            // which is the authored order: controls first, endpoint last.
+            // DrawingML reads `a:cubicBezTo`'s three `a:pt` positionally, so a
+            // reordering here would round-trip a different curve while staying
+            // schema-valid.
+            let name = match command {
+                ShapePathCommand::MoveTo { .. } => "a:moveTo",
+                ShapePathCommand::LineTo { .. } => "a:lnTo",
+                ShapePathCommand::CubicBezTo { .. } => "a:cubicBezTo",
+                ShapePathCommand::QuadBezTo { .. } => "a:quadBezTo",
+                ShapePathCommand::Close => {
+                    w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
+                    continue;
+                }
+                ShapePathCommand::ArcTo {
+                    width_radius,
+                    height_radius,
+                    start_angle,
+                    swing_angle,
+                } => {
+                    let mut arc = start("a:arcTo");
+                    arc.push_attribute(("wR", width_radius.token().as_str()));
+                    arc.push_attribute(("hR", height_radius.token().as_str()));
+                    arc.push_attribute(("stAng", start_angle.token().as_str()));
+                    arc.push_attribute(("swAng", swing_angle.token().as_str()));
+                    w.write_event(Event::Empty(arc)).map_err(pkg)?;
+                    continue;
+                }
+            };
+            w.write_event(Event::Start(start(name))).map_err(pkg)?;
+            for point in command.points() {
+                pos(w, "a:pt", point)?;
+            }
+            w.write_event(Event::End(BytesEnd::new(name)))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("a:path")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("a:pathLst")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:custGeom")))
@@ -8214,13 +9081,19 @@ fn write_embedded_object(
     {
         return Ok(());
     }
+    let label = ObjectLabel::frame(
+        ctx.defs,
+        ctx.doc_pr_ids,
+        object.id,
+        ObjectName::GENERIC_OBJECT,
+    );
     match &object.kind {
-        EmbeddedKind::Chart => write_graphic_object(w, &object.extent, CHART_URI, |w| {
+        EmbeddedKind::Chart => write_graphic_object(w, &object.extent, label, CHART_URI, |w| {
             let mut chart = start("c:chart");
             chart.push_attribute(("r:id", object.part.relationship_id.as_str()));
             w.write_event(Event::Empty(chart)).map_err(pkg)
         }),
-        EmbeddedKind::Diagram => write_graphic_object(w, &object.extent, DIAGRAM_URI, |w| {
+        EmbeddedKind::Diagram => write_graphic_object(w, &object.extent, label, DIAGRAM_URI, |w| {
             let mut rel_ids = start("dgm:relIds");
             for part in std::iter::once(&object.part).chain(object.extra_parts.iter()) {
                 if let Some(attr) = diagram_rel_attr(&part.relationship_type) {
@@ -8233,7 +9106,7 @@ fn write_embedded_object(
         // An unrecognized `a:graphicData` payload: emit the wrapper with its uri.
         // The referencing relationship is still emitted so the part stays
         // reachable (the importer does not produce this variant).
-        EmbeddedKind::Other(uri) => write_graphic_object(w, &object.extent, uri, |_| Ok(())),
+        EmbeddedKind::Other(uri) => write_graphic_object(w, &object.extent, label, uri, |_| Ok(())),
     }
 }
 
@@ -8253,6 +9126,7 @@ fn diagram_rel_attr(relationship_type: &str) -> Option<&'static str> {
 fn write_graphic_object(
     w: &mut Writer<Cursor<Vec<u8>>>,
     extent: &Extent,
+    label: ObjectLabel<'_>,
     uri: &str,
     body: impl FnOnce(&mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError>,
 ) -> Result<(), ExportError> {
@@ -8269,9 +9143,11 @@ fn write_graphic_object(
     ext.push_attribute(("cy", extent.height_emu.to_string().as_str()));
     w.write_event(Event::Empty(ext)).map_err(pkg)?;
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Object 1"));
+    label.push_doc_pr_id(&mut doc_pr);
+    label.push_name(&mut doc_pr);
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
     let mut graphic_data = start("a:graphicData");
@@ -8408,10 +9284,18 @@ fn write_text_box(
         "wp:inline"
     };
 
+    let label = ObjectLabel::frame(
+        ctx.defs,
+        ctx.doc_pr_ids,
+        text_box.id,
+        ObjectName::GENERIC_TEXT_BOX,
+    );
     let mut doc_pr = start("wp:docPr");
-    doc_pr.push_attribute(("id", "1"));
-    doc_pr.push_attribute(("name", "Text Box 1"));
+    label.push_doc_pr_id(&mut doc_pr);
+    label.push_name(&mut doc_pr);
+    label.push_title(&mut doc_pr);
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    label.write_frame_locks(w)?;
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
     let mut graphic_data = start("a:graphicData");
@@ -8420,10 +9304,10 @@ fn write_text_box(
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
-    c_nv_pr.push_attribute(("name", "Text Box"));
+    label.push_inner_name(&mut c_nv_pr);
+    label.push_inner_title(&mut c_nv_pr);
     w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
-    w.write_event(Event::Empty(start("wps:cNvSpPr")))
-        .map_err(pkg)?;
+    label.write_object_locks(w, "wps:cNvSpPr", LockElement::Shape)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(

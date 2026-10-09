@@ -47,6 +47,7 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.font": "Font",
   "menuGroup.formattingMarks": "Formatting marks",
   "menuGroup.headerFooter": "Header & footer",
+  "menuGroup.headings": "Document headings",
   "menuGroup.help": "Help",
   "menuGroup.history": "History",
   "menuGroup.illustrations": "Illustrations",
@@ -119,26 +120,44 @@ export const EN_STRINGS = Object.freeze({
   // a windowed body is already read-only. Disabled WITH this, never dead.
   "reflow.unavailable":
     "This document is too large to lay out whole, so it is shown one page-window at a time and cannot be reflowed.",
-  // -- Text width (`docs/154` §5.1, ADR-048) ---------------------------------
-  // Four steps for one measure, each labelled by what it does rather than by a
-  // number: "Wide" tells a reader nothing and "80" tells them nothing until they
-  // know it is WCAG 2.1 SC 1.4.8's maximum, which is what the `.title` sentences
-  // are for. The `.row` sentences and `textWidth.reading.short` are declared in
-  // `editor.html` beside the markup that carries them — `build-locale.mjs`
-  // refuses a key declared in both places — and `reflow_view.test.mjs` asserts
-  // every step has all four, so the split cannot rot into a half-labelled step.
+  // What the view is approximating, on demand (`docs/166` R-7). The command is
+  // enabled in BOTH views, because "nothing" is an answer and a greyed row is
+  // not: a reader asking what the page view is withholding has earned being told
+  // that it is withholding nothing.
+  //
+  // The individual sentences are NOT here. They come from the engine
+  // (`LayoutView::approximations`), which has no catalogue, so they are English
+  // in every locale — a pre-existing gap recorded rather than papered over. Only
+  // the label and the empty answer are routed.
+  "reflowNotes.command": "What this view approximates",
+  "reflowNotes.none":
+    "Nothing: every part of this document is laid out the way the document asks for it.",
+  // -- Text width (`docs/154` §5.1, ADR-048, `docs/151` §6.2a) ---------------
+  // Five steps for one measure, each labelled by what it does rather than by a
+  // number: "80" tells a reader nothing until they know it is WCAG 2.1 SC
+  // 1.4.8's maximum, and "Wide" nothing until they know it is the page without
+  // its margins, which is what the `.title` sentences are for. The `.row`
+  // sentences and `textWidth.wide.short` (the default's label, on the button)
+  // are declared in `editor.html` beside the markup that carries them —
+  // `build-locale.mjs` refuses a key declared in both places — and
+  // `reflow_view.test.mjs` asserts every step has all four, so the split cannot
+  // rot into a half-labelled step.
   "textWidth.command": "Text width",
   "textWidth.narrow.short": "Narrow",
+  "textWidth.reading.short": "Reading",
   "textWidth.fit.short": "Paper",
   "textWidth.full.short": "Full",
   "textWidth.narrow.title": "Narrow text: about 55 characters a line.",
   "textWidth.reading.title":
     "Reading width: 80 characters a line, which is the widest WCAG 2.1 SC 1.4.8 allows a block of text to be.",
   "textWidth.fit.title": "As wide as this document's own text column, so no line is longer than on paper.",
+  "textWidth.wide.title":
+    "As wide as this document's page, edge to edge — the page with its margins taken away, which is what pageless means.",
   "textWidth.full.title": "As wide as the window, however wide the window is.",
   "textWidth.narrow.command": "Text width: Narrow",
   "textWidth.reading.command": "Text width: Reading",
   "textWidth.fit.command": "Text width: Paper",
+  "textWidth.wide.command": "Text width: Wide",
   "textWidth.full.command": "Text width: Full",
   "textWidth.pagedWithheld":
     "Text width applies in reflow. On pages the measure is the document's own, so turn Reflow on to choose one.",
@@ -250,6 +269,13 @@ export const EN_STRINGS = Object.freeze({
   "toc.jumpedTo": "Jumped to {heading}",
   "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
   "paragraph.caretRequired": "Place the caret in a paragraph",
+  // Why Restart / Continue numbering and Insert ▸ Link are unavailable. They were
+  // the palette rows' English literals while the buttons for the same commands
+  // greyed out saying nothing (`control_reasons.mjs`); one entry each now, read
+  // by both surfaces.
+  "list.reason.notNumbered": "Place the caret in a numbered list",
+  "list.reason.nothingToContinue": "There is no earlier numbered list to continue",
+  "insert.reason.linkNeedsText": "Select text to add a link",
   "insert.chart": "Chart",
   // A disabled control has one channel — its title — and it must say what to
   // DO, not repeat what the control would have done. This one used to borrow
@@ -263,6 +289,23 @@ export const EN_STRINGS = Object.freeze({
   // not "Undo" plus a noun glued on, which is why this is one key and not two.
   "toolbar.undoNamed": "Undo {name}",
   "toolbar.redoNamed": "Redo {name}",
+  // Find and REPLACE as its own command, so ⌘H has an id to run — Word, Google
+  // Docs and ONLYOFFICE all bind Ctrl+H to it. The find panel's own button says
+  // the same word.
+  "find.replaceCommand": "Replace",
+  // The heading chords' palette rows (`quick_styles.mjs`). `{name}` is Word's UI
+  // name for a built-in style, which is not localised yet (`style_names.mjs`).
+  "style.apply.heading": "Apply Heading {level}",
+  "style.apply.normal": "Apply Normal style",
+  // The three heading chords as ONE row of File ▸ Shortcuts, the way Google
+  // Docs' own reference lists them.
+  "style.apply.headingRange": "Apply Heading 1–3",
+  "style.reason.missing": "This document has no {name} style",
+  // F6 / Shift+F6 (`region_focus.mjs`): Word's "move to the next pane", named for
+  // what moves — the keyboard — rather than for any one pane.
+  "region.next": "Move to the next region",
+  "region.previous": "Move to the previous region",
+  "region.move": "Move between regions",
   // The document-state pill. The words live in `status_policy.mjs`, which is
   // DOM-free and knows nothing of catalogues; these are the same strings, keyed.
   "status.state.opened": "Opened",
@@ -329,34 +372,41 @@ export const EN_STRINGS = Object.freeze({
   "compare.needsDocument": "Open a document to compare another one with",
   "compare.intro": "Pick a document to compare this one with. Nothing is uploaded.",
   "compare.chooseFile": "Choose a document…",
-  // REPLACES `compare.notTrackedChanges`, which said "The differences are listed
-  // here, not written into a document — they cannot be accepted or rejected."
-  // That was true of the change list and is false of ADR-061: the differences are
-  // written into the open document as tracked changes now, and the key's own name
-  // said the opposite. Renamed rather than reworded in place, so a maintainer
-  // reading `notTrackedChanges` cannot be told the opposite of what it carries.
-  //
-  // Said BEFORE a file is picked, because it is the warning that matters: Word and
-  // Google Docs build a merged THIRD document; we mutate the one on screen, which
-  // is ONLYOFFICE's answer (`docs/158` §2.2).
-  "compare.writesTrackedChanges":
-    "The differences are written into this document as tracked changes, which you can then accept or reject.",
-  // The answer, FIRST and as a sentence about the document rather than a number
-  // about the panel. The owner's report on the previous shape was that a count
-  // told them nothing: "i cant even see what is being changed".
-  //
-  // NO COUNT IN IT, deliberately, and measured: the first draft read "{count}
-  // differences are now tracked changes in this document" and rendered "1
-  // differences" on a one-word edit. A sentence needs plural agreement where a
-  // labelled number does not, and the count already has its own line directly
-  // below (`compare.changeCount`) — whose own comment records why that one is not
-  // a plural family. One number, one place, and nineteen catalogues that need one
-  // form each instead of Arabic's six.
+  // REPLACES `compare.writesTrackedChanges` (ADR-065): a comparison is SHOWN on
+  // the page now, read-only, and written into this document only if the reader
+  // keeps it. Said before a file is picked, because it is the reassurance that
+  // matters to someone about to compare their own document.
+  "compare.showsOnPage":
+    "The differences are shown on the page. Your document is not changed unless you keep them as tracked changes.",
+  // The redline on the canvas (ADR-065): its heading, its read-only reason (also
+  // the sentence an attempted edit is refused with), and the three ways on.
+  "compare.changesFrom": "Changes from {older} to {newer}",
+  "compare.thisDocument": "this document",
+  "compare.viewReadOnly": "You are looking at a comparison; close it to change the document",
+  "compare.keep": "Keep as tracked changes",
+  "compare.swap": "Swap order",
+  "compare.closeView": "Close comparison",
+  // The diff canvas's navigator and key (`diff_canvas.mjs`, ADR-065), shared by
+  // version history and Compare. "{index} of {count}" is a position, not a
+  // plural, so every language needs one form.
+  "diffCanvas.position": "{index} of {count}",
+  "diffCanvas.previous": "Previous change",
+  "diffCanvas.next": "Next change",
+  "diffCanvas.moved": "Moved",
+  "diffCanvas.replaced": "Replaced",
+  "diffCanvas.changesBy": "Changes by {name}",
+  // A version captured with no author name recorded: versions live in this
+  // browser, so they are the reader's own — the Settings name field's own
+  // placeholder says the same.
+  "diffCanvas.someone": "You",
+  "diffCanvas.details": "What isn't highlighted",
+  // After "Keep as tracked changes": a sentence about the document, with NO COUNT
+  // in it — "1 differences" is what a count in a sentence rendered, and a
+  // labelled number (`compare.changeCount`) needs one form per language where a
+  // plural needs Arabic's six.
   "compare.marked": "The differences are now tracked changes in this document.",
-  // And how to walk them. Review's own next/previous navigate the revisions the
-  // comparison just wrote, which is the route that cannot land on the wrong
-  // paragraph — unlike a click on a list entry, whose anchor belongs to the
-  // comparison's throwaway re-import (`compare_documents.mjs`, "still blocked").
+  // And how to walk them: review's own next/previous, over the revisions Keep
+  // just wrote.
   "compare.reviewNav":
     "Review ▸ Next and Previous move through them; Accept or Reject decides each one.",
   // The author a comparison's tracked changes are attributed to when the compared
@@ -373,6 +423,9 @@ export const EN_STRINGS = Object.freeze({
     "Whole paragraphs the other document has and this one does not — a tracked change marks text that is here, and there is no paragraph here to mark.",
   "compare.unmarked.trackedMove":
     "The far half of a move: where the content came from is in the other document only.",
+  // A removed paragraph is shown struck where it was (ADR-065), as its text: a
+  // picture's bytes belong to the other document's package.
+  "compare.unmarked.removedObject": "Pictures and other objects in removed paragraphs are not shown.",
   // The body only, and deliberately. A body path maps back to this document by
   // identity because the comparison's right-hand side is its own re-export; a
   // header, footer, note or comment story is paired by position or ordinal and
@@ -412,15 +465,8 @@ export const EN_STRINGS = Object.freeze({
   "compare.cancelled": "Comparison cancelled.",
   "compare.against": "Compared with {name}",
   "compare.identical": "No differences.",
-  // NOT "No differences". A document whose drawings this build has no typed
-  // comparison for can produce zero changes AND a loss report, and claiming the
-  // two files agree about something the engine never looked at is the silent loss
-  // `SKILL` §12 forbids. The finding wins and the sentence narrows.
-  "compare.identicalPartly": "No differences in what could be compared.",
   // What the comparison could NOT compare, aggregated by the engine — one row per
-  // construct with a count, so forty thousand drawings are one line. Shown before
-  // the changes themselves: a reader deciding whether to trust the list needs its
-  // limits first.
+  // construct with a count, so forty thousand drawings are one line.
   "compare.findingsTitle": "Not fully compared:",
   "compare.finding.notCompared":
     "{construct} changed, and this build has no detailed comparison for it ({count})",
@@ -434,44 +480,6 @@ export const EN_STRINGS = Object.freeze({
   // findings sentence records: it reports a labelled number, which reads the same
   // in every language and needs one form per locale instead of Arabic's six.
   "compare.changeCount": "Differences: {count}",
-  // CORRECTED 2026-10-04, English and all eighteen translations. This read "This
-  // comparison did not finish, so the list below is incomplete", on a comment in
-  // `compare_documents.mjs` claiming `complete: false` happens only on a cancelled
-  // job. `record.rs` says the opposite in as many words — `complete` is "False
-  // whenever `findings` is non-empty" — so a perfectly ordinary comparison that
-  // met one construct this build cannot compare in detail was telling the reader
-  // it had broken. Measured on bolding one word in the demo document: four
-  // differences found, and "did not finish" printed above them. A comparison that
-  // finished and skipped something is not a comparison that did not finish, and
-  // the findings list directly below already names what was skipped.
-  "compare.partial":
-    "Some of what differs could not be characterised; the list below says which.",
-  // WHAT A ROW IS ABOUT when there is no text and no typed field to name — the
-  // bracketed convention ONLYOFFICE uses, where theirs reads `<Image>`, `<Shape>`,
-  // `<Chart>` or `<Equation>`.
-  //
-  // Ours can only be as specific as the sidecar, and `family_of` in
-  // `casual-doc-diff/src/job.rs` maps a table row or cell to `table` and
-  // EVERYTHING else to `block` — so a deleted image-only paragraph is `<Block>`
-  // here and `<Image>` there. That gap is the engine's, it is reported as the
-  // engine's, and it is not papered over by printing `<Image>` on the grounds that
-  // images are the commonest untexted block: a plausible guess presented as a fact
-  // is what this repository has published by accident twice.
-  //
-  // All twelve families, enumerated rather than defaulted (SKILL §9.3), and
-  // `compare_documents.test.mjs` fails if the engine grows a family with no entry.
-  "compare.object.block": "<Block>",
-  "compare.object.text": "<Text>",
-  "compare.object.formatting": "<Formatting>",
-  "compare.object.style": "<Style>",
-  "compare.object.table": "<Table>",
-  "compare.object.object": "<Object>",
-  "compare.object.section": "<Page setup>",
-  "compare.object.definition": "<Definition>",
-  "compare.object.resource": "<Resource>",
-  "compare.object.comment": "<Comment>",
-  "compare.object.review": "<Tracked change>",
-  "compare.object.metadata": "<Document property>",
   "compare.cannotExport":
     "This document could not be written out, so there is nothing to compare.",
   // The engine's own sentence about this document — an admission limit, a corrupt
@@ -505,15 +513,6 @@ export const EN_STRINGS = Object.freeze({
   "compare.kind.move_from": "Moved from here",
   "compare.kind.move_to": "Moved to here",
   "compare.kind.formatting": "Reformatted",
-  "compare.kind.property": "Property changed",
-  // Where a change is, when it is not in the body. Saying "in the body" on every
-  // row of a body-only comparison would be noise, so the body says nothing.
-  "compare.story.header": "in the header of section {section}",
-  "compare.story.footer": "in the footer of section {section}",
-  "compare.story.footnote": "in footnote {number}",
-  "compare.story.endnote": "in endnote {number}",
-  "compare.story.comment": "in a comment",
-  "compare.story.definitions": "in the document's definitions",
   // ---- Breaks ---------------------------------------------------------------
   //
   // The six NAMES are not here, and that is deliberate. They live beside their
@@ -578,6 +577,149 @@ export const EN_STRINGS = Object.freeze({
   // the host withholding downloads — "this cannot be done" and "not for you" are
   // different answers and a reader deserves the right one.
   "filePane.export.noWriter": "This build cannot write {format}",
+  // The compatibility findings (`compat_findings.mjs`): what the header chip
+  // counts, opened. The kinds are named for what HAPPENED to a construct, because
+  // that is what a reader deciding whether to save over the original needs —
+  // the engine's two outcome axes, folded into five plain answers.
+  "findings.command": "Compatibility findings…",
+  "findings.none": "This document has no compatibility findings",
+  "findings.title": "Compatibility findings",
+  "findings.importIntro": "What this editor could not represent exactly when it opened the document, grouped by what happened to it.",
+  "findings.exportIntro": "What the last save could not write exactly, grouped by what happened to it.",
+  "findings.kind.lost": "Not kept",
+  "findings.kind.refused": "Refused for safety or size",
+  "findings.kind.approximated": "Shown approximately; the original is kept in the file",
+  "findings.kind.preserved": "Kept in the file, not shown or editable here",
+  "findings.kind.unsorted": "Other findings",
+  "findings.close": "Close",
+  "findings.closeLabel": "Close compatibility findings",
+  // What each finding IS, in words a reader shares (`109` FID-AT-05,
+  // `findings_catalogue.mjs`). The engine's id stays on the row, muted, for
+  // support; this is what is read first. Word's own UI names are used where
+  // Word has one ("Lock aspect ratio", "Decimal symbol", "Page color"). None of
+  // these says whether the thing was kept or lost — the group heading a row
+  // sits under says that, from the engine's outcome, so a word here can never
+  // contradict it.
+  //
+  // The tooltip on the row's muted id, which is what support matches on.
+  "findings.featureId": "Identifier",
+  // Word's own bookkeeping: a collapsed group inside each kind, kept out of the
+  // headline count, every entry still listed when it is opened.
+  "findings.bookkeeping.label": "Word's own bookkeeping",
+  "findings.bookkeeping.note": "Records Word keeps about the file, not content you would see in it.",
+  "findings.bookkeeping.only": "Nothing listed here is content you would see. It is all Word's own bookkeeping.",
+  // Where a finding is. A part this list does not know is named as itself.
+  "findings.where.body": "in the document body",
+  "findings.where.header": "in a header",
+  "findings.where.footer": "in a footer",
+  "findings.where.footnotes": "in the footnotes",
+  "findings.where.endnotes": "in the endnotes",
+  "findings.where.comments": "in the comments",
+  "findings.where.settings": "in the document settings",
+  "findings.where.theme": "in the theme",
+  "findings.where.styles": "in the styles",
+  "findings.where.numbering": "in the list definitions",
+  "findings.where.fonts": "in the fonts",
+  "findings.where.chart": "in a chart",
+  "findings.where.diagram": "in a SmartArt graphic",
+  "findings.where.glossary": "in the building blocks",
+  "findings.where.media": "in a picture or media file",
+  "findings.where.embedding": "in an embedded file",
+  "findings.where.webSettings": "in the web page settings",
+  "findings.where.properties": "in the document properties",
+  "findings.where.customXml": "in the custom XML data",
+  "findings.where.part": "in the file part {part}",
+  "findings.where.formatWord": "in the Word file",
+  "findings.where.formatOdf": "in the OpenDocument file",
+  "findings.where.formatRtf": "in the RTF file",
+  "findings.where.formatMarkdown": "in the Markdown file",
+  "findings.where.formatHtml": "in the HTML file",
+  "findings.where.formatPdf": "in the PDF",
+  "findings.where.formatText": "in the plain text",
+  // The fallback for an id nobody has catalogued: what KIND of thing it is.
+  "findings.unknown.element": "Other content or formatting",
+  "findings.unknown.attribute": "A property of an item",
+  "findings.unknown.part": "A separate part of the file",
+  "findings.unknown.class": "Another kind of finding",
+  "findings.unknown.setting": "A document setting",
+  "findings.unknown.property": "A document property",
+  // Word's own bookkeeping.
+  "findings.feature.rsid": "Editing-session numbers Word adds on every save, for Compare and Combine",
+  "findings.feature.docId": "Identifier Word assigns to the document",
+  "findings.feature.thumbnail": "Thumbnail preview of the first page",
+  "findings.feature.savePreviewPicture": "Setting to save a preview picture with the file",
+  "findings.feature.webSettings": "Web page settings (Web Options)",
+  "findings.feature.stylesWithEffects": "Copy of the styles kept for Word 2010",
+  "findings.feature.hyperlinksChanged": "Note in the file properties that links have changed",
+  "findings.feature.staleThumbnail": "Thumbnail preview of the first page, out of date after your edits",
+  "findings.feature.staleStatistics": "Page, word and character counts in the file properties, out of date after your edits",
+  "findings.feature.staleStylesWithEffects": "Word 2010 copy of the styles, out of date after your edits",
+  "findings.feature.paraId": "Paragraph identifiers Word assigns",
+  "findings.feature.textId": "Text-version identifiers Word assigns",
+  "findings.feature.rowId": "Table row identifiers Word assigns",
+  // Drawings and pictures.
+  "findings.feature.objectName": "Object name shown in Word's Selection Pane",
+  "findings.feature.objectLocks": "Object locks, such as Lock aspect ratio",
+  "findings.feature.pictureLocks": "Picture locks, such as Lock aspect ratio",
+  "findings.feature.drawing": "Drawing (picture, shape, chart or text box)",
+  "findings.feature.legacyShape": "Shape in the older Word format (VML)",
+  "findings.feature.legacyShapeType": "Shape template in the older Word format (VML)",
+  "findings.feature.legacyWordArt": "WordArt text in the older Word format",
+  "findings.feature.legacyShapePath": "Shape outline in the older Word format",
+  "findings.feature.shapeFill": "Shape fill (color, gradient, pattern or picture)",
+  "findings.feature.textBox": "Text box",
+  "findings.feature.watermark": "Watermark",
+  // Charts and embedded files.
+  "findings.feature.chartTrendline": "Chart trendline",
+  "findings.feature.chartDetail": "Other chart formatting or content",
+  "findings.feature.chartColors": "Chart color style",
+  "findings.feature.chartStyle": "Chart style",
+  "findings.feature.embeddedFile": "Embedded file, such as the workbook behind a chart",
+  // The theme.
+  "findings.feature.themeName": "Document theme name",
+  "findings.feature.themeFontsName": "Name of the theme fonts",
+  "findings.feature.themeObjectDefaults": "Theme's default look for new shapes, lines and text boxes",
+  "findings.feature.themeExtraColors": "Extra color sets stored in the theme",
+  // Document settings.
+  "findings.feature.decimalSymbol": "Decimal symbol used in calculations",
+  "findings.feature.listSeparator": "List separator used in calculations",
+  "findings.feature.defaultImageDpi": "Default resolution for pictures",
+  "findings.feature.doNotCompressImages": "Do not compress images in file",
+  "findings.feature.equationOptions": "Equation options",
+  "findings.feature.settingsFragmentRefused": "A document setting that could not be written back safely",
+  "findings.feature.shapeDefaults": "Default look for new shapes (older Word format)",
+  "findings.feature.headerShapeDefaults": "Default look for new shapes in headers (older Word format)",
+  "findings.feature.eastAsianLayout": "Layout option for East Asian and complex scripts",
+  "findings.feature.formProtection": "Section protection for filling in forms",
+  "findings.feature.colorMapping": "Theme color mapping",
+  "findings.feature.characterSpacing": "Character spacing control for East Asian text",
+  "findings.feature.chartTracking": "Properties follow chart data point",
+  "findings.feature.attachedTemplate": "Attached template",
+  "findings.feature.documentVariables": "Document variables",
+  "findings.feature.mailMerge": "Mail merge data source and settings",
+  "findings.feature.restrictEditingPassword": "Password for Restrict Editing",
+  "findings.feature.modifyPassword": "Password to modify",
+  // Data stored with the document.
+  "findings.feature.customXml": "Custom XML data stored with the document",
+  "findings.feature.customXmlProperties": "Identity and schemas of the custom XML data",
+  // Fonts and media the engine could not use.
+  "findings.feature.embeddedFontUnusable": "Embedded font that could not be used",
+  "findings.feature.mediaUnreadable": "Picture or media file that could not be read",
+  // What a save could not write.
+  "findings.feature.pageColor": "Page color",
+  "findings.feature.pictureDataMissing": "Picture whose image data is missing",
+  "findings.feature.unusedHeader": "Header no section uses",
+  "findings.feature.unusedFooter": "Footer no section uses",
+  "findings.feature.embeddedObjectMissing": "Embedded object whose file is missing",
+  "findings.feature.chartNotRewritten": "Chart this editor cannot fully rewrite",
+  "findings.feature.chartWorkbookRewritten": "Workbook behind a chart, rewritten from the chart's data",
+  "findings.feature.chartDetailNotWritten": "Chart details this editor cannot write",
+  "findings.feature.watermarkSharedHeader": "Watermark in a header another section shares",
+  "findings.feature.watermarkPictureMissing": "Picture watermark whose image data is missing",
+  "findings.feature.embeddedFontMissing": "Embedded font whose data is missing",
+  "findings.feature.retainedParts": "Extra parts carried from the original file",
+  "findings.feature.sourceMismatch": "Extra parts of an original file that no longer matches this document",
+  "findings.feature.overflow": "More findings than this list can hold",
   "filePane.settings.label": "Settings",
   "filePane.settings.blurb": "Appearance, your reviewer identity, autosave and proofing.",
   "filePane.properties.label": "Document properties",
@@ -725,7 +867,9 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.kind.saved": "Saved",
   "versionHistory.kind.named": "Named",
   "versionHistory.kind.auto": "Autosaved",
-  "versionHistory.kind.manual": "Version created",
+  // The version Make a copy takes of the current document before the copy
+  // replaces it. "Version created" said nothing about why it exists.
+  "versionHistory.kind.manual": "Before making a copy",
   "versionHistory.kind.preRestore": "Before a restore",
   "versionHistory.kind.restore": "Restored",
   "versionHistory.kind.recovery": "Recovered",
@@ -753,9 +897,11 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.row.sameAs": "Same content as {name}",
   "versionHistory.row.edits.one": "{count} edit",
   "versionHistory.row.edits.other": "{count} edits",
-  "versionHistory.row.grew": "{size} larger",
-  "versionHistory.row.shrank": "{size} smaller",
   "versionHistory.row.by": "by {name}",
+  // Labelled numbers, not plural families, for the reason `compare.changeCount`
+  // gives: one form per language instead of Arabic's six.
+  "versionHistory.row.wordsAdded": "Words added: {count}",
+  "versionHistory.row.wordsRemoved": "Words removed: {count}",
 
   // Said, not whispered. SKILL §10 forbids a silent no-op, and a capture that
   // found nothing new to keep used to be exactly that: no row appeared and
@@ -790,8 +936,7 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.emptyNamed": "No named versions. Name a version to find it here later.",
   "versionHistory.needsSelection": "Select a version in the list first",
   "versionHistory.headNotRestorable": "This is the current version — there is nothing to restore",
-  "versionHistory.headNotDeletable":
-    "This is the current version — it is the only one that still describes the document",
+  "versionHistory.headNotDeletable": "This is the current version, so it can't be deleted",
   // CORRECTED 2026-10-01. This read "Comparing one version with another is not
   // built yet", and the comment above it said the structural diff was `docs/140`
   // H3 and not built. The diff was built the whole time — `casual-doc-diff` plus
@@ -799,24 +944,36 @@ export const EN_STRINGS = Object.freeze({
   // §8-13 already said. Show changes is live now, and this sentence is what it
   // says when the surface that shows a comparison is not available at all: an
   // embedded editor composed without the Compare panel, where the capability
-  // genuinely is not there. `headNotComparable` is the other refusal.
+  // genuinely is not there. `earliestNotComparable` is the other refusal.
   "versionHistory.action.showChangesUnavailable":
     "Comparing versions is not available in this editor",
-  "versionHistory.headNotComparable":
-    "This is the current version — comparing it with itself would show nothing",
+  // RENAMED FROM `headNotComparable` 2026-10-05, English and all eighteen
+  // translations, because the row that refuses has changed. That sentence read
+  // "This is the current version — comparing it with itself would show nothing",
+  // and it was true of a comparison against the document on screen. ADR-062
+  // compares a version against its PREDECESSOR, so the head is now the most
+  // useful row in the panel and the one with nothing to compare against is the
+  // earliest version still kept.
+  "versionHistory.earliestNotComparable":
+    "This is the earliest version kept — there is nothing before it to compare with",
 
   // The counts and the policy, under the list. A person who cannot see the bound
   // cannot trust the promise (docs/139 §12).
   "versionHistory.kept.one": "{count} version kept",
   "versionHistory.kept.other": "{count} versions kept",
   "versionHistory.footerDetail": "{size} in this browser · {named} of {limit} named",
+  // REWORDED 2026-10-09: "kept for at least {days} days, up to {count}" promised
+  // a minimum the policy does not keep — the count ceiling removes younger
+  // versions too. This says what happens.
   "versionHistory.retention":
-    "Versions are kept for at least {days} days, up to {count} of them. Named versions are kept until you delete them.",
+    "Recent versions are kept for up to {days} days, {count} at most. Named versions are kept until you delete them.",
 
   // Why the entry point is disabled. Five different reasons, because the way out
   // of each is different and a reader can only act on the specific one.
   "versionHistory.disabled.noDocument": "Open a document to see its version history",
-  "versionHistory.disabled.setting": "Version history is off. Turn it on in Settings.",
+  // Settings has no version-history switch (only the host's stored preference
+  // reaches it), so this no longer sends the reader to look for one.
+  "versionHistory.disabled.setting": "Version history is turned off for this editor.",
   "versionHistory.disabled.autosave":
     "Version history follows autosave, which is off. Turn autosave on in Settings.",
   "versionHistory.disabled.embedded":
@@ -834,9 +991,9 @@ export const EN_STRINGS = Object.freeze({
   // destructive, which is why it is a sentence and not a warning glyph.
   "versionHistory.restore.title": "Restore this version?",
   "versionHistory.restore.message":
-    "“{name}” replaces what is on screen. Nothing is lost: the document you have now is kept as a version of its own first, and every version after this one stays in the timeline.",
+    "Your document is replaced by “{name}”. What you have now is saved as a version first, so you can go back to it.",
   "versionHistory.restore.confirm": "Restore",
-  "versionHistory.restore.cancel": "Keep current",
+  "versionHistory.restore.cancel": "Cancel",
   "versionHistory.restore.note": "The restored document is unsaved until you save it to a file.",
   "versionHistory.restore.cannotKeepCurrent":
     "The document on screen could not be kept as a version ({message}), so it was not replaced.",
@@ -871,7 +1028,7 @@ export const EN_STRINGS = Object.freeze({
 
   "versionHistory.named": "Named this version “{name}”.",
   "versionHistory.pinned": "This version is now kept until you say otherwise.",
-  "versionHistory.unpinned": "This version can now be released by the retention policy.",
+  "versionHistory.unpinned": "This version may now be removed automatically, like any recent version.",
   "versionHistory.deleted": "Deleted that version.",
 
   "versionHistory.delete.title": "Delete this version?",
@@ -927,6 +1084,14 @@ export const EN_STRINGS = Object.freeze({
   // the live region is the only channel a reader who cannot see it has.
   "table.rowAppended": "Row added at the end of the table",
   "table.atFirstCell": "The caret is already in the first cell of the table",
+  // A table's size, COLUMNS first — Word's own convention ("4x3 Table" over its
+  // Insert grid for four columns and three rows). The Insert grid and the Table
+  // band's hint both read this one sentence, because they used to print the
+  // same table as "4 × 3" and "3×4 table". `sizeSpoken` is the grid cell's
+  // accessible name, where a screen reader would read "×" as "times".
+  "table.size": "{columns} × {rows} table",
+  "table.sizeSpoken": "{columns} by {rows} table",
+  "table.sizeGrid": "Table size",
   // The row/column/table selection's own status line. It was built as
   // `Selected table ${mode}`, the one table status line that was not localised
   // at all, and glueing a translated noun onto a fixed verb is what these three
@@ -1070,6 +1235,33 @@ export const EN_STRINGS = Object.freeze({
   // not reachable.
   "object.addText": "Add text",
   "object.addText.notAShape": "Only a shape can hold text this way",
+  // Word's Change Picture (`docs/109` HF-252). The status line says what was
+  // KEPT, and asks for the one check a person must make: alt text written for
+  // the old picture may not describe the new one.
+  "object.changePicture": "Change picture",
+  "object.changePicture.menu": "Change picture…",
+  "object.changePicture.unsupported": "That file can’t be used as a picture. Choose a PNG, JPEG, GIF, BMP, TIFF or WebP image.",
+  "object.changePicture.unreadable": "Could not read that image",
+  "object.changePicture.done": "Picture changed — its size, position, wrap and border were kept",
+  "object.changePicture.doneAltText": "Picture changed — check that its alt text still describes the new picture",
+  // Word's Picture Border: a picture's outline, under Word's name for it (HF-254).
+  "object.pictureBorder": "Picture border",
+  "object.pictureBorder.short": "Border",
+  // Crop mode's arrows move the kept area; with nothing cropped there is nothing
+  // to move, and the key says so rather than doing nothing (`docs/104` HF-106).
+  "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",
+  // The text box body's Apply refuses a bad inset rather than doing nothing (HF-253).
+  "object.textBoxBody.invalid": "Each inset must be a number of inches, 0 or more",
+  // Moving an in-line object to another place in the text (`docs/109` UX-OB-02):
+  // the drag's hint, and Word's F2 "Move to where?" / Shift+F2 "Copy to where?".
+  // `{key}` is the copy key's name for this keyboard (Ctrl, or ⌥ on a Mac).
+  "object.dragInText.hint": "Release to drop it at the marker · hold {key} to copy · Esc cancels",
+  "object.moveTo.menu": "Move to…",
+  "object.moveTo.prompt": "Move to where? Put the insertion point where it should go, then press Enter. Esc cancels.",
+  "object.copyTo.prompt": "Copy to where? Put the insertion point where the copy should go, then press Enter. Esc cancels.",
+  "object.moveTo.cancelled": "Move cancelled",
+  "object.moved": "Moved",
+  "object.copied": "Copy placed",
   // The gutter's REORDER gesture (`docs/141` §4.2.3). The tooltip is on the band
   // once it is the selection — the moment it becomes a handle — and the two
   // announcements name both ends of the move, because the live region is the
@@ -1186,6 +1378,12 @@ export const EN_STRINGS = Object.freeze({
   "protect.command": "Restrict editing\u2026",
   "protect.applied": "Editing restricted to: {level}",
   "protect.removed": "Editing is no longer restricted",
+  // The SECOND axis applied on its own \u2014 `w:edit="none" w:formatting="1"`, which
+  // is what Word writes when an author ticks the formatting box and no editing
+  // box. Its own sentence rather than `protect.applied` with a level
+  // interpolated, because the level would read "No restriction" and the sentence
+  // would contradict itself.
+  "protect.appliedFormatting": "Formatting is now limited to this document's unlocked styles",
   // Not `protect.enforce.disabled`: `protect.enforce` is a markup key, and a
   // catalogue entry that looks like a child of another key invites `isDeclared`'s
   // plural-family prefix rule to answer for it.
@@ -1248,6 +1446,16 @@ export const EN_STRINGS = Object.freeze({
   "document.protectedCommentsOnly": "This document is protected: only comments can be added",
   "document.protectedTrackedChangesOnly": "This document is protected: changes must be tracked, and tracked changes cannot be accepted or rejected",
   "document.protectedFormsOnly": "This document is protected: only its form fields can be edited",
+  // `w:formatting` and `w:locked` — the other axis, whose refusals say what is
+  // still possible as well as what was refused, because a reader who is told only
+  // "no" tries the same gesture again. Neither says secure, encrypted or
+  // password-protected: `w:documentProtection` is plain-text XML and the standard
+  // says in its own note that it "is not intended as a security feature", so a
+  // sentence a reader would read as one would be a false claim in the place they
+  // are most likely to believe it. The engine asserts that in
+  // `every_protection_refusal_carries_a_distinct_routable_code_and_sentence`.
+  "document.protectedFormatting": "This document is protected: its formatting can only be changed by applying one of its styles",
+  "document.protectedStyleLocked": "This document is protected and that style is locked, so it cannot be applied",
   // The `ODC-7xxx` collaboration family (`docs/20`), every row of it. Each says
   // what the reader should DO, because that is the difference between the codes:
   // one invites a retry, one asks them to copy their work out, one is terminal.
@@ -1318,6 +1526,10 @@ export const EN_STRINGS = Object.freeze({
   "access.level.suggest": "Suggesting only",
   "access.level.comment": "Comments only",
   "access.level.read": "Read only",
+  // The one state where a reader may write and may not reformat — `w:formatting`
+  // with no editing restriction. Short enough for the footer badge at phone
+  // width, where the second half of the badge is shed.
+  "access.level.noFormatting": "No formatting changes",
   // Each source names WHERE the limit was decided, in the reader's terms rather
   // than the mechanism's: "set when this document was opened" is something a
   // reader can act on (ask whoever opened it), "the container grant withheld
@@ -1448,4 +1660,124 @@ export const EN_STRINGS = Object.freeze({
   // survives, because that is the claim worth making and the one a converter
   // cannot.
 
+  // The chart panel (`chart_data.mjs`): a chart's data grid, its type, its
+  // title and its legend. Word's Edit Data and Docs' chart editor, one panel.
+  // The two `chart.refused.*` sentences route the engine's coded refusals
+  // (`casual-doc-wasm/src/chart.rs`) so a non-English reader is told why in
+  // their own language.
+  "chart.panelTitle": "Chart",
+  "chart.panelIntro": "Changes apply to the chart as you make them.",
+  "chart.close": "Close chart panel",
+  "chart.typeHeading": "Chart type",
+  "chart.kind.column": "Clustered column",
+  "chart.kind.bar": "Clustered bar",
+  "chart.kind.line": "Line",
+  "chart.kind.area": "Area",
+  "chart.kind.pie": "Pie",
+  "chart.kind.doughnut": "Doughnut",
+  "chart.kind.scatter": "Scatter",
+  "chart.titleField": "Title",
+  "chart.legend.none": "None",
+  "chart.legend.right": "Right",
+  "chart.legend.top": "Top",
+  "chart.legend.left": "Left",
+  "chart.legend.bottom": "Bottom",
+  "chart.legend.topRight": "Top right",
+  "chart.dataHeading": "Data",
+  "chart.dataHint": "Rows are categories and columns are series. Paste cells from a spreadsheet to fill many at once.",
+  "chart.categories": "Categories",
+  "chart.xValues": "X values",
+  "chart.seriesNameLabel": "Name of series {n}",
+  "chart.rowNameLabel": "Name of row {n}",
+  "chart.cellLabel": "{series}, {label}",
+  "chart.seriesFallback": "Series {n}",
+  "chart.rowFallback": "Row {n}",
+  "chart.newSeries": "Series {n}",
+  "chart.newCategory": "Category {n}",
+  "chart.removeSeries": "Remove series {name}",
+  "chart.removeRow": "Remove row {name}",
+  "chart.lastSeries": "A chart needs at least one series",
+  "chart.lastRow": "A chart needs at least one row",
+  "chart.addRow": "Add row",
+  "chart.addSeries": "Add series",
+  "chart.rowLimit": "A chart can hold at most {n} rows",
+  "chart.seriesLimit": "A chart can hold at most {n} series",
+  "chart.notANumber": "“{value}” in row {row} of “{series}” is not a number. Type a number like 4.3, or clear the cell to leave a gap.",
+  "chart.pasteClipped": "Cells that did not fit and were left out: {count}",
+  "chart.editData": "Edit data",
+  "chart.editDataTitle": "Edit the chart's data, type, title and legend",
+  "chart.replacesWorkbook": "This chart came from the file you opened. Changing its data replaces the chart's embedded workbook with one holding just the data shown here.",
+  "chart.refused.partial": "This chart uses features this editor cannot rewrite yet, so its data is shown read-only.",
+  "chart.refused.combo": "This chart combines more than one chart type, and its data cannot be edited here yet.",
+  // The Chart tab, the Chart settings panel and the Chart Data dialog
+  // (`chart_surface.mjs`, `chart_panel.mjs`, `chart_data.mjs`).
+  "chart.kind.columnStacked": "Stacked column",
+  "chart.kind.columnPercent": "100% stacked column",
+  "chart.kind.lineMarkers": "Line with markers",
+  "chart.kind.lineStacked": "Stacked line",
+  "chart.kind.linePercent": "100% stacked line",
+  "chart.kind.barStacked": "Stacked bar",
+  "chart.kind.barPercent": "100% stacked bar",
+  "chart.kind.areaStacked": "Stacked area",
+  "chart.kind.areaPercent": "100% stacked area",
+  "chart.kind.scatterSmooth": "Scatter with smooth lines",
+  "chart.familyColumn": "Column",
+  "chart.familyLine": "Line",
+  "chart.familyPie": "Pie",
+  "chart.familyBar": "Bar",
+  "chart.familyArea": "Area",
+  "chart.familyScatter": "X Y (scatter)",
+  "chart.familyOther": "Other",
+  "chart.titleState.none": "None",
+  "chart.titleState.above": "Above chart",
+  "chart.titleState.overlay": "Centered overlay",
+  "chart.legendOverlay": "Show the legend over the chart",
+  "chart.labels.none": "None",
+  "chart.labels.show": "Show values",
+  "chart.labels.outsideEnd": "Outside end",
+  "chart.labels.insideEnd": "Inside end",
+  "chart.labels.center": "Center",
+  "chart.labels.insideBase": "Inside base",
+  "chart.labels.top": "Above",
+  "chart.labels.bottom": "Below",
+  "chart.labels.left": "Left",
+  "chart.labels.right": "Right",
+  "chart.noAxes": "This chart type has no axes",
+  "chart.axis.horizontal": "Horizontal axis",
+  "chart.axis.vertical": "Vertical axis",
+  "chart.gridlines.horizontal": "Horizontal gridlines",
+  "chart.gridlines.vertical": "Vertical gridlines",
+  "chart.elements": "Chart elements",
+  "chart.element.title": "Chart title",
+  "chart.element.legend": "Legend",
+  "chart.element.labels": "Data labels",
+  "chart.element.axes": "Axes",
+  "chart.element.gridlines": "Gridlines",
+  "chart.style": "Chart style",
+  "chart.settings": "Chart settings…",
+  "chart.dataTitle": "Chart data",
+  "chart.closeData": "Close chart data",
+  "chart.dataUndoNote": "Changes apply to the chart as you make them. Each change can be undone.",
+  "chart.done": "Done",
+  "chart.axis.auto": "Auto",
+  "chart.axis.minimum": "Minimum",
+  "chart.axis.maximum": "Maximum",
+  "chart.axis.reverse": "Values in reverse order",
+  "chart.readOnly": "This chart cannot be changed",
+  "chart.typeLabel": "Type",
+  "chart.axis.verticalHeading": "Vertical axis",
+  "chart.axis.horizontalHeading": "Horizontal axis",
+  "chart.dataSummary": "Series: {series} · Categories: {rows}",
+  "chart.editDataEllipsis": "Edit data…",
+  "chart.reason.viewing": "Turn on Editing to change this chart",
+  "chart.reason.suggesting": "Chart changes cannot be tracked in Suggesting mode",
+  "chart.reason.noChartSelected": "Select a chart to use these tools",
+  "chart.defaultTitle": "Chart Title",
+  "chart.palette.colorful": "Colorful",
+  "chart.palette.mono1": "Monochrome 1",
+  "chart.palette.mono2": "Monochrome 2",
+  "chart.palette.mono3": "Monochrome 3",
+  "chart.palette.mono4": "Monochrome 4",
+  "chart.palette.mono5": "Monochrome 5",
+  "chart.palette.mono6": "Monochrome 6",
 });

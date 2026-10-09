@@ -483,6 +483,12 @@ fn measure_chunk(
         // crosses this seam inside `MeasureResume`, so the seam is correct the
         // day that refusal is lifted (`109` FOLD-003).
         &FoldSet::EMPTY,
+        // A windowed body is PAGED by construction — this module builds its
+        // plans with `LayoutView::Paged` and `casual-doc-wasm` refuses reflow
+        // above the window threshold — so declared widths bleed into the margin
+        // here exactly as they do on paper. The seam is threaded rather than
+        // assumed so a reflowed window gets the right answer the day one exists.
+        crate::flow::MeasureFit::Bleed,
         measures.numbering.clone(),
     );
 
@@ -766,6 +772,8 @@ pub fn window_of(
         single_section_line_grid(document),
         // See `measure_chunk`: a windowed body is never folded.
         &FoldSet::EMPTY,
+        // See `measure_chunk`: a windowed body is paged by construction.
+        crate::flow::MeasureFit::Bleed,
         MeasureResume::default(),
     );
     let shaped_fragments = galley.len();

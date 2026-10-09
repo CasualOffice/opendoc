@@ -13,11 +13,13 @@
 //   `setStatus(text, k)` the status line
 //   `openShapeFill()`    open the shape-fill picker (the bar owns the button)
 //   `openShapeOutline()`
+//   `t(key)`             the catalogue
 //
 // Cost: O(1) per reflect — a fixed number of engine reads for ONE object. It
 // runs on every repaint while the panel is open, so it must stay that way.
 import { OBJECT_LABELS } from "./object_traversal.mjs";
 import { TWIPS_PER_INCH } from "./units.mjs";
+import { readTextBoxBody, writeTextBoxBody } from "./text_box_body.mjs";
 
 /** Builds the panel. Nothing is created until `ensure()` is first called, so a
  *  session that never selects an object never pays for it. */
@@ -80,30 +82,26 @@ export function createObjectInspector(io) {
     const wrapField = objectInspectorEl.querySelector("[data-object-inspector-wrap]");
     wrapField.hidden = !io.selection().canWrap;
     if (io.selection().canWrap) setValue(wrapField.querySelector("select"), io.doc().objectWrap(io.selection().ref.root) || "square");
+    // A picture's Appearance is its border — Word's Format Picture ▸ Line — and
+    // the button says so (`docs/109` HF-254).
     const appearance = objectInspectorEl.querySelector("[data-object-inspector-appearance]");
-    appearance.hidden = io.selection().kind !== "shape" || (!io.selection().canFill && !io.selection().canStroke);
-    appearance.querySelector("[data-object-inspector-fill]").hidden = !io.selection().canFill;
-    appearance.querySelector("[data-object-inspector-stroke]").hidden = !io.selection().canStroke;
+    const kind = io.selection().kind;
+    appearance.hidden = (kind !== "shape" && kind !== "image") || (!io.selection().canFill && !io.selection().canStroke);
+    appearance.querySelector("[data-object-inspector-fill]").hidden = !io.selection().canFill || kind !== "shape";
+    const stroke = appearance.querySelector("[data-object-inspector-stroke]");
+    stroke.hidden = !io.selection().canStroke;
+    stroke.textContent = kind === "image" ? io.t("object.pictureBorder") : "Shape outline";
     const bodyField = objectInspectorEl.querySelector("[data-object-inspector-textbox]");
     bodyField.hidden = io.selection().kind !== "textbox";
-    if (io.selection().kind === "textbox" && typeof io.doc().textBoxBodyProperties === "function") {
-      try {
-        const raw = io.doc().textBoxBodyProperties(io.selection().node);
-        const props = raw ? JSON.parse(raw) : null;
-        if (props) {
-          const insets = props.insets ?? {};
-          for (const side of ["left", "top", "right", "bottom"]) {
-            const input = bodyField.querySelector(`[data-object-textbox-inset=${side}]`);
-            if (input) setValue(input, String(Math.round(Number(insets[`${side}Emu`] ?? 0) / 914400 * 100) / 100));
-          }
-          setValue(bodyField.querySelector("[data-object-textbox-anchor]"), props.vertical_anchor ?? "top");
-          setValue(bodyField.querySelector("[data-object-textbox-h-overflow]"), props.horizontal_overflow ?? "overflow");
-          setValue(bodyField.querySelector("[data-object-textbox-v-overflow]"), props.vertical_overflow ?? "overflow");
-          setValue(bodyField.querySelector("[data-object-textbox-autofit]"), props.auto_fit?.mode ?? "none");
-        }
-      } catch {
-        // A malformed/unsupported payload fails closed; authored data is not overwritten.
-      }
+    // The record's shape — camelCase, defaults omitted — is `text_box_body.mjs`'s
+    // to know (HF-253: reading snake_case showed every text box as default).
+    const body = io.selection().kind === "textbox" ? readTextBoxBody(io.doc().textBoxBodyProperties?.(io.selection().node)) : null;
+    if (body) {
+      for (const side of ["left", "top", "right", "bottom"]) setValue(bodyField.querySelector(`[data-object-textbox-inset=${side}]`), String(body.insets[side]));
+      setValue(bodyField.querySelector("[data-object-textbox-anchor]"), body.verticalAnchor);
+      setValue(bodyField.querySelector("[data-object-textbox-h-overflow]"), body.horizontalOverflow);
+      setValue(bodyField.querySelector("[data-object-textbox-v-overflow]"), body.verticalOverflow);
+      setValue(bodyField.querySelector("[data-object-textbox-autofit]"), body.autoFit);
     }
   }
 
@@ -142,7 +140,7 @@ export function createObjectInspector(io) {
     objectInspectorEl.hidden = true;
     objectInspectorEl.setAttribute("aria-label", "Object properties");
     objectInspectorEl.innerHTML = `
-      <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span class="ms properties-panel-icon" aria-hidden="true">tune</span><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
+      <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
       <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-rotation hidden><legend>Rotation</legend><label class="dialog-field">Angle<span class="number-control"><input data-object-prop="rotation" type="number" min="0" max="360" step="1" /><span>&deg;</span></span></label><button type="button" class="dialog-button" data-object-inspector-rotation-apply>Apply rotation</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-wrap hidden><legend>Text wrapping</legend><label class="dialog-field">Wrap<select data-object-inspector-wrap-select><option value="square">Square</option><option value="tight">Tight</option><option value="through">Through</option><option value="topAndBottom">Top &amp; bottom</option><option value="behind">Behind text</option><option value="front">In front of text</option></select></label><button type="button" class="dialog-button" data-object-inspector-wrap-apply>Apply wrap</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-textbox hidden><legend>Text box body</legend><div class="property-grid-2"><label class="dialog-field">Left inset<span class="number-control"><input data-object-textbox-inset="left" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Right inset<span class="number-control"><input data-object-textbox-inset="right" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top inset<span class="number-control"><input data-object-textbox-inset="top" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Bottom inset<span class="number-control"><input data-object-textbox-inset="bottom" type="number" min="0" step="0.01" /><span>in</span></span></label></div><label class="dialog-field">Vertical alignment<select data-object-textbox-anchor><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label><label class="dialog-field">Horizontal overflow<select data-object-textbox-h-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option></select></label><label class="dialog-field">Vertical overflow<select data-object-textbox-v-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option><option value="ellipsis">Ellipsis</option></select></label><label class="dialog-field">Autofit<select data-object-textbox-autofit><option value="none">Fixed shape</option><option value="shape">Grow shape to fit</option><option value="normal">Scale text</option></select></label><button type="button" class="dialog-button" data-object-inspector-textbox-apply>Apply text box body</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-alt hidden><legend>Accessibility</legend><label class="dialog-field">Description<input data-object-inspector-alt-input type="text" maxlength="255" placeholder="Describe this object" /></label><button type="button" class="dialog-button" data-object-inspector-alt-apply>Apply description</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-appearance hidden><legend>Appearance</legend><button type="button" class="dialog-button" data-object-inspector-fill>Shape fill</button><button type="button" class="dialog-button" data-object-inspector-stroke>Shape outline</button></fieldset></div>`;
     objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
     objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
@@ -153,7 +151,13 @@ export function createObjectInspector(io) {
       const left = Number(objectInspectorEl.querySelector("[data-object-prop=left]").value);
       const top = Number(objectInspectorEl.querySelector("[data-object-prop=top]").value);
       if (rect.length < 5 || ![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return;
-      io.runEdit(() => io.doc().resizeObject(io.selection().ref.root, left * TWIPS_PER_INCH * 635, top * TWIPS_PER_INCH * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
+      // An in-line object's position is the text's, not the panel's: send the
+      // origin it already has. The Left/Top fields show it rounded to 0.01in,
+      // and sending that back moved the origin by the rounding, which the engine
+      // refuses for an in-line object — so Apply could never resize one
+      // (`docs/109` UX-OB-05).
+      const origin = io.selection().anchored ? [left * TWIPS_PER_INCH, top * TWIPS_PER_INCH] : [rect[1], rect[2]];
+      io.runEdit(() => io.doc().resizeObject(io.selection().ref.root, origin[0] * 635, origin[1] * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
     });
     objectInspectorEl.querySelector("[data-object-inspector-rotation-apply]").addEventListener("click", () => {
       if (!io.doc() || !io.selection()?.canRotate || !objectInspectorMatchesSelection()) return;
@@ -169,30 +173,20 @@ export function createObjectInspector(io) {
       io.runEdit(() => io.doc().setObjectWrap(io.selection().ref.root, mode), { gate: true });
     });
     objectInspectorEl.querySelector("[data-object-inspector-textbox-apply]").addEventListener("click", () => {
-      if (!io.doc() || io.selection()?.kind !== "textbox" || typeof io.doc().textBoxBodyProperties !== "function" || typeof io.doc().setTextBoxBodyProperties !== "function") return;
+      if (!io.doc() || io.selection()?.kind !== "textbox" || typeof io.doc().setTextBoxBodyProperties !== "function") return;
       if (!objectInspectorMatchesSelection()) return;
-      let props;
-      try { props = JSON.parse(io.doc().textBoxBodyProperties(io.selection().node)); } catch { return; }
-      if (!props?.insets) return;
-      for (const side of ["left", "top", "right", "bottom"]) {
-        const inches = Number(objectInspectorEl.querySelector(`[data-object-textbox-inset=${side}]`).value);
-        if (!Number.isFinite(inches) || inches < 0) return;
-        props.insets[`${side}Emu`] = Math.round(inches * 914400);
-      }
-      props.vertical_anchor = objectInspectorEl.querySelector("[data-object-textbox-anchor]").value;
-      props.horizontal_overflow = objectInspectorEl.querySelector("[data-object-textbox-h-overflow]").value;
-      props.vertical_overflow = objectInspectorEl.querySelector("[data-object-textbox-v-overflow]").value;
-      const autofitMode = objectInspectorEl.querySelector("[data-object-textbox-autofit]").value;
-      // Keep the authored scale/reduction values for normal autofit. The compact
-      // inspector changes the mode only; it must never erase unsupported detail.
-      if (autofitMode === "normal") {
-        props.auto_fit = props.auto_fit?.mode === "normal"
-          ? props.auto_fit
-          : { mode: "normal", font_scale: 100000, line_spacing_reduction: 0 };
-      } else {
-        props.auto_fit = { mode: autofitMode };
-      }
-      io.runEdit(() => io.doc().setTextBoxBodyProperties(io.selection().node, JSON.stringify(props)), { gate: true });
+      const field = (selector) => objectInspectorEl.querySelector(selector).value;
+      const record = writeTextBoxBody(io.doc().textBoxBodyProperties(io.selection().node), {
+        insets: Object.fromEntries(["left", "top", "right", "bottom"].map((side) => [side, field(`[data-object-textbox-inset=${side}]`)])),
+        verticalAnchor: field("[data-object-textbox-anchor]"),
+        horizontalOverflow: field("[data-object-textbox-h-overflow]"),
+        verticalOverflow: field("[data-object-textbox-v-overflow]"),
+        autoFit: field("[data-object-textbox-autofit]"),
+      });
+      // An inset that is not a number of inches is refused here, and SAYS so,
+      // rather than reaching the engine as a record it would refuse.
+      if (record === null) return io.setStatus(io.t("object.textBoxBody.invalid"), "error");
+      io.runEdit(() => io.doc().setTextBoxBodyProperties(io.selection().node, record), { gate: true });
     });
     objectInspectorEl.querySelector("[data-object-inspector-alt-apply]").addEventListener("click", () => {
       if (!io.doc() || !io.selection()?.canAltText || !objectInspectorMatchesSelection()) return;

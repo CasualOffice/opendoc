@@ -136,9 +136,12 @@ pub(crate) fn carries_no_meaning_when(
         // (a shadow, a glow, a reflection) is a real loss and still reports.
         b"effectLst" => self_closing,
         // `<a:spLocks/>` with no attributes locks nothing. Each attribute is a
-        // separate lock (`noChangeArrowheads`, `noResize`, `noEditPoints`, …) and
-        // this engine honours none of them, so a populated one is a restriction the
-        // document asked for and did not get: still reported.
+        // separate lock (`noChangeArrowheads`, `noResize`, `noEditPoints`, …). A
+        // populated one is a restriction the document asked for: since `109`
+        // FID-AT-09 it is modelled (`ObjectName::locks`) and written back by the
+        // body parser before it reaches the reporter, so this arm decides only
+        // what the coverage guard counts — the empty form, which the writer
+        // rightly omits, is not a loss.
         b"spLocks" => element.attributes().next().is_none(),
         // `<a14:useLocalDpi val="0"/>` — the Office 2010 drawing extension asking
         // that a picture NOT be rescaled to the authoring machine's DPI. Off is the
@@ -184,14 +187,34 @@ pub(crate) fn carries_no_meaning_when(
         b"effectExtent" => [b"l".as_slice(), b"t", b"r", b"b"]
             .iter()
             .all(|edge| is_zero_or_absent(element, edge)),
-        // `a:graphicFrameLocks` / `a:picLocks` — the same rule `a:spLocks` above
-        // already states, for the frame and the picture flavours of the lock
-        // element. No attributes locks nothing; each attribute
+        // `a:graphicFrameLocks` / `a:picLocks` / `a:grpSpLocks` — the same rule
+        // `a:spLocks` above states, for the frame, picture and group flavours of
+        // the lock element. No attributes locks nothing; each attribute
         // (`noChangeAspect`, `noResize`, `noChangeArrowheads`, …) is one
-        // restriction the document asked for and this engine does not honour, so
-        // a populated one is a loss and reports. Both were unconditionally silent
-        // until FID-P-03 measured them.
-        b"graphicFrameLocks" | b"picLocks" => element.attributes().next().is_none(),
+        // restriction the document asked for. The first two were unconditionally
+        // silent until FID-P-03 measured them, then reported; since `109`
+        // FID-AT-09 a populated one is modelled and written back, and an empty
+        // `a:grpSpLocks` — which used to raise a finding describing no loss — is
+        // a no-op like its siblings.
+        b"graphicFrameLocks" | b"picLocks" | b"grpSpLocks" => element.attributes().next().is_none(),
+        // `w:themeFontLang` with every language empty or absent. LibreOffice
+        // writes `w:val="" w:eastAsia="" w:bidi=""` into every document, which
+        // states exactly what an absent element does — it was 3 of the committed
+        // corpus's findings and described no loss. A STATED language is modeled
+        // (`DocumentSettings::theme_font_languages`) and round-trips, so it is
+        // neither silent nor lost; this arm only decides the empty form, which
+        // the writer correctly omits (`109` FID-AT-01).
+        // `<a:extraClrSchemeLst/>` and `<a:objectDefaults/>` — an EMPTY list of
+        // extra colour schemes and an EMPTY set of new-object defaults, which
+        // Word's stock theme writes into every document. Neither states anything
+        // an absent element does not, and reporting them put a "lost" theme
+        // construct in front of every reader of an ordinary Word file. A
+        // populated one (a second colour scheme, a default shape style) is
+        // unmodeled and dropped by the regenerated theme, and still reports.
+        b"extraClrSchemeLst" | b"objectDefaults" => self_closing,
+        b"themeFontLang" => [b"val".as_slice(), b"eastAsia", b"bidi"]
+            .iter()
+            .all(|language| attribute_value(element, language).is_none_or(|v| v.is_empty())),
         _ => false,
     }
 }
@@ -340,6 +363,7 @@ mod tests {
                 "a:picLocks",
                 r#"a:picLocks noChangeAspect="1" noChangeArrowheads="1""#,
             ),
+            (b"grpSpLocks", "a:grpSpLocks", r#"a:grpSpLocks noUngrp="1""#),
             (
                 b"effectExtent",
                 r#"wp:effectExtent l="0" t="0" r="0" b="0""#,
@@ -405,6 +429,45 @@ mod tests {
             assert!(
                 !carries_no_meaning_when(local, &element(loud), false),
                 "dropped something visible in silence: {loud}"
+            );
+        }
+    }
+
+    /// An empty theme list states nothing; a populated one is a lost construct.
+    #[test]
+    fn only_an_empty_theme_list_is_silent() {
+        for local in [b"extraClrSchemeLst".as_slice(), b"objectDefaults"] {
+            let name = format!("a:{}", String::from_utf8_lossy(local));
+            assert!(
+                carries_no_meaning_when(local, &element(&name), true),
+                "reported a loss that cannot be seen: <{name}/>"
+            );
+            assert!(
+                !carries_no_meaning_when(local, &element(&name), false),
+                "silenced a populated {name}"
+            );
+        }
+    }
+
+    /// The empty form states nothing; one stated language is information.
+    #[test]
+    fn only_an_all_empty_theme_font_language_is_silent() {
+        for silent in [
+            r#"w:themeFontLang w:val="" w:eastAsia="" w:bidi="""#,
+            "w:themeFontLang",
+        ] {
+            assert!(
+                carries_no_meaning_when(b"themeFontLang", &element(silent), true),
+                "reported a loss that cannot be seen: {silent}"
+            );
+        }
+        for loud in [
+            r#"w:themeFontLang w:val="" w:eastAsia="ja-JP" w:bidi="""#,
+            r#"w:themeFontLang w:val="en-US""#,
+        ] {
+            assert!(
+                !carries_no_meaning_when(b"themeFontLang", &element(loud), true),
+                "silenced a stated language: {loud}"
             );
         }
     }

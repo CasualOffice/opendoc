@@ -114,11 +114,14 @@ struct Pending {
 
 /// Aggregating report sink shared by every format adapter.
 ///
-/// Findings aggregate on `(feature, finding kind)`: two findings that share a
-/// feature name but differ in what happened to the construct are different
-/// fidelity facts. The **first** location for a key is kept, which is what `35`
-/// permits ("Repeated equivalent findings may be aggregated only when counts and
-/// first bounded locations remain deterministic").
+/// Findings aggregate on `(feature, finding kind, part)`: two findings that share
+/// a feature name but differ in what happened to the construct are different
+/// fidelity facts, and so are two that happened in different parts — a count of
+/// three `drawing` findings charged to `word/header1.xml` when two of them were
+/// in the body would be a location that is not true of the count. Within a key
+/// the **first** element/attribute location is kept, which is what `35` permits
+/// ("Repeated equivalent findings may be aggregated only when counts and first
+/// bounded locations remain deterministic").
 ///
 /// Nothing here knows a markup vocabulary. The adapter decides the feature
 /// identifier, the bounded location and which [`Finding`] applies — classifying
@@ -131,9 +134,19 @@ struct Pending {
 /// bounding the map; O(1) in document size.
 #[derive(Debug)]
 pub struct LossReporter {
-    findings: BTreeMap<(String, FindingKey), Pending>,
+    findings: BTreeMap<(String, FindingKey, Option<String>), Pending>,
     retention: SourceRetention,
+    /// The package part whose bytes the adapter is reading now, stamped on every
+    /// located finding ([`LossReporter::set_part`]). `None` when no package
+    /// exists.
+    part: Option<String>,
     overflow: u32,
+    /// Parts carried VERBATIM through a save as long as the model's projection
+    /// of them is unchanged, each with the opaque-part ledger record that
+    /// licenses it ([`LossReporter::retain_part`]). A finding charged to one is
+    /// `preserved` in either mode — the part's own bytes hold the detail — and
+    /// a save that has to regenerate the part names it then (`109` FID-AT-03).
+    retained_parts: Vec<(String, LedgerId)>,
 }
 
 impl LossReporter {
@@ -146,8 +159,34 @@ impl LossReporter {
         Self {
             findings: BTreeMap::new(),
             retention,
+            part: None,
             overflow: 0,
+            retained_parts: Vec::new(),
         }
+    }
+
+    /// Declares that `part` is carried verbatim by a save for as long as the
+    /// model's projection of it is unchanged, under ledger record `record`.
+    ///
+    /// Every finding charged to `part` — before or after this call — then
+    /// resolves to `preserved` citing `record`, whatever the import mode: the
+    /// detail the model does not carry is in the bytes the save will write.
+    /// When a save cannot write them (the model's projection changed), the
+    /// writer regenerates the part and names these findings itself.
+    pub fn retain_part(&mut self, part: &str, record: LedgerId) {
+        self.retained_parts.push((part.to_owned(), record));
+    }
+
+    /// Names the package part the next findings come from: the part name the
+    /// package's relationships resolved, or `None` when there is no package.
+    ///
+    /// Set by the adapter's driver before each part's parser runs, because the
+    /// parsers are handed bytes and cannot know it. A reader shown "`drawing` ×3"
+    /// cannot tell a lost header logo from a lost body chart; "×1
+    /// `word/header1.xml`, ×2 `word/document.xml`" is the report naming what was
+    /// lost, which is `109` HF-047's engine half.
+    pub fn set_part(&mut self, part: Option<&str>) {
+        self.part = part.map(str::to_owned);
     }
 
     /// What retains the source this reporter is reading.
@@ -162,12 +201,24 @@ impl LossReporter {
     /// "report this element", "report this attribute", "report this class once
     /// per document" — builds it as a thin layer over this call, and the
     /// taxonomy stays with one implementation.
-    pub fn record(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
+    ///
+    /// A location that names no part is charged to the part being read now
+    /// ([`LossReporter::set_part`]).
+    pub fn record(&mut self, feature: String, mut location: FeatureLocation, finding: Finding) {
+        if location.part_name.is_none() {
+            location.part_name.clone_from(&self.part);
+        }
+        self.record_unlocated(feature, location, finding);
+    }
+
+    /// Records a finding with exactly the location given — for a document-level
+    /// class that no single part owns.
+    pub fn record_unlocated(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
         let retained_bytes = match finding {
             Finding::RetainedInModel(bytes) => bytes,
             _ => 0,
         };
-        let key = (feature, finding.key());
+        let key = (feature, finding.key(), location.part_name.clone());
         if let Some(pending) = self.findings.get_mut(&key) {
             pending.occurrences = pending.occurrences.saturating_add(1);
             pending.retained_bytes = pending.retained_bytes.saturating_add(retained_bytes);
@@ -195,23 +246,50 @@ impl LossReporter {
         let retention = self.retention;
         let snapshot = ledger.source_snapshot();
         let mut entries: Vec<CompatibilityEntry> = Vec::with_capacity(self.findings.len());
-        for ((feature, key), pending) in self.findings {
+        for ((feature, key, part), pending) in self.findings {
             let finding = match key {
                 FindingKey::Omitted => Finding::Omitted,
                 FindingKey::Degraded => Finding::Degraded,
                 FindingKey::Invalid => Finding::Invalid,
                 FindingKey::RetainedInModel => Finding::RetainedInModel(pending.retained_bytes),
             };
+            // A part carried verbatim holds its own findings' detail, in either
+            // mode, under its own record (`LossReporter::retain_part`).
+            if let Some(record) = part.as_deref().and_then(|part| {
+                self.retained_parts
+                    .iter()
+                    .find(|(retained, _)| retained == part)
+                    .map(|(_, record)| *record)
+            }) {
+                entries.push(CompatibilityEntry {
+                    feature,
+                    occurrences: pending.occurrences,
+                    location: pending.location,
+                    disposition: SourceRetention::Snapshot.resolve(finding),
+                    ledger_id: Some(record),
+                    part: None,
+                });
+                continue;
+            }
             let disposition = retention.resolve(finding);
             // A preserved finding cites the record that licenses the claim: the
             // snapshot when the byte floor covers the source, otherwise the
             // in-model subtree record this finding is the reason for.
+            //
+            // A subtree retained INSIDE the model cites its own record even under
+            // the byte floor. The snapshot reproduces the source only when the
+            // whole file is saved unchanged; the model carries the subtree through
+            // every save, edited or not. Citing the snapshot would make the claim
+            // look exactly as fragile as one only the snapshot holds, and
+            // [`CompatibilityReport::held_only_by_source_snapshot`] — which tells a
+            // regenerating save what it does not deliver — would then name an
+            // equation that is in the saved file.
             let ledger_id: Option<LedgerId> = if disposition.claims_preservation() {
                 match (retention, key) {
-                    (SourceRetention::Snapshot, _) => snapshot,
-                    (SourceRetention::Regenerated, FindingKey::RetainedInModel) => {
+                    (_, FindingKey::RetainedInModel) => {
                         Some(ledger.record_model_subtree(&feature, pending.retained_bytes))
                     }
+                    (SourceRetention::Snapshot, _) => snapshot,
                     (SourceRetention::Regenerated, _) => None,
                 }
             } else {

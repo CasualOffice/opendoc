@@ -1,6 +1,8 @@
 # 119 — Custom shape geometry (`a:custGeom`)
 
-**Status:** accepted, implemented in `feat/custom-shape-geometry`.
+**Status:** accepted, implemented in `feat/custom-shape-geometry`; the preset table and the
+rest of the grammar landed in `fid/shapes-v2` ("Landed since", FID-L-04/FID-G-02), and so
+did tight/through wrap to the authored contour (FID-L-12).
 **Opened:** 2026-09-23. **Row:** `109` FID-G-01, unblocking `109` FID-L-04.
 **Source:** `118` §3 row 4 — **whose evidence this document corrects; see §1.**
 **Related:** `117` (the same comparison-first shape), `118` §4 (the empty-element
@@ -235,19 +237,21 @@ Each of these keeps today's behaviour — reported as an omission, painted as th
 bounding rectangle — and is `109` FID-G-02:
 
 - ~~**Curves and arcs**~~ — **`a:cubicBezTo` and `a:quadBezTo` have since landed**; see
-  "Landed since" below. `a:arcTo` is still out, and still FID-G-02.
-- **Guide formulas**: `a:gdLst` and the `*/ +- pin sin cos at2 …` formula
+  "Landed since" below. ~~`a:arcTo` is still out~~ — landed with the preset table.
+- ~~**Guide formulas**~~ (landed with the preset table): `a:gdLst` and the `*/ +- pin sin cos at2 …` formula
   language, and therefore any path whose coordinates are guide *names* rather
   than integers. This is the single largest remaining piece.
-- **Adjust handles** (`a:ahLst`, `a:ahXY`, `a:ahPolar`) and **connection sites**
-  (`a:cxnLst`), which are authoring and connector features, not rendering ones.
-- **Multiple subpaths** — more than one `a:path`, or a second `moveTo` inside
-  one — and the per-path `@fill` / `@stroke` / `@extrusionOk` attributes.
-- **`a:rect`**, the custom text rectangle.
+- ~~**Adjust handles** (`a:ahLst`, `a:ahXY`, `a:ahPolar`) and **connection sites**
+  (`a:cxnLst`)~~ — modelled and round-tripped with the preset table; the engine
+  evaluates handle positions. Dragging one is `109` FID-SH-02.
+- ~~**Multiple subpaths**~~ — landed with the preset table, with the per-path
+  `@fill` / `@stroke` / `@extrusionOk` attributes.
+- ~~**`a:rect`**, the custom text rectangle~~ — modelled and evaluated; text layout
+  inside it is `109` FID-SH-01.
 - **Editing**: no Edit-Points gesture, no vertex handles. The shape stays
   selectable and movable as a box.
 - **ODF export**: still writes the bounding `draw:rect`. `draw:polyline` /
-  `draw:polygon` is the right target and is part of FID-G-02.
+  `draw:polygon` is the right target; now `109` FID-SH-03.
 - **Hit-testing stays rectangular.** ONLYOFFICE hits the path; we hit the
   bounding box. Deliberate: these rules are 0.1 pt high and a path-exact hit
   test would make them unclickable without a tolerance model we do not have.
@@ -302,10 +306,167 @@ changed, because the "out of scope" list above is no longer wholly true.
    model change, not an evaluator one. The language was the stated blocker; it is no
    longer the blocker.
 
-Still out of scope and still FID-G-02: `a:arcTo`; `a:gdLst` in the model and
-guide-named path coordinates (the language exists, the consumer does not); multiple
-subpaths; `a:ahLst`/`a:cxnLst`; the `a:rect` text rectangle; ODF export; Edit Points;
-and path-exact hit testing.
+What was then still out of scope — `a:arcTo`, `a:gdLst` and guide-named coordinates,
+multiple subpaths, `a:ahLst`/`a:cxnLst`, the `a:rect` text rectangle — has since landed (next
+section). ODF export, Edit Points and path-exact hit testing remain.
+
+### Landed since: the standard's 187 presets and the whole grammar (FID-L-04, FID-G-02)
+
+Dated 2026-10-09. This closes what the two sections above left open: the preset
+table, and every remaining piece of the `a:custGeom` grammar.
+
+**Named prior art first** (`SKILL` §8). Four textbook pieces and nothing new:
+
+1. **An interpreter over a data table, the table GENERATED from the standard's
+   own machine-readable annex** — the route Apache OpenOffice and LibreOffice took,
+   and the opposite of ONLYOFFICE's 9,000 hand-transcribed lines (`156` §4.6).
+2. **Compile once, evaluate many** — symbol resolution at load time. Every formula
+   is parsed and every name bound to a slot index when a geometry is compiled;
+   evaluating against a box is arithmetic over an array. A preset compiles once
+   per process (measured: the whole table loads, verifies and compiles in 5.9 ms in
+   a release build, 23 ms in a debug one), so forty stars on a page parse `star5`
+   once.
+3. **Elliptical arc to cubic Bézier, one segment per quarter turn**, the
+   approximation `casual-doc-layout::arc` already uses for circles, under a
+   non-uniform scale.
+4. **A side table keyed by node id** for HF-267's object names — the `shape_styles`
+   and `charts` precedent, for the same `SKILL` §5a reason.
+
+**One mechanism.** The 187 presets are read into the SAME `CustomGeometry` an
+authored `a:custGeom` is, and both are drawn by the same
+`casual_doc_model::v1::GeometryProgram`. The engine lives in `casual-doc-model`,
+not in layout, because three crates need the one answer: the importer (does this
+`a:custGeom` compile? — refuse it if not), model validation (the same check, so a
+snapshot cannot smuggle in an uncompilable geometry), and layout (draw it). The
+formula language that was `casual-doc-layout::shape_guide` moved with it; its tests
+moved too. The hand-written vertex lists of the 22 typed presets are DELETED —
+they now draw from the table like every other preset — and the three closed-form
+primitives kept (`rect`, `ellipse`, `line`) are kept only because the backends
+draw them exactly and the line carries its arrowheads; their table entries are the
+same shapes. `roundRect` lost its primitive: it was drawn with quadratic corners,
+and the standard's are circular arcs.
+
+**Provenance (`156` §11 Q6).** The table is generated from ECMA-376 Part 1's
+`presetShapeDefinitions.xml`, the copy the Apache Software Foundation ships in its
+Apache-2.0 Apache POI release, under Ecma's copyright licence clause (iv)
+("making use of this specification in standard conformant products by
+implementing … the functionality therein"). The licence's condition — that the
+notice and licence accompany the work — is met by
+`crates/casual-doc-model/data/LICENSE-ECMA-376.txt`, cited in `NOTICE`; the source
+copy, URL and SHA-256 are in `crates/casual-doc-model/data/README.md`. Nothing
+was taken from ONLYOFFICE (AGPL) or LibreOffice (MPL). The table carries an
+FNV-1a 64 checksum of its body that the loader verifies, so a hand edit fails the
+model's tests instead of shipping.
+
+**What the grammar covers now** — all of ECMA-376 §20.1.9: `a:avLst` and `a:gdLst`
+(17 opcodes over the built-in environment, each guide seeing those before it),
+coordinates that are guide NAMES, `a:arcTo` (with the standard's VISUAL angles —
+the direction of the point from the centre, which the presets themselves compute
+that way, converted to the ellipse's parametric angle), any number of `a:path`s
+each with its own `@w`/`@h`/`@fill`/`@stroke`/`@extrusionOk`, a `a:close` in the
+middle of a path, `a:ahXY`/`a:ahPolar` adjust handles, `a:cxn` sites and the
+`a:rect` text rectangle — imported, validated, drawn, and written back as authored
+(a name stays a name).
+
+**Decisions made by measurement, not assumption:**
+
+- **A zero divisor yields 0, a negative root 0.** Refusing them sank the whole
+  outline of 153 flat-box cases and 21 legal adjust settings across the table —
+  `parallelogram` at `adj = 0` divides by its zero offset in a guide that only
+  places the TEXT rectangle. Overflow is still refused.
+- **Operands beyond an opcode's arity are ignored.** The standard's own annex
+  writes `+- xH 0 dxB 0` in three circular-arrow presets, and a producer embedding
+  those definitions writes it into documents.
+- **Guides are evaluated in EMU, the shape's own unit, then mapped onto the
+  painted rectangle.** The first evaluator ran in twips; an authored `*/ ss 1 4`
+  then meant a 5-twip corner instead of the clamped half-height the definition
+  produces. A group's non-uniform scale stretches the evaluated outline exactly as
+  it stretches the box.
+- **The four shading fill modes** (`darken`/`darkenLess`/`lighten`/`lightenLess`)
+  are given no values by the standard. They are taken as `a:shade`/`a:tint` at 60%
+  and 80%, applied per gradient stop. A stated choice, not a measurement of Word.
+- **Arrowheads ride the first and last OPEN STROKED path**, at its tangent: a
+  connector's only path, the stroked arc of an `arc` (whose filled wedge has no
+  ends). Both backends draw them.
+- **A lone floating text-bearing preset becomes a group of one** whose
+  `GroupTextBox` keeps the geometry — the normalization lone text-free shapes
+  already had. That is the usual form of a Word callout with text, which painted
+  as a box. An INLINE one cannot be a group and is still reported.
+
+**Measured.** The in-repository corpus (40 packages) carries 28 `a:prstGeom` (27
+`rect`, 1 `ellipse` — both drawn before and after) and 4 `a:custGeom`, of which
+the guide-named one was the last undrawn; 32 of 32 occurrences now draw from their
+definition. That corpus cannot rank the other 185 presets, which is the argument
+for the table over hand-picking: coverage is **187 of 187** presets (every one
+evaluates at ordinary, flat and extreme-adjust boxes — a test), against 22 typed
+before. `fixtures/generated/preset-shapes.docx` puts 63 gallery presets and one
+guide-driven freeform on a page: **15 of 64** drew as themselves on `main`, **64
+of 64** now.
+
+**Still not done, and filed (`109` FID-SH-01 … FID-SH-04):** text inside a shape
+is still laid out in the whole box rather than the evaluated `a:rect`; there is no
+adjust-handle or Edit Points gesture (the engine exposes `GeometryProgram::handles`
+for one); ODF export still writes the bounding `draw:rect` for a preset or a
+freeform; and `insertShape` still offers only the 22 typed presets. Hit-testing
+stays rectangular (§6). (FID-SH-05, every `wp:docPr` written with `id="1"`, is
+closed: the writer numbers frames 1, 2, 3, … across every part.)
+
+### Landed since: tight and through wrap follow the contour (FID-L-12)
+
+Dated 2026-10-09, same lane. `wp:wrapPolygon` was imported, modelled and written
+back, and then ignored: tight and through wrap excluded the object's bounding box,
+so text beside a circle or a cut-out stayed a box's width away from it.
+
+**Named prior art.** Two textbook pieces:
+
+1. **CSS Shapes' float area** (`shape-outside: polygon(…)`): what a float takes
+   from a line is the polygon's horizontal extent *within that line's band*. For a
+   polygon with straight edges that extent over any horizontal slab is reached at
+   the slab's top or bottom, so it is computed exactly from the edges — no
+   sampling. `crates/casual-doc-layout/src/wrap_contour.rs` cuts the contour at
+   every vertex height (a step steps where it was drawn) and on a grid of 32
+   slabs (a sloped edge narrows the lines near its tip), merges equal neighbours,
+   and caps the count at 64 by union, which over-excludes and never
+   under-excludes.
+2. **The exclusion-layout line retry.** Whether a band touches a line depends on
+   the line's height, which is known only after the line is broken. The line
+   breaker assumes the previous line's height (nothing for the first line),
+   breaks, and if the measured line reaches a band the assumption missed — or
+   misses one it assumed — reverts that line (`parley`'s `BreakLines::revert`,
+   which exists for this) and breaks it once more. One retry per line bounds the
+   work; a square exclusion always starts at or above every line it narrows, so
+   it never retries and its layout is unchanged.
+
+**One rule, three paths.** Each band is an ordinary side exclusion that now has a
+start as well as an end (`InlineFloatSpec::top`), so the paragraph-local marker,
+the carry to the next paragraphs of a table cell, and the page-level fixed point
+all follow the contour through the same `band_exclusion` side rule a square wrap
+uses. The side is decided once from the contour's whole extent, so text never
+flips sides between bands. The conservative envelope keys its merge on side AND
+start, or it would fold a contour back into its bounding box.
+
+**Decisions, stated:**
+
+- **Word's coordinate space, not the schema's.** `wp:start`/`wp:lineTo` are typed
+  `ST_Coordinate` (EMU), but Word writes a 21,600 × 21,600 space spanning the
+  object — a full-box contour is `0,0 … 21600,21600` whatever the picture's size —
+  and other DOCX producers read it the same way. The model keeps the authored
+  numbers; layout maps them onto the object's laid-out box.
+- **`distL`/`distR` widen every band; `distT`/`distB` do not apply.** Word's own
+  Layout dialog offers only Left and Right distances for Tight and Through.
+- **One side per float.** A concave contour's far-side notch is not filled: the
+  engine has one measure per line (the `bothSides` approximation in
+  `crate::wrap_side`).
+- **Bounded.** More than 1,024 vertices wraps as the box; a rotated object's
+  contour is mapped onto its unrotated box.
+
+**Measured.** No fixture in the repository carries a `wp:wrapPolygon`, so the
+geometry golden did not move; the guards build their own. A 1,500 × 1,800-twip
+float with a stepped contour (empty for 100 twips, full width to 600, its leading
+third below) puts every line at the inset the contour asks for — 1,500 beside the
+wide part, 500 beside the arm, 0 below — through the cell path and the page path,
+including the first line, which the first band starts inside of. The same float
+with square wrap keeps the whole box.
 
 ### Rejected
 
@@ -370,7 +531,8 @@ verbatim output are in the branch's commit message.
   now on blast radius. It should be revisited once guide formulas land, because
   at that point the set of geometries we cannot draw is small and weird rather
   than large and ordinary.
-- **`a:path@fill="none"`** on a path inside a filled shape is currently
-  unrepresentable; the first slice imports no path that carries the attribute at
-  a non-default value only because it imports no multi-path geometry. When
-  FID-G-02 adds subpaths this has to be answered, not inherited.
+- ~~**`a:path@fill="none"`** on a path inside a filled shape is currently
+  unrepresentable.~~ Answered by FID-G-02 in `fid/shapes-v2`: every `a:path`
+  carries its own `@fill` (`none` and the four shading modes included) and
+  `@stroke`, and each is painted with its own (see "Landed since: the standard's
+  187 presets").

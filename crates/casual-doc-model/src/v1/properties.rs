@@ -1088,7 +1088,15 @@ pub struct PatternStyle {
 /// silently substituting a solid for a pattern would be worse than no fill,
 /// because it looks deliberate. What modelling it buys is a report that says
 /// *pattern* instead of *unknown*.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// # Serialized forms
+///
+/// Written tagged (`{"kind": "solid", "color": …}`). Read in that form **and** in
+/// the untagged `{"color": …}` form every snapshot carried while a fill style
+/// could only be solid, because a stored draft, version or collaboration journal
+/// written then must still open: refusing it would lose the reader's document over
+/// a field nothing they did changed.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FillStyle {
     /// `a:solidFill`.
@@ -1100,6 +1108,35 @@ pub enum FillStyle {
     Gradient(GradientStyle),
     /// `a:pattFill`. Resolves to no fill; see the type's documentation.
     Pattern(PatternStyle),
+}
+
+/// The current, tagged form of a [`FillStyle`].
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum FillStyleTagged {
+    Solid { color: StyleColor },
+    Gradient(GradientStyle),
+    Pattern(PatternStyle),
+}
+
+/// Every form a [`FillStyle`] has been serialized in.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FillStyleWire {
+    Tagged(FillStyleTagged),
+    /// The solid-only form, before gradients and patterns were modelled.
+    Solid { color: StyleColor },
+}
+
+impl<'de> Deserialize<'de> for FillStyle {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match FillStyleWire::deserialize(deserializer)? {
+            FillStyleWire::Tagged(FillStyleTagged::Solid { color })
+            | FillStyleWire::Solid { color } => Self::Solid { color },
+            FillStyleWire::Tagged(FillStyleTagged::Gradient(gradient)) => Self::Gradient(gradient),
+            FillStyleWire::Tagged(FillStyleTagged::Pattern(pattern)) => Self::Pattern(pattern),
+        })
+    }
 }
 
 /// One `a:lnStyleLst` entry of the theme format scheme: a width, a solid colour and
@@ -1329,6 +1366,334 @@ pub struct ShapeStyleRef {
     /// all, which is the silent loss `AGENTS.md` forbids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_ref: Option<FontReference>,
+}
+
+/// Maximum UTF-8 length of a drawing object's name or title.
+pub const MAX_OBJECT_NAME_BYTES: usize = 1024;
+
+/// A drawing object's non-visual properties: its author-visible identity
+/// (`wp:docPr`, or a group child's `pic:cNvPr`/`wps:cNvPr`) — its NAME, the
+/// handle Word's Selection Pane lists it by and an author renames it by, and its
+/// TITLE, the short accessible label a screen reader announces beside the
+/// `@descr` alt text (`docs/109` HF-267) — and its locks
+/// ([`ObjectName::locks`], `109` FID-AT-09).
+///
+/// A side table keyed by the object's node id, for the reason [`ShapeStyleRef`]
+/// gives: the drawing types are constructed by literal across six crates, and a
+/// new field on each is a breaking change to every literal with nothing for a
+/// merge to conflict on (`SKILL` §5a shape 1).
+///
+/// The cost of the side table is the one it always has: an object duplicated by
+/// an edit gets a new id and starts unnamed, and Word then names it on save the
+/// way it names any new object. Recorded rather than hidden.
+///
+/// # Two statements of one object's name
+///
+/// A lone picture or text box is named twice: once on its frame (`wp:docPr`)
+/// and once on the object inside the frame (`pic:cNvPr`, `wps:cNvPr`). Word
+/// writes the same name in both; other producers do not — python-docx, which
+/// generates a great many real documents, names the frame `Picture 1` and the
+/// picture after the image FILE (`diagram.png`). The inner name is what a
+/// reader of the picture's own properties sees, so it is kept as
+/// [`ObjectName::inner_name`] / [`ObjectName::inner_title`] whenever it
+/// DIFFERS from the frame's, and written back to the inner element (`109`
+/// FID-AT-08). Equal to the frame's — Word's case — it is the empty state: the
+/// writer puts the frame's name on both elements, so storing it would change
+/// nothing and would stop write-then-reopen being a fixed point.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObjectName {
+    /// `@name` — "Picture 3", "Text Box 7", or whatever the author typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `@title` — the accessible title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The inner element's `@name` (`pic:cNvPr`, `wps:cNvPr`) where it differs
+    /// from the frame's (`wp:docPr`) — see the type's documentation. `None`
+    /// means "the same as the frame's", which is how the writer emits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner_name: Option<String>,
+    /// The inner element's `@title` where it differs from the frame's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner_title: Option<String>,
+    /// The object's DrawingML locks (`a:graphicFrameLocks` on the frame,
+    /// `a:picLocks`/`a:spLocks`/`a:grpSpLocks` on the object) — the other half
+    /// of the same non-visual properties the name belongs to, kept in this
+    /// side table so they ride the plumbing the name already has (`109`
+    /// FID-AT-09). Read [`Definitions::locks_aspect_ratio`] for the one a
+    /// resize handle needs.
+    ///
+    /// [`Definitions::locks_aspect_ratio`]: super::Definitions::locks_aspect_ratio
+    #[serde(default, skip_serializing_if = "ObjectLocks::is_empty")]
+    pub locks: ObjectLocks,
+}
+
+/// One DrawingML lock element's flags (`CT_GraphicalObjectFrameLocking`,
+/// `CT_PictureLocking`, `CT_ShapeLocking`, `CT_GroupLocking`): each is a
+/// restriction the author asked an editor to honour.
+///
+/// The union of the four elements' attributes, because the model stores what
+/// the source said and the writer decides which of them the element it writes
+/// can carry — a flag that element's schema does not list is not written.
+/// `false` is the absent attribute: `noChangeAspect="0"` states nothing an
+/// absent one does not.
+#[allow(clippy::struct_excessive_bools)] // one bool per schema attribute, by design
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LockFlags {
+    /// `@noGrp` — the object may not be grouped.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_grp: bool,
+    /// `@noUngrp` — the group may not be ungrouped (groups only).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_ungrp: bool,
+    /// `@noDrilldown` — the frame's contents may not be selected (frames only).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_drilldown: bool,
+    /// `@noSelect` — the object may not be selected.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_select: bool,
+    /// `@noRot` — the object may not be rotated.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_rot: bool,
+    /// `@noChangeAspect` — a resize must keep the aspect ratio. Word writes it on
+    /// every picture it inserts; it is what makes a corner drag proportional.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_change_aspect: bool,
+    /// `@noMove` — the object may not be moved.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_move: bool,
+    /// `@noResize` — the object may not be resized.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_resize: bool,
+    /// `@noEditPoints` — the geometry's points may not be edited.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_edit_points: bool,
+    /// `@noAdjustHandles` — the adjust handles may not be dragged.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_adjust_handles: bool,
+    /// `@noChangeArrowheads` — the arrowheads may not be changed.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_change_arrowheads: bool,
+    /// `@noChangeShapeType` — the preset may not be changed.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_change_shape_type: bool,
+    /// `@noTextEdit` — the shape's text may not be edited (shapes only).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_text_edit: bool,
+    /// `@noCrop` — the picture may not be cropped (pictures only).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub no_crop: bool,
+}
+
+impl LockFlags {
+    /// Whether no lock is set — an element that locks nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Every flag with its schema attribute name, in schema order — the one
+    /// table the importer reads by and the writer writes by.
+    #[must_use]
+    pub fn attributes(&self) -> [(&'static str, bool); 14] {
+        [
+            ("noGrp", self.no_grp),
+            ("noUngrp", self.no_ungrp),
+            ("noDrilldown", self.no_drilldown),
+            ("noSelect", self.no_select),
+            ("noRot", self.no_rot),
+            ("noChangeAspect", self.no_change_aspect),
+            ("noMove", self.no_move),
+            ("noResize", self.no_resize),
+            ("noEditPoints", self.no_edit_points),
+            ("noAdjustHandles", self.no_adjust_handles),
+            ("noChangeArrowheads", self.no_change_arrowheads),
+            ("noChangeShapeType", self.no_change_shape_type),
+            ("noTextEdit", self.no_text_edit),
+            ("noCrop", self.no_crop),
+        ]
+    }
+
+    /// The flag a schema attribute name sets, for the importer. `None` for a
+    /// name that is not a lock.
+    pub fn flag_mut(&mut self, attribute: &[u8]) -> Option<&mut bool> {
+        Some(match attribute {
+            b"noGrp" => &mut self.no_grp,
+            b"noUngrp" => &mut self.no_ungrp,
+            b"noDrilldown" => &mut self.no_drilldown,
+            b"noSelect" => &mut self.no_select,
+            b"noRot" => &mut self.no_rot,
+            b"noChangeAspect" => &mut self.no_change_aspect,
+            b"noMove" => &mut self.no_move,
+            b"noResize" => &mut self.no_resize,
+            b"noEditPoints" => &mut self.no_edit_points,
+            b"noAdjustHandles" => &mut self.no_adjust_handles,
+            b"noChangeArrowheads" => &mut self.no_change_arrowheads,
+            b"noChangeShapeType" => &mut self.no_change_shape_type,
+            b"noTextEdit" => &mut self.no_text_edit,
+            b"noCrop" => &mut self.no_crop,
+            _ => return None,
+        })
+    }
+
+    /// `self` with every flag `other` sets also set.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        let mut merged = self;
+        for (name, on) in other.attributes() {
+            if on && let Some(flag) = merged.flag_mut(name.as_bytes()) {
+                *flag = true;
+            }
+        }
+        merged
+    }
+}
+
+/// The four DrawingML lock elements, each a schema type with its own set of
+/// attributes — the one table the importer reads a lock element by and the
+/// writer writes one by (`109` FID-AT-09).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockElement {
+    /// `a:graphicFrameLocks` (`CT_GraphicalObjectFrameLocking`), on a frame.
+    Frame,
+    /// `a:picLocks` (`CT_PictureLocking`), on a picture.
+    Picture,
+    /// `a:spLocks` (`CT_ShapeLocking`), on a shape or text box.
+    Shape,
+    /// `a:grpSpLocks` (`CT_GroupLocking`), on a group.
+    Group,
+}
+
+impl LockElement {
+    /// The lock element a local element name is, if it is one.
+    #[must_use]
+    pub fn from_local_name(local: &[u8]) -> Option<Self> {
+        match local {
+            b"graphicFrameLocks" => Some(Self::Frame),
+            b"picLocks" => Some(Self::Picture),
+            b"spLocks" => Some(Self::Shape),
+            b"grpSpLocks" => Some(Self::Group),
+            _ => None,
+        }
+    }
+
+    /// The element's qualified name as the writer emits it.
+    #[must_use]
+    pub const fn qualified_name(self) -> &'static str {
+        match self {
+            Self::Frame => "a:graphicFrameLocks",
+            Self::Picture => "a:picLocks",
+            Self::Shape => "a:spLocks",
+            Self::Group => "a:grpSpLocks",
+        }
+    }
+
+    /// Whether `attribute` is one of this element's own locks in its schema
+    /// type. Every type has `noGrp`, `noSelect`, `noChangeAspect`, `noMove` and
+    /// `noResize`; the rest are per type.
+    #[must_use]
+    pub fn carries(self, attribute: &[u8]) -> bool {
+        let common = matches!(
+            attribute,
+            b"noGrp" | b"noSelect" | b"noChangeAspect" | b"noMove" | b"noResize"
+        );
+        let shape_like = matches!(
+            attribute,
+            b"noRot"
+                | b"noEditPoints"
+                | b"noAdjustHandles"
+                | b"noChangeArrowheads"
+                | b"noChangeShapeType"
+        );
+        common
+            || match self {
+                Self::Frame => attribute == b"noDrilldown",
+                Self::Picture => shape_like || attribute == b"noCrop",
+                Self::Shape => shape_like || attribute == b"noTextEdit",
+                Self::Group => matches!(attribute, b"noUngrp" | b"noRot"),
+            }
+    }
+}
+
+/// A drawing object's locks: the frame's and the object's own (`109`
+/// FID-AT-09).
+///
+/// Two sets because DrawingML states them on two elements and Word writes
+/// both: `wp:cNvGraphicFramePr/a:graphicFrameLocks` on the frame around every
+/// inline or floating object, and `a:picLocks` (`pic:cNvPicPr`), `a:spLocks`
+/// (`wps:cNvSpPr`) or `a:grpSpLocks` (`wpg:cNvGrpSpPr`) on the object inside
+/// it. A group child has no frame, so only `object` is ever set for one.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObjectLocks {
+    /// `a:graphicFrameLocks` — the frame's locks.
+    #[serde(default, skip_serializing_if = "LockFlags::is_empty")]
+    pub frame: LockFlags,
+    /// `a:picLocks` / `a:spLocks` / `a:grpSpLocks` — the object's own.
+    #[serde(default, skip_serializing_if = "LockFlags::is_empty")]
+    pub object: LockFlags,
+}
+
+impl ObjectLocks {
+    /// Whether neither set locks anything.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.frame.is_empty() && self.object.is_empty()
+    }
+
+    /// Whether a resize must keep the object's aspect ratio: `noChangeAspect`
+    /// on the frame OR on the object. Word sets it on both for a picture it
+    /// inserts, and honours either.
+    #[must_use]
+    pub const fn locks_aspect_ratio(&self) -> bool {
+        self.frame.no_change_aspect || self.object.no_change_aspect
+    }
+}
+
+impl ObjectName {
+    /// The name a writer gives a picture that has no modelled name — Word's own
+    /// default for the first picture in a document.
+    pub const GENERIC_PICTURE: &'static str = "Picture 1";
+    /// The `wp:docPr` name for an unnamed group.
+    pub const GENERIC_GROUP: &'static str = "Group 1";
+    /// The `wp:docPr` name for an unnamed chart, diagram or other object.
+    pub const GENERIC_OBJECT: &'static str = "Object 1";
+    /// The `wp:docPr` name for an unnamed text box.
+    pub const GENERIC_TEXT_BOX: &'static str = "Text Box 1";
+    /// The `wps:cNvPr` name for an unnamed shape inside a group.
+    pub const GENERIC_SHAPE: &'static str = "Shape";
+    /// The `wps:cNvPr` name for an unnamed text box inside a group.
+    pub const GENERIC_CHILD_TEXT_BOX: &'static str = "Text Box";
+    /// The `wpg:cNvPr` name for an unnamed nested group.
+    pub const GENERIC_CHILD_GROUP: &'static str = "Group";
+
+    /// Whether no part is set — an entry that says nothing and is not kept.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.title.is_none()
+            && self.inner_name.is_none()
+            && self.inner_title.is_none()
+            && self.locks.is_empty()
+    }
+
+    /// `self` with a name equal to `generic` dropped.
+    ///
+    /// The writer names an object that has no modelled name with the `GENERIC_*`
+    /// name for its kind, so that name IS the model's empty state, written out —
+    /// `docs/35`'s no-op rule, the same reason an absent `@wrapText` is not
+    /// normalized to `bothSides`. Keeping it would make a document with no names
+    /// grow one on every save and stop being a fixed point of write → reopen;
+    /// dropping it loses nothing, because the writer puts the same string back.
+    #[must_use]
+    pub fn without_generic(mut self, generic: &str) -> Self {
+        if self.name.as_deref() == Some(generic) {
+            self.name = None;
+        }
+        self
+    }
 }
 
 impl FormatScheme {

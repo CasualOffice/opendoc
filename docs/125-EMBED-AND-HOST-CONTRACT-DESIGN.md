@@ -111,7 +111,7 @@ tokens. Re-derive before publishing either number.
 `tools/opendoc-benchmark`. `casual-doc-wasm` does not.**
 
 Its command set is 5 typed requests (`Insert`, `Delete`, `Split`, `Join`,
-`SetSelection`); `casual-doc-wasm` applies `casual-doc-edit`'s 60 ops directly
+`SetSelection`); `casual-doc-wasm` applies `casual-doc-edit`'s 63 ops directly
 across 340 flat exported names. This is the *same* op-set split SKILL §2 records
 as the collaboration blocker, one layer up. **One substrate fixes both.**
 

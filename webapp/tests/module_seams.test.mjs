@@ -401,8 +401,57 @@ const SRC = new URL("../src/", import.meta.url);
  *      `previewPx`, as `nextZoomStep`'s sibling, where the past-the-end
  *      behaviour and the `w:sz` clamps are asserted rather than pressed.
  *  MEASURED with `wc -l` on this tree AFTER the rebase onto `origin/main`
- *  564db686, not carried from the branch. */
-const MAIN_JS_LINE_CEILING = 16162;
+ *  564db686, not carried from the branch.
+ *
+ *  Lowered to 16,065 by the UX-fix round (Ctrl+H, the heading chords, F6 region
+ *  cycling, the findings dialog, style display names, disabled-control reasons).
+ *  The file was AT its ceiling with zero slack, and the round needed registry
+ *  rows, a construction or two and its call sites — so it paid by extracting the
+ *  Insert-table size grid whole into `table_grid_picker.mjs` (~120 lines), which
+ *  was also the round's own subject: its size label disagreed with the Table
+ *  band's, and the two now read one formatter. Every new behaviour lives in its
+ *  own module (`region_focus`, `quick_styles`, `style_names`, `compat_findings`,
+ *  `control_reasons`), so `main.js` carries their wiring and nothing else.
+ *  MEASURED with `wc -l` from the tree AFTER rebasing onto `origin/main` 0e441fc
+ *  (#809), not carried from the branch, which had read 16,066.
+ *
+ *  Lowered to 16,047 by the object-editing round (`109` HF-166, HF-214, HF-252,
+ *  HF-254, HF-106, HF-259, HF-253). The file was AT its ceiling with zero slack
+ *  again, and the round needed Change picture, the picture border, the crop
+ *  keyboard, the refused-drag reason and the group-member Delete wired in. Every
+ *  one of them is a module (`object_keys`, `object_refusal`, `picture_replace`,
+ *  `text_box_body`), so `main.js` carries their construction and call sites; it
+ *  paid by moving the image decode and the placeable-type list into
+ *  `picture_replace.mjs` (Insert ▸ Picture imports them back, so Insert and
+ *  Change cannot accept different files), by folding the crop session's
+ *  Enter/Escape block into `handleCropKey`, and by replacing the right-click
+ *  menu's hand-copied selected-object context with `selectedObjectContext()`.
+ *  MEASURED with `wc -l` on this branch; re-measure after any rebase.
+ *
+ *  Lowered to 16,045 by the in-text object move (`109` UX-OB-02). The file was
+ *  one line under its ceiling and the round needed about thirty — the drag's
+ *  construction and its five call sites, F2's key hook, the move-pad and
+ *  cursor branches, and the guard that stops an UNCHANGED engine result marking
+ *  the document edited. The gesture itself is `object_text_move.mjs`, and it
+ *  paid by taking out the thing it needed a seam on: the drag-selection's
+ *  edge-scroll arithmetic, which the object drag needed too, is now
+ *  `edge_scroll.mjs` and both gestures call it. MEASURED with `wc -l` on
+ *  `ux/objects-v3` before any rebase; re-measure after one.
+ *
+ *  Lowered to 16,044 by FID-FW-01: the Save line and the draft snapshot now
+ *  take the chip's count from `compat_findings.mjs`, so `format_io.mjs`'s raw
+ *  occurrence count left `main.js`'s import list. MEASURED with `wc -l`.
+ *
+ *  16,047 -> 16,044 (ADR-065, the diff canvas): the redline seams — a preview
+ *  that carries its markup, the step-to-a-change navigation, Compare's view and
+ *  the version panel's redline — cost eleven lines, and were paid for by
+ *  folding the comparison panel's comment block and two of the preview swap's
+ *  comments, so the file shrank while it gained a feature.
+ *
+ *  16,042 on the merge of the two: each branch measured 16,044 against its
+ *  own base, and the two reductions do not overlap. MEASURED with `wc -l` on
+ *  the merged tree. */
+const MAIN_JS_LINE_CEILING = 16042;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -420,6 +469,10 @@ const PURE_MODULES = [
   // Holds the vertical goal column and nothing else: no DOM and no engine, so
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",
+  // The document's Track Changes setting and the review mode (HF-283): the
+  // engine and the edit runner are passed in, so the open/switch/follow rules
+  // are plain functions a unit test drives.
+  "review_tracking.mjs",
   "command_taxonomy.mjs",
   // The responsive ladder and the soft-keyboard inset (docs/148). Its window,
   // body and root are injected rather than reached for, which is the only
@@ -489,6 +542,9 @@ const PURE_MODULES = [
   // `object_context_menu.test.mjs` assert what a picture, a shape and a text box
   // offer, in each review mode, without a browser.
   "object_context_menu.mjs",
+  // The edge-scroll rule two drags share (drag-select and the in-text object
+  // move, UX-OB-02): a rectangle and a point in, a step out.
+  "edge_scroll.mjs",
   "edit_errors.mjs",
   // The field vocabulary: the kind table plus the host-side result formatter.
   // No DOM and no engine, so "what does a date field cache" is a node question.
@@ -516,6 +572,11 @@ const PURE_MODULES = [
   // UX-005). Selectors and ids only: the caller supplies the root, so the table
   // is checkable in node and cannot quietly grow a DOM opinion.
   "ribbon_faces.mjs",
+  // Which stored style Ctrl+Alt+2 means, and what a built-in style is CALLED.
+  // Both are decisions over a list of names with no DOM and no engine, which is
+  // what lets `quick_styles.test.mjs` and `style_names.test.mjs` drive them.
+  "quick_styles.mjs",
+  "style_names.mjs",
   "review_labels.mjs",
   "review_layout.mjs",
   // Takes nodes as arguments and never reaches for a global one, which is what

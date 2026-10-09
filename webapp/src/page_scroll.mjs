@@ -32,6 +32,8 @@
 // pages are never themselves compressed. Only the emptiness between the window
 // and the ends of the document is.
 
+import { TWIPS_PER_INCH } from "./units.mjs";
+
 /** Vertical space between two page sheets, in CSS px.
  *
  *  This is the page *pitch* contribution, not a decoration: document space is
@@ -81,7 +83,9 @@ export const PAGE_WINDOW_OVERSCAN_PX = 1000;
  * @param {ArrayLike<{widthTwip:number,heightTwip:number}>} sizes page boxes in
  *        twips, in page order, exactly as the engine reports them.
  * @param {number} cssPerTwip CSS px per twip at the current zoom.
- * @param {{gap?:number,maxScroll?:number}} [options]
+ * @param {{gap?:number,maxScroll?:number,snap?:number}} [options] `snap` builds
+ *        the band on a raster grid of that many backing px per CSS px (reflow;
+ *        see "SEAMLESS TILES").
  * @returns {{
  *   count:number, gap:number, tops:Float64Array, heights:Float64Array,
  *   widths:Float64Array, width:number, docHeight:number, height:number,
@@ -109,23 +113,110 @@ export const PAGE_WINDOW_OVERSCAN_PX = 1000;
  *
  * Complexity: O(1).
  *
+ * IN REFLOW IT IS ALSO WHERE THE GRID IS (`snap`): the band is built on the
+ * raster's own pixel grid so tiles meet without a seam — see "SEAMLESS TILES"
+ * below, `docs/151` §4.4b.
+ *
  * @param {boolean} reflowing whether the engine is laying out reflowed.
- * @returns {{gap:number, maxScroll:number}} spreadable into `buildPageBand`.
+ * @param {number} [ratio] backing px per CSS px; `backingRatio()` by default.
+ * @returns {{gap:number, maxScroll:number, snap?:number}} spreadable into
+ *          `buildPageBand`.
  */
-export function pageBandPitch(reflowing) {
-  return { gap: reflowing ? 0 : PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX };
+export function pageBandPitch(reflowing, ratio = backingRatio()) {
+  return reflowing
+    ? { gap: 0, maxScroll: MAX_SCROLL_PX, snap: ratio }
+    : { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX };
+}
+
+// ---- SEAMLESS TILES: the reflow band is built on the raster's pixel grid ------
+//
+// `docs/151` §4.4b. `gap: 0` makes two tiles ABUT in CSS px, and that turned out
+// not to be the same thing as a seamless column. Measured at a 2x backing store
+// on a table that crosses a tile cut: the border rows read dark, dark, LIGHT,
+// dark, dark, dark — a one-device-pixel hairline across every vertical line,
+// shading band and picture edge at every cut, which is the seam the owner saw.
+//
+// The cause is that the box and the raster disagreed. A trimmed tile is
+// `heightTwip * cssPerTwip` CSS px tall — fractional — while the engine
+// rasterises `ceil(heightTwip * dpi / 1440)` rows (`render_page_inner`), so the
+// browser drew a 2,109-row raster into a 2,108.375-row slot: every tile was
+// resampled (soft text), and its last row — the PADDING row past the content,
+// background in all but the fraction the content reached — was squeezed onto
+// the screen at the cut.
+//
+// The established fix is the one every tiled rasteriser uses (Chromium's own
+// compositor tiles, map tiles, Google Docs' canvas tiles): put each tile on the
+// device-pixel grid at exactly its raster's size, so it is blitted 1:1, and let
+// the next tile start on the grid row that holds the previous one's partial last
+// row — covering it. Concretely, in backing px:
+//
+//     top(0) = 0,  top(i+1) = top(i) + floor(H(i)),  box(i) = ceil(H(i)) rows
+//
+// where `H(i)` is the engine's own unrounded raster height. So consecutive boxes
+// overlap by exactly the partial row (0 or 1 row) and never leave a gap; no row
+// on screen is a partly-covered row; every tile is drawn at 1:1, which is also
+// what makes the text crisp at a fractional zoom. The tops are integral rows by
+// construction, so no cumulative drift is possible either. The price is that a
+// tile's content sits up to one backing pixel above where an ideal continuous
+// column would put it — the same sub-pixel fraction the partial row was — and
+// the band is up to a row per tile shorter than the sum of the tiles. Both are
+// invisible and both are consistent: every geometry question (`scaleOf`,
+// `virtualPageRect`) is answered from this same band.
+//
+// Paper is NOT snapped. Sheets are separated by a 22px desk, there is no cut to
+// seam, and the paged geometry is pinned byte-for-byte by other guards.
+
+/** The cap on the backing-store ratio, mirrored from `main.js`'s
+ *  `MAX_BACKING_DPR` — a raster at 2x per CSS px whatever the screen. Mirrored
+ *  because `main.js` exports nothing; `tests/page_scroll.test.mjs` reads the
+ *  constant out of `main.js` and fails if the two ever differ, because a band
+ *  snapped to 2x over rasters painted at 3x would be a resampled band again. */
+export const MAX_BACKING_RATIO = 2;
+
+/** Backing-store pixels per CSS px — what `main.js`'s `backingDpr()` answers.
+ *  The one read of a global in this module, and only as a default. */
+export function backingRatio(view = globalThis) {
+  return Math.min(view?.devicePixelRatio || 1, MAX_BACKING_RATIO);
+}
+
+/** The engine's raster extent for `twip` at `dpi`, BEFORE rounding:
+ *  `Twip::to_device_px`, which is `(twip as f32) * dpi / 1440.0` in f32. Done in
+ *  f32 here too (`Math.fround` after each operation is exact for `*` and `/`,
+ *  because 53 >= 2·24 + 2), so the canvas the engine hands back and the box it is
+ *  put in agree to the pixel rather than to within one.
+ *
+ *  Complexity: O(1). */
+export function rasterExtent(twip, dpi) {
+  const f = Math.fround;
+  return f(f(f(twip) * f(dpi)) / TWIPS_PER_INCH);
 }
 
 export function buildPageBand(sizes, cssPerTwip, options = {}) {
   const gap = options.gap ?? PAGE_GAP_PX;
   const maxScroll = options.maxScroll ?? MAX_SCROLL_PX;
+  const snap = options.snap > 0 ? options.snap : 0;
   const count = sizes.length;
   const tops = new Float64Array(count);
   const heights = new Float64Array(count);
   const widths = new Float64Array(count);
   let y = 0;
   let width = 0;
+  // The raster grid, when snapping: `main.js`'s `currentDpi()` is
+  // `BASE_DPI * zoom * backingDpr()`, and `cssPerTwip` is `BASE_DPI * zoom /
+  // 1440`, so this is the same dpi the tiles are rendered at.
+  const dpi = snap ? cssPerTwip * TWIPS_PER_INCH * snap : 0;
+  let row = 0;
   for (let i = 0; i < count; i++) {
+    if (snap) {
+      const exact = rasterExtent(sizes[i].heightTwip, dpi);
+      const w = Math.ceil(rasterExtent(sizes[i].widthTwip, dpi)) / snap;
+      tops[i] = row / snap;
+      heights[i] = Math.ceil(exact) / snap;
+      widths[i] = w;
+      if (w > width) width = w;
+      row += Math.floor(exact) + Math.round(gap * snap);
+      continue;
+    }
     const h = sizes[i].heightTwip * cssPerTwip;
     const w = sizes[i].widthTwip * cssPerTwip;
     tops[i] = y;
@@ -136,8 +227,10 @@ export function buildPageBand(sizes, cssPerTwip, options = {}) {
   }
   // The trailing gap is not part of the document: it would scroll past the last
   // page into nothing, and it would make the last page's bottom unreachable by
-  // exactly one gap at the maximum scroll offset.
-  const docHeight = count === 0 ? 0 : y - gap;
+  // exactly one gap at the maximum scroll offset. Snapped, the document ends
+  // where the last tile's box does — its partial row is not covered by anything.
+  const docHeight =
+    count === 0 ? 0 : snap ? tops[count - 1] + heights[count - 1] : y - gap;
   const height = Math.min(docHeight, maxScroll);
   return {
     count,

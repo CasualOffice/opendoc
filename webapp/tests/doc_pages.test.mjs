@@ -535,14 +535,23 @@ test("how much English the reference pages put on the site, measured and publish
   // has become false — the failure mode §9 exists to stop — plus three rows in the
   // no-op table for the conditional arms that replaced three unconditional
   // silences.
+  //
+  // 2663 -> 2672 with `109` FID-AT-07, FID-AT-09 and FID-AT-03 in
+  // `35-DISPOSITION-TAXONOMY.md`. MEASURED from the regenerated page, read off
+  // this assertion's own failure output rather than added up: nine, and the whole
+  // movement is in `disposition-taxonomy.html` (419 against 410) — the paragraph
+  // that says a source-snapshot `preserved` claim is conditional and which save
+  // restates it, the lock row's new sentence, and the theme part's record in the
+  // `preserved` row. Re-measure on the merged tree, not by adding this to another
+  // branch's figure.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2663,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2663). That ` +
+    2672,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2672). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

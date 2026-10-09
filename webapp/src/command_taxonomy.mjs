@@ -99,7 +99,12 @@ export const FILE_SURFACE = [
   // Docs files it under File and Word under Layout. It is on the Layout ribbon
   // too; this gives it a File home that matches the competition.
   { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print"] },
-  { nameKey: "menuGroup.document", ids: ["file.properties"] },
+  // Compatibility findings beside the document's properties: Word's File ▸ Info
+  // is where both live (Properties, and Check for Issues ▸ Check Compatibility).
+  // It is the second surface the header chip's report needed — the chip is
+  // hidden on a phone, so without this row the report was a pointer-only
+  // capability on one device class and unreachable on another.
+  { nameKey: "menuGroup.document", ids: ["file.properties", "file.compatibilityReport"] },
   // Version history's PRIMARY home, and the one both references agree on: Google
   // Docs is File ▸ Version history ▸ See version history, ONLYOFFICE is a File
   // page item (`DE.Views.FileMenu.btnHistory`), Word puts it under File ▸ Info.
@@ -119,7 +124,12 @@ export const FILE_SURFACE = [
   // Options ▸ Advanced. This row lands on the chooser inside Settings rather than
   // being a second copy of it, so the preference has one control and two ways in.
   { nameKey: "menuGroup.settings", ids: ["view.settings", "view.measurementUnits"] },
-  { nameKey: "menuGroup.help", ids: ["help.commands", "help.shortcuts", "help.about"] },
+  // Help behind one row, as Google Docs (a Help menu) and Word (File ▸ Help)
+  // both file it: the three rows are where a reader goes for the editor rather
+  // than for the document. Folded when Compatibility findings joined Document and
+  // took the File menu to 14 top-level rows, one past `menu-submenus.spec.mjs`'s
+  // cap of 13. The File PAGE renders a submenu flat, so its Help group is unchanged.
+  { nameKey: "menuGroup.help", submenu: true, ids: ["help.commands", "help.shortcuts", "help.about"] },
 ];
 
 /**
@@ -147,6 +157,9 @@ export const RIBBON_TABS = [
   { tab: "review", label: "Review" },
   { tab: "view", label: "View" },
   { tab: "table", label: "Table", contextual: true },
+  // Named in the markup (`documentChrome.chart`), which is the label a reader
+  // sees in every locale; nothing reads a label here.
+  { tab: "chart", contextual: true },
 ];
 
 /** The File roster as named bands, the shape both menu renderers take. */
@@ -270,13 +283,38 @@ export const APP_MENU_SECTIONS = {
       "menuGroup.show",
       "view.outline",
       "view.pages",
-      "view.fold.toggle",
-      "view.fold.all",
-      "view.fold.none",
       "view.showChanges",
       "view.reflow",
+      // Beside `view.reflow` because it is the question that view raises:
+      // what is this layout not showing me the way the page does? The engine
+      // has answered it since reflow shipped and nothing asked (`docs/166`
+      // R-7), and the answer is document-derived, so the row is honest in both
+      // views rather than reciting a fixed list.
+      "view.reflowApproximations",
       "view.compactRibbon",
     ),
+    // A SUBMENU, for the reason this file already applies to
+    // `menuGroup.formattingMarks`: three inline rows for one gesture family that
+    // most people reach through the heading chevron or the outline tree, not
+    // through View. It is also the row that had to give. Adding
+    // `view.reflowApproximations` took this menu to FOURTEEN top-level rows
+    // against `menu-submenus.spec.mjs`'s cap of 13 — "no menu makes a reader scan
+    // more than a screenful", which is the owner's own ask ("my ask was to group
+    // them and create sub menus .. so it's readable"). CI said `view lists 14
+    // rows at the top level`, and that cap is a UX guarantee, not a ratchet to
+    // raise.
+    //
+    // Folding and not something else, by this file's own test: Show holds STATES
+    // of the window, and `view.outline`, `view.pages`, `view.showChanges`,
+    // `view.reflow` and `view.compactRibbon` each answer "what is the window
+    // showing". The three fold rows are one FAMILY acting on headings, which is
+    // the `menuGroup.formattingMarks` shape exactly — and the nine level rungs
+    // below are already palette-only on the same argument one step further down.
+    //
+    // The band name is each catalogue's own `fold.treeLabel` — the outline
+    // tree's label, the one string in all nineteen that already names these
+    // things in that language. No translation here is one I invented.
+    sub("menuGroup.headings", "view.fold.toggle", "view.fold.all", "view.fold.none"),
     // Formatting marks. Google Docs' only surface for this is View ▸ Show
     // non-printing characters, so the View menu is where a reader trained on Docs
     // looks; the ribbon's ¶ button is where a reader trained on Word looks, and
@@ -310,6 +348,7 @@ export const APP_MENU_SECTIONS = {
       "view.textWidth.narrow",
       "view.textWidth.reading",
       "view.textWidth.fit",
+      "view.textWidth.wide",
       "view.textWidth.full",
     ),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),

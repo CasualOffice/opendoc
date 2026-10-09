@@ -5,9 +5,13 @@ use casual_doc_package::{
 };
 
 use crate::contenttypes::ContentTypes;
-use crate::discovery::{discover_main_document, resolve_part_relationships};
+use crate::discovery::{
+    discover_main_document, discover_main_document_recovering, resolve_part_relationships,
+};
 use crate::error::PackageError;
 use crate::path::is_macro_part;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::recover::PackageRepair;
 use crate::relationships::DocumentRelationship;
 
 pub(crate) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
@@ -99,6 +103,105 @@ impl<'a> DocxPackage<'a> {
             content_types,
             main_document_relationships,
         })
+    }
+
+    /// Opens a package best-effort, inferring OPC plumbing a strict open refuses
+    /// over, and reporting every assumption it made.
+    ///
+    /// The archive itself is **not** repaired here: pass the bytes through
+    /// [`crate::repair_archive`] first when this returns
+    /// [`PackageError::MalformedArchive`], and hand the result back to this
+    /// function. The split is deliberate — a repaired archive is a new byte
+    /// buffer, and a package borrows its bytes, so the owner of the buffer has to
+    /// be the caller rather than a package that would have to borrow from itself.
+    ///
+    /// Three refusals survive on purpose, and each is a refusal the host renders
+    /// as a sentence rather than a retry:
+    ///
+    /// - **A macro project part.** `.docm` is refused at open, and whether to
+    ///   change that is an undecided policy question, not an oversight.
+    /// - **An encrypted entry.** There is no password to try. Nothing is damaged;
+    ///   the bytes are simply not readable without a key.
+    /// - **No candidate main document at all.** A package with nothing that could
+    ///   be a Word document holds no Word document.
+    pub fn open_recovering(
+        bytes: &'a [u8],
+        limits: PackageLimits,
+    ) -> Result<(Self, Vec<PackageRepair>), PackageError> {
+        Self::open_recovering_with_cancellation(bytes, limits, &CancellationToken::default())
+    }
+
+    /// [`Self::open_recovering`] while honoring cooperative cancellation.
+    pub fn open_recovering_with_cancellation(
+        bytes: &'a [u8],
+        limits: PackageLimits,
+        cancellation: &CancellationToken,
+    ) -> Result<(Self, Vec<PackageRepair>), PackageError> {
+        let mut repairs: Vec<PackageRepair> = Vec::new();
+        let mut package = BoundedPackage::open_with_cancellation(bytes, limits, cancellation)
+            .map_err(PackageError::from)?;
+
+        if package
+            .entries()
+            .iter()
+            .any(|entry| is_macro_part(&entry.part_name))
+        {
+            return Err(PackageError::MacroPart);
+        }
+
+        let content_types = match package.contains_part(CONTENT_TYPES_PART) {
+            false => {
+                repairs.push(PackageRepair::ContentTypeManifestMissing);
+                ContentTypes::inferred()
+            }
+            true => {
+                let parsed = package
+                    .read_part_with_cancellation(CONTENT_TYPES_PART, cancellation)
+                    .map_err(PackageError::from)
+                    .and_then(|bytes| ContentTypes::parse(&bytes));
+                match parsed {
+                    Ok(content_types) => content_types,
+                    Err(_) => {
+                        repairs.push(PackageRepair::ContentTypeManifestUnreadable);
+                        ContentTypes::inferred()
+                    }
+                }
+            }
+        };
+
+        let relationships_bytes = if package.contains_part(ROOT_RELATIONSHIPS_PART) {
+            package
+                .read_part_with_cancellation(ROOT_RELATIONSHIPS_PART, cancellation)
+                .ok()
+        } else {
+            None
+        };
+        let main_document_part = discover_main_document_recovering(
+            relationships_bytes.as_deref(),
+            &content_types,
+            &package,
+            &mut repairs,
+        )?;
+        let main_document_relationships =
+            match resolve_part_relationships(&mut package, &main_document_part, cancellation) {
+                Ok(relationships) => relationships,
+                Err(_) => {
+                    repairs.push(PackageRepair::PartRelationshipsUnreadable {
+                        part: main_document_part.clone(),
+                    });
+                    Vec::new()
+                }
+            };
+
+        Ok((
+            Self {
+                package,
+                main_document_part,
+                content_types,
+                main_document_relationships,
+            },
+            repairs,
+        ))
     }
 
     /// Returns the normalized part name of the discovered main document.

@@ -10,7 +10,16 @@
 // gets `isMobile`, `hasTouch` and a real device scale factor rather than a narrow
 // desktop window — which, before that project existed, is all any "phone" spec in
 // this suite was ever getting (docs/148 §9 item 5).
-import { clickIntoFirstPage, expect, gotoEditor, menuCommandRow, stableBox, test } from "./fixtures.mjs";
+import {
+  appMenuButton,
+  clickIntoFirstPage,
+  expect,
+  gotoEditor,
+  menuCommandRow,
+  stableBox,
+  test,
+} from "./fixtures.mjs";
+import { rawKeyLeaks } from "./raw-keys.mjs";
 
 const PHONE = { width: 390, height: 844 };
 const NARROW = { width: 320, height: 568 };
@@ -125,6 +134,219 @@ test.describe("the two sheets", () => {
     expect(consoleErrors).toEqual([]);
   });
 
+  test("the Aa sheet says what is on, and keeps saying it while it is open", async ({
+    page,
+    consoleErrors,
+  }) => {
+    // Six plain rows — Bold, Italic, Underline, Strikethrough, Superscript,
+    // Subscript — and nothing to say whether the text was already bold, when
+    // tapping Bold over bold text REMOVES it. Google Docs' Aa panel opens with
+    // B / I / U / S as toggles that light up; this holds the sheet to that.
+    await page.setViewportSize(PHONE);
+    await gotoEditor(page);
+    await clickIntoFirstPage(page);
+    // PRECONDITION, stated rather than assumed: the tap lands in the fixture's
+    // bold "CASUALOFFICE" eyebrow, so the caret's text IS bold — the state under
+    // test is the document's, as the editor's own ribbon reports it, and not
+    // something this spec wrote into the DOM. If the fixture moves, this fails
+    // here and says why, instead of the assertions below passing on "off".
+    await expect(page.locator("#bold"), "the caret starts in bold text").toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.locator("#italic")).toHaveAttribute("aria-pressed", "false");
+    await openSheet(page, "#compactFormatBtn", "#compactFormatMenu");
+
+    const strip = page.locator("#compactFormatMenu .menu-toggle-strip");
+    await expect(strip).toBeVisible();
+    const ids = await strip.locator("[data-command-id]").evaluateAll((els) => els.map((el) => el.dataset.commandId));
+    expect(ids, "Docs' toggle row, in the band's own order").toEqual([
+      "format.bold",
+      "format.italic",
+      "format.underline",
+      "format.strike",
+      "format.superscript",
+      "format.subscript",
+    ]);
+    const bold = strip.locator('[data-command-id="format.bold"]');
+    const italic = strip.locator('[data-command-id="format.italic"]');
+    await expect(bold).toHaveAttribute("role", "menuitemcheckbox");
+    await expect(bold, "the sheet opens saying bold is on").toHaveAttribute("aria-checked", "true");
+    await expect(italic).toHaveAttribute("aria-checked", "false");
+
+    // Drawn, not only announced: lit and unlit must not paint the same.
+    const paint = (locator) => locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(await paint(bold), "a checked toggle is drawn differently from an unchecked one").not.toBe(
+      await paint(italic),
+    );
+    for (const toggle of await strip.locator("[data-command-id]").all()) {
+      const box = await stableBox(toggle);
+      expect(box.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+      expect(box.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    }
+    // Every icon is a GLYPH. A ligature the self-hosted face lacks renders as
+    // its own name in text — "format_strikethrough", ~10x wider than one glyph —
+    // which is worse than a wrong icon and passes every other check here.
+    const icons = await strip.locator(".ms").evaluateAll((els) =>
+      els.map((el) => ({
+        name: el.textContent,
+        width: el.getBoundingClientRect().width,
+        size: Number.parseFloat(getComputedStyle(el).fontSize),
+      })),
+    );
+    for (const icon of icons) {
+      expect(icon.width, `${icon.name} renders as one glyph`).toBeLessThanOrEqual(icon.size * 1.5);
+    }
+
+    // LIVE: tapping a toggle keeps the sheet up (Docs' panel does) and the
+    // toggle flips in place — no reopen, no stale answer.
+    await bold.click();
+    await expect(page.locator("#compactFormatMenu")).toBeVisible();
+    await expect(bold, "the toggle follows the caret's state while the sheet is open").toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await italic.click();
+    await expect(italic).toHaveAttribute("aria-checked", "true");
+
+    // The one-of-four rows say which one: the caret's paragraph is left-aligned.
+    const start = page.locator('#compactFormatMenu [data-command-id="paragraph.align.start"]');
+    await expect(start).toHaveAttribute("role", "menuitemradio");
+    await expect(start).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator('#compactFormatMenu [data-command-id="paragraph.align.center"]')).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+
+    // The ORDER case. `updateToolbar` refills an open sheet before it writes
+    // the list buttons' state, so a sheet that only refreshed on refill would
+    // still say "not a list" after this tap; the row has to hear the write
+    // itself.
+    const bullets = page.locator('#compactFormatMenu [data-command-id="paragraph.list.bullet"]');
+    await expect(bullets).toHaveAttribute("role", "menuitemcheckbox");
+    await expect(bullets).toHaveAttribute("aria-checked", "false");
+    await bullets.click();
+    await expect(page.locator("#bulletList")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#compactFormatMenu")).toBeVisible();
+    await expect(bullets, "the list row follows the paragraph it just changed").toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(bullets.locator(".menu-check")).toHaveCSS("opacity", "1");
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("a command run from a sheet closes the sheet first: the comment is not typed blind", async ({
+    page,
+    consoleErrors,
+  }) => {
+    // `phone-07a`: Add comment from the + sheet focused the comment composer
+    // UNDER the sheet, which stayed open across it, so the comment was typed into
+    // a box nobody could see. A menu closes before its command runs — the app
+    // menu bar always did — and these sheets did not.
+    await page.setViewportSize(PHONE);
+    await gotoEditor(page);
+    await clickIntoFirstPage(page);
+    // A comment needs text to hang off ("Select text to comment on").
+    await page.keyboard.press("End");
+    await page.keyboard.press("Shift+Home");
+    await openSheet(page, "#compactInsertBtn", "#compactInsertMenu");
+    const add = page.locator('#compactInsertMenu [data-command-id="review.comment"]');
+    await expect(add).toBeEnabled();
+    await add.click();
+
+    await expect(page.locator("#compactInsertMenu"), "the + sheet is gone").toBeHidden();
+    await expect(page.locator("#compactInsertBtn")).toHaveAttribute("aria-expanded", "false");
+    const composer = page.locator('[data-testid="review-comment-composer"]:visible').first();
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeFocused();
+    // And it is what is ON TOP at its own centre — a sheet left open over it
+    // would be the element a finger lands on.
+    const covered = await composer.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return hit && !el.contains(hit) && !hit.contains(el) ? hit.id || hit.className : null;
+    });
+    expect(covered, "nothing paints over the focused composer").toBeNull();
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("the table-size grid is a sheet a finger can use, not a 15px grid across the header", async ({
+    page,
+    consoleErrors,
+  }) => {
+    // `phone-08-insert-table.png`: Insert table from the + sheet put an 8x10
+    // grid of 15x15px cells at y 4 — across the title and the menu bar — because
+    // the row it was opened from had gone and the popover fell back to the
+    // ribbon's hidden button for an anchor. Both halves are measured here: where
+    // the grid is, and whether a finger can hit what is in it.
+    for (const size of [PHONE, NARROW]) {
+      await page.setViewportSize(size);
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await openSheet(page, "#compactInsertBtn", "#compactInsertMenu");
+      await page.locator('#compactInsertMenu [data-command-id="insert.table"]').click();
+      const grid = page.locator("#insertTableMenu");
+      await expect(grid).toBeVisible();
+
+      const box = await stableBox(grid);
+      const header = await stableBox(page.locator("header.bar"));
+      const bar = await stableBox(page.locator("#compactToolbar"));
+      expect(box.x, `the grid starts inside the window at ${size.width}px`).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width, `the grid ends inside the window at ${size.width}px`).toBeLessThanOrEqual(
+        size.width + 1,
+      );
+      expect(box.y, `the grid clears the header at ${size.width}px`).toBeGreaterThanOrEqual(
+        header.y + header.height - 1,
+      );
+      expect(box.y + box.height, `the grid clears the command bar at ${size.width}px`).toBeLessThanOrEqual(
+        bar.y + 1,
+      );
+
+      const cells = await grid.locator(".gc").evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { w: r.width, h: r.height };
+        }),
+      );
+      expect(cells.length, "the 8x10 grid").toBe(80);
+      const smallest = cells.reduce((min, c) => Math.min(min, c.w, c.h), Infinity);
+      expect(smallest, `every cell is a touch target at ${size.width}px`).toBeGreaterThanOrEqual(
+        MIN_TOUCH_TARGET_PX,
+      );
+
+      // And it still inserts: three columns by two rows.
+      await grid.locator('.gc[data-r="2"][data-c="3"]').click();
+      await expect(grid).toBeHidden();
+      await expect(page.locator("#tabTable"), "the caret is now in a table").toBeEnabled();
+    }
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("nothing on a phone is named with a catalogue key", async ({ page, consoleErrors }) => {
+    // The defect this was written against: on every phone the Aa and + buttons
+    // were announced as "appMenuBar.format" and "appMenuBar.insert" — their
+    // `aria-label` AND `title` — because the bar rendered before the catalogue
+    // that carries those keys had landed, and cached the miss. The sweep reads
+    // every chrome element, not the two buttons, because the defect was a class:
+    // `chrome-raw-keys.spec.mjs` holds the desktop project to the same sweep.
+    for (const size of [PHONE, NARROW]) {
+      await page.setViewportSize(size);
+      await gotoEditor(page);
+      await expect(page.locator("body")).toHaveClass(/phone-mode/);
+      expect(await rawKeyLeaks(page), `at ${size.width}px`).toEqual([]);
+      for (const [trigger, sheet] of [
+        ["#compactFormatBtn", "#compactFormatMenu"],
+        ["#compactInsertBtn", "#compactInsertMenu"],
+      ]) {
+        await openSheet(page, trigger, sheet);
+        expect(await rawKeyLeaks(page), `at ${size.width}px with ${sheet} open`).toEqual([]);
+        await page.keyboard.press("Escape");
+      }
+    }
+    expect(consoleErrors).toEqual([]);
+  });
+
   test("the + sheet offers insertion, and the comment command with it", async ({
     page,
     consoleErrors,
@@ -185,7 +407,7 @@ test.describe("the two sheets", () => {
     // axis (doc 122). So the menu is where this guard looks for them — which is
     // the reachability question it is actually asking, rather than a question
     // about which of two surfaces happened to render first.
-    await page.locator('.app-menu-button[data-menu="table"]').click();
+    await (await appMenuButton(page, "table")).click();
     await expect(page.locator("#appMenuPopover")).toBeVisible();
 
     const missing = await page.evaluate(async () => {
@@ -210,6 +432,163 @@ test.describe("the two sheets", () => {
       missing,
       "a command id in PHONE_TOOLBAR that the registry does not answer renders NOTHING and says nothing",
     ).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
+test.describe("the header", () => {
+  /** The eight menus, in the bar's order — read from the markup rather than
+   *  restated, so a ninth menu is covered on arrival. */
+  const menuNames = (page) =>
+    page.locator("#appMenuBar .app-menu-button").evaluateAll((els) => els.map((el) => el.dataset.menu));
+
+  /** The header's budget, in CSS px. MEASURED, then given headroom, and the
+   *  derivation is the point. The one row is set by the document-name field,
+   *  which under a finger takes the 16px no-iOS-zoom type (`style.css`'s coarse
+   *  block) and is 32px tall; with the bar's padding the header measured 38px at
+   *  BOTH 390 and 320 on the Pixel 7 project (the 30px icon buttons sit inside
+   *  that row). The budget is that plus 14px for a locale or a face with a
+   *  taller line box — and it is deliberately smaller than one row MORE: the
+   *  smallest thing a second row could hold is a 24px touch target
+   *  (`MIN_TOUCH_TARGET_PX`), and 38 + 24 = 62 cannot fit under 52. The header
+   *  this replaced measured 92px at 390 (`phone-09a`, a wrapped menu bar). */
+  const HEADER_BUDGET_PX = 52;
+
+  test("is one row at both phone widths, and spends no more than one row's height", async ({
+    page,
+    consoleErrors,
+  }) => {
+    for (const size of [PHONE, NARROW]) {
+      await page.setViewportSize(size);
+      await gotoEditor(page);
+      await expect(page.locator("body")).toHaveClass(/phone-mode/);
+      const header = await stableBox(page.locator("header.bar"));
+      const rows = await page.evaluate(() => {
+        // Every control the header paints, by its box. One row means every one
+        // of them shares a horizontal band: the lowest top is above the highest
+        // bottom. A second row fails that whatever the pixel numbers are.
+        const shown = [...document.querySelectorAll("header.bar button, header.bar input, header.bar .document-state")]
+          .filter((el) => el.getClientRects().length > 0)
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return { id: el.id || el.className, top: r.top, bottom: r.bottom };
+          });
+        return {
+          shown,
+          lowestTop: Math.max(...shown.map((c) => c.top)),
+          highestBottom: Math.min(...shown.map((c) => c.bottom)),
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+          headerScroll: document.querySelector("header.bar").scrollWidth,
+        };
+      });
+      const ids = rows.shown.map((c) => c.id);
+      for (const id of ["docTitle", "appMenusBtn", "propertiesBtn", "settingsBtn"]) {
+        expect(ids, `${id} is in the header at ${size.width}px`).toContain(id);
+      }
+      expect(
+        rows.lowestTop,
+        `the header's controls share one row at ${size.width}px: ${JSON.stringify(rows.shown)}`,
+      ).toBeLessThan(rows.highestBottom);
+      expect(header.height, `the header's height at ${size.width}px`).toBeLessThanOrEqual(HEADER_BUDGET_PX);
+      expect(rows.scrollWidth, `no page scroll at ${size.width}px`).toBeLessThanOrEqual(rows.clientWidth);
+      expect(rows.headerScroll, `no header scroll at ${size.width}px`).toBeLessThanOrEqual(rows.clientWidth);
+      const door = await stableBox(page.locator("#appMenusBtn"));
+      expect(door.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+      expect(door.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    }
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("every menu is still reachable, from a sheet of all eight names", async ({ page, consoleErrors }) => {
+    for (const size of [PHONE, NARROW]) {
+      await page.setViewportSize(size);
+      await gotoEditor(page);
+      const door = page.locator("#appMenusBtn");
+      const list = page.locator("#appMenuBar");
+      await expect(list, "the bar is not painted in the row").toBeHidden();
+      await expect(door).toHaveAttribute("aria-expanded", "false");
+      await expect(door).toHaveAttribute("aria-controls", "appMenuBar");
+
+      const names = await menuNames(page);
+      expect(names).toEqual(["file", "edit", "view", "insert", "format", "table", "references", "review"]);
+      for (const name of names) {
+        // Open on the first pass; on later passes Escape has already brought
+        // the list back, which is part of what is being asserted.
+        if ((await door.getAttribute("aria-expanded")) !== "true") await door.tap();
+        await expect(list).toBeVisible();
+        const button = page.locator(`#appMenuBar .app-menu-button[data-menu="${name}"]`);
+        const box = await stableBox(button);
+        expect(box.x, `${name} starts on screen at ${size.width}px`).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width, `${name} ends on screen at ${size.width}px`).toBeLessThanOrEqual(size.width + 1);
+        expect(box.y + box.height, `${name} is above the fold at ${size.width}px`).toBeLessThanOrEqual(size.height);
+        expect(box.height, `${name} is a touch target`).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+        // `tap`, the phone's gesture, and not `click`: a click leaves an emulated
+        // MOUSE resting where the name was, the menu sheet then opens under it,
+        // and `createMenuBar`'s hover-to-open expands whichever submenu landed
+        // under the pointer — a state a finger, which leaves no hovering pointer
+        // behind, never produces.
+        await button.tap();
+        const menu = page.locator("#appMenuPopover");
+        await expect(menu, `the ${name} menu opens from the sheet`).toBeVisible();
+        expect(
+          await menu.locator(".app-menu-item, .app-menu-item-parent").count(),
+          `the ${name} menu has rows`,
+        ).toBeGreaterThan(0);
+        // The list steps aside while a menu is open, and Escape drills back
+        // out to it with focus on the name that opened the menu.
+        await expect(list).toBeHidden();
+        await page.keyboard.press("Escape");
+        await expect(menu).toBeHidden();
+        await expect(list).toBeVisible();
+        await expect(button).toBeFocused();
+      }
+      // A second Escape leaves the list, and focus goes back to the door.
+      await page.keyboard.press("Escape");
+      await expect(list).toBeHidden();
+      await expect(door).toHaveAttribute("aria-expanded", "false");
+      await expect(door).toBeFocused();
+    }
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("a command chosen from a menu closes the list it was chosen from, and a tap outside does too", async ({
+    page,
+    consoleErrors,
+  }) => {
+    await page.setViewportSize(PHONE);
+    await gotoEditor(page);
+    await clickIntoFirstPage(page);
+    const door = page.locator("#appMenusBtn");
+    const list = page.locator("#appMenuBar");
+    const row = await menuCommandRow(page, "view", "view.outline");
+    await row.click();
+    await expect(page.locator("#outlinePanel")).toBeVisible();
+    await expect(page.locator("#appMenuPopover")).toBeHidden();
+    await expect(list, "the list does not outlive the command chosen from it").toBeHidden();
+    await expect(door).toHaveAttribute("aria-expanded", "false");
+
+    // An outside press on chrome that takes no focus — the state chip — so the
+    // press itself is what dismisses, not a focus change it happens to cause.
+    await door.tap();
+    await expect(list).toBeVisible();
+    await page.locator("#documentState").tap();
+    await expect(list, "an outside tap dismisses the list").toBeHidden();
+    await expect(door).toHaveAttribute("aria-expanded", "false");
+
+    // Focus leaving, with no press at all: from the keyboard the list takes
+    // focus on File, Up walks it (wrapping to Review, the last name), and Tab
+    // past the last name leaves it — which closes it.
+    await door.focus();
+    await page.keyboard.press("Enter");
+    await expect(list).toBeVisible();
+    await expect(page.locator('#appMenuBar [data-menu="file"]')).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator('#appMenuBar [data-menu="review"]')).toBeFocused();
+    await expect(page.locator("#appMenuPopover"), "Up walks the list, it does not open a menu").toBeHidden();
+    await page.keyboard.press("Tab");
+    await expect(list, "focus leaving the list dismisses it").toBeHidden();
+    await expect(door).toHaveAttribute("aria-expanded", "false");
     expect(consoleErrors).toEqual([]);
   });
 });
@@ -321,10 +700,12 @@ test("the toast clears an open bottom sheet as well as the command bar", async (
   ).toBeLessThanOrEqual(sheet.y + 1);
   // And not under the header it moved up to avoid the sheet — which is the same
   // defect one row up, and is what the first version of the rule did, because it
-  // used `--h-header: 63px` while this rung's header is two rows at 390px.
+  // used `--h-header: 63px` while this rung's header was then two rows at 390px.
+  // It is one row now (`docs/148` §5.3b); the rule reads the MEASURED height,
+  // which is why it did not have to change when the header did.
   expect(
     toast.y,
-    "the toast must clear the wrapped menu bar, not land across it",
+    "the toast must clear the header, not land across it",
   ).toBeGreaterThanOrEqual(header.y + header.height - 1);
 
   expect(consoleErrors).toEqual([]);

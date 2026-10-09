@@ -23,10 +23,10 @@ use crate::page::{
 use crate::display::GradientFocus;
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::{LayerBlend, LayerShadow};
-// Own line (anti-conflict): the chart lane's path and dash primitives.
-use crate::display::PathCommand;
 // Own line (anti-conflict): the solid dash a chart's furniture strokes with.
 use casual_doc_model::v1::DashStyle;
+// Own line (anti-conflict): a geometry path's `a:path@fill` mode.
+use casual_doc_model::v1::PathFill;
 // Own line (anti-conflict): the paint-only non-printing-character overlay.
 use crate::formatting_marks::{FormattingMarks, MarkLayer};
 use crate::page::PlacedWatermarkContent;
@@ -276,36 +276,6 @@ fn compose_paragraph_into(
     }
 }
 
-/// Translates one path command by `shift`.
-///
-/// Exhaustive over [`PathCommand`] on purpose: a new command variant must fail to
-/// compile here rather than silently composing at the wrong origin.
-///
-/// Complexity: O(1).
-fn shift_command(command: PathCommand, shift: impl Fn(Point) -> Point) -> PathCommand {
-    match command {
-        PathCommand::MoveTo { point } => PathCommand::MoveTo {
-            point: shift(point),
-        },
-        PathCommand::LineTo { point } => PathCommand::LineTo {
-            point: shift(point),
-        },
-        PathCommand::CubicTo {
-            control1,
-            control2,
-            point,
-        } => PathCommand::CubicTo {
-            control1: shift(control1),
-            control2: shift(control2),
-            point: shift(point),
-        },
-        PathCommand::QuadTo { control, point } => PathCommand::QuadTo {
-            control: shift(control),
-            point: shift(point),
-        },
-    }
-}
-
 /// Translates one box-local [`ChartPrimitive`] into page space and emits it as a
 /// display-list item.
 ///
@@ -374,10 +344,7 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
             // Translation only: the commands are already the display list's own
             // `PathCommand`, so a curved slice and a straight polyline take the
             // same one line here and nothing in this function knows which it is.
-            let commands = commands
-                .iter()
-                .map(|command| shift_command(*command, shift))
-                .collect();
+            let commands = commands.iter().map(|command| command.map(shift)).collect();
             list.push(PaintItem::Shape {
                 geometry: ShapeGeometry::Path {
                     commands,
@@ -1011,9 +978,7 @@ fn compose_anchor_content(list: &mut DisplayList, anchor: &PlacedAnchor, marks: 
         | AnchorContent::RoundedRectangle { .. }
         | AnchorContent::Path { .. }
         | AnchorContent::Line { .. } => {
-            if let Some(item) = shape_paint_item(&anchor.content, anchor.rect, anchor.transform) {
-                list.push(item);
-            }
+            push_shape_items(list, &anchor.content, anchor.rect, anchor.transform);
         }
         AnchorContent::PictureFilledShape {
             commands,
@@ -1065,11 +1030,8 @@ fn compose_anchor_content(list: &mut DisplayList, anchor: &PlacedAnchor, marks: 
             // takes, so an ellipse text box is the same ellipse either way. It
             // carries the box's fill and outline, which is why `fill`/`border`
             // below are unset whenever a backdrop is present.
-            if let Some(item) = backdrop
-                .as_deref()
-                .and_then(|content| shape_paint_item(content, anchor.rect, anchor.transform))
-            {
-                list.push(item);
+            if let Some(content) = backdrop.as_deref() {
+                push_shape_items(list, content, anchor.rect, anchor.transform);
             }
             if let Some(fill) = fill {
                 // The box background paints as a shape rect so a gradient fill
@@ -1148,99 +1110,185 @@ fn compose_anchor_content(list: &mut DisplayList, anchor: &PlacedAnchor, marks: 
     }
 }
 
-/// The single [`PaintItem`] a geometric float paints, or `None` for the content
-/// kinds that are not one shape (an image, a text box, a positioned table).
+/// Pushes the [`PaintItem`]s a geometric float paints, or nothing for the content
+/// kinds that are not a shape (an image, a text box, a positioned table).
 ///
 /// One function rather than one arm per geometry inside [`compose_anchor`],
 /// because a text box's backdrop paints exactly the shape a bare
 /// `GroupChild::Shape` would: routing both through here is what keeps an ellipse
 /// with text inside it identical to an ellipse without.
 ///
-/// Complexity: O(v) in the shape's vertex count (1 for every preset but the
-/// polygons, whose vertices were already resolved during placement).
-fn shape_paint_item(
+/// A [`AnchorContent::Path`] paints one item per path, in path order, each with
+/// its own fill mode and stroke switch — which is how the standard draws the lit
+/// lid of a `can` over its body and a callout's unfilled leader beside its box.
+/// Arrowheads ride the first and last OPEN stroked paths: a connector's only
+/// path, and the stroked arc of an `arc` (whose filled wedge is a separate,
+/// unstroked path).
+///
+/// Complexity: O(c) in the shape's resolved commands.
+fn push_shape_items(
+    list: &mut DisplayList,
     content: &AnchorContent,
     rect: Rect,
     transform: Option<crate::display::ShapeTransform>,
-) -> Option<PaintItem> {
-    let (geometry, fill, stroke, head_end, tail_end) = match content {
-        // A picture-filled shape is not ONE paint item: it expands into a clip, an
-        // image and a stroke, so it cannot come through here. `None` rather than a
-        // rectangle fallback, because a text box's backdrop is the only caller and a
-        // picture-filled backdrop would paint the image twice.
-        AnchorContent::PictureFilledShape { .. } => return None,
-        AnchorContent::Rectangle { fill, stroke } => (
+) {
+    let single =
+        |geometry, fill: Option<&AnchorFill>, stroke: Option<&AnchorStroke>| {
+            PaintItem::Shape {
+                geometry,
+                fill: fill.map(fill_to_display),
+                stroke: stroke.map(shape_outline),
+                head_end: None,
+                tail_end: None,
+                transform,
+            }
+        };
+    match content {
+        AnchorContent::Rectangle { fill, stroke } => list.push(single(
             ShapeGeometry::Rect { rect },
             fill.as_ref(),
             stroke.as_ref(),
-            None,
-            None,
-        ),
-        AnchorContent::Ellipse { fill, stroke } => (
+        )),
+        AnchorContent::Ellipse { fill, stroke } => list.push(single(
             ShapeGeometry::Ellipse { rect },
             fill.as_ref(),
             stroke.as_ref(),
-            None,
-            None,
-        ),
+        )),
         AnchorContent::RoundedRectangle {
             radius,
             fill,
             stroke,
-        } => (
+        } => list.push(single(
             ShapeGeometry::RoundedRect {
                 rect,
                 radius: *radius,
             },
             fill.as_ref(),
             stroke.as_ref(),
-            None,
-            None,
-        ),
+        )),
         AnchorContent::Path {
-            commands,
-            closed,
+            paths,
             fill,
             stroke,
-        } => (
-            ShapeGeometry::Path {
-                commands: commands.clone(),
-                closed: *closed,
-            },
-            fill.as_ref(),
-            stroke.as_ref(),
-            None,
-            None,
-        ),
+            head_end,
+            tail_end,
+        } => {
+            let open_stroked = |path: &crate::page::AnchorPath| {
+                path.stroke && crate::display::open_path_ends(&path.commands).is_some()
+            };
+            let head_at = paths.iter().position(open_stroked);
+            let tail_at = paths.iter().rposition(open_stroked);
+            for (index, path) in paths.iter().enumerate() {
+                // A path the GEOMETRY says paints nothing (`fill="none"` and
+                // `stroke="0"`) is skipped. One that merely has no fill or outline
+                // on this shape is still emitted, as every shape was before paths
+                // carried their own switches: an unpainted shape is still a shape
+                // in the display list.
+                if path.fill == PathFill::None && !path.stroke {
+                    continue;
+                }
+                let fill = fill.as_ref().and_then(|fill| shaded_fill(fill, path.fill));
+                let stroke = stroke.as_ref().filter(|_| path.stroke).map(shape_outline);
+                list.push(PaintItem::Shape {
+                    geometry: ShapeGeometry::Path {
+                        commands: path.commands.clone(),
+                        closed: false,
+                    },
+                    fill,
+                    stroke,
+                    head_end: if head_at == Some(index) {
+                        *head_end
+                    } else {
+                        None
+                    },
+                    tail_end: if tail_at == Some(index) {
+                        *tail_end
+                    } else {
+                        None
+                    },
+                    transform,
+                });
+            }
+        }
         AnchorContent::Line {
             from,
             to,
             stroke,
             head_end,
             tail_end,
-        } => (
-            ShapeGeometry::Line {
+        } => list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Line {
                 from: *from,
                 to: *to,
             },
-            None,
-            Some(stroke),
-            *head_end,
-            *tail_end,
-        ),
-        AnchorContent::Image { .. }
+            fill: None,
+            stroke: Some(shape_outline(stroke)),
+            head_end: *head_end,
+            tail_end: *tail_end,
+            transform,
+        }),
+        // A picture-filled shape is not one paint item: it expands into a clip, an
+        // image and a stroke, which `compose_anchor_content` emits. Nothing here,
+        // because a text box's backdrop is the only other caller and a
+        // picture-filled backdrop would paint the image twice.
+        AnchorContent::PictureFilledShape { .. }
+        | AnchorContent::Image { .. }
         | AnchorContent::TextBox { .. }
-        | AnchorContent::Table { .. } => {
-            return None;
+        | AnchorContent::Table { .. } => {}
+    }
+}
+
+/// The display fill one path of a geometry paints with, from the shape's fill and
+/// the path's `a:path@fill` mode — `None` for an unfilled path.
+///
+/// The standard names the four shading modes without giving values. They are
+/// taken here as the two steps DrawingML's own colour transforms express —
+/// `a:shade`/`a:tint` at 60% for `darken`/`lighten`, and at 80% for the `Less`
+/// variants — applied to every gradient stop alike, so a shaded face keeps the
+/// gradient's direction. A deliberate, stated choice rather than a measurement of
+/// Word, recorded in `docs/119`.
+///
+/// Complexity: O(stops).
+fn shaded_fill(fill: &AnchorFill, mode: PathFill) -> Option<Fill> {
+    let factor = match mode {
+        PathFill::None => return None,
+        PathFill::Norm => return Some(fill_to_display(fill)),
+        PathFill::Darken => -0.6,
+        PathFill::DarkenLess => -0.8,
+        PathFill::Lighten => 0.6,
+        PathFill::LightenLess => 0.8,
+    };
+    let shade = |color: Color| {
+        let channel = |value: u8| {
+            let value = f32::from(value);
+            let shaded = if factor < 0.0 {
+                // `a:shade`: toward black, keeping `-factor` of the colour.
+                value * -factor
+            } else {
+                // `a:tint`: toward white, keeping `factor` of the colour.
+                255.0 - (255.0 - value) * factor
+            };
+            // Both arms stay inside 0..=255 for a channel inside it.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            {
+                shaded.round().clamp(0.0, 255.0) as u8
+            }
+        };
+        Color {
+            r: channel(color.r),
+            g: channel(color.g),
+            b: channel(color.b),
+            a: color.a,
         }
     };
-    Some(PaintItem::Shape {
-        geometry,
-        fill: fill.map(fill_to_display),
-        stroke: stroke.map(shape_outline),
-        head_end,
-        tail_end,
-        transform,
+    Some(match fill_to_display(fill) {
+        Fill::Solid(color) => Fill::Solid(shade(color)),
+        Fill::Gradient(mut gradient) => {
+            for stop in &mut gradient.stops {
+                stop.color = shade(stop.color);
+            }
+            Fill::Gradient(gradient)
+        }
     })
 }
 

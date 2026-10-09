@@ -248,6 +248,223 @@ fn a_moved_paragraph_is_a_move_pair_whose_halves_reference_each_other() {
     );
 }
 
+// ── where removed content stood (`DiffChange::place`, ADR-065) ─────────────
+
+/// The `place` of the one change of a family and kind, as block indices.
+fn place_of(diff: &VersionDiff, family: DiffFamily, kind: DiffKind) -> Vec<u32> {
+    let changes = of(diff, family, kind);
+    assert_eq!(changes.len(), 1, "one change, got {:?}", diff.changes);
+    block_path(
+        &changes[0]
+            .place
+            .as_ref()
+            .unwrap_or_else(|| panic!("a place on {:?}", changes[0]))
+            .path,
+    )
+}
+
+/// A paragraph removed from the middle stood before the paragraph that now
+/// follows it — the point a redline puts it back at, struck through.
+#[test]
+fn a_removed_paragraph_records_the_newer_position_it_stood_at() {
+    let left = import_body(&format!(
+        "{}{}{}",
+        xml_paragraph("one"),
+        xml_paragraph("two"),
+        xml_paragraph("three")
+    ));
+    let right = import_body(&format!(
+        "{}{}",
+        xml_paragraph("one"),
+        xml_paragraph("three")
+    ));
+    let diff = diff(&left, &right);
+    assert_eq!(
+        place_of(&diff, DiffFamily::Block, DiffKind::Deletion),
+        vec![1],
+        "`two` stood between `one` (0) and `three` (now 1)"
+    );
+}
+
+/// A paragraph removed from the END stood one past the newer side's last
+/// paragraph: an insertion point that names no block, which is exactly why
+/// `place` is documented as a position and not a block.
+#[test]
+fn a_paragraph_removed_from_the_end_stood_one_past_the_last_sibling() {
+    let left = import_body(&format!(
+        "{}{}{}",
+        xml_paragraph("one"),
+        xml_paragraph("two"),
+        xml_paragraph("three")
+    ));
+    let right = import_body(&format!("{}{}", xml_paragraph("one"), xml_paragraph("two")));
+    let diff = diff(&left, &right);
+    assert_eq!(
+        place_of(&diff, DiffFamily::Block, DiffKind::Deletion),
+        vec![2]
+    );
+}
+
+/// A paragraph REPLACED by an unrelated one stands before its replacement, so
+/// the redline reads old-struck-then-new, the order Word and Google use.
+#[test]
+fn a_replaced_paragraph_stands_before_what_replaced_it() {
+    let left = import_body(&format!(
+        "{}{}{}",
+        xml_paragraph("keep the opening line"),
+        xml_paragraph("aaaaaaaaaaaaaaaaaaaa"),
+        xml_paragraph("keep the closing line")
+    ));
+    let right = import_body(&format!(
+        "{}{}{}{}",
+        xml_paragraph("keep the opening line"),
+        xml_paragraph("zzzzzzzzzzzzzzzzzzzz"),
+        xml_paragraph("yyyyyyyyyyyyyyyyyyyy"),
+        xml_paragraph("keep the closing line")
+    ));
+    let diff = diff(&left, &right);
+    assert_eq!(
+        place_of(&diff, DiffFamily::Block, DiffKind::Deletion),
+        vec![1],
+        "before both insertions, not after them; got {:?}",
+        diff.changes
+    );
+}
+
+/// Inside a ragged region, a removed paragraph that followed an EDITED one
+/// stands after that edit's newer half — not at the region's start, which
+/// would put it above the paragraph it came after.
+#[test]
+fn a_removed_paragraph_after_an_edited_one_stands_after_the_edit() {
+    let left = import_body(&format!(
+        "{}{}{}{}",
+        xml_paragraph("keep the opening line"),
+        xml_paragraph("the quick brown fox"),
+        xml_paragraph("aaaaaaaaaaaaaaaaaaaa"),
+        xml_paragraph("keep the closing line")
+    ));
+    let right = import_body(&format!(
+        "{}{}{}{}{}",
+        xml_paragraph("keep the opening line"),
+        xml_paragraph("the quick brown fox jumps"),
+        xml_paragraph("zzzzzzzzzzzzzzzzzzzz"),
+        xml_paragraph("yyyyyyyyyyyyyyyyyyyy"),
+        xml_paragraph("keep the closing line")
+    ));
+    let diff = diff(&left, &right);
+    assert_eq!(
+        place_of(&diff, DiffFamily::Block, DiffKind::Deletion),
+        vec![2],
+        "after the edited fox paragraph (1); got {:?}",
+        diff.changes
+    );
+}
+
+/// A move's ORIGIN records where it stood, so the redline can show the
+/// paragraph struck at its old position as well as underlined at its new one.
+#[test]
+fn a_move_origin_records_where_the_paragraph_stood() {
+    let left = import_body(&format!(
+        "{}{}{}",
+        xml_paragraph("first"),
+        xml_paragraph("second"),
+        xml_paragraph("third")
+    ));
+    let right = import_body(&format!(
+        "{}{}{}",
+        xml_paragraph("second"),
+        xml_paragraph("third"),
+        xml_paragraph("first")
+    ));
+    let diff = diff(&left, &right);
+    assert_eq!(
+        place_of(&diff, DiffFamily::Block, DiffKind::MoveFrom),
+        vec![0],
+        "`first` stood before `second`, which is now at 0"
+    );
+    assert!(
+        of(&diff, DiffFamily::Block, DiffKind::MoveTo)[0]
+            .place
+            .is_none(),
+        "the destination has a right anchor and no place"
+    );
+}
+
+/// Inside a table cell the place is a full container path, so a resolver can
+/// find the cell's block list rather than the body's.
+#[test]
+fn a_paragraph_removed_from_a_cell_records_a_path_through_the_table() {
+    let cell = |inner: &str| format!("<w:tc>{inner}</w:tc>");
+    let table = |inner: &str| format!("<w:tbl><w:tr>{}</w:tr></w:tbl>", cell(inner));
+    let left = import_body(&format!(
+        "{}{}",
+        xml_paragraph("before"),
+        table(&format!(
+            "{}{}",
+            xml_paragraph("kept"),
+            xml_paragraph("gone")
+        ))
+    ));
+    let right = import_body(&format!(
+        "{}{}",
+        xml_paragraph("before"),
+        table(&xml_paragraph("kept"))
+    ));
+    let diff = diff(&left, &right);
+    let changes = of(&diff, DiffFamily::Block, DiffKind::Deletion);
+    assert_eq!(changes.len(), 1, "one deletion, got {:?}", diff.changes);
+    let place = changes[0].place.as_ref().expect("a place");
+    assert_eq!(
+        place.path,
+        vec![
+            PathSegment::Block { index: 1 },
+            PathSegment::Row { index: 0 },
+            PathSegment::Cell { index: 0 },
+            PathSegment::Block { index: 1 },
+        ],
+        "after `kept`, inside the one cell of the second block"
+    );
+}
+
+/// A moved paragraph beside an unrelated removal is still a MOVE. The region
+/// between the two unchanged paragraphs is one-to-one — one paragraph out, one
+/// in — and used to be paired positionally as an edit, word-diffing the moved
+/// sentence against the removed one.
+#[test]
+fn a_move_beside_an_unrelated_removal_is_a_move_and_a_removal_not_an_edit() {
+    let left = import_body(&format!(
+        "{}{}{}{}",
+        xml_paragraph("We moved this sentence."),
+        xml_paragraph("Intro paragraph stays."),
+        xml_paragraph("Removed line."),
+        xml_paragraph("Closing.")
+    ));
+    let right = import_body(&format!(
+        "{}{}{}",
+        xml_paragraph("Intro paragraph stays."),
+        xml_paragraph("We moved this sentence."),
+        xml_paragraph("Closing.")
+    ));
+    let diff = diff(&left, &right);
+    assert!(
+        of(&diff, DiffFamily::Text, DiffKind::Insertion).is_empty()
+            && of(&diff, DiffFamily::Text, DiffKind::Deletion).is_empty(),
+        "no word-level edit between unrelated paragraphs: {:?}",
+        diff.changes
+    );
+    let from = of(&diff, DiffFamily::Block, DiffKind::MoveFrom);
+    let to = of(&diff, DiffFamily::Block, DiffKind::MoveTo);
+    assert_eq!(from.len(), 1, "one move: {:?}", diff.changes);
+    assert_eq!(to.len(), 1);
+    assert_eq!(
+        from[0].left_text.as_deref(),
+        Some("We moved this sentence.")
+    );
+    let removed = of(&diff, DiffFamily::Block, DiffKind::Deletion);
+    assert_eq!(removed.len(), 1, "one removal: {:?}", diff.changes);
+    assert_eq!(removed[0].left_text.as_deref(), Some("Removed line."));
+}
+
 /// Content that is not unique on both sides is NOT called a move. It is a
 /// deletion plus an insertion, and the reader is told why.
 #[test]
@@ -676,12 +893,17 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
         document.definitions_mut().charts.insert(
             ChartId::new(NodeId::new(900_002).expect("non-zero")),
             Chart {
+                chart_retained: Default::default(),
+                namespaces: Default::default(),
+                space_retained: Default::default(),
                 object: object_id,
                 coverage: ChartCoverage::Complete,
                 title: None,
                 auto_title_deleted: false,
                 plot_area: PlotArea {
+                    retained: Default::default(),
                     groups: vec![ChartGroup {
+                        retained: Default::default(),
                         kind: ChartGroupKind::Bar {
                             direction: BarDirection::Column,
                             grouping: BarGrouping::Clustered,
@@ -707,6 +929,7 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
                 display_blanks_as: DisplayBlanks::Gap,
                 vary_colors: false,
                 external_data: None,
+                dirty: false,
             },
         );
         document

@@ -132,6 +132,79 @@ test("every pane starts at the same left edge — one measure, not four", async 
   expect(consoleErrors).toEqual([]);
 });
 
+// ...and ENDS at the same right edge (HF-265 D4). The left edge was already
+// guarded above; the measure was not.
+//
+// The pane is a backstage column, so it is as wide as the window leaves it —
+// 960px at 1280 and 1600px at 1920 — and the TEXT inside it is capped at a
+// reading measure. The HEADING over that text was capped at nothing, so it ran
+// 152px past its own column at 1280 and 792px past it at 1920: a title that
+// stops looking like it belongs to the thing under it.
+//
+// The decision recorded in `--file-page-measure`: the heading joins the column,
+// rather than the column being centred or allowed to grow. Centring would put
+// the content away from the left nav it is chosen from, and growing makes a
+// four-field pane 1600px wide — the "a four-field dialog as wide as a
+// twenty-field one" defect the stylesheet already names. A GALLERY is the
+// exception and stays full-bleed: Export and New are grids of tiles, which is
+// what ONLYOFFICE's Save As pane is (`filemenu.less` `.format-items`), and a
+// gallery is not a reading measure.
+//
+// Asserted at TWO widths, because one width cannot tell a measure from a
+// coincidence.
+for (const width of [1280, 1920]) {
+  test(`every text pane ends at the same right edge as its heading — ${width}`, async ({
+    page,
+    consoleErrors,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await gotoEditor(page);
+    await openFilePage(page);
+
+    for (const [pane] of PANES) {
+      await openPane(page, pane);
+      const edges = await page.evaluate(() => {
+        const detail = document.getElementById("filePageDetail");
+        const right = (el) => (el ? Math.round(el.getBoundingClientRect().right) : null);
+        const style = getComputedStyle(detail);
+        return {
+          paneRight: Math.round(
+            detail.getBoundingClientRect().right - parseFloat(style.paddingRight),
+          ),
+          heading: right(detail.querySelector("h2")),
+          sub: right(detail.querySelector(".file-detail-sub")),
+          // The borrowed PANEL, which is what carries the measure —
+          // `.file-pane-body` is an uncapped wrapper around it.
+          column: right(detail.querySelector(".panel-in-page")),
+        };
+      });
+
+      // Every pane: a heading never runs past its own pane.
+      expect(edges.heading, `${pane}: the heading runs past the pane`).toBeLessThanOrEqual(
+        edges.paneRight,
+      );
+
+      if (!TEXT_PANES.has(pane)) continue;
+      // A text pane: the heading, its blurb and the column it heads share one
+      // right edge, whatever that edge is. A measured number would redden when
+      // the measure is retuned; this does not, and still fails the moment the
+      // three disagree.
+      expect(edges.column, `${pane} shows no column`).not.toBeNull();
+      expect(edges.heading, `${pane}: the heading and its content end apart`).toBe(edges.column);
+      expect(edges.sub, `${pane}: the blurb and its content end apart`).toBe(edges.column);
+      // And the measure really is narrower than the pane at this width —
+      // otherwise this would be asserting that two full-width things are both
+      // full width, which holds however badly the measure behaves.
+      expect(
+        edges.column,
+        `${pane}: the column fills the whole pane at ${width}, so this proves nothing`,
+      ).toBeLessThan(edges.paneRight);
+    }
+
+    expect(consoleErrors).toEqual([]);
+  });
+}
+
 test("a borrowed panel survives being shown, left, and shown again", async ({
   page,
   consoleErrors,

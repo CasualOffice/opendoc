@@ -52,15 +52,73 @@
 //!   Untracked typing changes it too. So the four review decisions and the one untracked edit
 //!   are all refused, by two conditions rather than by five special cases.
 //!
+//! # The second axis — `w:formatting`, and why it was the rest of the feature
+//!
+//! Word's Restrict Editing pane is **two independent restrictions**, and only one of them is
+//! `w:edit`. The other is `w:documentProtection/@w:formatting`, which Microsoft's SDK names
+//! *"Only Allow Formatting With Unlocked Styles"*, whose companion is `w:style/@w:locked`
+//! (ECMA-376 §17.7.4.6, *"Style Cannot Be Applied"*). `165` §7.6 measured all three of
+//! `w:formatting`, `w:locked` and `w:latentStyles/@w:defLockedState` as imported, exported,
+//! and **consumed by nothing** — the "modeled is not shipped" failure, three constructs deep,
+//! inside the one feature family whose whole job is to refuse. `refuse_if_formatting_locked`
+//! is their first consumer.
+//!
+//! It is a *separate* axis in the model and it has to be one here: a document may carry
+//! `w:edit="none" w:formatting="1" w:enforcement="1"`, which is the pure formatting
+//! restriction Word writes when an author ticks the formatting box and no editing box. Before
+//! this, that document was freely reformattable here with no refusal and no finding.
+//!
+//! **The rule, stated once:** while a formatting restriction is enforced, an operation whose
+//! effect is to change how existing content *looks* is refused — except installing a
+//! paragraph style that is not locked, which is the one formatting change the restriction
+//! exists to permit. Content edits are untouched, because the axes are independent.
+//!
+//! Three consequences are deliberate and none of them is obvious:
+//!
+//! 1. **Redefining a style is refused, locked or not.** Only a locked style's definition is
+//!    normatively immutable, but a restriction that forbids setting one run bold while
+//!    allowing `Normal`'s `w:rPr` to be rewritten has bought nothing: the second is strictly
+//!    the more powerful of the two gestures. A rule a caller can walk around is a suggestion
+//!    (`SKILL` §12), so the narrower sourced reading is not the one taken, and the locked case
+//!    keeps its own more specific refusal. Numbering definitions are refused for the identical
+//!    reason — a list's appearance is formatting held in a definition table.
+//! 2. **`SetParagraphProperties` is judged by projection, not by variant**, the same way
+//!    `comments` is and for the same reason: one operation carries both the style change the
+//!    restriction permits and the direct paragraph formatting it forbids. Compare the
+//!    properties with `style_ref` removed from both sides; equal means the operation moved the
+//!    style and nothing else, and then the only remaining question is whether that style is
+//!    locked.
+//! 3. **`SetInlines` and `ReplaceTable` are allowed, and that is a residual this module
+//!    names rather than hides.** Both are *inverse vehicles* — `SetInlines`'s own doc comment
+//!    says so — and the inverse of an allowed content edit arrives as one. Undo runs through
+//!    this choke point, so refusing them would refuse the undo of an edit the restriction
+//!    permits; and a property-stripping projection cannot separate them from content, because
+//!    an unformatted paste legitimately redraws run boundaries. So a caller that constructs a
+//!    bare `SetInlines` by hand can still change formatting under a formatting restriction.
+//!    That is the one hole in this axis, it is bounded by the fact that no editing gesture in
+//!    this product produces one, and it is written down rather than left to be discovered.
+//!
+//! # What this axis is NOT
+//!
+//! It is not a security boundary, and nothing here should ever be described as one.
+//! `w:documentProtection`'s password material is an integrity marker in plain-text XML:
+//! ISO/IEC 29500-1 §17.15.1.29 says in its own note that the protection "does not encrypt the
+//! document, and malicious applications might circumvent its use. This protection is not
+//! intended as a security feature." No hash is modelled or verified here (ADR-052), and the
+//! *grant* — [`crate::access`] — is the only thing in this engine that is a boundary.
+//!
 //! # Complexity
 //!
 //! O(the inlines the operation names) — never O(document). A protection check runs on the
 //! keystroke path, so it may not walk the document (`107` §4 B1); the paragraphs are
 //! resolved once, and only for the levels that need the projection. `readOnly` needs no
-//! projection at all and is O(operations).
+//! projection at all and is O(operations). The formatting axis adds one `BTreeMap` lookup per
+//! style it has to grade and is behind a `bool` that is false in every unprotected document.
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{Document, DocumentProtectionEdit, InlineNode, Revision, RevisionKind};
+use casual_doc_model::v1::{
+    Document, DocumentProtectionEdit, InlineNode, ParagraphProperties, Revision, RevisionKind,
+};
 
 use crate::Operation;
 use crate::access::Capabilities;
@@ -80,6 +138,15 @@ pub enum ProtectionRefusal {
     /// `w:edit="trackedChanges"`: edits are allowed but must be tracked, and a tracked
     /// change may not be accepted or rejected.
     TrackedChangesOnly,
+    /// `w:formatting="1"`: the document's formatting may not be changed directly. The
+    /// **other axis** — it can refuse on a document whose `w:edit` restricts nothing, and
+    /// it refuses a formatting gesture while leaving a content edit alone.
+    FormattingRestricted,
+    /// `w:formatting="1"` and the style the operation names carries `w:locked`
+    /// (ECMA-376 §17.7.4.6, "Style Cannot Be Applied"). Separate from
+    /// [`Self::FormattingRestricted`] because the reader's remedy differs: a locked style is
+    /// one the author closed, and another style may still be applicable.
+    StyleLocked,
 }
 
 impl ProtectionRefusal {
@@ -101,6 +168,20 @@ impl ProtectionRefusal {
                 "document.protected-tracked-changes-only",
                 "This document is protected: changes must be tracked, and tracked changes \
                  cannot be accepted or rejected."
+            ),
+            // Both sentences say what was refused and what is still possible, because that
+            // is the half a reader can act on — and neither says "secure" or "locked by a
+            // password", which `w:documentProtection` is not (ISO/IEC 29500-1 §17.15.1.29's
+            // own note). "Its styles" rather than "a style" is the sourced behaviour: the
+            // restriction permits the styles the document already defines and does not lock.
+            Self::FormattingRestricted => crate::refused!(
+                "document.protected-formatting",
+                "This document is protected: its formatting can only be changed by applying \
+                 one of its styles."
+            ),
+            Self::StyleLocked => crate::refused!(
+                "document.protected-style-locked",
+                "This document is protected and that style is locked, so it cannot be applied."
             ),
         }
     }
@@ -163,8 +244,179 @@ pub fn refuse_if_protected(
                 }
             }
         }
+        // **The second axis, and it is checked AFTER the editing level, deliberately.** Both
+        // can refuse the same operation on a document that carries both, and then the
+        // editing level is the more useful sentence: "this document is read-only" tells a
+        // reader their whole situation, where "formatting can only be changed by applying a
+        // style" invites them to try a style that will also be refused. Narrowest authority
+        // first is the same ordering rule `access_badge.mjs` follows in the chrome.
+        if protection.formatting {
+            refuse_if_formatting_locked(document, op)?;
+        }
     }
     Ok(())
+}
+
+/// Refuses `op` when it changes formatting other than by applying an unlocked style.
+///
+/// The `w:formatting` axis, reached only from [`refuse_if_protected`] and only while a
+/// protection is enforced *and* carries the flag. See this module's header for the rule and
+/// for the three deliberate consequences; this function is where the operation set lives.
+///
+/// # Errors
+///
+/// [`ProtectionRefusal::StyleLocked`] when the operation names a style the document locked,
+/// and [`ProtectionRefusal::FormattingRestricted`] for every other formatting change.
+///
+/// # Complexity
+///
+/// O(1) for every operation but [`Operation::SetParagraphProperties`], which resolves its
+/// paragraph once — the same cost `comments` already pays — plus one `BTreeMap` lookup to
+/// grade the style.
+fn refuse_if_formatting_locked(
+    document: &Document,
+    op: &Operation,
+) -> Result<(), ProtectionRefusal> {
+    match op {
+        // Direct character formatting. No style can authorise it, so there is nothing to
+        // project and nothing to grade.
+        Operation::FormatText { .. } | Operation::ClearFormatting { .. } => {
+            Err(ProtectionRefusal::FormattingRestricted)
+        }
+        // The one operation that carries both halves. See the header's point 2.
+        Operation::SetParagraphProperties { node, properties } => {
+            let Some(current) = current_properties(document, *node) else {
+                // A write this check cannot place is refused rather than waved through —
+                // the rule `is_comment_only` and the facade's forms check both follow.
+                return Err(ProtectionRefusal::FormattingRestricted);
+            };
+            if without_style(current) != without_style(properties) {
+                return Err(ProtectionRefusal::FormattingRestricted);
+            }
+            // Only the style moved. It may be installed if the document did not lock it —
+            // and REMOVING a style (`None`) is not applying one, so it is allowed: it
+            // restores the document defaults rather than imposing the author's formatting
+            // on content they locked away from.
+            match properties.style_ref {
+                Some(style) if document.definitions().style_locked(style) => {
+                    Err(ProtectionRefusal::StyleLocked)
+                }
+                _ => Ok(()),
+            }
+        }
+        // Formatting held in a definition table, which is the more powerful gesture rather
+        // than the lesser one. Header point 1.
+        Operation::SetStyleDefinition { id, .. } => {
+            if document.definitions().style_locked(*id) {
+                Err(ProtectionRefusal::StyleLocked)
+            } else {
+                Err(ProtectionRefusal::FormattingRestricted)
+            }
+        }
+        Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        // Direct table and drawing formatting. `ReplaceTable` is NOT here: header point 3.
+        | Operation::SetTableProperties { .. }
+        | Operation::SetTableCellProperties { .. }
+        | Operation::SetShapeFill { .. }
+        | Operation::SetShapeStroke { .. } => Err(ProtectionRefusal::FormattingRestricted),
+        // **Exhaustive on purpose, with no `_` arm**, for this module's standing reason: the
+        // 61st operation must be a compile error here rather than a formatting change that
+        // arrives exempt. Every arm below is content, structure, page geometry or metadata —
+        // none of them is a "formatting modification" in the sense ECMA-376 §17.15.1.30
+        // restricts, and refusing one would refuse an edit Word permits, which is a defect
+        // in the other direction and a worse one on a file this engine merely read.
+        //
+        // The two inverse vehicles — `SetInlines` and `ReplaceTable` — are the residual, and
+        // they are here rather than above because undo runs through this choke point. Header
+        // point 3 carries the argument and names the hole.
+        //
+        // Page and section setup is deliberately not formatting either: Word's own route to
+        // the style whitelist is Manage Styles, the pane's axis is character and paragraph
+        // formatting, and nothing sourced says a protected document's margins are frozen.
+        // Recorded as a decision rather than left ambiguous — if it turns out Word freezes
+        // them, the arms move up and the guard for the move already has a home.
+        Operation::InsertText { .. }
+        | Operation::DeleteText { .. }
+        | Operation::SplitParagraph { .. }
+        | Operation::JoinParagraphs { .. }
+        | Operation::SetHyperlink { .. }
+        | Operation::SetInlines { .. }
+        | Operation::InsertRow { .. }
+        | Operation::DeleteRow { .. }
+        | Operation::InsertColumn { .. }
+        | Operation::DeleteColumn { .. }
+        | Operation::DeleteTable { .. }
+        | Operation::InsertTable { .. }
+        | Operation::InsertBlocks { .. }
+        | Operation::DeleteBlocks { .. }
+        | Operation::SetExtent { .. }
+        | Operation::SetGroupGeometry { .. }
+        | Operation::SetAnchor { .. }
+        | Operation::SetImageCrop { .. }
+        | Operation::SetObjectDescr { .. }
+        | Operation::DeleteObject { .. }
+        | Operation::InsertObjectNode { .. }
+        | Operation::InsertInlineObject { .. }
+        | Operation::RemoveInlineObject { .. }
+        | Operation::ReplaceTable { .. }
+        | Operation::SetCoreProperties { .. }
+        | Operation::UpdateReviewState { .. }
+        | Operation::SetSectionGeometry { .. }
+        | Operation::SpliceSectionBoundary { .. }
+        | Operation::SetMediaReference { .. }
+        | Operation::SetChartDefinition { .. }
+        // Never reached: `refuse_if_protected` exempts this operation before either axis is
+        // consulted, for the one-way-door reason `exempt_from_protection` records. `Ok` is
+        // nonetheless the right answer to put here rather than a refusal, because a
+        // formatting restriction has no standing to stop itself being lifted.
+        | Operation::SetDocumentProtection { .. }
+        | Operation::CreateBookmark { .. }
+        | Operation::DeleteBookmark { .. }
+        | Operation::RenameBookmark { .. }
+        | Operation::InsertField { .. }
+        | Operation::RemoveField { .. }
+        | Operation::InsertFieldRange { .. }
+        | Operation::RemoveFieldRange { .. }
+        | Operation::InsertNote { .. }
+        | Operation::RemoveNote { .. }
+        | Operation::CreateHeaderFooterBody { .. }
+        | Operation::RemoveHeaderFooterBody { .. }
+        | Operation::SetSectionRunningRef { .. }
+        | Operation::SetSectionTitlePage { .. }
+        | Operation::SetSectionWatermark { .. }
+        | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageNumbering { .. }
+        | Operation::SetSectionVerticalAlignment { .. }
+        | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetTextBoxBody { .. }
+        // A lock is a restriction on later edits, not formatting of the object, like
+        // its alt text beside it in the same non-visual properties.
+        | Operation::SetObjectLocks { .. }
+        // A document setting, as `SetEvenAndOddHeaders` is.
+        | Operation::SetTrackRevisions { .. }
+        // Page and section setup, by the decision recorded above.
+        | Operation::SetSectionFormProtection { .. } => Ok(()),
+    }
+}
+
+/// The paragraph's current properties, or `None` when the operation names a paragraph that
+/// is not there.
+///
+/// Resolved through the same walk [`current_inlines`] uses, so a `SetParagraphProperties`
+/// costs what an `UpdateReviewState` already costs under `comments`.
+fn current_properties(document: &Document, node: NodeId) -> Option<&ParagraphProperties> {
+    crate::find_paragraph_any(document, node).map(|paragraph| &*paragraph.properties)
+}
+
+/// `properties` with `w:pStyle` removed — the projection the formatting axis compares.
+///
+/// Two paragraph property sets have the same projection exactly when they differ in nothing
+/// but which style is applied, which is the one formatting change `w:formatting` permits.
+fn without_style(properties: &ParagraphProperties) -> ParagraphProperties {
+    let mut projected = properties.clone();
+    projected.style_ref = None;
+    projected
 }
 
 /// Whether `op` is exempt from **every** editing restriction, including `readOnly`.
@@ -336,7 +588,12 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetEvenAndOddHeaders { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => false,
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. }
+        // Not a comment. (Under `trackedChanges`, `is_tracked_only` admits turning
+        // tracking ON before it gets here.)
+        | Operation::SetTrackRevisions { .. }
+        | Operation::SetSectionFormProtection { .. } => false,
     }
 }
 
@@ -347,6 +604,11 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
 /// [`is_comment_only`]: the projection below drops comment markers as well.
 pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
     match op {
+        // ECMA-376 §17.15.1.29: `trackedChanges` "shall imply the presence of the
+        // `trackRevisions` element, and applications shall not allow that element's
+        // state to be changed to false". Turning tracking ON is what the restriction
+        // asks for; turning it off is refused.
+        Operation::SetTrackRevisions { enabled } => *enabled,
         Operation::UpdateReviewState { paragraphs, .. } => paragraphs.iter().all(|state| {
             current_inlines(document, state.node).is_some_and(|current| {
                 before_projection(current) == before_projection(&state.inlines)
@@ -599,6 +861,10 @@ mod tests {
         BlockNode, CommentId, CommentRangeEnd, CommentRangeStart, Definitions, DocumentProtection,
         Paragraph, ParagraphProperties, Run, RunProperties,
     };
+
+    // Separate `use` line (kept out of the sorted block above) so a parallel lane adding a
+    // v1 import here does not conflict in the shared sorted list.
+    use casual_doc_model::v1::{LatentStyles, StyleId};
 
     use crate::{Pos, Range, ReviewParagraphState};
 
@@ -1569,6 +1835,355 @@ mod tests {
                 enforcement: true,
                 formatting: false,
             }),
+        }
+    }
+
+    // ---- the `w:formatting` axis -------------------------------------------------------
+    //
+    // The second of Word's two restrictions, and the one that was imported, exported, carried
+    // through the dialog and enforced by nothing (`165` §7.6). Every guard below was driven
+    // RED by deleting the enforcement rather than by hiding a control; the mutations and their
+    // output are in the commit message.
+
+    /// The id of the one style these fixtures define.
+    fn styled() -> StyleId {
+        StyleId::new(n(40))
+    }
+
+    /// A document with ONE paragraph, a style table holding [`styled`], and
+    /// `w:formatting="1"` — at `edit`, enforced unless stated.
+    ///
+    /// `locked` is the style's `w:locked`, and `defaults` the
+    /// `w:latentStyles/@w:defLockedState` a style the table does NOT define inherits.
+    fn formatting_restricted(
+        edit: DocumentProtectionEdit,
+        enforcement: bool,
+        locked: bool,
+        default_locked_state: Option<bool>,
+    ) -> Document {
+        let mut ids = IdGenerator::new(1);
+        let document_id = ids.next_id().expect("an id");
+        let mut definitions = Definitions::default();
+        definitions.settings.document_protection = Some(DocumentProtection {
+            edit,
+            enforcement,
+            formatting: true,
+        });
+        // Built from the crate's own helper rather than a twenty-field literal: a field added
+        // to `Style` on a sibling branch is a breaking change to every literal with nothing
+        // for a merge to conflict on (`SKILL` §5a shape 1).
+        let mut style = crate::references::caption_style(None);
+        style.locked = locked;
+        definitions.styles.insert(styled(), style);
+        if default_locked_state.is_some() {
+            definitions.latent_styles = Some(LatentStyles {
+                default_locked_state,
+                ..LatentStyles::default()
+            });
+        }
+        Document::new(
+            document_id,
+            vec![BlockNode::Paragraph(Paragraph {
+                id: n(10),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![run(11, "abcdefgh")],
+            })],
+            definitions,
+        )
+        .expect("a valid document")
+    }
+
+    /// Direct character formatting over paragraph 10 — bold, the gesture a formatting
+    /// restriction exists to refuse.
+    fn embolden() -> Operation {
+        Operation::FormatText {
+            range: Range {
+                start: Pos::new(n(10), 0),
+                end: Pos::new(n(10), 4),
+            },
+            delta: crate::FormatDelta {
+                bold: Some(true),
+                ..crate::FormatDelta::default()
+            },
+        }
+    }
+
+    /// `SetParagraphProperties` on paragraph 10 installing `properties`.
+    fn set_properties(properties: ParagraphProperties) -> Operation {
+        Operation::SetParagraphProperties {
+            node: n(10),
+            properties: Box::new(properties),
+        }
+    }
+
+    #[test]
+    fn a_formatting_restriction_refuses_direct_formatting_and_takes_an_unlocked_style() {
+        // The rule, both directions, on a document whose `w:edit` restricts NOTHING — which
+        // is the state Word writes when an author ticks the formatting box only, and the
+        // state in which this axis was previously a no-op. If the two assertions were not
+        // both here, a rule that refused everything would look identical to a correct one.
+        let document =
+            formatting_restricted(DocumentProtectionEdit::None, true, false, Some(false));
+
+        assert_eq!(
+            refuse_if_protected(&document, &[embolden()], Capabilities::local()),
+            Err(ProtectionRefusal::FormattingRestricted),
+            "direct formatting is the one gesture `w:formatting` names"
+        );
+
+        let apply_style = set_properties(ParagraphProperties {
+            style_ref: Some(styled()),
+            ..ParagraphProperties::default()
+        });
+        assert_eq!(
+            refuse_if_protected(&document, &[apply_style], Capabilities::local()),
+            Ok(()),
+            "applying an UNLOCKED style is what \"only allow formatting with unlocked \
+             styles\" permits; refusing it would make the restriction a read-only one"
+        );
+
+        // The projection, which is why this cannot be a variant-level rule: the SAME
+        // operation carrying the same style plus one direct property is refused.
+        let style_and_more = set_properties(ParagraphProperties {
+            style_ref: Some(styled()),
+            keep_lines: Some(true),
+            ..ParagraphProperties::default()
+        });
+        assert_eq!(
+            refuse_if_protected(&document, &[style_and_more], Capabilities::local()),
+            Err(ProtectionRefusal::FormattingRestricted),
+            "a style change smuggling direct paragraph formatting beside it is still direct \
+             formatting"
+        );
+    }
+
+    #[test]
+    fn a_locked_style_cannot_be_applied_and_the_refusal_says_which_problem_it_is() {
+        // `w:locked`'s first consumer in this tree. The assertion that matters is the
+        // DISTINCT refusal: a reader told "formatting can only be changed by applying one of
+        // its styles" after applying one of its styles has been sent in a circle.
+        let document = formatting_restricted(DocumentProtectionEdit::None, true, true, None);
+        let apply_style = set_properties(ParagraphProperties {
+            style_ref: Some(styled()),
+            ..ParagraphProperties::default()
+        });
+        assert_eq!(
+            refuse_if_protected(&document, &[apply_style], Capabilities::local()),
+            Err(ProtectionRefusal::StyleLocked)
+        );
+        assert_ne!(
+            ProtectionRefusal::StyleLocked.reason(),
+            ProtectionRefusal::FormattingRestricted.reason(),
+            "two problems with two remedies may not share one sentence"
+        );
+
+        // Removing a style is not applying one, and the document defaults are not the
+        // author's locked formatting, so it is allowed.
+        assert_eq!(
+            refuse_if_protected(
+                &document,
+                &[set_properties(ParagraphProperties::default())],
+                Capabilities::local()
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_style_the_table_does_not_define_inherits_the_declared_latent_default() {
+        // The branch no `Style` field can answer, and `w:defLockedState`'s first consumer.
+        // A style id that resolves to nothing is graded by the latent-styles block, so a
+        // document that declares its latent built-ins locked has them locked.
+        let absent = StyleId::new(n(41));
+        let apply = || {
+            set_properties(ParagraphProperties {
+                style_ref: Some(absent),
+                ..ParagraphProperties::default()
+            })
+        };
+
+        let locked_by_default =
+            formatting_restricted(DocumentProtectionEdit::None, true, false, Some(true));
+        assert_eq!(
+            refuse_if_protected(&locked_by_default, &[apply()], Capabilities::local()),
+            Err(ProtectionRefusal::StyleLocked)
+        );
+
+        // And the other direction, so the guard cannot pass by refusing every absent style.
+        let unlocked_by_default =
+            formatting_restricted(DocumentProtectionEdit::None, true, false, Some(false));
+        assert_eq!(
+            refuse_if_protected(&unlocked_by_default, &[apply()], Capabilities::local()),
+            Ok(())
+        );
+
+        // No block at all: `false`, the honest absence, rather than a fail-closed guess.
+        let silent = formatting_restricted(DocumentProtectionEdit::None, true, false, None);
+        assert_eq!(
+            refuse_if_protected(&silent, &[apply()], Capabilities::local()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_two_axes_are_independent_so_a_content_edit_survives_a_formatting_restriction() {
+        // THE point of the axis being separate, and the assertion a rule bolted onto the
+        // editing level could not satisfy: `w:formatting="1"` with no editing restriction
+        // means "write what you like, do not reformat it". Typing and deleting must land.
+        let document = formatting_restricted(DocumentProtectionEdit::None, true, true, Some(true));
+        for op in [typing(), deleting()] {
+            assert_eq!(
+                refuse_if_protected(&document, std::slice::from_ref(&op), Capabilities::local()),
+                Ok(()),
+                "a formatting restriction refused the content edit {op:?}, which is the \
+                 other axis"
+            );
+        }
+    }
+
+    #[test]
+    fn a_formatting_restriction_that_is_not_enforced_does_not_apply() {
+        // The same rule the editing level follows, and the one `w:enforcement` exists for: a
+        // restriction an author set up and switched off is retained and not applied.
+        let document = formatting_restricted(DocumentProtectionEdit::None, false, true, Some(true));
+        assert_eq!(
+            refuse_if_protected(&document, &[embolden()], Capabilities::local()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn redefining_a_style_is_refused_even_when_the_style_is_not_locked() {
+        // The bypass this axis would otherwise have, and the reason the sourced-narrow
+        // reading was not taken: rewriting `Caption`'s `w:rPr` reformats every paragraph
+        // using it, which is strictly more than the one run of bold that IS refused. A rule a
+        // caller can walk around is a suggestion.
+        let document =
+            formatting_restricted(DocumentProtectionEdit::None, true, false, Some(false));
+        let mut redefined = crate::references::caption_style(None);
+        redefined.run = Some(RunProperties {
+            bold: Some(false),
+            ..RunProperties::default()
+        });
+        let op = Operation::SetStyleDefinition {
+            id: styled(),
+            style: Some(Box::new(redefined)),
+        };
+        assert_eq!(
+            refuse_if_protected(&document, &[op], Capabilities::local()),
+            Err(ProtectionRefusal::FormattingRestricted)
+        );
+
+        // A LOCKED style's definition is normatively immutable (ECMA-376 §17.7.4.6), and the
+        // more specific sentence is the one the reader gets.
+        let locked = formatting_restricted(DocumentProtectionEdit::None, true, true, None);
+        assert_eq!(
+            refuse_if_protected(
+                &locked,
+                &[Operation::SetStyleDefinition {
+                    id: styled(),
+                    style: None,
+                }],
+                Capabilities::local()
+            ),
+            Err(ProtectionRefusal::StyleLocked)
+        );
+    }
+
+    #[test]
+    fn the_editing_level_outranks_the_formatting_axis_on_a_document_carrying_both() {
+        // Both axes refuse this operation and only one sentence is shown. "This document is
+        // protected against changes" is the reader's whole situation; "formatting can only be
+        // changed by applying one of its styles" invites them to try a style that is also
+        // refused. Narrowest authority first, the rule the chrome's badge follows too.
+        let document =
+            formatting_restricted(DocumentProtectionEdit::ReadOnly, true, false, Some(false));
+        assert_eq!(
+            refuse_if_protected(&document, &[embolden()], Capabilities::local()),
+            Err(ProtectionRefusal::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn lifting_a_formatting_restriction_is_not_refused_by_the_restriction_it_lifts() {
+        // The one-way door, on the new axis: a formatting-restricted document must not be
+        // permanently unreformattable, which is strictly worse than not enforcing the
+        // restriction at all.
+        //
+        // **What this guard does and does not catch, measured rather than asserted.** Moving
+        // the formatting check ABOVE `exempt_from_protection` was tried and left it GREEN,
+        // because the axis's `SetDocumentProtection` arm answers `Ok` on its own — the door
+        // is held open by that arm's value, not by the ordering, and the ordering is already
+        // guarded by `only_the_protection_operation_itself_is_exempt`. What reddens this is
+        // moving that arm into the refused set, on the `viewer()` line: the first two
+        // assertions are answered by the exemption before the axis is reached, so the
+        // UNEXEMPTED caller is the one that can see the arm at all. Recorded because a guard
+        // believed to cover an ordering it cannot see is how a rule gets deleted quietly.
+        let document = formatting_restricted(DocumentProtectionEdit::None, true, true, Some(true));
+        assert_eq!(
+            refuse_if_protected(&document, &[lift()], Capabilities::local()),
+            Ok(())
+        );
+        assert_eq!(
+            refuse_if_protected(&document, &[lift()], Capabilities::owner()),
+            Ok(())
+        );
+        // A viewer is NOT exempt, so the operation falls through to the axis and the axis
+        // answers `Ok` — because a formatting restriction has no standing to stop itself
+        // being lifted, which is what this function's `SetDocumentProtection` arm says. The
+        // viewer's refusal is the GRANT's, one layer out, and asserting it here would be
+        // asserting the wrong authority: this guard first claimed `FormattingRestricted` and
+        // went red, which is the difference between the two layers made visible.
+        assert_eq!(
+            refuse_if_protected(&document, &[lift()], Capabilities::viewer()),
+            Ok(()),
+            "the policy axis must not be the thing that refuses a viewer"
+        );
+        assert!(
+            crate::access::refuse_if_not_permitted(
+                Some(&document),
+                &[lift()],
+                Capabilities::viewer()
+            )
+            .is_err(),
+            "a viewer must still be refused — by the grant, which is the outer gate"
+        );
+    }
+
+    #[test]
+    fn every_protection_refusal_carries_a_distinct_routable_code_and_sentence() {
+        // The class guard rather than five row guards: a new level or axis that reuses
+        // another's code reaches the chrome's `PROTECTION_REFUSAL_KEYS` table as a collision
+        // and the reader is told the wrong thing. `#[non_exhaustive]` means this list is
+        // maintained by hand, so the count is asserted beside it.
+        let all = [
+            ProtectionRefusal::ReadOnly,
+            ProtectionRefusal::CommentsOnly,
+            ProtectionRefusal::TrackedChangesOnly,
+            ProtectionRefusal::FormattingRestricted,
+            ProtectionRefusal::StyleLocked,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for refusal in all {
+            let reason = refusal.reason();
+            assert!(
+                seen.insert(reason),
+                "{refusal:?} reuses another refusal's sentence: {reason}"
+            );
+            assert!(
+                reason.contains("protected"),
+                "{refusal:?} does not name the document's protection: {reason}"
+            );
+            // The one claim this family may never make. `w:documentProtection` is plain-text
+            // XML and ISO/IEC 29500-1 §17.15.1.29's own note says it "is not intended as a
+            // security feature"; a sentence that reads as one would be a false claim in the
+            // place a reader is most likely to believe it.
+            for forbidden in ["secure", "encrypt", "password", "safe"] {
+                assert!(
+                    !reason.to_ascii_lowercase().contains(forbidden),
+                    "{refusal:?} claims {forbidden:?}, which this protection is not: {reason}"
+                );
+            }
         }
     }
 }

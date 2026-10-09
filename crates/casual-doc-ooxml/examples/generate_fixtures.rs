@@ -261,6 +261,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     fs::write(
+        output.join("preset-shapes.docx"),
+        package(&entries_with_document(&preset_shapes_document()))?,
+    )?;
+
+    fs::write(
         output.join("floating-table.docx"),
         package(&entries_with_document(&floating_table_document()))?,
     )?;
@@ -1267,6 +1272,183 @@ fn floating_table_document() -> Vec<u8> {
          </w:body></w:document>",
         row("ITEM", "COST"),
         row("Widget", "12"),
+    )
+    .into_bytes()
+}
+
+/// The presets on `preset-shapes.docx`, in reading order: the shapes a Word
+/// author reaches for from Insert ▸ Shapes, row by row — basic shapes, the
+/// 3-D-shaded ones whose paths are lightened or darkened, block arrows, flowchart
+/// symbols, stars and banners, callouts, and the open line shapes whose ends carry
+/// arrowheads.
+const PRESET_GALLERY: [&str; 63] = [
+    "roundRect",
+    "snip2SameRect",
+    "round2DiagRect",
+    "plaque",
+    "triangle",
+    "rtTriangle",
+    "parallelogram",
+    "trapezoid",
+    "diamond",
+    "pentagon",
+    "hexagon",
+    "heptagon",
+    "octagon",
+    "decagon",
+    "dodecagon",
+    "pie",
+    "chord",
+    "teardrop",
+    "frame",
+    "halfFrame",
+    "corner",
+    "diagStripe",
+    "plus",
+    "donut",
+    "can",
+    "cube",
+    "bevel",
+    "foldedCorner",
+    "smileyFace",
+    "heart",
+    "lightningBolt",
+    "sun",
+    "moon",
+    "cloud",
+    "noSmoking",
+    "blockArc",
+    "rightArrow",
+    "leftRightArrow",
+    "upDownArrow",
+    "quadArrow",
+    "bentArrow",
+    "uturnArrow",
+    "circularArrow",
+    "curvedRightArrow",
+    "stripedRightArrow",
+    "notchedRightArrow",
+    "chevron",
+    "mathMultiply",
+    "flowChartDecision",
+    "flowChartDocument",
+    "flowChartMagneticDisk",
+    "star5",
+    "star12",
+    "irregularSeal1",
+    "ribbon2",
+    "doubleWave",
+    "wedgeRectCallout",
+    "wedgeEllipseCallout",
+    "cloudCallout",
+    "borderCallout1",
+    "arc",
+    "bentConnector3",
+    "curvedConnector3",
+];
+
+/// `preset-shapes.docx` — every preset of [`PRESET_GALLERY`] plus one
+/// guide-driven freeform, each an anchored `wps:wsp` at a page offset on an
+/// 8 × 8 grid, named after its preset in `wp:docPr@name` (`docs/109` FID-L-04,
+/// FID-G-02, HF-267).
+///
+/// Before the ECMA-376 preset table, every shape here but the rounded rectangle
+/// family and its handful of typed neighbours painted as its bounding rectangle;
+/// the fixture is the visual evidence that they no longer do, and its render is
+/// committed beside the change. The last three are OPEN shapes with an
+/// `a:tailEnd`, so the arrowheads of a path are exercised as well as its fill.
+///
+/// The 64th cell is an `a:custGeom` written the way Word writes Edit Points on
+/// a rounded rectangle: adjust value, guides, an `a:arcTo` with guide-named
+/// radii, and a second, unfilled path — the grammar FID-G-02 adds.
+fn preset_shapes_document() -> Vec<u8> {
+    const CELL_W: i64 = 868_680; // 0.95"
+    const CELL_H: i64 = 822_960; // 0.9"
+    const SHAPE_W: i64 = 731_520; // 0.8"
+    const SHAPE_H: i64 = 640_080; // 0.7"
+    const LEFT: i64 = 457_200; // 0.5"
+    const TOP: i64 = 914_400; // 1"
+    let fill = "<a:solidFill><a:srgbClr val=\"5B9BD5\"/></a:solidFill>";
+    let outline = |arrow: bool| {
+        format!(
+            "<a:ln w=\"12700\"><a:solidFill><a:srgbClr val=\"1F3864\"/></a:solidFill>{}</a:ln>",
+            if arrow {
+                "<a:tailEnd type=\"triangle\"/>"
+            } else {
+                ""
+            }
+        )
+    };
+    let shape = |index: i64, name: &str, geometry: &str, paint: &str| {
+        let x = LEFT + (index % 8) * CELL_W;
+        let y = TOP + (index / 8) * CELL_H;
+        let id = index + 1;
+        format!(
+            "<w:r><w:drawing>\
+             <wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+             relativeHeight=\"{id}\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+             allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/>\
+             <wp:positionH relativeFrom=\"page\"><wp:posOffset>{x}</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"page\"><wp:posOffset>{y}</wp:posOffset></wp:positionV>\
+             <wp:extent cx=\"{SHAPE_W}\" cy=\"{SHAPE_H}\"/>\
+             <wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>\
+             <wp:wrapNone/><wp:docPr id=\"{id}\" name=\"{name}\"/>\
+             <a:graphic><a:graphicData \
+             uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp><wps:cNvSpPr/><wps:spPr>\
+             <a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{SHAPE_W}\" cy=\"{SHAPE_H}\"/></a:xfrm>\
+             {geometry}{paint}\
+             </wps:spPr><wps:bodyPr/></wps:wsp>\
+             </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+        )
+    };
+
+    let mut runs = String::new();
+    for (index, preset) in (0_i64..).zip(PRESET_GALLERY) {
+        let open = matches!(preset, "arc" | "bentConnector3" | "curvedConnector3");
+        let paint = if open {
+            outline(true)
+        } else {
+            format!("{fill}{}", outline(false))
+        };
+        runs.push_str(&shape(
+            index,
+            preset,
+            &format!("<a:prstGeom prst=\"{preset}\"><a:avLst/></a:prstGeom>"),
+            &paint,
+        ));
+    }
+    runs.push_str(&shape(
+        63,
+        "Freeform: rounded corner",
+        "<a:custGeom><a:avLst><a:gd name=\"adj\" fmla=\"val 25000\"/></a:avLst>\
+         <a:gdLst><a:gd name=\"a\" fmla=\"pin 0 adj 50000\"/>\
+         <a:gd name=\"x1\" fmla=\"*/ ss a 100000\"/><a:gd name=\"x2\" fmla=\"+- r 0 x1\"/>\
+         </a:gdLst><a:ahLst/><a:cxnLst/><a:rect l=\"l\" t=\"t\" r=\"r\" b=\"b\"/><a:pathLst>\
+         <a:path><a:moveTo><a:pt x=\"l\" y=\"x1\"/></a:moveTo>\
+         <a:arcTo wR=\"x1\" hR=\"x1\" stAng=\"cd2\" swAng=\"cd4\"/>\
+         <a:lnTo><a:pt x=\"x2\" y=\"t\"/></a:lnTo><a:lnTo><a:pt x=\"r\" y=\"b\"/></a:lnTo>\
+         <a:lnTo><a:pt x=\"l\" y=\"b\"/></a:lnTo><a:close/></a:path>\
+         <a:path fill=\"none\"><a:moveTo><a:pt x=\"x1\" y=\"b\"/></a:moveTo>\
+         <a:lnTo><a:pt x=\"r\" y=\"x1\"/></a:lnTo></a:path>\
+         </a:pathLst></a:custGeom>",
+        &format!("{fill}{}", outline(false)),
+    ));
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+         xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+         xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+         <w:body>\
+         <w:p><w:r><w:t>DrawingML preset shapes, drawn from the ECMA-376 definitions.</w:t></w:r></w:p>\
+         <w:p>{runs}</w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\" \
+         w:header=\"360\" w:footer=\"360\"/></w:sectPr>\
+         </w:body></w:document>"
     )
     .into_bytes()
 }

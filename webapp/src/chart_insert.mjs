@@ -8,7 +8,7 @@
  *  Competitive standard first, per the editing rule. Word's Insert ▸ Chart opens
  *  a type gallery and then a data sheet; Google Docs' Insert ▸ Chart offers Bar,
  *  Column, Line, Pie and "From Sheets". Neither is reachable here yet, because
- *  this build has no chart DATA editor — a type picker that hands the reader
+ *  this build had no chart DATA editor — a type picker that hands the reader
  *  seven variations of uneditable placeholder data would be choice without
  *  consequence. So the first surface inserts Word's own default, a clustered
  *  column chart, and the type picker is owed rather than faked.
@@ -51,18 +51,22 @@ export function chartInsertFailure(err) {
  *  @param {() => boolean} o.suggesting   tracked-change mode cannot record this yet
  *  @param {(text: string, kind: string) => void} o.status
  *  @param {(result: unknown) => Promise<unknown>} o.apply
+ *  @returns {Promise<boolean>} whether a chart was inserted — the caller then
+ *           selects it and opens its data, which is Word's Insert ▸ Chart.
  */
 export async function insertChartAtCaret({ doc, caret, blocked, suggesting, status, apply }) {
-  if (!doc || !caret || blocked()) return;
+  if (!doc || !caret || blocked()) return false;
   if (suggesting()) {
     // Not a dead control and not a silent no-op: the reader is told which mode
     // refuses and which one to switch to, as `insertNote` does for notes.
     status("Inserting a chart cannot be tracked yet; switch to Editing", "error");
-    return;
+    return false;
   }
   try {
     await apply(doc.insertChart(caret.node, caret.offset, DEFAULT_CHART_KIND));
   } catch (err) {
     status(chartInsertFailure(err), "error");
+    return false;
   }
+  return true;
 }

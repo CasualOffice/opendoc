@@ -119,6 +119,62 @@ test.describe("the ribbon width budget", () => {
     console.log(`RIBBON_HOME_HEADROOM_AT_1280 ${headroom}px`);
   });
 
+  test("every other band fits 1280px too, and its budget is published", async ({ page }) => {
+    // Home was the only band measured, so the Review band could be widened —
+    // as `109` UX-040 does, labelling Track changes, Accept, Reject, Spelling and
+    // Grammar — with nothing to say what that spent. Each band is measured the
+    // same way Home is, against the same floor, and published beside it.
+    await page.setViewportSize(AT);
+    await gotoEditor(page);
+    const measured = {};
+    for (const tab of ["insert", "layout", "references", "review", "view"]) {
+      await page.locator(`[data-tab="${tab}"]`).click();
+      await expect(page.locator(`.ribbon-panel[data-panel="${tab}"]`)).toBeVisible();
+      measured[tab] = await page.evaluate(async (name) => {
+        const band = document.querySelector(`.ribbon-panel[data-panel="${name}"]`);
+        const groups = [...band.querySelectorAll(".rgroup")];
+        const group = groups[groups.length - 1];
+        const fits = () => {
+          const btn = document.querySelector("#ribbonOverflowBtn");
+          const exiled = !!(
+            btn &&
+            !(btn.hidden || getComputedStyle(btn).display === "none" || btn.offsetParent === null)
+          );
+          const parent = band.parentElement;
+          return (
+            !exiled &&
+            !(
+              band.scrollWidth > band.clientWidth + 1 ||
+              (!!parent && parent.scrollWidth > parent.clientWidth + 1) ||
+              document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
+            )
+          );
+        };
+        if (!fits()) return -1;
+        const pad = document.createElement("span");
+        pad.style.cssText = "display:inline-block;height:1px;";
+        group.appendChild(pad);
+        let grew = 0;
+        for (let w = 0; w <= 1200; w += 4) {
+          pad.style.width = `${w}px`;
+          await new Promise((r) => requestAnimationFrame(r));
+          if (!fits()) break;
+          grew = w;
+        }
+        pad.remove();
+        return grew;
+      }, tab);
+    }
+    for (const [tab, headroom] of Object.entries(measured)) {
+      expect(
+        headroom,
+        `the ${tab} band has ${headroom}px of growth headroom at 1280px (-1: it does not fit at all), ` +
+          "below the 120px floor Home is held to",
+      ).toBeGreaterThanOrEqual(120);
+      console.log(`RIBBON_${tab.toUpperCase()}_HEADROOM_AT_1280 ${headroom}px`);
+    }
+  });
+
   test("it is horizontal scroll that breaks first, not the overflow menu", async ({ page }) => {
     // The corrected mechanism, asserted so the wrong one cannot come back into a
     // comment. If a future ribbon really does exile a group on growth, this test

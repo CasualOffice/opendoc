@@ -60,12 +60,14 @@ mod page_border;
 pub mod paginate;
 // Own line (anti-conflict): the user-facing measurement-unit layer.
 pub mod quantity;
+// Own line (anti-conflict): what a reflowed column approximates in a document.
+mod reflow_report;
+// Own line (anti-conflict): per-table horizontal scrolling in a reflowed column.
+pub mod reflow_scroll;
 pub mod resolve;
 pub mod running;
 pub mod script;
 pub mod shape;
-pub mod shape_guide;
-pub mod shape_preset;
 pub mod symbol_map;
 mod table_float;
 pub mod tabs;
@@ -76,3 +78,5 @@ mod watermark;
 pub mod windowed;
 // Own line (anti-conflict): the single wrap-side/exclusion-width rule.
 mod wrap_side;
+// Own line (anti-conflict): tight/through wrap to the authored contour.
+mod wrap_contour;

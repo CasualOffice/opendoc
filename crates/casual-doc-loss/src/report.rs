@@ -261,8 +261,41 @@ impl CompatibilityReport {
         Ok(())
     }
 
-    /// Folds a second report's entries into this one, aggregating by feature
-    /// *and disposition* and preserving the deterministic ordering.
+    /// The entries whose `preserved` claim only the verbatim source snapshot
+    /// licenses — `Retention` mode's byte floor, and nothing else.
+    ///
+    /// # Why a caller needs this (`109` FID-AT-07)
+    ///
+    /// The snapshot reproduces the source **only when the file is saved
+    /// unchanged**, byte for byte. Every other save regenerates the parts the
+    /// model consumes from the model, and the detail the model does not carry is
+    /// not in the result. In `Retention` mode the import report nevertheless says
+    /// `preserved` for that detail, because at the moment of import the claim is
+    /// true: an unchanged save keeps it. It stops being true the moment the
+    /// reader edits and saves, and before this nothing said so.
+    ///
+    /// The entries this returns are exactly the ones a regenerating save drops:
+    /// a construct retained inside the model cites its own
+    /// [`PreservationKind::ModelSubtree`](crate::PreservationKind::ModelSubtree)
+    /// record, and a part the side-table carries cites its
+    /// [`PreservationKind::OpaquePart`](crate::PreservationKind::OpaquePart)
+    /// record, so neither is here. A save that regenerates names these as
+    /// `not-retained` in its own report; an exact save of an unchanged document
+    /// loses none of them.
+    ///
+    /// Complexity: O(entries), once per import.
+    pub fn held_only_by_source_snapshot<'a>(
+        &'a self,
+        ledger: &PreservationLedger,
+    ) -> impl Iterator<Item = &'a CompatibilityEntry> + 'a {
+        let snapshot = ledger.source_snapshot();
+        self.entries
+            .iter()
+            .filter(move |entry| snapshot.is_some() && entry.ledger_id == snapshot)
+    }
+
+    /// Folds a second report's entries into this one, aggregating by feature,
+    /// disposition *and part*, and preserving the deterministic ordering.
     ///
     /// Two findings that share a feature name but differ in disposition are
     /// different fidelity facts and stay separate entries. Used where one source
@@ -275,7 +308,9 @@ impl CompatibilityReport {
     pub fn merge(&mut self, other: Self) {
         for entry in other.entries {
             match self.entries.iter_mut().find(|existing| {
-                existing.feature == entry.feature && existing.disposition == entry.disposition
+                existing.feature == entry.feature
+                    && existing.disposition == entry.disposition
+                    && existing.location.part_name == entry.location.part_name
             }) {
                 Some(existing) => {
                     existing.occurrences = existing.occurrences.saturating_add(entry.occurrences);
@@ -286,7 +321,8 @@ impl CompatibilityReport {
         self.sort();
     }
 
-    /// Restores the deterministic order: by feature name, then by disposition.
+    /// Restores the deterministic order: by feature name, then by disposition,
+    /// then by the part the finding is charged to.
     ///
     /// Public because an adapter may append its own findings to a report built
     /// here, and a report whose order depends on insertion order is not
@@ -296,6 +332,7 @@ impl CompatibilityReport {
             left.feature
                 .cmp(&right.feature)
                 .then_with(|| left.disposition.cmp(&right.disposition))
+                .then_with(|| left.location.part_name.cmp(&right.location.part_name))
         });
     }
 

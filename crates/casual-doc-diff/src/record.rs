@@ -232,6 +232,25 @@ pub struct DiffChange {
     /// The other half of a move pair, by change id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paired_with: Option<String>,
+    /// Where, in the newer document, content that exists only in the older one
+    /// stood — set on a whole-block deletion and on a move's origin, the two
+    /// kinds with no `right` anchor.
+    ///
+    /// `path`'s last segment is the sibling position the removed block would
+    /// occupy if it were put back: the newer-side sibling it preceded, or one
+    /// past the last sibling when it stood at the end of its list. So it is an
+    /// **insertion point**, not a block — it may name no block at all — and a
+    /// resolver must treat it as one. A redline view uses it to show a removed
+    /// paragraph struck through where it was, which is the difference between
+    /// a comparison a reader can follow and a list of things that are gone
+    /// (ADR-065).
+    ///
+    /// Not part of [`DiffChange::id`]: where the content stood does not change
+    /// what the change is, so ids stay stable across this field's addition.
+    /// `None` for every other kind, and for a removed story, which has no
+    /// list left to stand in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<DiffAnchor>,
     /// Exact, or heuristic.
     pub confidence: Confidence,
 }
@@ -402,6 +421,7 @@ impl ChangeSpec {
             right_text: self.right_text,
             fields: self.fields,
             paired_with: None,
+            place: None,
             confidence: if self.heuristic {
                 Confidence::Heuristic
             } else {

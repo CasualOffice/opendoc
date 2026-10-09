@@ -120,6 +120,37 @@ test.describe("with a coarse pointer", () => {
   });
 });
 
+test.describe("with a coarse pointer on a wide screen", () => {
+  // A touchscreen laptop: a finger at 1280px, in the ribbon chrome, where the
+  // table-size grid is still an anchored popover rather than a sheet. Its cells
+  // were drawn for a mouse at 15x15 — under WCAG 2.5.8's 24px — and the rule
+  // that raises them is keyed on the POINTER, so it has to reach a wide window
+  // too, not only the phone rung (`phone-command-surface.spec.mjs` holds that).
+  test.use({ hasTouch: true, viewport: { width: 1280, height: 900 } });
+
+  test("the table-size grid's cells are 24px targets", async ({ page, consoleErrors }) => {
+    await gotoEditor(page);
+    await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
+    await page.locator("#tabInsert").click();
+    await page.locator("#insertTableBtn").click();
+    const grid = page.locator("#insertTableMenu");
+    await expect(grid).toBeVisible();
+    const sizes = await grid.locator(".gc").evaluateAll((els) =>
+      els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return Math.min(r.width, r.height);
+      }),
+    );
+    expect(sizes.length).toBe(80);
+    expect(Math.min(...sizes), "the smallest cell is a WCAG 2.5.8 target").toBeGreaterThanOrEqual(24);
+    // Still an anchored popover at this width, inside the window.
+    const box = await stableBox(grid);
+    expect(box.x + box.width).toBeLessThanOrEqual(1280);
+    expect(box.y + box.height).toBeLessThanOrEqual(900);
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
 // ---- HF-098 -----------------------------------------------------------------
 // Not touch-specific: a 9px grip is fiddly with a trackpad and unusable with a
 // pen, so the expanded target has to hold for every pointer.

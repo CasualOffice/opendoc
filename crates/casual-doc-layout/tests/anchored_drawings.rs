@@ -45,7 +45,64 @@ use casual_doc_model::v1::WrapSide;
 /// vertex list the tests asserted before the path primitive replaced it — which is
 /// what keeps those assertions comparable across the change.
 fn endpoints(commands: &[casual_doc_layout::display::PathCommand]) -> Vec<Point> {
-    commands.iter().map(|command| command.endpoint()).collect()
+    commands
+        .iter()
+        .filter_map(|command| command.endpoint())
+        .collect()
+}
+
+/// Whether a resolved path ends by closing its subpath.
+fn closes(commands: &[casual_doc_layout::display::PathCommand]) -> bool {
+    commands.last() == Some(&casual_doc_layout::display::PathCommand::Close)
+}
+
+/// The vertices of a geometry's FIRST path and whether it closes — what every
+/// one-path preset and freeform resolves to.
+fn first_path(paths: &[casual_doc_layout::page::AnchorPath]) -> (Vec<Point>, bool) {
+    let commands = &paths.first().expect("at least one path").commands;
+    (endpoints(commands), closes(commands))
+}
+
+/// The corner radius of a resolved `roundRect`: the standard's path starts at
+/// `(l, y1)` on the left edge and its first arc ends at `(x1, t)` on the top
+/// edge, and `x1 - l` is the radius.
+///
+/// The rounded rectangle used to be a closed-form primitive carrying its radius;
+/// it now resolves through ECMA-376's own definition (true circular arcs rather
+/// than the old quadratic corners), so the radius is read off the outline.
+fn corner_radius(content: &AnchorContent) -> Twip {
+    use casual_doc_layout::display::PathCommand;
+    let AnchorContent::Path { paths, .. } = content else {
+        panic!("expected a roundRect path, got {content:?}");
+    };
+    let commands = &paths[0].commands;
+    let Some(PathCommand::MoveTo { point: start }) = commands.first() else {
+        panic!("a path begins with a move: {commands:?}");
+    };
+    let Some(PathCommand::CubicTo { point: corner, .. }) = commands.get(1) else {
+        panic!("a roundRect's first segment is its top-left arc: {commands:?}");
+    };
+    Twip(corner.x.raw() - start.x.raw())
+}
+
+/// Asserts two closed outlines are the SAME polygon: identical vertices in
+/// identical cyclic order, whatever vertex each starts from.
+///
+/// The standard's preset paths trace each outline from the vertex ECMA-376's
+/// `a:pathLst` starts at (a `triangle` starts bottom-left); the hand-written
+/// vertex lists these tests were first written against started elsewhere. The
+/// shape is what is asserted, to the twip and in order — the start vertex is not
+/// a property of the shape.
+#[track_caller]
+fn assert_same_outline(actual: &[Point], expected: &[Point]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?} vs {expected:?}");
+    let matches = (0..expected.len()).any(|shift| {
+        (0..expected.len()).all(|index| actual[(index + shift) % actual.len()] == expected[index])
+    });
+    assert!(
+        matches,
+        "not the same outline in the same order:\n actual   {actual:?}\n expected {expected:?}"
+    );
 }
 
 fn node(id: u64) -> NodeId {
@@ -1914,13 +1971,11 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
     let anchored = &layout.pages[0].anchored;
     assert_eq!(anchored.len(), 2);
     assert!(matches!(anchored[0].content, AnchorContent::Ellipse { .. }));
-    assert!(matches!(
-        anchored[1].content,
-        AnchorContent::RoundedRectangle {
-            radius: Twip(360),
-            ..
-        }
-    ));
+    assert_eq!(
+        corner_radius(&anchored[1].content),
+        Twip(360),
+        "adj 25000 of a 1440-twip side"
+    );
 
     let list = compose_page(&layout.pages[0]);
     assert!(list.items.iter().any(|item| matches!(
@@ -1930,15 +1985,18 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             ..
         }
     )));
+    // The rounded rectangle reaches the display list as the curved path the
+    // standard defines — four arcs, each a cubic — not as a box.
     assert!(list.items.iter().any(|item| matches!(
         item,
         PaintItem::Shape {
-            geometry: DisplayShapeGeometry::RoundedRect {
-                radius: Twip(360),
-                ..
-            },
+            geometry: DisplayShapeGeometry::Path { commands, .. },
             ..
-        }
+        } if commands
+            .iter()
+            .filter(|command| matches!(command, casual_doc_layout::display::PathCommand::CubicTo { .. }))
+            .count()
+            == 4
     )));
 }
 
@@ -2012,42 +2070,35 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
         .anchored
         .iter()
         .filter_map(|anchor| match &anchor.content {
-            AnchorContent::Path { commands, .. } => Some(endpoints(commands)),
+            AnchorContent::Path { paths, .. } => Some(first_path(paths).0),
             _ => None,
         })
         .collect();
     assert_eq!(polygons.len(), 3);
-    // The vertex ORDER below is the specification's, not a hand-written list's.
-    // These shapes stopped being hand-coded vertex lists and are now resolved from
-    // the committed ECMA-376 table, which starts each polygon at a different vertex
-    // and winds the other way. The point SETS are identical — that was measured for
-    // all eighteen collapsed presets before the hand-written code was deleted — so
-    // this re-pins the same geometry against its new source of truth rather than
-    // recording a change in what is drawn.
-    assert_eq!(
-        polygons[0],
-        vec![
-            Point::new(Twip(1_440), Twip(2_880)),
+    assert_same_outline(
+        &polygons[0],
+        &[
             Point::new(Twip(2_160), Twip(1_440)),
             Point::new(Twip(2_880), Twip(2_880)),
-        ]
+            Point::new(Twip(1_440), Twip(2_880)),
+        ],
     );
-    assert_eq!(
-        polygons[1],
-        vec![
-            Point::new(Twip(2_880), Twip(2_880)),
+    assert_same_outline(
+        &polygons[1],
+        &[
             Point::new(Twip(2_880), Twip(1_440)),
             Point::new(Twip(4_320), Twip(2_880)),
-        ]
+            Point::new(Twip(2_880), Twip(2_880)),
+        ],
     );
-    assert_eq!(
-        polygons[2],
-        vec![
-            Point::new(Twip(4_320), Twip(2_160)),
+    assert_same_outline(
+        &polygons[2],
+        &[
             Point::new(Twip(5_040), Twip(1_440)),
             Point::new(Twip(5_760), Twip(2_160)),
             Point::new(Twip(5_040), Twip(2_880)),
-        ]
+            Point::new(Twip(4_320), Twip(2_160)),
+        ],
     );
 
     let list = compose_page(&layout.pages[0]);
@@ -2109,18 +2160,16 @@ fn an_untyped_preset_resolves_its_outline_from_the_table() {
     };
 
     // `plus` is a twelve-vertex cross, arc-free, and nothing like its bounding box.
-    let AnchorContent::Path {
-        commands, closed, ..
-    } = content("plus")
-    else {
+    let AnchorContent::Path { paths, .. } = content("plus") else {
         panic!("a cross must not paint as a rectangle");
     };
-    assert_eq!(commands.len(), 12, "a plus has twelve vertices");
+    let (points, closed) = first_path(&paths);
+    assert_eq!(points.len(), 12, "a plus has twelve vertices");
     assert!(closed, "and it is a closed outline");
     // The box is 1440 twips square at (1440, 1440). A cross visits its edge MIDPOINTS,
     // which a rectangle never does — that is the assertion a type check cannot make.
-    let xs: Vec<i32> = commands.iter().map(|c| c.endpoint().x.raw()).collect();
-    let ys: Vec<i32> = commands.iter().map(|c| c.endpoint().y.raw()).collect();
+    let xs: Vec<i32> = points.iter().map(|point| point.x.raw()).collect();
+    let ys: Vec<i32> = points.iter().map(|point| point.y.raw()).collect();
     assert!(
         xs.iter().any(|x| *x > 1_440 && *x < 2_880),
         "a vertex strictly inside the horizontal span: {xs:?}"
@@ -2134,20 +2183,18 @@ fn an_untyped_preset_resolves_its_outline_from_the_table() {
     // assertion used to be that it fell back to its bounding rectangle. `ellipse`
     // reaches the table only as an untyped token like this; a shape whose model
     // geometry is `Ellipse` is still answered by the typed primitive.
-    let AnchorContent::Path {
-        commands, closed, ..
-    } = content("ellipse")
-    else {
+    let AnchorContent::Path { paths, .. } = content("ellipse") else {
         panic!("an arc-bearing preset must not paint as a rectangle either");
     };
+    let (points, closed) = first_path(&paths);
     assert!(closed, "an ellipse is a closed outline");
     // The box is the same 1440 twips square at (1440, 1440), so this is the circle of
     // radius 720 about (2160, 2160), drawn as a move to its leftmost point and four
     // quarter-turn cubics. Its on-curve points are the box's edge MIDPOINTS — the
     // same assertion the cross above makes, and one a rectangle cannot pass.
-    let walk: Vec<(i32, i32)> = commands
+    let walk: Vec<(i32, i32)> = points
         .iter()
-        .map(|command| (command.endpoint().x.raw(), command.endpoint().y.raw()))
+        .map(|point| (point.x.raw(), point.y.raw()))
         .collect();
     assert_eq!(
         walk,
@@ -3046,10 +3093,7 @@ fn an_adjustment_guide_that_computes_its_value_is_evaluated_not_defaulted() {
             ShapeGeometry::RoundRectangle,
             adjustments,
         )));
-        match content {
-            AnchorContent::RoundedRectangle { radius, .. } => radius,
-            other => panic!("expected a rounded rectangle, got {other:?}"),
-        }
+        corner_radius(&content)
     };
     let adj = |formula: &str| {
         vec![ShapeAdjustment {
@@ -3069,12 +3113,16 @@ fn an_adjustment_guide_that_computes_its_value_is_evaluated_not_defaulted() {
         Twip(360),
         "a computed guide must not fall back to the default"
     );
-    // One referencing the box resolves too: `ss` is 1440, so ss/4 = 360 and the
-    // radius is 1440 * 360 / 100000 = 5.
+    // One referencing the box resolves too, IN THE SHAPE'S OWN UNIT. Guides are
+    // evaluated against the shape's extent in EMU — the unit the document wrote
+    // them in — so `ss` is 914400 and `ss / 4` = 228600, which the definition's own
+    // `pin 0 adj 50000` clamps to 50000: a fully rounded end, 720 twips. (Evaluated
+    // in twips, as the first evaluator did, `ss` was 1440 and this read 5 twips — a
+    // unit artifact, not a shape anyone authored.)
     assert_eq!(
         radius_with(adj("*/ ss 1 4")),
-        Twip(5),
-        "a box-relative guide"
+        Twip(720),
+        "a box-relative guide, clamped by the definition"
     );
 }
 
@@ -3089,7 +3137,7 @@ fn an_adjustment_guide_that_computes_its_value_is_evaluated_not_defaulted() {
 #[test]
 fn a_curves_control_points_are_resolved_into_page_space() {
     use casual_doc_layout::display::PathCommand;
-    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+    use casual_doc_model::v1::{CustomGeometry, GeometryPoint, ShapePath, ShapePathCommand};
 
     let child = GroupChild::Shape(GroupShape {
         hyperlink: None,
@@ -3102,29 +3150,20 @@ fn a_curves_control_points_are_resolved_into_page_space() {
         geometry: ShapeGeometry::Other,
         preset: None,
         adjustments: Vec::new(),
-        path: Some(ShapePath {
+        path: Some(CustomGeometry::single_path(ShapePath {
             width_emu: 100,
             height_emu: 100,
-            commands: vec![
+            ..ShapePath::new(vec![
                 ShapePathCommand::MoveTo {
-                    point: PointEmu { x_emu: 0, y_emu: 0 },
+                    point: GeometryPoint::literal(0, 0),
                 },
                 ShapePathCommand::CubicBezTo {
-                    control1: PointEmu {
-                        x_emu: 30,
-                        y_emu: 80,
-                    },
-                    control2: PointEmu {
-                        x_emu: 70,
-                        y_emu: 80,
-                    },
-                    point: PointEmu {
-                        x_emu: 100,
-                        y_emu: 0,
-                    },
+                    control1: GeometryPoint::literal(30, 80),
+                    control2: GeometryPoint::literal(70, 80),
+                    point: GeometryPoint::literal(100, 0),
                 },
-            ],
-        }),
+            ])
+        })),
         fill: None,
         stroke: None,
         flip_h: false,
@@ -3133,13 +3172,11 @@ fn a_curves_control_points_are_resolved_into_page_space() {
     });
 
     let content = only_anchor_content(&single_child_group_document(child));
-    let AnchorContent::Path {
-        commands, closed, ..
-    } = content
-    else {
+    let AnchorContent::Path { paths, .. } = content else {
         panic!("expected a path, got {content:?}");
     };
-    assert!(!closed, "no a:close was authored");
+    let commands = paths[0].commands.clone();
+    assert!(!closes(&commands), "no a:close was authored");
     // The box is 1440 twips square at (1440, 1440), and `@w`/`@h` are 100, so a
     // coordinate maps to 1440 + round(1440 * value / 100).
     assert_eq!(
@@ -3165,7 +3202,7 @@ fn a_curves_control_points_are_resolved_into_page_space() {
 /// expected twips are arithmetic, not a snapshot.
 #[test]
 fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
-    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+    use casual_doc_model::v1::{CustomGeometry, GeometryPoint, ShapePath, ShapePathCommand};
 
     let child_extent = Extent {
         width_emu: 914_400,
@@ -3176,10 +3213,10 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         height_emu: 914_400,
     };
     let move_to = |x_emu, y_emu| ShapePathCommand::MoveTo {
-        point: PointEmu { x_emu, y_emu },
+        point: GeometryPoint::literal(x_emu, y_emu),
     };
     let line_to = |x_emu, y_emu| ShapePathCommand::LineTo {
-        point: PointEmu { x_emu, y_emu },
+        point: GeometryPoint::literal(x_emu, y_emu),
     };
     let shape = |id, x_emu, path| {
         GroupChild::Shape(GroupShape {
@@ -3190,7 +3227,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
             geometry: ShapeGeometry::Other,
             preset: None,
             adjustments: Vec::new(),
-            path: Some(path),
+            path: Some(CustomGeometry::single_path(path)),
             fill: None,
             stroke: None,
             flip_h: false,
@@ -3223,7 +3260,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
                 ShapePath {
                     width_emu: 1000,
                     height_emu: 0,
-                    commands: vec![move_to(0, 0), line_to(1000, 0)],
+                    ..ShapePath::new(vec![move_to(0, 0), line_to(1000, 0)])
                 },
             ),
             // A closed triangle with both axes scaled.
@@ -3233,12 +3270,12 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
                 ShapePath {
                     width_emu: 100,
                     height_emu: 100,
-                    commands: vec![
+                    ..ShapePath::new(vec![
                         move_to(50, 0),
                         line_to(100, 100),
                         line_to(0, 100),
                         ShapePathCommand::Close,
-                    ],
+                    ])
                 },
             ),
         ],
@@ -3260,9 +3297,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         .anchored
         .iter()
         .filter_map(|anchor| match &anchor.content {
-            AnchorContent::Path {
-                commands, closed, ..
-            } => Some((endpoints(commands), *closed)),
+            AnchorContent::Path { paths, .. } => Some(first_path(paths)),
             _ => None,
         })
         .collect();
@@ -3298,17 +3333,18 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         )
     );
 
-    // …and the `closed` flag survives into the display list, which is the half
-    // the backends actually read.
+    // …and the closing survives into the display list, which is the half the
+    // backends actually read: as the authored `a:close` command, which a path with
+    // several subpaths needs, rather than only as the whole-path flag.
     let list = compose_page(&layout.pages[0]);
     let closed: Vec<bool> = list
         .items
         .iter()
         .filter_map(|item| match item {
             PaintItem::Shape {
-                geometry: DisplayShapeGeometry::Path { closed, .. },
+                geometry: DisplayShapeGeometry::Path { commands, closed },
                 ..
-            } => Some(*closed),
+            } => Some(*closed || closes(commands)),
             _ => None,
         })
         .collect();
@@ -3604,7 +3640,10 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
     enum Expected {
         Polygon(usize),
         Rectangle,
-        RoundedRectangle,
+        /// A closed path whose corners are curves — the `roundRect`, which now
+        /// resolves through the standard's definition (four quarter-circle arcs)
+        /// instead of a closed-form primitive with quadratic corners.
+        RoundedPath,
         Ellipse,
         Line,
     }
@@ -3612,7 +3651,7 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
     fn expected(geometry: ShapeGeometry) -> Expected {
         match geometry {
             ShapeGeometry::Rectangle | ShapeGeometry::Other => Expected::Rectangle,
-            ShapeGeometry::RoundRectangle => Expected::RoundedRectangle,
+            ShapeGeometry::RoundRectangle => Expected::RoundedPath,
             ShapeGeometry::Ellipse => Expected::Ellipse,
             ShapeGeometry::Line => Expected::Line,
             ShapeGeometry::Triangle | ShapeGeometry::RightTriangle => Expected::Polygon(3),
@@ -3635,15 +3674,10 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
         let document = single_child_group_document(preset_shape_child(geometry, Vec::new()));
         let content = only_anchor_content(&document);
         match (expected(geometry), &content) {
-            (
-                Expected::Polygon(count),
-                AnchorContent::Path {
-                    commands, closed, ..
-                },
-            ) => {
-                let points = endpoints(commands);
+            (Expected::Polygon(count), AnchorContent::Path { paths, .. }) => {
+                let (points, closed) = first_path(paths);
                 assert_eq!(points.len(), count, "{geometry:?} vertex count");
-                assert!(*closed, "{geometry:?} is a closed outline");
+                assert!(closed, "{geometry:?} is a closed outline");
                 for point in points {
                     assert!(
                         point.x >= Twip(1_440)
@@ -3654,8 +3688,22 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
                     );
                 }
             }
+            (Expected::RoundedPath, AnchorContent::Path { paths, .. }) => {
+                let commands = &paths[0].commands;
+                assert!(closes(commands), "{geometry:?} is a closed outline");
+                assert_eq!(
+                    commands
+                        .iter()
+                        .filter(|command| matches!(
+                            command,
+                            casual_doc_layout::display::PathCommand::CubicTo { .. }
+                        ))
+                        .count(),
+                    4,
+                    "{geometry:?} has four arc corners"
+                );
+            }
             (Expected::Rectangle, AnchorContent::Rectangle { .. })
-            | (Expected::RoundedRectangle, AnchorContent::RoundedRectangle { .. })
             | (Expected::Ellipse, AnchorContent::Ellipse { .. })
             | (Expected::Line, AnchorContent::Line { .. }) => {}
             (want, other) => {
@@ -3663,6 +3711,179 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
             }
         }
     }
+}
+
+/// A preset outside the typed set — kept only as its `ST_ShapeType` token — draws
+/// from the standard's table instead of its bounding box (`109` FID-L-04).
+///
+/// `wedgeRectCallout` at its default adjust values puts its tail's tip at
+/// `(hc - 0.20833w, vc + 0.625h)`: below the box, which is the whole point of a
+/// callout and exactly what the bounding-rectangle fallback could never draw. The
+/// tail leaves the bottom edge between `x1 = w·2/12` and `x2 = w·5/12`. Every
+/// number is arithmetic on the 1" box at (1440, 1440), not a snapshot.
+#[test]
+fn a_retained_preset_token_draws_from_the_standards_table() {
+    let outline = |token: &str, adjustments: Vec<ShapeAdjustment>| {
+        let mut child = preset_shape_child(ShapeGeometry::Other, adjustments);
+        if let GroupChild::Shape(shape) = &mut child {
+            shape.preset = Some(token.to_owned());
+        }
+        only_anchor_content(&single_child_group_document(child))
+    };
+    let at = |x, y| Point::new(Twip(x), Twip(y));
+
+    let AnchorContent::Path { paths, .. } = outline("wedgeRectCallout", Vec::new()) else {
+        panic!("a callout must draw its outline, not a box");
+    };
+    let (points, closed) = first_path(&paths);
+    assert!(closed, "the callout is a closed outline");
+    let tail = [at(2_040, 2_880), at(1_860, 3_060), at(1_680, 2_880)];
+    assert!(
+        points.windows(3).any(|window| window == tail),
+        "the tail leaves the bottom edge and reaches its tip below the box: {points:?}"
+    );
+
+    // The authored `a:avLst` overrides the definition's defaults by name: tip
+    // centred, a full height below the centre.
+    let AnchorContent::Path { paths, .. } = outline(
+        "wedgeRectCallout",
+        vec![
+            ShapeAdjustment {
+                name: "adj1".to_owned(),
+                formula: "val 0".to_owned(),
+            },
+            ShapeAdjustment {
+                name: "adj2".to_owned(),
+                formula: "val 100000".to_owned(),
+            },
+        ],
+    ) else {
+        panic!("still a path");
+    };
+    let (points, _) = first_path(&paths);
+    assert!(
+        points
+            .windows(3)
+            .any(|window| window == [at(2_040, 2_880), at(2_160, 3_600), at(1_680, 2_880)]),
+        "the authored adjust values move the tip: {points:?}"
+    );
+
+    // A token outside `ST_ShapeType` has no definition, and keeps painting the
+    // bounding rectangle rather than nothing (docs/119 §6 "Rejected").
+    assert!(matches!(
+        outline("notAShapeType", Vec::new()),
+        AnchorContent::Rectangle { .. }
+    ));
+}
+
+/// The display-list items one preset shape composes to, in paint order.
+fn composed_shape_items(child: GroupChild) -> Vec<PaintItem> {
+    let document = single_child_group_document(child);
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    compose_page(&layout.pages[0])
+        .items
+        .into_iter()
+        .filter(|item| matches!(item, PaintItem::Shape { .. }))
+        .collect()
+}
+
+/// A preset of several paths paints each one its OWN way (`a:path@fill`,
+/// `@stroke`): the standard's `can` is a filled body, a LIGHTENED lid with no
+/// outline, and an outline-only path over both. One item per path, in path
+/// order — a single item filled the shape's colour would paint the lid the same
+/// colour as the body and outline the seams that are not there.
+#[test]
+fn a_multi_path_preset_paints_each_path_with_its_own_fill_mode_and_stroke() {
+    let mut child = preset_shape_child(ShapeGeometry::Other, Vec::new());
+    if let GroupChild::Shape(shape) = &mut child {
+        shape.preset = Some("can".to_owned());
+        shape.stroke = Some(casual_doc_model::v1::ShapeStroke {
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 12_700,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        });
+    }
+    let painted: Vec<(Option<[u8; 3]>, bool)> = composed_shape_items(child)
+        .iter()
+        .map(|item| match item {
+            PaintItem::Shape { fill, stroke, .. } => (
+                fill.as_ref().map(|fill| match fill {
+                    DisplayFill::Solid(color) => [color.r, color.g, color.b],
+                    DisplayFill::Gradient(_) => panic!("a solid fill stays solid"),
+                }),
+                stroke.is_some(),
+            ),
+            _ => unreachable!("filtered to shapes"),
+        })
+        .collect();
+    assert_eq!(
+        painted,
+        vec![
+            // The body: the shape's own fill, no outline.
+            (Some([60, 120, 180]), false),
+            // The lid: `lighten` — `a:tint` at 60%, 255 - (255 - c) * 0.6.
+            (Some([138, 174, 210]), false),
+            // The outline over both, unfilled.
+            (None, true),
+        ]
+    );
+}
+
+/// The arrowheads of an open preset ride the path that is OPEN and STROKED: the
+/// standard's `arc` is a filled wedge with no outline plus the stroked arc
+/// itself, and the arrowhead belongs on the arc, not on the wedge's closed
+/// outline (which has no ends to put one on).
+#[test]
+fn an_arcs_arrowhead_rides_its_stroked_open_path() {
+    use casual_doc_model::v1::{LineEnd, LineEndKind};
+    let mut child = preset_shape_child(ShapeGeometry::Other, Vec::new());
+    if let GroupChild::Shape(shape) = &mut child {
+        shape.preset = Some("arc".to_owned());
+        shape.stroke = Some(casual_doc_model::v1::ShapeStroke {
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 12_700,
+            dash: None,
+            head_end: None,
+            tail_end: Some(LineEnd {
+                kind: LineEndKind::Triangle,
+                width: None,
+                length: None,
+            }),
+        });
+    }
+    let tails: Vec<bool> = composed_shape_items(child)
+        .iter()
+        .map(|item| {
+            matches!(
+                item,
+                PaintItem::Shape {
+                    tail_end: Some(_),
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        tails,
+        vec![false, true],
+        "the wedge, then the arc with its head"
+    );
 }
 
 /// Three of the new presets, to the twip, so the outlines are arithmetic rather
@@ -3673,7 +3894,7 @@ fn new_presets_resolve_to_their_documented_outlines() {
     let outline = |geometry, adjustments| {
         let document = single_child_group_document(preset_shape_child(geometry, adjustments));
         match only_anchor_content(&document) {
-            AnchorContent::Path { commands, .. } => endpoints(&commands),
+            AnchorContent::Path { paths, .. } => first_path(&paths).0,
             other => panic!("expected a path, got {other:?}"),
         }
     };
@@ -3681,21 +3902,21 @@ fn new_presets_resolve_to_their_documented_outlines() {
 
     // `homePlate` at its preset default `adj` = 50000: the point is half the
     // shorter side (720tw) deep, on the RIGHT.
-    assert_eq!(
-        outline(ShapeGeometry::HomePlate, Vec::new()),
-        vec![
+    assert_same_outline(
+        &outline(ShapeGeometry::HomePlate, Vec::new()),
+        &[
             at(1_440, 1_440),
             at(2_160, 1_440),
             at(2_880, 2_160),
             at(2_160, 2_880),
             at(1_440, 2_880),
-        ]
+        ],
     );
 
     // `plus` at its preset default `adj` = 25000: 360tw arms.
-    assert_eq!(
-        outline(ShapeGeometry::Plus, Vec::new()),
-        vec![
+    assert_same_outline(
+        &outline(ShapeGeometry::Plus, Vec::new()),
+        &[
             at(1_440, 1_800),
             at(1_800, 1_800),
             at(1_800, 1_440),
@@ -3708,28 +3929,29 @@ fn new_presets_resolve_to_their_documented_outlines() {
             at(1_800, 2_880),
             at(1_800, 2_520),
             at(1_440, 2_520),
-        ]
+        ],
     );
 
     // The regular `pentagon`, apex up, filling the box.
-    // Re-pinned in the specification's vertex order; see the note in
-    // `angular_presets_reach_exact_polygon_display_primitives`. Same five points.
-    assert_eq!(
-        outline(ShapeGeometry::Pentagon, Vec::new()),
-        vec![
-            at(1_440, 1_990),
+    assert_same_outline(
+        &outline(ShapeGeometry::Pentagon, Vec::new()),
+        &[
             at(2_160, 1_440),
             at(2_880, 1_990),
             at(2_605, 2_880),
             at(1_715, 2_880),
-        ]
+            at(1_440, 1_990),
+        ],
     );
 
     // An authored `a:avLst` really moves the outline: the default `hexagon`
     // insets its corners by 360tw (25000 of the 1440tw shorter side), an
     // authored 40000 by 576tw.
     let default_hexagon = outline(ShapeGeometry::Hexagon, Vec::new());
-    assert_eq!(default_hexagon[1], at(1_800, 1_440));
+    assert!(
+        default_hexagon.contains(&at(1_800, 1_440)),
+        "{default_hexagon:?}"
+    );
     let authored_hexagon = outline(
         ShapeGeometry::Hexagon,
         vec![ShapeAdjustment {
@@ -3737,7 +3959,11 @@ fn new_presets_resolve_to_their_documented_outlines() {
             formula: "val 40000".to_owned(),
         }],
     );
-    assert_eq!(authored_hexagon[1], at(2_016, 1_440));
+    assert!(
+        authored_hexagon.contains(&at(2_016, 1_440))
+            && !authored_hexagon.contains(&at(1_800, 1_440)),
+        "{authored_hexagon:?}"
+    );
 }
 
 /// A grouped text box whose `wps:wsp` is an ELLIPSE paints as an ellipse with
@@ -5153,10 +5379,18 @@ fn a_picture_filled_shape_clips_its_image_to_its_outline() {
     // rectangle's four.
     match &list.items[clip_at] {
         PaintItem::PushClipPath { commands, closed } => {
-            assert!(closed, "a filled shape's outline closes");
+            // The geometry engine closes a subpath with an explicit `Close`
+            // command, so a closed outline is either flagged or ends in one.
+            assert!(
+                *closed || matches!(commands.last(), Some(casual_doc_layout::display::PathCommand::Close)),
+                "a filled shape's outline closes: {commands:?}"
+            );
+            let vertices = commands
+                .iter()
+                .filter(|command| !matches!(command, casual_doc_layout::display::PathCommand::Close))
+                .count();
             assert_eq!(
-                commands.len(),
-                3,
+                vertices, 3,
                 "the triangle's own outline clips the picture: {commands:?}"
             );
         }
@@ -5293,5 +5527,207 @@ fn a_tiled_picture_fill_is_not_painted_as_a_stretch() {
         )),
         "the shape itself still paints: {:?}",
         list.items
+    );
+}
+
+/// The stepped contour FID-L-12's guards wrap to, in Word's 21,600 space over a
+/// `WRAP_FLOAT_WIDTH` × `WRAP_FLOAT_HEIGHT` (1,500 × 1,800 twip) float: nothing
+/// for the first 100 twips, the full width down to 600, then only the leading
+/// third (500 twips) to the bottom. The empty top is what makes the FIRST line
+/// of a paragraph depend on its own height: the band starts inside it.
+fn stepped_contour() -> Vec<PointEmu> {
+    [
+        (0, 1_200),
+        (21_600, 1_200),
+        (21_600, 7_200),
+        (7_200, 7_200),
+        (7_200, 21_600),
+        (0, 21_600),
+    ]
+    .into_iter()
+    .map(|(x_emu, y_emu)| PointEmu { x_emu, y_emu })
+    .collect()
+}
+
+/// [`wrap_float`] wrapping as `wrap`, carrying [`stepped_contour`].
+fn contour_float(
+    id: u64,
+    media: MediaId,
+    relative_from: HorizontalAnchor,
+    position: HorizontalPosition,
+    wrap: WrapMode,
+) -> InlineNode {
+    let InlineNode::AnchoredDrawing(mut drawing) =
+        wrap_float(id, media, relative_from, position, at_paragraph_top())
+    else {
+        unreachable!("wrap_float builds an anchored drawing");
+    };
+    drawing.anchor.wrap = wrap;
+    drawing.anchor.wrap_polygon = Some(stepped_contour());
+    InlineNode::AnchoredDrawing(drawing)
+}
+
+/// The leading inset a line spanning `top..top + height` must have beside
+/// [`stepped_contour`] whose float's top is at `float_top`, flush with the
+/// measure's leading edge: the widest band the line overlaps.
+fn contour_inset(float_top: i32, top: i32, height: i32) -> i32 {
+    let overlaps = |from: i32, to: i32| top < float_top + to && top + height > float_top + from;
+    if overlaps(100, 600) {
+        1_500
+    } else if overlaps(600, 1_800) {
+        500
+    } else {
+        0
+    }
+}
+
+/// Every text line of `blocks`: its top (from `origin`, stacking the blocks),
+/// its height and its leading edge.
+fn stacked_lines(blocks: &[BlockFragment], origin: i32) -> Vec<(i32, i32, i32)> {
+    let mut out = Vec::new();
+    let mut paragraph_top = origin;
+    for block in blocks {
+        let BlockFragment::Paragraph { lines, .. } = block else {
+            panic!("expected a paragraph fragment");
+        };
+        let mut y = paragraph_top;
+        for line in &lines.lines {
+            if let Some(run) = line.runs.first() {
+                out.push((y, line.height.raw(), run.origin.x.raw()));
+            }
+            y += line.height.raw();
+        }
+        paragraph_top += block.height().raw();
+    }
+    out
+}
+
+/// **Tight wrap follows the authored contour, band by band** (`docs/109`
+/// FID-L-12). Through the paragraph-local exclusion (the anchoring paragraph)
+/// and the carried one (the next paragraph of the same cell): a line beside the
+/// contour's wide top is pushed past the whole float, a line beside its narrow
+/// arm only past the arm, and the first line — which the contour's first band
+/// starts INSIDE — is narrowed although its top is above that band.
+///
+/// The square-wrap control shows the same float, contour and all, excluding its
+/// whole box, so the difference is the wrap mode and nothing else.
+#[test]
+fn a_tight_wrap_follows_its_contour_band_by_band_in_its_own_cell() {
+    let (media, definitions) = media_defs();
+    let laid_out = |wrap: WrapMode| {
+        let float = contour_float(
+            900,
+            media,
+            HorizontalAnchor::Column,
+            HorizontalPosition::Offset(0),
+            wrap,
+        );
+        let cell = wrap_cell(
+            wrap_cell_table(
+                vec![float, run(901, "A short anchor line.")],
+                vec![wrap_filler(902)],
+            ),
+            definitions.clone(),
+        );
+        stacked_lines(&cell.blocks, 0)
+    };
+
+    let tight = laid_out(WrapMode::Tight);
+    let mut beside_arm = 0;
+    for &(top, height, x) in &tight {
+        let expected = contour_inset(0, top, height);
+        assert!(
+            (x - expected).abs() <= 1,
+            "the line at {top}..{} starts at {x}; the contour asks for {expected}",
+            top + height
+        );
+        if expected == 500 {
+            beside_arm += 1;
+        }
+    }
+    assert!(
+        beside_arm >= 2,
+        "several lines must sit beside the contour's narrow arm: {tight:?}"
+    );
+
+    for (top, height, x) in laid_out(WrapMode::Square) {
+        let expected = if top < WRAP_FLOAT_HEIGHT.raw() {
+            1_500
+        } else {
+            0
+        };
+        assert!(
+            (x - expected).abs() <= 1,
+            "square wrap keeps the box: the line at {top}..{} starts at {x}, not {expected}",
+            top + height
+        );
+    }
+}
+
+/// The page-level pass follows the contour too: a `Page`-relative float (which
+/// the paragraph-local slice does not handle) narrows its own paragraph and the
+/// following one band by band.
+#[test]
+fn a_page_relative_tight_wrap_follows_its_contour_in_the_following_paragraph() {
+    use casual_doc_layout::document_layout::paginate_document;
+
+    let (media, definitions) = media_defs();
+    // At the left margin, so the float is flush with the body measure.
+    let float = contour_float(
+        910,
+        media,
+        HorizontalAnchor::Page,
+        HorizontalPosition::Offset(1_440 * 635),
+        WrapMode::Tight,
+    );
+    let document = Document::new(
+        node(911),
+        vec![
+            BlockNode::Paragraph(Paragraph {
+                id: node(912),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![float, run(913, "Anchor.")],
+            }),
+            BlockNode::Paragraph(Paragraph {
+                id: node(914),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![wrap_filler(915)],
+            }),
+        ],
+        definitions,
+    )
+    .unwrap();
+    let layout = paginate_document(&document, &ParleyShaper::new());
+    let page = &layout.pages[0];
+    let float_top = page
+        .anchored
+        .first()
+        .expect("the float is placed")
+        .rect
+        .origin
+        .y
+        .raw();
+    let mut checked = 0;
+    let mut beside_arm = 0;
+    for placed in &page.placed {
+        for (top, height, x) in stacked_lines(
+            std::slice::from_ref(&placed.fragment),
+            placed.rect.origin.y.raw(),
+        ) {
+            let expected = contour_inset(float_top, top, height);
+            assert!(
+                (x - expected).abs() <= 1,
+                "the line at {top}..{} starts at {x}; the contour asks for {expected}",
+                top + height
+            );
+            checked += 1;
+            if expected == 500 {
+                beside_arm += 1;
+            }
+        }
+    }
+    assert!(
+        checked >= 6 && beside_arm >= 2,
+        "{checked} lines, {beside_arm} beside the arm"
     );
 }

@@ -70,6 +70,7 @@ use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
 use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
 use casual_doc_layout::document_layout::LayoutView;
+// Own line (anti-conflict): per-table horizontal scrolling in reflow (`docs/151` §6.3d).
 use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
@@ -77,6 +78,7 @@ use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
 use casual_doc_layout::page::{AnchorContent, Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
+use casual_doc_layout::reflow_scroll;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
@@ -156,6 +158,31 @@ mod window;
 // and this file is already 40k lines and is owned by other lanes.
 mod objects;
 
+// Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
+// Its own module for the reason `objects` gives, and because the whole feature
+// is one command composed from two existing operations.
+mod inline_move;
+
+// Word's "Lock aspect ratio" as the selection publishes it (`docs/109` FID-AT-09).
+#[cfg(test)]
+#[path = "object_locks_tests.rs"]
+mod object_locks_tests;
+
+// An edited save states the current `app.xml` counts (`docs/109` FID-AT-04).
+#[cfg(test)]
+#[path = "save_statistics_tests.rs"]
+mod save_statistics_tests;
+
+// The document's Track Changes setting (`docs/165` M7, `docs/109` HF-283).
+#[cfg(test)]
+#[path = "track_changes_tests.rs"]
+mod track_changes_tests;
+
+// Forms protection per section (`docs/165` M6, `docs/109` FID-AT-06).
+#[cfg(test)]
+#[path = "forms_protection_tests.rs"]
+mod forms_protection_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -171,6 +198,12 @@ mod toc;
 // returns a sidecar, which is exactly what makes it movable into a Worker later
 // without an engine change.
 mod diff;
+
+// The redline view (ADR-065): a finished comparison painted into a throwaway
+// copy of its newer side, for the version-history and Compare canvases. Its own
+// module because `diff` is at its size limit and this is a separate act — it
+// writes a document, where `diff` only reads two.
+mod compare_view;
 
 // Measurement units (`docs/153`, "Choose measurement units"). Its own module
 // because the preference belongs to the PERSON rather than to a document, so
@@ -188,6 +221,12 @@ mod collab;
 // replayed, so keeping it off the document handle is what stops it ever reaching
 // a commit.
 mod presence;
+
+// Chart AUTHORING — the data behind a chart, its family, its title and its
+// legend (`docs/155`). Its own module for the same reason as `diff`: this file is
+// 26k lines and is owned by other lanes, and the whole feature is one read, one
+// write and the gate that decides when the write survives a save.
+mod chart;
 
 use window::BodyLayout;
 use window::WindowedBody;
@@ -645,6 +684,14 @@ pub struct WasmDocument {
     /// cannot observe it, which is the whole point of not driving reflow through
     /// `setPageSetup`.
     layout_view: LayoutView,
+    /// How far the reader has scrolled each over-wide table sideways in reflow,
+    /// by table node (`docs/151` §6.3d) — a VIEW like `layout_view` beside it:
+    /// no `Operation`, no revision, invisible to export. Remembered here because
+    /// every relayout builds fresh pages and the offset has to be written back
+    /// onto them (`reflow_scroll::apply_table_scroll`); the offset ON the pages
+    /// is the one geometry reads, and it is idempotent by construction. Empty
+    /// outside reflow.
+    reflow_table_scroll: BTreeMap<NodeId, Twip>,
     /// docs/108 phase 2 (HF-131). While `Some`, paragraph formatting applied through
     /// `apply_paragraph_props_as` or `apply_indent_props` is recorded as a tracked
     /// `w:pPrChange`, dated with the inner value. The host scopes it to ONE command
@@ -784,6 +831,8 @@ enum HistoryKind {
     TableStructure,
     ObjectResize,
     ObjectMove,
+    /// A Ctrl-drag that dropped a copy of an in-line object (`inline_move`).
+    ObjectCopy,
     ObjectCrop,
     ObjectAltText,
     ObjectDelete,
@@ -797,6 +846,8 @@ enum HistoryKind {
     NoteChange,
     Review,
     ReviewTyping,
+    /// The document's Track Changes setting (`SetTrackRevisions`).
+    TrackChanges,
 }
 
 impl HistoryKind {
@@ -821,6 +872,7 @@ impl HistoryKind {
             Self::TableStructure => "Table structure",
             Self::ObjectResize => "Object resize",
             Self::ObjectMove => "Object move",
+            Self::ObjectCopy => "Copy object",
             Self::ObjectCrop => "Crop",
             Self::ObjectAltText => "Alt text",
             Self::ObjectDelete => "Delete object",
@@ -836,6 +888,7 @@ impl HistoryKind {
             Self::NoteChange => "Note change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
+            Self::TrackChanges => "Track changes",
         }
     }
 }
@@ -869,6 +922,8 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
         Operation::SetTextBoxBody { .. } => HistoryKind::ObjectResize,
+        // Word's "Lock aspect ratio" sits in the Size tab, beside the size it governs.
+        Operation::SetObjectLocks { .. } => HistoryKind::ObjectResize,
         Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
             HistoryKind::ObjectDelete
         }
@@ -924,6 +979,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. } => HistoryKind::Edit,
+        Operation::SetTrackRevisions { .. } => HistoryKind::TrackChanges,
+        // Leads no user action of its own: a section break carries it.
+        Operation::SetSectionFormProtection { .. } => HistoryKind::SectionBreak,
         // Shape fill and outline are formatting, exactly as Word groups them.
         Operation::SetShapeFill { .. } | Operation::SetShapeStroke { .. } => {
             HistoryKind::Formatting
@@ -981,9 +1039,117 @@ pub fn open_as(bytes: &[u8], format_id: &str) -> Result<WasmDocument, JsValue> {
 
 #[wasm_bindgen]
 impl WasmDocument {
+    /// The `docProps/app.xml` statistics as they are NOW (`109` FID-AT-04), each
+    /// `None` where the editor cannot say.
+    ///
+    /// Words, characters (without and with spaces) and paragraphs are
+    /// [`document_stats`](Self::document_stats)' — the counts the status bar
+    /// shows, which take in every story's text (headers, footers, notes, text
+    /// boxes); Word's own definitions are not reproduced, so a count can differ
+    /// from the one Word would write for the same text. Pages and lines come from
+    /// this session's own pagination and only when it is whole and exact: a
+    /// windowed body has measured a prefix, and a count of a prefix is not the
+    /// document's — that statistic is left as it was, so the save leaves it out
+    /// as stale and says so rather than writing a guess.
+    ///
+    /// **O(document)**: one text walk and, for lines, one pass over the placed
+    /// pages. Called once per regenerating save, which is O(document) anyway.
+    fn current_statistics(&self) -> [Option<i64>; 6] {
+        let stats = self.document_stats();
+        // The page count is the document's once measuring has reached the end,
+        // windowed or not; a line count needs every page laid out, which only a
+        // whole body has.
+        let pages = self
+            .layout
+            .page_count_is_exact()
+            .then(|| i64::try_from(self.layout.page_count()).unwrap_or(i64::MAX));
+        let lines = (!self.layout.is_windowed()).then(|| {
+            let lines: usize = self
+                .layout
+                .resident()
+                .pages
+                .iter()
+                .map(|page| {
+                    placed_paragraphs(&page.placed)
+                        .iter()
+                        .map(|paragraph| paragraph.lines.lines.len())
+                        .sum::<usize>()
+                })
+                .sum();
+            i64::try_from(lines).unwrap_or(i64::MAX)
+        });
+        [
+            pages,
+            Some(i64::from(stats.words)),
+            Some(i64::from(stats.characters)),
+            Some(i64::from(stats.characters_with_spaces)),
+            lines,
+            Some(i64::from(stats.paragraphs)),
+        ]
+    }
+
+    /// Runs `export` over the document with `statistics` written into its
+    /// `docProps/app.xml` properties, then puts back what was there — so the
+    /// save carries current counts and the document the session goes on editing
+    /// is exactly what it was. `None` when there is nothing to write (no
+    /// statistics asked for, or a document that carries no application
+    /// properties at all, where inventing an `app.xml` is not this save's call).
+    ///
+    /// A statistic given as `None` is left as the document holds it.
+    /// `source_unchanged` is false for the callback by construction: statistics
+    /// are only refreshed for an edited document.
+    fn with_current_statistics<T>(
+        &mut self,
+        statistics: Option<[Option<i64>; 6]>,
+        export: impl FnOnce(&Document, &DocumentResources, Option<&SourceEnvelope>) -> T,
+    ) -> Option<T> {
+        let statistics = statistics?;
+        self.document.properties()?;
+        let app = &mut self.document.properties_mut().app;
+        let slots = [
+            &mut app.pages,
+            &mut app.words,
+            &mut app.characters,
+            &mut app.characters_with_spaces,
+            &mut app.lines,
+            &mut app.paragraphs,
+        ];
+        let mut previous = [None; 6];
+        for ((slot, current), kept) in slots.into_iter().zip(statistics).zip(&mut previous) {
+            *kept = *slot;
+            if let Some(current) = current {
+                *slot = Some(current);
+            }
+        }
+        let result = export(
+            &self.document,
+            &self.resources,
+            self.format_state.source.as_ref(),
+        );
+        let app = &mut self.document.properties_mut().app;
+        for (slot, kept) in [
+            &mut app.pages,
+            &mut app.words,
+            &mut app.characters,
+            &mut app.characters_with_spaces,
+            &mut app.lines,
+            &mut app.paragraphs,
+        ]
+        .into_iter()
+        .zip(previous)
+        {
+            *slot = kept;
+        }
+        Some(result)
+    }
+
     /// See [`WasmDocument::export_as`]. Kept free of `JsValue` so native tests
     /// exercise the same registry dispatch and compatibility reporting as WASM.
-    fn export_as_inner(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, String> {
+    fn export_as_inner(
+        &mut self,
+        format_id: &str,
+        mode: &str,
+    ) -> Result<WasmExportArtifact, String> {
         let format = FormatId::new(format_id)
             .map_err(|error| format!("invalid format identifier: {error}"))?;
         let mode = match mode {
@@ -998,17 +1164,41 @@ impl WasmDocument {
             }
         };
         let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
-        let artifact = registry
-            .export(
-                &format,
-                ExportRequest {
-                    document: &self.document,
-                    resources: &self.resources,
-                    source: self.format_state.source.as_ref(),
-                    source_unchanged: self.revision == 0,
-                    mode,
-                },
-            )
+        // An EDITED document's `docProps/app.xml` statistics are the counts it had
+        // when it was opened; the io adapter leaves out each one still holding the
+        // source's value (`109` FID-AT-04). The editor knows the current counts, so
+        // a regenerating DOCX save writes them instead — for the duration of the
+        // export only (`with_current_statistics`), so saving changes nothing in the
+        // document the session goes on editing.
+        let refresh = format.as_str() == casual_doc_io::formats::DOCX
+            && !matches!(mode, ExportMode::ExactIfUnchanged)
+            && self.revision != 0;
+        let statistics = refresh.then(|| self.current_statistics());
+        let artifact = self
+            .with_current_statistics(statistics, |document, resources, source| {
+                registry.export(
+                    &format,
+                    ExportRequest {
+                        document,
+                        resources,
+                        source,
+                        source_unchanged: false,
+                        mode,
+                    },
+                )
+            })
+            .unwrap_or_else(|| {
+                registry.export(
+                    &format,
+                    ExportRequest {
+                        document: &self.document,
+                        resources: &self.resources,
+                        source: self.format_state.source.as_ref(),
+                        source_unchanged: self.revision == 0,
+                        mode,
+                    },
+                )
+            })
             .map_err(|error| format!("export {format}: {error}"))?;
         let report_json = compatibility_report_json(&artifact.report, &artifact.ledger)?;
 
@@ -1203,11 +1393,17 @@ impl WasmDocument {
     /// autosave, and persist a 390px-wide "page" into the user's DOCX.
     ///
     /// Returns a JSON object: `{ "reflow": bool, "approximations": [string] }`.
-    /// The approximations are **reported, not hidden** — a page- or
+    /// The approximations are **reported, not hidden**, and they are derived from
+    /// **this document at this measure** rather than recited: a top-level table
+    /// wider than the reading column keeps its widths and scrolls sideways
+    /// (`docs/151` §6.3d), an image wider than it has been fitted to it
+    /// (`docs/166` R-1), a page- or
     /// margin-anchored drawing keeps its paper-relative position (`docs/151` §8
     /// item 1 is still open), a footnote lands at a tile bottom rather than a page
     /// bottom, and a `PAGE`/`NUMPAGES` field prints a refusal because a tile index
-    /// is not a page number (`docs/151` §6.5).
+    /// is not a page number (`docs/151` §6.5). A document with none of these gets
+    /// an empty list, which is the point: the old fixed list told every reader
+    /// about footnotes whether or not the document had any.
     ///
     /// Complexity: `O(document)`. Entering or leaving reflow is a full re-shape —
     /// the galley cache is width-scoped, so nothing in it survives a width change
@@ -1268,9 +1464,85 @@ impl WasmDocument {
             content_width_twip: width,
             tile_height_twip: height,
             gutter_twip: gutter,
-            approximations: self.layout_view.approximations(),
+            approximations: self.layout_view.approximations(&self.document),
         })
         .unwrap_or_else(|_| "{\"reflow\":false,\"approximations\":[]}".to_owned())
+    }
+
+    /// The over-wide tables on reflow tile `index`, as JSON:
+    /// `[{ "table": id, "topTwip", "heightTwip", "scrollWidthTwip",
+    /// "viewportTwip", "offsetTwip" }]`, top to bottom (`docs/151` §6.3d).
+    ///
+    /// In a reflowed column a top-level table keeps the width its document
+    /// declares (`MeasureFit::Scroll`), and the part past the tile is reached the
+    /// way Google Docs' pageless view reaches it: a horizontal scroller of the
+    /// table's own. This is what a host needs to put one there — the band the
+    /// table occupies on this tile, the width the scroller spans, the width it
+    /// shows, and where it is scrolled to now. `[]` on paper, and for a tile whose
+    /// tables all fit.
+    ///
+    /// Complexity: `O(fragments on the tile)`, plus each over-wide table's own
+    /// rows to find its widest — never the document.
+    #[wasm_bindgen(js_name = reflowTableOverflows)]
+    #[must_use]
+    pub fn reflow_table_overflows(&self, index: u32) -> String {
+        if !self.layout_view.is_reflow() {
+            return "[]".to_owned();
+        }
+        let rows: Vec<TableOverflowJson> =
+            reflow_scroll::table_overflows(self.painted_layout(), index as usize)
+                .into_iter()
+                .map(|overflow| TableOverflowJson {
+                    table: overflow.table.to_string(),
+                    top_twip: overflow.top.raw(),
+                    height_twip: overflow.height.raw(),
+                    scroll_width_twip: overflow.scroll_width.raw(),
+                    viewport_twip: overflow.viewport.raw(),
+                    offset_twip: overflow.offset.raw(),
+                })
+                .collect();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned())
+    }
+
+    /// Scrolls over-wide table `table` (on tile `index`, or any tile it spans)
+    /// sideways to `offsetTwip`, and returns the offset applied — clamped to the
+    /// table's range — or `-1` when there is no such over-wide table there.
+    ///
+    /// **A view, never an edit**, like `setLayoutView`: no `Operation`, no
+    /// revision, nothing on the export path. The offset is written onto the
+    /// placed rows themselves, so the raster, `hitTest`, the caret and every
+    /// selection rectangle agree about which column is where without one of them
+    /// having to remember to ask (`casual_doc_layout::reflow_scroll`). It is
+    /// remembered across a relayout — typing, a width step, a font arriving — and
+    /// forgotten on leaving reflow.
+    ///
+    /// Complexity: `O(rows of the table)`. A scroll gesture is an interaction and
+    /// must not cost the document (`docs/107` §4); this never walks it.
+    #[wasm_bindgen(js_name = setReflowTableScroll)]
+    pub fn set_reflow_table_scroll(&mut self, index: u32, table: &str, offset_twip: i32) -> i32 {
+        self.set_reflow_table_scroll_inner(index as usize, table, offset_twip)
+            .map_or(-1, Twip::raw)
+    }
+
+    /// Rasterises over-wide table `table`'s band on tile `index` at its FULL
+    /// width and at offset zero — `scrollWidthTwip` by `heightTwip` from
+    /// `reflowTableOverflows` — so a host can put it in a native scroll container
+    /// and let the compositor scroll it. A scroll gesture then costs no raster at
+    /// all; only an edit to the table, which repaints its tile, re-rasterises it.
+    ///
+    /// Same pixels as `renderPage` would paint for those rows, from the same
+    /// composer and the same layout (the markup one while changes are shown).
+    ///
+    /// Throws when the tile has no such over-wide table.
+    #[wasm_bindgen(js_name = renderReflowTableStrip)]
+    pub fn render_reflow_table_strip(
+        &mut self,
+        index: u32,
+        table: &str,
+        dpi: f32,
+    ) -> Result<PageBitmap, JsValue> {
+        self.render_reflow_table_strip_inner(index, table, dpi)
+            .map_err(to_js)
     }
 
     /// Why this document cannot be edited, or the empty string when it can be.
@@ -2017,16 +2289,7 @@ impl WasmDocument {
             .into_iter()
             .rev()
             .find(|obj| obj.page == page && obj.rect.contains(point))
-            .map(|obj| ObjectHitPayload {
-                root: obj.root.to_string(),
-                subject: obj.subject.to_string(),
-                path: obj.path,
-                kind: obj.kind,
-                page: obj.page,
-                rect: flat_rect(obj.page, obj.rect),
-                anchored: obj.anchored,
-                capabilities: obj.capabilities,
-            })
+            .map(|obj| object_hit_payload(obj, self.document.definitions(), true))
     }
 
     /// Resolves the deepest painted descendant of multi-child group `root` at a
@@ -2053,7 +2316,7 @@ impl WasmDocument {
                     && object.page == page
                     && object.rect.contains(point)
             })
-            .map(object_hit_payload)
+            .map(|object| object_hit_payload(object, self.document.definitions(), false))
     }
 
     /// The paint-ordered leaf references inside multi-child group `root`, as
@@ -2069,7 +2332,7 @@ impl WasmDocument {
             .object_boxes_including_group_children()
             .into_iter()
             .filter(|object| object.root == root && object.subject != root)
-            .map(object_order_entry)
+            .map(|object| object_order_entry(object, self.document.definitions(), false))
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -2093,7 +2356,7 @@ impl WasmDocument {
         let objects: Vec<ObjectOrderEntryJson> = self
             .object_boxes()
             .into_iter()
-            .map(object_order_entry)
+            .map(|object| object_order_entry(object, self.document.definitions(), true))
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -2823,15 +3086,11 @@ impl WasmDocument {
         height_emu: f64,
         mime: String,
     ) -> Result<EditResult, JsValue> {
-        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
-        let (media_type, ext) = match mime.to_ascii_lowercase().as_str() {
-            "image/png" => ("image/png", "png"),
-            "image/jpeg" | "image/jpg" => ("image/jpeg", "jpeg"),
-            "image/gif" => ("image/gif", "gif"),
-            "image/bmp" | "image/x-ms-bmp" => ("image/bmp", "bmp"),
-            "image/tiff" => ("image/tiff", "tiff"),
-            "image/webp" => ("image/webp", "webp"),
-            _ => return Err(to_js(format!("unsupported image type {mime:?}"))),
+        use casual_doc_model::v1::{
+            Drawing, Extent, LockFlags, MediaId, MediaReference, ObjectLocks,
+        };
+        let Some((media_type, ext)) = image_part_type(&mime) else {
+            return Err(to_js(format!("unsupported image type {mime:?}")));
         };
         if bytes.is_empty() {
             return Err(to_js("the image has no bytes".into()));
@@ -2886,7 +3145,19 @@ impl WasmDocument {
             flip_v: false,
             rotation: None,
         };
-        self.apply_action_as(
+        // Word writes `a:graphicFrameLocks noChangeAspect="1"` on the frame of every
+        // picture it inserts, and that flag is what makes a corner drag of the picture
+        // proportional — in Word, and here (`Definitions::locks_aspect_ratio`, read by
+        // the resize grips). A picture inserted here carries the same lock, so it keeps
+        // its proportions on a corner drag in this editor and in Word after a save.
+        let word_picture_locks = ObjectLocks {
+            frame: LockFlags {
+                no_change_aspect: true,
+                ..LockFlags::default()
+            },
+            object: LockFlags::default(),
+        };
+        self.apply_action_caret_as(
             vec![
                 // Registration first: the drawing that follows names this media id, and an
                 // operation must never be ordered before the thing it references.
@@ -2898,7 +3169,14 @@ impl WasmDocument {
                     at: Pos::new(owner, offset),
                     node: Box::new(InlineNode::Drawing(Box::new(drawing))),
                 },
+                // After the drawing: the lock names it.
+                Operation::SetObjectLocks {
+                    object: drawing_id,
+                    locks: word_picture_locks,
+                },
             ],
+            // Where `InsertInlineObject` alone left the caret: at the insertion point.
+            Pos::new(owner, offset),
             HistoryKind::ObjectInsert,
         )
         .map_err(to_js)
@@ -3267,6 +3545,46 @@ impl WasmDocument {
         let mut out = Vec::new();
         for (page, rect) in LayoutSnapshot::new(self.painted_layout())
             .selection_rects_on(range, self.edit_context.running_page())
+        {
+            out.extend_from_slice(&flat_rect(page, rect));
+        }
+        out
+    }
+
+    /// Rectangles for a mark that HANGS OFF THE TEXT'S BASELINE over a range —
+    /// a spelling or grammar squiggle, a tracked-change or comment underline —
+    /// flattened as `[page, x, y, w, h, …]` (page-local twips), one 5-tuple per
+    /// covered line-fragment.
+    ///
+    /// Horizontally identical to [`selectionRects`](Self::selection_rects);
+    /// vertically it is the marked run's own text box (its painted baseline
+    /// bracketed by its own ascent and descent) rather than the line box. A
+    /// host that hangs a decoration off the bottom of a selection rect puts it
+    /// at the bottom of the LINE, which walks away from the text as line
+    /// spacing grows — measured at 23.3 px below the baseline on a
+    /// double-spaced 11pt paragraph against 3.9 px at single. Use
+    /// `selectionRects` for a region fill (the selection, a find highlight) and
+    /// this for anything anchored to the glyphs.
+    #[wasm_bindgen(js_name = decorationRects)]
+    #[must_use]
+    pub fn decoration_rects(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Vec<i32> {
+        let Ok((start, end)) = self.order_endpoints(start_node, start_offset, end_node, end_offset)
+        else {
+            return Vec::new();
+        };
+        let range = ModelRange::new(
+            self.view_pos(ModelPos::new(start.node, start.offset)),
+            self.view_pos(ModelPos::new(end.node, end.offset)),
+        );
+        let mut out = Vec::new();
+        for (page, rect) in LayoutSnapshot::new(self.painted_layout())
+            .decoration_rects_on(range, self.edit_context.running_page())
         {
             out.extend_from_slice(&flat_rect(page, rect));
         }
@@ -4100,7 +4418,16 @@ impl WasmDocument {
     pub fn shape_format(&self, shape: &str) -> Result<Option<ShapeFormat>, JsValue> {
         let node = node_id(shape)?;
         let Some(shape) = find_shape(&self.document, node) else {
-            return Ok(None);
+            // A picture has an outline (its border) and no fill, and the host
+            // reflects it through this same read (`docs/109` HF-254).
+            return Ok(
+                casual_doc_edit::picture_border(&self.document, node).map(|border| ShapeFormat {
+                    fill: None,
+                    outline: border.map(|stroke| hex_of(stroke.color)),
+                    #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
+                    outline_width_emu: border.map(|stroke| stroke.width_emu as f64),
+                }),
+            );
         };
         Ok(Some(ShapeFormat {
             fill: shape.fill.as_ref().map(|fill| hex_of(fill.flat_color())),
@@ -4146,7 +4473,12 @@ impl WasmDocument {
         width_emu: Option<f64>,
     ) -> Result<EditResult, JsValue> {
         let node = node_id(shape)?;
-        let current = find_shape(&self.document, node).and_then(|shape| shape.stroke);
+        // A picture's border is the same stroke on a different carrier, and a
+        // weight or colour change inherits the rest of it just the same.
+        let current = match find_shape(&self.document, node) {
+            Some(shape) => shape.stroke,
+            None => casual_doc_edit::picture_border(&self.document, node).flatten(),
+        };
         let stroke = match rgba {
             Some(text) => Some(ShapeStroke {
                 color: shape_rgba(&text)?,
@@ -4222,6 +4554,73 @@ impl WasmDocument {
             HistoryKind::Edit,
         )
         .map_err(to_js)
+    }
+
+    /// Whether the document's Track Changes setting is on (`w:trackRevisions`,
+    /// `docs/165` M7): the flag Word saves a document with while tracking is on,
+    /// and opens it with. The host opens such a document in Suggesting mode. O(1).
+    #[wasm_bindgen(getter, js_name = trackRevisions)]
+    #[must_use]
+    pub fn track_revisions(&self) -> bool {
+        self.document.definitions().settings.track_changes
+    }
+
+    /// Turns the document's Track Changes setting on or off as one undoable edit
+    /// (`SetTrackRevisions`), so a save writes it and a reopen honours it. The
+    /// host calls it when the reader switches between Editing and Suggesting.
+    ///
+    /// `(node, offset)` is the caret to keep: a setting has no place in the text,
+    /// and moving the reader's caret because they changed mode would be a defect.
+    /// A request for the value the document already has is reported UNCHANGED —
+    /// same revision, nothing on the undo stack — rather than as an empty edit.
+    ///
+    /// # Errors
+    ///
+    /// A refusal when the choke point refuses the operation — a `trackedChanges`
+    /// restriction locks Track Changes, as Word does — or `node` is not an id.
+    #[wasm_bindgen(js_name = setTrackRevisions)]
+    pub fn set_track_revisions(
+        &mut self,
+        enabled: bool,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.set_track_revisions_inner(enabled, node, offset)
+            .map_err(to_js)
+    }
+
+    /// [`set_track_revisions`](Self::set_track_revisions) with a `String` error,
+    /// so a native test can read a refusal.
+    fn set_track_revisions_inner(
+        &mut self,
+        enabled: bool,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, String> {
+        // No caret yet (a document nobody has clicked into): the document root,
+        // which the host resolves to its first position, as for any setting.
+        let anchor = if node.is_empty() {
+            self.document.id()
+        } else {
+            node_id_msg(node)?
+        };
+        let caret = Pos::new(anchor, offset);
+        if self.track_revisions() == enabled {
+            return Ok(EditResult {
+                node: caret.node.to_string(),
+                offset,
+                revision: self.revision,
+                page_count: self.page_count(),
+                dirty: Vec::new(),
+                paste_loss: Vec::new(),
+                placed_object: String::new(),
+            });
+        }
+        self.apply_action_caret_as(
+            vec![Operation::SetTrackRevisions { enabled }],
+            caret,
+            HistoryKind::TrackChanges,
+        )
     }
 
     /// The document's editing restriction (`w:documentProtection`), for the host's
@@ -4864,7 +5263,7 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| "id space exhausted".to_owned())?;
-        let ops = section_break_ops(
+        let mut ops = section_break_ops(
             Pos::new(nid, offset),
             &split,
             &inherited,
@@ -4872,6 +5271,20 @@ impl WasmDocument {
             new_paragraph,
             start,
         );
+        // Word copies the split section's `w:sectPr` to the new break, `w:formProt`
+        // included; the model keeps that one flag in a side table keyed by section
+        // (`109` FID-AT-06), so it travels as its own operation, after the boundary
+        // it names exists.
+        if let Some(protected) = self
+            .document
+            .definitions()
+            .section_form_protection(split.current)
+        {
+            ops.push(Operation::SetSectionFormProtection {
+                section: new_section,
+                protected: Some(protected),
+            });
+        }
         self.apply_action_caret_as(ops, Pos::new(new_paragraph, 0), HistoryKind::SectionBreak)
     }
 
@@ -9852,6 +10265,7 @@ impl WasmDocument {
                     page_count: self.page_count(),
                     dirty: Vec::new(),
                     paste_loss: Vec::new(),
+                    placed_object: String::new(),
                 });
             };
             return self.remove_drop_cap(cap, body);
@@ -12972,6 +13386,7 @@ impl WasmDocument {
                 &self.folds,
             ));
         }
+        self.restore_reflow_table_scroll();
         self.revision += 1;
     }
 
@@ -13815,7 +14230,11 @@ impl WasmDocument {
     /// Accepted modes are `semantic`, `preserve_when_safe`, and
     /// `exact_if_unchanged`.
     #[wasm_bindgen(js_name = exportAs)]
-    pub fn export_as(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, JsValue> {
+    pub fn export_as(
+        &mut self,
+        format_id: &str,
+        mode: &str,
+    ) -> Result<WasmExportArtifact, JsValue> {
         self.export_as_inner(format_id, mode).map_err(to_js)
     }
 }
@@ -14141,6 +14560,7 @@ impl WasmDocument {
                 &self.folds,
             )
         });
+        self.restore_reflow_table_scroll();
         Ok(())
     }
 
@@ -14225,6 +14645,13 @@ impl WasmDocument {
             return Ok(self.layout_view());
         }
         self.layout_view = requested;
+        // A table offset is a position in a REFLOWED column; on paper the table
+        // bleeds into the margin and there is nothing to scroll. Forgotten rather
+        // than kept for a later return, because the column it was measured in is
+        // gone too (`docs/151` §6.3d).
+        if !requested.is_reflow() {
+            self.reflow_table_scroll.clear();
+        }
         // The galley cache MUST go, for two independent reasons, and neither is an
         // optimisation:
         //
@@ -14265,11 +14692,102 @@ impl WasmDocument {
                 &self.folds,
             ));
         }
+        // Same tables, new measure: the remembered offsets are re-clamped to it.
+        self.restore_reflow_table_scroll();
         // A re-layout is a view change, not a document change: bump the view epoch
         // the host re-rasters on, and leave `log.head()` — the DOCUMENT revision —
         // exactly where it was.
         self.revision += 1;
         Ok(self.layout_view())
+    }
+
+    /// See [`WasmDocument::set_reflow_table_scroll`]. `None` when there is no
+    /// over-wide `table` on tile `index`, or the view is paged.
+    fn set_reflow_table_scroll_inner(
+        &mut self,
+        index: usize,
+        table: &str,
+        offset_twip: i32,
+    ) -> Option<Twip> {
+        if !self.layout_view.is_reflow() {
+            return None;
+        }
+        let table = NodeId::from_str(table).ok()?;
+        let BodyLayout::Whole(layout) = &mut self.layout else {
+            return None;
+        };
+        let applied = reflow_scroll::scroll_table(layout, index, table, Twip(offset_twip))?;
+        // The markup layout is what is PAINTED while changes are shown, and it has
+        // the same tables on the same tiles: both get the offset, or the raster
+        // and the hit test would disagree about where the columns are.
+        if let Some(markup) = self.markup_layout.as_mut() {
+            reflow_scroll::scroll_table(markup, index, table, applied);
+        }
+        self.reflow_table_scroll.insert(table, applied);
+        Some(applied)
+    }
+
+    /// See [`WasmDocument::render_reflow_table_strip`].
+    fn render_reflow_table_strip_inner(
+        &mut self,
+        index: u32,
+        table: &str,
+        dpi: f32,
+    ) -> Result<PageBitmap, String> {
+        if !self.layout_view.is_reflow() {
+            return Err("a table strip exists only in reflow".to_owned());
+        }
+        let table = NodeId::from_str(table).map_err(|_| format!("not a node id: {table}"))?;
+        let strip = reflow_scroll::table_strip_page(self.painted_layout(), index as usize, table)
+            .ok_or_else(|| format!("tile {index} has no over-wide table {table}"))?;
+        let width_px = strip.page_size.width.to_device_px(dpi).ceil() as u32;
+        let height_px = strip.page_size.height.to_device_px(dpi).ceil() as u32;
+        let mut surface = match self.document.background() {
+            Some(c) => Surface::with_background(width_px, height_px, [c.r, c.g, c.b]),
+            None => Surface::new(width_px, height_px),
+        }
+        .map_err(|e| format!("allocate surface: {e:?}"))?;
+        let registry = self.shaper.registry();
+        let fonts = RegistryFontSource::new(&registry);
+        render(
+            &compose_page_with(&strip, &ComposeOptions { marks: self.marks }),
+            &mut surface,
+            dpi,
+            &fonts,
+            &BorrowedMedia(self.resources.as_map()),
+        );
+        Ok(PageBitmap {
+            width_px,
+            height_px,
+            rgba: surface.data().to_vec(),
+        })
+    }
+
+    /// Writes every remembered table offset back onto the layouts a relayout
+    /// just rebuilt — re-clamped to the tables and the column as they now are.
+    /// A no-op when nothing has been scrolled, and outside reflow, where there
+    /// is nothing to scroll. Idempotent (`reflow_scroll`), so a rebuild site that
+    /// calls it twice, or a layout that kept some pages, cannot double an offset.
+    fn restore_reflow_table_scroll(&mut self) {
+        self.write_reflow_table_scroll(false);
+    }
+
+    /// Puts every scrolled table back at offset zero, so a layout handed to the
+    /// incremental paginator is exactly the layout it built.
+    fn reset_reflow_table_scroll(&mut self) {
+        self.write_reflow_table_scroll(true);
+    }
+
+    fn write_reflow_table_scroll(&mut self, reset: bool) {
+        if self.reflow_table_scroll.is_empty() || !self.layout_view.is_reflow() {
+            return;
+        }
+        if let BodyLayout::Whole(layout) = &mut self.layout {
+            reflow_scroll::apply_table_scroll(layout, &self.reflow_table_scroll, reset);
+        }
+        if let Some(markup) = self.markup_layout.as_mut() {
+            reflow_scroll::apply_table_scroll(markup, &self.reflow_table_scroll, reset);
+        }
     }
 
     /// See [`WasmDocument::page_size`].
@@ -14385,6 +14903,7 @@ impl WasmDocument {
                 &self.folds,
             ));
         }
+        self.restore_reflow_table_scroll();
     }
 
     fn register_fonts_inner(&mut self, bytes: &[u8], lengths: &[u32]) -> Result<(), String> {
@@ -14883,6 +15402,12 @@ impl WasmDocument {
             if casual_doc_edit::protection::exempt_from_protection(op, self.capabilities) {
                 continue;
             }
+            // `forms` protects only the sections that do not say `w:formProt="false"`
+            // (ECMA-376 §17.18.29: "no restrictions in sections where `formProt` is
+            // false"; `docs/165` M6, `109` FID-AT-06).
+            if self.forms_leave_open(op) {
+                continue;
+            }
             if !self.op_is_inside_a_form_field(op) {
                 return Err(refused!(
                     "document.protected-forms-only",
@@ -14892,6 +15417,38 @@ impl WasmDocument {
             }
         }
         Ok(())
+    }
+
+    /// Whether forms protection leaves every paragraph `op` writes in OPEN: each
+    /// one is in the body, in a section whose `w:formProt` is `false`
+    /// (`Definitions::section_form_protection`, `109` FID-AT-06). A section that
+    /// states nothing, or `true`, is protected — `None` is not `Some(false)`.
+    ///
+    /// Only paragraph-addressed operations can be placed in a section here
+    /// ([`operation_paragraphs`]); anything else stays under the form-field rule,
+    /// which refuses it — a table or block insertion in an open section included
+    /// (`109` FID-AT-13). Headers, footers, notes and text boxes are not in a
+    /// section's body and stay protected, as in Word.
+    ///
+    /// **Complexity.** O(sections) and nothing more for every document whose
+    /// sections leave none open — which is every document but a mixed one. A
+    /// mixed one pays one pass over the top-level body per paragraph named,
+    /// stopping at the next section break: O(top-level body blocks).
+    fn forms_leave_open(&self, op: &Operation) -> bool {
+        let definitions = self.document.definitions();
+        let open = |section: SectionId| definitions.section_form_protection(section) == Some(false);
+        if !definitions
+            .sections
+            .iter()
+            .any(|boundary| open(boundary.id))
+        {
+            return false;
+        }
+        operation_paragraphs(op).is_some_and(|paragraphs| {
+            paragraphs
+                .iter()
+                .all(|paragraph| body_section_of(&self.document, *paragraph).is_some_and(open))
+        })
     }
 
     /// Whether an operation writes inside an ENABLED text form field's result.
@@ -15039,6 +15596,20 @@ impl WasmDocument {
             return ops.to_vec();
         }
         let mut removed: Vec<NodeId> = Vec::new();
+        // An object this same transaction puts BACK is moving, not leaving: an
+        // in-line object dragged to a new place in the text is a
+        // `RemoveInlineObject` followed by an `InsertInlineObject` of the very same
+        // node (`inline_move`), and cascading its removal would delete the chart's
+        // data while the chart itself survived the move — a chart that paints as
+        // `[chart]` after a drag. Its whole subtree comes back with it, so any
+        // chart nested inside it is moving too. O(operations).
+        let reinserted: Vec<NodeId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::InsertInlineObject { node, .. } => Some(node.id()),
+                _ => None,
+            })
+            .collect();
         for op in ops {
             // The two operations that name the node they remove. Everything else is
             // the positional family recorded above; a wildcard rather than 60 explicit
@@ -15046,6 +15617,9 @@ impl WasmDocument {
             if let Operation::DeleteObject { object } | Operation::RemoveInlineObject { object } =
                 op
             {
+                if reinserted.contains(object) {
+                    continue;
+                }
                 // The node IS a chart: answered from the registry, no walk. The
                 // common case, and the one the chart delete gesture takes.
                 if charts.iter().any(|(_, chart)| chart.object == *object) {
@@ -15104,6 +15678,11 @@ impl WasmDocument {
     /// correct and always `O(document)`.
     fn finish_edit_with(&mut self, caret: Pos, damage: &DirtySet) -> EditResult {
         self.revision += 1;
+        // The incremental pass reuses pages from the layout it is handed, so it
+        // must be handed them exactly as they were BUILT — no table scrolled —
+        // or a reused page would carry an offset into a comparison and a resume
+        // decision that know nothing about it. Written back after the pass.
+        self.reset_reflow_table_scroll();
         // The previous layout is TAKEN, not borrowed, and handed to the layout
         // pass so the pages it reuses are moved rather than copied. `apply_group`
         // refuses every mutation on a windowed body, so a whole one is what
@@ -15172,6 +15751,7 @@ impl WasmDocument {
             None => pages_to_repaint(&update),
         };
         self.layout = BodyLayout::Whole(update.layout);
+        self.restore_reflow_table_scroll();
         EditResult {
             node: caret.node.to_string(),
             offset: caret.offset,
@@ -15181,6 +15761,7 @@ impl WasmDocument {
             // Every path through here carried everything; the one path that can
             // degrade content fills this in on the result it returns.
             paste_loss: Vec::new(),
+            placed_object: String::new(),
         }
     }
 
@@ -15898,16 +16479,19 @@ impl WasmDocument {
         // correlation below (media-name match, then document order) is
         // layout-independent, so nothing else about this walk changes.
         for page in &self.painted_layout().pages {
-            for placed in &page.placed {
-                let BlockFragment::Paragraph {
-                    id,
-                    lines,
-                    box_metrics,
-                    ..
-                } = &placed.fragment
-                else {
-                    continue;
-                };
+            // Every paragraph painted on the page, table cells included — a
+            // picture in a cell paints exactly as one in the body does, and
+            // walking only the top-level paragraph fragments left it with no
+            // object box, so it could not be clicked, resized or dragged
+            // (`docs/109` UX-OB-03).
+            for &PlacedParagraph {
+                id,
+                lines,
+                box_metrics,
+                left,
+                top,
+            } in &placed_paragraphs(&page.placed)
+            {
                 // A fragment whose painted lines carry no object has nothing to
                 // correlate, and the `claimed` bookkeeping for it was never read.
                 let Some(nodes) = object_nodes.get(id) else {
@@ -15915,8 +16499,12 @@ impl WasmDocument {
                 };
                 let (img_nodes, tb_nodes, chart_nodes) =
                     (&nodes.images, &nodes.text_boxes, &nodes.charts);
-                let content_x = placed.rect.origin.x.raw() + box_metrics.indent_start.raw();
-                let content_y = placed.rect.origin.y.raw() + box_metrics.space_before.raw();
+                // Whether an object here sits directly in the run flow, which is
+                // what a move in the text needs. O(wrapped), and `wrapped` is
+                // empty for almost every paragraph.
+                let directly = |node: NodeId| !nodes.wrapped.contains(&node);
+                let content_x = left.raw() + box_metrics.indent_start.raw();
+                let content_y = top.raw() + box_metrics.space_before.raw();
                 let entry = claimed.entry(*id).or_insert_with(|| ClaimedObjectNodes {
                     images: vec![false; img_nodes.len()],
                     text_boxes: vec![false; tb_nodes.len()],
@@ -15953,6 +16541,7 @@ impl WasmDocument {
                                 }
                                 None => ("image", ObjectCapabilities::inline_image(frame)),
                             };
+                            let capabilities = capabilities.in_text(directly(found.node));
                             out.push(ObjectBox {
                                 root: found.node,
                                 subject: found.node,
@@ -15991,7 +16580,8 @@ impl WasmDocument {
                                 rect,
                                 rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_embedded_object(frame),
+                                capabilities: ObjectCapabilities::inline_embedded_object(frame)
+                                    .in_text(directly(chart_nodes[i])),
                             });
                         }
                     }
@@ -16015,7 +16605,8 @@ impl WasmDocument {
                                 rect,
                                 rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_text_box(frame),
+                                capabilities: ObjectCapabilities::inline_text_box(frame)
+                                    .in_text(directly(tb_nodes[i])),
                             });
                         }
                     }
@@ -16817,6 +17408,20 @@ impl WasmDocument {
         }
         out
     }
+}
+
+/// One over-wide table's band on one reflow tile — `reflowTableOverflows`'s
+/// rows (`docs/151` §6.3d). Twips, tile-local; `table` is the node id string the
+/// rest of this API speaks.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TableOverflowJson {
+    table: String,
+    top_twip: i32,
+    height_twip: i32,
+    scroll_width_twip: i32,
+    viewport_twip: i32,
+    offset_twip: i32,
 }
 
 /// Walks one paragraph's inlines in the same byte-anchor space
@@ -17626,22 +18231,21 @@ fn move_group_child_in_inlines(
 ) -> bool {
     for inline in inlines {
         match inline {
-            InlineNode::Sdt(sdt) => {
-                if move_group_child_in_inlines(&mut sdt.inlines, child, dx_emu, dy_emu) {
-                    return true;
-                }
-            }
-            InlineNode::Hyperlink(link) => {
-                if move_group_child_in_inlines(&mut link.inlines, child, dx_emu, dy_emu) {
-                    return true;
-                }
-            }
             InlineNode::Group(group) => {
                 if move_child_in_group(group, child, dx_emu, dy_emu) {
                     return true;
                 }
             }
-            _ => {}
+            // The declared inline wrappers (`Hyperlink`, `Field`, `Revision`,
+            // `Sdt`): a group inside a field result or a tracked insertion moved
+            // nothing when its child was dragged (`109` HF-214).
+            other => {
+                if let Some(nested) = contained_inlines_mut(other)
+                    && move_group_child_in_inlines(nested, child, dx_emu, dy_emu)
+                {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -17724,9 +18328,9 @@ fn paragraph_holds_group_child(paragraph: &Paragraph, node: NodeId) -> bool {
     fn in_inlines(inlines: &[InlineNode], node: NodeId) -> bool {
         inlines.iter().any(|inline| match inline {
             InlineNode::Group(group) => group_holds(group, node),
-            InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
-            InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
-            _ => false,
+            // The declared inline wrappers, so a group in a field result or a
+            // tracked insertion is found too (`109` HF-214).
+            other => contained_inlines(other).is_some_and(|nested| in_inlines(nested, node)),
         })
     }
     fn group_holds(group: &WordprocessingGroup, node: NodeId) -> bool {
@@ -17992,6 +18596,66 @@ fn damage_of(ops: &[Operation]) -> DirtySet {
     DirtySet::complete(nodes)
 }
 
+/// The paragraphs `op` writes in, for the per-section forms rule
+/// (`WasmDocument::forms_leave_open`), or `None` when it is not addressed to
+/// paragraphs. Both ends of a range: a range that crosses into a protected
+/// section is not open. O(1).
+fn operation_paragraphs(op: &Operation) -> Option<Vec<NodeId>> {
+    match op {
+        Operation::InsertText { at, .. }
+        | Operation::SplitParagraph { at, .. }
+        | Operation::InsertInlineObject { at, .. } => Some(vec![at.node]),
+        Operation::DeleteText { range }
+        | Operation::FormatText { range, .. }
+        | Operation::ClearFormatting { range }
+        | Operation::SetHyperlink { range, .. } => Some(vec![range.start.node, range.end.node]),
+        Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
+            Some(vec![*node])
+        }
+        Operation::JoinParagraphs { first, second, .. } => Some(vec![*first, *second]),
+        _ => None,
+    }
+}
+
+/// The section a BODY paragraph sits in — in a table cell or a content control
+/// too — or `None` when `paragraph` is not in the body.
+///
+/// `ParagraphProperties::section_break` names the section a top-level paragraph
+/// ENDS, and the final section is the trailing entry no paragraph names, so the
+/// paragraph's section is the one named by the first top-level paragraph at or
+/// after its block that carries a break (`casual_doc_edit::section_split_site`'s
+/// rule). **O(top-level body blocks)**: one pass to find the block, which
+/// continues forward to the break.
+fn body_section_of(document: &Document, paragraph: NodeId) -> Option<SectionId> {
+    fn holds(block: &BlockNode, paragraph: NodeId) -> bool {
+        match block {
+            BlockNode::Paragraph(candidate) => candidate.id == paragraph,
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| cell.blocks.iter().any(|block| holds(block, paragraph)))
+            }),
+            BlockNode::Sdt(sdt) => sdt.blocks.iter().any(|block| holds(block, paragraph)),
+            BlockNode::AltChunk(_) => false,
+        }
+    }
+    let body = document.body();
+    let index = body.iter().position(|block| holds(block, paragraph))?;
+    body[index..]
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Paragraph(candidate) => candidate.properties.section_break,
+            _ => None,
+        })
+        .or_else(|| {
+            document
+                .definitions()
+                .sections
+                .last()
+                .map(|boundary| boundary.id)
+        })
+}
+
 fn operation_write_position(op: &Operation) -> Option<(NodeId, u32)> {
     match op {
         Operation::InsertText { at, .. } => Some((at.node, at.offset)),
@@ -18158,6 +18822,11 @@ struct ParagraphObjectNodes {
     /// `images` too. Exactly one of the two boxes is ever painted for it, and the
     /// claim bookkeeping is per list, so neither can steal the other's slot.
     charts: Vec<NodeId>,
+    /// The nodes above that were found INSIDE a link, a field result, a content
+    /// control or a tracked change rather than directly in the paragraph — the
+    /// ones a move in the text cannot lift out on their own. Empty for almost
+    /// every paragraph, so asking it is a scan of nothing.
+    wrapped: Vec<NodeId>,
 }
 
 /// Which of one paragraph's object nodes a painted box has already been matched
@@ -18206,28 +18875,56 @@ const EMBEDDED_CHART_RELATIONSHIP: &str =
 ///
 /// O(1).
 fn chart_group_for_kind(kind: &str) -> Option<ChartGroupKind> {
+    // Word's and ONLYOFFICE's chart-type picker: each family with its stacked
+    // and 100% stacked forms, a line with markers, a smoothed scatter. Stacked
+    // bars overlap fully (`c:overlap` 100), which is what stacking means for a
+    // bar and what Word writes for one.
+    let bar = |direction, grouping| {
+        let stacked = !matches!(grouping, BarGrouping::Clustered | BarGrouping::Standard);
+        ChartGroupKind::Bar {
+            direction,
+            grouping,
+            gap_width: 150,
+            overlap: if stacked { 100 } else { -27 },
+        }
+    };
     let group = match kind {
-        "bar" => ChartGroupKind::Bar {
-            direction: BarDirection::Bar,
-            grouping: BarGrouping::Clustered,
-            gap_width: 150,
-            overlap: -27,
-        },
-        "column" => ChartGroupKind::Bar {
-            direction: BarDirection::Column,
-            grouping: BarGrouping::Clustered,
-            gap_width: 150,
-            overlap: -27,
-        },
+        "column" => bar(BarDirection::Column, BarGrouping::Clustered),
+        "column-stacked" => bar(BarDirection::Column, BarGrouping::Stacked),
+        "column-percent" => bar(BarDirection::Column, BarGrouping::PercentStacked),
+        "bar" => bar(BarDirection::Bar, BarGrouping::Clustered),
+        "bar-stacked" => bar(BarDirection::Bar, BarGrouping::Stacked),
+        "bar-percent" => bar(BarDirection::Bar, BarGrouping::PercentStacked),
         "line" => ChartGroupKind::Line {
             grouping: Grouping::Standard,
+            marker: false,
+        },
+        "line-markers" => ChartGroupKind::Line {
+            grouping: Grouping::Standard,
+            marker: true,
+        },
+        "line-stacked" => ChartGroupKind::Line {
+            grouping: Grouping::Stacked,
+            marker: false,
+        },
+        "line-percent" => ChartGroupKind::Line {
+            grouping: Grouping::PercentStacked,
             marker: false,
         },
         "area" => ChartGroupKind::Area {
             grouping: Grouping::Standard,
         },
+        "area-stacked" => ChartGroupKind::Area {
+            grouping: Grouping::Stacked,
+        },
+        "area-percent" => ChartGroupKind::Area {
+            grouping: Grouping::PercentStacked,
+        },
         "scatter" => ChartGroupKind::Scatter {
             style: ScatterStyle::LineMarker,
+        },
+        "scatter-smooth" => ChartGroupKind::Scatter {
+            style: ScatterStyle::SmoothMarker,
         },
         "pie" => ChartGroupKind::Pie {
             first_slice_angle: 0,
@@ -18409,6 +19106,9 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         )
     };
     Chart {
+        chart_retained: Vec::new(),
+        namespaces: Vec::new(),
+        space_retained: Vec::new(),
         object,
         coverage: ChartCoverage::Complete,
         // No title and `autoTitleDeleted` unset: Word shows "Chart Title" as a
@@ -18418,7 +19118,9 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         title: None,
         auto_title_deleted: true,
         plot_area: PlotArea {
+            retained: Vec::new(),
             groups: vec![ChartGroup {
+                retained: Vec::new(),
                 kind: group,
                 series,
                 axis_ids,
@@ -18427,6 +19129,7 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
             axes,
         },
         legend: Some(Legend {
+            retained: Vec::new(),
             position: LegendPosition::Bottom,
             overlay: false,
         }),
@@ -18434,6 +19137,7 @@ fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
         display_blanks_as: DisplayBlanks::Gap,
         vary_colors: chart_colors_by_point(group),
         external_data: None,
+        dirty: false,
     }
 }
 
@@ -19499,6 +20203,7 @@ struct ObjectOrderEntryJson {
     can_resize: bool,
     can_rotate: bool,
     can_move: bool,
+    can_move_in_text: bool,
     can_wrap: bool,
     can_delete: bool,
     can_alt_text: bool,
@@ -19513,6 +20218,10 @@ struct ObjectOrderEntryJson {
     /// Absent when every capability is available.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     capability_reasons: BTreeMap<String, String>,
+    /// Whether a resize of `root` must keep its aspect ratio — the file's
+    /// `noChangeAspect` (`Definitions::locks_aspect_ratio`). The same answer
+    /// [`ObjectHitPayload::locks_aspect_ratio`] gives.
+    locks_aspect_ratio: bool,
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -23573,8 +24282,41 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     ]
 }
 
-fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
+/// Whether a resize of `object` must keep its aspect ratio — Word's "Lock aspect
+/// ratio", DrawingML's `noChangeAspect` (`Definitions::locks_aspect_ratio`,
+/// `docs/109` FID-AT-09). An absent flag is unlocked, whatever the kind, because
+/// that is how Word reads the same file.
+///
+/// A resize acts on the ROOT, so the root's lock decides. One more place states
+/// it: a lone shape is modelled as a group of one, and its file writes the lock
+/// on the shape (`a:spLocks` in `wps:cNvSpPr`), which the importer keys by the
+/// shape — the box's subject. For a TOP-LEVEL selection, where the subject of a
+/// group of one is the very object the reader sees, that lock counts too. A
+/// member picked out of a many-member group (`top_level` false) does not lend the
+/// group its lock: the group is what a drag would resize.
+///
+/// Two side-table lookups, O(log n) each.
+fn object_locks_aspect_ratio(
+    object: &ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> bool {
+    definitions.locks_aspect_ratio(object.root)
+        || (top_level
+            && object.subject != object.root
+            && definitions.locks_aspect_ratio(object.subject))
+}
+
+/// `object`'s hit payload. `definitions` answers the one thing the placed box does
+/// not carry, [`object_locks_aspect_ratio`]; `top_level` says whether the box is a
+/// whole-object selection (`objectAt`) or a group member (`objectDescendantAt`).
+fn object_hit_payload(
+    object: ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> ObjectHitPayload {
     ObjectHitPayload {
+        locks_aspect_ratio: object_locks_aspect_ratio(&object, definitions, top_level),
         root: object.root.to_string(),
         subject: object.subject.to_string(),
         path: object.path,
@@ -23586,13 +24328,20 @@ fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
     }
 }
 
-fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
+/// `object`'s `objectOrder` entry; `definitions` and `top_level` as
+/// [`object_hit_payload`] uses them.
+fn object_order_entry(
+    object: ObjectBox,
+    definitions: &casual_doc_model::v1::Definitions,
+    top_level: bool,
+) -> ObjectOrderEntryJson {
     let capability_reasons = capability_refusals(object.kind, object.anchored, object.capabilities)
         .into_iter()
         .map(|(name, reason)| (name.to_owned(), reason.to_owned()))
         .collect();
     ObjectOrderEntryJson {
         capability_reasons,
+        locks_aspect_ratio: object_locks_aspect_ratio(&object, definitions, top_level),
         node: object.subject.to_string(),
         surface: "body".to_owned(),
         root: object.root.to_string(),
@@ -23604,6 +24353,7 @@ fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
         can_resize: object.capabilities.can_resize,
         can_rotate: object.capabilities.can_rotate,
         can_move: object.capabilities.can_move,
+        can_move_in_text: object.capabilities.can_move_in_text,
         can_wrap: object.capabilities.can_wrap,
         can_delete: object.capabilities.can_delete,
         can_alt_text: object.capabilities.can_alt_text,
@@ -24260,7 +25010,15 @@ struct ObjectCapabilities {
     /// compatibility summary; this mask is the exact carrier contract consumed
     /// by `objectHandles`.
     resize_handles: u8,
+    /// FREE placement: the object's anchor position can be set anywhere on the
+    /// page (`setObjectAnchorPosition`, the float drag, the arrow nudge).
     can_move: bool,
+    /// Placement IN THE TEXT: the object sits directly in a paragraph's run flow
+    /// and can be lifted out and put at another caret position
+    /// (`moveInlineObject` — Word's and Docs' drag of an in-line picture,
+    /// `docs/109` UX-OB-02). A different capability from `can_move` because it
+    /// is a different command with a different target: a caret, not a point.
+    can_move_in_text: bool,
     can_wrap: bool,
     can_delete: bool,
     can_alt_text: bool,
@@ -24271,14 +25029,29 @@ struct ObjectCapabilities {
 }
 
 impl ObjectCapabilities {
+    /// This in-line carrier, sitting directly in its paragraph's run flow
+    /// (`directly == true`) or inside a link, field result, content control or
+    /// tracked change, which a move in the text would have to tear it out of
+    /// (`casual_doc_edit::inline_object_position` is the same rule). O(1).
+    const fn in_text(self, directly: bool) -> Self {
+        Self {
+            can_move_in_text: directly,
+            ..self
+        }
+    }
+
     const fn inline_image(frame: ObjectFrame) -> Self {
         Self {
             can_resize: frame.handles != 0,
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
+            can_move_in_text: true,
             can_delete: true,
             can_alt_text: true,
             can_crop: true,
+            // Word's Picture Border: the picture's own `a:ln`, written by the
+            // same `SetShapeStroke` a shape's outline is (`docs/109` HF-254).
+            can_stroke: true,
             ..Self::empty()
         }
     }
@@ -24300,14 +25073,17 @@ impl ObjectCapabilities {
     /// carrier.
     ///
     /// What is true: the extent is writable (resize), the node is removable
-    /// (delete, paired with its projection — see `Operation::DeleteObject`), and
-    /// nothing else is. Inline, so no move and no wrap; no `a:xfrm`, so no
-    /// rotation; no picture fill or outline; no text story of its own.
+    /// (delete, paired with its projection — see `Operation::DeleteObject`), it
+    /// can be moved to another place in the text (the projection is keyed by its
+    /// id, which a move keeps), and nothing else is. In-line, so no free move and
+    /// no wrap; no `a:xfrm`, so no rotation; no picture fill or outline; no text
+    /// story of its own.
     const fn inline_embedded_object(frame: ObjectFrame) -> Self {
         Self {
             can_resize: frame.handles != 0,
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
+            can_move_in_text: true,
             can_delete: true,
             ..Self::empty()
         }
@@ -24318,6 +25094,7 @@ impl ObjectCapabilities {
             can_resize: frame.handles != 0,
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
+            can_move_in_text: true,
             can_delete: true,
             can_edit_text: true,
             ..Self::empty()
@@ -24334,6 +25111,8 @@ impl ObjectCapabilities {
             can_delete: true,
             can_alt_text: kind == "image",
             can_crop: kind == "image",
+            // A picture's border (`docs/109` HF-254).
+            can_stroke: kind == "image",
             can_edit_text: kind == "textbox",
             ..Self::empty()
         }
@@ -24347,12 +25126,19 @@ impl ObjectCapabilities {
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
             can_move: true,
+            // A member of a floating group: it moves with, or within, the group.
+            can_move_in_text: false,
             can_wrap: true,
             can_delete: true,
             can_fill: kind == "shape",
-            can_stroke: kind == "shape",
+            // A grouped picture carries its own border, alt text and source
+            // crop exactly as a loose one does; withholding them made a logo
+            // in a group the one picture nothing could describe or trim
+            // (`docs/109` HF-214, HF-254).
+            can_stroke: kind == "shape" || kind == "image",
+            can_alt_text: kind == "image",
+            can_crop: kind == "image",
             can_edit_text: kind == "textbox",
-            ..Self::empty()
         }
     }
 
@@ -24374,6 +25160,7 @@ impl ObjectCapabilities {
             resize_handles: 0,
             can_rotate: false,
             can_move: false,
+            can_move_in_text: false,
             can_wrap: false,
             can_delete: false,
             can_alt_text: false,
@@ -24385,7 +25172,7 @@ impl ObjectCapabilities {
     }
 
     /// Whether the capability the host calls `name` is available here, or `None`
-    /// when `name` is not one of the ten.
+    /// when `name` is not one of the eleven.
     ///
     /// The accessor half of [`OBJECT_CAPABILITY_NAMES`]: one list of names and
     /// one function that reads them, so the reason table below cannot disagree
@@ -24395,6 +25182,7 @@ impl ObjectCapabilities {
             b"canResize" => self.can_resize,
             b"canRotate" => self.can_rotate,
             b"canMove" => self.can_move,
+            b"canMoveInText" => self.can_move_in_text,
             b"canWrap" => self.can_wrap,
             b"canDelete" => self.can_delete,
             b"canAltText" => self.can_alt_text,
@@ -24407,14 +25195,14 @@ impl ObjectCapabilities {
     }
 }
 
-/// The ten structural capabilities, under the names the host reads them by — the
-/// camelCase keys both payloads publish and `main.js`'s own
+/// The eleven structural capabilities, under the names the host reads them by —
+/// the camelCase keys both payloads publish and `main.js`'s own
 /// `OBJECT_CAPABILITY_KEYS` mirrors.
 ///
 /// One list, consumed by [`ObjectCapabilities::has`] and by
 /// [`capability_refusals`], because two copies of "what the capability set is" is
 /// how a capability comes to have a bit and no reason.
-const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
+const OBJECT_CAPABILITY_NAMES: [&str; 11] = [
     "canResize",
     "canRotate",
     "canMove",
@@ -24425,6 +25213,7 @@ const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
     "canFill",
     "canStroke",
     "canEditText",
+    "canMoveInText",
 ];
 
 /// Every capability this placed object does **not** support, each with the
@@ -24434,14 +25223,16 @@ const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
 ///
 /// # Why a `false` had to learn to explain itself
 ///
-/// `ObjectCapabilities` publishes ten booleans and nothing else, and
+/// `ObjectCapabilities` published its booleans and nothing else, and
 /// `webapp/src/main.js` gates on bare truthiness (`if (objectSelection.canMove)`),
 /// so an unavailable capability produced a control that did nothing and said
-/// nothing. The live instance is the inline picture: `can_move` is false because
-/// this build has no inline-to-floating conversion, so **dragging an inline
-/// picture does nothing at all** — `SKILL` §10's dead control, and the same
-/// defect on every false bit of every carrier, which is why this is one function
-/// rather than a fix at the drag site.
+/// nothing. The live instance was the inline picture: `can_move` (free
+/// placement) is false for it, so **dragging an inline picture did nothing at
+/// all** — `SKILL` §10's dead control, and the same defect on every false bit of
+/// every carrier, which is why this is one function rather than a fix at the
+/// drag site. (That drag now moves the picture in the text — `can_move_in_text`,
+/// `docs/109` UX-OB-02 — and the explanation is for the objects it still cannot
+/// move.)
 ///
 /// # Why the reason is derived rather than stored per bit
 ///
@@ -24456,7 +25247,7 @@ const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
 /// and what the command throws must not be two different explanations of one
 /// fact.
 ///
-/// Complexity: O(1) — ten names, and an allocation only for the ones that are
+/// Complexity: O(1) — eleven names, and an allocation only for the ones that are
 /// unavailable.
 fn capability_refusals(
     kind: &str,
@@ -24479,6 +25270,12 @@ fn capability_refusals(
             "canResize" => objects::INLINE_RESIZE_INEXACT,
             "canRotate" => objects::NO_ROTATION,
             "canMove" => objects::NOT_FLOATING_MOVE,
+            // FREE placement is refused above for an in-line object; placement IN
+            // THE TEXT is refused here for a floating one, and for an in-line one
+            // that is part of a link, field, content control or tracked change.
+            // The same constants `moveInlineObject` throws.
+            "canMoveInText" if anchored => inline_move::FLOATS_FREELY,
+            "canMoveInText" => inline_move::NOT_DIRECTLY_IN_TEXT,
             "canWrap" => objects::NOT_FLOATING_WRAP,
             "canDelete" => objects::NOT_DELETABLE,
             "canAltText" => objects::NO_ALT_TEXT,
@@ -24571,6 +25368,22 @@ fn rotate_about(x: i32, y: i32, cx: i32, cy: i32, rotation_60k: i32) -> (i32, i3
     );
     #[allow(clippy::cast_possible_truncation)]
     (turned.0.round() as i32, turned.1.round() as i32)
+}
+
+/// The package media type and part-name extension for an image `mime` this
+/// editor can place, or `None` for one it cannot. One table for `insertImage`
+/// and `replacePicture`, so the two can never accept different files.
+/// **O(1)**.
+pub(crate) fn image_part_type(mime: &str) -> Option<(&'static str, &'static str)> {
+    Some(match mime.to_ascii_lowercase().as_str() {
+        "image/png" => ("image/png", "png"),
+        "image/jpeg" | "image/jpg" => ("image/jpeg", "jpeg"),
+        "image/gif" => ("image/gif", "gif"),
+        "image/bmp" | "image/x-ms-bmp" => ("image/bmp", "bmp"),
+        "image/tiff" => ("image/tiff", "tiff"),
+        "image/webp" => ("image/webp", "webp"),
+        _ => return None,
+    })
 }
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
@@ -24920,17 +25733,18 @@ fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> O
                     can_rotate: false,
                 });
             }
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(frame) = object_resize_handles_in_inlines(&hyperlink.inlines, object) {
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(frame) = object_resize_handles_in_inlines(nested, object)
+                {
                     return Some(frame);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(frame) = object_resize_handles_in_inlines(&revision.inlines, object) {
-                    return Some(frame);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25056,18 +25870,18 @@ fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> 
                     return Some(extent);
                 }
             }
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(extent) = object_authored_extent_in_inlines(&hyperlink.inlines, object)
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(extent) = object_authored_extent_in_inlines(nested, object)
                 {
                     return Some(extent);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(extent) = object_authored_extent_in_inlines(&revision.inlines, object) {
-                    return Some(extent);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25126,17 +25940,18 @@ fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Dr
                 }
             }
             InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(anchor) = object_anchor_in_inlines(&hyperlink.inlines, object) {
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(anchor) = object_anchor_in_inlines(nested, object)
+                {
                     return Some(anchor);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(anchor) = object_anchor_in_inlines(&revision.inlines, object) {
-                    return Some(anchor);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25190,17 +26005,18 @@ fn object_group_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<&Wo
                     return Some(group);
                 }
             }
-            InlineNode::Hyperlink(hyperlink) => {
-                if let Some(group) = object_group_in_inlines(&hyperlink.inlines, object) {
+            // Every inline wrapper in the declared container set — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
+            // float inside a field result (an `INCLUDEPICTURE` picture) or an
+            // inline content control painted and could not be clicked (`109`
+            // HF-166, HF-214).
+            other => {
+                if let Some(nested) = contained_inlines(other)
+                    && let Some(group) = object_group_in_inlines(nested, object)
+                {
                     return Some(group);
                 }
             }
-            InlineNode::Revision(revision) => {
-                if let Some(group) = object_group_in_inlines(&revision.inlines, object) {
-                    return Some(group);
-                }
-            }
-            _ => {}
         }
     }
     None
@@ -25260,10 +26076,102 @@ fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&Word
 /// one walk in [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph);
 /// no by-id lookup, so a click stays O(placed fragments) rather than
 /// O(fragments × document) (HF-184, `docs/116`).
+/// One paragraph fragment painted on a page, with the page-local origin of its
+/// box: what [`placed_paragraphs`] yields for the object-box correlation.
+#[derive(Clone, Copy)]
+struct PlacedParagraph<'a> {
+    id: &'a NodeId,
+    lines: &'a casual_doc_layout::text::LineLayout,
+    box_metrics: &'a casual_doc_layout::block::BoxMetrics,
+    /// The fragment box's page-local left edge (before its start indent).
+    left: Twip,
+    /// The fragment box's page-local top edge (before its space-before).
+    top: Twip,
+}
+
+/// Every paragraph fragment on a page — top-level ones AND the ones inside
+/// table cells, nested tables included — with the page-local origin each was
+/// painted at.
+///
+/// The cell geometry is the hit test's own (`casual_doc_layout::hittest`'s
+/// `collect_fragment`): a cell's content starts at the row's left plus the
+/// cell's `x` and its start margin, and at the row's top plus the cell spacing
+/// and the vertical-alignment offset for the cell's box height; the cell's
+/// blocks then stack by height. Restated rather than shared because that walk is
+/// private to the layout crate and produces line boxes, not fragments. That the
+/// two agree is asserted by `inline_move_tests.rs`: an in-cell picture's box is
+/// exactly a rectangle the page's display list paints a picture into, and the
+/// click hit test resolves its centre into the cell's paragraph.
+///
+/// Walking only the top-level fragments is why a picture in a table cell had no
+/// object box at all (`docs/109` UX-OB-03).
+///
+/// **O(fragments on the page, cell content included)**; no document walk.
+fn placed_paragraphs(
+    placed: &[casual_doc_layout::page::PlacedFragment],
+) -> Vec<PlacedParagraph<'_>> {
+    fn walk<'a>(
+        fragment: &'a BlockFragment,
+        left: Twip,
+        top: Twip,
+        out: &mut Vec<PlacedParagraph<'a>>,
+    ) {
+        match fragment {
+            BlockFragment::Paragraph {
+                id,
+                lines,
+                box_metrics,
+                ..
+            } => out.push(PlacedParagraph {
+                id,
+                lines,
+                box_metrics,
+                left,
+                top,
+            }),
+            BlockFragment::TableRow { cells, .. } => {
+                let row_height = fragment.height();
+                for cell in cells {
+                    let cell_left = left + cell.x + cell.margins.start;
+                    let box_top = top + cell.cell_spacing.top;
+                    let mut block_top =
+                        box_top + cell.content_y_offset(cell.box_height(row_height));
+                    for block in &cell.blocks {
+                        walk(block, cell_left, block_top, out);
+                        block_top = block_top + block.height();
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for fragment in placed {
+        walk(
+            &fragment.fragment,
+            fragment.rect.origin.x,
+            fragment.rect.origin.y,
+            &mut out,
+        );
+    }
+    out
+}
+
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
     out: &mut ParagraphObjectNodes,
+) {
+    collect_para_objects_at(inlines, definitions, out, false);
+}
+
+/// [`collect_para_objects`], told whether `inlines` is the paragraph's own list
+/// (`wrapped == false`) or the content of a wrapper inside it, so each object
+/// found under a wrapper is also recorded in `out.wrapped`.
+fn collect_para_objects_at(
+    inlines: &[InlineNode],
+    definitions: &casual_doc_model::v1::Definitions,
+    out: &mut ParagraphObjectNodes,
+    wrapped: bool,
 ) {
     let part_of = |media: &casual_doc_model::v1::MediaId| {
         definitions
@@ -25272,6 +26180,14 @@ fn collect_para_objects(
             .map(|media| media.part_name.clone())
     };
     for inline in inlines {
+        if wrapped
+            && matches!(
+                inline,
+                InlineNode::Drawing(_) | InlineNode::EmbeddedObject(_) | InlineNode::TextBox(_)
+            )
+        {
+            out.wrapped.push(inline.id());
+        }
         match inline {
             InlineNode::Drawing(drawing) => {
                 out.images.push(InlineImageNode {
@@ -25305,16 +26221,16 @@ fn collect_para_objects(
             // Floats: placed by the float layer, reported through `page.anchored`.
             InlineNode::TextBox(_) | InlineNode::AnchoredDrawing(_) | InlineNode::Group(_) => {}
             InlineNode::Hyperlink(hyperlink) => {
-                collect_para_objects(&hyperlink.inlines, definitions, out);
+                collect_para_objects_at(&hyperlink.inlines, definitions, out, true);
             }
             InlineNode::Revision(revision) => {
-                collect_para_objects(&revision.inlines, definitions, out);
+                collect_para_objects_at(&revision.inlines, definitions, out, true);
             }
             InlineNode::Sdt(sdt) => {
-                collect_para_objects(&sdt.inlines, definitions, out);
+                collect_para_objects_at(&sdt.inlines, definitions, out, true);
             }
             InlineNode::Field(field) => {
-                collect_para_objects(&field.inlines, definitions, out);
+                collect_para_objects_at(&field.inlines, definitions, out, true);
             }
             // Leaves: nothing inside them paints an object box of its own.
             InlineNode::Run(_)
@@ -25355,10 +26271,27 @@ pub struct ObjectHitPayload {
     rect: [i32; 5],
     anchored: bool,
     capabilities: ObjectCapabilities,
+    locks_aspect_ratio: bool,
 }
 
 #[wasm_bindgen]
 impl ObjectHitPayload {
+    /// Whether a resize of this reference's root must keep its aspect ratio:
+    /// DrawingML's `noChangeAspect` on the object's frame or on the object, as
+    /// the file (or this editor's own insert, which writes Word's lock) states it
+    /// (`Definitions::locks_aspect_ratio`, `docs/109` FID-AT-09).
+    ///
+    /// This is Word's "Lock aspect ratio", and Word honours it both ways: a
+    /// corner drag of a locked object keeps its proportions, and a corner drag of
+    /// an unlocked one — a picture whose file states no lock included — does not
+    /// unless Shift is held. An ABSENT flag is therefore unlocked, whatever the
+    /// kind: that is how Word reads the same file.
+    #[wasm_bindgen(getter, js_name = locksAspectRatio)]
+    #[must_use]
+    pub fn locks_aspect_ratio(&self) -> bool {
+        self.locks_aspect_ratio
+    }
+
     /// Compatibility alias for [`subject`](Self::subject).
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -25443,6 +26376,14 @@ impl ObjectHitPayload {
     #[must_use]
     pub fn can_move(&self) -> bool {
         self.capabilities.can_move
+    }
+
+    /// Whether this object sits directly in the text and can be dragged to
+    /// another place in it (`moveInlineObject`, `docs/109` UX-OB-02).
+    #[wasm_bindgen(getter, js_name = canMoveInText)]
+    #[must_use]
+    pub fn can_move_in_text(&self) -> bool {
+        self.capabilities.can_move_in_text
     }
 
     /// Whether this reference's root owns a mutable text-wrapping mode.
@@ -26362,6 +27303,7 @@ fn open_document_bounded(
         marks: FormattingMarks::default(),
         folds,
         layout_view: LayoutView::Paged,
+        reflow_table_scroll: BTreeMap::new(),
     })
 }
 
@@ -26446,11 +27388,20 @@ struct LedgerRecordJson<'a> {
 #[serde(rename_all = "camelCase")]
 struct CompatibilityLocationJson<'a> {
     part_name: Option<&'a str>,
+    /// Always `null`: no adapter names a namespace. Still emitted because it is
+    /// part of the published shape a host already reads.
+    namespace: Option<&'a str>,
+    /// The element, under the JSON name hosts already read (`localName`): the
+    /// shared taxonomy calls it `element`, and renaming a published field would
+    /// break every host that reads it — the editor's findings panel among them.
+    #[serde(rename = "localName")]
     element: Option<&'a str>,
     /// The attribute the finding is about, when it is about one (FID-R-03). Host
     /// visible: an attribute-level loss the adapter can now describe would
     /// otherwise stop at this boundary, and a capability no host can reach is not
-    /// a capability.
+    /// a capability. Published as `attributeName`, for the reason `element` keeps
+    /// its name.
+    #[serde(rename = "attributeName")]
     attribute: Option<&'a str>,
 }
 
@@ -26512,6 +27463,7 @@ fn compatibility_report_json(
             occurrences: entry.occurrences,
             location: CompatibilityLocationJson {
                 part_name: entry.location.part_name.as_deref(),
+                namespace: None,
                 element: entry.location.element.as_deref(),
                 attribute: entry.location.attribute.as_deref(),
             },
@@ -26881,22 +27833,28 @@ fn object_crop_for_blocks(blocks: &[BlockNode], id: NodeId) -> Option<Option<Cro
                 InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
                     return Some(drawing.crop);
                 }
-                InlineNode::Hyperlink(link) => {
-                    if let Some(found) = inlines(&link.inlines, id) {
-                        return Some(found);
-                    }
-                }
-                InlineNode::Revision(revision) => {
-                    if let Some(found) = inlines(&revision.inlines, id) {
-                        return Some(found);
-                    }
-                }
                 InlineNode::Group(group) => {
                     if let Some(found) = group_crop(&group.children, id) {
                         return Some(found);
                     }
                 }
-                _ => {}
+                // A picture in a text box's own story is croppable by the write
+                // side, so the read side must find it — or crop mode opens on
+                // a cropped picture showing it uncropped.
+                InlineNode::TextBox(text_box) => {
+                    if let Some(found) = object_crop_for_blocks(&text_box.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                // The declared inline wrappers — `Hyperlink`, `Field`,
+                // `Revision`, `Sdt` (`109` HF-214).
+                other => {
+                    if let Some(nested) = contained_inlines(other)
+                        && let Some(found) = inlines(nested, id)
+                    {
+                        return Some(found);
+                    }
+                }
             }
         }
         None
@@ -28057,7 +29015,8 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         | Operation::SetGroupGeometry { object, .. }
         | Operation::SetAnchor { object, .. }
         | Operation::SetImageCrop { object, .. }
-        | Operation::SetObjectDescr { object, .. } => Pos::new(*object, 0),
+        | Operation::SetObjectDescr { object, .. }
+        | Operation::SetObjectLocks { object, .. } => Pos::new(*object, 0),
         // Deleting an object removes it, so its own id is a neutral placeholder (the
         // host re-selects after the delete); its inverse re-inserts into `owner`.
         Operation::DeleteObject { object } => Pos::new(*object, 0),
@@ -28172,6 +29131,11 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        // A setting has no place in the text; `set_track_revisions` keeps the
+        // caller's caret through `apply_action_caret_as`.
+        | Operation::SetTrackRevisions { .. }
+        // Carried by a section break, which supplies its own caret.
+        | Operation::SetSectionFormProtection { .. }
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
@@ -28222,10 +29186,23 @@ pub struct EditResult {
     /// because "this edit landed but degraded something" is a property of an edit,
     /// and the next path that degrades something must not invent a second channel.
     paste_loss: Vec<String>,
+    /// The id of an object this edit created where the user was pointing, which
+    /// the host then selects — the copy a Ctrl-drag dropped (`inline_move`).
+    /// Empty on every other path. A field rather than the caret, because the
+    /// caret must stay a TEXT position the host can draw.
+    placed_object: String,
 }
 
 #[wasm_bindgen]
 impl EditResult {
+    /// The object this edit placed for the host to select (a dragged copy), or
+    /// `""` when it placed none.
+    #[wasm_bindgen(getter, js_name = placedObject)]
+    #[must_use]
+    pub fn placed_object(&self) -> String {
+        self.placed_object.clone()
+    }
+
     /// The caret anchor node id (32-hex string).
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -30254,7 +31231,7 @@ mod tests {
 
     #[test]
     fn format_neutral_host_opens_text_and_round_trips_through_odt() {
-        let doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
+        let mut doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
         assert_eq!(doc.source_format(), formats::TEXT);
         assert_eq!(doc.import_report_json(), "{\"entries\":[],\"ledger\":[]}");
         assert_eq!(
@@ -30330,7 +31307,7 @@ mod tests {
 
     #[test]
     fn generic_export_surfaces_cross_format_compatibility_findings() {
-        let doc = open_document(RICH_DOCX).expect("open rich DOCX");
+        let mut doc = open_document(RICH_DOCX).expect("open rich DOCX");
         let artifact = doc
             .export_as_inner(formats::ODT, "semantic")
             .expect("export bounded ODT projection");
@@ -30605,11 +31582,37 @@ mod tests {
         assert_eq!(view.content_width_twip, Some(PHONE_COLUMN));
         assert_eq!(view.tile_height_twip, Some(PHONE_TILE));
         assert_eq!(view.gutter_twip, Some(PHONE_GUTTER));
-        assert_eq!(
-            view.approximations.len(),
-            3,
-            "the known approximations are reported, not hidden: {:?}",
-            view.approximations
+        // The approximations are DERIVED from this document now, not recited
+        // (`docs/166` R-7), so what is asserted is that property and not a count:
+        // every sentence reported names one of the four things reflow can
+        // approximate, and a document with none of them gets none of them. A
+        // count would have gone stale the first time the fixture changed, and a
+        // fixed list is what made the old count true for every document.
+        for sentence in &view.approximations {
+            assert!(
+                [
+                    "wider than the reading column",
+                    "anchored to the page",
+                    "footnote",
+                    "PAGE or NUMPAGES"
+                ]
+                .iter()
+                .any(|topic| sentence.contains(topic)),
+                "an approximation names nothing reflow approximates: {sentence}"
+            );
+        }
+        let mut plain = open_document(&text_of_lines(40)).expect("plain text opens");
+        let plain_view: LayoutViewJson = serde_json::from_str(
+            &plain
+                .set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+                .expect("a reading column"),
+        )
+        .expect("the view serializes");
+        assert!(
+            plain_view.approximations.is_empty(),
+            "a plain-text document has no notes, no fields, no page-anchored art \
+             and nothing over-wide, so reflow approximates nothing in it: {:?}",
+            plain_view.approximations
         );
 
         // The tile, not the paper — and this is the assertion that would have
@@ -32790,6 +33793,194 @@ mod tests {
         assert_eq!(doc.block_index_of("not-a-node"), -1);
     }
 
+    // ---- docs/151 §6.3d: a wide table scrolls sideways in reflow --------------
+
+    /// A plain document with an 8-column table 12in wide (`w:tblW` in dxa, fixed
+    /// layout) after its first line, laid out as a phone-width reflow column.
+    /// Returns the document, the table, and the paragraph in its LAST cell of row
+    /// one — the cell furthest from the column, which is the one a fit or a clip
+    /// would lose first.
+    fn wide_table_in_reflow() -> (WasmDocument, NodeId, NodeId) {
+        use casual_doc_edit::{find_table, locate_table_cell};
+        let mut d = open_document(&text_of_lines(30)).expect("plain text opens");
+        let body = d
+            .first_body_paragraph()
+            .expect("body paragraph")
+            .to_string();
+        let anchor = d.insert_table(&body, 6, 8).expect("insert table").node();
+        d.set_table_width(&anchor, 17_280).expect("12in wide");
+        d.set_table_fixed_layout(&anchor, true)
+            .expect("fixed layout");
+        let (table, _) = locate_table_cell(
+            &d.document,
+            NodeId::from_str(&anchor).expect("table anchor"),
+        )
+        .expect("table cell");
+        let last = find_table(&d.document, table)
+            .and_then(|t| first_paragraph_of_cell(&t.rows[0].cells[7]))
+            .expect("the last cell of row one has a paragraph");
+        d.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a phone reading column");
+        (d, table, last)
+    }
+
+    /// Parses `reflowTableOverflows` for tile `index`.
+    fn overflows_on(d: &WasmDocument, index: u32) -> Vec<serde_json::Value> {
+        serde_json::from_str(&d.reflow_table_overflows(index)).expect("overflows serialize")
+    }
+
+    /// The first tile the table is reported on, and its row there.
+    fn first_overflow(d: &WasmDocument, table: NodeId) -> (u32, serde_json::Value) {
+        (0..d.page_count())
+            .find_map(|index| {
+                overflows_on(d, index)
+                    .into_iter()
+                    .find(|row| row["table"] == table.to_string())
+                    .map(|row| (index, row))
+            })
+            .expect("the wide table is reported on some tile")
+    }
+
+    /// THE FACADE GUARANTEE: the over-wide table is listed, scrolling it brings
+    /// its far column into the raster, and a CLICK there lands in that column —
+    /// the raster, the caret and the hit test agree, because they read the same
+    /// shifted rows. And its strip is the full scroll width.
+    ///
+    /// MUTATION PROOF, run and seen red: `set_reflow_table_scroll_inner` scrolling
+    /// a CLONE of the layout (so the offset is clamped and recorded but never
+    /// applied to the rows anything reads) fails with `scrolled to 11880, the last
+    /// column's caret is still at 15588, outside the 6120-twip raster`.
+    #[test]
+    fn a_wide_table_scrolls_and_a_click_lands_where_it_is_painted() {
+        let (mut d, table, last) = wide_table_in_reflow();
+        let (index, row) = first_overflow(&d, table);
+        let viewport = row["viewportTwip"].as_i64().expect("viewport") as i32;
+        let scroll_width = row["scrollWidthTwip"].as_i64().expect("scroll width") as i32;
+        assert!(
+            scroll_width > viewport,
+            "the precondition: the table is wider than its tile ({scroll_width} vs {viewport})"
+        );
+        assert_eq!(row["offsetTwip"], 0, "a table starts unscrolled");
+
+        let before = d.caret_rect(&last.to_string(), 0);
+        assert!(
+            before[1] > viewport,
+            "the precondition: the last column starts past the raster ({before:?})"
+        );
+
+        let max = scroll_width - viewport;
+        let applied = d.set_reflow_table_scroll(index, &table.to_string(), i32::MAX);
+        assert_eq!(
+            applied, max,
+            "an offset past the end clamps to the table's range"
+        );
+        let after = d.caret_rect(&last.to_string(), 0);
+        assert!(
+            after[1] >= 0 && after[1] < viewport,
+            "scrolled to {applied}, the last column's caret is still at {}, outside the \
+             {viewport}-twip raster",
+            after[1]
+        );
+        let hit = d
+            .hit_test(after[0] as u32, after[1] + 20, after[2] + after[4] / 2)
+            .expect("a click on the scrolled-in column hits something");
+        assert_eq!(
+            hit.node(),
+            last.to_string(),
+            "a click on the last column, scrolled into view, landed in another paragraph"
+        );
+
+        // The strip a host scrolls natively is the whole width, at the dpi asked.
+        let strip = d
+            .render_reflow_table_strip_inner(index, &table.to_string(), 96.0)
+            .expect("a strip for the over-wide table");
+        let expected = Twip(scroll_width).to_device_px(96.0).ceil() as u32;
+        assert_eq!(
+            strip.width_px, expected,
+            "the strip is not the full scroll width"
+        );
+        assert!(
+            d.render_reflow_table_strip_inner(index, "not-a-node", 96.0)
+                .is_err()
+        );
+    }
+
+    /// A table offset is a VIEW: no operation, no revision, nothing to undo. It
+    /// survives every relayout the reader can cause — typing, a new column width,
+    /// a font arriving — re-clamped to the table as it then is, and it is
+    /// forgotten on paper, where the table bleeds into the margin and nothing
+    /// scrolls.
+    ///
+    /// MUTATION PROOFS, run and seen red: deleting the
+    /// `restore_reflow_table_scroll()` after `finish_edit_with`'s layout swap
+    /// fails with `typing elsewhere scrolled the table back: offset 0, not 1440`;
+    /// deleting the `reflow_table_scroll.clear()` on leaving reflow fails with
+    /// `back in reflow, the table came back scrolled to 1440 from a column that
+    /// no longer exists`.
+    #[test]
+    fn a_table_scroll_is_a_view_that_survives_relayout_and_is_forgotten_on_paper() {
+        let (mut d, table, _) = wide_table_in_reflow();
+        let undo_before = d.can_undo();
+        let head_before = d.log.head();
+        let (index, _) = first_overflow(&d, table);
+        assert_eq!(
+            d.set_reflow_table_scroll(index, &table.to_string(), 1_440),
+            1_440
+        );
+        assert_eq!(
+            d.can_undo(),
+            undo_before,
+            "scrolling a table put something on the undo stack"
+        );
+        assert_eq!(
+            d.log.head(),
+            head_before,
+            "scrolling a table moved the document revision"
+        );
+        let offset = |d: &WasmDocument| first_overflow(d, table).1["offsetTwip"].clone();
+
+        // Typing in a paragraph BELOW the table relays the body out.
+        let below = body_paragraph_ids(&d)
+            .last()
+            .cloned()
+            .expect("a paragraph after the table");
+        d.insert_text(&below, 0, "typed ".to_owned())
+            .expect("type below the table");
+        assert_eq!(
+            offset(&d),
+            1_440,
+            "typing elsewhere scrolled the table back: offset {}, not 1440",
+            offset(&d)
+        );
+
+        // A wider column: the same table, a smaller range, the offset kept.
+        d.set_layout_view_inner(PHONE_COLUMN + 1_440, PHONE_TILE, PHONE_GUTTER)
+            .expect("a wider reading column");
+        assert_eq!(
+            offset(&d),
+            1_440,
+            "a new column width lost the table's offset"
+        );
+
+        // A font registration re-shapes everything.
+        d.repaginate();
+        assert_eq!(offset(&d), 1_440, "a repagination lost the table's offset");
+
+        // Paper: nothing to scroll, and the setter says so.
+        d.set_layout_view_inner(0, 0, 0).expect("back to paper");
+        assert_eq!(d.reflow_table_overflows(0), "[]");
+        assert_eq!(d.set_reflow_table_scroll(0, &table.to_string(), 100), -1);
+        d.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("reflow again");
+        assert_eq!(
+            offset(&d),
+            0,
+            "back in reflow, the table came back scrolled to {} from a column that no longer \
+             exists",
+            offset(&d)
+        );
+    }
+
     // ---- docs/108 phase 2: authoring paragraph-level suggestions (HF-130/131) ----
 
     /// Four plain paragraphs, written and re-opened through the real package path,
@@ -34852,6 +36043,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
         let node = paragraph.to_string();
 
@@ -35302,6 +36494,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
         let node = paragraph.to_string();
 
@@ -35612,6 +36805,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
 
         let summary: serde_json::Value =
@@ -39473,6 +40667,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         }
     }
 
@@ -40654,6 +41849,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
             session: None,
         }
     }
@@ -42148,6 +43344,7 @@ mod tests {
             marks: FormattingMarks::default(),
             folds: FoldSet::new(),
             layout_view: LayoutView::Paged,
+            reflow_table_scroll: BTreeMap::new(),
         };
         (handle, source_id, target_id)
     }
@@ -46565,6 +47762,18 @@ mod tests {
                 ObjectCapabilities::inline_image(frame),
             ),
             (
+                "inline image that is a link's or a field's content",
+                "image",
+                false,
+                ObjectCapabilities::inline_image(frame).in_text(false),
+            ),
+            (
+                "inline chart inside a content control",
+                "chart",
+                false,
+                ObjectCapabilities::inline_embedded_object(frame).in_text(false),
+            ),
+            (
                 "inline text box",
                 "textbox",
                 false,
@@ -46631,7 +47840,7 @@ mod tests {
             for name in OBJECT_CAPABILITY_NAMES {
                 let available = capabilities
                     .has(name)
-                    .unwrap_or_else(|| panic!("{name} is not one of the ten capabilities"));
+                    .unwrap_or_else(|| panic!("{name} is not one of the capabilities"));
                 let reason = reasons.get(name);
                 assert_eq!(
                     available,

@@ -64,6 +64,16 @@
             title="Rename document"
           />
         </div>
+        <!-- The menu bar's door on a phone (docs/148 §5.3b). At the phone rung the
+             header is ONE row — title, state, this button, info, settings — and
+             the eight menu names live in a sheet this button opens, each still
+             opening its own menu; at every other width it is not painted and the
+             bar below is the row. A disclosure, not a menu button: it reveals the
+             nav element, it does not stand in for a menu, so it carries
+             `aria-expanded`/`aria-controls` and no `aria-haspopup`. Named by the
+             nav's own key, so the door and the room are one word in every
+             language. -->
+        <button data-i18n-title="documentChrome.applicationMenus.label" data-i18n-label="documentChrome.applicationMenus.label" id="appMenusBtn" type="button" class="btn icon-only app-menus-button" title="Application menus" aria-label="Application menus" aria-expanded="false" aria-controls="appMenuBar"><span class="ms" aria-hidden="true">menu</span></button>
         <!-- The menu bar is COMPACT-MODE chrome only (`body.ribbon-mode` hides it
              in style.css). Ribbon mode's one navigation axis is the tab strip,
              whose first tab is File — ONLYOFFICE's arrangement, verified in
@@ -137,6 +147,11 @@
                between References and View, where it read as a permanent tab that
                happened to be greyed out. -->
           <button data-i18n="documentChrome.table" id="tabTable" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
+          <!-- Chart is contextual too, after Table: ONLYOFFICE's chart tab is the
+               same kind of tab (`ChartTab.js`, declared aux) and Word's Chart
+               Design sits in the same place. Disabled, with the reason, until a
+               chart is selected (`chart_surface.mjs`). -->
+          <button data-i18n="documentChrome.chart" id="tabChart" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="chart" role="tab" aria-controls="panelChart" aria-selected="false" tabindex="-1" disabled>Chart</button>
         </div>
           <!-- The collapse chevron is a sibling of the tab list, not a child of
                it: `role="tablist"` may only contain tabs, and the strip now
@@ -174,11 +189,37 @@
                loudest thing in the chrome and read as an unexplained error.
                It is a neutral status chip now, beside the state chip it belongs
                with — Word and Docs both report conversion findings as neutral
-               status, never as an alert. -->
-          <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
+               status, never as an alert.
+               A BUTTON, because a count that cannot be opened reports that
+               something happened without saying what: it opens the findings
+               themselves (`compat_findings.mjs`). `aria-live` keeps what the old
+               `role="status"` gave — the count is still announced when it
+               changes — without taking the button's role away. -->
+          <button id="compatibilityStatus" class="compatibility-status" type="button" aria-haspopup="dialog" aria-live="polite" hidden></button>
         </div>
         <!-- Row 2, with the tab strip: how the APPLICATION is presented. -->
         <div class="controls-app">
+          <!-- The editing mode, at the top right: where all three references put
+               it — ONLYOFFICE at the right of the tab row, Google Docs at the
+               right of the toolbar ("Editing ▾"), Word at the right of the ribbon
+               (`109` UX-025, docs/123 §4.5). One button naming the mode in force,
+               opening a three-row menu, which is Docs' shape.
+               It is the SECOND face of ONE state, not a second state: it holds
+               no mode of its own. `header_mode.mjs` reads the status bar's
+               segmented control (`#reviewModeControl`) and acts by pressing it,
+               so `setReviewMode` stays the only writer and the two surfaces
+               cannot disagree. The rows carry `data-header-mode`, NOT
+               `data-review-mode`: `main.js` collects every `[data-review-mode]`
+               at import and stamps `aria-pressed` on it, which a
+               `menuitemradio` must not carry. -->
+          <div id="headerModeControl" class="header-mode">
+            <span data-i18n="ui.editingMode.label" id="headerModeCaption" class="sr-only">Editing mode</span>
+            <button data-i18n-title="headerMode.title" id="headerModeBtn" type="button" class="header-mode-btn" title="Choose whether your edits change the document, become suggestions, or are not allowed" aria-haspopup="menu" aria-controls="headerModeMenu" aria-expanded="false" aria-labelledby="headerModeCaption headerModeText" data-mode="editing">
+              <span id="headerModeIcon" class="ms" aria-hidden="true">edit</span>
+              <span id="headerModeText" class="header-mode-text"></span>
+              <span class="ms header-mode-caret" aria-hidden="true">arrow_drop_down</span>
+            </button>
+          </div>
           <div data-i18n-label="ui.toolbarMode.label" class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
             <button data-i18n="ui.compact" type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
                     data-chrome-mode="compact" aria-checked="false" tabindex="-1">Compact</button>
@@ -596,7 +637,7 @@
             <div class="rgroup-ctl editing-ctl">
               <div class="stackrows">
                 <button data-i18n-title="panelHome.findReplaceF.title" data-i18n-label="panelHome.findReplace.label" id="findBtn" type="button" class="fmt" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><span class="ms" aria-hidden="true">search</span></button>
-                <button data-i18n-title="panelHome.replaceF.title" data-i18n-label="panelHome.replace.label" id="replaceBtn" type="button" class="fmt" title="Replace (⌘F)" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span></button>
+                <button data-i18n-title="panelHome.replace.label" data-i18n-label="panelHome.replace.label" id="replaceBtn" type="button" class="fmt" title="Replace" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span></button>
               </div>
             </div>
             <span data-i18n="panelHome.editing" class="rgroup-label">Editing</span>
@@ -922,6 +963,38 @@
           </div>
         </div>
 
+        <!-- The contextual Chart band — ONLYOFFICE's chart tab: Edit Data, the
+             chart type, Chart Elements, the style gallery and the settings. Each
+             control is a face of a `chart.*` command (`ribbon_faces.mjs`), the
+             same command the right-click menu and the palette run. -->
+        <div id="panelChart" class="ribbon-panel chart-ribbon" data-panel="chart" role="tabpanel" aria-labelledby="tabChart" hidden>
+          <div class="rgroup" data-group="chart-data">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelChart.editData.title" data-i18n-label="panelChart.editData.label" id="chartEditDataBtn" type="button" class="fmt fmt-big" title="Edit the chart's data" aria-label="Edit data" aria-haspopup="dialog"><span class="ms" aria-hidden="true">table_chart</span><span data-i18n="panelChart.editDataShort" class="fmt-big-label">Edit data</span></button>
+            </div>
+            <span data-i18n="panelChart.data" class="rgroup-label">Data</span>
+          </div>
+          <div class="rgroup" data-group="chart-layout">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelChart.changeType.title" data-i18n-label="panelChart.changeType.label" id="chartTypeBtn" type="button" class="fmt fmt-big" title="Change the chart type" aria-label="Change chart type" aria-haspopup="menu"><span class="ms" aria-hidden="true">bar_chart</span><span data-i18n="panelChart.type" class="fmt-big-label">Type</span></button>
+              <button data-i18n-title="panelChart.elements.title" data-i18n-label="panelChart.elements.label" id="chartElementsBtn" type="button" class="fmt fmt-big" title="Show or hide the title, legend, data labels, axes and gridlines" aria-label="Chart elements" aria-haspopup="menu"><span class="ms" aria-hidden="true">legend_toggle</span><span data-i18n="panelChart.elementsShort" class="fmt-big-label">Elements</span></button>
+            </div>
+            <span data-i18n="panelChart.layout" class="rgroup-label">Layout</span>
+          </div>
+          <div class="rgroup" data-group="chart-styles">
+            <div class="rgroup-ctl">
+              <div data-i18n-label="panelChart.styles.label" id="chartStyleGallery" class="chart-ribbon-styles" role="group" aria-label="Chart styles"></div>
+            </div>
+            <span data-i18n="panelChart.styles" class="rgroup-label">Chart styles</span>
+          </div>
+          <div class="rgroup" data-group="chart-settings">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelChart.settings.title" data-i18n-label="panelChart.settings.label" id="chartSettingsBtn" type="button" class="fmt fmt-big" title="Open the chart settings panel" aria-label="Chart settings" aria-haspopup="dialog"><span class="ms" aria-hidden="true">tune</span><span data-i18n="panelChart.settingsShort" class="fmt-big-label">Settings</span></button>
+            </div>
+            <span data-i18n="panelChart.settingsGroup" class="rgroup-label">Settings</span>
+          </div>
+        </div>
+
         <div id="panelView" class="ribbon-panel" data-panel="view" role="tabpanel" aria-labelledby="tabView" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
@@ -959,7 +1032,7 @@
                    text button on a band that fits far below 1280px. Its other
                    faces are the View menu's Text width submenu and the palette. -->
               <span class="rgroup-mini-divider" aria-hidden="true"></span>
-              <button data-i18n-title="panelView.textWidth.title" data-i18n-label="panelView.textWidth.label" id="viewTextWidthBtn" type="button" class="fmt fmt-num" title="Text width — how many characters a line holds" aria-label="Text width" aria-haspopup="menu" aria-controls="textWidthMenu" aria-expanded="false" disabled><span data-i18n="textWidth.reading.short" data-width-label>Reading</span></button>
+              <button data-i18n-title="panelView.textWidth.title" data-i18n-label="panelView.textWidth.label" id="viewTextWidthBtn" type="button" class="fmt fmt-num" title="Text width — how many characters a line holds" aria-label="Text width" aria-haspopup="menu" aria-controls="textWidthMenu" aria-expanded="false" disabled><span data-i18n="textWidth.wide.short" data-width-label>Wide</span></button>
             </div>
             <span data-i18n="panelView.show" class="rgroup-label">Show</span>
           </div>
@@ -998,7 +1071,7 @@
         <div id="panelReview" class="ribbon-panel" data-panel="review" role="tabpanel" aria-labelledby="tabReview" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelReview.trackChangesSuggestingMode.title" data-i18n-label="panelReview.trackChanges.label" id="reviewTrackBtn" type="button" class="fmt" title="Track changes (Suggesting mode)" aria-label="Track changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">track_changes</span></button>
+              <button data-i18n-title="panelReview.trackChanges.title" data-i18n-label="panelReview.trackChanges.label" id="reviewTrackBtn" type="button" class="fmt fmt-big" title="Record your edits as suggestions. The shortcut cycles Editing, Suggesting and Read only (⌘⇧E)" aria-label="Track changes" aria-pressed="false" data-tip-detail disabled><span class="ms" aria-hidden="true">track_changes</span><span data-i18n="reviewTrackBtn.trackChanges" class="fmt-big-label">Track changes</span></button>
               <button data-i18n-title="panelReview.showTrackedChangesDocument.title" data-i18n-label="panelReview.showChanges.label" id="reviewShowChangesBtn" type="button" class="fmt" title="Show tracked changes in the document" aria-label="Show changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span></button>
             </div>
             <span data-i18n="panelReview.tracking" class="rgroup-label">Tracking</span>
@@ -1008,8 +1081,8 @@
               <button data-i18n-title="panelReview.previousCommentChange.title" data-i18n-label="panelReview.previousCommentChange.label" id="reviewPrevBtn" type="button" class="fmt" title="Previous comment or change" aria-label="Previous comment or change" disabled><span class="ms" aria-hidden="true">navigate_before</span></button>
               <button data-i18n-title="panelReview.nextCommentChange.title" data-i18n-label="panelReview.nextCommentChange.label" id="reviewNextBtn" type="button" class="fmt" title="Next comment or change" aria-label="Next comment or change" disabled><span class="ms" aria-hidden="true">navigate_next</span></button>
               <span class="rgroup-mini-divider" aria-hidden="true"></span>
-              <button data-i18n-title="panelReview.acceptChangeAtCursor.title" data-i18n-label="panelReview.acceptChange.label" id="reviewAcceptBtn" type="button" class="fmt" title="Accept the change at the cursor and move to the next" aria-label="Accept change" disabled><span class="ms" aria-hidden="true">check</span></button>
-              <button data-i18n-title="panelReview.rejectChangeAtCursor.title" data-i18n-label="panelReview.rejectChange.label" id="reviewRejectBtn" type="button" class="fmt" title="Reject the change at the cursor and move to the next" aria-label="Reject change" disabled><span class="ms" aria-hidden="true">close</span></button>
+              <button data-i18n-title="panelReview.acceptChangeAtCursor.title" data-i18n-label="panelReview.acceptChange.label" id="reviewAcceptBtn" type="button" class="fmt fmt-big" title="Accept the change at the cursor and move to the next (⌘⌥⏎)" aria-label="Accept change" disabled><span class="ms" aria-hidden="true">check</span><span data-i18n="reviewAcceptBtn.accept" class="fmt-big-label">Accept</span></button>
+              <button data-i18n-title="panelReview.rejectChangeAtCursor.title" data-i18n-label="panelReview.rejectChange.label" id="reviewRejectBtn" type="button" class="fmt fmt-big" title="Reject the change at the cursor and move to the next (⌘⌥⌫)" aria-label="Reject change" disabled><span class="ms" aria-hidden="true">close</span><span data-i18n="reviewRejectBtn.reject" class="fmt-big-label">Reject</span></button>
               <span class="rgroup-mini-divider" aria-hidden="true"></span>
               <button data-i18n-title="panelReview.acceptAllChanges.title" data-i18n-label="panelReview.acceptAllChanges.label" id="reviewAcceptAllBtn" type="button" class="fmt" title="Accept all changes" aria-label="Accept all changes" disabled><span class="ms" aria-hidden="true">done_all</span></button>
               <button data-i18n-title="panelReview.rejectAllChanges.title" data-i18n-label="panelReview.rejectAllChanges.label" id="reviewRejectAllBtn" type="button" class="fmt" title="Reject all changes" aria-label="Reject all changes" disabled><span class="ms" aria-hidden="true">remove_done</span></button>
@@ -1041,8 +1114,8 @@
                a durable, one-click switch, so that is the placement taken. -->
           <div class="rgroup" data-group="proofing">
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelReview.checkSpellingAsYou.title" data-i18n-label="panelReview.spellCheck.label" id="reviewSpellCheckBtn" type="button" class="fmt" title="Check spelling as you type" aria-label="Spell check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span></button>
-              <button data-i18n-title="panelReview.checkGrammarAsYou.title" data-i18n-label="panelReview.grammarCheck.label" id="reviewGrammarCheckBtn" type="button" class="fmt" title="Check grammar as you type" aria-label="Grammar check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span><span class="table-command-badge" aria-hidden="true">G</span></button>
+              <button data-i18n-title="panelReview.checkSpellingAsYou.title" data-i18n-label="panelReview.spellCheck.label" id="reviewSpellCheckBtn" type="button" class="fmt fmt-big" title="Check spelling as you type" aria-label="Spell check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span><span data-i18n="settingsPanel.spelling" class="fmt-big-label">Spelling</span></button>
+              <button data-i18n-title="panelReview.checkGrammarAsYou.title" data-i18n-label="panelReview.grammarCheck.label" id="reviewGrammarCheckBtn" type="button" class="fmt fmt-big" title="Check grammar as you type" aria-label="Grammar check" aria-pressed="false"><span class="ms" aria-hidden="true">grading</span><span data-i18n="reviewGrammarCheckBtn.grammar" class="fmt-big-label">Grammar</span></button>
               <button data-i18n-title="panelReview.replaceStraightQuotesTypographic.title" data-i18n-label="panelReview.smartQuotes.label" id="reviewSmartQuotesBtn" type="button" class="fmt" title="Replace straight quotes with typographic quotes as you type" aria-label="Smart quotes" aria-pressed="false"><span class="ms" aria-hidden="true">format_quote</span></button>
               <!-- Proofing languages (docs/146 §3/§10, ADR-042). Word's own
                    install surface is File ▸ Options ▸ Language, but its Review tab
@@ -1169,11 +1242,23 @@
               <p data-i18n="shortcutsDialog.everyCommandHasOne" id="shortcutsDescription">Every command that has one, plus caret movement — spelled for the keyboard you are using.</p>
             </div>
           </div>
-          <button data-i18n-title="shortcutsDialog.close.title" data-i18n-label="shortcutsDialog.closeKeyboardShortcuts.label" id="shortcutsClose" type="button" class="dialog-close" title="Close" aria-label="Close keyboard shortcuts">
+          <button data-shortcuts-dismiss data-i18n-title="shortcutsDialog.close.title" data-i18n-label="shortcutsDialog.closeKeyboardShortcuts.label" id="shortcutsClose" type="button" class="dialog-close" title="Close" aria-label="Close keyboard shortcuts">
             <span class="ms" aria-hidden="true">close</span>
           </button>
         </header>
         <div id="shortcutsBody" class="dialog-body shortcuts-body"></div>
+        <!-- A FOOTER, because this dialog had none (HF-265 D3): its body
+             scrolled 872px of keymap through a 612px box on a 1280x720
+             laptop and the content simply ran off the bottom edge of the
+             card with nothing under it to say the card ended. Every other
+             dialog in the product closes from its own action row as well as
+             from the X, and a reference you read to the bottom is the one
+             that most needs a dismissal where your eye already is. -->
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-shortcuts-dismiss data-i18n="shortcutsDialog.closeButton" id="shortcutsDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
       </section>
     </div>
 
@@ -1191,7 +1276,7 @@
               <p data-i18n="aboutDialog.apache20Document" id="aboutDescription">An Apache-2.0 document editor that runs entirely in this browser.</p>
             </div>
           </div>
-          <button data-i18n-title="aboutDialog.close.title" data-i18n-label="aboutDialog.closeAbout.label" id="aboutClose" type="button" class="dialog-close" title="Close" aria-label="Close about">
+          <button data-about-dismiss data-i18n-title="aboutDialog.close.title" data-i18n-label="aboutDialog.closeAbout.label" id="aboutClose" type="button" class="dialog-close" title="Close" aria-label="Close about">
             <span class="ms" aria-hidden="true">close</span>
           </button>
         </header>
@@ -1210,6 +1295,14 @@
             <a data-i18n="aboutDialog.reportIssue" href="https://github.com/CasualOffice/opendoc/issues" rel="noreferrer noopener" target="_blank">Report an issue</a>
           </p>
         </div>
+        <!-- An action row, for the reason Keyboard shortcuts gained one
+             (HF-265 D3): a card with a body and no footer ends in content, and
+             whether today's content happens to fit is not the property. -->
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-about-dismiss data-i18n="aboutDialog.closeButton" id="aboutDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
       </section>
     </div>
 
@@ -1624,8 +1717,9 @@
     <div data-i18n-label="ui.textWidth.label" id="textWidthMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Text width">
       <div data-i18n="textWidthMenu.heading" class="menu-heading">Text width</div>
       <button type="button" class="menu-item" data-text-width="narrow" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.narrow.row">Narrow — about 55 characters</span></button>
-      <button type="button" class="menu-item" data-text-width="reading" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.reading.row">Reading — 80 characters (WCAG AAA)</span></button>
+      <button type="button" class="menu-item" data-text-width="reading" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.reading.row">Reading — 80 characters (WCAG AAA)</span></button>
       <button type="button" class="menu-item" data-text-width="fit" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.fit.row">Paper — this document's own column</span></button>
+      <button type="button" class="menu-item" data-text-width="wide" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.wide.row">Wide — the page without its margins</span></button>
       <button type="button" class="menu-item" data-text-width="full" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.full.row">Full — as wide as the window</span></button>
     </div>
 
@@ -1850,6 +1944,37 @@
       <p data-i18n="settings.language.note" class="settings-note language-menu-note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
     </div>
 
+    <!-- The header's editing-mode menu (`#headerModeBtn`). At body level, like
+         the language menu, so no ancestor's stacking context can put it under
+         the ribbon. The three names are the status bar's own keys — one
+         vocabulary for one state on two surfaces — and each row's sentence is
+         its DESCRIPTION, not part of its name: `aria-hidden` on the visible
+         copy and `aria-describedby` to it, so a screen reader hears "Suggesting,
+         radio menu item, checked" and then the explanation. -->
+    <div data-i18n-label="ui.editingMode.label" id="headerModeMenu" class="context-menu header-mode-menu" role="menu" aria-label="Editing mode" hidden>
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="true" data-header-mode="editing" aria-describedby="headerModeEditingNote">
+        <span class="ms" aria-hidden="true">edit</span>
+        <span class="header-mode-item-text">
+          <span data-i18n="reviewModeControl.editing" class="header-mode-item-label">Editing</span>
+          <span data-i18n="headerMode.editing.note" id="headerModeEditingNote" class="header-mode-item-note" aria-hidden="true">Edit the document directly</span>
+        </span>
+      </button>
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-header-mode="suggesting" aria-describedby="headerModeSuggestingNote">
+        <span class="ms" aria-hidden="true">rate_review</span>
+        <span class="header-mode-item-text">
+          <span data-i18n="reviewModeControl.suggesting" class="header-mode-item-label">Suggesting</span>
+          <span data-i18n="headerMode.suggesting.note" id="headerModeSuggestingNote" class="header-mode-item-note" aria-hidden="true">Edits become suggestions others can accept or reject</span>
+        </span>
+      </button>
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-header-mode="viewing" aria-describedby="headerModeViewingNote">
+        <span class="ms" aria-hidden="true">visibility</span>
+        <span class="header-mode-item-text">
+          <span data-i18n="reviewModeControl.readOnly" class="header-mode-item-label">Read only</span>
+          <span data-i18n="headerMode.readOnly.note" id="headerModeViewingNote" class="header-mode-item-note" aria-hidden="true">Read the document without changing it</span>
+        </span>
+      </button>
+    </div>
+
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -2043,6 +2168,25 @@
               <button data-i18n="protect.level.comments" type="button" data-protect-level="comments">Comments</button>
               <button data-i18n="protect.level.forms" type="button" data-protect-level="forms">Filling in forms</button>
             </div>
+          </div>
+          <!-- The SECOND axis. Word's Restrict Editing pane is two independent
+               restrictions — "1. Formatting restrictions" over "2. Editing
+               restrictions" — and this dialog shipped only the second while
+               carrying `w:formatting` through untouched, which is `165` U3: half
+               of a pane with the whole pane's name. `w:formatting` is now
+               enforced at the operation (`casual_doc_edit::protection`), so the
+               control that sets it is no longer a claim without an engine.
+               Placed BELOW the editing levels rather than above them, which is
+               Word's order reversed, and the reason is this dialog's own shape
+               rather than taste: our radio group's first row IS Stop Protection,
+               where Word gives that its own button at the foot of the pane, so a
+               reader who opened this to LIFT a restriction must meet that row
+               first. Recorded rather than left as an unexplained departure. -->
+          <div class="settings-section" id="restrictEditingFormattingRow">
+            <label class="dialog-check">
+              <input id="restrictEditingFormatting" type="checkbox" />
+              <span><strong data-i18n="protect.formatting">Limit formatting to the document's unlocked styles</strong><small data-i18n="protect.formatting.hint">Bold, colour, spacing and other direct formatting are refused; applying a style the document has not locked is not. Which styles are locked is set in the file, not here.</small></span>
+            </label>
           </div>
           <div class="settings-section" id="restrictEditingEnforceRow">
             <label class="dialog-check">
@@ -2652,9 +2796,17 @@
          your document. It appears only while a preview is on screen, so it is
          never a resting disabled control — which is what the five-button stack
          this replaced had five of. -->
-    <div id="versionPreviewBanner" class="suggesting-banner version-preview-banner" role="status" hidden>
+    <div id="versionPreviewBanner" class="suggesting-banner version-preview-banner" hidden>
       <span class="ms" aria-hidden="true">history</span>
-      <span id="versionPreviewBannerText"></span>
+      <!-- The live region is the SENTENCE, not the bar: on the bar it made a
+           screen reader read every button label with each change of version. -->
+      <span id="versionPreviewBannerText" role="status"></span>
+      <!-- The diff canvas's controls (ADR-065): who made this version's changes
+           (their colour), "3 of 12" with previous/next, and a key to what each
+           mark means. Built by `diff_canvas.mjs`; hidden while the version is
+           shown plain. The switch is Google's "Show changes", on by default. -->
+      <span id="versionPreviewChanges" hidden></span>
+      <label class="diff-toggle"><input id="versionPreviewShowChanges" type="checkbox" checked /> <span id="versionPreviewShowChangesLabel"></span></label>
       <button data-i18n="versionPreviewBanner.restoreThisVersion" id="versionPreviewRestore" type="button">Restore this version</button>
       <!-- The two ways OUT of a version that are not "replace my document with
            it" (`docs/139` VH-007). Both are also on every row's ⋮ menu, so
@@ -2731,7 +2883,7 @@
            of what they came for. The file input is the Word route — Review ▸
            Compare picks a document off the disk — and its `accept` list is the
            importers' own, because a comparison has to PARSE the other side. -->
-      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel" hidden aria-label="Compare documents">
+      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel compare-panel" hidden aria-label="Compare documents">
         <div class="panel-head">
           <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
           <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
@@ -2900,7 +3052,6 @@
       <aside id="paragraphPropertiesPanel" class="side-panel properties-panel paragraph-properties-panel" hidden aria-labelledby="paragraphPropertiesTitle" aria-describedby="paragraphPropertiesDescription">
         <header class="panel-head properties-panel-head">
           <div class="properties-panel-heading">
-            <span class="ms properties-panel-icon" aria-hidden="true">format_paragraph</span>
             <span>
               <strong data-i18n="paragraphPropertiesPanel.paragraphProperties" id="paragraphPropertiesTitle" class="panel-title">Paragraph properties</strong>
               <small id="paragraphPropertiesContext"></small>
@@ -3001,7 +3152,6 @@
       <aside id="tablePropertiesPanel" class="side-panel table-properties-panel" hidden aria-labelledby="tablePropertiesTitle" aria-describedby="tablePropertiesDescription">
         <header class="panel-head table-properties-head">
           <div class="table-panel-heading">
-            <span class="ms table-panel-icon" aria-hidden="true">table_chart</span>
             <span>
               <strong data-i18n="tablePropertiesPanel.tableProperties" id="tablePropertiesTitle" class="panel-title">Table properties</strong>
               <small id="tablePropertiesContext"></small>
@@ -3194,5 +3344,8 @@
     <div id="statusToast" class="toast" aria-hidden="true" hidden></div>
 
     <script type="module" src="./src/main.js"></script>
+    <!-- Chrome that binds to markup and needs no editor state: the header's
+         editing-mode selector, the status line's hover text, Alt key tips. -->
+    <script type="module" src="./src/chrome_wiring.mjs"></script>
   </body>
 </html>
