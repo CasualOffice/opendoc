@@ -495,8 +495,10 @@ struct PendingColor {
     stroke_width_emu: i64,
 }
 
-/// A main-document relationship an embedded object can reference, resolved from
-/// the package (`r:id` -> part). The `r:id` is the lookup key.
+/// A relationship of the part being parsed that an embedded object can reference,
+/// resolved from the package (`r:id` -> part). The `r:id` is the lookup key, and
+/// it is scoped to ONE part's `_rels`: a header's `rId1` and the document's `rId1`
+/// are different relationships, which is why every part carries its own index.
 #[derive(Clone, Debug)]
 pub(crate) struct EmbeddedRel {
     /// Relationship type URI (`.../chart`, `.../diagramData`, `.../oleObject`, …).
@@ -1610,41 +1612,91 @@ pub(crate) fn parse<'a>(
     })
 }
 
+/// What a running part — a notes, header, footer or comments part — resolves its
+/// references against: its OWN relationships (media, external hyperlinks,
+/// embedded objects), plus the document-global tables every part shares (styles,
+/// numbering, the theme's colour scheme).
+///
+/// # Why one struct, and why it carries everything the body gets
+///
+/// The three running-part entry points used to take their resolution tables as
+/// separate parameters and build the rest themselves — and each built an EMPTY
+/// embedded-object index and passed NO colour scheme. So on all five surfaces a
+/// chart, SmartArt diagram or OLE object resolved to nothing and was dropped from
+/// the document, and a DrawingML `a:schemeClr` resolved against the all-zero
+/// default palette: a header shape filled with `accent1` imported, and saved, as
+/// transparent black with no finding at all (`109` HF-266). Three hand-built
+/// copies of one input set is how one copy came to differ from the body's; one
+/// struct, filled by the caller from the part's own sources, is how it stops.
+///
+/// What a running part legitimately does NOT get is the note, header/footer and
+/// comment reference indexes: a footnote reference inside a header, or a comment
+/// reference inside a footnote, has nothing to resolve to, so those stay empty
+/// ([`RunningPartInputs::parse_inputs`]).
+pub(crate) struct RunningPartInputs<'a> {
+    /// The document's styles.
+    pub styles: &'a Styles,
+    /// The document's numbering.
+    pub numbering: &'a Numbering,
+    /// The theme colour scheme a DrawingML `a:schemeClr` resolves against.
+    pub color_scheme: Option<&'a ColorScheme>,
+    /// This part's image relationships, already added to the shared media table.
+    pub media_index: &'a BTreeMap<String, MediaId>,
+    /// This part's external hyperlink relationships.
+    pub hyperlink_rels: &'a BTreeMap<String, String>,
+    /// This part's embedded-object and alt-chunk relationships.
+    pub embedded_index: &'a BTreeMap<String, EmbeddedRel>,
+}
+
+/// The reference indexes a running part never resolves through. `static` so the
+/// borrow outlives the parser without each entry point minting its own empties.
+static NO_NOTE_IDS: BTreeMap<String, NoteId> = BTreeMap::new();
+/// See [`NO_NOTE_IDS`].
+static NO_HEADER_FOOTER_IDS: BTreeMap<String, HeaderFooterId> = BTreeMap::new();
+/// See [`NO_NOTE_IDS`].
+static NO_COMMENT_IDS: BTreeMap<String, CommentId> = BTreeMap::new();
+
+impl<'a> RunningPartInputs<'a> {
+    /// The body parser's inputs for this part: everything the caller resolved,
+    /// and empty note/header/footer/comment reference indexes.
+    fn parse_inputs(&self) -> ParseInputs<'a> {
+        ParseInputs {
+            styles: self.styles,
+            numbering: self.numbering,
+            media_index: self.media_index,
+            hyperlink_rels: self.hyperlink_rels,
+            embedded_index: self.embedded_index,
+            footnote_ids: &NO_NOTE_IDS,
+            endnote_ids: &NO_NOTE_IDS,
+            header_ids: &NO_HEADER_FOOTER_IDS,
+            footer_ids: &NO_HEADER_FOOTER_IDS,
+            comment_ids: &NO_COMMENT_IDS,
+            color_scheme: self.color_scheme,
+        }
+    }
+}
+
+/// A notes part parse result: each note keyed by its source `w:id` with its
+/// allocated id and blocks, plus the package parts its embedded objects reference.
+pub(crate) struct NotesParse {
+    pub notes: Vec<(String, NoteId, Vec<BlockNode>)>,
+    /// See [`BodyParse::embedded_part_names`]; the same rule, for this part.
+    pub embedded_part_names: BTreeSet<String>,
+}
+
 /// Parses a notes part (`word/footnotes.xml` / `word/endnotes.xml`) into its
 /// notes, each keyed by its source `w:id` and allocated id in document order.
 /// `container` is `b"footnote"` or `b"endnote"`.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_notes(
     xml: &[u8],
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
-    styles: &Styles,
-    numbering: &Numbering,
-    media_index: &BTreeMap<String, MediaId>,
-    hyperlink_rels: &BTreeMap<String, String>,
+    inputs: &RunningPartInputs<'_>,
     parsed_defs: &mut ParsedDefinitions,
     container: &'static [u8],
     config: ImportConfig,
-) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
-    // A note resolves its own part's media and hyperlink relationships; note
-    // references inside a note (rare) carry no index.
-    let empty_notes = BTreeMap::new();
-    let empty_hf = BTreeMap::new();
-    let empty_comment = BTreeMap::new();
-    let empty_embedded = BTreeMap::new();
-    let inputs = ParseInputs {
-        styles,
-        numbering,
-        media_index,
-        hyperlink_rels,
-        embedded_index: &empty_embedded,
-        footnote_ids: &empty_notes,
-        endnote_ids: &empty_notes,
-        header_ids: &empty_hf,
-        footer_ids: &empty_hf,
-        comment_ids: &empty_comment,
-        color_scheme: None,
-    };
+) -> Result<NotesParse, ImportError> {
+    let inputs = inputs.parse_inputs();
     let role = if container == b"endnote" {
         crate::recovery::PartRole::Endnotes
     } else {
@@ -1665,11 +1717,14 @@ pub(crate) fn parse_notes(
     }
     // A note left open by malformed input still commits its content.
     parser.close_note()?;
-    Ok(parser
-        .notes
-        .into_iter()
-        .map(|(source_id, node_id, _meta, blocks)| (source_id, NoteId::new(node_id), blocks))
-        .collect())
+    Ok(NotesParse {
+        notes: parser
+            .notes
+            .into_iter()
+            .map(|(source_id, node_id, _meta, blocks)| (source_id, NoteId::new(node_id), blocks))
+            .collect(),
+        embedded_part_names: parser.embedded_part_names,
+    })
 }
 
 /// A header/footer part parse result: its block content, plus the watermark
@@ -1683,40 +1738,22 @@ pub(crate) fn parse_notes(
 pub(crate) struct HeaderFooterParse {
     pub blocks: Vec<BlockNode>,
     pub watermark: Option<Watermark>,
+    /// See [`BodyParse::embedded_part_names`]; the same rule, for this part.
+    pub embedded_part_names: BTreeSet<String>,
 }
 
 /// Parses a header/footer part (`word/header1.xml` / `word/footer1.xml`) into its
 /// block content. `root` is `b"hdr"` or `b"ftr"`.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_header_footer(
     xml: &[u8],
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
-    styles: &Styles,
-    numbering: &Numbering,
-    media_index: &BTreeMap<String, MediaId>,
-    hyperlink_rels: &BTreeMap<String, String>,
+    inputs: &RunningPartInputs<'_>,
     parsed_defs: &mut ParsedDefinitions,
     root: &'static [u8],
     config: ImportConfig,
 ) -> Result<HeaderFooterParse, ImportError> {
-    let empty_notes = BTreeMap::new();
-    let empty_hf = BTreeMap::new();
-    let empty_comment = BTreeMap::new();
-    let empty_embedded = BTreeMap::new();
-    let inputs = ParseInputs {
-        styles,
-        numbering,
-        media_index,
-        hyperlink_rels,
-        embedded_index: &empty_embedded,
-        footnote_ids: &empty_notes,
-        endnote_ids: &empty_notes,
-        header_ids: &empty_hf,
-        footer_ids: &empty_hf,
-        comment_ids: &empty_comment,
-        color_scheme: None,
-    };
+    let inputs = inputs.parse_inputs();
     let role = if root == b"ftr" {
         crate::recovery::PartRole::Footer
     } else {
@@ -1730,41 +1767,30 @@ pub(crate) fn parse_header_footer(
     Ok(HeaderFooterParse {
         blocks: parser.blocks,
         watermark: parser.watermark,
+        embedded_part_names: parser.embedded_part_names,
     })
+}
+
+/// A comments part parse result: each comment keyed by its source `w:id`, plus
+/// the package parts its embedded objects reference.
+pub(crate) struct CommentsParse {
+    pub comments: Vec<(String, CommentId, Comment)>,
+    /// See [`BodyParse::embedded_part_names`]; the same rule, for this part.
+    pub embedded_part_names: BTreeSet<String>,
 }
 
 /// Parses the comments part (`word/comments.xml`) into its comments, each keyed
 /// by its source `w:id` with its allocated id, metadata, and block content. The
-/// part resolves its own media and hyperlink relationships.
-#[allow(clippy::too_many_arguments)]
+/// part resolves its own media, hyperlink and embedded-object relationships.
 pub(crate) fn parse_comments(
     xml: &[u8],
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
-    styles: &Styles,
-    numbering: &Numbering,
-    media_index: &BTreeMap<String, MediaId>,
-    hyperlink_rels: &BTreeMap<String, String>,
+    inputs: &RunningPartInputs<'_>,
     parsed_defs: &mut ParsedDefinitions,
     config: ImportConfig,
-) -> Result<Vec<(String, CommentId, Comment)>, ImportError> {
-    let empty_notes = BTreeMap::new();
-    let empty_hf = BTreeMap::new();
-    let empty_comment = BTreeMap::new();
-    let empty_embedded = BTreeMap::new();
-    let inputs = ParseInputs {
-        styles,
-        numbering,
-        media_index,
-        hyperlink_rels,
-        embedded_index: &empty_embedded,
-        footnote_ids: &empty_notes,
-        endnote_ids: &empty_notes,
-        header_ids: &empty_hf,
-        footer_ids: &empty_hf,
-        comment_ids: &empty_comment,
-        color_scheme: None,
-    };
+) -> Result<CommentsParse, ImportError> {
+    let inputs = inputs.parse_inputs();
     let mut parser = BodyParser::build(
         ids,
         reporter,
@@ -1779,25 +1805,28 @@ pub(crate) fn parse_comments(
         parser.exit_frame()?;
     }
     parser.close_note()?;
-    Ok(parser
-        .notes
-        .into_iter()
-        .map(|(source_id, node_id, meta, blocks)| {
-            (
-                source_id,
-                CommentId::new(node_id),
-                Comment {
-                    blocks,
-                    author: meta.author,
-                    date: meta.date,
-                    initials: meta.initials,
-                    // Threading, durable id, and identity are joined from the
-                    // companion parts in `build_comments`.
-                    ..Comment::default()
-                },
-            )
-        })
-        .collect())
+    Ok(CommentsParse {
+        comments: parser
+            .notes
+            .into_iter()
+            .map(|(source_id, node_id, meta, blocks)| {
+                (
+                    source_id,
+                    CommentId::new(node_id),
+                    Comment {
+                        blocks,
+                        author: meta.author,
+                        date: meta.date,
+                        initials: meta.initials,
+                        // Threading, durable id, and identity are joined from the
+                        // companion parts in `build_comments`.
+                        ..Comment::default()
+                    },
+                )
+            })
+            .collect(),
+        embedded_part_names: parser.embedded_part_names,
+    })
 }
 
 impl BodyParser<'_> {
