@@ -203,6 +203,10 @@ implement in small increments → test → update docs and ADRs.
   deploy dies). Run `npm ci` there instead.
 - `webapp/pkg` is not committed: run `./webapp/build.sh` after a rebase or a Rust change
   before trusting an e2e result.
+- Chrome built at boot must not call `t()` until it is shown: the catalogue lands later,
+  and `chrome-raw-keys.spec.mjs` reads `title`/`aria-label` on HIDDEN elements too. A
+  scoped e2e run missed this and turned `main` red (#815 → HF-281); before pushing UI, run
+  the whole browser suite, not just the specs named after the feature.
 - Run Playwright from `webapp/`. Specs never assert Mac glyphs; use the `shortcutHint`
   fixture.
 - A relative `git worktree add name` lands inside the repo. Use absolute paths.

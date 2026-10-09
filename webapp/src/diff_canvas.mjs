@@ -199,8 +199,8 @@ export function createChangeNavigator(root, io) {
   let current = -1;
   let author = "";
 
-  const previous = button("diffCanvas.previous", "keyboard_arrow_up", () => step(-1));
-  const next = button("diffCanvas.next", "keyboard_arrow_down", () => step(1));
+  const previous = button("keyboard_arrow_up", () => step(-1));
+  const next = button("keyboard_arrow_down", () => step(1));
   const position = document.createElement("span");
   position.className = "diff-nav-position";
   position.setAttribute("aria-live", "polite");
@@ -209,12 +209,15 @@ export function createChangeNavigator(root, io) {
   const by = document.createElement("span");
   by.className = "diff-nav-author";
 
-  function button(key, icon, run) {
+  // UNNAMED until shown, on purpose. This is built when the version panel is,
+  // at boot — before the catalogue lands — and a name taken then is the raw
+  // key ("diffCanvas.previous") on a hidden button, which a screen reader and
+  // `chrome-raw-keys.spec.mjs` both read. The names are written by `reflect`,
+  // in the language in force when the navigator is actually on screen.
+  function button(icon, run) {
     const element = document.createElement("button");
     element.type = "button";
     element.className = "diff-nav-step";
-    element.title = t(key);
-    element.setAttribute("aria-label", t(key));
     const glyph = document.createElement("span");
     glyph.className = "ms";
     glyph.setAttribute("aria-hidden", "true");
@@ -232,6 +235,10 @@ export function createChangeNavigator(root, io) {
   }
 
   function reflect() {
+    previous.title = t("diffCanvas.previous");
+    previous.setAttribute("aria-label", previous.title);
+    next.title = t("diffCanvas.next");
+    next.setAttribute("aria-label", next.title);
     const total = entries.length;
     previous.disabled = total === 0;
     next.disabled = total === 0;
