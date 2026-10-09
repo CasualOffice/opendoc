@@ -1051,6 +1051,7 @@ fn build_retained_parts(
         let part = PartDisposition {
             part_name: name.clone(),
             content_type: content_type.clone(),
+            kind: None,
         };
         if is_signature {
             // Retention mode's byte floor keeps the signature bytes verbatim, so
@@ -1104,6 +1105,10 @@ fn build_retained_parts(
         // rather than contradicted there. The ledger record is still created, so
         // the preservation claim those findings make still resolves.
         if !projected_chart_parts.contains(name) {
+            let part = PartDisposition {
+                kind: opaque::custom_xml_kind(name, &bytes),
+                ..part
+            };
             dispositions.push((part, Disposition::OmittedPreserved, Some(ledger_id)));
         }
         parts.push(RetainedPart {
@@ -1208,6 +1213,7 @@ fn chart_construct_dispositions(
         let part = || PartDisposition {
             part_name: outcome.part_name.clone(),
             content_type: None,
+            kind: None,
         };
         if !outcome.projected {
             // No projection, so the part keeps today's whole-part `omitted` +

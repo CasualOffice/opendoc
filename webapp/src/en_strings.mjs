@@ -702,6 +702,14 @@ export const EN_STRINGS = Object.freeze({
   // Data stored with the document.
   "findings.feature.customXml": "Custom XML data stored with the document",
   "findings.feature.customXmlProperties": "Identity and schemas of the custom XML data",
+  "findings.feature.customXmlStoreIdentity": "Identity of a custom XML store (an id and the schemas it uses)",
+  "findings.feature.bibliographyStyleOnly": "Citation style for a bibliography that has no sources yet",
+  "findings.feature.sharePointContentType": "SharePoint content type the file was saved with",
+  "findings.feature.sharePointForms": "SharePoint form templates of the document library",
+  "findings.feature.bibliographySources": "Bibliography sources (References ▸ Manage Sources)",
+  "findings.feature.sharePointProperties": "SharePoint document properties (library columns)",
+  "findings.feature.coverPageProperties": "Cover page fields (abstract, publish date, company details)",
+  "findings.feature.sensitivityLabel": "Sensitivity label (Microsoft Purview)",
   // Fonts and media the engine could not use.
   "findings.feature.embeddedFontUnusable": "Embedded font that could not be used",
   "findings.feature.mediaUnreadable": "Picture or media file that could not be read",

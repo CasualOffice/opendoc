@@ -8039,6 +8039,87 @@ fn semantic_import_reports_each_unconsumed_admitted_part_once() {
     assert_eq!(part.bytes, EXTRA_CUSTOM_XML);
 }
 
+/// A `customXml` store is reported as what it is, by its content, and its part
+/// name stays the finding's location (`109` FID-AT-18). Every one of these is
+/// still kept verbatim; what changes is the name a host shows and whether a
+/// reader would miss it. The owner's three documents each carried an EMPTY
+/// bibliography store and its identity record, and the loan agreement carried a
+/// SharePoint library's content type, form templates and properties — six
+/// findings read as "Custom XML data stored with the document".
+///
+/// MUTATION: `custom_xml_kind` returning `None` (report by name, as before)
+/// fails with `customXml/item1.xml` where `docx.customXml.bibliography.empty`
+/// was expected.
+#[test]
+fn a_custom_xml_store_is_reported_as_what_it_is() {
+    let content_types: &[u8] = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>"#;
+    let empty_bibliography: &[u8] = br#"<b:Sources xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography" xmlns="http://schemas.openxmlformats.org/officeDocument/2006/bibliography" SelectedStyle="\APASixthEditionOfficeOnline.xsl" StyleName="APA" Version="6"></b:Sources>"#;
+    let bibliography: &[u8] = br#"<b:Sources xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography"><b:Source><b:Tag>Doe20</b:Tag></b:Source></b:Sources>"#;
+    let identity: &[u8] = br#"<ds:datastoreItem ds:itemID="{00000000-0000-0000-0000-000000000001}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"/>"#;
+    let content_type: &[u8] = br#"<ct:contentTypeSchema xmlns:ct="http://schemas.microsoft.com/office/2006/metadata/contentType"/>"#;
+    let forms: &[u8] = br#"<FormTemplates xmlns="http://schemas.microsoft.com/sharepoint/v3/contenttype/forms"><Display>DocumentLibraryForm</Display></FormTemplates>"#;
+    let properties: &[u8] = br#"<p:properties xmlns:p="http://schemas.microsoft.com/office/2006/metadata/properties"><documentManagement/></p:properties>"#;
+    let bytes = zip_package(&[
+        ("[Content_Types].xml", content_types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document),
+        ("customXml/item1.xml", empty_bibliography),
+        ("customXml/itemProps1.xml", identity),
+        ("customXML/item2.xml", bibliography),
+        ("customXml/item3.xml", content_type),
+        ("customXml/item4.xml", forms),
+        ("customXml/item5.xml", properties),
+        ("customXml/item6.xml", EXTRA_CUSTOM_XML),
+    ]);
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let mut reported: Vec<(String, String)> = import
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let part = entry.part.as_ref()?;
+            Some((part.part_name.to_ascii_lowercase(), entry.feature.clone()))
+        })
+        .collect();
+    reported.sort();
+    assert_eq!(
+        reported,
+        [
+            ("customxml/item1.xml", "docx.customXml.bibliography.empty"),
+            ("customxml/item2.xml", "docx.customXml.bibliography"),
+            (
+                "customxml/item3.xml",
+                "docx.customXml.sharepoint.contentType"
+            ),
+            ("customxml/item4.xml", "docx.customXml.sharepoint.forms"),
+            (
+                "customxml/item5.xml",
+                "docx.customXml.sharepoint.properties"
+            ),
+            ("customxml/item6.xml", "customXml/item6.xml"),
+            ("customxml/itemprops1.xml", "docx.customXml.storeIdentity"),
+        ]
+        .map(|(part, feature)| (part.to_owned(), feature.to_owned()))
+        .to_vec(),
+        "each store is named by what it holds, and an unknown one by its part"
+    );
+    // Recognising a store changes its name, not what happens to it: each is
+    // still carried verbatim.
+    assert_eq!(import.retained_parts.parts.len(), 7);
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.part.is_some())
+            .all(|entry| entry.retention_outcome() == RetentionOutcome::Preserved)
+    );
+}
+
 #[test]
 fn a_consumed_part_is_not_reported_as_a_dropped_whole_part() {
     let bytes = package_with_extra_part();

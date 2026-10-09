@@ -27,6 +27,7 @@ import {
   catalogueKeys,
   describeFinding,
   isBookkeeping,
+  partArea,
 } from "../src/findings_catalogue.mjs";
 import { findingTotals, groupFindings } from "../src/compat_findings.mjs";
 import { compatibilityOccurrenceCount } from "../src/format_io.mjs";
@@ -163,6 +164,10 @@ test("Word's own bookkeeping is exactly this declared list", () => {
     "HyperlinksChanged",
     "docId",
     "docProps/thumbnail.*",
+    "docx.customXml.bibliography.empty",
+    "docx.customXml.sharepoint.contentType",
+    "docx.customXml.sharepoint.forms",
+    "docx.customXml.storeIdentity",
     "docx.export.stale.statistics",
     "docx.export.stale.styles_with_effects",
     "docx.export.stale.thumbnail",
@@ -175,6 +180,34 @@ test("Word's own bookkeeping is exactly this declared list", () => {
     "word/stylesWithEffects.xml",
     "word/webSettings.xml",
   ]);
+});
+
+// `109` FID-AT-18. A part name is matched whatever its letter case, as OPC part
+// names are: the owner's file wrote `customXML/item1.xml` and the panel called it
+// "A separate part of the file". MUTATION: the case-insensitive lookup removed ->
+// `null` for the upper-case spelling.
+test("a part name is catalogued whatever its letter case", () => {
+  assert.equal(catalogueEntry("customXML/item1.xml")?.key, "findings.feature.customXml");
+  assert.equal(catalogueEntry("customXML/itemProps1.xml")?.key, "findings.feature.customXmlProperties");
+  assert.equal(partArea("customXML/item1.xml"), "customXml");
+  // An element name is an XML name, and XML names are case-sensitive.
+  assert.equal(catalogueEntry("Drawing"), null);
+});
+
+test("a store the engine recognises reads as what it is, and the records Word or SharePoint keep are bookkeeping", () => {
+  for (const [feature, bookkeeping] of [
+    ["docx.customXml.storeIdentity", true],
+    ["docx.customXml.bibliography.empty", true],
+    ["docx.customXml.sharepoint.contentType", true],
+    ["docx.customXml.sharepoint.forms", true],
+    ["docx.customXml.bibliography", false],
+    ["docx.customXml.sharepoint.properties", false],
+    ["docx.customXml.coverPage", false],
+    ["docMetadata/LabelInfo.xml", false],
+  ]) {
+    assert.equal(isBookkeeping(finding(feature, 1, "customXml/item1.xml")), bookkeeping, feature);
+    assert.ok(EN_STRINGS[catalogueEntry(feature).key], `${feature} has words`);
+  }
 });
 
 test("revision-save ids are bookkeeping; the theme's name and the document's content are not", () => {
