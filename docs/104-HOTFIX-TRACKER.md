@@ -68,7 +68,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
 | P1 | 33 | 3 |
-| P2 | 52 | 21 |
+| P2 | 52 | 20 |
 | P3 | 22 | 13 |
 | Behavioural audit — 2026-09-04 | 18 | 4 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **41** |
+| **Total** | **158** | **40** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**41 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**40 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -226,7 +226,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Fixed (#497) |
 | HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Fixed (#554) |
 | HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Fixed |
-| HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
+| HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Fixed (#810, `fid/attributes-v2`) |
 | HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | Fixed |
 | HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | Fixed |
 | HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | Fixed |
@@ -1308,7 +1308,7 @@ remains open.
 
 ### HF-047 — Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded
 
-**P2** · error-handling · ux · effort M · source: Sibling gap vs opencalc · **Status:** Open · related: HF-044, HF-037
+**P2** · error-handling · ux · effort M · source: Sibling gap vs opencalc · **Status:** Fixed (#810, `fid/attributes-v2`) · related: HF-044, HF-037
 
 **Symptom.** You save and are told "12 compatibility findings" with no way to learn what the 12 are, whether any matters, or which part of your document changed. On open you are told nothing at all, even though the engine already wrote the report.
 
