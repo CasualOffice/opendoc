@@ -122,7 +122,7 @@ const RUST_MIME = Object.freeze({
   "org.openxmlformats.wordprocessingml.template": ["crates/casual-doc-io/src/dotx.rs", "DOTX_MIME"],
   "org.casualoffice.normalized-json": ["crates/casual-doc-io/src/normalized_json.rs", "JSON_MIME"],
   "text.markdown": ["crates/casual-doc-io/src/markdown.rs", "MARKDOWN_MIME"],
-  "text.html": ["crates/casual-doc-io/src/html.rs", "HTML_MIME"],
+  "text.html": ["crates/casual-doc-io/src/html/mod.rs", "HTML_MIME"],
   "text.plain": ["crates/casual-doc-io/src/text.rs", "TEXT_MIME"],
   "org.oasis.opendocument.text": ["crates/casual-doc-odf/src/package.rs", "ODT_MIME"],
   "application.rtf": ["crates/casual-doc-rtf/src/lib.rs", "RTF_MIME"],
