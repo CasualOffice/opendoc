@@ -3433,9 +3433,11 @@ chunk first, so the chain resolves — it reddens.
 
 ## ADR-061 — A comparison is expressed as tracked changes, not as a second markup mechanism
 
-- **Status:** **Proposed**, 2026-10-04. The analysis is complete and sourced (`158`); the
-  implementation is **not started** and is an engine addition, so nothing here is claimed as
-  shipped. The chrome half (§"What the chrome owes") is small and blocked on the engine half.
+- **Status:** **Accepted and shipped** (`applyDiffAsRevisions`, Review ▸ Compare). This line
+  read "Proposed … not started" after the implementation had merged. Since **ADR-065** it is the
+  SECOND step of Compare — "Keep as tracked changes" — after the comparison has been shown on
+  the canvas as a read-only redline; the mechanism this ADR chose (tracked changes, never a
+  second markup layer) is what the redline is built from.
 - **Date:** 2026-10-04.
 - **Design doc:** `158` — ONLYOFFICE source findings plus Word and Google Docs behaviour.
 - **Closes:** `105` OO-007 ("pre-existing tracked changes accepted on compare… result saved as a
@@ -3906,8 +3908,10 @@ gate split in two is a gate whose halves cannot both be driven red.
 
 ## ADR-064 — Version history's Show changes is a read-only projection against the predecessor; ADR-061's mutation stays with Review ▸ Compare
 
-**Status:** accepted. **Supersedes ADR-061 for one of its two routes.** `docs/139` §9.4 and
-`docs/140` §11.4/§11.6 are corrected in the same change.
+**Status:** accepted; **its presentation is superseded by ADR-065** — the read-only projection
+against the predecessor stands, and is now painted on the canvas as a redline rather than listed
+as a unified diff in a panel. **Supersedes ADR-061 for one of its two routes.** `docs/139` §9.4
+and `docs/140` §11.4/§11.6 are corrected in the same change.
 
 ### The decision
 
@@ -4065,3 +4069,83 @@ glance or asserted by a guard.
   this feature: pruning the middle of a lineage changes what "the predecessor" is, and
   `predecessorOf` deliberately answers "the one before it in what is still kept", which is
   also what the reader sees on screen.
+
+## ADR-065 — A comparison is read as a redline on the canvas: version history and Compare both show changes on the page
+
+**Status:** accepted. **Supersedes ADR-064's presentation** (the unified block diff in a side
+panel) for version history, and **ADR-061's first step** for Review ▸ Compare: a comparison is
+now shown before it is written. ADR-061's mechanism — a comparison is expressed as tracked
+changes, never as a second markup layer — is kept, and is what makes this possible. Asked for by
+the owner: "a diff canvas for version diff, to see the changes on that version — what anyone has
+removed or added or changed in position — just like Google Docs."
+
+### The decision
+
+Both routes put the same picture on the canvas: a **redline**, read-only.
+
+| | Version history (click a version) | Review ▸ Compare (pick a file) |
+| --- | --- | --- |
+| Older side | the version's predecessor | the other document (or this one, after **Swap order**) |
+| Newer side | the version | this document (or the other one) |
+| On the canvas | a throwaway copy of the newer side, every change painted as a tracked change in its author's colour, markup view on | the same |
+| Who the changes are by | the version's recorded actor | the other document's name |
+| Navigation | "3 of 12", previous/next, a key (Added / Removed / Moved / Reformatted) on the preview bar | the same, plus a list of changes in the panel |
+| What happens to the reader's document | nothing | nothing, until **Keep as tracked changes** (ADR-061's `applyDiffAsRevisions`, one undo step, its refusal unchanged) |
+
+### What the engine does
+
+`WasmDocument.showComparison(job, author, date)` paints a finished `WasmVersionDiff` into the
+handle it is called on, which must be the comparison's newer side — checked by content digest,
+not assumed. Every change becomes an ordinary `InlineNode::Revision` through the existing
+operations, so the page, the author colours, `listRevisions` and the review layer read it with no
+change:
+
+- insertions and a move's destination are marked where they are (`classify_change`, shared with
+  `applyDiffAsRevisions` through one `comparison_review_operation`);
+- removed text inside a paragraph is put back struck at its offset, read **in full** from the
+  older side the job still holds — not limited to the record's 160-byte excerpt;
+- **a whole paragraph that is gone — deleted, or moved away — is put back struck where it stood**,
+  through `Operation::InsertBlocks`. This is the case a tracked change could not express and the
+  reason ADR-064 retreated to a text list. `casual-doc-diff` now records where removed content
+  stood: `DiffChange::place`, an insertion point in the newer document, computed during alignment
+  (just past the nearest pairing before it, so the old text reads before its replacement);
+- a paragraph whose exact text is unique on both sides is never paired positionally as an
+  *edit* of whatever replaced it: it goes to move detection. Without this, a move beside an
+  unrelated removal was word-diffed into one interleaved line ("Removed~~We~~ line…");
+- moves are drawn with the **double** form of each mark — double strikethrough where text left,
+  double underline where it arrived — which is Word's convention and the only cue that struck
+  text is elsewhere rather than gone. Colour cannot carry it: colour is the author's.
+
+A restored paragraph keeps its text, tabs, breaks, direct formatting and its styles **matched by
+name** (a `StyleId` is minted per import and names nothing across two parses). Pictures and other
+objects in it, and list numbering, are not reconstructed and that is reported
+(`removedObject`), never silent. Formatting, table-structure, section and definition changes have
+no mark: they are listed and, where they sit on a paragraph, navigable.
+
+### Why this and not the alternatives
+
+- **Not a second paint mechanism** (ADR-061's rejection stands). The redline is a document; the
+  review layer paints it.
+- **Not side-by-side** (ADR-064's reason stands: one canvas, one paginator). A redline needs one
+  column, which is what Word's "compare into a new document" and Google's history both show.
+- **Not a mutation of the reader's document on first click.** No reference writes a comparison
+  into the open document before the reader asks; ADR-061 did, and refused any document with
+  suggestions in it as a consequence. The redline view refuses nothing: nothing on it is ever
+  decided, so a version's own suggestions and the comparison's marks cannot decide each other.
+
+### What it costs
+
+O(both documents) to parse and compare, in slices with progress and a Cancel (`runComparison`),
+then one O(newer) open and an O(changes) paint, once per view. One O(document) content digest
+proves the handle is the newer side. Never O(document) per interaction: stepping to a change is a
+selection and a scroll.
+
+### What this does not decide
+
+- Per-change attribution inside a version (`docs/139` VH-016). A version records one actor, so a
+  version's changes carry one colour. Google attributes each edit to its editor; that needs an
+  author on the transaction log, which does not exist.
+- Paint for formatting changes (`PropChange` is not drawn by the markup layout). They are listed.
+- Removed tables, rows and headers/footers are still listed rather than painted (body
+  paragraphs only, for `classify_change`'s reason).
+- A worker. Still the main thread in slices, for the reason `diff.rs` gives.

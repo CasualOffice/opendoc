@@ -289,8 +289,13 @@ export function versionRowDeltas(rows) {
       previous && Number.isFinite(here) && Number.isFinite(there) && here > there
         ? here - there
         : 0;
+    const words =
+      previous && Number.isFinite(row.words) && Number.isFinite(previous.words)
+        ? row.words - previous.words
+        : null;
     deltas.set(row.versionId, {
       edits,
+      words,
       byteDelta: previous ? (row.bytes ?? 0) - (previous.bytes ?? 0) : 0,
       sameAs: twin ? versionRowRef(twin) : "",
     });
@@ -318,19 +323,20 @@ export function versionRowDeltas(rows) {
  * O(1). Reads only the row and the delta it is handed.
  *
  * @param {object} row a `version_meta` row.
- * @param {{isHead?: boolean, sizeText?: string, delta?: object,
- *          describeSize?: (bytes: number) => string}} [context]
+ * @param {{isHead?: boolean, delta?: object}} [context]
  */
 export function versionRowText(
   row,
-  { isHead = false, sizeText = "", delta = null, describeSize = null } = {},
+  { isHead = false, delta = null } = {},
 ) {
   const at = row?.createdAt ?? 0;
   const named = Boolean(row?.name);
   const clock = d(at, { timeStyle: "short" });
   const timestamp = d(at, { dateStyle: "full", timeStyle: "medium" });
+  // The short spelling a bar or a sentence can carry: "Oct 9, 2026, 2:32 PM".
+  const when = d(at, { dateStyle: "medium", timeStyle: "short" });
   const kind = versionKindLabel(row?.kind);
-  const change = versionChangeText(delta, describeSize);
+  const change = versionChangeText(delta);
   const author = String(row?.actor ?? "").trim();
   const parts = [named ? row.name : clock, timestamp, kind];
   if (change) parts.push(change);
@@ -341,12 +347,12 @@ export function versionRowText(
   // the row, and the rest is what tells two rows of one kind apart.
   const detailParts = [kind];
   if (change) detailParts.push(change);
-  else if (sizeText) detailParts.push(sizeText);
   if (author) detailParts.push(t("versionHistory.row.by", { name: author }));
   return {
     title: named ? row.name : clock,
     clock,
     timestamp,
+    when,
     exact: Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : "",
     kind,
     named,
@@ -362,20 +368,25 @@ export function versionRowText(
  *  Order matters and is a decision: "same content" OUTRANKS a count of edits,
  *  because a row whose bytes are already in the timeline is the one fact a reader
  *  most needs and the edits that produced it cancelled out. O(1). */
-export function versionChangeText(delta, describeSize = null) {
+export function versionChangeText(delta) {
   if (!delta) return "";
   if (delta.sameAs) return t("versionHistory.row.sameAs", { name: delta.sameAs });
-  const phrases = [];
-  if (delta.edits > 0) phrases.push(t("versionHistory.row.edits", { count: delta.edits }));
-  const size = Number(delta.byteDelta);
-  if (describeSize && Number.isFinite(size) && size !== 0) {
-    phrases.push(
-      size > 0
-        ? t("versionHistory.row.grew", { size: describeSize(size) })
-        : t("versionHistory.row.shrank", { size: describeSize(-size) }),
-    );
+  // NO SIZE CHANGE, deliberately, since 2026-10-09: it was the compressed
+  // file's byte delta ("1.2 KB larger"), which a reader cannot act on and which
+  // can say "smaller" for a version that gained text. What changed is now on
+  // the page — opening a version paints its changes (ADR-065).
+  //
+  // WORDS FIRST: "Words added: 12" is a change a reader recognises, where the
+  // edit count is the engine's operation counter (one typed word can be several
+  // operations). The count stays only for rows captured before words were
+  // recorded, and for a version whose edits left the word count where it was.
+  const words = Number(delta.words);
+  if (Number.isFinite(words) && delta.words !== null && words !== 0) {
+    return words > 0
+      ? t("versionHistory.row.wordsAdded", { count: n(words) })
+      : t("versionHistory.row.wordsRemoved", { count: n(-words) });
   }
-  return phrases.join(" · ");
+  return delta.edits > 0 ? t("versionHistory.row.edits", { count: delta.edits }) : "";
 }
 
 /**

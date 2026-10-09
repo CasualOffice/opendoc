@@ -28,7 +28,7 @@ import {
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
-import { bindComparePanel, comparableBytes } from "./compare_documents.mjs";
+import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
 import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
@@ -3042,6 +3042,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // one leaves the previous document open, because the previous document is
     // what the user still has.
     const next = open(bytes);
+    await versionHistory.closePreview(); await comparePanel.closeView(); // a borrowed canvas goes home first, or `doc.free()` below frees the preview and strands the live wrapper
     hideLinkChip();
     pointerHover.clear();
     // Only now that the new document has PARSED — a failed open leaves the
@@ -10584,12 +10585,13 @@ const documentProtection = createDocumentProtection({
   participantRefusal: () => SESSION.refusalFor("review.restrictEditing"),
   onChanged: () => updateToolbar(),
 });
-// ADR-061's three review seams are inline on purpose: `compare_documents.mjs`
-// owns the ORDER of "apply the sidecar, repaint, turn the markup on, re-render the
-// gutter" because that order is the decision, and this is the 93%-of-the-webapp
-// module with no mount seam (`109` HF-085). `landed` doubles as the capability
-// test — withheld, the panel claims no tracked changes it cannot write.
-const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); }, navigate: (a) => { const node = doc?.nodeAtStoryPath(JSON.stringify(a.story), JSON.stringify(a.path)); if (node) navigateToReviewAnchor({ node, start: a.start, end: a.end }); else setStatus(t("compare.diff.unresolved"), "error"); } });
+// Review ▸ Compare's seams (ADR-061, ADR-065), inline because this module has no
+// mount seam (`109` HF-085); `landed` is also the capability test for "Keep".
+const yieldFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+const redlineOf = (io) => buildRedline({ ...io, engine: { begin: beginVersionDiff, slice: defaultDiffSlice, open }, yieldToHost: yieldFrame });
+/** Takes the reader to one change on a redline (ADR-065): the selection and the scroll, focus left on the control they stepped with. */
+const showChange = (a) => { selection = { anchor: { node: a.node, offset: Number(a.start) || 0 }, focus: { node: a.node, offset: Number(a.end) || Number(a.start) || 0 } }; drawSelection(); if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer(); };
+const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), redline: redlineOf, showView: (view) => (view ? showVersionPreview(view, { markup: true, reason: t("compare.viewReadOnly") }) : showVersionPreview(null)), beforeView: () => versionHistory.closePreview(), yieldToHost: yieldFrame, setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); }, navigate: showChange });
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -15109,7 +15111,7 @@ function takeDraftSnapshot() {
         findings = 0; // a report we cannot parse must not lose us the draft
       }
       artifact.free();
-      return { bytes, formatId, mode, findings, contentId: doc.contentDigest() };
+      return { bytes, formatId, mode, findings, contentId: doc.contentDigest(), words: ((s) => { const words = s.words; s.free(); return words; })(doc.documentStats()) };
     } catch (err) {
       lastError = err;
     }
@@ -15619,35 +15621,29 @@ const versionNamePrompt = createNamePrompt({
 let versionPreviewHome = null;
 
 /**
- * Swaps the canvas onto a version preview, or (with `null`) back to the live
- * document.
- *
- * O(preview document) for the render, once per preview, and it never touches the
- * live document's model. The live wrapper is KEPT, not freed: it is the document
- * the user is editing and the only copy of their unsaved work.
+ * Swaps the canvas onto a read-only preview — a version, or a redline (ADR-065)
+ * with `markup` on — or (with `null`) back to the live document. O(preview) to
+ * render, once; the live wrapper is KEPT: it holds the reader's unsaved work.
  */
-async function showVersionPreview(previewDoc) {
+async function showVersionPreview(previewDoc, { markup = false, reason = t("versionHistory.preview.readOnly") } = {}) {
   if (previewDoc) {
-    if (!versionPreviewHome) {
-      versionPreviewHome = { doc, selection, reviewMode, readOnlyReason };
-    }
+    versionPreviewHome ??= { doc, selection, reviewMode, readOnlyReason, showingChanges, reviewSidebarPreference };
     doc = previewDoc;
-    readOnlyReason = t("versionHistory.preview.readOnly");
+    readOnlyReason = reason; if (markup) reviewSidebarPreference = false; // a redline's index is its own panel, not decision cards
+    // A redline IS its markup; one too large for the markup layout is shown plain, and says why.
+    try { showingChanges = markup && (previewDoc.setShowChanges(true) ?? true); } catch (error) { showingChanges = false; setStatus(String(error?.message ?? error), "error"); }
   } else {
     if (!versionPreviewHome) return;
-    ({ doc, selection, readOnlyReason } = versionPreviewHome);
+    ({ doc, selection, readOnlyReason, showingChanges, reviewSidebarPreference } = versionPreviewHome);
     const home = versionPreviewHome;
     versionPreviewHome = null;
-    // LEAVING keeps the default focus restore, unlike entering: the control the
-    // reader pressed — "Back to current" — is part of the preview banner and goes
-    // away with it, so declining to move focus would drop the keyboard onto
-    // `<body>` and make them Tab in from the top. Measured, both ways.
+    // LEAVING keeps the default focus restore: "Back to current" goes away with the
+    // banner, and declining to move focus would drop the keyboard onto `<body>`.
     setReviewMode(home.reviewMode);
   }
-  // A different document, so every answer cached about the last one is wrong: the
-  // remembered object presence, any table selection, the review card geometry,
-  // and the background measure ticker (which captures `doc`, so a late tick from
-  // the old one is already a no-op).
+  reflectShowingChangesState();
+  // A different document: every cached answer about the last one is wrong (object
+  // presence, table selection, card geometry; the measure ticker captures `doc`).
   objectPresence.forget();
   tableRange.clear();
   reviewLayout = [];
@@ -15674,7 +15670,7 @@ let activatingRestore = false;
 
 const versionHistory = createVersionHistory({
   parse: (bytes) => open(bytes),
-  showPreview: (previewDoc) => showVersionPreview(previewDoc),
+  showPreview: (previewDoc, _row, options) => showVersionPreview(previewDoc, options),
   // Through the ORDINARY open path, so a restored document is indistinguishable
   // from an opened one: same admission limits, dirty tracking and loss reporting.
   activateRestored: async (bytes, name) => {
@@ -15716,7 +15712,9 @@ const versionHistory = createVersionHistory({
     // never squeezed from both sides at once.
     if (isOpen && !reviewSidebar.hidden) toggleReview(false);
   },
-  showChanges: comparePanel.compareVersions && ((older, newer, olderName, newerName) => void comparePanel.compareVersions(older, newer, olderName, newerName)),
+  redline: redlineOf,
+  navigateTo: showChange,
+  beforePreview: () => comparePanel.closeView(),
 });
 
 /**

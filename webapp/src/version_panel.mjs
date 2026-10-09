@@ -27,7 +27,7 @@
 // | A ⋮ menu on every entry carrying that entry's actions | same | — (see "The row actions" below: this row USED to read "an action bar below the list", and that difference is what the owner rejected) |
 // | Restore also offered prominently while previewing | on the preview bar, beside "Back to current" | — |
 // | Restore this version, current state kept as a version | same | Docs restores without confirming; this asks once, because the confirmation is where the reader is TOLD their current work is kept — see `confirmRestore` |
-// | "Show changes" diff toggle | present and LIVE: it compares this version with its PREDECESSOR and renders the result as a read-only unified diff in the Compare panel (ADR-062) | Docs paints its differences into the preview; ours puts them in a panel beside it, as added/removed blocks with context that expands — GitHub's shape, because `casual-doc-diff` returns a typed sidecar and not a merged document. Three rows of this table were stale and are corrected here: it used to compare against the document ON SCREEN, which during a preview is the same version (so it could only report "No differences"); it used to write the result into the reader's document as tracked changes, which no competitor does; and the row that refuses is the EARLIEST version kept, not the head |
+// | "Show changes" diff toggle | same, and ON by default: the preview IS the version with its changes against its PREDECESSOR painted in place — added text underlined, removed text and removed paragraphs struck where they were, moves double-lined at both ends, all in the version author's colour — with "3 of 12" and previous/next on the preview bar (ADR-065, `diff_canvas.mjs`) | none in kind. Docs attributes edits within a version to each editor; a version here records one actor, so a version's changes carry that one colour (VH-016). The unified block diff in a side panel this replaced (ADR-064) is gone: it asked the reader to map a text list back onto a page they could not see |
 // | Make a copy | same, and it replaces the document in the tab | Docs opens the copy as a NEW file in Drive and leaves yours alone. There is no document manager here, so the copy arrives where the reader is — which is a real difference and is therefore CONFIRMED, and the current document becomes a version of its own first so nothing is left in neither place |
 // | Download this version | same | the bytes are the checkpoint's, handed over unchanged; see `downloadVersion` for why that is the whole point |
 //
@@ -87,7 +87,7 @@
 //   Name            the row menu, and **F2** on the focused row
 //   Delete          the row menu, and **Delete** on the focused row
 //   Keep            the row menu, and the row's right-click / Shift+F10 menu
-//   Show changes    the same pair, live on every row but the head
+//   Show changes    the row menu, and the preview bar's "Show changes" switch
 //   Clear history   the panel footer (it acts on the timeline, not on a row)
 //
 // F2 and Delete are the two keys a list carries everywhere, and they are
@@ -121,6 +121,8 @@ import { t } from "./i18n.mjs";
 import { downloadBytes } from "./save_formats.mjs";
 import { formatShortcut, matchesShortcut } from "./keyboard.mjs";
 import { focusMenuIndex, renderMenuLevel } from "./menu_render.mjs";
+import { createChangeNavigator, redlineEntries } from "./diff_canvas.mjs";
+import { reviewAuthorColor, reviewAuthorKey } from "./review_labels.mjs";
 import {
   CAPTURE_REASON,
   HISTORY_STATUS,
@@ -198,15 +200,17 @@ function iconSpan(name, className = "") {
  * @param {(bytes: Uint8Array) => object} deps.parse the engine's `open`; throws
  *        on a document it will not admit, which is how a corrupt checkpoint is
  *        refused before anything on screen changes.
- * @param {(doc: object|null, version: object|null) => Promise<void>} deps.showPreview
+ * @param {(doc: object|null, version: object|null, options?: {markup: boolean}) => Promise<void>} deps.showPreview
  *        swaps the canvas onto a preview document, or back to the live one when
- *        given `null`. Read-only enforcement is the caller's, because the caller
- *        already owns the one fail-closed mutation choke point.
+ *        given `null`; `markup` asks for the preview's tracked changes to be
+ *        painted, which a redline needs. Read-only enforcement is the caller's,
+ *        because the caller already owns the one fail-closed mutation choke
+ *        point.
  * @param {(bytes: Uint8Array, name: string) => Promise<boolean>} deps.activateRestored
  *        opens restored bytes through the ordinary open path.
  * @param {() => object|null} deps.snapshot the same fidelity-complete export the
  *        autosave path takes, or null when the document cannot be exported.
- *        `{bytes, formatId, mode, findings, contentId}`.
+ *        `{bytes, formatId, mode, findings, contentId, words}`.
  *
  *        `contentId` is the engine's `contentDigest()` — the document's CONTENT
  *        identity, folded from the semantic projection the Compare pipeline
@@ -256,12 +260,17 @@ export function createVersionHistory({
   confirm,
   promptName,
   onOpenChange = () => {},
-  // Google Docs' "Show changes", handed the checkpoint's bytes and its label.
+  // Google Docs' "Show changes" (ADR-065): `diff_canvas.mjs`'s `buildRedline`,
+  // bound to the engine, handed two checkpoints and who the changes are by.
   // Optional, and that is not laziness: `version_panel.test.mjs` builds this
-  // module without a comparison surface, and a row that assumed one would make
-  // every such caller throw instead of seeing the row disabled with its reason —
-  // which is also exactly what a host that withheld the capability gets.
-  showChanges = null,
+  // module without an engine, and a preview that assumed one would make every
+  // such caller throw instead of showing the version plain.
+  redline = null,
+  // Takes the reader to one change on the canvas (`{node, start, end}`).
+  navigateTo = () => {},
+  // Called before a preview takes the canvas, so another read-only view on it
+  // (Review ▸ Compare's) can let go first: one borrowed canvas at a time.
+  beforePreview = async () => {},
   storeOptions = {},
 }) {
   const panel = document.getElementById("versionPanel");
@@ -287,6 +296,12 @@ export function createVersionHistory({
   const bannerRestore = document.getElementById("versionPreviewRestore");
   const bannerCopy = document.getElementById("versionPreviewCopy");
   const bannerDownload = document.getElementById("versionPreviewDownload");
+  const bannerShowChanges = document.getElementById("versionPreviewShowChanges");
+  const bannerShowChangesLabel = document.getElementById("versionPreviewShowChangesLabel");
+  const changesRoot = document.getElementById("versionPreviewChanges");
+  const changes = changesRoot
+    ? createChangeNavigator(changesRoot, { navigate: (entry) => navigateTo(entry.anchor) })
+    : null;
   const clearBtn = document.getElementById("versionClearBtn");
 
   /** The store, once. `null` until asked for; `storeReason` is non-empty once
@@ -312,6 +327,10 @@ export function createVersionHistory({
   let menuLevel = null;
   let previewVersionId = "";
   let previewDoc = null;
+  /** Whether a preview shows its changes against its predecessor. On by
+   *  default, as Google's is; the preview bar's switch and the row menu's
+   *  "Show changes" set it. */
+  let showDiff = true;
   /** Serialises preview work: two overlapping parses would race on `previewDoc`
    *  and leak the loser's wasm allocation. */
   let previewToken = 0;
@@ -469,9 +488,7 @@ export function createVersionHistory({
   function renderRow(row) {
     const text = versionRowText(row, {
       isHead: row.versionId === headVersionId,
-      sizeText: describeDraftSize(row.bytes ?? 0),
       delta: deltas.get(row.versionId) ?? null,
-      describeSize: describeDraftSize,
     });
     const item = document.createElement("div");
     item.className = "version-item";
@@ -514,6 +531,16 @@ export function createVersionHistory({
     detail.className = "version-item-detail";
     if (text.exact) detail.dateTime = text.exact;
     detail.textContent = text.named ? `${text.clock} · ${text.detail}` : text.detail;
+    // The author's colour, as Google's list shows it: the same hue the
+    // version's changes are painted in when it is opened (ADR-065), so the dot
+    // and the marks on the page say the same thing. A version with no recorded
+    // name was made in this browser and is painted as "You", so is its dot.
+    const dot = document.createElement("span");
+    dot.className = "version-item-author-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const painter = text.author || t("diffCanvas.someone");
+    dot.style.setProperty("--diff-author-color", reviewAuthorColor(reviewAuthorKey({ author: painter })));
+    detail.prepend(dot);
 
     entry.append(head, detail);
     entry.addEventListener("click", () => {
@@ -680,7 +707,14 @@ export function createVersionHistory({
       else clearBtn.title = t("versionHistory.empty");
     }
     if (bannerBack) bannerBack.hidden = !previewing;
-    if (bannerRestore) bannerRestore.hidden = !previewing;
+    // The head previewed with its changes is the document already in place, so
+    // there is nothing to restore.
+    if (bannerRestore) bannerRestore.hidden = !previewing || previewVersionId === headVersionId;
+    if (bannerShowChanges) {
+      bannerShowChanges.checked = showDiff;
+      bannerShowChanges.disabled = typeof redline !== "function";
+    }
+    if (bannerShowChangesLabel) bannerShowChangesLabel.textContent = t("versionPanel.showChanges");
     for (const [button, capability] of [
       [bannerCopy, "open"],
       [bannerDownload, "download"],
@@ -728,7 +762,7 @@ export function createVersionHistory({
     }
     // `expectVersions` is what turns a browser that dropped the origin's
     // IndexedDB into a reported loss rather than an empty timeline.
-    const status = await ready.storageStatus({ expectVersions: rows.length });
+    const status = await ready.storageStatus({ expectVersions: rows.length, lineageId });
     if (status.status === HISTORY_STATUS.EVICTED) report(status);
     const words = retentionSummary(status, retention(), describeDraftSize);
     summaryEl.textContent = words.kept;
@@ -879,26 +913,15 @@ export function createVersionHistory({
         run: () => void queue(() => setPinned(id, !row.pinned)),
       },
       {
-        // Google Docs' "Show changes": this version against the document on
-        // screen. It is LIVE now, and the row's old reason — that the structural
-        // diff "is not built yet" — was wrong about which half was missing:
-        // `crates/casual-doc-diff` and `crates/casual-doc-wasm/src/diff.rs` were
-        // both complete and `webapp/` called neither. What was missing was the
-        // panel, and `compare_documents.mjs` is it.
-        //
-        // Refused on the HEAD row, because the head IS the document on screen and
-        // comparing it with itself would report no differences and teach the
-        // reader nothing. Refused without a host that granted the comparison, for
-        // the reason the copy and download rows are.
+        // Google Docs' "Show changes": this version on the page with what changed
+        // since its PREDECESSOR painted in (ADR-065). The head is the most useful
+        // row — "what changed in the latest save?" — and the EARLIEST one kept is
+        // the one that refuses, because it has nothing before it to compare with.
+        // Disabled with that reason rather than enabled and silently useless.
         id: "version.changes",
         group: "edit",
         label: t("versionPanel.showChanges"),
-        // THE EARLIEST ROW IS THE ONE THAT REFUSES NOW, not the head. The
-        // comparison is against a PREDECESSOR (ADR-062), so the head is the most
-        // useful row in the panel — "what changed in the latest save?" — and the
-        // earliest one kept has nothing before it to compare with. Disabled with
-        // that reason rather than enabled and silently useless.
-        enabled: predecessorOf(id) !== null && typeof showChanges === "function",
+        enabled: predecessorOf(id) !== null && typeof redline === "function",
         disabledReason:
           predecessorOf(id) === null
             ? t("versionHistory.earliestNotComparable")
@@ -1037,15 +1060,27 @@ export function createVersionHistory({
    * artifact is reported and the live document is untouched, which is the
    * difference between a preview and a hazard.
    *
+   * ## With its changes (ADR-065)
+   *
+   * While "Show changes" is on and the version has a predecessor, what reaches
+   * the canvas is not the version plain but its REDLINE: the predecessor and
+   * this version are compared (sliced, cancellable — a click on another row
+   * cancels it through the token), and the result is painted into a throwaway
+   * copy of this version in its author's colour. If that fails the version is
+   * still shown, plain, and the failure is said — a preview never goes missing
+   * because its decoration did.
+   *
    * Complexity: O(target document) for the read, the hash and the parse, once
-   * per preview. It never walks the live document, and nothing here runs on an
-   * interaction with the document itself.
+   * per preview — O(both versions) with changes on. It never walks the live
+   * document, and nothing here runs on an interaction with the document itself.
    */
-  async function openPreview(versionId) {
-    if (versionId === previewVersionId) return;
-    if (versionId === headVersionId) {
-      // The head IS the document on screen. Previewing it would swap the live
-      // session for a byte-identical copy and throw away the caret for nothing.
+  async function openPreview(versionId, { reload = false } = {}) {
+    if (versionId === previewVersionId && !reload) return;
+    const older = showDiff && typeof redline === "function" ? predecessorOf(versionId) : null;
+    if (versionId === headVersionId && !older) {
+      // The head IS the document on screen. Previewing it plain would swap the
+      // live session for a byte-identical copy and throw away the caret for
+      // nothing; previewing it WITH its changes is the latest save's redline.
       await closePreview();
       return;
     }
@@ -1060,13 +1095,48 @@ export function createVersionHistory({
       return;
     }
     let next = null;
-    try {
-      next = parse(loaded.bytes);
-    } catch (err) {
-      // `docs/139` §8.4: an unavailable or partial version is stated, never
-      // shown as an empty preview.
-      publish(t("versionHistory.preview.failed", { message: String(err?.message ?? err) }), "error");
-      return;
+    let entries = null;
+    const author = String(row.actor ?? "").trim() || t("diffCanvas.someone");
+    if (older) {
+      const previous = await ready.readCheckpoint(older.checkpointId);
+      if (token !== previewToken) return;
+      if (previous.ok) {
+        // The stamp that marks THIS comparison's changes: the version's own
+        // time, so two previews of one version paint identically.
+        const date = new Date(row.createdAt ?? 0).toISOString();
+        const painted = await redline({
+          older: previous.bytes,
+          newer: loaded.bytes,
+          author,
+          date,
+          cancelled: () => token !== previewToken,
+        });
+        if (token !== previewToken) {
+          if (painted.ok) painted.view.free();
+          return;
+        }
+        if (painted.ok) {
+          next = painted.view;
+          entries = redlineEntries(JSON.parse(next.listRevisions()), painted.diff, painted.summary, {
+            author,
+            date,
+          });
+        } else {
+          publish(t("compare.failed", { reason: painted.reason }), "error");
+        }
+      } else {
+        report(previous);
+      }
+    }
+    if (!next) {
+      try {
+        next = parse(loaded.bytes);
+      } catch (err) {
+        // `docs/139` §8.4: an unavailable or partial version is stated, never
+        // shown as an empty preview.
+        publish(t("versionHistory.preview.failed", { message: String(err?.message ?? err) }), "error");
+        return;
+      }
     }
     if (token !== previewToken) {
       next.free();
@@ -1077,12 +1147,19 @@ export function createVersionHistory({
     previewVersionId = versionId;
     const words = versionRowText(row, { isHead: false });
     if (bannerText) {
-      bannerText.textContent = t("versionHistory.preview.banner", { when: words.timestamp });
+      // A short date, and the version's NAME when it has one: the full spelling
+      // with seconds ("Friday, October 9, 2026 at 2:32:05 PM") was most of the
+      // bar, and it is on the row's tooltip for whoever needs it.
+      const when = words.named ? `“${words.title}”, ${words.when}` : words.when;
+      bannerText.textContent = t("versionHistory.preview.banner", { when });
     }
-    await keepingFocus(() => showPreview(next, row));
+    if (previous === null) await beforePreview();
+    await keepingFocus(() => showPreview(next, row, { markup: Boolean(entries) }));
     // Freed AFTER the swap: the canvas held the old preview until `showPreview`
     // returned, and freeing before that would hand the renderer a dead wrapper.
     previous?.free();
+    if (entries) changes?.show(entries, { author });
+    else changes?.clear();
     reflectSelection();
   }
 
@@ -1093,6 +1170,7 @@ export function createVersionHistory({
     previewToken += 1;
     if (!previewVersionId) return;
     previewVersionId = "";
+    changes?.clear();
     const previous = previewDoc;
     previewDoc = null;
     await keepingFocus(() => showPreview(null, null));
@@ -1286,82 +1364,22 @@ export function createVersionHistory({
   }
 
   /**
-   * Show changes: this version against its PREDECESSOR, read-only (**ADR-062**).
+   * Show changes: this version on the page, with what changed since its
+   * PREDECESSOR painted in (**ADR-065**). The same preview a click opens, with
+   * the switch forced on — the row menu's surface for the preview bar's switch.
    *
-   * ## What this used to do, and why it could only ever say "No differences"
-   *
-   * It read one checkpoint and handed it to `compareWith`, whose other side is
-   * `comparableBytes(doc, …)` — the LIVE document. That is Google's model and it
-   * is defensible, but four facts made it report nothing through the route every
-   * reader takes:
-   *
-   *   1. clicking a row runs `void openPreview(row.versionId)` — "a click is a
-   *      decision already made";
-   *   2. `showVersionPreview` assigns `doc = previewDoc`, so the module-level live
-   *      document IS the historical one while a preview is up;
-   *   3. the comparison's own side is therefore an export of that preview;
-   *   4. a freshly parsed preview has `revision == 0`, and
-   *      `ExportMode::ExactIfUnchanged` returns the retained ORIGINAL BYTES
-   *      verbatim.
-   *
-   * So "mine" was byte-identical to "theirs" and the comparison was a version
-   * against itself. The doc comment here claimed "Nothing about the live document
-   * is touched", which had also been false since ADR-061 — the sidecar was
-   * written into the reader's document as tracked changes.
-   *
-   * ## What it does now
-   *
-   * Reads BOTH checkpoints and compares them: the predecessor as the older side,
-   * this version as the newer, so an insertion is what this version added. The
-   * live document is not read, not exported and not written — see
-   * `compare_documents.mjs`'s `compareVersions` for the mechanics and for why the
-   * split keeps ADR-061 for Review ▸ Compare.
-   *
-   * THE HEAD ROW IS LIVE NOW. It used to refuse with "comparing it with itself",
-   * which was true of a comparison against the document on screen and is not true
-   * of one against a predecessor — and the head is the row a reader asks about
-   * first: what changed in the latest save? The row that refuses instead is the
-   * EARLIEST one kept, which has nothing before it, and it refuses with that
-   * reason rather than being enabled and silently useless.
-   *
-   * Both checkpoints are read on EVERY invocation rather than cached: a cached
-   * checkpoint is a second copy of a multi-megabyte document held for a panel
-   * nobody may open again, and reading one is a store round trip on an explicit
-   * act.
-   *
-   * Complexity: O(both versions' bytes) for the two reads; the comparison itself
-   * is the engine's and is driven in slices, with progress and a Cancel, by the
-   * surface that received the bytes.
+   * Reachable even though the menu row is disabled on the earliest version: the
+   * command is also reachable from the palette and from a host driving it, and
+   * a refusal that exists only as a disabled control is a refusal the second
+   * surface does not have (`SKILL` §10).
    */
   async function showChangesFor(versionId) {
-    if (typeof showChanges !== "function") {
+    if (typeof redline !== "function") {
       return void publish(t("versionHistory.action.showChangesUnavailable"), "error");
     }
-    const ready = await ensureStore();
-    const row = rows.find((candidate) => candidate.versionId === versionId);
-    if (!ready || !row) return;
-    const older = predecessorOf(versionId);
-    // Reachable even though the menu row is disabled for it: the command is also
-    // reachable from the palette and from a host driving it, and a refusal that
-    // exists only as a disabled control is a refusal the second surface does not
-    // have (`SKILL` §10 — every capability from ≥2 surfaces, and the same rule
-    // applies to every refusal).
-    if (!older) return void publish(t("versionHistory.earliestNotComparable"), "error");
-    const loaded = await ready.readCheckpoint(row.checkpointId);
-    if (!loaded.ok) return void report(loaded);
-    const previous = await ready.readCheckpoint(older.checkpointId);
-    if (!previous.ok) return void report(previous);
-    // Named by WHEN each was, not by file name: every version of a document
-    // shares one file name, so "opendoc-demo.docx" on both sides of a comparison
-    // would tell the reader nothing about which two versions they are looking at.
-    // The timestamp is the only thing that distinguishes them, formatted in the
-    // reader's own locale by the same helper the rows use.
-    showChanges(
-      previous.bytes,
-      loaded.bytes,
-      versionRowText(older, { isHead: false }).timestamp,
-      versionRowText(row, { isHead: false }).timestamp,
-    );
+    if (!predecessorOf(versionId)) return void publish(t("versionHistory.earliestNotComparable"), "error");
+    showDiff = true;
+    await openPreview(versionId, { reload: true });
   }
 
   async function downloadVersion(versionId) {
@@ -1628,9 +1646,10 @@ export function createVersionHistory({
       if (selectedId) void queue(() => nameVersion(selectedId));
     } else if (matchesShortcut(DELETE_KEY, event)) {
       // The head is the document; deleting it is refused for the same reason its
-      // menu row is disabled, and silently doing nothing would be worse than the
-      // menu row that says so.
-      if (selectedId && selectedId !== headVersionId) void queue(() => removeVersion(selectedId));
+      // menu row is disabled — and SAID, because a key that silently does
+      // nothing is the dead control `SKILL` §10 forbids.
+      if (selectedId === headVersionId) publish(t("versionHistory.headNotDeletable"), "error");
+      else if (selectedId) void queue(() => removeVersion(selectedId));
     } else if (event.key === "Escape") {
       void close();
     } else {
@@ -1657,6 +1676,10 @@ export function createVersionHistory({
   closeBtn?.addEventListener("click", () => void close());
   for (const entry of entryPoints) entry.addEventListener("click", () => void toggle());
   bannerBack?.addEventListener("click", () => void closePreview());
+  bannerShowChanges?.addEventListener("change", () => {
+    showDiff = bannerShowChanges.checked;
+    if (previewVersionId) void queue(() => openPreview(previewVersionId, { reload: true }));
+  });
   bannerRestore?.addEventListener("click", () => void queue(() => restore(previewVersionId)));
   // The version the bar is about is the one being previewed, which is why these
   // two need no selection of their own: the bar only exists while one is up.
@@ -1673,6 +1696,7 @@ export function createVersionHistory({
     available: enabled,
     unavailableReason,
     previewing: () => Boolean(previewVersionId),
+    closePreview,
 
     /**
      * Joins a freshly opened document to its own timeline and records the import
@@ -1799,6 +1823,9 @@ export function createVersionHistory({
       // rather than losing the version: over-keeping is recoverable, dropping is
       // not.
       contentId: taken.contentId ?? "",
+      // The word count, so a row can say "Words added: 12" — the change a
+      // reader recognises — without opening the version.
+      words: Number.isFinite(taken.words) ? taken.words : null,
       formatId: taken.formatId,
       exportMode: taken.mode,
       findings: taken.findings,

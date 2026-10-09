@@ -33,6 +33,7 @@
 //! length.
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 
 use casual_doc_model::v1::Document;
@@ -40,7 +41,7 @@ use casual_doc_model::v1::Document;
 use crate::align::{Step, align};
 use crate::compare::{MediaDigests, compare_definitions, differing_field_paths};
 use crate::inline::diff_text;
-use crate::projection::{BlockKey, List, Projection, Projector, resolve_block};
+use crate::projection::{BlockKey, List, NO_PARENT, Projection, Projector, resolve_block};
 use crate::record::{
     ChangeSpec, DIFF_SCHEMA, DiffAnchor, DiffChange, DiffDiagnostics, DiffFamily, DiffKind,
     FindingCode, FindingSet, Story, VersionDiff, excerpt,
@@ -118,6 +119,36 @@ pub struct DiffSides<'a> {
 struct ListPair {
     left: (u32, u32),
     right: (u32, u32),
+    /// Which right-side list this is, so a block removed from it can say where
+    /// it stood.
+    right_list: RightList,
+}
+
+/// One sibling list on the right (newer) side: its story slot and its parent
+/// block, or [`NO_PARENT`] for a story's root list.
+#[derive(Clone, Copy, Debug)]
+struct RightList {
+    story: u32,
+    parent: u32,
+}
+
+/// Where an unmatched left block stood in the right side's sibling list: the
+/// list and the sibling position it would occupy. See [`DiffChange::place`].
+#[derive(Clone, Copy, Debug)]
+struct Place {
+    list: RightList,
+    index: u32,
+}
+
+/// The right-side extent of one replace region inside a list being aligned:
+/// the region's first sibling position, the position just past it, and where
+/// the list starts in the projection.
+#[derive(Clone, Copy, Debug)]
+struct Region {
+    list: RightList,
+    first: u32,
+    start: u32,
+    end: u32,
 }
 
 /// A change with the sort key that puts it in document order.
@@ -141,6 +172,11 @@ pub struct DiffJob {
     findings: FindingSet,
     unmatched_left: Vec<u32>,
     unmatched_right: Vec<u32>,
+    /// Where each unmatched left block stood on the right, by left index.
+    places: BTreeMap<u32, Place>,
+    /// How often each subtree hash occurs on each side, built once on first
+    /// use: what tells a paragraph that MOVED from one that was edited.
+    occurrences: Option<(HashMap<u128, u32>, HashMap<u128, u32>)>,
     diagnostics: DiffDiagnostics,
     result: Option<VersionDiff>,
 }
@@ -289,6 +325,10 @@ impl DiffJob {
                     queued.push(ListPair {
                         left: (slot.first_root, slot.first_root + slot.root_count),
                         right: (other.first_root, other.first_root + other.root_count),
+                        right_list: RightList {
+                            story: *right_index,
+                            parent: NO_PARENT,
+                        },
                     });
                 }
                 None => removed.push((index, slot.story.clone())),
@@ -365,16 +405,28 @@ impl DiffJob {
         let mut deletes: Vec<u32> = Vec::new();
         let mut inserts: Vec<u32> = Vec::new();
         let mut cost = alignment.steps.len();
+        // The right-side extent of the region being accumulated, in sibling
+        // positions: it starts just past the previous exact match and ends at
+        // the next one (or the end of the list).
+        let mut region = Region {
+            list: pair.right_list,
+            first: pair.right.0,
+            start: 0,
+            end: 0,
+        };
         for step in &alignment.steps {
             match *step {
-                Step::Equal(_, _) => {
-                    cost += self.resolve_run(sides, &mut deletes, &mut inserts);
+                Step::Equal(_, right) => {
+                    region.end = right.saturating_sub(pair.right.0);
+                    cost += self.resolve_run(sides, &mut deletes, &mut inserts, region);
+                    region.start = region.end.saturating_add(1);
                 }
                 Step::Delete(index) => deletes.push(index),
                 Step::Insert(index) => inserts.push(index),
             }
         }
-        cost += self.resolve_run(sides, &mut deletes, &mut inserts);
+        region.end = pair.right.1.saturating_sub(pair.right.0);
+        cost += self.resolve_run(sides, &mut deletes, &mut inserts, region);
         cost
     }
 
@@ -390,7 +442,10 @@ impl DiffJob {
     /// * The kinds line up one-to-one with nothing left over — one paragraph
     ///   replaced by one paragraph, one cell by one cell. There is no other
     ///   reading of that, so it is an edit however different the two texts are.
-    ///   A cell that went from `before` to `after` is the same cell.
+    ///   A cell that went from `before` to `after` is the same cell. **Except a
+    ///   paragraph whose exact content is unique on both sides**: that one has
+    ///   another reading — it moved — and `is_move_candidate` leaves it to move
+    ///   detection rather than word-diffing it against its neighbour.
     /// * The region is ragged — three paragraphs became five. Now the pairing is
     ///   a guess, so it is only made where the texts are similar enough
     ///   ([`PAIR_SIMILARITY`]); the rest stay unmatched and go to move detection.
@@ -398,12 +453,20 @@ impl DiffJob {
     /// A container is always accepted: a table whose one cell changed is still
     /// that table, and refusing it would report a thousand cells as deleted.
     ///
+    /// Every left block left unmatched also records where it stood on the
+    /// right ([`DiffChange::place`]): just after the right half of the nearest
+    /// pairing before it in this region, or at the region's start when there
+    /// is none. So a removed paragraph is put back *before* whatever replaced
+    /// it, which is the order Word's and Google's redlines read in — the old
+    /// text struck, then the new.
+    ///
     /// **O(region log region)**.
     fn resolve_run(
         &mut self,
         sides: DiffSides<'_>,
         deletes: &mut Vec<u32>,
         inserts: &mut Vec<u32>,
+        region: Region,
     ) -> usize {
         if deletes.is_empty() && inserts.is_empty() {
             return 0;
@@ -414,6 +477,15 @@ impl DiffJob {
             return cost;
         }
         if inserts.is_empty() {
+            for index in deletes.iter() {
+                self.places.insert(
+                    *index,
+                    Place {
+                        list: region.list,
+                        index: region.start,
+                    },
+                );
+            }
             self.unmatched_left.append(deletes);
             return cost;
         }
@@ -433,19 +505,36 @@ impl DiffJob {
             .all(|step| matches!(step, Step::Equal(_, _)));
         let mut matched_left = vec![false; deletes.len()];
         let mut matched_right = vec![false; inserts.len()];
+        // For each left slot, the right block it was paired with, if any.
+        let mut partner: Vec<Option<u32>> = vec![None; deletes.len()];
         for step in &alignment.steps {
             if let Step::Equal(left_slot, right_slot) = *step {
                 let left_index = deletes[left_slot as usize];
                 let right_index = inserts[right_slot as usize];
-                if unambiguous || self.accept_pair(sides, left_index, right_index) {
+                if !self.is_move_candidate(left_index, right_index)
+                    && (unambiguous || self.accept_pair(sides, left_index, right_index))
+                {
                     matched_left[left_slot as usize] = true;
                     matched_right[right_slot as usize] = true;
+                    partner[left_slot as usize] = Some(right_index);
                     self.characterise(sides, left_index, right_index);
                 }
             }
         }
+        // One forward pass: the position just past the latest pairing seen so
+        // far is where the next unmatched left block stood.
+        let mut stood_at = region.start;
         for (slot, index) in deletes.iter().enumerate() {
-            if !matched_left[slot] {
+            if let Some(right_index) = partner[slot] {
+                stood_at = right_index.saturating_sub(region.first).saturating_add(1);
+            } else {
+                self.places.insert(
+                    *index,
+                    Place {
+                        list: region.list,
+                        index: stood_at,
+                    },
+                );
                 self.unmatched_left.push(*index);
             }
         }
@@ -457,6 +546,46 @@ impl DiffJob {
         deletes.clear();
         inserts.clear();
         cost
+    }
+
+    /// Whether a positional pairing of two paragraphs is really a MOVE beside an
+    /// unrelated change, and so must not be called an edit.
+    ///
+    /// A one-to-one region is otherwise always an edit ("there is no other
+    /// reading"), and that is wrong in exactly one case: either paragraph's
+    /// exact content occurs **once on each side** — the uniqueness rule
+    /// `detect_moves` already applies. Then there IS another reading, and it is
+    /// the right one: `[We moved…, Intro, Removed line]` → `[Intro, We moved…]`
+    /// used to pair "Removed line" with "We moved…" and word-diff them into
+    /// "Removed~~We~~ line~~moved this sentence~~", where a reader sees one move
+    /// and one removal. Left unpaired, both go to move detection and come back
+    /// as exactly that.
+    ///
+    /// Paragraphs only: a container with one changed cell is still that
+    /// container. **O(1)** after a one-off O(b) count of both sides.
+    fn is_move_candidate(&mut self, left_index: u32, right_index: u32) -> bool {
+        let (Some(left), Some(right)) = (
+            self.left.blocks.get(left_index as usize).copied(),
+            self.right.blocks.get(right_index as usize).copied(),
+        ) else {
+            return false;
+        };
+        if left.kind != BlockKey::Paragraph || right.kind != BlockKey::Paragraph {
+            return false;
+        }
+        let (left_counts, right_counts) = self.occurrences.get_or_insert_with(|| {
+            let count = |projection: &Projection| {
+                let mut counts: HashMap<u128, u32> = HashMap::new();
+                for block in &projection.blocks {
+                    *counts.entry(block.subtree_hash).or_insert(0) += 1;
+                }
+                counts
+            };
+            (count(&self.left), count(&self.right))
+        });
+        let unique_on_both =
+            |hash: u128| left_counts.get(&hash) == Some(&1) && right_counts.get(&hash) == Some(&1);
+        unique_on_both(left.subtree_hash) || unique_on_both(right.subtree_hash)
     }
 
     /// Whether a candidate pairing is the same block, modified.
@@ -715,11 +844,46 @@ impl DiffJob {
         let left_children = self.left.children(left_index);
         let right_children = self.right.children(right_index);
         if !left_children.is_empty() || !right_children.is_empty() {
+            let story = self
+                .right
+                .blocks
+                .get(right_index as usize)
+                .map_or(0, |block| block.story);
             self.lists.push_back(ListPair {
                 left: (left_children.start, left_children.end),
                 right: (right_children.start, right_children.end),
+                right_list: RightList {
+                    story,
+                    parent: right_index,
+                },
             });
         }
+    }
+
+    /// The right-side insertion point an unmatched left block stood at, as an
+    /// anchor ([`DiffChange::place`]). **O(depth)**.
+    fn place_of(&self, left_index: u32) -> Option<DiffAnchor> {
+        let place = self.places.get(&left_index)?;
+        let kind = self.left.blocks.get(left_index as usize)?.kind;
+        let story = self
+            .right
+            .stories
+            .get(place.list.story as usize)?
+            .story
+            .clone();
+        let mut path = if place.list.parent == NO_PARENT {
+            Vec::new()
+        } else {
+            self.right.path(place.list.parent)
+        };
+        path.push(kind.segment(place.index));
+        Some(DiffAnchor {
+            story,
+            path,
+            node: None,
+            start: 0,
+            end: 0,
+        })
     }
 
     /// Compares everything outside story content. **O(definitions)**, one shot:
@@ -771,7 +935,7 @@ impl DiffJob {
         for (left_indices, right_indices) in buckets.values() {
             if left_indices.len() == 1 && right_indices.len() == 1 {
                 let (left_index, right_index) = (left_indices[0], right_indices[0]);
-                let from = ChangeSpec {
+                let mut from = ChangeSpec {
                     family: Some(DiffFamily::Block),
                     kind: Some(DiffKind::MoveFrom),
                     left: Some(self.anchor(&self.left, left_index, (0, 0))),
@@ -780,6 +944,7 @@ impl DiffJob {
                     ..ChangeSpec::default()
                 }
                 .build();
+                from.place = self.place_of(left_index);
                 let mut to = ChangeSpec {
                     family: Some(DiffFamily::Block),
                     kind: Some(DiffKind::MoveTo),
@@ -790,7 +955,6 @@ impl DiffJob {
                 }
                 .build();
                 to.paired_with = Some(from.id.clone());
-                let mut from = from;
                 from.paired_with = Some(to.id.clone());
                 let left_story = self.left.order_key(left_index);
                 let right_story = self.right.order_key(right_index);
@@ -808,7 +972,7 @@ impl DiffJob {
             if moved_left.contains(&index) {
                 continue;
             }
-            let change = ChangeSpec {
+            let mut change = ChangeSpec {
                 family: Some(family_of(&self.left, index)),
                 kind: Some(DiffKind::Deletion),
                 left: Some(self.anchor(&self.left, index, (0, 0))),
@@ -816,6 +980,7 @@ impl DiffJob {
                 ..ChangeSpec::default()
             }
             .build();
+            change.place = self.place_of(index);
             let key = self.left.order_key(index);
             self.push_change(key.0, key.1, change);
         }

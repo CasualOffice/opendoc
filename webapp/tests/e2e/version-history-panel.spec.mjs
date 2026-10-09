@@ -434,7 +434,9 @@ test("restore is non-destructive: the document you replace becomes a version", a
   // document, and this one replaces what is in the tab.
   const dialog = page.locator("#confirmDialog");
   await expect(dialog).toBeVisible();
-  await expect(page.locator("#confirmDescription")).toContainText("Nothing is lost");
+  await expect(page.locator("#confirmDescription")).toContainText(
+    "saved as a version first, so you can go back to it",
+  );
   await expect(page.locator("#confirmNote")).toContainText("unsaved");
   await page.locator("#confirmAccept").click();
 
@@ -547,17 +549,23 @@ test("the timeline keeps the keyboard when a preview opens under it", async ({ p
   // End schedules the older version's preview, and the menu is opened inside the
   // 220 ms before it settles — which is what a reader does when they arrow to a
   // version and reach straight for its actions.
-  await expect(page.locator("#versionPreviewBanner")).toBeHidden();
+  //
+  // The head previews too now — with what its last save changed (ADR-065,
+  // Google's "Current version" view) — so the signal that a preview has landed
+  // is WHICH row carries `is-previewing`, not whether the bar is shown.
+  const head = page.locator(`#${ids[0]}`);
+  const oldest = page.locator(`#${ids[ids.length - 1]}`);
+  await expect(head).toHaveClass(/is-previewing/);
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Enter");
   await expect(page.locator(rowMenu)).toBeVisible();
   // If the preview had already landed, the wait below would prove nothing.
   await expect(
-    page.locator("#versionPreviewBanner"),
+    oldest,
     "the preview settled before the menu opened, so this run cannot see the defect",
-  ).toBeHidden();
-  await expect(page.locator("#versionPreviewBanner")).toBeVisible();
+  ).not.toHaveClass(/is-previewing/);
+  await expect(oldest).toHaveClass(/is-previewing/);
 
   expect(
     await page.evaluate(() => !!document.activeElement?.closest("#versionRowMenu")),
@@ -619,7 +627,7 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   // and refused on the HEAD, because the comparison ran against the document on
   // screen. ADR-062 compares against a PREDECESSOR, so the head is live (the
   // most useful row: what changed in the latest save?) and the earliest version
-  // kept is the one with nothing before it. `compare.spec.mjs` drives both and
+  // kept is the one with nothing before it. `version-diff-canvas.spec.mjs` drives both and
   // asserts the comparison each produces.
   const changes = page.locator(`${rowMenu} [data-command-id="version.changes"]`);
   await expect(changes).toBeDisabled();
