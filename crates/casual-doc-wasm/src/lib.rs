@@ -4258,6 +4258,7 @@ impl WasmDocument {
                     target,
                     tooltip: None,
                     inlines: vec![run_node],
+                    history: false,
                 })));
             } else {
                 out.push(run_node);
@@ -35293,6 +35294,7 @@ mod tests {
                             properties: Default::default(),
                             text: "Go".to_owned(),
                         })],
+                        history: false,
                     }))],
                 }),
                 BlockNode::Paragraph(Paragraph {
@@ -43263,6 +43265,7 @@ mod tests {
                             }),
                             page_number,
                         ],
+                        history: false,
                     }))],
                 }),
                 BlockNode::Paragraph(Paragraph {
@@ -45904,6 +45907,7 @@ mod tests {
                 }),
                 tooltip: None,
                 inlines: vec![run(id(), "link")],
+                history: false,
             })),
             InlineNode::Drawing(Box::new(Drawing {
                 hyperlink: None,

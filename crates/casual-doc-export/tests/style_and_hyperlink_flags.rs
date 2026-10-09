@@ -22,12 +22,11 @@
 //!   construct this common is the report-noise class HF-174 is about, and the
 //!   flag is not cosmetic: Word uses it to decide which styles a template
 //!   re-attach may replace.
-//! * **`@w:history` is reported.** Adding a field to `v1::Hyperlink` breaks every
-//!   struct literal of it — Rust has no source-compatible way to add one
-//!   (`SKILL` §5a) — and there are 37 across `casual-doc-edit`,
-//!   `casual-doc-transaction` and `casual-doc-wasm`, three crates other lanes
-//!   own. So the silence is closed and the model half waits for a lane that owns
-//!   those files.
+//! * **`@w:history` was reported, and is modelled since `109` FID-AT-17.**
+//!   Adding a field to `v1::Hyperlink` breaks every struct literal of it — Rust
+//!   has no source-compatible way to add one (`SKILL` §5a) — so the silence was
+//!   closed first and the model half waited for a branch that could touch every
+//!   crate holding a literal. `Hyperlink::history` is that half.
 //!
 //! # The trap this file is written around
 //!
@@ -46,8 +45,9 @@
 //!
 //! # What this file does NOT claim
 //!
-//! It does not claim `@w:history` survives a save: it does not, and the finding
-//! is the point. Nor does it claim the editor marks a style it mints as custom —
+//! It does not claim the editor marks a link it creates with `@w:history` (Word
+//! does; a link made here is written without it, as before). Nor does it claim
+//! the editor marks a style it mints as custom —
 //! `casual-doc-wasm`'s create-style-from-selection path still writes
 //! `custom_style: false`, which is wrong and is recorded as the open remainder of
 //! `109` FID-R-11 rather than fixed from outside that lane.
@@ -369,65 +369,52 @@ fn a_second_save_keeps_the_custom_style_flag() {
     );
 }
 
-/// `@w:history` does not survive the save — and **says so**. The guarantee is
-/// "the value survives the save OR is reported", which stays green under a
-/// wrong-value mutation and red under silence, and silence is what this was.
+/// `@w:history` survives the save, on the link that had it and only on that
+/// one, and raises no finding (`109` FID-AT-17). It was reported and dropped
+/// until the model carried it; this test used to assert exactly that drop.
+///
+/// MUTATION: the writer leaving `w:history` out fails with "the flagged link
+/// keeps `@w:history`".
 #[test]
-fn a_hyperlinks_history_flag_is_reported_when_it_cannot_be_kept() {
+fn a_hyperlinks_history_flag_survives_a_save() {
     let imported = import(&package());
-
-    let entry = finding_for(&imported.entries, "hyperlink", "history").unwrap_or_else(|| {
-        panic!(
-            "`w:hyperlink@w:history` must be reported: it is dropped, and a drop with no \
-             finding is the silent loss `SKILL` §1 says the local-first position depends on \
-             detecting. Entries: {:?}",
-            imported
-                .entries
-                .iter()
-                .map(|entry| entry.feature.as_str())
-                .collect::<Vec<_>>()
-        )
-    });
-    assert_eq!(
-        entry.feature, "hyperlink/@history",
-        "the feature string names the element and the attribute"
-    );
-    assert_eq!(
-        entry.occurrences, 1,
-        "ONE of the probe's two hyperlinks carries the attribute, and the finding counts \
-         occurrences rather than raising one entry per link — which is what keeps a common \
-         attribute from becoming the report noise HF-174 is about"
-    );
-
-    // And the drop it is reporting is real, so the finding is not decorative.
-    let written = write_back(&imported);
     assert!(
-        hyperlinks(&written)
+        finding_for(&imported.entries, "hyperlink", "history").is_none(),
+        "a kept attribute is not a loss: {:?}",
+        imported
+            .entries
             .iter()
-            .all(|(_, history)| history.is_none()),
-        "the writer emits no `@w:history`, which is exactly why the finding has to exist"
+            .map(|entry| entry.feature.as_str())
+            .collect::<Vec<_>>()
+    );
+    let written = write_back(&imported);
+    let mut flags: Vec<Option<String>> = hyperlinks(&written)
+        .into_iter()
+        .map(|(_, history)| history)
+        .collect();
+    flags.sort();
+    assert_eq!(
+        flags,
+        vec![None, Some("1".to_owned())],
+        "the flagged link keeps `@w:history` and the other gains none"
     );
 }
 
-/// The element-level hyperlink finding and the attribute-level one are different
-/// findings, and the location pair is what tells them apart.
+/// Neither the attribute nor the element raises a finding on this probe: both
+/// links resolve and both are carried whole.
 ///
-/// Without this, `finding_for` could be satisfied by the wrong entry on a
-/// document whose link target does not resolve — the confusion the module doc
-/// describes, made into a check rather than a comment.
+/// This used to tell the attribute finding apart from the element-level one —
+/// `finding_for` matches the `location` pair so a link whose target does not
+/// resolve could not satisfy an attribute guard. With the attribute modelled
+/// there is no attribute finding to confuse, and what remains to assert is that
+/// nothing about these links is reported at all.
 #[test]
-fn the_attribute_finding_is_not_the_element_level_hyperlink_finding() {
+fn the_probes_links_raise_no_hyperlink_finding() {
     let imported = import(&package());
-    let attribute = finding_for(&imported.entries, "hyperlink", "history")
-        .expect("the attribute finding exists");
-    assert_eq!(attribute.location.attribute.as_deref(), Some("history"));
-    let element_level = imported.entries.iter().find(|entry| {
-        entry.location.element.as_deref() == Some("hyperlink") && entry.location.attribute.is_none()
-    });
-    assert!(
-        element_level.is_none(),
-        "this probe's links both resolve, so there must be NO element-level `hyperlink` \
-         finding — if one appears, the attribute guard above could be matching it instead: \
-         {element_level:?}"
-    );
+    let about_links: Vec<_> = imported
+        .entries
+        .iter()
+        .filter(|entry| entry.location.element.as_deref() == Some("hyperlink"))
+        .collect();
+    assert!(about_links.is_empty(), "{about_links:?}");
 }

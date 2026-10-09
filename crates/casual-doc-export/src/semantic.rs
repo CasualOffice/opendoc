@@ -6731,16 +6731,20 @@ fn write_inline(
                     if let Some(tip) = &link.tooltip {
                         el.push_attribute(("w:tooltip", tip.as_str()));
                     }
-                    w.write_event(Event::Start(el)).map_err(pkg)?;
                 }
                 HyperlinkTarget::Internal(int) => {
                     el.push_attribute(("w:anchor", int.anchor.as_str()));
                     if let Some(tip) = &link.tooltip {
                         el.push_attribute(("w:tooltip", tip.as_str()));
                     }
-                    w.write_event(Event::Start(el)).map_err(pkg)?;
                 }
             }
+            // `w:history` (`109` FID-AT-17): what Word writes on every link it
+            // inserts, so a followed link paints as followed.
+            if link.history {
+                el.push_attribute(("w:history", "1"));
+            }
+            w.write_event(Event::Start(el)).map_err(pkg)?;
             for child in &link.inlines {
                 write_inline(w, child, ctx, in_deletion)?;
             }

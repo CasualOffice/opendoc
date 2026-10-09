@@ -1179,6 +1179,7 @@ mod tests {
                 ),
                 tooltip: None,
                 inlines: vec![run(61, "a")],
+                history: false,
             })),
             revision(62, RevisionKind::Insertion, vec![run(63, "a")]),
         ];

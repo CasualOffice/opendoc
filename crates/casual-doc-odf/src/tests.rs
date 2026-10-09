@@ -957,6 +957,7 @@ fn footer_page_number_field_and_logo_survive_the_export() {
                             properties: Default::default(),
                             text: "Terms".to_owned(),
                         })],
+                        history: false,
                     })),
                     InlineNode::BookmarkEnd(BookmarkEnd {
                         id: fresh(),

@@ -10826,6 +10826,7 @@ mod tests {
             }),
             tooltip: None,
             inlines: vec![run_node(31, "linked", RunProperties::default())],
+            history: false,
         }));
         let rev = InlineNode::Revision(Box::new(Revision {
             id: NodeId::from_parts(40, 1).unwrap(),

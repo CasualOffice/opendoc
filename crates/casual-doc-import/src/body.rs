@@ -122,6 +122,8 @@ enum Segment {
     Hyperlink {
         target: HyperlinkTarget,
         tooltip: Option<String>,
+        /// `w:history` (`109` FID-AT-17).
+        history: bool,
         children: Vec<Segment>,
     },
     Field {
@@ -953,6 +955,8 @@ struct ContentFrame {
 struct HyperlinkAccumulator {
     target: HyperlinkTarget,
     tooltip: Option<String>,
+    /// `w:history` (`109` FID-AT-17).
+    history: bool,
     segments: Vec<Segment>,
 }
 
@@ -2983,43 +2987,20 @@ impl BodyParser<'_> {
                 // `@w:history` — "add this link to the viewed-hyperlinks list",
                 // which is what makes a followed link paint with the
                 // `FollowedHyperlink` theme colour instead of `Hyperlink`.
-                //
-                // Reported, not modelled, and the reason is worth stating
-                // because it is not a preference. Adding a field to
-                // `v1::Hyperlink` breaks every struct literal of it (Rust has no
-                // source-compatible way to add one — `SKILL` §5a), and there are
-                // 37 across `casual-doc-edit`, `casual-doc-transaction` and
-                // `casual-doc-wasm`, three crates other lanes own. So the
-                // silence is closed here and the model half waits for a lane
-                // that owns those files.
-                //
-                // This does not reintroduce the report noise HF-174 and the
-                // empty-`w:ind` class are about: `report_attribute` keys a
-                // finding by `(feature, kind)` and counts occurrences, so the 54
-                // occurrences measured across six of the owner's nineteen
-                // documents are ONE entry reading `hyperlink/@history`, not 54.
-                //
-                // Reported on PRESENCE rather than on a non-default value, and
-                // that is a deliberate over-report with the reason recorded: the
-                // `ST_OnOff` default for this attribute is not verified from the
-                // specification here, and every value measured is `"1"`. Since
-                // the writer emits the attribute in neither case, one of the two
-                // values is genuinely lost whichever way the default goes, and
-                // over-reporting by one feature entry is the cheaper error than
-                // dropping it on an unchecked assumption.
-                //
-                // Charged before the target check below, so a hyperlink rejected
-                // for an unresolvable target still reports the attribute it
-                // carried.
-                if attribute_value(element, b"history").is_some() {
-                    self.reporter.report_attribute(b"hyperlink", b"history");
-                }
+                // Modeled on `Hyperlink::history` since `109` FID-AT-17; it was
+                // reported and dropped by every edited save before, because the
+                // field broke 37 struct literals in crates other lanes owned.
+                // `ST_OnOff`, so `"0"`/`"false"`/`"off"` are off and a bare or
+                // truthy value is on.
+                let history =
+                    attribute_value(element, b"history").is_some_and(|value| is_true(Some(&value)));
                 if self.hyperlink_depth == 1 {
                     match self.resolve_hyperlink_target(element) {
                         Some((target, tooltip)) => {
                             self.hyperlink = Some(HyperlinkAccumulator {
                                 target,
                                 tooltip,
+                                history,
                                 segments: Vec::new(),
                             });
                             self.wrapper_order.push(WrapperKind::Hyperlink);
@@ -7808,6 +7789,7 @@ impl BodyParser<'_> {
                 self.push_segment(Segment::Hyperlink {
                     target: accumulator.target,
                     tooltip: accumulator.tooltip,
+                    history: accumulator.history,
                     children,
                 });
             }
@@ -8672,6 +8654,7 @@ impl BodyParser<'_> {
             Segment::Hyperlink {
                 target,
                 tooltip,
+                history,
                 children,
             } => {
                 let id = self.next_id()?;
@@ -8684,6 +8667,7 @@ impl BodyParser<'_> {
                     target,
                     tooltip,
                     inlines,
+                    history,
                 })))
             }
             Segment::Field {

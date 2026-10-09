@@ -11092,6 +11092,7 @@ fn build_inlines(
                     groups,
                     group_media_ids,
                 )?,
+                history: false,
             })),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
                 id,

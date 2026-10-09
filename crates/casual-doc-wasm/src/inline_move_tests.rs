@@ -151,6 +151,7 @@ fn fixture() -> (WasmDocument, Ids) {
                             ..full_picture(40, media)
                         })),
                     ],
+                    history: false,
                 })),
                 run(33, " now"),
             ],

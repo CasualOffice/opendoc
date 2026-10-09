@@ -2084,6 +2084,7 @@ fn hyperlink_paragraph(inlines: Vec<InlineNode>) -> BlockNode {
         }),
         tooltip: None,
         inlines,
+        history: false,
     }));
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
@@ -2176,6 +2177,7 @@ fn a_field_inside_a_hyperlink_is_still_validated_as_leaf_only() {
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(16), "x")],
+        history: false,
     }));
     assert!(matches!(
         table_document(vec![hyperlink_paragraph(vec![outer(inner_link, 12)])]),
@@ -2195,6 +2197,7 @@ fn hyperlink_inside_a_hyperlink_is_still_rejected() {
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "x")],
+        history: false,
     }));
     assert!(matches!(
         table_document(vec![hyperlink_paragraph(vec![inner_link])]),
@@ -2211,6 +2214,7 @@ fn hyperlink_inside_a_field_is_rejected() {
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "x")],
+        history: false,
     }));
     let field = Field {
         id: tid(10),
@@ -3711,6 +3715,7 @@ fn revision_may_wrap_a_hyperlink_at_top_level() {
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "link")],
+        history: false,
     }));
     let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
@@ -3975,6 +3980,7 @@ fn bookmark_marker_inside_a_hyperlink_validates() {
                 bookmark: bm,
             }),
         ],
+        history: false,
     }));
     let paragraph = bookmark_paragraph(tid(1), vec![link]);
     assert!(Document::new(tid(99), vec![paragraph], definitions).is_ok());
@@ -4349,6 +4355,7 @@ fn inline_content_control_composes_with_a_hyperlink_either_way() {
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "link")],
+        history: false,
     }));
     let sdt_over_link = InlineNode::Sdt(Box::new(InlineSdt {
         id: tid(10),
@@ -4369,6 +4376,7 @@ fn inline_content_control_composes_with_a_hyperlink_either_way() {
         }),
         tooltip: None,
         inlines: vec![inner_sdt],
+        history: false,
     }));
     assert!(table_document(vec![inline_sdt_paragraph(tid(2), link_over_sdt)]).is_ok());
 }

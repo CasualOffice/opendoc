@@ -1600,6 +1600,13 @@ pub struct Hyperlink {
     pub tooltip: Option<String>,
     /// The hyperlinked inline content (non-empty; never a nested wrapper).
     pub inlines: Vec<InlineNode>,
+    /// `w:history`: add the target to the viewed-hyperlinks list when it is
+    /// followed, which is what makes a followed link paint in the
+    /// `FollowedHyperlink` colour. Word writes it on every link it inserts; it
+    /// was reported and dropped by every edited save until `109` FID-AT-17.
+    /// Additive.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub history: bool,
 }
 
 /// A hyperlink on a DRAWING — `a:hlinkClick`, the element that makes a picture
