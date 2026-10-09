@@ -164,6 +164,7 @@ mod inline_move;
 
 // Word's "Lock aspect ratio" as the selection publishes it (`docs/109` FID-AT-09).
 #[cfg(test)]
+#[path = "object_locks_tests.rs"]
 mod object_locks_tests;
 
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
