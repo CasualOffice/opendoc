@@ -8,10 +8,10 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, CropRect, Definitions, Document, Drawing, DrawingHyperlink, Extent, ExternalTarget,
-    HeaderFooter, HeaderFooterId, Hyperlink, HyperlinkTarget, InlineNode, MediaId, MediaReference,
-    ObjectName, Paragraph, ParagraphProperties, Rgba, Run, RunProperties, ShapeStroke, Table,
-    TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties, TextBox,
-    TextBoxBodyProperties,
+    HeaderFooter, HeaderFooterId, Hyperlink, HyperlinkTarget, InlineNode, LockFlags, MediaId,
+    MediaReference, ObjectLocks, ObjectName, Paragraph, ParagraphProperties, Rgba, Run,
+    RunProperties, ShapeStroke, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+    TableRowProperties, TextBox, TextBoxBodyProperties,
 };
 
 use crate::WasmDocument;
@@ -186,12 +186,27 @@ fn fixture() -> (WasmDocument, Ids) {
         },
     );
     // A side-table entry keyed by the picture's id: a move that changed the id
-    // would orphan it and the picture would be renamed "Picture 1" on save.
+    // would orphan it and the picture would be renamed "Picture 1" on save. Every
+    // field is populated — the picture-level name and the locks share the entry
+    // (FID-AT-08, FID-AT-09), so a move that kept only the frame's name would
+    // still fail the whole-entry comparison below.
     definitions.object_names.insert(
         ids.picture,
         ObjectName {
             name: Some("Logo".to_owned()),
             title: Some("Company logo".to_owned()),
+            inner_name: Some("logo.png".to_owned()),
+            inner_title: None,
+            locks: ObjectLocks {
+                frame: LockFlags {
+                    no_change_aspect: true,
+                    ..LockFlags::default()
+                },
+                object: LockFlags {
+                    no_change_aspect: true,
+                    ..LockFlags::default()
+                },
+            },
         },
     );
     definitions.headers.insert(
