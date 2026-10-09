@@ -11231,9 +11231,10 @@ const CHART_BODY: &str = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xml
 /// One cached bar series, tier 1 throughout.
 const TIER_ONE_CHART: &[u8] = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
 
-/// The same chart plus an out-of-scope `c:trendline`, as the committed
-/// `chart.docx` fixture carries.
-const MIXED_CHART: &[u8] = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val><c:trendline><c:trendlineType val="linear"/></c:trendline></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+/// The same chart plus an out-of-scope `c:dPt` (a per-point override), which
+/// the projection names and carries but does not model. It held a
+/// `c:trendline` until trendlines were modelled (`docs/155` §19).
+const MIXED_CHART: &[u8] = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val><c:dPt><c:idx val="0"/><c:invertIfNegative val="1"/></c:dPt></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
 
 fn import_with_chart(chart: &[u8]) -> Import {
     import_bytes(&build_package(
@@ -11333,6 +11334,52 @@ fn a_fully_projected_chart_part_raises_no_finding() {
     );
 }
 
+/// **A chart's parsed formatting is a valid model** (`docs/155` §19): what the
+/// reader types — and what it declines to type — passes `Document::validate`.
+#[test]
+fn a_formatted_chart_snapshot_is_a_valid_document() {
+    // Every `docs/155` §19 construct at once — fonts on the chart space,
+    // legend, axis and title, an axis title, a dashed series line, three
+    // trendlines and error bars with custom lengths — plus a malformed font
+    // size and a malformed polynomial order, which must be left out of the
+    // model rather than make it invalid.
+    let chart = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1400" b="1"/></a:pPr><a:r><a:t>Sales</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:plotArea><c:layout/><c:lineChart><c:grouping val="standard"/><c:ser><c:idx val="0"/><c:order val="0"/><c:spPr><a:ln w="28575"><a:prstDash val="dash"/></a:ln></c:spPr><c:trendline><c:name>Trend</c:name><c:trendlineType val="linear"/><c:dispEq val="1"/></c:trendline><c:trendline><c:trendlineType val="poly"/><c:order val="3"/></c:trendline><c:trendline><c:trendlineType val="poly"/><c:order val="7"/></c:trendline><c:trendline><c:trendlineType val="movingAvg"/><c:period val="2"/></c:trendline><c:errBars><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:plus><c:minus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt></c:numLit></c:minus></c:errBars><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>5</c:v></c:pt></c:numLit></c:val></c:ser><c:marker val="1"/><c:axId val="1"/><c:axId val="2"/></c:lineChart><c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="5"/></a:pPr></a:p></c:txPr><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Units</a:t></a:r></a:p></c:rich></c:tx></c:title><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="900"><a:latin typeface="Calibri"/></a:defRPr></a:pPr></a:p></c:txPr><c:crossAx val="1"/></c:valAx></c:plotArea><c:legend><c:legendPos val="b"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr i="1"/></a:pPr></a:p></c:txPr></c:legend><c:plotVisOnly val="1"/></c:chart><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1000"/></a:pPr></a:p></c:txPr></c:chartSpace>"#;
+    let import = import_with_chart(chart);
+    import
+        .document
+        .validate()
+        .expect("the parsed formatting must be a valid model");
+    let (_, chart) = import
+        .document
+        .definitions()
+        .charts
+        .iter()
+        .next()
+        .expect("a projection");
+    // The import really did parse the formatting, or this is vacuous.
+    assert_eq!(chart.font.as_ref().and_then(|font| font.size), Some(1000));
+    assert_eq!(
+        chart.plot_area.axes[0].font, None,
+        "a 0.05 pt size is left out of the model"
+    );
+    assert!(
+        chart.plot_area.axes[0]
+            .retained
+            .iter()
+            .any(|fragment| fragment.name == "txPr" && fragment.xml.contains(r#"sz="5""#)),
+        "and its bytes are kept"
+    );
+    assert!(chart.plot_area.axes[1].title.is_some());
+    let series = &chart.plot_area.groups[0].series[0];
+    assert_eq!(
+        series.trendlines.len(),
+        3,
+        "the order-7 one is carried, not modelled"
+    );
+    assert_eq!(series.error_bars.len(), 1);
+    assert!(series.line.as_ref().is_some_and(|line| line.dash.is_some()));
+}
+
 /// A chart mixing tier 1 with an out-of-scope construct is enumerated **by
 /// construct**, not by part (`docs/155` §6.2).
 ///
@@ -11357,25 +11404,28 @@ fn a_partly_projected_chart_is_enumerated_by_construct() {
         chart.plot_area.groups[0].series[0]
             .retained
             .iter()
-            .any(|fragment| fragment.name == "trendline" && fragment.xml.contains("trendlineType")),
-        "the trendline must be carried verbatim on its series"
+            .any(|fragment| fragment.name == "dPt" && fragment.xml.contains("invertIfNegative")),
+        "the data point must be carried verbatim on its series"
     );
 
-    let trendline = import
+    let data_point = import
         .report
         .entries
         .iter()
-        .find(|entry| entry.feature == "chart.trendline")
-        .expect("the trendline must be named");
-    assert_eq!(trendline.disposition, crate::Disposition::DegradedPreserved);
+        .find(|entry| entry.feature == "chart.dPt")
+        .expect("the data point must be named");
     assert_eq!(
-        trendline.location.part_name.as_deref(),
+        data_point.disposition,
+        crate::Disposition::DegradedPreserved
+    );
+    assert_eq!(
+        data_point.location.part_name.as_deref(),
         Some("word/charts/chart1.xml"),
         "the finding is charged to the part it was found in"
     );
-    assert_eq!(trendline.location.element.as_deref(), Some("trendline"));
+    assert_eq!(data_point.location.element.as_deref(), Some("dPt"));
     assert!(
-        trendline.ledger_id.is_some(),
+        data_point.ledger_id.is_some(),
         "a `preserved` claim must cite the record that licenses it"
     );
     // And the one-line-about-a-part row it replaces is gone.
@@ -11469,19 +11519,19 @@ fn a_chart_part_with_no_preservation_record_does_not_fail_the_import() {
     assert_eq!(import.document.definitions().charts.len(), 1);
     // And the construct is still named, with the honest disposition: nothing
     // retains it on this path, so it does not claim to be preserved.
-    let trendline = import
+    let data_point = import
         .report
         .entries
         .iter()
-        .find(|entry| entry.feature == "chart.trendline")
+        .find(|entry| entry.feature == "chart.dPt")
         .expect("the construct is still named");
     assert_eq!(
-        trendline.disposition,
+        data_point.disposition,
         crate::Disposition::DegradedNotRetained,
         "with no preservation record the claim must be the weaker, true one"
     );
     assert!(
-        trendline.ledger_id.is_none(),
+        data_point.ledger_id.is_none(),
         "and it must not cite a record that does not exist"
     );
 }
