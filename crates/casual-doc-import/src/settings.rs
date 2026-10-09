@@ -27,7 +27,7 @@ use casual_doc_model::v1::{
     NotePosition, NoteProperties, ProofState, WriteProtection, Zoom, ZoomMode,
 };
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
-use casual_doc_model::v1::{DocumentView, ThemeFontLanguages};
+use casual_doc_model::v1::{DocumentView, PasswordAttribute, PasswordVerifier, ThemeFontLanguages};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -460,76 +460,43 @@ fn on_setting(
     }
 }
 
-/// The `AG_Password` and `AG_TransitionalPassword` attribute groups, which
-/// `w:documentProtection` (`CT_DocProtect`) and `w:writeProtection`
-/// (`CT_WriteProtection`) both carry and this model represents nowhere.
+/// A protection element's password verifier, verbatim (ADR-052, updated
+/// 2026-10-09): every one of the sixteen `AG_Password` and
+/// `AG_TransitionalPassword` attributes the element states, or `None` when it
+/// states none.
 ///
-/// Sorted by name, so the two groups are interleaved rather than in blocks.
-/// `AG_Password` is the legacy twelve Word has always written (`w:hash`,
-/// `w:salt`, `w:cryptProviderType`, `w:cryptAlgorithmClass`,
-/// `w:cryptAlgorithmType`, `w:cryptAlgorithmSid`, `w:cryptSpinCount`,
-/// `w:cryptProvider`, `w:algIdExt`, `w:algIdExtSource`,
-/// `w:cryptProviderTypeExt`, `w:cryptProviderTypeExtSource`).
-/// `AG_TransitionalPassword` is the Office-2010 ISO verifier form Word writes
-/// *instead* when `UseIsoPasswordVerifier` is set — `w:algorithmName`,
-/// `w:hashValue`, `w:saltValue`, `w:spinCount` — so a modern file's password
-/// material may be entirely in those four. ADR-052 and `docs/160` §7 item 5 each
-/// enumerated only the legacy five or seven until this landed; both now name the
-/// sixteen.
-const PASSWORD_ATTRIBUTES: &[&[u8]] = &[
-    b"algIdExt",
-    b"algIdExtSource",
-    b"algorithmName",
-    b"cryptAlgorithmClass",
-    b"cryptAlgorithmSid",
-    b"cryptAlgorithmType",
-    b"cryptProvider",
-    b"cryptProviderType",
-    b"cryptProviderTypeExt",
-    b"cryptProviderTypeExtSource",
-    b"cryptSpinCount",
-    b"hash",
-    b"hashValue",
-    b"salt",
-    b"saltValue",
-    b"spinCount",
-];
+/// Until 2026-10-09 these were reported and dropped, so a password-protected
+/// restriction saved password-less — liftable in Word by anyone. They are now
+/// kept and written back; nothing verifies them, and nothing claims the
+/// restriction is a security boundary (the legacy hash is removable by editing
+/// one attribute, and Word documents it as a deterrent). An empty value says
+/// nothing and is skipped (a producer may write `w:hash=""`); an over-long one
+/// is not stored and is reported by [`report_unmodeled_attributes`].
+///
+/// Complexity: O(16) attribute lookups on the one element.
+fn password_verifier(element: &BytesStart<'_>) -> Option<PasswordVerifier> {
+    let mut verifier = PasswordVerifier::default();
+    for attribute in PasswordAttribute::ALL {
+        if let Some(value) = attribute_value(element, attribute.local_name().as_bytes()) {
+            verifier.set(attribute, value);
+        }
+    }
+    (!verifier.is_empty()).then_some(verifier)
+}
 
-/// Reports the **attributes** of an otherwise-modeled settings element whose
-/// meaning the model does not carry — today, exactly the password groups on the
-/// two protection elements.
+/// Reports the **attributes** of an otherwise-modeled settings element that the
+/// model could not keep: an over-long `w:themeFontLang` language, and a password
+/// attribute whose value is longer than [`PasswordVerifier::MAX_VALUE_LEN`].
 ///
-/// This function exists because `apply_setting` returns *handled* for
-/// `w:documentProtection` and `w:writeProtection`, and the catch-all at the end
-/// of [`on_setting`] fires only on the `false` branch. "Handled" marked the whole
-/// element consumed, so its unread attributes fell through the only reporter in
-/// reach and were dropped **in total silence**: `word/settings.xml` is a consumed
-/// part that the semantic writer regenerates from the model, and retained parts
-/// are extra opaque parts rather than an override for a generated one, so there
-/// is no byte floor behind these either. A password-protected document therefore
-/// saved password-less while the restriction survived, and nothing anywhere said
-/// so. That is `AGENTS.md`'s no-silent-data-loss rule, and `SKILL.md` §1
-/// advantage 2 — verbatim retention is only an advantage if the loss is
-/// *reported*.
+/// This function exists because `apply_setting` returns *handled* for these
+/// elements, and the catch-all at the end of [`on_setting`] fires only on the
+/// `false` branch, so an attribute the model could not hold would otherwise be
+/// dropped in silence: `word/settings.xml` is regenerated from the model on a
+/// semantic save, and there is no byte floor behind it. The shape mirrors
+/// `numbering.rs`'s `report_unmodeled_attributes` (`docs/142` LST-31).
 ///
-/// It is a report rather than a round trip on purpose. ADR-052 decided opendoc
-/// will **not** verify password material as a security boundary (the legacy hash
-/// is removable by editing one attribute, and Word documents it as a deterrent),
-/// and re-emitting a hash the engine cannot verify is a separate decision an
-/// owner has to make. Reporting it needs no decision at all.
-///
-/// The shape mirrors `numbering.rs`'s `report_unmodeled_attributes` (`docs/142`
-/// LST-31), which exists for the same reason in the same position: a parser that
-/// matches on element names cannot see an attribute on an element it recognises.
-///
-/// Empty values are skipped. `docs/160` §3's reduction is that an attribute whose
-/// value says nothing is not a loss — a producer may legitimately write
-/// `w:hash=""` — and a false finding is the failure mode HF-174 put 621 of in
-/// front of the owner.
-///
-/// Complexity: O(A) in the attributes of the one element being opened, with a
-/// 16-name comparison each, and there is at most one of each protection element
-/// per document. No document walk.
+/// Complexity: O(A) in the attributes of the one element being opened. No
+/// document walk.
 fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
     if local == b"themeFontLang" {
         // A language the model's bound refuses is the one thing `w:themeFontLang`
@@ -544,9 +511,12 @@ fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &
     if !matches!(local, b"documentProtection" | b"writeProtection") {
         return;
     }
-    for attribute in PASSWORD_ATTRIBUTES {
-        if attribute_value(element, attribute).is_some_and(|value| !value.is_empty()) {
-            reporter.report_attribute(local, attribute);
+    for attribute in PasswordAttribute::ALL {
+        let name = attribute.local_name().as_bytes();
+        if attribute_value(element, name)
+            .is_some_and(|value| !value.is_empty() && !PasswordVerifier::is_storable(&value))
+        {
+            reporter.report_attribute(local, name);
         }
     }
 }
@@ -671,11 +641,13 @@ fn apply_setting(
                 edit: protection_edit(element),
                 enforcement: enforcement(element),
                 formatting: attr_flag(element, b"formatting"),
+                password: password_verifier(element),
             });
         }
         b"writeProtection" => {
             settings.write_protection = Some(WriteProtection {
                 recommended: attr_flag(element, b"recommended"),
+                password: password_verifier(element),
             });
         }
         b"zoom" => {

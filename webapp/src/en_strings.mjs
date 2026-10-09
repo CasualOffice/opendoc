@@ -1397,6 +1397,10 @@ export const EN_STRINGS = Object.freeze({
   // catalogue entry that looks like a child of another key invites `isDeclared`'s
   // plural-family prefix rule to answer for it.
   "protect.enforceOff": "Choose a restriction before applying one",
+  // Appended when the restriction just changed carried a Word password, which a
+  // change made here removes (ADR-052, updated 2026-10-09). `{status}` is one of
+  // the sentences above.
+  "protect.withPasswordRemoved": "{status}. The password set in Word was removed.",
 
   // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
   //

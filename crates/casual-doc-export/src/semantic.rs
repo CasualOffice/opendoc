@@ -45,6 +45,8 @@ use casual_doc_model::v1::WatermarkContent;
 use casual_doc_model::v1::WatermarkLayout;
 use casual_doc_model::v1::WatermarkText;
 use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::PasswordVerifier;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 // Own line (anti-conflict): `w:view`, FID-AT-01.
@@ -3749,6 +3751,21 @@ fn table_style_region_token(region: TableStyleRegion) -> &'static str {
     }
 }
 
+/// Writes a protection element's password verifier back, attribute by
+/// attribute, as the file stated it (ADR-052, updated 2026-10-09). The model
+/// keeps them in `PasswordAttribute::ALL` order, so the output is deterministic.
+fn push_password(el: &mut BytesStart<'_>, password: Option<&PasswordVerifier>) {
+    for (attribute, value) in password
+        .map(|p| p.attributes.as_slice())
+        .unwrap_or_default()
+    {
+        el.push_attribute((
+            format!("w:{}", attribute.local_name()).as_str(),
+            value.as_str(),
+        ));
+    }
+}
+
 /// Emits `word/settings.xml` with the modeled settings, in `CT_Settings` schema
 /// order so the part is valid WordprocessingML. Each field is emitted only when
 /// it departs from the default, and the importer reads the same shapes back — so
@@ -3811,6 +3828,7 @@ fn settings_xml(
         if protection.recommended {
             el.push_attribute(("w:recommended", "1"));
         }
+        push_password(&mut el, protection.password.as_ref());
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     // `w:view` sits between `w:writeProtection` and `w:zoom` in CT_Settings.
@@ -3875,6 +3893,7 @@ fn settings_xml(
         if protection.formatting {
             el.push_attribute(("w:formatting", "1"));
         }
+        push_password(&mut el, protection.password.as_ref());
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(value) = settings.default_tab_stop {

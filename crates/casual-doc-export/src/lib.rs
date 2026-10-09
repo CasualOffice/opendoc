@@ -5680,26 +5680,21 @@ mod semantic_tests {
         assert_eq!(languages.east_asia.as_deref(), Some("zh-CN"));
     }
 
-    /// A password-protected restriction comes back password-less from a semantic
-    /// save — and the import report has to NAME that, because nothing else can.
+    /// A password-protected restriction comes back from a semantic save WITH its
+    /// password, every attribute of both groups on both elements, and nothing is
+    /// reported because nothing is lost (ADR-052, updated 2026-10-09).
     ///
-    /// This is the reproduction of the defect as a user meets it. The webapp
-    /// imports with `retain_source`, so an *untouched* save takes
-    /// `ExportMode::ExactIfUnchanged` and returns the original bytes with the
-    /// password intact; but `word/settings.xml` is a **consumed** part that the
-    /// semantic writer regenerates from the model unconditionally, and retained
-    /// parts are *extra* opaque parts, never an override for a generated one. So
-    /// one typed character is enough: the restriction survives, the password
-    /// material does not, and the recipient opens the file in Word and clicks
-    /// Stop Protection with no password.
-    ///
-    /// The test is deliberately written at the altitude `160` §4 argues for —
-    /// *survives or is reported* — so it holds whichever way the open decision on
-    /// re-emitting the hash goes. Verifying or rewriting password material is a
-    /// separate decision (ADR-052 declines it as a security boundary); what is
-    /// not a decision is that the loss must stop being silent.
+    /// This was the reproduction of the defect as a user met it, and it said so:
+    /// the webapp imports with `retain_source`, so an *untouched* save returns
+    /// the original bytes, but `word/settings.xml` is a **consumed** part the
+    /// semantic writer regenerates from the model, so one typed character was
+    /// enough for the restriction to survive and its password not to — the
+    /// recipient clicked Stop Protection in Word with no password. Its own
+    /// failure message asked for this rewrite: "if this fails, the model grew a
+    /// home for password material and this test should assert the round trip
+    /// instead of the report". It did (`PasswordVerifier`), and this does.
     #[test]
-    fn a_password_protected_restriction_saves_password_less_and_the_loss_is_reported() {
+    fn a_password_protected_restriction_keeps_every_password_attribute_through_a_save() {
         use casual_doc_model::v1::DocumentProtectionEdit;
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
         let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
@@ -5744,6 +5739,7 @@ mod semantic_tests {
                 .definitions()
                 .settings
                 .document_protection
+                .as_ref()
                 .map(|p| (p.edit, p.enforcement)),
             Some((DocumentProtectionEdit::ReadOnly, true))
         );
@@ -5755,63 +5751,138 @@ mod semantic_tests {
         let written_settings =
             String::from_utf8(written.read_part("word/settings.xml").unwrap()).unwrap();
 
-        // Half one: the password material is gone from the saved file. Asserted
-        // per attribute so a partial re-emission could not pass this by halves.
-        const PASSWORD_ATTRIBUTES: &[&str] = &[
-            "algIdExt",
-            "algIdExtSource",
-            "algorithmName",
-            "cryptAlgorithmClass",
-            "cryptAlgorithmSid",
-            "cryptAlgorithmType",
-            "cryptProvider",
-            "cryptProviderType",
-            "cryptProviderTypeExt",
-            "cryptProviderTypeExtSource",
-            "cryptSpinCount",
-            "hash",
-            "hashValue",
-            "salt",
-            "saltValue",
-            "spinCount",
+        // Half one: every attribute is back in the saved file, with its value.
+        // Asserted per attribute so a partial re-emission cannot pass by halves.
+        const PASSWORD_ATTRIBUTES: &[(&str, &str)] = &[
+            ("algIdExt", "00000000"),
+            ("algIdExtSource", "com.microsoft.office"),
+            ("algorithmName", "SHA-512"),
+            ("cryptAlgorithmClass", "hash"),
+            ("cryptAlgorithmSid", "14"),
+            ("cryptAlgorithmType", "typeAny"),
+            (
+                "cryptProvider",
+                "Microsoft Enhanced RSA and AES Cryptographic Provider",
+            ),
+            ("cryptProviderType", "rsaAES"),
+            ("cryptProviderTypeExt", "00000000"),
+            ("cryptProviderTypeExtSource", "com.microsoft.office"),
+            ("cryptSpinCount", "100000"),
+            ("hash", "cXV1eA=="),
+            ("hashValue", "Z3JhdWx0"),
+            ("salt", "Y29yZ2U="),
+            ("saltValue", "Z2FycGx5"),
+            ("spinCount", "100000"),
         ];
-        for attribute in PASSWORD_ATTRIBUTES {
+        let protection = written_settings
+            .split("<w:documentProtection ")
+            .nth(1)
+            .and_then(|tail| tail.split("/>").next())
+            .expect("the restriction is written");
+        for (attribute, value) in PASSWORD_ATTRIBUTES {
             assert!(
-                !written_settings.contains(&format!("w:{attribute}=")),
-                "w:{attribute} is not re-emitted by the semantic writer (if this \
-                 fails, the model grew a home for password material and this test \
-                 should assert the round trip instead of the report)"
+                protection.contains(&format!(r#"w:{attribute}="{value}""#)),
+                "w:{attribute} is written back on w:documentProtection: {protection}"
             );
         }
         assert!(
-            written_settings.contains(r#"w:edit="readOnly""#),
-            "the restriction itself survives the save - that is what makes the \
-             dropped password a document-safety defect and not a cosmetic one"
+            protection.contains(r#"w:edit="readOnly""#),
+            "the restriction itself survives the save"
         );
+        let write = written_settings
+            .split("<w:writeProtection ")
+            .nth(1)
+            .and_then(|tail| tail.split("/>").next())
+            .expect("write protection is written");
+        for attribute in [
+            r#"w:algorithmName="SHA-512""#,
+            r#"w:hashValue="Zm9v""#,
+            r#"w:saltValue="YmFy""#,
+            r#"w:spinCount="100000""#,
+        ] {
+            assert!(
+                write.contains(attribute),
+                "{attribute} is written back on w:writeProtection: {write}"
+            );
+        }
 
-        // Half two: the loss is NAMED. Every attribute the source carried, on
-        // both elements, reaches the compatibility report the host surfaces.
+        // Half two: nothing is lost, so nothing is reported.
         let reported: Vec<&str> = import
             .report
             .entries
             .iter()
             .map(|entry| entry.feature.as_str())
+            .filter(|feature| {
+                feature.starts_with("documentProtection") || feature.starts_with("writeProtection")
+            })
             .collect();
-        for attribute in PASSWORD_ATTRIBUTES {
-            let feature = format!("documentProtection/@{attribute}");
+        assert!(
+            reported.is_empty(),
+            "a kept attribute is not a loss: {reported:?}"
+        );
+    }
+
+    /// A Restrict Editing or read-only password survives an edited save,
+    /// verbatim (ADR-052, updated 2026-10-09).
+    ///
+    /// `word/settings.xml` is regenerated from the model on a semantic save, and
+    /// the model used to carry the restriction without its verifier, so a
+    /// password-protected form came back liftable in Word by anyone. The values
+    /// here are the shape Word writes for a legacy SHA-512 verifier (synthetic
+    /// bytes) and for the ISO form on `w:writeProtection`.
+    ///
+    /// MUTATION: `push_password` writing nothing fails with
+    /// "w:cryptProviderType=\"rsaAES\" is written back".
+    #[test]
+    fn a_protection_password_survives_a_save_verbatim() {
+        use casual_doc_model::v1::PasswordAttribute;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let document_xml = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let settings_xml = br#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:writeProtection w:recommended="1" w:algorithmName="SHA-512" w:hashValue="Zm9vYmFy" w:saltValue="c2FsdA==" w:spinCount="100000"/><w:documentProtection w:edit="forms" w:enforcement="1" w:cryptProviderType="rsaAES" w:cryptAlgorithmClass="hash" w:cryptAlgorithmType="typeAny" w:cryptAlgorithmSid="14" w:cryptSpinCount="100000" w:hash="aGFzaA==" w:salt="c2FsdA=="/></w:settings>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/_rels/document.xml.rels", document_rels),
+            ("word/document.xml", document_xml),
+            ("word/settings.xml", settings_xml),
+        ]);
+        let document = reopen(&source);
+        let bytes = write_document(&document, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let written = String::from_utf8(package.read_part("word/settings.xml").unwrap()).unwrap();
+        for attribute in [
+            r#"w:cryptProviderType="rsaAES""#,
+            r#"w:cryptAlgorithmClass="hash""#,
+            r#"w:cryptAlgorithmType="typeAny""#,
+            r#"w:cryptAlgorithmSid="14""#,
+            r#"w:cryptSpinCount="100000""#,
+            r#"w:hash="aGFzaA==""#,
+            r#"w:salt="c2FsdA==""#,
+            r#"w:algorithmName="SHA-512""#,
+            r#"w:hashValue="Zm9vYmFy""#,
+        ] {
             assert!(
-                reported.contains(&feature.as_str()),
-                "{feature} must be reported, not silently dropped; report held {reported:?}"
+                written.contains(attribute),
+                "{attribute} is written back:\n{written}"
             );
         }
-        for attribute in ["algorithmName", "hashValue", "saltValue", "spinCount"] {
-            let feature = format!("writeProtection/@{attribute}");
-            assert!(
-                reported.contains(&feature.as_str()),
-                "{feature} must be reported too - `w:writeProtection` carries the \
-                 same two password groups; report held {reported:?}"
-            );
-        }
+        let reopened = reopen(&bytes);
+        let settings = &reopened.definitions().settings;
+        assert_eq!(
+            settings.document_protection,
+            document.definitions().settings.document_protection,
+            "the restriction and its verifier reopen exactly"
+        );
+        assert_eq!(
+            settings
+                .write_protection
+                .as_ref()
+                .and_then(|write| write.password.as_ref())
+                .and_then(|password| password.get(PasswordAttribute::SpinCount)),
+            Some("100000")
+        );
     }
 
     /// `w:enforcement` is written EXPLICITLY in both directions, never omitted.
@@ -5842,6 +5913,7 @@ mod semantic_tests {
                 edit: DocumentProtectionEdit::ReadOnly,
                 enforcement,
                 formatting: false,
+                password: None,
             });
             let bytes = write_document(&document, &BTreeMap::new()).unwrap();
             let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
@@ -5851,6 +5923,7 @@ mod semantic_tests {
                 .definitions()
                 .settings
                 .document_protection
+                .clone()
                 .expect("the restriction survives the round trip");
             (settings, reopened.enforcement)
         };
@@ -5926,6 +5999,7 @@ mod semantic_tests {
                 .definitions()
                 .settings
                 .document_protection
+                .clone()
                 .expect("the element is present, so a restriction is modeled");
             let locked: Vec<bool> = document
                 .definitions()

@@ -2533,7 +2533,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
         Operation::SetDocumentProtection { protection } => {
             let slot = &mut doc.definitions_mut().settings.document_protection;
             let previous = match protection {
-                Some(protection) => slot.replace(*protection),
+                Some(protection) => slot.replace(protection.clone()),
                 None => slot.take(),
             };
             Ok(Operation::SetDocumentProtection {

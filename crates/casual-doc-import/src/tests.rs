@@ -1,10 +1,12 @@
 use casual_doc_model::v1::MAX_DESCR_BYTES;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
     InlineNode, LevelJustification, LevelSuffix, MathExpression, MoveKind, NumberFormat, Paragraph,
     PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState, RevisionKind,
     RgbColor, SdtControlKind, StyleKind, Symbol,
 };
+use casual_doc_model::v1::{PasswordAttribute, PasswordVerifier};
 use casual_doc_ooxml::DocxPackage;
 
 use crate::{
@@ -2598,6 +2600,7 @@ fn an_absent_w_enforcement_means_enforced_and_an_explicit_zero_still_means_off()
             .definitions()
             .settings
             .document_protection
+            .clone()
             .expect("the element is present, so the model carries a restriction")
     };
 
@@ -2631,31 +2634,30 @@ fn an_absent_w_enforcement_means_enforced_and_an_explicit_zero_still_means_off()
     assert_eq!(protection("").edit, DocumentProtectionEdit::ReadOnly);
 }
 
-/// The password groups on the two protection elements are REPORTED, not dropped
-/// in silence.
+/// The password groups on the two protection elements are KEPT, verbatim, and
+/// not reported (ADR-052, updated 2026-10-09).
 ///
-/// `apply_setting` returns *handled* for `w:documentProtection` and
-/// `w:writeProtection`, which marked the whole element consumed and put its
-/// unread attributes beyond the reach of the only reporter in the function — so
-/// the sixteen `AG_Password`/`AG_TransitionalPassword` attributes were dropped
-/// with **no finding at all**, and `word/settings.xml` is a consumed part with no
-/// byte floor behind it. A password-protected document saved password-less while
-/// the restriction survived.
+/// They were first dropped with no finding at all, then reported and dropped: a
+/// password-protected document saved password-less while the restriction
+/// survived, so Word let anyone lift it. The model now carries every one of the
+/// sixteen `AG_Password`/`AG_TransitionalPassword` attributes as the file stated
+/// it, and the writer puts them back (`casual-doc-export`'s
+/// `a_protection_password_survives_a_save_verbatim`).
 ///
-/// The four Office-2010 ISO-verifier attributes are asserted by name because
-/// ADR-052 and `docs/160` §7 item 5 each enumerate only the legacy group, and a
-/// modern Word file's password material may be entirely in those four.
+/// The four Office-2010 ISO-verifier attributes are asserted on both elements by
+/// name, because a modern Word file's password material may be entirely in them.
 ///
-/// This guard asserts the FINDING, not the parse: nothing here reads a hash into
-/// the model, and nothing should until ADR-052's open decision is made.
+/// MUTATION: `password_verifier` returning `None` (the old behaviour without the
+/// report) fails with "the verifier is carried: None".
 #[test]
-fn the_protection_password_groups_are_reported_rather_than_dropped_in_silence() {
+fn the_protection_password_groups_are_kept_verbatim_and_not_reported() {
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
     // Synthetic values. `w:hash=""` is present-but-empty on purpose: an attribute
-    // whose value says nothing is not a loss (`docs/160` §3), and a false finding
-    // is the failure HF-174 put 621 of in front of the owner.
-    let settings = br#"<w:settings xmlns:w="urn:w">
+    // whose value says nothing is neither kept nor a loss (`docs/160` §3).
+    let long = "A".repeat(PasswordVerifier::MAX_VALUE_LEN + 1);
+    let settings = format!(
+        r#"<w:settings xmlns:w="urn:w">
         <w:writeProtection w:recommended="1" w:algorithmName="SHA-512"
             w:hashValue="Zm9v" w:saltValue="YmFy" w:spinCount="100000"/>
         <w:documentProtection w:edit="readOnly" w:enforcement="1"
@@ -2664,62 +2666,87 @@ fn the_protection_password_groups_are_reported_rather_than_dropped_in_silence() 
             w:cryptSpinCount="100000" w:cryptProvider="Microsoft Enhanced RSA and AES"
             w:algIdExt="00000000" w:algIdExtSource="com.microsoft.office"
             w:cryptProviderTypeExt="00000000" w:cryptProviderTypeExtSource="com.microsoft.office"
-            w:hash="" w:salt="Y29yZ2U="
+            w:hash="" w:salt="{long}"
             w:algorithmName="SHA-512" w:hashValue="Z3JhdWx0" w:saltValue="Z2FycGx5"
             w:spinCount="100000"/>
-    </w:settings>"#;
-    let import = import_with_settings(document, settings);
+    </w:settings>"#
+    );
+    let import = import_with_settings(document, settings.as_bytes());
+    let protection = import
+        .document
+        .definitions()
+        .settings
+        .document_protection
+        .clone()
+        .expect("the restriction is modeled");
+    let verifier = protection.password.as_ref();
+    assert!(verifier.is_some(), "the verifier is carried: {verifier:?}");
+    let verifier = verifier.unwrap();
+    for (attribute, value) in [
+        (PasswordAttribute::AlgorithmName, "SHA-512"),
+        (PasswordAttribute::HashValue, "Z3JhdWx0"),
+        (PasswordAttribute::SaltValue, "Z2FycGx5"),
+        (PasswordAttribute::SpinCount, "100000"),
+        (PasswordAttribute::CryptProviderType, "rsaAES"),
+        (PasswordAttribute::CryptAlgorithmClass, "hash"),
+        (PasswordAttribute::CryptAlgorithmType, "typeAny"),
+        (PasswordAttribute::CryptAlgorithmSid, "14"),
+        (PasswordAttribute::CryptSpinCount, "100000"),
+        (
+            PasswordAttribute::CryptProvider,
+            "Microsoft Enhanced RSA and AES",
+        ),
+        (PasswordAttribute::AlgIdExt, "00000000"),
+        (PasswordAttribute::AlgIdExtSource, "com.microsoft.office"),
+        (PasswordAttribute::CryptProviderTypeExt, "00000000"),
+        (
+            PasswordAttribute::CryptProviderTypeExtSource,
+            "com.microsoft.office",
+        ),
+    ] {
+        assert_eq!(verifier.get(attribute), Some(value), "{attribute:?}");
+    }
+    assert_eq!(
+        verifier.get(PasswordAttribute::Hash),
+        None,
+        "an empty value says nothing"
+    );
+    assert_eq!(
+        verifier.get(PasswordAttribute::Salt),
+        None,
+        "an over-long value is not stored"
+    );
+
+    let write = import
+        .document
+        .definitions()
+        .settings
+        .write_protection
+        .clone();
+    let write_verifier = write
+        .and_then(|write| write.password)
+        .expect("write protection's verifier");
+    assert_eq!(
+        write_verifier.get(PasswordAttribute::HashValue),
+        Some("Zm9v")
+    );
+    assert_eq!(
+        write_verifier.get(PasswordAttribute::SpinCount),
+        Some("100000")
+    );
+
+    // Kept is not lost, so nothing is reported — except the one value the model's
+    // bound refused, which IS lost and must say so.
     let reported = features(&import);
-    for attribute in [
-        "algIdExt",
-        "algIdExtSource",
-        "algorithmName",
-        "cryptAlgorithmClass",
-        "cryptAlgorithmSid",
-        "cryptAlgorithmType",
-        "cryptProvider",
-        "cryptProviderType",
-        "cryptProviderTypeExt",
-        "cryptProviderTypeExtSource",
-        "cryptSpinCount",
-        "hashValue",
-        "salt",
-        "saltValue",
-        "spinCount",
-    ] {
-        let feature = format!("documentProtection/@{attribute}");
-        assert!(
-            reported.contains(&feature.as_str()),
-            "{feature} must reach the compatibility report; it held {reported:?}"
-        );
-    }
-    // The same two groups live on `w:writeProtection` (`CT_WriteProtection`), and
-    // the same handler consumed them, so the family is covered rather than the
-    // one reported case.
-    for attribute in ["algorithmName", "hashValue", "saltValue", "spinCount"] {
-        let feature = format!("writeProtection/@{attribute}");
-        assert!(
-            reported.contains(&feature.as_str()),
-            "{feature} must reach the compatibility report; it held {reported:?}"
-        );
-    }
-    // Empty is not a loss, and the three POLICY attributes are modeled, so none
-    // of them may appear - otherwise this is a finding generator rather than a
-    // loss report.
-    for not_a_finding in [
-        "documentProtection/@hash",
-        "documentProtection/@edit",
-        "documentProtection/@enforcement",
-        "documentProtection/@formatting",
-        "writeProtection/@recommended",
-        "documentProtection",
-        "writeProtection",
-    ] {
-        assert!(
-            !reported.contains(&not_a_finding),
-            "{not_a_finding} is not a loss and must not be reported; it held {reported:?}"
-        );
-    }
+    assert_eq!(
+        reported
+            .iter()
+            .filter(|feature| feature.starts_with("documentProtection")
+                || feature.starts_with("writeProtection"))
+            .collect::<Vec<_>>(),
+        vec![&"documentProtection/@salt"],
+        "only the refused value is a loss; it held {reported:?}"
+    );
 }
 
 #[test]

@@ -126,6 +126,10 @@ export function readProtection(json) {
     value: edit === null || edit === "none" ? "off" : (known?.value ?? "readOnly"),
     enforcement: parsed?.enforcement === true,
     formatting: parsed?.formatting === true,
+    /** Whether the file carries a Word password with the restriction. Kept and
+     *  saved, never checked (ADR-052); a change made here removes it, which the
+     *  dialog says before Apply and the status line after. */
+    password: parsed?.password === true,
     /** Whether a restriction is actually in force, which is the ribbon button's
      *  pressed state and the access badge's document authority. `edit="none"`
      *  restricts nothing however it is enforced — **unless `w:formatting` is on**,
@@ -161,6 +165,7 @@ export function createDocumentProtection(io) {
   const applyBtn = el("restrictEditingApply");
   const cancelBtn = el("restrictEditingCancel");
   const closeBtn = el("restrictEditingClose");
+  const passwordNote = el("restrictEditingPassword");
 
   /** What the document says right now. `{edit:null,…}` with no document open. */
   function current() {
@@ -210,6 +215,7 @@ export function createDocumentProtection(io) {
     group.reflect(state.value);
     if (enforce) enforce.checked = state.enforcement;
     if (formatting) formatting.checked = state.formatting;
+    if (passwordNote) passwordNote.hidden = !state.password;
     reflectEnforce();
     modal.open();
   }
@@ -280,7 +286,8 @@ export function createDocumentProtection(io) {
     // Three outcomes rather than two, because the formatting axis can be the ONLY
     // thing in force and "Editing restricted to: No restriction" would be a
     // sentence that contradicts itself. What is said is what will now be refused.
-    io.setStatus(statusFor(wantedEdit, wantedEnforcement, wantedFormatting, row));
+    const status = statusFor(wantedEdit, wantedEnforcement, wantedFormatting, row);
+    io.setStatus(state.password ? t("protect.withPasswordRemoved", { status }) : status);
   }
 
   /** What the status bar says after Apply.

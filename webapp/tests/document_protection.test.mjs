@@ -160,7 +160,9 @@ function fakeMarkup(withFormatting = true) {
   elements.set("restrictEditingApply", node("apply"));
   elements.set("restrictEditingCancel", node("cancel"));
   elements.set("restrictEditingClose", node("close"));
-  return { levels, enforce, formatting: formattingBox, listeners };
+  const passwordNote = { hidden: true };
+  elements.set("restrictEditingPassword", passwordNote);
+  return { levels, enforce, formatting: formattingBox, passwordNote, listeners };
 }
 
 /**
@@ -172,7 +174,7 @@ function fakeMarkup(withFormatting = true) {
  * assertion about an argument.
  */
 function build(start, withFormatting = true) {
-  const { enforce, formatting, listeners } = fakeMarkup(withFormatting);
+  const { enforce, formatting, passwordNote, listeners } = fakeMarkup(withFormatting);
   let stored = start;
   const doc = {
     documentProtection: () => stored,
@@ -211,6 +213,7 @@ function build(start, withFormatting = true) {
     protection,
     enforce,
     formatting,
+    passwordNote,
     status,
     listeners,
     closed: () => closed,
@@ -424,4 +427,29 @@ test("the command row is live on a document that is ALREADY protected", () => {
   assert.equal(row.enabled, true);
   assert.equal(row.disabledReason, "");
   assert.equal(h.protection.isActive(), true, "while the ribbon button reads as pressed");
+});
+
+// A restriction the file carries with a Word password: Word would ask for it,
+// this editor does not, and a change made here removes it (ADR-052, updated
+// 2026-10-09). The reader is told BEFORE Apply and again after. MUTATION: the
+// note never shown -> "the dialog says so before anything is applied"; the status
+// left as it was -> the second assertion's sentence.
+test("a restriction carrying a Word password says, before and after, that a change here removes it", async () => {
+  const passworded = JSON.stringify({ edit: "forms", enforcement: true, formatting: false, password: true });
+  const h = build(passworded);
+  assert.equal(h.stored().password, true, "precondition: the file carries a password");
+  h.protection.open();
+  assert.equal(h.passwordNote.hidden, false, "the dialog says so before anything is applied");
+  h.choose("off");
+  h.enforce.checked = false;
+  await applyVia(h);
+  assert.equal(
+    h.status.at(-1).text,
+    `${EN["protect.removed"]}. The password set in Word was removed.`,
+  );
+
+  // And a document with no password says nothing about one.
+  const plain = build(json("readOnly", true));
+  plain.protection.open();
+  assert.equal(plain.passwordNote.hidden, true);
 });

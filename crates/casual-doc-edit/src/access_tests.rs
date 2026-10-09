@@ -40,6 +40,7 @@ fn document(protection: Option<DocumentProtectionEdit>) -> Document {
         edit,
         enforcement: true,
         formatting: false,
+        password: None,
     });
     Document::new(
         document_id,
@@ -90,6 +91,7 @@ fn impose(edit: DocumentProtectionEdit) -> Operation {
             edit,
             enforcement: true,
             formatting: false,
+            password: None,
         }),
     }
 }
