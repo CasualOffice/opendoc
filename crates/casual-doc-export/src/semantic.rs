@@ -47,6 +47,8 @@ use casual_doc_model::v1::WatermarkText;
 use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 use casual_doc_model::v1::PasswordVerifier;
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::LEGACY_COMPAT_OPTIONS;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 // Own line (anti-conflict): `w:view`, FID-AT-01.
@@ -163,6 +165,11 @@ const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordproce
 const FOOTER_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
 const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+/// `w:attachedTemplate`'s relationship, declared by `settings.xml` itself.
+const ATTACHED_TEMPLATE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate";
+/// The one relationship id `settings.xml.rels` declares (the template's).
+const ATTACHED_TEMPLATE_REL_ID: &str = "rId1";
 const SETTINGS_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
 const SETTINGS_CT: &str =
@@ -1341,6 +1348,16 @@ pub fn export_package_with_options(
             );
         }
         parts.push(extra.part_name, extra.bytes);
+    }
+    // `w:attachedTemplate` resolves through the settings part's OWN
+    // relationships, to an external target (`109` FID-AT-15). `settings.xml` is
+    // emitted whenever the template is set, because a set template makes the
+    // settings non-default.
+    if let Some(target) = &document.definitions().settings.attached_template {
+        parts.push(
+            "word/_rels/settings.xml.rels".to_owned(),
+            attached_template_rels_xml(target)?,
+        );
     }
     // Generated chart parts (HF-256). Their `document.xml.rels` entry is already
     // emitted from the node's verbatim relationship id by `embedded_rels`, so
@@ -3309,6 +3326,23 @@ fn font_table_xml(
 
 /// Emits a `fontTable.xml.rels` carrying the embedded-font `/font` relationships
 /// (internal targets, no `TargetMode`).
+/// `word/_rels/settings.xml.rels`: the attached template, external.
+fn attached_template_rels_xml(target: &str) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("Relationships");
+    root.push_attribute(("xmlns", REL_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    let mut rel = start("Relationship");
+    rel.push_attribute(("Id", ATTACHED_TEMPLATE_REL_ID));
+    rel.push_attribute(("Type", ATTACHED_TEMPLATE_REL_TYPE));
+    rel.push_attribute(("Target", target));
+    rel.push_attribute(("TargetMode", "External"));
+    w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("Relationships")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
 fn font_rels_xml(rels: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("Relationships");
@@ -3793,6 +3827,10 @@ fn settings_xml(
         .shape_defaults_xml
         .as_deref()
         .filter(|xml| settings_fragment_is_writable(xml, "shapeDefaults", reporter));
+    let header_shape_defaults = settings
+        .header_shape_defaults_xml
+        .as_deref()
+        .filter(|xml| settings_fragment_is_writable(xml, "hdrShapeDefaults", reporter));
     let w14 = settings.document_id_w14.is_some() || settings.default_image_dpi.is_some();
     let w15 = settings.document_id_w15.is_some();
     let mut w = new_writer();
@@ -3801,7 +3839,10 @@ fn settings_xml(
     if math_properties.is_some() {
         root.push_attribute(("xmlns:m", M_NS));
     }
-    if shape_defaults.is_some() {
+    if settings.attached_template.is_some() {
+        root.push_attribute(("xmlns:r", R_NS));
+    }
+    if shape_defaults.is_some() || header_shape_defaults.is_some() {
         root.push_attribute(("xmlns:o", O_NS));
         root.push_attribute(("xmlns:v", V_NS));
     }
@@ -3865,6 +3906,14 @@ fn settings_xml(
         if let Some(state) = settings.proof_state.grammar {
             el.push_attribute(("w:grammar", proof_state_token(state)));
         }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:attachedTemplate` follows `w:proofState` (and the `w:formsDesign` this
+    // writer does not emit) in CT_Settings; its id is the one relationship
+    // `settings.xml.rels` declares (`109` FID-AT-15).
+    if settings.attached_template.is_some() {
+        let mut el = start("w:attachedTemplate");
+        el.push_attribute(("r:id", ATTACHED_TEMPLATE_REL_ID));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     // `w:trackRevisions` (ECMA-376 §17.15.1.89). This wrote `w:trackChanges`,
@@ -3935,6 +3984,41 @@ fn settings_xml(
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
             .map_err(pkg)?;
     }
+    // The drawing grid sits between the book-fold group and
+    // `w:doNotShadeFormData` in CT_Settings, in this order (`109` FID-AT-15).
+    let grid = &settings.drawing_grid;
+    for (name, value) in [
+        ("w:drawingGridHorizontalSpacing", grid.horizontal_spacing),
+        ("w:drawingGridVerticalSpacing", grid.vertical_spacing),
+        (
+            "w:displayHorizontalDrawingGridEvery",
+            grid.display_horizontal_every,
+        ),
+        (
+            "w:displayVerticalDrawingGridEvery",
+            grid.display_vertical_every,
+        ),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if grid.do_not_use_margins_for_origin {
+        w.write_event(Event::Empty(start("w:doNotUseMarginsForDrawingGridOrigin")))
+            .map_err(pkg)?;
+    }
+    for (name, value) in [
+        ("w:drawingGridHorizontalOrigin", grid.horizontal_origin),
+        ("w:drawingGridVerticalOrigin", grid.vertical_origin),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
     if settings.save_preview_picture {
         w.write_event(Event::Empty(start("w:savePreviewPicture")))
             .map_err(pkg)?;
@@ -3943,21 +4027,34 @@ fn settings_xml(
         w.write_event(Event::Empty(start("w:updateFields")))
             .map_err(pkg)?;
     }
+    // `w:hdrShapeDefaults` follows `w:updateFields` and precedes
+    // `w:footnotePr`. Verbatim, already checked (`109` FID-AT-15).
+    if let Some(xml) = header_shape_defaults {
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
     write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
     write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
-    if settings.adjust_line_height_in_table || settings.use_fe_layout || !settings.compat.is_empty()
+    if settings.adjust_line_height_in_table
+        || settings.use_fe_layout
+        || !settings.compat.is_empty()
+        || !settings.compat_options.is_empty()
     {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
-        // `CT_Compat` order: `w:adjustLineHeightInTable`, …, `w:useFELayout`,
-        // …, then the `w:compatSetting` triples last.
-        if settings.adjust_line_height_in_table {
-            w.write_event(Event::Empty(start("w:adjustLineHeightInTable")))
-                .map_err(pkg)?;
-        }
-        if settings.use_fe_layout {
-            w.write_event(Event::Empty(start("w:useFELayout")))
-                .map_err(pkg)?;
+        // `CT_Compat` order (`LEGACY_COMPAT_OPTIONS`): every switch that is on,
+        // the two typed ones from their fields and the rest from
+        // `compat_options` (`109` FID-AT-15), then the `w:compatSetting`
+        // triples last. O(65).
+        for name in LEGACY_COMPAT_OPTIONS {
+            let on = match name {
+                "adjustLineHeightInTable" => settings.adjust_line_height_in_table,
+                "useFELayout" => settings.use_fe_layout,
+                _ => settings.compat_options.iter().any(|held| held == name),
+            };
+            if on {
+                w.write_event(Event::Empty(start(&format!("w:{name}"))))
+                    .map_err(pkg)?;
+            }
         }
         for setting in &settings.compat {
             let mut el = start("w:compatSetting");

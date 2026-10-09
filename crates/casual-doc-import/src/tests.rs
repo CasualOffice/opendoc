@@ -2523,9 +2523,10 @@ fn numbering_level_detail_is_modeled_not_reported() {
 fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     // A settings part mixing modeled settings (header parity, default tab stop,
     // track changes, document protection, proof state, zoom, a compatSetting) with
-    // an unmodeled one (`w:hideSpellingErrors`) plus an unmodeled `w:compat` child
-    // (`w:doNotExpandShiftReturn`). The modeled ones land in the model; the two
-    // unmodeled ones are reported (no silent loss).
+    // an unmodeled one (`w:hideSpellingErrors`) plus a `w:compat` child no schema
+    // names (`w:notACompatSwitch`). The modeled ones land in the model — a legacy
+    // switch such as `w:doNotExpandShiftReturn` among them since `109` FID-AT-15 —
+    // and the two unmodeled ones are reported (no silent loss).
     let settings = br#"<w:settings xmlns:w="urn:w">
         <w:writeProtection w:recommended="1"/>
         <w:zoom w:percent="150"/>
@@ -2539,6 +2540,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
             <w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/>
             <w:adjustLineHeightInTable/>
             <w:doNotExpandShiftReturn/>
+            <w:notACompatSwitch/>
         </w:compat>
     </w:settings>"#;
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
@@ -2563,7 +2565,9 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     assert!(s.adjust_line_height_in_table);
     // The unmodeled top-level setting and the unmodeled compat child are reported.
     assert!(features(&import).contains(&"hideSpellingErrors"));
-    assert!(features(&import).contains(&"doNotExpandShiftReturn"));
+    assert!(features(&import).contains(&"notACompatSwitch"));
+    assert_eq!(s.compat_options, vec!["doNotExpandShiftReturn".to_owned()]);
+    assert!(!features(&import).contains(&"doNotExpandShiftReturn"));
     // The modeled compatSetting is NOT reported (it is retained as a triple).
     assert!(!features(&import).contains(&"compatSetting"));
     assert!(!features(&import).contains(&"adjustLineHeightInTable"));

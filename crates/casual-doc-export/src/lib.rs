@@ -5249,6 +5249,115 @@ mod semantic_tests {
         r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15">"#,
     );
 
+    /// The rest of what Word writes into `settings.xml` that the owner's documents
+    /// carried (`109` FID-AT-15): the drawing grid, a legacy `w:compat` switch
+    /// (`w:ulTrailSpace`), `w:hdrShapeDefaults`, `w:attachedTemplate` (through
+    /// `settings.xml.rels`, external) and `w14:defaultImageDpi="32767"` — Word's
+    /// "High fidelity", which a bound of 10,000 refused. Every one was reported
+    /// and dropped by an edited save; each now survives in `CT_Settings` order
+    /// and raises no finding.
+    ///
+    /// MUTATIONS: the importer's compat branch reporting again → "nothing here
+    /// is a loss"; the writer leaving out the template relationship →
+    /// "settings.xml.rels declares the template".
+    #[test]
+    fn the_drawing_grid_compat_switches_header_shape_defaults_and_template_survive_a_save() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let settings_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate" Target="file:///C:\Templates\Report%20(1).dotx" TargetMode="External"/></Relationships>"#;
+        let settings = format!(
+            "{}{}</w:settings>",
+            WORD_SETTINGS_ROOT.replace(
+                "<w:settings ",
+                r#"<w:settings xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#
+            ),
+            concat!(
+                r#"<w:attachedTemplate r:id="rId7"/>"#,
+                r#"<w:defaultTabStop w:val="720"/>"#,
+                r#"<w:drawingGridHorizontalSpacing w:val="110"/>"#,
+                r#"<w:displayHorizontalDrawingGridEvery w:val="2"/>"#,
+                r#"<w:displayVerticalDrawingGridEvery w:val="2"/>"#,
+                r#"<w:hdrShapeDefaults><o:shapedefaults v:ext="edit" spidmax="2050"/></w:hdrShapeDefaults>"#,
+                r#"<w:compat><w:ulTrailSpace/><w:doNotExpandShiftReturn w:val="0"/><w:useFELayout/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
+                r#"<w14:defaultImageDpi w14:val="32767"/>"#,
+            )
+        );
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings.as_bytes()),
+            ("word/_rels/settings.xml.rels", settings_rels),
+        ]);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        let reported: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(reported.is_empty(), "nothing here is a loss: {reported:?}");
+        let modeled = &import.document.definitions().settings;
+        assert_eq!(
+            modeled.attached_template.as_deref(),
+            Some(r"file:///C:\Templates\Report%20(1).dotx")
+        );
+        assert_eq!(modeled.drawing_grid.horizontal_spacing, Some(110));
+        assert_eq!(modeled.drawing_grid.display_vertical_every, Some(2));
+        assert_eq!(
+            modeled.compat_options,
+            vec!["ulTrailSpace".to_owned()],
+            "an off switch is the default"
+        );
+        assert_eq!(modeled.default_image_dpi, Some(32_767));
+
+        let bytes = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let mut written_package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let written =
+            String::from_utf8(written_package.read_part("word/settings.xml").unwrap()).unwrap();
+        let sequence = [
+            r#"<w:attachedTemplate r:id="rId1"/>"#,
+            "<w:defaultTabStop ",
+            r#"<w:drawingGridHorizontalSpacing w:val="110"/>"#,
+            r#"<w:displayHorizontalDrawingGridEvery w:val="2"/>"#,
+            r#"<w:displayVerticalDrawingGridEvery w:val="2"/>"#,
+            r#"<w:hdrShapeDefaults><o:shapedefaults v:ext="edit" spidmax="2050"/></w:hdrShapeDefaults>"#,
+            "<w:compat><w:ulTrailSpace/><w:useFELayout/><w:compatSetting ",
+            r#"<w14:defaultImageDpi w14:val="32767"/>"#,
+        ];
+        let positions: Vec<usize> = sequence
+            .iter()
+            .map(|needle| {
+                written
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("{needle} is written: {written}"))
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "written in CT_Settings order {sequence:?}: {written}"
+        );
+        let rels = written_package
+            .read_part("word/_rels/settings.xml.rels")
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .unwrap_or_default();
+        assert!(
+            rels.contains("relationships/attachedTemplate")
+                && rels.contains(r#"TargetMode="External""#),
+            "settings.xml.rels declares the template: {rels}"
+        );
+        let reopened = reopen(&bytes);
+        assert_eq!(
+            &reopened.definitions().settings,
+            modeled,
+            "the settings reopen exactly"
+        );
+    }
+
     /// The settings Word writes into every document it saves were reported and
     /// dropped by every edited save (`109` FID-AT-10, found on `sample.docx`);
     /// Track Changes was read from an element that is in no schema and written

@@ -1556,7 +1556,9 @@ pub struct DocumentSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_id_w15: Option<String>,
     /// `w14:defaultImageDpi` — the resolution pictures are compressed to when
-    /// they are compressed (`220`, `150`, `96`, …), bounded 1..=10,000.
+    /// they are compressed (`220`, `150`, `96`, …), bounded 1..=32,767. Word's
+    /// "High fidelity" (do not compress) is stored as `32767`, which a bound of
+    /// 10,000 refused and reported until the owner's documents showed it.
     /// Additive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_image_dpi: Option<u32>,
@@ -1578,6 +1580,149 @@ pub struct DocumentSettings {
     /// states. Additive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shape_defaults_xml: Option<String>,
+    /// `w:hdrShapeDefaults` — the same VML defaults for shapes in headers and
+    /// footers, retained VERBATIM like [`DocumentSettings::shape_defaults_xml`].
+    /// Word writes one into most documents it saves (`spidmax`, the highest
+    /// shape id used). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_shape_defaults_xml: Option<String>,
+    /// `w:drawingGrid*` and `w:displayHorizontal/VerticalDrawingGridEvery` —
+    /// Word's drawing grid (Layout ▸ Align ▸ Grid Settings). Additive.
+    #[serde(default, skip_serializing_if = "DrawingGrid::is_empty")]
+    pub drawing_grid: DrawingGrid,
+    /// The legacy `w:compat` switches that are on, by local name, in
+    /// [`LEGACY_COMPAT_OPTIONS`] order — every `CT_Compat` on/off child except
+    /// the two typed ones above (`w:adjustLineHeightInTable`, `w:useFELayout`).
+    ///
+    /// Kept and written back so an edited save does not change how Word lays
+    /// the document out; the layout engine here does not interpret them (most
+    /// apply only to documents in an older compatibility mode). A switch stated
+    /// off is the default and is not stored. Additive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compat_options: Vec<String>,
+    /// `w:attachedTemplate` — the target of the template the document was based
+    /// on (`Normal.dotm`, or a path or URL), from `settings.xml.rels`. Word keeps
+    /// it across saves; nothing here opens it. At most
+    /// [`MAX_ATTACHED_TEMPLATE_BYTES`]. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_template: Option<String>,
+}
+
+/// The longest attached-template target kept ([`DocumentSettings::attached_template`]).
+pub const MAX_ATTACHED_TEMPLATE_BYTES: usize = 2048;
+
+/// Every on/off child of `w:compat` (`CT_Compat`, ECMA-376 Part 1 §17.15.3), in
+/// schema order, except `w:compatSetting`. [`DocumentSettings::compat_options`]
+/// holds the ones that are on, other than the two typed fields.
+pub const LEGACY_COMPAT_OPTIONS: [&str; 65] = [
+    "useSingleBorderforContiguousCells",
+    "wpJustification",
+    "noTabHangInd",
+    "noLeading",
+    "spaceForUL",
+    "noColumnBalance",
+    "balanceSingleByteDoubleByteWidth",
+    "noExtraLineSpacing",
+    "doNotLeaveBackslashAlone",
+    "ulTrailSpace",
+    "doNotExpandShiftReturn",
+    "spacingInWholePoints",
+    "lineWrapLikeWord6",
+    "printBodyTextBeforeHeader",
+    "printColBlack",
+    "wpSpaceWidth",
+    "showBreaksInFrames",
+    "subFontBySize",
+    "suppressBottomSpacing",
+    "suppressTopSpacing",
+    "suppressSpacingAtTopOfPage",
+    "suppressTopSpacingWP",
+    "suppressSpBfAfterPgBrk",
+    "swapBordersFacingPages",
+    "convMailMergeEsc",
+    "truncateFontHeightsLikeWP6",
+    "mwSmallCaps",
+    "usePrinterMetrics",
+    "doNotSuppressParagraphBorders",
+    "wrapTrailSpaces",
+    "footnoteLayoutLikeWW8",
+    "shapeLayoutLikeWW8",
+    "alignTablesRowByRow",
+    "forgetLastTabAlignment",
+    "adjustLineHeightInTable",
+    "autoSpaceLikeWord95",
+    "noSpaceRaiseLower",
+    "doNotUseHTMLParagraphAutoSpacing",
+    "layoutRawTableWidth",
+    "layoutTableRowsApart",
+    "useWord97LineBreakRules",
+    "doNotBreakWrappedTables",
+    "doNotSnapToGridInCell",
+    "selectFldWithFirstOrLastChar",
+    "applyBreakingRules",
+    "doNotWrapTextWithPunct",
+    "doNotUseEastAsianBreakRules",
+    "useWord2002TableStyleRules",
+    "growAutofit",
+    "useFELayout",
+    "useNormalStyleForList",
+    "doNotUseIndentAsNumberingTabStop",
+    "useAltKinsokuLineBreakRules",
+    "allowSpaceOfSameStyleInTable",
+    "doNotSuppressIndentation",
+    "doNotAutofitConstrainedTables",
+    "autofitToFirstFixedWidthCell",
+    "underlineTabInNumList",
+    "displayHangulFixedWidth",
+    "splitPgBreakAndParaMark",
+    "doNotVertAlignCellWithSp",
+    "doNotBreakConstrainedForcedTable",
+    "doNotVertAlignInTxbx",
+    "useAnsiKerningPairs",
+    "cachedColBalance",
+];
+
+/// Word's drawing grid (`w:drawingGridHorizontalSpacing` and its six siblings,
+/// ECMA-376 Part 1 §17.15.1.43–48). Each value is what the file stated; `None`
+/// and `false` are the schema's absent. Spacings and origins are twips, bounded
+/// like a tab stop (0..=31,680); the "every" counts are 0..=32,767.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingGrid {
+    /// `w:drawingGridHorizontalSpacing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_spacing: Option<u32>,
+    /// `w:drawingGridVerticalSpacing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_spacing: Option<u32>,
+    /// `w:displayHorizontalDrawingGridEvery`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_horizontal_every: Option<u32>,
+    /// `w:displayVerticalDrawingGridEvery`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_vertical_every: Option<u32>,
+    /// `w:doNotUseMarginsForDrawingGridOrigin`.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub do_not_use_margins_for_origin: bool,
+    /// `w:drawingGridHorizontalOrigin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_origin: Option<u32>,
+    /// `w:drawingGridVerticalOrigin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_origin: Option<u32>,
+}
+
+impl DrawingGrid {
+    /// The largest spacing or origin kept, in twips (22 inches).
+    pub const MAX_TWIPS: u32 = 31_680;
+    /// The largest "display every" count kept.
+    pub const MAX_EVERY: u32 = 32_767;
+
+    /// Whether the file stated nothing about the grid.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Maximum UTF-8 length of a settings token (`w:decimalSymbol`,
@@ -1625,10 +1770,19 @@ impl DocumentSettings {
             })
     }
 
-    /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=10,000.
+    /// Whether `dpi` is a storable `w14:defaultImageDpi`: 1..=32,767, the top
+    /// being Word's "High fidelity".
     #[must_use]
     pub const fn is_valid_image_dpi(dpi: u32) -> bool {
-        dpi >= 1 && dpi <= 10_000
+        dpi >= 1 && dpi <= 32_767
+    }
+
+    /// Whether `name` is a `w:compat` switch [`Self::compat_options`] may hold.
+    #[must_use]
+    pub fn is_compat_option(name: &str) -> bool {
+        name != "adjustLineHeightInTable"
+            && name != "useFELayout"
+            && LEGACY_COMPAT_OPTIONS.contains(&name)
     }
 }
 

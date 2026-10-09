@@ -450,6 +450,23 @@ pub fn import_package(
         Some(part) => recover_read(package, part, PartRole::Settings, recover, &mut repairs)?,
         None => None,
     };
+    // `w:attachedTemplate` points through the settings part's own relationships
+    // at an EXTERNAL target (`Normal.dotm`, a path or a URL). A relationships
+    // part that cannot be read leaves the element unresolved, and so reported.
+    let settings_templates: std::collections::BTreeMap<String, String> = settings_part
+        .as_ref()
+        .filter(|_| settings_bytes.is_some())
+        .and_then(|part| package.part_relationships(part).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|relationship| {
+            relationship
+                .relationship_type
+                .ends_with("/attachedTemplate")
+                && relationship.target_mode == casual_doc_ooxml::TargetMode::External
+        })
+        .map(|relationship| (relationship.id, relationship.target))
+        .collect();
     // Each extra part (notes, headers, footers) carries its own image and
     // external-hyperlink relationships, so images and links inside it are modeled.
     let mut footnotes = match footnotes_part {
@@ -714,6 +731,7 @@ pub fn import_package(
         font_table: font_table_part.as_deref(),
         theme: theme_part.as_deref(),
         settings: settings_part.as_deref(),
+        settings_templates: Some(&settings_templates),
         retain_theme,
     };
     let mut import = match import_with_named_sources(
@@ -1716,6 +1734,10 @@ impl<'a> SharedTables<'a> {
     }
 }
 
+/// No attached-template relationships: the XML-only entry points have no
+/// settings relationships part to read them from.
+static NO_TEMPLATES: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+
 /// The resolved package part names of the main document and the definition
 /// parts, so a finding raised while one is read can say which part it came from
 /// (`Reporter::set_part`, `109` HF-047). Every field is `None` where no package
@@ -1728,6 +1750,9 @@ pub(crate) struct DefinitionPartNames<'a> {
     pub font_table: Option<&'a str>,
     pub theme: Option<&'a str>,
     pub settings: Option<&'a str>,
+    /// The settings part's EXTERNAL `attachedTemplate` relationships, id to
+    /// target, which `w:attachedTemplate` resolves through (`109` FID-AT-15).
+    pub settings_templates: Option<&'a std::collections::BTreeMap<String, String>>,
     /// Whether the theme part may be carried verbatim (`109` FID-AT-03): a
     /// package exists and the part owns no relationships of its own, whose
     /// targets a verbatim copy would point at without the writer carrying them.
@@ -1922,7 +1947,12 @@ pub(crate) fn import_with_named_sources(
     reporter.set_part(names.settings);
     let settings = match settings_xml {
         Some(xml) => recover_part(
-            settings::parse(xml, &mut reporter, config),
+            settings::parse(
+                xml,
+                names.settings_templates.unwrap_or(&NO_TEMPLATES),
+                &mut reporter,
+                config,
+            ),
             &mut reporter,
             PartRole::Settings,
             DocumentSettings::default,
