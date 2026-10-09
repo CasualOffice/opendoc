@@ -1530,7 +1530,7 @@ fn command_path(commands: &[PathCommand], closed: bool, dpi: f32) -> Option<tiny
     }
     let point = |p: Point| (p.x.to_device_px(dpi), p.y.to_device_px(dpi));
     let mut builder = PathBuilder::new();
-    let start = first.endpoint();
+    let start = first.endpoint()?;
     let (x, y) = point(start);
     builder.move_to(x, y);
     for command in rest {
@@ -1558,6 +1558,10 @@ fn command_path(commands: &[PathCommand], closed: bool, dpi: f32) -> Option<tiny
                 let (x, y) = point(p);
                 builder.quad_to(cx, cy, x, y);
             }
+            // A mid-path close ends one subpath; the next segment, if any, starts
+            // again from that subpath's first point, which is the semantics the
+            // builder (and PDF's `h`) already have.
+            PathCommand::Close => builder.close(),
         }
     }
     if closed {
@@ -1737,23 +1741,44 @@ fn render_shape(
             .pixmap
             .stroke_path(&path, &paint, &sk_stroke, transform, clip);
 
-        // Arrowheads sit at the line's endpoints, oriented along the segment. The
-        // endpoints ride the same transform so a rotated/flipped line keeps its
-        // heads attached and correctly oriented.
-        if let ShapeGeometry::Line { from, to } = geometry {
-            let mut ends = [
-                SkPoint::from_xy(from.x.to_device_px(dpi), from.y.to_device_px(dpi)),
-                SkPoint::from_xy(to.x.to_device_px(dpi), to.y.to_device_px(dpi)),
+        // Arrowheads sit at the line's endpoints, oriented along the segment — or,
+        // for an OPEN path (a connector, an `arc`), at its two ends oriented along
+        // its tangents there. The points ride the same transform so a
+        // rotated/flipped shape keeps its heads attached and correctly oriented.
+        let ends = match geometry {
+            ShapeGeometry::Line { from, to } => Some(((*from, *to), (*to, *from))),
+            ShapeGeometry::Path { commands, closed } if !*closed => {
+                casual_doc_layout::display::open_path_ends(commands)
+            }
+            _ => None,
+        };
+        if let Some(((start, start_toward), (end, end_from))) = ends {
+            let device = |p: Point| SkPoint::from_xy(p.x.to_device_px(dpi), p.y.to_device_px(dpi));
+            let mut points = [
+                device(start),
+                device(start_toward),
+                device(end),
+                device(end_from),
             ];
-            transform.map_points(&mut ends);
-            let [a, b] = ends;
+            transform.map_points(&mut points);
+            let [start, start_toward, end, end_from] = points;
             if let Some(head) = head_end {
-                // The head sits at the start, pointing back along `b -> a`.
-                draw_arrowhead(surface, a, b, head, width, stroke.color, clip);
+                // The head sits at the start, pointing back against the direction
+                // the path leaves in.
+                draw_arrowhead(
+                    surface,
+                    start,
+                    start_toward,
+                    head,
+                    width,
+                    stroke.color,
+                    clip,
+                );
             }
             if let Some(tail) = tail_end {
-                // The tail sits at the end, pointing along `a -> b`.
-                draw_arrowhead(surface, b, a, tail, width, stroke.color, clip);
+                // The tail sits at the end, pointing along the direction the path
+                // arrives in.
+                draw_arrowhead(surface, end, end_from, tail, width, stroke.color, clip);
             }
         }
     }
@@ -3688,6 +3713,115 @@ mod tests {
             pixel_at(&surface, 100, 50, 10)[0] < 100,
             "the two-point rule is painted (got {:?})",
             pixel_at(&surface, 100, 50, 10)
+        );
+    }
+
+    fn black_outline() -> ShapeOutline {
+        ShapeOutline {
+            color: ShapeColor::BLACK,
+            width: 2.0,
+            dash: DashStyle::Solid,
+        }
+    }
+
+    /// A close in the MIDDLE of a path (`a:close` then more commands — the
+    /// standard writes exactly this in `accentBorderCallout1`, and a `donut` is
+    /// two closed rings in one path) ends that subpath, and the next segment
+    /// starts again from the subpath's FIRST point.
+    ///
+    /// Pixels, because the failure is visible only as which edges get stroked:
+    /// `(10,10)→(90,10)→(90,50)`, close, then a line to `(10,50)`. Honoured, the
+    /// close strokes the diagonal back to `(10,10)` and the line runs down the LEFT
+    /// edge from there; ignored, the line runs along the BOTTOM from `(90,50)`.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_mid_path_close_restarts_the_next_segment_at_the_subpath_start() {
+        let at = |x, y| Point::new(Twip(x), Twip(y));
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Path {
+                commands: vec![
+                    PathCommand::MoveTo { point: at(10, 10) },
+                    PathCommand::LineTo { point: at(90, 10) },
+                    PathCommand::LineTo { point: at(90, 50) },
+                    PathCommand::Close,
+                    PathCommand::LineTo { point: at(10, 50) },
+                ],
+                closed: false,
+            },
+            fill: None,
+            stroke: Some(black_outline()),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 60);
+        assert!(
+            pixel_at(&surface, 100, 50, 30)[0] < 100,
+            "the close strokes the diagonal back to the start (got {:?})",
+            pixel_at(&surface, 100, 50, 30)
+        );
+        assert!(
+            pixel_at(&surface, 100, 10, 30)[0] < 100,
+            "the next line starts at the subpath start: the left edge (got {:?})",
+            pixel_at(&surface, 100, 10, 30)
+        );
+        assert!(
+            pixel_at(&surface, 100, 50, 50)[0] > 200,
+            "and not from where the pen was before the close (got {:?})",
+            pixel_at(&surface, 100, 50, 50)
+        );
+    }
+
+    /// An OPEN path — a connector, the stroked arc of an `arc` — carries its
+    /// `a:tailEnd` at its end, oriented along the direction it ARRIVES in: for a
+    /// curve, its last control point, not the chord from its start.
+    ///
+    /// The curve leaves `(10,50)` and arrives at `(80,30)` travelling right
+    /// (its second control is `(60,30)`), so the arrowhead's base sits left of
+    /// the tip and spreads above and below `y = 30`. A head oriented along the
+    /// chord would point up-right and miss `(75,28)`.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn an_open_path_draws_its_tail_arrowhead_along_its_arriving_tangent() {
+        let at = |x, y| Point::new(Twip(x), Twip(y));
+        let curve = |tail_end| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Path {
+                    commands: vec![
+                        PathCommand::MoveTo { point: at(10, 50) },
+                        PathCommand::CubicTo {
+                            control1: at(30, 50),
+                            control2: at(60, 30),
+                            point: at(80, 30),
+                        },
+                    ],
+                    closed: false,
+                },
+                fill: None,
+                stroke: Some(black_outline()),
+                head_end: None,
+                tail_end,
+                transform: None,
+            });
+            shape_surface(&list, 100, 60)
+        };
+        let arrow = curve(Some(LineEnd {
+            kind: LineEndKind::Triangle,
+            width: None,
+            length: None,
+        }));
+        assert!(
+            pixel_at(&arrow, 100, 75, 28)[0] < 100,
+            "the arrowhead spreads above the arriving stroke (got {:?})",
+            pixel_at(&arrow, 100, 75, 28)
+        );
+        let plain = curve(None);
+        assert!(
+            pixel_at(&plain, 100, 75, 28)[0] > 200,
+            "and the stroke alone does not reach there (got {:?})",
+            pixel_at(&plain, 100, 75, 28)
         );
     }
 

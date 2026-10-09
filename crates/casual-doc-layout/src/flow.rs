@@ -92,6 +92,8 @@ use crate::units::emu_to_twip_offset;
 use crate::units::{Point, Size, Twip};
 // Own line (anti-conflict): the single wrap-side rule.
 use crate::wrap_side::{band_exclusion, wrap_sides};
+// Own line (anti-conflict): tight/through wrap to the authored contour.
+use crate::wrap_contour::{anchor_contour, contour_exclusions};
 
 /// One page-derived edge exclusion applied at the start of a body paragraph.
 /// These are produced by the bounded cross-paragraph float pass after an initial
@@ -100,6 +102,11 @@ use crate::wrap_side::{band_exclusion, wrap_sides};
 pub(crate) struct ParagraphFloatExclusion {
     pub(crate) side: InlineFloatSide,
     pub(crate) width: Twip,
+    /// Where the exclusion starts below the paragraph's top: zero for a square
+    /// wrap, a band's top for one band of a tight/through contour
+    /// (`crate::wrap_contour`).
+    pub(crate) top: Twip,
+    /// Where the exclusion ends below the paragraph's top.
     pub(crate) height: Twip,
 }
 
@@ -1647,11 +1654,13 @@ fn paragraph_hash(
             FlowItem::FloatExclusion {
                 side,
                 width,
+                top,
                 height,
             } => {
                 9u8.hash(&mut hasher);
                 (*side as u8).hash(&mut hasher);
                 width.0.hash(&mut hasher);
+                top.0.hash(&mut hasher);
                 height.0.hash(&mut hasher);
             }
             FlowItem::NoteReference(marker) => {
@@ -2100,6 +2109,7 @@ fn flow_paragraph_with_carries(
             active_carries.push(ParagraphFloatExclusion {
                 side: float.side,
                 width: float.width,
+                top: Twip((float.top.raw() - consumed.raw()).max(0)),
                 height: remaining,
             });
         }
@@ -2111,6 +2121,7 @@ fn flow_paragraph_with_carries(
 /// dropping those whose clearance is exhausted.
 fn decrement_wrap_carries(active_carries: &mut Vec<ParagraphFloatExclusion>, consumed: Twip) {
     for carry in active_carries.iter_mut() {
+        carry.top = Twip((carry.top.raw() - consumed.raw()).max(0));
         carry.height = Twip((carry.height.raw() - consumed.raw()).max(0));
     }
     active_carries.retain(|carry| carry.height.raw() > 0);
@@ -2258,6 +2269,7 @@ fn collapse_drop_cap_fragment(
     (frame.mode == DropCapMode::Drop).then_some(ParagraphFloatExclusion {
         side: InlineFloatSide::Left,
         width,
+        top: Twip::ZERO,
         height,
     })
 }
@@ -4021,10 +4033,8 @@ fn collect_items_with_measure<'a>(
                 embedded_object_items(object, out, shaper, ctx);
             }
             InlineNode::AnchoredDrawing(drawing) => {
-                if intrinsic.is_none()
-                    && let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent, width)
-                {
-                    out.push(item);
+                if intrinsic.is_none() {
+                    out.extend(float_flow_items(&drawing.anchor, &drawing.extent, width));
                 }
             }
             InlineNode::Field(field) => {
@@ -4083,17 +4093,15 @@ fn collect_items_with_measure<'a>(
             InlineNode::TextBox(text_box) => {
                 if intrinsic.is_none()
                     && let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
-                    && let Some(item) = float_flow_item(anchor, extent, width)
                 {
-                    out.push(item);
+                    out.extend(float_flow_items(anchor, extent, width));
                 }
             }
             InlineNode::Group(group) => {
                 if intrinsic.is_none()
                     && let Some(anchor) = &group.anchor
-                    && let Some(item) = float_flow_item(anchor, &group.extent, width)
                 {
-                    out.push(item);
+                    out.extend(float_flow_items(anchor, &group.extent, width));
                 }
             }
             InlineNode::Hyperlink(hyperlink) => {
@@ -4507,6 +4515,56 @@ fn float_band(anchor: &DrawingAnchor, extent: &Extent, content_width: Twip) -> (
     )
 }
 
+/// The contour a paragraph-anchored tight/through float wraps to, cut into
+/// bands measured from the anchoring paragraph's top and its container's
+/// leading edge — the object's own box placed exactly where [`float_band`] and
+/// [`float_clearance`] place it. `None` for every float that wraps to its box.
+///
+/// O(n log n) in the contour's vertices (`crate::wrap_contour`).
+fn float_contour(
+    anchor: &DrawingAnchor,
+    extent: &Extent,
+    content_width: Twip,
+) -> Option<Vec<crate::wrap_contour::ContourBand>> {
+    let offset_emu = match anchor.vertical.position {
+        VerticalPosition::Offset(offset) => offset,
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
+        _ => return None,
+    };
+    let (band_start, _) = float_band(anchor, extent, content_width);
+    let object = crate::units::Rect::new(
+        Point::new(
+            band_start + emu_to_twip_extent(anchor.wrap_distances.start_emu),
+            emu_to_twip_offset(offset_emu),
+        ),
+        Size::new(
+            emu_to_twip_extent(extent.width_emu),
+            emu_to_twip_extent(extent.height_emu),
+        ),
+    );
+    anchor_contour(anchor, object)
+}
+
+/// A tight/through float's contour bands as paragraph-relative exclusions.
+/// Empty when the contour reaches into nothing; `None` when the float wraps to
+/// its box.
+fn float_contour_exclusions(
+    anchor: &DrawingAnchor,
+    extent: &Extent,
+    content_width: Twip,
+) -> Option<Vec<crate::wrap_contour::BandExclusion>> {
+    let bands = float_contour(anchor, extent, content_width)?;
+    Some(contour_exclusions(
+        &bands,
+        emu_to_twip_extent(anchor.wrap_distances.start_emu),
+        emu_to_twip_extent(anchor.wrap_distances.end_emu),
+        Twip::ZERO,
+        content_width,
+        wrap_sides(anchor),
+        Twip::ZERO,
+    ))
+}
+
 /// Converts a paragraph-local anchored object into its non-painting flow marker.
 /// Top-and-bottom wrapping reserves vertical space; square-family wrapping
 /// narrows only lines that intersect the object's vertical clearance, on the
@@ -4516,15 +4574,21 @@ fn float_band(anchor: &DrawingAnchor, extent: &Extent, content_width: Twip) -> (
 /// longer wrap two different ways depending on which pass saw it.
 /// Page-relative exclusions remain outside this local slice.
 ///
-/// O(1).
-fn float_flow_item(
+/// A tight/through float with an authored contour yields one exclusion per
+/// band of it (`crate::wrap_contour`), each starting where its band does; every
+/// other float yields at most one marker.
+///
+/// O(1) for a box; O(n log n) in a contour's vertices.
+fn float_flow_items<'a>(
     anchor: &DrawingAnchor,
     extent: &Extent,
     content_width: Twip,
-) -> Option<FlowItem<'static>> {
-    let height = float_clearance(anchor, extent)?;
+) -> Vec<FlowItem<'a>> {
+    let Some(height) = float_clearance(anchor, extent) else {
+        return Vec::new();
+    };
     if anchor.wrap == WrapMode::TopAndBottom {
-        return Some(FlowItem::FloatBarrier { height });
+        return vec![FlowItem::FloatBarrier { height }];
     }
     if !matches!(
         anchor.wrap,
@@ -4533,21 +4597,35 @@ fn float_flow_item(
         anchor.horizontal.relative_from,
         HorizontalAnchor::Margin | HorizontalAnchor::Column
     ) {
-        return None;
+        return Vec::new();
+    }
+    if let Some(bands) = float_contour_exclusions(anchor, extent, content_width) {
+        return bands
+            .into_iter()
+            .map(|band| FlowItem::FloatExclusion {
+                side: band.side,
+                width: band.width,
+                top: band.top,
+                height: band.bottom,
+            })
+            .collect();
     }
     let (band_start, band_end) = float_band(anchor, extent, content_width);
-    let exclusion = band_exclusion(
+    band_exclusion(
         band_start,
         band_end,
         Twip::ZERO,
         content_width,
         wrap_sides(anchor),
-    )?;
-    Some(FlowItem::FloatExclusion {
+    )
+    .map(|exclusion| FlowItem::FloatExclusion {
         side: exclusion.side,
         width: exclusion.width,
+        top: Twip::ZERO,
         height,
     })
+    .into_iter()
+    .collect()
 }
 
 /// The square-family wrap exclusion each of a paragraph's anchored floats imposes,
@@ -4564,7 +4642,7 @@ fn paragraph_wrap_carries(
     for inline in &paragraph.inlines {
         let carry = match inline {
             InlineNode::AnchoredDrawing(drawing) => {
-                wrap_carry(&drawing.anchor, drawing.extent, content_width)
+                wrap_carries(&drawing.anchor, drawing.extent, content_width)
             }
             // A FLOATING text box carries exactly as a drawing or a group does.
             // It used to be omitted here while `collect_items` and
@@ -4579,18 +4657,16 @@ fn paragraph_wrap_carries(
             // shape `SKILL.md` §8 forbids. A box with no authored extent
             // therefore carries nothing, which is what it did before.
             InlineNode::TextBox(text_box) => match (&text_box.anchor, &text_box.extent) {
-                (Some(anchor), Some(extent)) => wrap_carry(anchor, *extent, content_width),
-                _ => None,
+                (Some(anchor), Some(extent)) => wrap_carries(anchor, *extent, content_width),
+                _ => Vec::new(),
             },
             InlineNode::Group(group) => match &group.anchor {
-                Some(anchor) => wrap_carry(anchor, group.extent, content_width),
-                None => None,
+                Some(anchor) => wrap_carries(anchor, group.extent, content_width),
+                None => Vec::new(),
             },
-            _ => None,
+            _ => Vec::new(),
         };
-        if let Some(carry) = carry {
-            carries.push(carry);
-        }
+        carries.extend(carry);
     }
     carries
 }
@@ -4609,12 +4685,15 @@ fn paragraph_wrap_carries(
 /// the float, and crossing the column centre flipped the text from one side to
 /// the other.
 ///
-/// O(1).
-fn wrap_carry(
+/// A tight/through float with an authored contour carries one exclusion per
+/// band of it instead, each with its own start and end (`crate::wrap_contour`).
+///
+/// O(1) for a box; O(n log n) in a contour's vertices.
+fn wrap_carries(
     anchor: &DrawingAnchor,
     extent: Extent,
     content_width: Twip,
-) -> Option<ParagraphFloatExclusion> {
+) -> Vec<ParagraphFloatExclusion> {
     if anchor.behind_doc
         || !matches!(
             anchor.wrap,
@@ -4625,22 +4704,38 @@ fn wrap_carry(
             HorizontalAnchor::Margin | HorizontalAnchor::Column
         )
     {
-        return None;
+        return Vec::new();
     }
-    let height = float_clearance(anchor, &extent)?;
+    let Some(height) = float_clearance(anchor, &extent) else {
+        return Vec::new();
+    };
+    if let Some(bands) = float_contour_exclusions(anchor, &extent, content_width) {
+        return bands
+            .into_iter()
+            .map(|band| ParagraphFloatExclusion {
+                side: band.side,
+                width: band.width,
+                top: band.top,
+                height: band.bottom,
+            })
+            .collect();
+    }
     let (band_start, band_end) = float_band(anchor, &extent, content_width);
-    let exclusion = band_exclusion(
+    band_exclusion(
         band_start,
         band_end,
         Twip::ZERO,
         content_width,
         wrap_sides(anchor),
-    )?;
-    Some(ParagraphFloatExclusion {
+    )
+    .map(|exclusion| ParagraphFloatExclusion {
         side: exclusion.side,
         width: exclusion.width,
+        top: Twip::ZERO,
         height,
     })
+    .into_iter()
+    .collect()
 }
 
 fn prepend_paragraph_float_exclusions<'a>(
@@ -4663,12 +4758,13 @@ fn prepend_explicit_float_exclusions<'a>(
 ) {
     // Insert in reverse so the stable, page-derived order is preserved at byte 0.
     for exclusion in exclusions.iter().rev() {
-        if exclusion.width.raw() > 0 && exclusion.height.raw() > 0 {
+        if exclusion.width.raw() > 0 && exclusion.height > exclusion.top {
             items.insert(
                 0,
                 FlowItem::FloatExclusion {
                     side: exclusion.side,
                     width: exclusion.width,
+                    top: exclusion.top,
                     height: exclusion.height,
                 },
             );
@@ -5369,11 +5465,13 @@ fn shape_text_with_objects(
             FlowItem::FloatExclusion {
                 side,
                 width,
+                top,
                 height,
             } => floats.push(InlineFloatSpec {
                 index: byte,
                 side: *side,
                 width: *width,
+                top: *top,
                 height: *height,
             }),
             _ => {}
@@ -9509,6 +9607,12 @@ mod tests {
             height_emu: 800 * 635,
         };
         let content_width = Twip(9000);
+        // A float that wraps to its box carries exactly one exclusion.
+        let wrap_carry = |anchor: &DrawingAnchor, extent: Extent, width: Twip| {
+            let mut carries = wrap_carries(anchor, extent, width);
+            assert!(carries.len() <= 1, "a box carries one exclusion");
+            carries.pop()
+        };
 
         let offset = wrap_carry(
             &anchor(HorizontalPosition::Offset(-7)),
@@ -16527,23 +16631,26 @@ mod tests {
             wrap_polygon: None,
             behind_doc: false,
         };
-        let item = float_flow_item(
+        let items = float_flow_items(
             &anchor,
             &Extent {
                 width_emu: 1500 * 635,
                 height_emu: 1500 * 635,
             },
             Twip(9_000),
-        )
-        .expect("supported paragraph-local square wrap");
-        assert!(matches!(
-            item,
-            FlowItem::FloatExclusion {
-                side: InlineFloatSide::Right,
-                width: Twip(1680),
-                height: Twip(1500),
-            }
-        ));
+        );
+        assert!(
+            matches!(
+                items.as_slice(),
+                [FlowItem::FloatExclusion {
+                    side: InlineFloatSide::Right,
+                    width: Twip(1680),
+                    top: Twip(0),
+                    height: Twip(1500),
+                }]
+            ),
+            "supported paragraph-local square wrap"
+        );
     }
 
     fn hr_model(align: HorizontalRuleAlign, width_permille: u16) -> ModelHorizontalRule {

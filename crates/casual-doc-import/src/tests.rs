@@ -9245,7 +9245,7 @@ fn custom_geometry_import() -> Import {
 
 #[test]
 fn a_custom_geometry_path_of_straight_segments_is_imported_as_a_path() {
-    use casual_doc_model::v1::{PointEmu, ShapeGeometry, ShapePathCommand};
+    use casual_doc_model::v1::{GeometryPoint, ShapeGeometry, ShapePathCommand};
 
     let import = custom_geometry_import();
     let shapes = custom_geometry_shapes(&import);
@@ -9263,29 +9263,28 @@ fn a_custom_geometry_path_of_straight_segments_is_imported_as_a_path() {
         rule.preset, None,
         "no preset token is retained beside a path"
     );
-    let path = rule.path.as_ref().expect("the open rule carries its path");
+    let geometry = rule.path.as_ref().expect("the open rule carries its path");
+    let path = &geometry.paths[0];
     assert_eq!(path.width_emu, 6_660_515, "a:path@w");
     assert_eq!(path.height_emu, 0, "a:path@h is absent: absolute EMU");
     assert_eq!(
         path.commands,
         vec![
             ShapePathCommand::MoveTo {
-                point: PointEmu { x_emu: 0, y_emu: 0 },
+                point: GeometryPoint::literal(0, 0),
             },
             ShapePathCommand::LineTo {
-                point: PointEmu {
-                    x_emu: 6_660_057,
-                    y_emu: 0,
-                },
+                point: GeometryPoint::literal(6_660_057, 0),
             },
         ],
     );
 
     // 2. A closed triangle with both axes scaled.
-    let triangle = shapes[1]
+    let triangle = &shapes[1]
         .path
         .as_ref()
-        .expect("the triangle carries a path");
+        .expect("the triangle carries a path")
+        .paths[0];
     assert_eq!((triangle.width_emu, triangle.height_emu), (100, 100));
     assert_eq!(
         triangle.commands.last(),
@@ -9296,54 +9295,67 @@ fn a_custom_geometry_path_of_straight_segments_is_imported_as_a_path() {
 }
 
 #[test]
-fn a_curve_is_modelled_while_a_guide_coordinate_keeps_its_rectangle_and_stays_reported() {
-    use casual_doc_model::v1::{PointEmu, ShapeGeometry, ShapePathCommand};
+fn a_curve_and_a_guide_named_coordinate_are_both_modelled_now() {
+    use casual_doc_model::v1::{GeometryPoint, GeometryValue, ShapePathCommand};
 
     let import = custom_geometry_import();
     let shapes = custom_geometry_shapes(&import);
 
-    // 3. The cubic Bezier is now MODELLED (`109` FID-G-02), so it carries a path
-    //    with its controls in the authored order. DrawingML reads `a:cubicBezTo`'s
-    //    three `a:pt` positionally, so asserting the order — not just the count —
-    //    is what would catch a reordering that stayed schema-valid.
-    let curve = shapes[2].path.as_ref().expect("the curve carries a path");
+    // 3. The cubic Bezier, with its controls in the authored order. DrawingML reads
+    //    `a:cubicBezTo`'s three `a:pt` positionally, so asserting the order — not
+    //    just the count — is what would catch a reordering that stayed
+    //    schema-valid.
+    let curve = &shapes[2]
+        .path
+        .as_ref()
+        .expect("the curve carries a path")
+        .paths[0];
     assert_eq!((curve.width_emu, curve.height_emu), (100, 100));
     assert_eq!(
         curve.commands,
         vec![
             ShapePathCommand::MoveTo {
-                point: PointEmu { x_emu: 0, y_emu: 0 },
+                point: GeometryPoint::literal(0, 0),
             },
             ShapePathCommand::CubicBezTo {
-                control1: PointEmu {
-                    x_emu: 30,
-                    y_emu: 80
+                control1: GeometryPoint::literal(30, 80),
+                control2: GeometryPoint::literal(70, 80),
+                point: GeometryPoint::literal(100, 0),
+            },
+        ],
+    );
+
+    // 4. `<a:pt x="wd2" y="t"/>` — a coordinate that NAMES a guide. This was the
+    //    fixture's unsupported case until the guide language reached the model
+    //    (`109` FID-G-02); it is now carried as the name, not evaluated at import,
+    //    so the geometry still scales when the box does.
+    let named = &shapes[3]
+        .path
+        .as_ref()
+        .expect("a guide-named coordinate now produces a path")
+        .paths[0];
+    let guide = |name: &str| GeometryValue::Guide(name.to_owned());
+    assert_eq!(
+        named.commands,
+        vec![
+            ShapePathCommand::MoveTo {
+                point: GeometryPoint {
+                    x: guide("wd2"),
+                    y: guide("t"),
                 },
-                control2: PointEmu {
-                    x_emu: 70,
-                    y_emu: 80
-                },
-                point: PointEmu {
-                    x_emu: 100,
-                    y_emu: 0
+            },
+            ShapePathCommand::LineTo {
+                point: GeometryPoint {
+                    x: guide("r"),
+                    y: guide("b"),
                 },
             },
         ],
     );
 
-    // 4. A guide-named coordinate is still outside the modeled subset: it needs the
-    //    `a:gdLst` formula language. It must not be flattened into the straight
-    //    segments it is NOT, so no path and the bounding rectangle still paints.
-    assert!(
-        shapes[3].path.is_none(),
-        "a guide-named coordinate must not produce a path"
-    );
-    assert_eq!(shapes[3].geometry, ShapeGeometry::Other);
-
-    // And the loss is still named, exactly ONCE now: only the guide-named
-    // coordinate remains undrawable, the curve having moved to the supported side.
-    // A guard that only checked the supported side would pass while the
-    // unsupported side fell silent.
+    // So nothing in this fixture is lost any more, and nothing is reported. The
+    // unsupported side keeps its own guard below, because a guard on the
+    // supported side alone would pass while the unsupported side fell silent.
     let custgeom: u32 = import
         .report
         .entries
@@ -9351,9 +9363,267 @@ fn a_curve_is_modelled_while_a_guide_coordinate_keeps_its_rectangle_and_stays_re
         .filter(|entry| entry.feature == "custGeom")
         .map(|entry| entry.occurrences)
         .sum();
+    assert_eq!(custgeom, 0, "every geometry in this fixture is drawable");
+}
+
+/// What Word writes when an author uses Edit Points on a rounded rectangle: the
+/// preset's WHOLE definition copied into `a:custGeom` — adjust values, guide
+/// formulas, an adjust handle, connection sites, a guide-named text rectangle,
+/// and a path of lines and ARCS. Every part must arrive, by name, so the shape
+/// both draws and saves as itself.
+#[test]
+fn a_full_geometry_definition_imports_whole() {
+    use casual_doc_model::v1::{
+        AdjustHandle, GeometryPoint, GeometryRect, GeometryValue, GroupChild, ShapeAdjustment,
+        ShapePathCommand,
+    };
+
+    let import = import_standalone_drawingml_shape(concat!(
+        r#"<a:custGeom><a:avLst><a:gd name="adj" fmla="val 16667"/></a:avLst>"#,
+        r#"<a:gdLst><a:gd name="a" fmla="pin 0 adj 50000"/><a:gd name="x1" fmla="*/ ss a 100000"/>"#,
+        r#"<a:gd name="x2" fmla="+- r 0 x1"/><a:gd name="y2" fmla="+- b 0 x1"/></a:gdLst>"#,
+        r#"<a:ahLst><a:ahXY gdRefX="adj" minX="0" maxX="50000"><a:pos x="x1" y="t"/></a:ahXY></a:ahLst>"#,
+        r#"<a:cxnLst><a:cxn ang="3cd4"><a:pos x="hc" y="t"/></a:cxn></a:cxnLst>"#,
+        r#"<a:rect l="x1" t="x1" r="x2" b="y2"/>"#,
+        r#"<a:pathLst><a:path><a:moveTo><a:pt x="l" y="x1"/></a:moveTo>"#,
+        r#"<a:arcTo wR="x1" hR="x1" stAng="cd2" swAng="cd4"/><a:lnTo><a:pt x="x2" y="t"/></a:lnTo>"#,
+        r#"<a:close/></a:path></a:pathLst></a:custGeom>"#,
+    ));
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    let guide = |name: &str| GeometryValue::Guide(name.to_owned());
     assert_eq!(
-        custgeom, 1,
-        "custGeom is reported for the one geometry we cannot draw, and only that"
+        shape.adjustments,
+        vec![ShapeAdjustment {
+            name: "adj".to_owned(),
+            formula: "val 16667".to_owned()
+        }],
+        "the geometry's avLst is the shape's adjustments, one list either way"
+    );
+    let geometry = shape
+        .path
+        .as_ref()
+        .expect("the whole definition is modelled");
+    assert_eq!(geometry.guides.len(), 4);
+    assert_eq!(
+        geometry.handles,
+        vec![AdjustHandle::Xy {
+            guide_x: Some("adj".to_owned()),
+            min_x: Some(GeometryValue::Literal(0)),
+            max_x: Some(GeometryValue::Literal(50_000)),
+            guide_y: None,
+            min_y: None,
+            max_y: None,
+            position: GeometryPoint {
+                x: guide("x1"),
+                y: guide("t"),
+            },
+        }]
+    );
+    assert_eq!(geometry.connections.len(), 1);
+    assert_eq!(geometry.connections[0].angle, guide("3cd4"));
+    assert_eq!(
+        geometry.text_rect,
+        Some(GeometryRect {
+            left: guide("x1"),
+            top: guide("x1"),
+            right: guide("x2"),
+            bottom: guide("y2"),
+        })
+    );
+    assert_eq!(
+        geometry.paths[0].commands[1],
+        ShapePathCommand::ArcTo {
+            width_radius: guide("x1"),
+            height_radius: guide("x1"),
+            start_angle: guide("cd2"),
+            swing_angle: guide("cd4"),
+        }
+    );
+    assert!(
+        !features(&import).contains(&"custGeom"),
+        "a modelled geometry is not a loss"
+    );
+}
+
+/// Several paths, each painted its own way: `@fill="none"` for a leader,
+/// `@stroke="0"` for a filled face with no outline. These attributes are how the
+/// standard draws a callout and a 3-D face, so they must survive.
+#[test]
+fn several_paths_keep_their_own_fill_and_stroke() {
+    use casual_doc_model::v1::{GroupChild, PathFill};
+
+    let import = import_standalone_drawingml_shape(concat!(
+        r#"<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:pathLst>"#,
+        r#"<a:path w="10" h="10" stroke="0" extrusionOk="0"><a:moveTo><a:pt x="0" y="0"/></a:moveTo>"#,
+        r#"<a:lnTo><a:pt x="10" y="0"/></a:lnTo><a:lnTo><a:pt x="10" y="10"/></a:lnTo><a:close/></a:path>"#,
+        r#"<a:path w="10" h="10" fill="darkenLess"><a:moveTo><a:pt x="0" y="0"/></a:moveTo>"#,
+        r#"<a:lnTo><a:pt x="0" y="10"/></a:lnTo><a:lnTo><a:pt x="10" y="10"/></a:lnTo><a:close/></a:path>"#,
+        r#"<a:path fill="none"><a:moveTo><a:pt x="0" y="0"/></a:moveTo>"#,
+        r#"<a:lnTo><a:pt x="r" y="b"/></a:lnTo></a:path>"#,
+        r#"</a:pathLst></a:custGeom>"#,
+    ));
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    let paths = &shape.path.as_ref().expect("three paths").paths;
+    let painted: Vec<_> = paths
+        .iter()
+        .map(|path| (path.fill, path.stroke, path.extrusion_ok))
+        .collect();
+    assert_eq!(
+        painted,
+        vec![
+            (PathFill::Norm, false, false),
+            (PathFill::DarkenLess, true, true),
+            (PathFill::None, true, true),
+        ]
+    );
+}
+
+/// The unsupported side, held on its own: a geometry naming a guide nothing
+/// defines, one carrying an extension list, and an arc missing an attribute must
+/// each keep their bounding rectangle AND be reported — never modelled as a
+/// geometry that would claim to be drawn.
+#[test]
+fn an_undrawable_geometry_is_refused_and_reported() {
+    use casual_doc_model::v1::GroupChild;
+
+    for (what, geometry) in [
+        (
+            "an undefined guide name",
+            r#"<a:pathLst><a:path><a:moveTo><a:pt x="nowhere" y="t"/></a:moveTo><a:lnTo><a:pt x="r" y="b"/></a:lnTo></a:path></a:pathLst>"#,
+        ),
+        (
+            "a formula outside the language",
+            r#"<a:gdLst><a:gd name="g" fmla="frob 1 2"/></a:gdLst><a:pathLst><a:path><a:moveTo><a:pt x="g" y="t"/></a:moveTo><a:lnTo><a:pt x="r" y="b"/></a:lnTo></a:path></a:pathLst>"#,
+        ),
+        (
+            "an arc missing its swing",
+            r#"<a:pathLst><a:path><a:moveTo><a:pt x="l" y="t"/></a:moveTo><a:arcTo wR="wd2" hR="hd2" stAng="0"/></a:path></a:pathLst>"#,
+        ),
+        (
+            "an extension list",
+            r#"<a:pathLst><a:path><a:moveTo><a:pt x="l" y="t"/></a:moveTo><a:lnTo><a:pt x="r" y="b"/></a:lnTo></a:path></a:pathLst><a:extLst/>"#,
+        ),
+        (
+            "a handle with no position",
+            r#"<a:ahLst><a:ahXY gdRefX="adj"/></a:ahLst><a:pathLst><a:path><a:moveTo><a:pt x="l" y="t"/></a:moveTo><a:lnTo><a:pt x="r" y="b"/></a:lnTo></a:path></a:pathLst>"#,
+        ),
+    ] {
+        let import =
+            import_standalone_drawingml_shape(&format!("<a:custGeom>{geometry}</a:custGeom>"));
+        let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected a standalone shape group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected the group child to be a shape");
+        };
+        assert!(shape.path.is_none(), "{what} must not produce a geometry");
+        assert!(
+            features(&import).contains(&"custGeom"),
+            "{what} is reported rather than silently dropped"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `docs/109` HF-267 — a drawing object's NAME and TITLE are modelled.
+// ---------------------------------------------------------------------------
+
+/// The name lands on the node the element describes: the `wp:docPr` on the
+/// drawing's node (here the group a lone shape becomes), a child's `wps:cNvPr`
+/// on the child. The writer's generic name for an unnamed object is the model's
+/// empty state written out, so it is not stored.
+#[test]
+fn a_drawing_objects_name_and_title_land_on_its_own_node() {
+    use casual_doc_model::v1::{GroupChild, ObjectName};
+
+    let document = concat!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r>"#,
+        r#"<w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/>"#,
+        r#"<wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH>"#,
+        r#"<wp:positionV relativeFrom="page"><wp:posOffset>457200</wp:posOffset></wp:positionV>"#,
+        r#"<wp:extent cx="1828800" cy="914400"/><wp:wrapNone/>"#,
+        r#"<wp:docPr id="1" name="Arrow: to the appendix" title="Go to the appendix"/>"#,
+        r#"<a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr>"#,
+        r#"<a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>"#,
+        r#"<a:prstGeom prst="rightArrow"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>"#,
+        r#"</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#,
+    );
+    let import = import(document.as_bytes());
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    let names = &import.document.definitions().object_names;
+    assert_eq!(
+        names.get(&group.id),
+        Some(&ObjectName {
+            name: Some("Arrow: to the appendix".to_owned()),
+            title: Some("Go to the appendix".to_owned()),
+        })
+    );
+    assert_eq!(
+        names.get(&shape.id),
+        None,
+        "the child's `Shape` is the writer's generic name — nothing to keep"
+    );
+    assert!(
+        !features(&import)
+            .iter()
+            .any(|feature| feature.ends_with("/@name") || feature.ends_with("/@title")),
+        "a modelled name is not a loss: {:?}",
+        features(&import)
+    );
+}
+
+/// One node, two statements of its name — a lone text box's `wp:docPr` and its
+/// own `wps:cNvPr` — that DISAGREE. The model holds one name per object, so the
+/// docPr's is kept and the other is the one value lost; it is reported rather
+/// than silently dropped, which is the half of the change a guard on the kept
+/// name alone could not see.
+#[test]
+fn a_second_name_that_disagrees_on_the_same_node_is_reported() {
+    let document = concat!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r>"#,
+        r#"<w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/>"#,
+        r#"<wp:docPr id="1" name="Sidebar"/><a:graphic><a:graphicData><wps:wsp>"#,
+        r#"<wps:cNvPr id="2" name="Text Box 7"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>"#,
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>"#,
+        r#"<wps:txbx><w:txbxContent><w:p><w:r><w:t>Aside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>"#,
+        r#"</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#,
+    );
+    let import = import(document.as_bytes());
+    let InlineNode::TextBox(text_box) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected a lone text box, got {:?}",
+            paragraph(&import, 0).inlines
+        );
+    };
+    assert_eq!(
+        import
+            .document
+            .definitions()
+            .object_names
+            .get(&text_box.id)
+            .and_then(|name| name.name.as_deref()),
+        Some("Sidebar"),
+        "the docPr's name is the object's"
+    );
+    assert!(
+        features(&import).contains(&"cNvPr/@name"),
+        "the disagreeing second name is reported: {:?}",
+        features(&import)
     );
 }
 
@@ -9996,11 +10266,14 @@ fn the_corpus_reports_exactly_these_findings() {
         // two locations, as `w14:paraId` is already reported on `w:p` and `w:tr`
         // separately; they collapse when the model carries a name.
         //
-        // 6, then 5 with FID-AT-01: `w:view` is carried now (see above).
+        // 6, then 5 with FID-AT-01 (`w:view` is carried now), then 3 with HF-267:
+        // the model carries the drawing names (`Definitions::object_names`), so
+        // both name findings are gone because nothing is lost — the name
+        // round-trips — not because anything was silenced.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            5,
+            3,
         ),
         // 2, then 1 with FID-AT-01 (`w:view`), each.
         (
@@ -10700,29 +10973,82 @@ fn a_paragraph_spanning_field_nested_in_another_is_reported_and_not_nested() {
     );
 }
 
-/// A LONE (ungrouped) text-bearing shape has no place to keep its preset — the
-/// standalone `TextBox` models no geometry — so the drop is REPORTED rather
-/// than silent (SKILL §1: unsupported data is preserved or named, never lost
-/// quietly). A grouped one keeps its geometry instead and reports nothing.
+/// A LONE (ungrouped) text-bearing shape with a non-rectangular preset — the
+/// usual form of a Word callout with text — keeps its geometry when it floats:
+/// it becomes a group of one whose `GroupTextBox` child carries the preset, the
+/// same normalization a lone text-free shape gets, so it draws as itself
+/// (`docs/109` FID-L-04). An INLINE one has no group to become (a group needs an
+/// anchor), so its preset is still dropped — and still REPORTED rather than lost
+/// in silence (SKILL §1).
 #[test]
-fn a_lone_text_bearing_shape_reports_the_preset_it_cannot_keep() {
-    let text_box_shape = |preset: &str| {
+fn a_lone_text_bearing_preset_keeps_its_geometry_when_it_floats_and_is_reported_inline() {
+    use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+    let text_box_shape = |preset: &str, inline: bool| {
+        let frame = if inline {
+            "<wp:inline>".to_owned()
+        } else {
+            r#"<wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>457200</wp:posOffset></wp:positionV>"#.to_owned()
+        };
+        let wrap = if inline { "" } else { "<wp:wrapNone/>" };
+        let close = if inline {
+            "</wp:inline>"
+        } else {
+            "</wp:anchor>"
+        };
         let document = format!(
-            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>457200</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Shape"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Inside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r><w:drawing>{frame}<wp:extent cx="1828800" cy="914400"/>{wrap}<wp:docPr id="1" name="Callout 3"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Inside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic>{close}</w:drawing></w:r></w:p></w:body></w:document>"#
         );
         import(document.as_bytes())
     };
 
-    let ellipse = text_box_shape("ellipse");
+    let callout = text_box_shape("wedgeRectCallout", false);
+    let InlineNode::Group(group) = &paragraph(&callout, 0).inlines[0] else {
+        panic!(
+            "a floating callout with text becomes a group of one, got {:?}",
+            paragraph(&callout, 0).inlines
+        );
+    };
+    let GroupChild::TextBox(text_box) = &group.children[0] else {
+        panic!("whose child is the text box");
+    };
+    assert_eq!(text_box.geometry, ShapeGeometry::Other);
+    assert_eq!(text_box.preset.as_deref(), Some("wedgeRectCallout"));
     assert!(
-        features(&ellipse).contains(&"prstGeom"),
-        "a lone ellipse text box names the geometry it drops: {:?}",
-        features(&ellipse)
+        !features(&callout).contains(&"prstGeom"),
+        "a kept geometry is not a loss: {:?}",
+        features(&callout)
+    );
+    assert_eq!(
+        callout
+            .document
+            .definitions()
+            .object_names
+            .get(&group.id)
+            .and_then(|name| name.name.as_deref()),
+        Some("Callout 3"),
+        "the drawing's name stays on the drawing, which is now the group"
     );
 
-    // A plain `rect` text box drops NOTHING, so it must not cry loss — a report
-    // fired on every text box would make the signal worthless.
-    let rectangle = text_box_shape("rect");
+    let inline = text_box_shape("ellipse", true);
+    assert!(
+        matches!(paragraph(&inline, 0).inlines[0], InlineNode::TextBox(_)),
+        "an inline text box stays a text box"
+    );
+    assert!(
+        features(&inline).contains(&"prstGeom"),
+        "an inline ellipse text box names the geometry it drops: {:?}",
+        features(&inline)
+    );
+
+    // A plain `rect` text box drops NOTHING and stays a `TextBox`, so it must
+    // not cry loss — a report fired on every text box would make the signal
+    // worthless.
+    let rectangle = text_box_shape("rect", false);
+    assert!(matches!(
+        paragraph(&rectangle, 0).inlines[0],
+        InlineNode::TextBox(_)
+    ));
     assert!(
         !features(&rectangle).contains(&"prstGeom"),
         "a rectangular text box has nothing to report: {:?}",

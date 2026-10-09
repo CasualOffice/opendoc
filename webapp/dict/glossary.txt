@@ -326,6 +326,7 @@ commenter
 compat
 composable
 config
+conformant
 contenteditable
 contextualSpacing
 crypto

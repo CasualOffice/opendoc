@@ -15,8 +15,13 @@ mod chart;
 // reader will find them. `crate::container_audit` is the guard that holds every
 // consumer to it.
 mod containers;
+// DrawingML geometry as data, the engine that draws it, and the standard's 187
+// preset definitions read into the same structure (`docs/109` FID-L-04,
+// FID-G-02; `docs/119`).
+mod custom_geometry;
 mod definitions;
 mod document;
+mod geometry_program;
 mod ids;
 mod intern;
 // Resolving a paragraph by id in O(1) in document size (`docs/109` HF-184): a bounded,
@@ -27,20 +32,24 @@ mod locate;
 mod metadata;
 mod migration;
 mod numbering;
+mod preset_shapes;
 mod properties;
 mod table;
 
 pub use body::*;
 pub use chart::*;
 pub use containers::*;
+pub use custom_geometry::*;
 pub use definitions::*;
 pub use document::*;
+pub use geometry_program::*;
 pub use ids::*;
 pub use intern::*;
 pub use locate::{reset_route_block_visits, route_block_visits};
 pub use metadata::*;
 pub use migration::*;
 pub use numbering::*;
+pub use preset_shapes::*;
 pub use properties::*;
 pub use table::*;
 

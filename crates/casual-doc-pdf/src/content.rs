@@ -767,8 +767,16 @@ impl<'a> Transcriber<'a> {
             out.op("[] 0 d");
             // Arrowheads ride inside the shape's own transform, so a rotated
             // connector keeps its heads attached and oriented, exactly as the
-            // raster backend places them.
-            if let ShapeGeometry::Line { from, to } = geometry {
+            // raster backend places them — at a line's endpoints, or at an open
+            // path's ends along its tangents.
+            let ends = match geometry {
+                ShapeGeometry::Line { from, to } => Some(((*from, *to), (*to, *from))),
+                ShapeGeometry::Path { commands, closed } if !*closed => {
+                    casual_doc_layout::display::open_path_ends(commands)
+                }
+                _ => None,
+            };
+            if let Some(((start, start_toward), (end, end_from))) = ends {
                 let width = (stroke.width * PX96_TO_POINTS).max(MIN_DECORATION_POINTS);
                 let color = [
                     stroke.color.r,
@@ -776,15 +784,15 @@ impl<'a> Transcriber<'a> {
                     stroke.color.b,
                     stroke.color.a,
                 ];
-                let a = (pt(from.x), out.height - pt(from.y));
-                let b = (pt(to.x), out.height - pt(to.y));
+                let height = out.height;
+                let page = |p: Point| (pt(p.x), height - pt(p.y));
                 if let Some(head) = head_end {
                     self.alpha(out, stroke.color.a);
-                    out.arrowhead(a, b, head, width, color);
+                    out.arrowhead(page(start), page(start_toward), head, width, color);
                 }
                 if let Some(tail) = tail_end {
                     self.alpha(out, stroke.color.a);
-                    out.arrowhead(b, a, tail, width, color);
+                    out.arrowhead(page(end), page(end_from), tail, width, color);
                 }
             }
         }
@@ -938,16 +946,26 @@ impl Content {
     /// `c2 = p2 + 2/3*(c - p2)` — which is exact, not an approximation: every
     /// quadratic Bézier IS a cubic with those controls.
     fn path_commands(&mut self, commands: &[PathCommand], closed: bool) {
-        let Some(first) = commands.first() else {
+        let Some(start) = commands.first().and_then(|first| first.endpoint()) else {
             self.op("n");
             return;
         };
-        let start = first.endpoint();
         self.move_to_point(start);
         let mut current = start;
+        // Where `h` returns the pen to, so a quadratic AFTER a mid-path close
+        // promotes from the right point.
+        let mut subpath_start = start;
         for command in &commands[1..] {
             match *command {
-                PathCommand::MoveTo { point } => self.move_to_point(point),
+                PathCommand::MoveTo { point } => {
+                    self.move_to_point(point);
+                    subpath_start = point;
+                }
+                PathCommand::Close => {
+                    self.op("h");
+                    current = subpath_start;
+                    continue;
+                }
                 PathCommand::LineTo { point } => self.segment_to(point, "l"),
                 PathCommand::CubicTo {
                     control1,
@@ -964,7 +982,7 @@ impl Content {
                     self.cubic_to(lift(current, control), lift(point, control), point);
                 }
             }
-            current = command.endpoint();
+            current = command.endpoint().unwrap_or(current);
         }
         if closed {
             self.op("h");

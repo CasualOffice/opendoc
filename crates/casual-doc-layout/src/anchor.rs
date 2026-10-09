@@ -19,8 +19,9 @@
 //! A float is *positioned* against the geometry of the section that owns its
 //! anchoring paragraph. Paragraph/line-relative side wrapping is handled during
 //! ordinary flow; page/margin-relative square-family body wrapping is resolved
-//! by the document driver's bounded fixed point. Contour wrapping still uses the
-//! object's rectangular extent.
+//! by the document driver's bounded fixed point. Tight/through wrap follows the
+//! authored `wp:wrapPolygon` on every one of those paths, band by band
+//! (`crate::wrap_contour`, `docs/109` FID-L-12).
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
@@ -35,6 +36,11 @@ use casual_doc_model::v1::DashStyle;
 // Its own `use` line on purpose: a new v1 import added into the sorted block
 // above conflicts with every other branch doing the same.
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
+// Own line (anti-conflict): the geometry engine and the preset table.
+use casual_doc_model::v1::{
+    CustomGeometry, GeometryProgram, GroupTextBox, ResolvedCommand, ResolvedGeometry,
+    ResolvedPoint, preset_shape,
+};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -42,10 +48,9 @@ use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
-    AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
+    AnchorContent, AnchorPath, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
 };
 use crate::paginate::PageConfig;
-use crate::shape_guide::{GuideBox, guide_value};
 // Own line (anti-conflict): the theme style resolution types.
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
@@ -108,7 +113,7 @@ pub fn place_floats(
 
 /// One top-level body float whose square-family wrap rectangle can exclude text
 /// in paragraphs beyond its anchor paragraph.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BodyWrapRect {
     pub(crate) page_index: usize,
     pub(crate) source: NodeId,
@@ -118,6 +123,10 @@ pub(crate) struct BodyWrapRect {
     /// here because the exclusion side is an authored property and not a
     /// geometric guess (see [`crate::wrap_side`]).
     pub(crate) sides: WrapSides,
+    /// The tight/through contour the text wraps to, mapped onto `rect` (page
+    /// coordinates) and cut into bands; `None` wraps to `rect` itself
+    /// (`crate::wrap_contour`, `docs/109` FID-L-12).
+    pub(crate) contour: Option<Vec<crate::wrap_contour::ContourBand>>,
 }
 
 /// Resolves the page-local wrap rectangles of eligible top-level body floats
@@ -387,6 +396,7 @@ fn push_body_wrap_rect(
         rect,
         distances: anchor.wrap_distances,
         sides: wrap_sides(&anchor),
+        contour: crate::wrap_contour::anchor_contour(&anchor, rect),
     });
 }
 
@@ -969,6 +979,7 @@ fn place_group_children(
                 // is the already-tracked follow-up this waits on.
                 let mut rect =
                     pose.reposition(mapper.child_rect(origin, text_box.offset, text_box.extent));
+                let placed_size = rect.size;
                 let flowed = flow_anchored_text_box(
                     ctx.document,
                     &text_box.blocks,
@@ -986,7 +997,11 @@ fn place_group_children(
                 // text inside. The backdrop comes from the same mapping a
                 // text-free shape uses, and takes the fill/outline with it so
                 // the rectangular box path below paints nothing over it.
-                let backdrop = text_box_backdrop(text_box, rect);
+                let backdrop = text_box_backdrop(
+                    text_box,
+                    grown_extent(text_box.extent, placed_size, rect.size),
+                    rect,
+                );
                 push(
                     layout,
                     page_index,
@@ -1025,17 +1040,8 @@ fn place_group_children(
                 // drawable subset, and `geometry` stays `Other` beside it
                 // (docs/119 §6).
                 let (fill, stroke) = themed_appearance(shape, ctx.document.definitions());
-                let content = if let Some(path) = shape.path.as_ref() {
-                    custom_path_content(path, rect, fill, stroke)
-                } else {
-                    preset_geometry_content(
-                        shape.geometry,
-                        &shape.adjustments,
-                        rect,
-                        fill.as_ref(),
-                        stroke,
-                    )
-                };
+                let content =
+                    geometry_content(GeometryRef::of_shape(shape), rect, fill.as_ref(), stroke);
                 push(
                     layout,
                     page_index,
@@ -1079,528 +1085,261 @@ fn place_group_children(
     }
 }
 
-/// Resolves the common `roundRect` `adj` guide. DrawingML uses 100000-based
-/// percentages; the preset default is 16667 (one sixth of the shorter side).
-fn rounded_rectangle_radius(adjustments: &[ShapeAdjustment], rect: Rect) -> Twip {
-    let guides = GuideBox::new(
-        f64::from(rect.size.width.raw()),
-        f64::from(rect.size.height.raw()),
-    );
-    let adjustment = adjustment_value(adjustments, "adj", 16_667, guides).clamp(0, 50_000);
-    let shorter = i64::from(rect.size.width.raw().min(rect.size.height.raw()).max(0));
-    Twip((shorter * adjustment / 100_000).clamp(0, i64::from(i32::MAX)) as i32)
-}
-
-/// Resolves one `a:avLst` adjustment guide by name, falling back to the preset's
-/// documented default when the document authors none, or authors one that cannot be
-/// read at all. A guide that COMPUTES its value — `*/ h 1 2`, say — is evaluated
-/// through [`crate::shape_guide`] rather than passed over, which it previously was:
-/// every guide in the modeled preset set is a literal `val N`, so an authored formula
-/// hit the default and the shape drew with proportions nobody chose.
+/// The geometry a shape paints: its preset or its authored `a:custGeom`, the
+/// adjust values beside either, and the extent its guides are evaluated against.
 ///
-/// Complexity: O(g) over the shape's own guides, bounded by
-/// `MAX_SHAPE_ADJUSTMENTS` (32) at import — O(1) in document size.
-fn adjustment_value(
-    adjustments: &[ShapeAdjustment],
-    name: &str,
-    default: i64,
-    shape: GuideBox,
-) -> i64 {
-    // Through the formula evaluator rather than a `val ` prefix match, so an
-    // authored guide that computes its value is honoured instead of silently losing
-    // to the preset default. `val N` is simply the one-operand case.
-    //
-    // The unit convention is unchanged: a preset's `adj` is a 100000-based fraction
-    // and the caller scales it the same way whether it arrived as a literal or as an
-    // expression.
-    guide_value(adjustments, name, shape)
-        .map(|value| value.round() as i64)
-        .unwrap_or(default)
-}
-
-/// A preset shape's bounding box in the coordinate names ECMA-376's preset
-/// geometry definitions use (Part 1 §20.1.9.18): `l`/`t`/`r`/`b` edges,
-/// `hc`/`vc` centers, `w`/`h` extents, and `ss` — the "shortest side", the
-/// reference length nearly every adjustment guide is expressed against.
+/// Borrowed from a [`GroupShape`] or a `GroupTextBox`, so both resolve through
+/// [`geometry_content`] — a text box that is a star is the same star.
 #[derive(Clone, Copy)]
-struct PresetBox {
-    l: f64,
-    t: f64,
-    r: f64,
-    b: f64,
-    w: f64,
-    h: f64,
-    hc: f64,
-    vc: f64,
-    ss: f64,
-}
-
-impl PresetBox {
-    fn new(rect: Rect) -> Self {
-        let l = f64::from(rect.origin.x.raw());
-        let t = f64::from(rect.origin.y.raw());
-        let w = f64::from(rect.size.width.raw());
-        let h = f64::from(rect.size.height.raw());
-        Self {
-            l,
-            t,
-            r: f64::from(rect.right().raw()),
-            b: f64::from(rect.bottom().raw()),
-            w,
-            h,
-            // Whole-twip halves, so a preset's midpoint lands exactly where the
-            // triangle and diamond already put theirs on an odd-width box.
-            hc: l + f64::from(rect.size.width.raw() / 2),
-            vc: t + f64::from(rect.size.height.raw() / 2),
-            ss: w.min(h),
-        }
-    }
-
-    /// One vertex, rounded to whole twips and clamped into the coordinate range.
-    fn at(self, x: f64, y: f64) -> Point {
-        Point::new(twip_rounded(x), twip_rounded(y))
-    }
-}
-
-/// The closed outline of a polygonal preset geometry, in page-local twips, or
-/// `None` for the presets that are not polygons (the rectangle family, the
-/// ellipse, the line, and the untyped `Other` that paints its bounding box).
-///
-/// Exhaustive on purpose: a [`ShapeGeometry`] variant added without an outline
-/// here fails to compile, which is the point — a variant that fell through to a
-/// bounding rectangle would be `Other` with a longer name.
-///
-/// Winding is clockwise from the vertex ECMA-376's own `a:pathLst` starts at, so
-/// a filled and a stroked preset trace the same outline. Each shape's
-/// adjustment guides and preset defaults are documented on the [`ShapeGeometry`]
-/// variant.
-///
-/// Complexity: O(1) — a fixed vertex count per preset (at most the 12 of
-/// `plus`), over at most 32 authored guides.
-#[allow(clippy::too_many_lines)]
-fn preset_polygon(
+struct GeometryRef<'a> {
     geometry: ShapeGeometry,
-    adjustments: &[ShapeAdjustment],
-    rect: Rect,
-) -> Option<Vec<Point>> {
-    let g = PresetBox::new(rect);
-    // Guide formulas resolve in the shape's OWN space, so the environment carries
-    // the extents only, never the absolute page position.
-    let guides = GuideBox::new(g.w, g.h);
-    // `ss`-relative guide lengths are clamped to the box so a hostile or simply
-    // out-of-range `a:avLst` cannot push a vertex outside the shape.
-    let along = |value: f64, span: f64| value.clamp(0.0, span.max(0.0));
-    Some(match geometry {
-        ShapeGeometry::Rectangle
-        | ShapeGeometry::RoundRectangle
-        | ShapeGeometry::Ellipse
-        | ShapeGeometry::Line
-        | ShapeGeometry::Other => return None,
-        ShapeGeometry::Triangle => vec![g.at(g.hc, g.t), g.at(g.r, g.b), g.at(g.l, g.b)],
-        ShapeGeometry::RightTriangle => vec![g.at(g.l, g.t), g.at(g.r, g.b), g.at(g.l, g.b)],
-        ShapeGeometry::Diamond => vec![
-            g.at(g.hc, g.t),
-            g.at(g.r, g.vc),
-            g.at(g.hc, g.b),
-            g.at(g.l, g.vc),
-        ],
-        ShapeGeometry::Pentagon => {
-            // The regular pentagon inscribed so it fills the box: apex at the
-            // top edge, the shoulders at 0.381966·h (the apex-to-shoulder share
-            // of the 1 + cos36° apex-to-base span) and the feet on the bottom
-            // edge at 0.190983·w / 0.809017·w.
-            let shoulder = g.t + 0.381_966 * g.h;
-            vec![
-                g.at(g.hc, g.t),
-                g.at(g.r, shoulder),
-                g.at(g.l + 0.809_017 * g.w, g.b),
-                g.at(g.l + 0.190_983 * g.w, g.b),
-                g.at(g.l, shoulder),
-            ]
-        }
-        ShapeGeometry::Hexagon => {
-            let inset = along(
-                g.ss * adjustment_value(adjustments, "adj", 25_000, guides) as f64 / 100_000.0,
-                g.w / 2.0,
-            );
-            vec![
-                g.at(g.l, g.vc),
-                g.at(g.l + inset, g.t),
-                g.at(g.r - inset, g.t),
-                g.at(g.r, g.vc),
-                g.at(g.r - inset, g.b),
-                g.at(g.l + inset, g.b),
-            ]
-        }
-        ShapeGeometry::Octagon => {
-            let cut = g.ss
-                * adjustment_value(adjustments, "adj", 29_289, guides).clamp(0, 50_000) as f64
-                / 100_000.0;
-            let (dx, dy) = (along(cut, g.w / 2.0), along(cut, g.h / 2.0));
-            vec![
-                g.at(g.l, g.t + dy),
-                g.at(g.l + dx, g.t),
-                g.at(g.r - dx, g.t),
-                g.at(g.r, g.t + dy),
-                g.at(g.r, g.b - dy),
-                g.at(g.r - dx, g.b),
-                g.at(g.l + dx, g.b),
-                g.at(g.l, g.b - dy),
-            ]
-        }
-        ShapeGeometry::Star5 => star_points(g, &PENTAGRAM, star_ratio(adjustments, 19_098, guides)),
-        ShapeGeometry::Star4 => {
-            star_points(g, &FOUR_POINT_STAR, star_ratio(adjustments, 12_500, guides))
-        }
-        ShapeGeometry::RightArrow | ShapeGeometry::LeftArrow => {
-            let shaft = along(
-                g.h * adjustment_value(adjustments, "adj1", 50_000, guides).clamp(0, 100_000)
-                    as f64
-                    / 200_000.0,
-                g.h / 2.0,
-            );
-            let head = along(
-                g.ss * adjustment_value(adjustments, "adj2", 50_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.w,
-            );
-            let (y1, y2) = (g.vc - shaft, g.vc + shaft);
-            if geometry == ShapeGeometry::RightArrow {
-                let neck = g.r - head;
-                vec![
-                    g.at(g.l, y1),
-                    g.at(neck, y1),
-                    g.at(neck, g.t),
-                    g.at(g.r, g.vc),
-                    g.at(neck, g.b),
-                    g.at(neck, y2),
-                    g.at(g.l, y2),
-                ]
-            } else {
-                let neck = g.l + head;
-                vec![
-                    g.at(g.l, g.vc),
-                    g.at(neck, g.t),
-                    g.at(neck, y1),
-                    g.at(g.r, y1),
-                    g.at(g.r, y2),
-                    g.at(neck, y2),
-                    g.at(neck, g.b),
-                ]
-            }
-        }
-        ShapeGeometry::UpArrow | ShapeGeometry::DownArrow => {
-            let shaft = along(
-                g.w * adjustment_value(adjustments, "adj1", 50_000, guides).clamp(0, 100_000)
-                    as f64
-                    / 200_000.0,
-                g.w / 2.0,
-            );
-            let head = along(
-                g.ss * adjustment_value(adjustments, "adj2", 50_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.h,
-            );
-            let (x1, x2) = (g.hc - shaft, g.hc + shaft);
-            if geometry == ShapeGeometry::UpArrow {
-                let neck = g.t + head;
-                vec![
-                    g.at(g.l, neck),
-                    g.at(g.hc, g.t),
-                    g.at(g.r, neck),
-                    g.at(x2, neck),
-                    g.at(x2, g.b),
-                    g.at(x1, g.b),
-                    g.at(x1, neck),
-                ]
-            } else {
-                let neck = g.b - head;
-                vec![
-                    g.at(x1, g.t),
-                    g.at(x2, g.t),
-                    g.at(x2, neck),
-                    g.at(g.r, neck),
-                    g.at(g.hc, g.b),
-                    g.at(g.l, neck),
-                    g.at(x1, neck),
-                ]
-            }
-        }
-        ShapeGeometry::LeftRightArrow => {
-            let shaft = along(
-                g.h * adjustment_value(adjustments, "adj1", 50_000, guides).clamp(0, 100_000)
-                    as f64
-                    / 200_000.0,
-                g.h / 2.0,
-            );
-            let head = along(
-                g.ss * adjustment_value(adjustments, "adj2", 50_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.w / 2.0,
-            );
-            let (y1, y2) = (g.vc - shaft, g.vc + shaft);
-            let (x1, x2) = (g.l + head, g.r - head);
-            vec![
-                g.at(g.l, g.vc),
-                g.at(x1, g.t),
-                g.at(x1, y1),
-                g.at(x2, y1),
-                g.at(x2, g.t),
-                g.at(g.r, g.vc),
-                g.at(x2, g.b),
-                g.at(x2, y2),
-                g.at(x1, y2),
-                g.at(x1, g.b),
-            ]
-        }
-        ShapeGeometry::Parallelogram => {
-            let lean = along(
-                g.ss * adjustment_value(adjustments, "adj", 25_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.w,
-            );
-            vec![
-                g.at(g.l, g.b),
-                g.at(g.l + lean, g.t),
-                g.at(g.r, g.t),
-                g.at(g.r - lean, g.b),
-            ]
-        }
-        ShapeGeometry::Trapezoid => {
-            let inset = along(
-                g.ss * adjustment_value(adjustments, "adj", 25_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.w / 2.0,
-            );
-            vec![
-                g.at(g.l, g.b),
-                g.at(g.l + inset, g.t),
-                g.at(g.r - inset, g.t),
-                g.at(g.r, g.b),
-            ]
-        }
-        ShapeGeometry::Chevron => {
-            let point = along(
-                g.ss * adjustment_value(adjustments, "adj", 50_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.w,
-            );
-            vec![
-                g.at(g.l, g.t),
-                g.at(g.r - point, g.t),
-                g.at(g.r, g.vc),
-                g.at(g.r - point, g.b),
-                g.at(g.l, g.b),
-                g.at(g.l + point, g.vc),
-            ]
-        }
-        ShapeGeometry::HomePlate => {
-            let point = along(
-                g.ss * adjustment_value(adjustments, "adj", 50_000, guides).max(0) as f64
-                    / 100_000.0,
-                g.w,
-            );
-            vec![
-                g.at(g.l, g.t),
-                g.at(g.r - point, g.t),
-                g.at(g.r, g.vc),
-                g.at(g.r - point, g.b),
-                g.at(g.l, g.b),
-            ]
-        }
-        ShapeGeometry::Plus => {
-            let arm = g.ss
-                * adjustment_value(adjustments, "adj", 25_000, guides).clamp(0, 50_000) as f64
-                / 100_000.0;
-            let (dx, dy) = (along(arm, g.w / 2.0), along(arm, g.h / 2.0));
-            let (x1, x2) = (g.l + dx, g.r - dx);
-            let (y1, y2) = (g.t + dy, g.b - dy);
-            vec![
-                g.at(g.l, y1),
-                g.at(x1, y1),
-                g.at(x1, g.t),
-                g.at(x2, g.t),
-                g.at(x2, y1),
-                g.at(g.r, y1),
-                g.at(g.r, y2),
-                g.at(x2, y2),
-                g.at(x2, g.b),
-                g.at(x1, g.b),
-                g.at(x1, y2),
-                g.at(g.l, y2),
-            ]
-        }
-    })
+    preset: Option<&'a str>,
+    adjustments: &'a [ShapeAdjustment],
+    custom: Option<&'a CustomGeometry>,
+    /// The shape's own extent (`a:ext`), in EMU: what the guides see as `w`/`h`.
+    /// Evaluating in the shape's own space and THEN mapping onto the painted
+    /// rectangle is what a group's scale does to its children, and it keeps an
+    /// authored literal meaning the EMU the file meant.
+    extent: Extent,
 }
 
-/// A star preset's shape, independent of the box it is drawn in: the unit-circle
-/// direction of each outer point (apex first, clockwise) interleaved with the
-/// directions of the notches between them, plus the normalization that makes the
-/// outer points touch the bounding box.
-struct StarShape {
-    /// `(cos, sin)` of each outer point, y-downward, apex first and clockwise.
-    outer: &'static [(f64, f64)],
-    /// `(cos, sin)` of each inner notch, in the same order, starting with the
-    /// notch that follows the apex.
-    inner: &'static [(f64, f64)],
-    /// Fraction of the half-width the outer circle is scaled to, so the star's
-    /// widest points land on the left and right edges.
-    x_scale: f64,
-    /// Fraction of the height the outer circle's radius is scaled to.
-    y_scale: f64,
-    /// Where the star's center sits, as a fraction of the height from the top.
-    y_center: f64,
-}
-
-/// The five-pointed star (`star5`): outer points every 72° from the apex,
-/// notches on the 36° bisectors. The scales place the apex on the top edge, the
-/// arms on the side edges and the legs on the bottom edge — the same
-/// normalization ECMA-376 spells as the `hf`/`vf` guides.
-static PENTAGRAM: StarShape = StarShape {
-    outer: &[
-        (0.0, -1.0),
-        (0.951_057, -0.309_017),
-        (0.587_785, 0.809_017),
-        (-0.587_785, 0.809_017),
-        (-0.951_057, -0.309_017),
-    ],
-    inner: &[
-        (0.587_785, -0.809_017),
-        (0.951_057, 0.309_017),
-        (0.0, 1.0),
-        (-0.951_057, 0.309_017),
-        (-0.587_785, -0.809_017),
-    ],
-    x_scale: 1.051_462,
-    y_scale: 0.552_786,
-    y_center: 0.552_786,
-};
-
-/// The 45 degree direction cosine a four-pointed star's notches sit on.
-const DIAGONAL: f64 = core::f64::consts::FRAC_1_SQRT_2;
-
-/// The four-pointed star (`star4`): outer points on the four edge midpoints,
-/// notches on the diagonals. No normalization is needed — the outer points
-/// already touch the box.
-static FOUR_POINT_STAR: StarShape = StarShape {
-    outer: &[(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)],
-    inner: &[
-        (DIAGONAL, -DIAGONAL),
-        (DIAGONAL, DIAGONAL),
-        (-DIAGONAL, DIAGONAL),
-        (-DIAGONAL, -DIAGONAL),
-    ],
-    x_scale: 1.0,
-    y_scale: 0.5,
-    y_center: 0.5,
-};
-
-/// The `adj` guide of a star preset as the inner/outer radius ratio it encodes
-/// (`adj / 50000`, clamped to the closed unit range).
-fn star_ratio(adjustments: &[ShapeAdjustment], default: i64, guides: GuideBox) -> f64 {
-    adjustment_value(adjustments, "adj", default, guides).clamp(0, 50_000) as f64 / 50_000.0
-}
-
-/// Interleaves a star's outer points and inner notches into one closed outline.
-///
-/// Complexity: O(p) in the star's point count — 5 or 4.
-fn star_points(g: PresetBox, shape: &StarShape, ratio: f64) -> Vec<Point> {
-    let (rx, ry) = (g.w / 2.0 * shape.x_scale, g.h * shape.y_scale);
-    let (cx, cy) = (g.hc, g.t + g.h * shape.y_center);
-    let mut points = Vec::with_capacity(shape.outer.len() * 2);
-    for (index, (ox, oy)) in shape.outer.iter().enumerate() {
-        points.push(g.at(cx + rx * ox, cy + ry * oy));
-        let (ix, iy) = shape.inner[index];
-        points.push(g.at(cx + rx * ratio * ix, cy + ry * ratio * iy));
+impl<'a> GeometryRef<'a> {
+    fn of_shape(shape: &'a GroupShape) -> Self {
+        Self {
+            geometry: shape.geometry,
+            preset: shape.preset.as_deref(),
+            adjustments: &shape.adjustments,
+            custom: shape.path.as_ref(),
+            extent: shape.extent,
+        }
     }
-    points
+
+    fn of_text_box(text_box: &'a GroupTextBox, extent: Extent) -> Self {
+        Self {
+            geometry: text_box.geometry,
+            preset: text_box.preset.as_deref(),
+            adjustments: &text_box.adjustments,
+            custom: None,
+            extent,
+        }
+    }
+
+    /// Whether the shape is the plain rectangle a text box's own fill and border
+    /// already paint — a typed `rect`, or an `Other` with no token to draw.
+    fn is_plain_box(&self) -> bool {
+        self.custom.is_none()
+            && match self.geometry {
+                ShapeGeometry::Rectangle => true,
+                ShapeGeometry::Other => self.preset.and_then(preset_shape).is_none(),
+                _ => false,
+            }
+    }
 }
 
-/// Maps a preset geometry onto the [`AnchorContent`] that paints it inside
+/// Maps a shape's geometry onto the [`AnchorContent`] that paints it inside
 /// `rect`.
 ///
-/// This is the ONE place a [`ShapeGeometry`] becomes something paintable. A
-/// `wps:wsp` that carries text and one that does not differ only in what is
-/// drawn *on top*, so both come through here; a second copy for text boxes
-/// would be a second answer to "what does `star5` look like", and the two would
-/// drift.
+/// This is the ONE place a geometry becomes something paintable, and there is one
+/// mechanism behind it: an authored `a:custGeom` and every one of the standard's
+/// 187 presets are the same data evaluated by the same
+/// [`GeometryProgram`](casual_doc_model::v1::GeometryProgram) (`docs/119` §6,
+/// `docs/109` FID-L-04). Three presets keep a closed-form primitive because the
+/// backends draw them exactly and the result is the same shape: the rectangle,
+/// the ellipse (an exact oval rather than four cubics), and the line, which
+/// carries its arrowheads.
 ///
-/// Complexity: O(1) in document size — see [`preset_polygon`].
-fn preset_geometry_content(
-    geometry: ShapeGeometry,
-    adjustments: &[ShapeAdjustment],
+/// A `wps:wsp` that carries text and one that does not differ only in what is
+/// drawn *on top*, so both come through here.
+///
+/// Complexity: O(g + c) in the geometry's guides and commands — a preset compiles
+/// once per process, a custom geometry once per call — so O(1) in document size.
+fn geometry_content(
+    shape: GeometryRef<'_>,
     rect: Rect,
     fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
 ) -> AnchorContent {
-    if let Some(points) = preset_polygon(geometry, adjustments, rect) {
-        return AnchorContent::Path {
-            commands: polyline_commands(&points),
-            closed: true,
-            fill: fill.cloned(),
-            stroke: shape_stroke(stroke),
-        };
+    let rectangle = || AnchorContent::Rectangle {
+        fill: fill.cloned(),
+        stroke: shape_stroke(stroke),
+    };
+    // Extents are validated to `0..=MAX_EMU`, inside f64's exact integer range.
+    #[allow(clippy::cast_precision_loss)]
+    let (width, height) = (
+        shape.extent.width_emu as f64,
+        shape.extent.height_emu as f64,
+    );
+    let resolved = if let Some(custom) = shape.custom {
+        // A custom geometry outranks the preset enum: the importer only attaches
+        // one that compiles, and `geometry` stays `Other` beside it.
+        GeometryProgram::compile(shape.adjustments, custom)
+            .ok()
+            .and_then(|program| program.evaluate(width, height, &[]))
+    } else {
+        match shape.geometry {
+            ShapeGeometry::Rectangle => return rectangle(),
+            ShapeGeometry::Ellipse => {
+                return AnchorContent::Ellipse {
+                    fill: fill.cloned(),
+                    stroke: shape_stroke(stroke),
+                };
+            }
+            ShapeGeometry::Line => {
+                return AnchorContent::Line {
+                    from: rect.origin,
+                    to: Point::new(rect.right(), rect.bottom()),
+                    // A line without an explicit stroke still draws a hairline in
+                    // its fill color (Word's connector default).
+                    stroke: shape_stroke(stroke).unwrap_or(AnchorStroke {
+                        color: fill.map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
+                        width: Twip::ZERO,
+                        dash: DashStyle::Solid,
+                    }),
+                    head_end: stroke.and_then(|s| s.head_end),
+                    tail_end: stroke.and_then(|s| s.tail_end),
+                };
+            }
+            _ => {}
+        }
+        // Every other preset is a table entry, typed or retained by token. The
+        // shape's authored `a:avLst` overrides the definition's defaults by name.
+        shape
+            .geometry
+            .preset_token()
+            .or(shape.preset)
+            .and_then(preset_shape)
+            .and_then(|preset| preset.program().evaluate(width, height, shape.adjustments))
+    };
+    // A token this build does not know, or a geometry with no answer at this box,
+    // paints its bounding rectangle. ONLYOFFICE paints NOTHING here
+    // (`Geometry.draw` early-returns on an invalid geometry); we deliberately
+    // differ, because silently erasing an object is a larger change than showing
+    // a box where it is, and Word does not erase them either (`docs/119` §6
+    // "Rejected"). With the standard's table loaded, only a token outside
+    // `ST_ShapeType` reaches this.
+    let Some(resolved) = resolved else {
+        return rectangle();
+    };
+    AnchorContent::Path {
+        paths: anchor_paths(&resolved, shape.extent, rect),
+        fill: fill.cloned(),
+        stroke: shape_stroke(stroke),
+        head_end: stroke.and_then(|s| s.head_end),
+        tail_end: stroke.and_then(|s| s.tail_end),
     }
-    match geometry {
-        ShapeGeometry::Line => AnchorContent::Line {
-            from: rect.origin,
-            to: Point::new(rect.right(), rect.bottom()),
-            // A line without an explicit stroke still draws a hairline in its
-            // fill color (Word's connector default).
-            stroke: shape_stroke(stroke).unwrap_or(AnchorStroke {
-                color: fill.map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
-                width: Twip::ZERO,
-                dash: DashStyle::Solid,
-            }),
-            head_end: stroke.and_then(|s| s.head_end),
-            tail_end: stroke.and_then(|s| s.tail_end),
-        },
-        ShapeGeometry::Ellipse => AnchorContent::Ellipse {
-            fill: fill.cloned(),
-            stroke: shape_stroke(stroke),
-        },
-        ShapeGeometry::RoundRectangle => AnchorContent::RoundedRectangle {
-            radius: rounded_rectangle_radius(adjustments, rect),
-            fill: fill.cloned(),
-            stroke: shape_stroke(stroke),
-        },
-        // A preset this build has no primitive for, and a custom geometry
-        // outside the drawable subset, both paint their bounding rectangle.
-        // ONLYOFFICE paints NOTHING here (`Geometry.draw` early-returns on an
-        // invalid geometry); we deliberately differ, because silently erasing
-        // every unsupported freeform is a larger change than showing a box where
-        // an object is, and Word does not erase them either. Weighed and
-        // recorded in docs/119 §6 "Rejected". Every remaining variant is
-        // polygonal and returned above.
-        _ => AnchorContent::Rectangle {
-            fill: fill.cloned(),
-            stroke: shape_stroke(stroke),
-        },
-    }
+}
+
+/// Maps resolved paths from the shape's own space (EMU) onto `rect` (page twips).
+///
+/// The scale is the painted rectangle over the shape's own extent, per axis, so a
+/// group's non-uniform scale stretches the evaluated outline exactly as it
+/// stretches the box. A zero extent has no scale to take; its coordinates are
+/// already absolute EMU and convert at 635 per twip.
+///
+/// Complexity: O(c) in the resolved commands.
+fn anchor_paths(resolved: &ResolvedGeometry, extent: Extent, rect: Rect) -> Vec<AnchorPath> {
+    #[allow(clippy::cast_precision_loss)] // see `geometry_content`
+    let scale = |painted: Twip, own: i64| {
+        if own > 0 {
+            f64::from(painted.raw()) / own as f64
+        } else {
+            1.0 / crate::units::EMU_PER_TWIP as f64
+        }
+    };
+    let (sx, sy) = (
+        scale(rect.size.width, extent.width_emu),
+        scale(rect.size.height, extent.height_emu),
+    );
+    let (ox, oy) = (
+        f64::from(rect.origin.x.raw()),
+        f64::from(rect.origin.y.raw()),
+    );
+    let at = |point: ResolvedPoint| {
+        Point::new(
+            twip_rounded(ox + point.x * sx),
+            twip_rounded(oy + point.y * sy),
+        )
+    };
+    resolved
+        .paths
+        .iter()
+        .map(|path| AnchorPath {
+            commands: path
+                .commands
+                .iter()
+                .map(|command| match *command {
+                    ResolvedCommand::MoveTo(point) => PathCommand::MoveTo { point: at(point) },
+                    ResolvedCommand::LineTo(point) => PathCommand::LineTo { point: at(point) },
+                    ResolvedCommand::QuadTo { control, point } => PathCommand::QuadTo {
+                        control: at(control),
+                        point: at(point),
+                    },
+                    ResolvedCommand::CubicTo {
+                        control1,
+                        control2,
+                        point,
+                    } => PathCommand::CubicTo {
+                        control1: at(control1),
+                        control2: at(control2),
+                        point: at(point),
+                    },
+                    ResolvedCommand::Close => PathCommand::Close,
+                })
+                .collect(),
+            fill: path.fill,
+            stroke: path.stroke,
+        })
+        .collect()
 }
 
 /// The shape a grouped text box paints behind its text, or `None` when the box
 /// is the plain rectangle whose fill and outline the text-box content itself
 /// already draws.
 ///
-/// Complexity: O(1) in document size — see [`preset_polygon`].
+/// `extent` is the box's own extent grown by whatever its text autofit added, so
+/// the outline is evaluated for the box actually painted.
+///
+/// Complexity: O(1) in document size — see [`geometry_content`].
 fn text_box_backdrop(
-    text_box: &casual_doc_model::v1::GroupTextBox,
+    text_box: &GroupTextBox,
+    extent: Extent,
     rect: Rect,
 ) -> Option<Box<AnchorContent>> {
-    if matches!(
-        text_box.geometry,
-        ShapeGeometry::Rectangle | ShapeGeometry::Other
-    ) {
+    let geometry = GeometryRef::of_text_box(text_box, extent);
+    if geometry.is_plain_box() {
         return None;
     }
-    Some(Box::new(preset_geometry_content(
-        text_box.geometry,
-        &text_box.adjustments,
+    Some(Box::new(geometry_content(
+        geometry,
         rect,
         text_box.fill.as_ref(),
         text_box.border,
     )))
+}
+
+/// A text box's own extent grown by the factor its text's autofit grew the
+/// painted box (`placed` → `grown`), so its outline is evaluated for the box
+/// actually painted rather than stretched from the one it was authored at — the
+/// proportions of a callout's tail are a function of the box's shorter side.
+///
+/// Complexity: O(1).
+fn grown_extent(extent: Extent, placed: Size, grown: Size) -> Extent {
+    let grow = |own: i64, before: Twip, after: Twip| {
+        if before.raw() > 0 && after != before {
+            // An extent is bounded by MAX_EMU, inside f64's exact range, and the
+            // growth factor is a ratio of two i32 twip sizes.
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+            {
+                (own as f64 * f64::from(after.raw()) / f64::from(before.raw())).round() as i64
+            }
+        } else {
+            own
+        }
+    };
+    Extent {
+        width_emu: grow(extent.width_emu, placed.width, grown.width),
+        height_emu: grow(extent.height_emu, placed.height, grown.height),
+    }
 }
 
 // --- Band walk -------------------------------------------------------------
@@ -2024,95 +1763,6 @@ fn themed_appearance(
         });
     }
     (fill, stroke)
-}
-
-fn custom_path_content(
-    path: &casual_doc_model::v1::ShapePath,
-    rect: Rect,
-    fill: Option<Fill>,
-    stroke: Option<ShapeStroke>,
-) -> AnchorContent {
-    use casual_doc_model::v1::ShapePathCommand;
-
-    let resolve = |value: i64, space: i64, origin: Twip, size: Twip| -> Twip {
-        if space > 0 {
-            Twip(
-                (f64::from(size.raw()) * (value as f64 / space as f64))
-                    .round()
-                    .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
-            ) + origin
-        } else {
-            emu_to_twip_offset(value) + origin
-        }
-    };
-
-    let resolve_point = |point: casual_doc_model::v1::PointEmu| {
-        Point::new(
-            resolve(point.x_emu, path.width_emu, rect.origin.x, rect.size.width),
-            resolve(
-                point.y_emu,
-                path.height_emu,
-                rect.origin.y,
-                rect.size.height,
-            ),
-        )
-    };
-
-    let mut commands = Vec::with_capacity(path.commands.len());
-    let mut closed = false;
-    for command in &path.commands {
-        // Each arm resolves EVERY coordinate the command names, controls included:
-        // a control point left in the path's own space would bend the curve toward
-        // the page origin instead of toward where it was authored.
-        commands.push(match *command {
-            ShapePathCommand::MoveTo { point } => PathCommand::MoveTo {
-                point: resolve_point(point),
-            },
-            ShapePathCommand::LineTo { point } => PathCommand::LineTo {
-                point: resolve_point(point),
-            },
-            ShapePathCommand::CubicBezTo {
-                control1,
-                control2,
-                point,
-            } => PathCommand::CubicTo {
-                control1: resolve_point(control1),
-                control2: resolve_point(control2),
-                point: resolve_point(point),
-            },
-            ShapePathCommand::QuadBezTo { control, point } => PathCommand::QuadTo {
-                control: resolve_point(control),
-                point: resolve_point(point),
-            },
-            ShapePathCommand::Close => {
-                closed = true;
-                continue;
-            }
-        });
-    }
-
-    AnchorContent::Path {
-        commands,
-        closed,
-        fill,
-        stroke: shape_stroke(stroke),
-    }
-}
-
-/// A resolved vertex list as path commands: a leading move, then straight
-/// segments.
-///
-/// The typed presets still resolve to vertices, so this is the one place lifting
-/// them into the path primitive. It goes away when they become table entries
-/// (`109` FID-L-04).
-fn polyline_commands(points: &[Point]) -> Vec<PathCommand> {
-    let mut commands = Vec::with_capacity(points.len());
-    let mut rest = points.iter();
-    if let Some(first) = rest.next() {
-        commands.push(PathCommand::MoveTo { point: *first });
-    }
-    commands.extend(rest.map(|point| PathCommand::LineTo { point: *point }));
-    commands
 }
 
 fn ratio(numerator: i64, denominator: i64) -> f64 {

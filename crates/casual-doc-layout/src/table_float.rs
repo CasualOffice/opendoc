@@ -281,6 +281,8 @@ pub(crate) fn wrap_rects(
             // `w:tblpPr` has no `wrapText` attribute, so a positioned table
             // takes the same default an anchor with the attribute absent takes.
             sides: WrapSides::default(),
+            // Nor a contour: a table wraps to its rectangle.
+            contour: None,
         })
         .collect()
 }

@@ -43,8 +43,15 @@ use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
+// Own line (anti-conflict): the rest of the `a:custGeom` grammar.
+use casual_doc_model::v1::{
+    AdjustHandle, ConnectionSite, CustomGeometry, GeometryPoint, GeometryRect, GeometryValue,
+    MAX_SHAPE_CONNECTIONS, MAX_SHAPE_GUIDES, MAX_SHAPE_HANDLES, MAX_SHAPE_PATHS, PathFill,
+};
 // Own line (anti-conflict): the shape theme-style side table's value.
 use casual_doc_model::v1::ShapeStyleRef;
+// Own line (anti-conflict): drawing object names (`docs/109` HF-267).
+use casual_doc_model::v1::{MAX_OBJECT_NAME_BYTES, ObjectName};
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 use casual_doc_model::{IdGenerator, NodeId};
@@ -95,6 +102,8 @@ enum Segment {
         flip_h: bool,
         flip_v: bool,
         rotation: Option<i32>,
+        /// The `wp:docPr` name/title (`docs/109` HF-267); `None` for a VML picture.
+        name: Option<ObjectName>,
     },
     /// A first-class embedded object (chart / SmartArt diagram / OLE object).
     EmbeddedObject {
@@ -104,6 +113,9 @@ enum Segment {
         preview: Option<MediaId>,
         extent: Extent,
         prog_id: Option<String>,
+        /// The `wp:docPr` name/title (`docs/109` HF-267); `None` for an OLE
+        /// `w:object`, which carries no `wp:docPr`.
+        name: Option<ObjectName>,
     },
     Hyperlink {
         target: HyperlinkTarget,
@@ -232,6 +244,8 @@ enum Segment {
         flip_h: bool,
         flip_v: bool,
         rotation: Option<i32>,
+        /// The `wp:docPr` name/title (`docs/109` HF-267).
+        name: Option<ObjectName>,
     },
 }
 
@@ -345,9 +359,8 @@ struct ShapeBuilder {
     geometry: ShapeGeometry,
     preset: Option<String>,
     adjustments: Vec<ShapeAdjustment>,
-    /// The recovered `a:custGeom` path, if the geometry is inside the modeled
-    /// straight-line subset (docs/119).
-    path: Option<ShapePath>,
+    /// The recovered `a:custGeom`, when it compiled (docs/119).
+    path: Option<CustomGeometry>,
     in_adjustment_list: bool,
     fill: Option<Fill>,
     stroke: Option<ShapeStroke>,
@@ -355,6 +368,8 @@ struct ShapeBuilder {
     embed: Option<String>,
     /// The alt text (`pic:cNvPr@descr` / `wps:cNvPr@descr`), if declared.
     descr: Option<String>,
+    /// The child's own `cNvPr@name`/`@title` (`docs/109` HF-267).
+    object_name: ObjectName,
     /// The `a:hlinkClick` on this child's `cNvPr`, resolved.
     hyperlink: Option<DrawingHyperlink>,
     /// The picture's `a:srcRect` crop, for a picture child, if declared.
@@ -373,9 +388,10 @@ struct ShapeBuilder {
     rotation: Option<i32>,
 }
 
-/// Maps an `a:prstGeom@prst` token onto the typed [`ShapeGeometry`] layout can
-/// draw the real outline of, or `None` for a preset that has no primitive yet
-/// (retained verbatim as [`ShapeGeometry::Other`] plus its token).
+/// Maps an `a:prstGeom@prst` token onto its typed [`ShapeGeometry`], or `None`
+/// for a token outside the typed set (retained verbatim as
+/// [`ShapeGeometry::Other`] plus its token, which layout draws from the
+/// standard's preset table all the same).
 ///
 /// The tokens are `ST_ShapeType` (ECMA-376 Part 1 §20.1.10.56). This is the ONE
 /// token → variant table: the `prstGeom` handler consults it both for the
@@ -387,44 +403,71 @@ fn typed_preset_geometry(token: &str) -> Option<ShapeGeometry> {
     ShapeGeometry::from_preset_token(token)
 }
 
-/// Accumulator for an open `a:custGeom` on the current shape (docs/119).
+/// Which `a:custGeom` list the next `a:gd`, handle, site or path belongs to —
+/// they are siblings, so the most recently opened list is the one in force.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum GeometryList {
+    #[default]
+    None,
+    /// `a:avLst`.
+    Adjust,
+    /// `a:gdLst`.
+    Guide,
+    /// `a:ahLst`.
+    Handle,
+    /// `a:cxnLst`.
+    Connection,
+    /// `a:pathLst`.
+    Path,
+}
+
+/// Accumulator for an open `a:custGeom` on the current shape (`docs/119`).
 ///
-/// Collects the straight-line subset of `a:pathLst/a:path` — `a:moveTo`,
-/// `a:lnTo`, `a:close` — and latches [`unsupported`](Self::unsupported) the
-/// moment anything outside that subset appears (a curve, a guide formula, a
-/// guide-named coordinate, an adjust handle, a second subpath). A latched
-/// accumulator produces NO path, so the shape keeps painting its bounding
-/// rectangle and the `custGeom` loss keeps being reported: the modeled subset is
-/// never allowed to half-describe a geometry it cannot draw.
+/// Collects the WHOLE geometry grammar into the model's [`CustomGeometry`]:
+/// adjust values, guide formulas, adjust handles, connection sites, the text
+/// rectangle, and every path with its `@w`/`@h`/`@fill`/`@stroke`/`@extrusionOk`
+/// and all six commands, with coordinates that may be guide names. Anything
+/// outside the grammar (an extension list, a command missing a point) latches
+/// [`unsupported`](Self::unsupported), and a latched accumulator produces NO
+/// geometry — the shape keeps painting its bounding rectangle and the `custGeom`
+/// loss keeps being reported, so the model never half-describes a geometry.
 #[derive(Default)]
-struct CustomGeometry {
-    /// `a:path@w` of the single supported subpath (`0` = absolute EMU).
-    width_emu: i64,
-    /// `a:path@h` of the single supported subpath (`0` = absolute EMU).
-    height_emu: i64,
-    /// Commands collected so far, in path order.
-    commands: Vec<ShapePathCommand>,
-    /// How many `a:path` children have been opened; more than one is out of
-    /// scope for this slice.
-    paths: usize,
+struct CustomGeometryBuilder {
+    /// `a:avLst`: the geometry's adjust values, which become the shape's
+    /// `adjustments`.
+    adjustments: Vec<ShapeAdjustment>,
+    /// Everything else, in the model's own form.
+    geometry: CustomGeometry,
+    /// The list currently open.
+    list: GeometryList,
     /// The command the `a:pt` children will complete.
     pending: Option<PathVertexKind>,
     /// Points gathered for the open command, awaiting its full arity.
-    pending_points: Vec<PointEmu>,
-    /// Something outside the modeled subset was seen.
+    pending_points: Vec<GeometryPoint>,
+    /// A handle or connection site has opened and not yet received its `a:pos`.
+    awaiting_pos: bool,
+    /// Commands collected so far over every path.
+    commands: usize,
+    /// Something outside the modeled grammar, or past a bound, was seen.
     unsupported: bool,
 }
 
-impl CustomGeometry {
-    /// Appends a command, latching `unsupported` rather than growing past
-    /// [`MAX_SHAPE_PATH_COMMANDS`] — a truncated path is a WRONG path, so an
-    /// over-long geometry falls back to its bounding rectangle and is reported.
+impl CustomGeometryBuilder {
+    /// Appends a command to the open path, latching `unsupported` rather than
+    /// growing past [`MAX_SHAPE_PATH_COMMANDS`] — a truncated path is a WRONG
+    /// path, so an over-long geometry falls back to its bounding rectangle and is
+    /// reported.
     fn push(&mut self, command: ShapePathCommand) {
-        if self.commands.len() >= MAX_SHAPE_PATH_COMMANDS {
+        let Some(path) = self.geometry.paths.last_mut() else {
+            self.unsupported = true;
+            return;
+        };
+        if self.commands >= MAX_SHAPE_PATH_COMMANDS {
             self.unsupported = true;
             return;
         }
-        self.commands.push(command);
+        self.commands += 1;
+        path.commands.push(command);
     }
 }
 
@@ -845,6 +888,7 @@ struct ContentFrame {
     pending_srcrect: Option<CropRect>,
     pending_opacity: Option<u32>,
     pending_inline_descr: Option<String>,
+    pending_object_name: Option<ObjectName>,
     /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
     /// picture (no open shape builder), consumed by `commit_drawing`.
     pending_flip_h: bool,
@@ -1062,6 +1106,9 @@ struct BodyParser<'a> {
     /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
     /// captures its own `descr` on the `PendingAnchor`).
     pending_inline_descr: Option<String>,
+    /// The `wp:docPr@name`/`@title` of the open drawing (`docs/109` HF-267),
+    /// consumed by whichever node the drawing becomes.
+    pending_object_name: Option<ObjectName>,
     /// The resolved `a:hlinkClick` of the open lone/inline drawing (no anchor).
     pending_inline_hyperlink: Option<DrawingHyperlink>,
     /// How many non-visual-property elements (`*:cNvPr`, `wp:docPr`) are open.
@@ -1126,7 +1173,7 @@ struct BodyParser<'a> {
     /// The open `a:custGeom` on `pending_shape`, if any. Not saved across a
     /// text-box frame: a `w:txbxContent` can only appear after the shape's
     /// `wps:spPr` has closed, so a custom geometry is never open across one.
-    cust_geom: Option<CustomGeometry>,
+    cust_geom: Option<CustomGeometryBuilder>,
     /// Which `a:xfrm` the next `a:off`/`a:ext`/`a:chOff`/`a:chExt` routes to.
     xfrm_target: XfrmTarget,
     /// Depth of an open `a:ln` (outline), so a `solidFill` inside it colors the
@@ -1432,6 +1479,7 @@ impl<'a> BodyParser<'a> {
             pending_srcrect: None,
             pending_opacity: None,
             pending_inline_descr: None,
+            pending_object_name: None,
             pending_inline_hyperlink: None,
             nvpr_depth: 0,
             pending_flip_h: false,
@@ -1553,6 +1601,9 @@ pub(crate) struct ParsedDefinitions {
     /// the reason `Definitions::shape_styles` records: `GroupShape` has 23 literal
     /// sites across six crates and a new field on it breaks every one.
     pub shape_styles: DefinitionMap<NodeId, ShapeStyleRef>,
+    /// Drawing object names and titles by node id (`docs/109` HF-267), a side
+    /// table for the same reason.
+    pub object_names: DefinitionMap<NodeId, ObjectName>,
 }
 
 impl ParsedDefinitions {
@@ -1562,6 +1613,7 @@ impl ParsedDefinitions {
             bookmarks: DefinitionMap::default(),
             field_ranges: DefinitionMap::default(),
             shape_styles: DefinitionMap::default(),
+            object_names: DefinitionMap::default(),
         }
     }
 }
@@ -3045,6 +3097,7 @@ impl BodyParser<'_> {
                     self.pending_srcrect = None;
                     self.pending_opacity = None;
                     self.pending_inline_descr = None;
+                    self.pending_object_name = None;
                     self.pending_inline_hyperlink = None;
                     self.pending_flip_h = false;
                     self.pending_flip_v = false;
@@ -3383,6 +3436,7 @@ impl BodyParser<'_> {
                     stroke: None,
                     embed: None,
                     descr: None,
+                    object_name: ObjectName::default(),
                     srcrect: None,
                     opacity: None,
                     textbox_blocks: None,
@@ -3412,6 +3466,7 @@ impl BodyParser<'_> {
                     stroke: None,
                     embed: None,
                     descr: None,
+                    object_name: ObjectName::default(),
                     srcrect: None,
                     opacity: None,
                     textbox_blocks: None,
@@ -3610,7 +3665,7 @@ impl BodyParser<'_> {
                     shape.adjustments.clear();
                     shape.path = None;
                 }
-                self.cust_geom = Some(CustomGeometry::default());
+                self.cust_geom = Some(CustomGeometryBuilder::default());
             }
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
@@ -3807,7 +3862,10 @@ impl BodyParser<'_> {
                 {
                     shape.descr = Some(descr);
                 }
-                self.report_object_name(element, b"cNvPr");
+                let name = self.read_object_name(element, b"cNvPr");
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.object_name = name;
+                }
             }
             // The same element on a drawing with no open group child — a
             // top-level picture's `pic:cNvPr` or a lone shape's `wps:cNvPr`.
@@ -3836,7 +3894,14 @@ impl BodyParser<'_> {
                 if !self.drawing_descr_captured() {
                     self.capture_drawing_descr(element);
                 }
-                self.report_object_name(element, b"cNvPr");
+                // A lone picture's `pic:cNvPr` names the SAME object `wp:docPr`
+                // did, and Word writes the same name in both; it is a fallback,
+                // and a value that DIFFERS from the docPr's is the one case still
+                // lost, so it is the one case still reported.
+                let name = self.read_object_name(element, b"cNvPr");
+                let first = self.pending_object_name.take();
+                let merged = self.merge_object_name(first, name);
+                self.pending_object_name = Some(merged);
             }
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
@@ -5594,141 +5659,313 @@ impl BodyParser<'_> {
     /// existing group-of-one float model; a bare inline shape remains reported
     /// until the in-flow composite-box slice is implemented.
     /// Routes one element inside an open `a:custGeom` into the geometry
-    /// accumulator (docs/119 §6).
+    /// accumulator (`docs/119` §6).
     ///
-    /// `O(1)` per element. The modeled subset is `a:pathLst`, a single `a:path`,
-    /// and `a:moveTo`/`a:lnTo`/`a:close` with integer `a:pt` coordinates. The
-    /// empty containers Word always writes (`a:avLst`, `a:gdLst`, `a:ahLst`,
-    /// `a:cxnLst`) and the text rectangle `a:rect` are ignored rather than
-    /// treated as losses, because an empty DrawingML container states that the
-    /// feature is ABSENT (`docs/118` §4). Anything else latches `unsupported`,
-    /// which is what keeps a curve or a guide formula from being silently
-    /// flattened into straight lines.
+    /// `O(1)` per element. The modeled grammar is all of ECMA-376 §20.1.9's
+    /// geometry: `a:avLst`/`a:gdLst` guides, `a:ahXY`/`a:ahPolar` handles,
+    /// `a:cxn` sites, the `a:rect` text rectangle, and any number of `a:path`s
+    /// holding `a:moveTo`/`a:lnTo`/`a:arcTo`/`a:quadBezTo`/`a:cubicBezTo`/
+    /// `a:close`, whose coordinates may be integers or guide names. Anything else
+    /// latches `unsupported`, which is what keeps an unknown construct from being
+    /// silently dropped from a geometry that then claims to be complete.
+    #[allow(clippy::too_many_lines)] // one flat match over the grammar's elements
     fn custom_geometry_start(&mut self, local: &[u8], element: &BytesStart<'_>) {
         // Read the attributes before borrowing the accumulator mutably.
-        let path_w = attr_i64(element, b"w");
-        let path_h = attr_i64(element, b"h");
-        let pt = (attr_i64(element, b"x"), attr_i64(element, b"y"));
-        let Some(geometry) = self.cust_geom.as_mut() else {
+        let value =
+            |name: &[u8]| attribute_value(element, name).map(|token| GeometryValue::parse(&token));
+        let Some(builder) = self.cust_geom.as_mut() else {
             return;
         };
         match local {
-            // Empty-by-default containers, and the text rectangle, which does not
-            // participate in the outline.
-            b"pathLst" | b"avLst" | b"gdLst" | b"ahLst" | b"cxnLst" | b"rect" => {}
+            b"avLst" => builder.list = GeometryList::Adjust,
+            b"gdLst" => builder.list = GeometryList::Guide,
+            b"ahLst" => builder.list = GeometryList::Handle,
+            b"cxnLst" => builder.list = GeometryList::Connection,
+            b"pathLst" => builder.list = GeometryList::Path,
+            b"gd" => {
+                let name = attribute_value(element, b"name")
+                    .filter(|name| !name.is_empty() && name.len() <= MAX_SHAPE_GUIDE_NAME_BYTES);
+                let formula = attribute_value(element, b"fmla").filter(|formula| {
+                    !formula.is_empty() && formula.len() <= MAX_SHAPE_FORMULA_BYTES
+                });
+                let (Some(name), Some(formula)) = (name, formula) else {
+                    builder.unsupported = true;
+                    return;
+                };
+                let guide = ShapeAdjustment { name, formula };
+                match builder.list {
+                    GeometryList::Adjust if builder.adjustments.len() < MAX_SHAPE_ADJUSTMENTS => {
+                        builder.adjustments.push(guide);
+                    }
+                    GeometryList::Guide if builder.geometry.guides.len() < MAX_SHAPE_GUIDES => {
+                        builder.geometry.guides.push(guide);
+                    }
+                    _ => builder.unsupported = true,
+                }
+            }
+            b"ahXY" | b"ahPolar" => {
+                if builder.list != GeometryList::Handle
+                    || builder.awaiting_pos
+                    || builder.geometry.handles.len() >= MAX_SHAPE_HANDLES
+                {
+                    builder.unsupported = true;
+                    return;
+                }
+                // An optional bound that is present but unreadable is a value the
+                // model could not write back, so it refuses the geometry.
+                let mut bad = false;
+                let mut bound = |name: &[u8]| match value(name) {
+                    Some(Some(parsed)) => Some(parsed),
+                    Some(None) => {
+                        bad = true;
+                        None
+                    }
+                    None => None,
+                };
+                let guide = |name: &[u8]| attribute_value(element, name);
+                let position = GeometryPoint::literal(0, 0);
+                let handle = if local == b"ahXY" {
+                    AdjustHandle::Xy {
+                        guide_x: guide(b"gdRefX"),
+                        min_x: bound(b"minX"),
+                        max_x: bound(b"maxX"),
+                        guide_y: guide(b"gdRefY"),
+                        min_y: bound(b"minY"),
+                        max_y: bound(b"maxY"),
+                        position,
+                    }
+                } else {
+                    AdjustHandle::Polar {
+                        guide_radius: guide(b"gdRefR"),
+                        min_radius: bound(b"minR"),
+                        max_radius: bound(b"maxR"),
+                        guide_angle: guide(b"gdRefAng"),
+                        min_angle: bound(b"minAng"),
+                        max_angle: bound(b"maxAng"),
+                        position,
+                    }
+                };
+                if bad {
+                    builder.unsupported = true;
+                    return;
+                }
+                builder.geometry.handles.push(handle);
+                builder.awaiting_pos = true;
+            }
+            b"cxn" => {
+                let Some(Some(angle)) = value(b"ang") else {
+                    builder.unsupported = true;
+                    return;
+                };
+                if builder.list != GeometryList::Connection
+                    || builder.awaiting_pos
+                    || builder.geometry.connections.len() >= MAX_SHAPE_CONNECTIONS
+                {
+                    builder.unsupported = true;
+                    return;
+                }
+                builder.geometry.connections.push(ConnectionSite {
+                    angle,
+                    position: GeometryPoint::literal(0, 0),
+                });
+                builder.awaiting_pos = true;
+            }
+            b"pos" => {
+                let (Some(Some(x)), Some(Some(y))) = (value(b"x"), value(b"y")) else {
+                    builder.unsupported = true;
+                    return;
+                };
+                let position = GeometryPoint { x, y };
+                let slot = match builder.list {
+                    GeometryList::Handle => {
+                        builder
+                            .geometry
+                            .handles
+                            .last_mut()
+                            .map(|handle| match handle {
+                                AdjustHandle::Xy { position, .. }
+                                | AdjustHandle::Polar { position, .. } => position,
+                            })
+                    }
+                    GeometryList::Connection => builder
+                        .geometry
+                        .connections
+                        .last_mut()
+                        .map(|site| &mut site.position),
+                    _ => None,
+                };
+                match slot {
+                    Some(slot) if builder.awaiting_pos => {
+                        *slot = position;
+                        builder.awaiting_pos = false;
+                    }
+                    _ => builder.unsupported = true,
+                }
+            }
+            b"rect" => {
+                let edges = (value(b"l"), value(b"t"), value(b"r"), value(b"b"));
+                let (Some(Some(left)), Some(Some(top)), Some(Some(right)), Some(Some(bottom))) =
+                    edges
+                else {
+                    builder.unsupported = true;
+                    return;
+                };
+                builder.geometry.text_rect = Some(GeometryRect {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                });
+            }
             b"path" => {
-                geometry.paths += 1;
-                if geometry.paths > 1 {
-                    // A second subpath needs its own coordinate space and its own
-                    // `@fill`/`@stroke`; out of scope for this slice.
-                    geometry.unsupported = true;
+                if builder.list != GeometryList::Path
+                    || builder.pending.is_some()
+                    || builder.geometry.paths.len() >= MAX_SHAPE_PATHS
+                {
+                    builder.unsupported = true;
                     return;
                 }
                 // An absent or negative `@w`/`@h` means "no path coordinate
-                // space": the coordinates are absolute EMU (docs/119 §3).
-                geometry.width_emu = path_w.filter(|w| *w > 0).unwrap_or(0);
-                geometry.height_emu = path_h.filter(|h| *h > 0).unwrap_or(0);
+                // space": the coordinates are in shape space (docs/119 §3).
+                let extent = |name: &[u8]| attr_i64(element, name).filter(|v| *v > 0).unwrap_or(0);
+                let flag = |name: &[u8]| match attribute_value(element, name).as_deref() {
+                    None | Some("1" | "true") => Some(true),
+                    Some("0" | "false") => Some(false),
+                    Some(_) => None,
+                };
+                let fill = match attribute_value(element, b"fill") {
+                    None => Some(PathFill::Norm),
+                    Some(token) => PathFill::from_token(&token),
+                };
+                let (Some(fill), Some(stroke), Some(extrusion_ok)) =
+                    (fill, flag(b"stroke"), flag(b"extrusionOk"))
+                else {
+                    builder.unsupported = true;
+                    return;
+                };
+                builder.geometry.paths.push(ShapePath {
+                    width_emu: extent(b"w"),
+                    height_emu: extent(b"h"),
+                    fill,
+                    stroke,
+                    extrusion_ok,
+                    commands: Vec::new(),
+                });
             }
             b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo" => {
                 // A command opening while the previous one is still short of its
                 // arity means the file nested or truncated them; refuse rather than
                 // emit a curve built from the wrong points.
-                if geometry.pending.is_some() {
-                    geometry.unsupported = true;
+                if builder.pending.is_some() {
+                    builder.unsupported = true;
                     return;
                 }
-                geometry.pending_points.clear();
-                geometry.pending = Some(match local {
+                builder.pending_points.clear();
+                builder.pending = Some(match local {
                     b"moveTo" => PathVertexKind::Move,
                     b"lnTo" => PathVertexKind::Line,
                     b"cubicBezTo" => PathVertexKind::Cubic,
                     _ => PathVertexKind::Quad,
                 });
             }
-            b"close" => {
-                if geometry.pending.is_some() {
-                    geometry.unsupported = true;
+            b"arcTo" => {
+                let operands = (value(b"wR"), value(b"hR"), value(b"stAng"), value(b"swAng"));
+                let (
+                    Some(Some(width_radius)),
+                    Some(Some(height_radius)),
+                    Some(Some(start_angle)),
+                    Some(Some(swing_angle)),
+                ) = operands
+                else {
+                    builder.unsupported = true;
+                    return;
+                };
+                if builder.pending.is_some() {
+                    builder.unsupported = true;
                     return;
                 }
-                geometry.push(ShapePathCommand::Close);
+                builder.push(ShapePathCommand::ArcTo {
+                    width_radius,
+                    height_radius,
+                    start_angle,
+                    swing_angle,
+                });
+            }
+            b"close" => {
+                if builder.pending.is_some() {
+                    builder.unsupported = true;
+                    return;
+                }
+                builder.push(ShapePathCommand::Close);
             }
             b"pt" => {
-                let Some(kind) = geometry.pending else {
-                    // An `a:pt` outside a modeled command belongs to one this slice
-                    // does not model (an `a:arcTo` control point, say).
-                    geometry.unsupported = true;
+                let Some(kind) = builder.pending else {
+                    // An `a:pt` outside a point-taking command.
+                    builder.unsupported = true;
                     return;
                 };
-                // A coordinate may be a GUIDE NAME rather than an integer
-                // (`x="wd2"`). Evaluating those is the guide-formula language,
-                // which is `109` FID-G-02, so a named coordinate is unsupported
-                // rather than approximated.
-                let (Some(x_emu), Some(y_emu)) = pt else {
-                    geometry.unsupported = true;
+                let (Some(Some(x)), Some(Some(y))) = (value(b"x"), value(b"y")) else {
+                    builder.unsupported = true;
                     return;
                 };
-                geometry.pending_points.push(PointEmu { x_emu, y_emu });
-                if geometry.pending_points.len() < kind.arity() {
+                builder.pending_points.push(GeometryPoint { x, y });
+                if builder.pending_points.len() < kind.arity() {
                     return;
                 }
                 // Positional, in authored order: controls first, endpoint last.
-                let points = core::mem::take(&mut geometry.pending_points);
-                geometry.pending = None;
-                geometry.push(match kind {
-                    PathVertexKind::Move => ShapePathCommand::MoveTo { point: points[0] },
-                    PathVertexKind::Line => ShapePathCommand::LineTo { point: points[0] },
+                let mut points = core::mem::take(&mut builder.pending_points).into_iter();
+                builder.pending = None;
+                let mut next = || points.next().expect("arity checked above");
+                let command = match kind {
+                    PathVertexKind::Move => ShapePathCommand::MoveTo { point: next() },
+                    PathVertexKind::Line => ShapePathCommand::LineTo { point: next() },
                     PathVertexKind::Quad => ShapePathCommand::QuadBezTo {
-                        control: points[0],
-                        point: points[1],
+                        control: next(),
+                        point: next(),
                     },
                     PathVertexKind::Cubic => ShapePathCommand::CubicBezTo {
-                        control1: points[0],
-                        control2: points[1],
-                        point: points[2],
+                        control1: next(),
+                        control2: next(),
+                        point: next(),
                     },
-                });
+                };
+                builder.push(command);
             }
-            // Arcs, guide formulas, adjust handles, connection sites, extensions.
-            _ => geometry.unsupported = true,
+            // Extension lists and anything else outside the grammar.
+            _ => builder.unsupported = true,
         }
     }
 
-    /// Closes an open `a:custGeom`: attaches the recovered path to the shape, or
-    /// reports the geometry as an omission and leaves the shape painting its
-    /// bounding rectangle (docs/119 §6).
+    /// Closes an open `a:custGeom`: attaches the recovered geometry to the shape,
+    /// or reports it as an omission and leaves the shape painting its bounding
+    /// rectangle (`docs/119` §6).
     ///
-    /// A path is accepted only when it is a single subpath that STARTS with a
-    /// `moveTo`, has exactly one `moveTo` (a second one is a disjoint subpath),
-    /// draws at least one segment, and stayed inside the modeled subset.
+    /// A geometry is accepted only when it stayed inside the grammar, every
+    /// command and handle received all of its points, at least one path draws a
+    /// segment, and it passes the model's own [`CustomGeometry::check`] — which
+    /// includes COMPILING it, so a name that resolves to nothing is caught here
+    /// rather than painting a rectangle under a geometry that claims to be drawn.
     fn finish_custom_geometry(&mut self) {
-        let Some(geometry) = self.cust_geom.take() else {
+        let Some(builder) = self.cust_geom.take() else {
             return;
         };
-        let moves = geometry
-            .commands
-            .iter()
-            .filter(|command| matches!(command, ShapePathCommand::MoveTo { .. }))
-            .count();
-        let usable = !geometry.unsupported
+        let usable = !builder.unsupported
             // A command that never received its full arity leaves `pending` set.
-            && geometry.pending.is_none()
-            && geometry.paths == 1
-            && moves == 1
-            && matches!(
-                geometry.commands.first(),
-                Some(ShapePathCommand::MoveTo { .. })
-            )
+            && builder.pending.is_none()
+            && !builder.awaiting_pos
             // Any drawing command, not `LineTo` specifically: a path that is a
             // single cubic draws perfectly well, and testing for a line rejected
             // every curve-only geometry.
-            && geometry.commands.iter().any(ShapePathCommand::is_segment);
+            && builder
+                .geometry
+                .paths
+                .iter()
+                .any(|path| path.commands.iter().any(ShapePathCommand::is_segment))
+            && builder.geometry.check(&builder.adjustments).is_ok();
         match (usable, self.pending_shape.as_mut()) {
             (true, Some(shape)) => {
-                shape.path = Some(ShapePath {
-                    width_emu: geometry.width_emu,
-                    height_emu: geometry.height_emu,
-                    commands: geometry.commands,
-                });
+                shape.adjustments = builder.adjustments;
+                shape.path = Some(builder.geometry);
             }
             _ => self.reporter.report(b"custGeom"),
         }
@@ -5792,17 +6029,49 @@ impl BodyParser<'_> {
             return Ok(());
         }
         // A LONE text-bearing shape becomes a `TextBox`, which models no
-        // geometry, so an authored non-rectangular preset really is dropped
-        // here. Grouped text boxes keep theirs (`GroupTextBox::geometry`); this
-        // one is named rather than lost in silence until `TextBox` carries the
-        // same triple.
-        if shape.geometry != ShapeGeometry::Rectangle
+        // geometry. When that geometry is a non-rectangular PRESET and the shape
+        // floats, it is normalized to a group of one instead — exactly what a
+        // lone text-free shape already becomes — whose `GroupTextBox` child keeps
+        // the preset and its adjust values and draws them from the standard's
+        // table (`docs/109` FID-L-04). This is the usual form of a Word callout
+        // with text in it, which would otherwise paint as a box.
+        let shaped = shape.geometry != ShapeGeometry::Rectangle
             || shape.preset.is_some()
-            || !shape.adjustments.is_empty()
-            || shape.path.is_some()
-        {
+            || !shape.adjustments.is_empty();
+        if shaped && shape.path.is_none() && self.pending_anchor.is_some() {
+            let pending = self
+                .pending_anchor
+                .take()
+                .expect("checked to be open just above");
+            let extent = self
+                .pending_extent
+                .take()
+                .or((shape.extent != ZERO_EXTENT).then_some(shape.extent))
+                .unwrap_or(ZERO_EXTENT);
+            if shape.extent == ZERO_EXTENT {
+                shape.extent = extent;
+            }
+            // The `wp:docPr` name stays on the drawing, i.e. the group
+            // (`commit_drawing`); the shape's own `cNvPr` name goes to the child.
+            shape.textbox_blocks = Some(blocks);
+            let Some(child) = self.shape_to_group_child(shape) else {
+                return Ok(());
+            };
+            let group =
+                self.vml_group_of_one(pending.resolve(), pending.relative_height, extent, child)?;
+            self.pending_group = Some(group);
+            return Ok(());
+        }
+        // What is still dropped here is named rather than lost in silence: an
+        // INLINE text box's preset (a group needs an anchor), and a text-bearing
+        // `a:custGeom`, which `GroupTextBox` has no field for.
+        if shaped || shape.path.is_some() {
             self.reporter.report(b"prstGeom");
         }
+        let docpr = self.pending_object_name.take();
+        let own = core::mem::take(&mut shape.object_name);
+        let name = self.merge_object_name(docpr, own);
+        self.record_object_name(shape.id, Some(name), ObjectName::GENERIC_TEXT_BOX);
         match self.pending_anchor.take() {
             Some(pending) => {
                 // A floating text box: carry its anchor + extent + fill/border.
@@ -5850,6 +6119,21 @@ impl BodyParser<'_> {
     /// unresolved media reference, or a text box with no blocks, is reported and
     /// dropped (`None`).
     fn shape_to_group_child(&mut self, mut shape: ShapeBuilder) -> Option<GroupChild> {
+        let (id, name) = (shape.id, core::mem::take(&mut shape.object_name));
+        let child = self.shape_to_group_child_unnamed(shape)?;
+        let generic = match child {
+            GroupChild::Picture(_) => ObjectName::GENERIC_PICTURE,
+            GroupChild::TextBox(_) => ObjectName::GENERIC_CHILD_TEXT_BOX,
+            GroupChild::Shape(_) => ObjectName::GENERIC_SHAPE,
+            GroupChild::Group(_) => ObjectName::GENERIC_CHILD_GROUP,
+        };
+        self.record_object_name(id, Some(name), generic);
+        Some(child)
+    }
+
+    /// [`Self::shape_to_group_child`] without the name, which the caller records
+    /// only once the child is known to exist.
+    fn shape_to_group_child_unnamed(&mut self, mut shape: ShapeBuilder) -> Option<GroupChild> {
         if shape.is_picture {
             let embed = shape.embed.as_deref()?;
             let media = *self.media_index.get(embed)?;
@@ -5963,12 +6247,16 @@ impl BodyParser<'_> {
         // A DrawingML group takes precedence: emit the whole positioned group
         // rather than collapsing to a single (stretched) picture.
         if let Some(group) = self.pending_group.take() {
+            let name = self.pending_object_name.take();
+            self.record_object_name(group.id, name, ObjectName::GENERIC_GROUP);
             self.push_segment(Segment::Group(group));
             return;
         }
         let extent = self.pending_extent.take();
         let extra = self.drawing_extra;
         let graphic = std::mem::take(&mut self.pending_graphic);
+        // The `wp:docPr` name/title, for whichever node this drawing becomes.
+        let name = self.pending_object_name.take();
         // A chart payload (`a:graphicData` -> `c:chart`).
         if graphic.declares(GRAPHIC_DATA_CHART_URI)
             && let Some(rid) = &graphic.chart_rid
@@ -5982,6 +6270,7 @@ impl BodyParser<'_> {
                 preview: None,
                 extent: extent.unwrap_or(ZERO_EXTENT),
                 prog_id: None,
+                name,
             });
             return;
         }
@@ -6010,6 +6299,7 @@ impl BodyParser<'_> {
                 preview: None,
                 extent: extent.unwrap_or(ZERO_EXTENT),
                 prog_id: None,
+                name,
             });
             return;
         }
@@ -6042,6 +6332,7 @@ impl BodyParser<'_> {
                             flip_h,
                             flip_v,
                             rotation,
+                            name,
                         });
                         // Any remaining unmodeled detail is still surfaced so
                         // the anchored drawing is never silently under-modeled.
@@ -6067,6 +6358,7 @@ impl BodyParser<'_> {
                         flip_h,
                         flip_v,
                         rotation,
+                        name,
                     });
                 }
                 None => self.reporter.report(b"drawing"),
@@ -6100,6 +6392,7 @@ impl BodyParser<'_> {
             preview,
             extent: object.extent.unwrap_or(ZERO_EXTENT),
             prog_id,
+            name: None,
         });
     }
 
@@ -6204,6 +6497,7 @@ impl BodyParser<'_> {
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
+                        name: None,
                     }),
                     None => self.reporter.report(b"pict"),
                 },
@@ -6308,6 +6602,7 @@ impl BodyParser<'_> {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
+                    name: None,
                 }));
             }
             // Inline VML image: not floating (no absolute box/z-order), but the
@@ -6333,6 +6628,7 @@ impl BodyParser<'_> {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                name: None,
             }));
         }
         // A VML text box (`v:textbox`): placement depends on both its container and
@@ -6832,6 +7128,7 @@ impl BodyParser<'_> {
             pending_srcrect: self.pending_srcrect.take(),
             pending_opacity: self.pending_opacity.take(),
             pending_inline_descr: self.pending_inline_descr.take(),
+            pending_object_name: self.pending_object_name.take(),
             pending_flip_h: std::mem::take(&mut self.pending_flip_h),
             pending_flip_v: std::mem::take(&mut self.pending_flip_v),
             pending_rotation: self.pending_rotation.take(),
@@ -6921,6 +7218,7 @@ impl BodyParser<'_> {
         self.pending_srcrect = frame.pending_srcrect;
         self.pending_opacity = frame.pending_opacity;
         self.pending_inline_descr = frame.pending_inline_descr;
+        self.pending_object_name = frame.pending_object_name;
         self.pending_flip_h = frame.pending_flip_h;
         self.pending_flip_v = frame.pending_flip_v;
         self.pending_rotation = frame.pending_rotation;
@@ -7881,32 +8179,67 @@ impl BodyParser<'_> {
     /// reads as though the two were related.
     fn drawing_doc_pr(&mut self, element: &BytesStart<'_>) {
         self.capture_drawing_descr(element);
-        self.report_object_name(element, b"docPr");
+        self.pending_object_name = Some(self.read_object_name(element, b"docPr"));
     }
 
-    /// Reports a drawing object's NAME, which the model does not carry.
+    /// Reads a drawing object's NAME and TITLE (`@name`/`@title` on `wp:docPr` or
+    /// a `*:cNvPr`) into the model's `ObjectName` (`docs/109` HF-267).
     ///
-    /// `wp:docPr@name` and `pic:cNvPr`/`wps:cNvPr@name` are the object's name in
-    /// Word's Selection Pane — the handle an author renames a shape by, and what a
-    /// screen reader announces beside the alt text. The model holds `descr` and no
-    /// name, so the value is dropped; it was dropped *in silence* until HF-243's
-    /// attribute gate named it, and §12's rule is that unsupported document data is
-    /// preserved where safe or **reported explicitly**.
+    /// The name is the handle Word's Selection Pane lists the object by and an
+    /// author renames it by, and the title is what a screen reader announces
+    /// beside the `@descr` alt text. Both were dropped until HF-243's attribute
+    /// gate named `@name`; they are now modelled in `Definitions::object_names`
+    /// and written back on save. An empty value says nothing and is not kept; a
+    /// value too long to store is still reported, as a degraded attribute, rather
+    /// than truncated.
+    fn read_object_name(&mut self, element: &BytesStart<'_>, local: &[u8]) -> ObjectName {
+        let mut read = |attribute: &[u8]| match attribute_value(element, attribute) {
+            Some(value) if value.is_empty() => None,
+            Some(value) if value.len() <= MAX_OBJECT_NAME_BYTES => Some(value),
+            Some(_) => {
+                self.reporter.report_attribute(local, attribute);
+                None
+            }
+            None => None,
+        };
+        ObjectName {
+            name: read(b"name"),
+            title: read(b"title"),
+        }
+    }
+
+    /// Merges a second statement of an object's name (a lone shape's or
+    /// picture's `cNvPr`) into the first (`wp:docPr`): a part the first lacks is
+    /// taken, and a part that DISAGREES with it is reported, since the model holds
+    /// one name per object and the second value is the one not kept.
+    fn merge_object_name(&mut self, first: Option<ObjectName>, second: ObjectName) -> ObjectName {
+        let mut merged = first.unwrap_or_default();
+        for (kept, other, attribute) in [
+            (&mut merged.name, second.name, &b"name"[..]),
+            (&mut merged.title, second.title, &b"title"[..]),
+        ] {
+            match (kept.as_ref(), other) {
+                (None, other) => *kept = other,
+                (Some(kept), Some(other)) if *kept != other => {
+                    self.reporter.report_attribute(b"cNvPr", attribute);
+                }
+                _ => {}
+            }
+        }
+        merged
+    }
+
+    /// Records an object's name in the side table, when it says anything.
     ///
-    /// Reported, not silenced, and the distinction from the no-op class is the
-    /// point: an empty name says nothing and raises nothing, but "Picture 1" is a
-    /// value the model has no field for, which is a loss whether or not the author
-    /// chose the word. `35`'s rule is that presence which is not the model's own
-    /// state is information.
-    ///
-    /// The report aggregates by feature, so a document with forty drawings gets one
-    /// row with a count of forty, not forty rows. Two features rather than one
-    /// because the two elements are different locations, which is how `w14:paraId`
-    /// is already reported on `w:p` and `w:tr` separately. They collapse into one
-    /// the day the model carries a name.
-    fn report_object_name(&mut self, element: &BytesStart<'_>, local: &[u8]) {
-        if attribute_value(element, b"name").is_some_and(|name| !name.is_empty()) {
-            self.reporter.report_attribute(local, b"name");
+    /// `generic` is the name the writer gives an unnamed object of this kind
+    /// (`ObjectName::GENERIC_*`); a name equal to it is the model's empty state
+    /// written out, and is not stored (`ObjectName::without_generic`).
+    fn record_object_name(&mut self, id: NodeId, name: Option<ObjectName>, generic: &str) {
+        if let Some(name) = name
+            .map(|name| name.without_generic(generic))
+            .filter(|name| !name.is_empty())
+        {
+            self.parsed_defs.object_names.insert(id, name);
         }
     }
 
@@ -8100,8 +8433,10 @@ impl BodyParser<'_> {
                 flip_v,
                 rotation,
                 hyperlink,
+                name,
             } => {
                 let id = self.next_id()?;
+                self.record_object_name(id, name, ObjectName::GENERIC_PICTURE);
                 Ok(InlineNode::Drawing(Box::new(Drawing {
                     hyperlink,
                     opacity,
@@ -8129,8 +8464,10 @@ impl BodyParser<'_> {
                 flip_v,
                 rotation,
                 hyperlink,
+                name,
             } => {
                 let id = self.next_id()?;
+                self.record_object_name(id, name, ObjectName::GENERIC_PICTURE);
                 Ok(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
                     hyperlink,
                     opacity,
@@ -8154,8 +8491,10 @@ impl BodyParser<'_> {
                 preview,
                 extent,
                 prog_id,
+                name,
             } => {
                 let id = self.next_id()?;
+                self.record_object_name(id, name, ObjectName::GENERIC_OBJECT);
                 Ok(InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
                     id,
                     kind,
