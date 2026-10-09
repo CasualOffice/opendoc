@@ -394,3 +394,25 @@ test("a picture's outline row is Word's Picture border, and it has no fill row",
   // And a shape's row keeps its own name.
   assert.equal(row(shape, "object.outline").label, "Shape outline");
 });
+
+// ---- Word's F2, "Move to where?" (`docs/109` UX-OB-02) ------------------------
+//
+// The drag that moves an in-line picture to another place in the text is a
+// pointer gesture, so on its own it is a capability a keyboard or screen-reader
+// user cannot reach (`SKILL` §10). The menu row is the second surface, and the
+// palette inherits it.
+
+test("an object that moves in the text offers Move to… with Word's F2, and only that object", () => {
+  const io = { ...host(), moveInText: () => {} };
+  const inline = { ...image, canMoveInText: true };
+  const move = row(inline, "object.moveInText", io);
+  assert.ok(move, "an in-line picture offers Move to…");
+  assert.equal(move.label, "object.moveTo.menu");
+  assert.equal(move.shortcut, "F2", "and names the key that does the same");
+  assert.equal(move.enabled, true);
+  assert.equal(row(image, "object.moveInText", io), undefined, "an object that cannot move in the text has no row");
+  assert.equal(row(inline, "object.moveInText", host()), undefined, "a host with no verb gets no dead row");
+  const viewing = row(inline, "object.moveInText", { ...host({ reviewMode: "viewing" }), moveInText: () => {} });
+  assert.equal(viewing.enabled, false);
+  assert.equal(viewing.disabledReason, "Turn on Editing to change this object");
+});

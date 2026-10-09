@@ -24,7 +24,11 @@ async function selectFloat(page) {
   return box;
 }
 
-const capabilities = (page) => page.locator("#pages").getAttribute("data-object-capabilities");
+// A LIST of names, not the attribute string: `toContain("canMove")` on the
+// string also matched `canMoveInText`, so an in-line picture (which moves in the
+// text, UX-OB-02) read as one that moves freely.
+const capabilities = async (page) =>
+  ((await page.locator("#pages").getAttribute("data-object-capabilities")) ?? "").split(",");
 const outlineBox = async (page) => stableBox(page.locator(".overlay .object-outline").first());
 
 // ---- The case the owner reported -------------------------------------------
@@ -57,6 +61,8 @@ test("an image can be put IN LINE and taken back out, and the engine agrees", as
   );
   expect(await capabilities(page)).not.toContain("canWrap");
   expect(await capabilities(page)).not.toContain("canMove");
+  // It moves in the TEXT instead, as an in-line picture does in Word (UX-OB-02).
+  expect(await capabilities(page)).toContain("canMoveInText");
   // ...and it MOVED, into the run flow, which is the reader-visible half.
   const inline = await outlineBox(page);
   expect(Math.abs(inline.x - floating.x) + Math.abs(inline.y - floating.y)).toBeGreaterThan(8);

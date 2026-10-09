@@ -52,6 +52,8 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::ShapeStyleRef;
 // Own line (anti-conflict): drawing object names (`docs/109` HF-267).
 use casual_doc_model::v1::{MAX_OBJECT_NAME_BYTES, ObjectName};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::{LockElement, LockFlags, ObjectLocks};
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
 use casual_doc_model::{IdGenerator, NodeId};
@@ -345,6 +347,10 @@ struct GroupBuilder {
     anchor: Option<(DrawingAnchor, Extent, Option<u32>)>,
     transform: GroupTransform,
     children: Vec<GroupChild>,
+    /// A NESTED group's own `wpg:cNvPr` name and title. A top-level group's
+    /// `wpg:cNvPr` is instead the inner statement of its frame's name, merged
+    /// into the frame's (`merge_object_name`).
+    object_name: ObjectName,
 }
 
 /// A `pic:pic` or `wps:wsp`/`wps:cxnSp` shape being accumulated inside a group (or
@@ -1042,6 +1048,10 @@ struct SectionAccumulator {
     /// its metadata plus the fully-built prior section snapshot. Attached to the
     /// built [`SectionBoundary`].
     section_change: Option<PropChange<SectionBoundary>>,
+    /// `w:formProt`: whether the section is protected under forms protection.
+    /// `None` is an absent element, which is not the same statement as `false`
+    /// (`109` FID-AT-06).
+    form_protection: Option<bool>,
 }
 
 /// Which per-section note-properties container (if any) is open, so its
@@ -1604,6 +1614,9 @@ pub(crate) struct ParsedDefinitions {
     /// Drawing object names and titles by node id (`docs/109` HF-267), a side
     /// table for the same reason.
     pub object_names: DefinitionMap<NodeId, ObjectName>,
+    /// Each section's `w:formProt` by section id (`109` FID-AT-06), a side table
+    /// because `SectionBoundary` has 78 literal sites across eight crates.
+    pub form_protection: DefinitionMap<SectionId, bool>,
 }
 
 impl ParsedDefinitions {
@@ -1614,6 +1627,7 @@ impl ParsedDefinitions {
             field_ranges: DefinitionMap::default(),
             shape_styles: DefinitionMap::default(),
             object_names: DefinitionMap::default(),
+            form_protection: DefinitionMap::default(),
         }
     }
 }
@@ -3410,6 +3424,7 @@ impl BodyParser<'_> {
                         rotation: None,
                     },
                     children: Vec::new(),
+                    object_name: ObjectName::default(),
                 });
             }
             // The group transform container: its `a:xfrm` off/ext/chOff/chExt route
@@ -3864,7 +3879,22 @@ impl BodyParser<'_> {
                 }
                 let name = self.read_object_name(element, b"cNvPr");
                 if let Some(shape) = self.pending_shape.as_mut() {
-                    shape.object_name = name;
+                    let locks = shape.object_name.locks;
+                    shape.object_name = ObjectName { locks, ..name };
+                }
+            }
+            // A NESTED group's `wpg:cNvPr` (inside a `wpg:grpSp`, with no group
+            // child open) names that nested group, which is a node of its own.
+            // It used to fall to the arm below and be merged into the TOP-LEVEL
+            // frame's name — taken as the frame's name when the frame had none,
+            // and reported as a disagreement when it had one — so a nested
+            // group's name was never on its own node (`109` FID-AT-08).
+            b"cNvPr" if self.drawing_depth > 0 && self.group_stack.len() > 1 => {
+                self.nvpr_depth = self.nvpr_depth.saturating_add(1);
+                let name = self.read_object_name(element, b"cNvPr");
+                if let Some(group) = self.group_stack.last_mut() {
+                    let locks = group.object_name.locks;
+                    group.object_name = ObjectName { locks, ..name };
                 }
             }
             // The same element on a drawing with no open group child — a
@@ -3894,15 +3924,26 @@ impl BodyParser<'_> {
                 if !self.drawing_descr_captured() {
                     self.capture_drawing_descr(element);
                 }
-                // A lone picture's `pic:cNvPr` names the SAME object `wp:docPr`
-                // did, and Word writes the same name in both; it is a fallback,
-                // and a value that DIFFERS from the docPr's is the one case still
-                // lost, so it is the one case still reported.
+                // A lone picture's `pic:cNvPr`, a lone text box's `wps:cNvPr` or
+                // a top-level group's `wpg:cNvPr` names the SAME object
+                // `wp:docPr` did, and Word writes the same name in both; it is a
+                // fallback where the docPr has none, and the inner element's own
+                // name where it DIFFERS (`ObjectName::inner_name`, `109`
+                // FID-AT-08).
                 let name = self.read_object_name(element, b"cNvPr");
                 let first = self.pending_object_name.take();
-                let merged = self.merge_object_name(first, name);
+                let merged = Self::merge_object_name(first, name);
                 self.pending_object_name = Some(merged);
             }
+            // The DrawingML locks (`109` FID-AT-09): reported and dropped until
+            // they were modelled, and `noChangeAspect` — on every picture Word
+            // inserts — is what keeps a corner drag proportional. Each lands on
+            // the non-visual properties of the object it belongs to, by the same
+            // routing the object's name takes: the frame's on the top-level
+            // drawing, a picture's or shape's on the open group child (or the
+            // lone picture), a group's on the group.
+            b"graphicFrameLocks" | b"picLocks" | b"spLocks" | b"grpSpLocks"
+                if self.drawing_depth > 0 && self.route_locks(local, element) => {}
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
             b"pict" if self.run_open => {
@@ -4062,6 +4103,16 @@ impl BodyParser<'_> {
                 let on = is_true(attribute_value(element, b"val").as_deref());
                 if let Some(section) = self.section.as_mut() {
                     section.title_page = Some(on);
+                }
+            }
+            // `w:formProt` (`109` FID-AT-06): reported and dropped until it was
+            // modelled — in every LibreOffice-produced document of the corpus,
+            // as `w:val="false"`, which IS information: under enforced forms
+            // protection, a section without the element is protected.
+            b"formProt" if self.section.is_some() => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(section) = self.section.as_mut() {
+                    section.form_protection = Some(on);
                 }
             }
             b"vAlign" if self.section.is_some() => {
@@ -5141,6 +5192,12 @@ impl BodyParser<'_> {
             // mistaken for a real section.
             b"sectPr" if self.section_change_meta.is_some() && self.prior_section.is_none() => {
                 if let Some(prior_acc) = self.section.take() {
+                    // The prior snapshot is not a section of the document, so its
+                    // `w:formProt` has no section id to be filed under in the
+                    // side table: it is reported rather than dropped in silence.
+                    if prior_acc.form_protection.is_some() {
+                        self.reporter.report(b"formProt");
+                    }
                     self.prior_section = Some(self.build_section_boundary(prior_acc)?);
                 }
                 self.section = self.saved_section.take();
@@ -6070,7 +6127,7 @@ impl BodyParser<'_> {
         }
         let docpr = self.pending_object_name.take();
         let own = core::mem::take(&mut shape.object_name);
-        let name = self.merge_object_name(docpr, own);
+        let name = Self::merge_object_name(docpr, own);
         self.record_object_name(shape.id, Some(name), ObjectName::GENERIC_TEXT_BOX);
         match self.pending_anchor.take() {
             Some(pending) => {
@@ -6236,6 +6293,11 @@ impl BodyParser<'_> {
                 };
                 if let Some(parent) = self.group_stack.last_mut() {
                     parent.children.push(GroupChild::Group(Box::new(nested)));
+                    self.record_object_name(
+                        builder.id,
+                        Some(builder.object_name),
+                        ObjectName::GENERIC_CHILD_GROUP,
+                    );
                 } else {
                     self.reporter.report(b"grpSp");
                 }
@@ -6976,8 +7038,12 @@ impl BodyParser<'_> {
     }
 
     fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<SectionId, ImportError> {
+        let form_protection = accumulator.form_protection;
         let boundary = self.build_section_boundary(accumulator)?;
         let id = boundary.id;
+        if let Some(protected) = form_protection {
+            self.parsed_defs.form_protection.insert(id, protected);
+        }
         self.sections.push(boundary);
         Ok(id)
     }
@@ -8202,27 +8268,125 @@ impl BodyParser<'_> {
             }
             None => None,
         };
+        // One element states one name; whether it is the frame's or an inner
+        // element's own is decided by `merge_object_name`, which sees both.
         ObjectName {
             name: read(b"name"),
             title: read(b"title"),
+            inner_name: None,
+            inner_title: None,
+            // Locks are on the sibling `cNv*Pr`, read by `route_locks`.
+            locks: ObjectLocks::default(),
         }
+    }
+
+    /// Routes one DrawingML lock element (`109` FID-AT-09) to the non-visual
+    /// properties of the object it belongs to, returning whether it was taken.
+    ///
+    /// - `a:graphicFrameLocks` is the FRAME's (`wp:cNvGraphicFramePr`), so it
+    ///   joins the pending frame name of the top-level drawing — only when no
+    ///   group is open, since a frame inside a group (`wpg:graphicFrame`) is not
+    ///   a node this model has.
+    /// - `a:picLocks` and `a:spLocks` are the object's own: the open group child
+    ///   or lone shape when there is one, otherwise the lone picture, whose
+    ///   identity is the pending frame's.
+    /// - `a:grpSpLocks` is the innermost open group's: a nested group's own, or
+    ///   the top-level group's (whose identity is the pending frame's).
+    ///
+    /// Anything else — a lock element where none of these holds — returns
+    /// `false` and is reported by the catch-all, as every lock was before.
+    ///
+    /// Complexity: O(attributes) of the one element.
+    fn route_locks(&mut self, local: &[u8], element: &BytesStart<'_>) -> bool {
+        let shape_open = self.pending_shape.is_some();
+        let groups = self.group_stack.len();
+        enum Target {
+            Frame,
+            PendingObject,
+            Shape,
+            NestedGroup,
+        }
+        let target = match local {
+            b"graphicFrameLocks" if groups == 0 && !shape_open => Target::Frame,
+            b"picLocks" | b"spLocks" if shape_open => Target::Shape,
+            b"picLocks" if groups == 0 => Target::PendingObject,
+            b"grpSpLocks" if groups > 1 && !shape_open => Target::NestedGroup,
+            b"grpSpLocks" if groups == 1 && !shape_open => Target::PendingObject,
+            _ => return false,
+        };
+        let flags = self.read_lock_flags(local, element);
+        let pending = || ObjectName::default();
+        match target {
+            Target::Frame => {
+                let name = self.pending_object_name.get_or_insert_with(pending);
+                name.locks.frame = name.locks.frame.union(flags);
+            }
+            Target::PendingObject => {
+                let name = self.pending_object_name.get_or_insert_with(pending);
+                name.locks.object = name.locks.object.union(flags);
+            }
+            Target::Shape => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.object_name.locks.object = shape.object_name.locks.object.union(flags);
+                }
+            }
+            Target::NestedGroup => {
+                if let Some(group) = self.group_stack.last_mut() {
+                    group.object_name.locks.object = group.object_name.locks.object.union(flags);
+                }
+            }
+        }
+        true
+    }
+
+    /// Reads one lock element's flags. An attribute that is not one of the
+    /// element's own locks (`CT_GraphicalObjectFrameLocking`,
+    /// `CT_PictureLocking`, `CT_ShapeLocking`, `CT_GroupLocking`) is reported
+    /// as a degraded attribute rather than stored, so the writer is never handed
+    /// a flag the element it writes cannot carry.
+    fn read_lock_flags(&mut self, local: &[u8], element: &BytesStart<'_>) -> LockFlags {
+        let mut flags = LockFlags::default();
+        for attribute in element.attributes().flatten() {
+            let key = attribute.key.local_name();
+            let key = key.as_ref();
+            if attribute.key.as_ref().starts_with(b"xmlns") {
+                continue;
+            }
+            let value = std::str::from_utf8(attribute.value.as_ref()).ok();
+            let belongs = LockElement::from_local_name(local).is_some_and(|kind| kind.carries(key));
+            match flags.flag_mut(key) {
+                Some(flag) if belongs => {
+                    *flag = crate::properties::is_true(value);
+                }
+                _ => self.reporter.report_attribute(local, key),
+            }
+        }
+        flags
     }
 
     /// Merges a second statement of an object's name (a lone shape's or
     /// picture's `cNvPr`) into the first (`wp:docPr`): a part the first lacks is
-    /// taken, and a part that DISAGREES with it is reported, since the model holds
-    /// one name per object and the second value is the one not kept.
-    fn merge_object_name(&mut self, first: Option<ObjectName>, second: ObjectName) -> ObjectName {
+    /// taken, and a part that DISAGREES with it is kept as the inner element's
+    /// own (`ObjectName::inner_name` / `inner_title`, `109` FID-AT-08), which the
+    /// writer puts back on that element. It used to be reported and dropped,
+    /// because the model held one name per object; python-docx writes the image
+    /// FILE name there on every picture it generates.
+    ///
+    /// The comparison is with the frame's name as WRITTEN in the source, before
+    /// `record_object_name` drops a generic one, because that is what the inner
+    /// name is the same as or different from.
+    fn merge_object_name(first: Option<ObjectName>, second: ObjectName) -> ObjectName {
         let mut merged = first.unwrap_or_default();
-        for (kept, other, attribute) in [
-            (&mut merged.name, second.name, &b"name"[..]),
-            (&mut merged.title, second.title, &b"title"[..]),
+        // The two statements' locks are on different elements, so they combine.
+        merged.locks.frame = merged.locks.frame.union(second.locks.frame);
+        merged.locks.object = merged.locks.object.union(second.locks.object);
+        for (kept, inner, other) in [
+            (&mut merged.name, &mut merged.inner_name, second.name),
+            (&mut merged.title, &mut merged.inner_title, second.title),
         ] {
             match (kept.as_ref(), other) {
                 (None, other) => *kept = other,
-                (Some(kept), Some(other)) if *kept != other => {
-                    self.reporter.report_attribute(b"cNvPr", attribute);
-                }
+                (Some(kept), Some(other)) if *kept != other => *inner = Some(other),
                 _ => {}
             }
         }

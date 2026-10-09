@@ -146,19 +146,38 @@ impl Reporter {
         );
     }
 
-    fn insert(
+    /// Records a finding under an import's own feature identifier and location
+    /// — for detail the import report called `preserved` that this save could
+    /// not deliver (a regenerated theme, `109` FID-AT-03), so a host describes
+    /// the save's statement of it in the words it used for the import's.
+    pub(crate) fn record_import_finding(
         &mut self,
-        feature: &'static str,
+        feature: &str,
         location: FeatureLocation,
         disposition: Disposition,
+        occurrences: u32,
+    ) {
+        self.insert_counted(feature, location, disposition, occurrences);
+    }
+
+    fn insert(&mut self, feature: &str, location: FeatureLocation, disposition: Disposition) {
+        self.insert_counted(feature, location, disposition, 1);
+    }
+
+    fn insert_counted(
+        &mut self,
+        feature: &str,
+        location: FeatureLocation,
+        disposition: Disposition,
+        occurrences: u32,
     ) {
         let key = (feature.to_owned(), location);
         if let Some((count, _)) = self.counts.get_mut(&key) {
-            *count = count.saturating_add(1);
+            *count = count.saturating_add(occurrences);
         } else if self.counts.len() < MAX_REPORT_FINDINGS {
-            self.counts.insert(key, (1, disposition));
+            self.counts.insert(key, (occurrences, disposition));
         } else {
-            self.overflow = self.overflow.saturating_add(1);
+            self.overflow = self.overflow.saturating_add(occurrences);
         }
     }
 

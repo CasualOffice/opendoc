@@ -8848,6 +8848,66 @@ fn a_comment_paragraph_identity_is_not_reported_as_lost() {
     );
 }
 
+/// Under the `Retention` byte floor, an equation the MODEL carries still cites
+/// its own model record, and so is not among the findings a regenerating save
+/// loses (`109` FID-AT-07).
+///
+/// The byte floor keeps everything for an unchanged save; the model keeps the
+/// raw OMML through every save. Citing the snapshot for it — which is what the
+/// resolution did before — would put an equation the saved file contains on the
+/// list of things an edited save drops, and the reader would be told it was lost.
+/// The second half is the other direction: a construct ONLY the snapshot holds is
+/// on that list.
+#[test]
+fn a_retention_mode_equation_the_model_carries_is_not_lost_by_a_regenerating_save() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>
+        <w:p><m:oMath><m:phant><m:e><m:r><m:t>x</m:t></m:r></m:e></m:phant></m:oMath></w:p>
+        <w:tbl><w:tblPr><w:tblStyle w:val="Grid"/></w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import_main_document_xml(
+        document,
+        ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        },
+    )
+    .unwrap();
+    let equation = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "oMath")
+        .expect("the unprojected equation is reported");
+    let record = import
+        .ledger
+        .get(
+            equation
+                .ledger_id
+                .expect("a preserved finding cites a record"),
+        )
+        .expect("the cited record exists");
+    assert_eq!(
+        record.kind,
+        crate::PreservationKind::ModelSubtree,
+        "the model carries the OMML through every save, so that is the record"
+    );
+    let lost: Vec<&str> = import
+        .report
+        .held_only_by_source_snapshot(&import.ledger)
+        .map(|entry| entry.feature.as_str())
+        .collect();
+    assert!(
+        !lost.contains(&"oMath"),
+        "an equation the model carries is not lost by a regenerating save: {lost:?}"
+    );
+    assert!(
+        lost.contains(&"tblStyle"),
+        "a construct only the snapshot holds IS lost by one: {lost:?}"
+    );
+}
+
 /// An equation whose structure has no typed projection is `omitted` from the
 /// model as mathematics but its OMML is retained verbatim **inside** the model and
 /// re-emitted on save — so it is `omitted` + `preserved`, with a ledger record of
@@ -9571,6 +9631,12 @@ fn a_drawing_objects_name_and_title_land_on_its_own_node() {
         Some(&ObjectName {
             name: Some("Arrow: to the appendix".to_owned()),
             title: Some("Go to the appendix".to_owned()),
+            // A lone SHAPE's `wps:cNvPr` belongs to the group child it becomes,
+            // not to the frame, so the frame has no inner statement here.
+            inner_name: None,
+            inner_title: None,
+            // The fixture states no lock.
+            locks: casual_doc_model::v1::ObjectLocks::default(),
         })
     );
     assert_eq!(
@@ -9588,12 +9654,13 @@ fn a_drawing_objects_name_and_title_land_on_its_own_node() {
 }
 
 /// One node, two statements of its name — a lone text box's `wp:docPr` and its
-/// own `wps:cNvPr` — that DISAGREE. The model holds one name per object, so the
-/// docPr's is kept and the other is the one value lost; it is reported rather
-/// than silently dropped, which is the half of the change a guard on the kept
-/// name alone could not see.
+/// own `wps:cNvPr` — that DISAGREE. The docPr's is the object's name, and the
+/// other is kept as the inner element's own (`ObjectName::inner_name`, `109`
+/// FID-AT-08) instead of being reported and dropped, which is what this test
+/// asserted before the model could hold it. The report half matters as much as
+/// the model half: a kept value that is still reported is a false loss.
 #[test]
-fn a_second_name_that_disagrees_on_the_same_node_is_reported() {
+fn a_second_name_that_disagrees_on_the_same_node_is_kept_as_the_inner_name() {
     let document = concat!(
         r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r>"#,
         r#"<w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/>"#,
@@ -9610,19 +9677,27 @@ fn a_second_name_that_disagrees_on_the_same_node_is_reported() {
             paragraph(&import, 0).inlines
         );
     };
+    let name = import
+        .document
+        .definitions()
+        .object_names
+        .get(&text_box.id)
+        .expect("the text box is named");
     assert_eq!(
-        import
-            .document
-            .definitions()
-            .object_names
-            .get(&text_box.id)
-            .and_then(|name| name.name.as_deref()),
+        name.name.as_deref(),
         Some("Sidebar"),
         "the docPr's name is the object's"
     );
+    assert_eq!(
+        name.inner_name.as_deref(),
+        Some("Text Box 7"),
+        "the disagreeing second name is the inner element's own"
+    );
     assert!(
-        features(&import).contains(&"cNvPr/@name"),
-        "the disagreeing second name is reported: {:?}",
+        !features(&import)
+            .iter()
+            .any(|feature| feature.starts_with("cNvPr/")),
+        "a kept name is not a loss: {:?}",
         features(&import)
     );
 }
@@ -10071,9 +10146,11 @@ fn the_same_markup_carrying_something_is_still_reported() {
             r#"<a:effectLst><a:outerShdw blurRad="50800"/></a:effectLst>"#,
             "effectLst",
         ),
-        // A lock that locks something is a restriction the document asked for
-        // and did not get.
-        ("<a:spLocks/>", r#"<a:spLocks noResize="1"/>"#, "spLocks"),
+        // (A lock that locks something used to be a row here. Since `109`
+        // FID-AT-09 it is modelled and written back, so it is carried rather
+        // than reported, and `a_drawing_objects_locks_survive_a_save_on_every_kind`
+        // in `casual-doc-export` holds that instead.)
+        //
         // `val="1"` asks for the picture to be rescaled to the authoring DPI.
         (
             r#"<a14:useLocalDpi val="0"/>"#,
@@ -10221,27 +10298,33 @@ fn the_corpus_reports_exactly_these_findings() {
         // stays: it IS information (an absent `w:formProt` means the section is
         // protected when forms protection is on) and the section model has no
         // field for it (`docs/165` M6).
+        //
+        // 1, then 0 with FID-AT-06, on EVERY real-producer document below: that
+        // one remaining finding was `w:formProt w:val="false"`, which is now
+        // modelled (`Definitions::form_protection`, keyed by section) and
+        // written back with its value — carried, not silenced. These documents
+        // now lose nothing and say so.
         (
             "real-producer-footnotes",
             include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
-            1,
+            0,
         ),
         (
             "real-producer-header-footer",
             include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
-            1,
+            0,
         ),
         // 2, then 1 with FID-AT-01: `w:view w:val="web"` is modeled and written
-        // back, so it is no longer lost. `w:formProt` remains, as above.
+        // back, so it is no longer lost. `w:formProt` remained until FID-AT-06, as above.
         (
             "real-producer-hyperlinks",
             include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
-            1,
+            0,
         ),
         (
             "real-producer-libreoffice",
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
-            1,
+            0,
         ),
         // 2 before FID-P-03's coverage guard, then 4. The two then-new ones are
         // REAL losses that were silent: `a:graphicFrameLocks noChangeAspect="1"`
@@ -10270,21 +10353,27 @@ fn the_corpus_reports_exactly_these_findings() {
         // the model carries the drawing names (`Definitions::object_names`), so
         // both name findings are gone because nothing is lost — the name
         // round-trips — not because anything was silenced.
+        //
+        // 3, then 1 with FID-AT-09: the two locks FID-P-03 surfaced
+        // (`a:graphicFrameLocks noChangeAspect="1"`, `a:picLocks
+        // noChangeAspect="1" noChangeArrowheads="1"`) are modelled
+        // (`ObjectName::locks`) and written back, so they are carried rather
+        // than lost. `w:formProt` remained until FID-AT-06, as above.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            3,
+            0,
         ),
         // 2, then 1 with FID-AT-01 (`w:view`), each.
         (
             "real-producer-table-list",
             include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
-            1,
+            0,
         ),
         (
             "real-producer-table-merges",
             include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
-            1,
+            0,
         ),
         // A document that loses nothing, and says so.
         (

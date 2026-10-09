@@ -324,3 +324,23 @@ test("object resize is blocked (fail-closed) in Suggesting mode", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("the properties panel resizes an in-line picture, which it could not (UX-OB-05)", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The panel's Left/Top show the picture's origin rounded to 0.01in, and
+  // Apply sent that rounding back — a moved origin, which the engine rightly
+  // refuses for a picture in the line of text, so Apply said "can be resized
+  // but not moved" and resized nothing.
+  await gotoEditor(page);
+  await selectImage(page);
+  await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
+  const before = await outlineSize(page);
+  await page.locator(".object-inspector [data-object-prop=width]").fill("0.5");
+  await page.locator(".object-inspector [data-object-prop=height]").fill("0.5");
+  await page.locator(".object-inspector [data-object-inspector-apply]").click();
+  await expect.poll(async () => (await outlineSize(page)).w, { message: "Apply resized it" }).toBeGreaterThan(before.w * 2);
+  await expect(page.locator("#status")).not.toContainText("not moved");
+  expect(consoleErrors).toEqual([]);
+});

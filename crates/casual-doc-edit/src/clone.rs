@@ -142,6 +142,29 @@ pub fn clone_blocks_with_fresh_ids(
     Some(out)
 }
 
+/// One inline node, as [`clone_blocks_with_fresh_ids`] copies the inlines of a
+/// block: every id in the subtree re-minted, the per-range markers counted in
+/// `report` rather than duplicated.
+///
+/// The single-node face of the same total copy, for an edit that duplicates ONE
+/// object in place — a Ctrl-drag copy of a picture — and must not build a second
+/// "clone an object" next to this one.
+///
+/// `None` when the id space is exhausted, or when the node was nothing but a
+/// degraded marker and so copies to nothing (the module documentation's
+/// "Degraded" family; never an object).
+///
+/// `O(size of the node's subtree)`.
+pub fn clone_inline_with_fresh_ids(
+    inline: &InlineNode,
+    ids: &mut dyn RunIds,
+    report: &mut CloneReport,
+) -> Option<InlineNode> {
+    clone_inlines(core::slice::from_ref(inline), ids, report)?
+        .into_iter()
+        .next()
+}
+
 /// One block, as [`clone_blocks_with_fresh_ids`] does the list.
 ///
 /// Total over `BlockNode`'s four variants with no catch-all, for the same reason
@@ -446,6 +469,18 @@ fn clone_group_children(
 pub fn node_ids_of_blocks(blocks: &[BlockNode]) -> Vec<NodeId> {
     let mut out = Vec::new();
     collect_block_ids(blocks, &mut out);
+    out
+}
+
+/// Every `NodeId` in one inline node's subtree, the node's own first — the
+/// single-node face of [`node_ids_of_blocks`], for a caller deciding whether a
+/// copy of that node would leave a node-keyed side table behind.
+///
+/// `O(size of the subtree)`.
+#[must_use]
+pub fn node_ids_of_inline(inline: &InlineNode) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    collect_inline_ids(core::slice::from_ref(inline), &mut out);
     out
 }
 

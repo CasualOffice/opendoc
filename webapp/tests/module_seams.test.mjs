@@ -428,12 +428,30 @@ const SRC = new URL("../src/", import.meta.url);
  *  menu's hand-copied selected-object context with `selectedObjectContext()`.
  *  MEASURED with `wc -l` on this branch; re-measure after any rebase.
  *
+ *  Lowered to 16,045 by the in-text object move (`109` UX-OB-02). The file was
+ *  one line under its ceiling and the round needed about thirty — the drag's
+ *  construction and its five call sites, F2's key hook, the move-pad and
+ *  cursor branches, and the guard that stops an UNCHANGED engine result marking
+ *  the document edited. The gesture itself is `object_text_move.mjs`, and it
+ *  paid by taking out the thing it needed a seam on: the drag-selection's
+ *  edge-scroll arithmetic, which the object drag needed too, is now
+ *  `edge_scroll.mjs` and both gestures call it. MEASURED with `wc -l` on
+ *  `ux/objects-v3` before any rebase; re-measure after one.
+ *
+ *  Lowered to 16,044 by FID-FW-01: the Save line and the draft snapshot now
+ *  take the chip's count from `compat_findings.mjs`, so `format_io.mjs`'s raw
+ *  occurrence count left `main.js`'s import list. MEASURED with `wc -l`.
+ *
  *  16,047 -> 16,044 (ADR-065, the diff canvas): the redline seams — a preview
  *  that carries its markup, the step-to-a-change navigation, Compare's view and
  *  the version panel's redline — cost eleven lines, and were paid for by
  *  folding the comparison panel's comment block and two of the preview swap's
- *  comments, so the file shrank while it gained a feature. */
-const MAIN_JS_LINE_CEILING = 16044;
+ *  comments, so the file shrank while it gained a feature.
+ *
+ *  16,042 on the merge of the two: each branch measured 16,044 against its
+ *  own base, and the two reductions do not overlap. MEASURED with `wc -l` on
+ *  the merged tree. */
+const MAIN_JS_LINE_CEILING = 16042;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -520,6 +538,9 @@ const PURE_MODULES = [
   // `object_context_menu.test.mjs` assert what a picture, a shape and a text box
   // offer, in each review mode, without a browser.
   "object_context_menu.mjs",
+  // The edge-scroll rule two drags share (drag-select and the in-text object
+  // move, UX-OB-02): a rectangle and a point in, a step out.
+  "edge_scroll.mjs",
   "edit_errors.mjs",
   // The field vocabulary: the kind table plus the host-side result formatter.
   // No DOM and no engine, so "what does a date field cache" is a node question.

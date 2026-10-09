@@ -25,6 +25,7 @@
 import {
   expect,
   gotoEditor,
+  gotoSampleDocument,
   clickIntoFirstPage,
   MOD,
   openAppMenu,
@@ -81,7 +82,8 @@ export const MODALS = [
     opener: "#compatibilityStatus",
     focus: "#compatibilityFindingsDialogDone",
     async open(page) {
-      await gotoEditor(page);
+      // `sample.docx`: the rich fixture has no findings left to open (FID-AT-08/09/10).
+      await gotoSampleDocument(page);
       await page.locator("#compatibilityStatus").click();
     },
   },

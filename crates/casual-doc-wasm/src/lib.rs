@@ -157,6 +157,11 @@ mod window;
 // and this file is already 40k lines and is owned by other lanes.
 mod objects;
 
+// Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
+// Its own module for the reason `objects` gives, and because the whole feature
+// is one command composed from two existing operations.
+mod inline_move;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -805,6 +810,8 @@ enum HistoryKind {
     TableStructure,
     ObjectResize,
     ObjectMove,
+    /// A Ctrl-drag that dropped a copy of an in-line object (`inline_move`).
+    ObjectCopy,
     ObjectCrop,
     ObjectAltText,
     ObjectDelete,
@@ -842,6 +849,7 @@ impl HistoryKind {
             Self::TableStructure => "Table structure",
             Self::ObjectResize => "Object resize",
             Self::ObjectMove => "Object move",
+            Self::ObjectCopy => "Copy object",
             Self::ObjectCrop => "Crop",
             Self::ObjectAltText => "Alt text",
             Self::ObjectDelete => "Delete object",
@@ -10003,6 +10011,7 @@ impl WasmDocument {
                     page_count: self.page_count(),
                     dirty: Vec::new(),
                     paste_loss: Vec::new(),
+                    placed_object: String::new(),
                 });
             };
             return self.remove_drop_cap(cap, body);
@@ -15291,6 +15300,20 @@ impl WasmDocument {
             return ops.to_vec();
         }
         let mut removed: Vec<NodeId> = Vec::new();
+        // An object this same transaction puts BACK is moving, not leaving: an
+        // in-line object dragged to a new place in the text is a
+        // `RemoveInlineObject` followed by an `InsertInlineObject` of the very same
+        // node (`inline_move`), and cascading its removal would delete the chart's
+        // data while the chart itself survived the move — a chart that paints as
+        // `[chart]` after a drag. Its whole subtree comes back with it, so any
+        // chart nested inside it is moving too. O(operations).
+        let reinserted: Vec<NodeId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::InsertInlineObject { node, .. } => Some(node.id()),
+                _ => None,
+            })
+            .collect();
         for op in ops {
             // The two operations that name the node they remove. Everything else is
             // the positional family recorded above; a wildcard rather than 60 explicit
@@ -15298,6 +15321,9 @@ impl WasmDocument {
             if let Operation::DeleteObject { object } | Operation::RemoveInlineObject { object } =
                 op
             {
+                if reinserted.contains(object) {
+                    continue;
+                }
                 // The node IS a chart: answered from the registry, no walk. The
                 // common case, and the one the chart delete gesture takes.
                 if charts.iter().any(|(_, chart)| chart.object == *object) {
@@ -15439,6 +15465,7 @@ impl WasmDocument {
             // Every path through here carried everything; the one path that can
             // degrade content fills this in on the result it returns.
             paste_loss: Vec::new(),
+            placed_object: String::new(),
         }
     }
 
@@ -16156,16 +16183,19 @@ impl WasmDocument {
         // correlation below (media-name match, then document order) is
         // layout-independent, so nothing else about this walk changes.
         for page in &self.painted_layout().pages {
-            for placed in &page.placed {
-                let BlockFragment::Paragraph {
-                    id,
-                    lines,
-                    box_metrics,
-                    ..
-                } = &placed.fragment
-                else {
-                    continue;
-                };
+            // Every paragraph painted on the page, table cells included — a
+            // picture in a cell paints exactly as one in the body does, and
+            // walking only the top-level paragraph fragments left it with no
+            // object box, so it could not be clicked, resized or dragged
+            // (`docs/109` UX-OB-03).
+            for &PlacedParagraph {
+                id,
+                lines,
+                box_metrics,
+                left,
+                top,
+            } in &placed_paragraphs(&page.placed)
+            {
                 // A fragment whose painted lines carry no object has nothing to
                 // correlate, and the `claimed` bookkeeping for it was never read.
                 let Some(nodes) = object_nodes.get(id) else {
@@ -16173,8 +16203,12 @@ impl WasmDocument {
                 };
                 let (img_nodes, tb_nodes, chart_nodes) =
                     (&nodes.images, &nodes.text_boxes, &nodes.charts);
-                let content_x = placed.rect.origin.x.raw() + box_metrics.indent_start.raw();
-                let content_y = placed.rect.origin.y.raw() + box_metrics.space_before.raw();
+                // Whether an object here sits directly in the run flow, which is
+                // what a move in the text needs. O(wrapped), and `wrapped` is
+                // empty for almost every paragraph.
+                let directly = |node: NodeId| !nodes.wrapped.contains(&node);
+                let content_x = left.raw() + box_metrics.indent_start.raw();
+                let content_y = top.raw() + box_metrics.space_before.raw();
                 let entry = claimed.entry(*id).or_insert_with(|| ClaimedObjectNodes {
                     images: vec![false; img_nodes.len()],
                     text_boxes: vec![false; tb_nodes.len()],
@@ -16211,6 +16245,7 @@ impl WasmDocument {
                                 }
                                 None => ("image", ObjectCapabilities::inline_image(frame)),
                             };
+                            let capabilities = capabilities.in_text(directly(found.node));
                             out.push(ObjectBox {
                                 root: found.node,
                                 subject: found.node,
@@ -16249,7 +16284,8 @@ impl WasmDocument {
                                 rect,
                                 rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_embedded_object(frame),
+                                capabilities: ObjectCapabilities::inline_embedded_object(frame)
+                                    .in_text(directly(chart_nodes[i])),
                             });
                         }
                     }
@@ -16273,7 +16309,8 @@ impl WasmDocument {
                                 rect,
                                 rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_text_box(frame),
+                                capabilities: ObjectCapabilities::inline_text_box(frame)
+                                    .in_text(directly(tb_nodes[i])),
                             });
                         }
                     }
@@ -18424,6 +18461,11 @@ struct ParagraphObjectNodes {
     /// `images` too. Exactly one of the two boxes is ever painted for it, and the
     /// claim bookkeeping is per list, so neither can steal the other's slot.
     charts: Vec<NodeId>,
+    /// The nodes above that were found INSIDE a link, a field result, a content
+    /// control or a tracked change rather than directly in the paragraph — the
+    /// ones a move in the text cannot lift out on their own. Empty for almost
+    /// every paragraph, so asking it is a scan of nothing.
+    wrapped: Vec<NodeId>,
 }
 
 /// Which of one paragraph's object nodes a painted box has already been matched
@@ -19800,6 +19842,7 @@ struct ObjectOrderEntryJson {
     can_resize: bool,
     can_rotate: bool,
     can_move: bool,
+    can_move_in_text: bool,
     can_wrap: bool,
     can_delete: bool,
     can_alt_text: bool,
@@ -23905,6 +23948,7 @@ fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
         can_resize: object.capabilities.can_resize,
         can_rotate: object.capabilities.can_rotate,
         can_move: object.capabilities.can_move,
+        can_move_in_text: object.capabilities.can_move_in_text,
         can_wrap: object.capabilities.can_wrap,
         can_delete: object.capabilities.can_delete,
         can_alt_text: object.capabilities.can_alt_text,
@@ -24561,7 +24605,15 @@ struct ObjectCapabilities {
     /// compatibility summary; this mask is the exact carrier contract consumed
     /// by `objectHandles`.
     resize_handles: u8,
+    /// FREE placement: the object's anchor position can be set anywhere on the
+    /// page (`setObjectAnchorPosition`, the float drag, the arrow nudge).
     can_move: bool,
+    /// Placement IN THE TEXT: the object sits directly in a paragraph's run flow
+    /// and can be lifted out and put at another caret position
+    /// (`moveInlineObject` — Word's and Docs' drag of an in-line picture,
+    /// `docs/109` UX-OB-02). A different capability from `can_move` because it
+    /// is a different command with a different target: a caret, not a point.
+    can_move_in_text: bool,
     can_wrap: bool,
     can_delete: bool,
     can_alt_text: bool,
@@ -24572,11 +24624,23 @@ struct ObjectCapabilities {
 }
 
 impl ObjectCapabilities {
+    /// This in-line carrier, sitting directly in its paragraph's run flow
+    /// (`directly == true`) or inside a link, field result, content control or
+    /// tracked change, which a move in the text would have to tear it out of
+    /// (`casual_doc_edit::inline_object_position` is the same rule). O(1).
+    const fn in_text(self, directly: bool) -> Self {
+        Self {
+            can_move_in_text: directly,
+            ..self
+        }
+    }
+
     const fn inline_image(frame: ObjectFrame) -> Self {
         Self {
             can_resize: frame.handles != 0,
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
+            can_move_in_text: true,
             can_delete: true,
             can_alt_text: true,
             can_crop: true,
@@ -24604,14 +24668,17 @@ impl ObjectCapabilities {
     /// carrier.
     ///
     /// What is true: the extent is writable (resize), the node is removable
-    /// (delete, paired with its projection — see `Operation::DeleteObject`), and
-    /// nothing else is. Inline, so no move and no wrap; no `a:xfrm`, so no
-    /// rotation; no picture fill or outline; no text story of its own.
+    /// (delete, paired with its projection — see `Operation::DeleteObject`), it
+    /// can be moved to another place in the text (the projection is keyed by its
+    /// id, which a move keeps), and nothing else is. In-line, so no free move and
+    /// no wrap; no `a:xfrm`, so no rotation; no picture fill or outline; no text
+    /// story of its own.
     const fn inline_embedded_object(frame: ObjectFrame) -> Self {
         Self {
             can_resize: frame.handles != 0,
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
+            can_move_in_text: true,
             can_delete: true,
             ..Self::empty()
         }
@@ -24622,6 +24689,7 @@ impl ObjectCapabilities {
             can_resize: frame.handles != 0,
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
+            can_move_in_text: true,
             can_delete: true,
             can_edit_text: true,
             ..Self::empty()
@@ -24653,6 +24721,8 @@ impl ObjectCapabilities {
             resize_handles: frame.handles,
             can_rotate: frame.can_rotate,
             can_move: true,
+            // A member of a floating group: it moves with, or within, the group.
+            can_move_in_text: false,
             can_wrap: true,
             can_delete: true,
             can_fill: kind == "shape",
@@ -24685,6 +24755,7 @@ impl ObjectCapabilities {
             resize_handles: 0,
             can_rotate: false,
             can_move: false,
+            can_move_in_text: false,
             can_wrap: false,
             can_delete: false,
             can_alt_text: false,
@@ -24696,7 +24767,7 @@ impl ObjectCapabilities {
     }
 
     /// Whether the capability the host calls `name` is available here, or `None`
-    /// when `name` is not one of the ten.
+    /// when `name` is not one of the eleven.
     ///
     /// The accessor half of [`OBJECT_CAPABILITY_NAMES`]: one list of names and
     /// one function that reads them, so the reason table below cannot disagree
@@ -24706,6 +24777,7 @@ impl ObjectCapabilities {
             b"canResize" => self.can_resize,
             b"canRotate" => self.can_rotate,
             b"canMove" => self.can_move,
+            b"canMoveInText" => self.can_move_in_text,
             b"canWrap" => self.can_wrap,
             b"canDelete" => self.can_delete,
             b"canAltText" => self.can_alt_text,
@@ -24718,14 +24790,14 @@ impl ObjectCapabilities {
     }
 }
 
-/// The ten structural capabilities, under the names the host reads them by — the
-/// camelCase keys both payloads publish and `main.js`'s own
+/// The eleven structural capabilities, under the names the host reads them by —
+/// the camelCase keys both payloads publish and `main.js`'s own
 /// `OBJECT_CAPABILITY_KEYS` mirrors.
 ///
 /// One list, consumed by [`ObjectCapabilities::has`] and by
 /// [`capability_refusals`], because two copies of "what the capability set is" is
 /// how a capability comes to have a bit and no reason.
-const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
+const OBJECT_CAPABILITY_NAMES: [&str; 11] = [
     "canResize",
     "canRotate",
     "canMove",
@@ -24736,6 +24808,7 @@ const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
     "canFill",
     "canStroke",
     "canEditText",
+    "canMoveInText",
 ];
 
 /// Every capability this placed object does **not** support, each with the
@@ -24745,14 +24818,16 @@ const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
 ///
 /// # Why a `false` had to learn to explain itself
 ///
-/// `ObjectCapabilities` publishes ten booleans and nothing else, and
+/// `ObjectCapabilities` published its booleans and nothing else, and
 /// `webapp/src/main.js` gates on bare truthiness (`if (objectSelection.canMove)`),
 /// so an unavailable capability produced a control that did nothing and said
-/// nothing. The live instance is the inline picture: `can_move` is false because
-/// this build has no inline-to-floating conversion, so **dragging an inline
-/// picture does nothing at all** — `SKILL` §10's dead control, and the same
-/// defect on every false bit of every carrier, which is why this is one function
-/// rather than a fix at the drag site.
+/// nothing. The live instance was the inline picture: `can_move` (free
+/// placement) is false for it, so **dragging an inline picture did nothing at
+/// all** — `SKILL` §10's dead control, and the same defect on every false bit of
+/// every carrier, which is why this is one function rather than a fix at the
+/// drag site. (That drag now moves the picture in the text — `can_move_in_text`,
+/// `docs/109` UX-OB-02 — and the explanation is for the objects it still cannot
+/// move.)
 ///
 /// # Why the reason is derived rather than stored per bit
 ///
@@ -24767,7 +24842,7 @@ const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
 /// and what the command throws must not be two different explanations of one
 /// fact.
 ///
-/// Complexity: O(1) — ten names, and an allocation only for the ones that are
+/// Complexity: O(1) — eleven names, and an allocation only for the ones that are
 /// unavailable.
 fn capability_refusals(
     kind: &str,
@@ -24790,6 +24865,12 @@ fn capability_refusals(
             "canResize" => objects::INLINE_RESIZE_INEXACT,
             "canRotate" => objects::NO_ROTATION,
             "canMove" => objects::NOT_FLOATING_MOVE,
+            // FREE placement is refused above for an in-line object; placement IN
+            // THE TEXT is refused here for a floating one, and for an in-line one
+            // that is part of a link, field, content control or tracked change.
+            // The same constants `moveInlineObject` throws.
+            "canMoveInText" if anchored => inline_move::FLOATS_FREELY,
+            "canMoveInText" => inline_move::NOT_DIRECTLY_IN_TEXT,
             "canWrap" => objects::NOT_FLOATING_WRAP,
             "canDelete" => objects::NOT_DELETABLE,
             "canAltText" => objects::NO_ALT_TEXT,
@@ -25590,10 +25671,102 @@ fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&Word
 /// one walk in [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph);
 /// no by-id lookup, so a click stays O(placed fragments) rather than
 /// O(fragments × document) (HF-184, `docs/116`).
+/// One paragraph fragment painted on a page, with the page-local origin of its
+/// box: what [`placed_paragraphs`] yields for the object-box correlation.
+#[derive(Clone, Copy)]
+struct PlacedParagraph<'a> {
+    id: &'a NodeId,
+    lines: &'a casual_doc_layout::text::LineLayout,
+    box_metrics: &'a casual_doc_layout::block::BoxMetrics,
+    /// The fragment box's page-local left edge (before its start indent).
+    left: Twip,
+    /// The fragment box's page-local top edge (before its space-before).
+    top: Twip,
+}
+
+/// Every paragraph fragment on a page — top-level ones AND the ones inside
+/// table cells, nested tables included — with the page-local origin each was
+/// painted at.
+///
+/// The cell geometry is the hit test's own (`casual_doc_layout::hittest`'s
+/// `collect_fragment`): a cell's content starts at the row's left plus the
+/// cell's `x` and its start margin, and at the row's top plus the cell spacing
+/// and the vertical-alignment offset for the cell's box height; the cell's
+/// blocks then stack by height. Restated rather than shared because that walk is
+/// private to the layout crate and produces line boxes, not fragments. That the
+/// two agree is asserted by `inline_move_tests.rs`: an in-cell picture's box is
+/// exactly a rectangle the page's display list paints a picture into, and the
+/// click hit test resolves its centre into the cell's paragraph.
+///
+/// Walking only the top-level fragments is why a picture in a table cell had no
+/// object box at all (`docs/109` UX-OB-03).
+///
+/// **O(fragments on the page, cell content included)**; no document walk.
+fn placed_paragraphs(
+    placed: &[casual_doc_layout::page::PlacedFragment],
+) -> Vec<PlacedParagraph<'_>> {
+    fn walk<'a>(
+        fragment: &'a BlockFragment,
+        left: Twip,
+        top: Twip,
+        out: &mut Vec<PlacedParagraph<'a>>,
+    ) {
+        match fragment {
+            BlockFragment::Paragraph {
+                id,
+                lines,
+                box_metrics,
+                ..
+            } => out.push(PlacedParagraph {
+                id,
+                lines,
+                box_metrics,
+                left,
+                top,
+            }),
+            BlockFragment::TableRow { cells, .. } => {
+                let row_height = fragment.height();
+                for cell in cells {
+                    let cell_left = left + cell.x + cell.margins.start;
+                    let box_top = top + cell.cell_spacing.top;
+                    let mut block_top =
+                        box_top + cell.content_y_offset(cell.box_height(row_height));
+                    for block in &cell.blocks {
+                        walk(block, cell_left, block_top, out);
+                        block_top = block_top + block.height();
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for fragment in placed {
+        walk(
+            &fragment.fragment,
+            fragment.rect.origin.x,
+            fragment.rect.origin.y,
+            &mut out,
+        );
+    }
+    out
+}
+
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
     out: &mut ParagraphObjectNodes,
+) {
+    collect_para_objects_at(inlines, definitions, out, false);
+}
+
+/// [`collect_para_objects`], told whether `inlines` is the paragraph's own list
+/// (`wrapped == false`) or the content of a wrapper inside it, so each object
+/// found under a wrapper is also recorded in `out.wrapped`.
+fn collect_para_objects_at(
+    inlines: &[InlineNode],
+    definitions: &casual_doc_model::v1::Definitions,
+    out: &mut ParagraphObjectNodes,
+    wrapped: bool,
 ) {
     let part_of = |media: &casual_doc_model::v1::MediaId| {
         definitions
@@ -25602,6 +25775,14 @@ fn collect_para_objects(
             .map(|media| media.part_name.clone())
     };
     for inline in inlines {
+        if wrapped
+            && matches!(
+                inline,
+                InlineNode::Drawing(_) | InlineNode::EmbeddedObject(_) | InlineNode::TextBox(_)
+            )
+        {
+            out.wrapped.push(inline.id());
+        }
         match inline {
             InlineNode::Drawing(drawing) => {
                 out.images.push(InlineImageNode {
@@ -25635,16 +25816,16 @@ fn collect_para_objects(
             // Floats: placed by the float layer, reported through `page.anchored`.
             InlineNode::TextBox(_) | InlineNode::AnchoredDrawing(_) | InlineNode::Group(_) => {}
             InlineNode::Hyperlink(hyperlink) => {
-                collect_para_objects(&hyperlink.inlines, definitions, out);
+                collect_para_objects_at(&hyperlink.inlines, definitions, out, true);
             }
             InlineNode::Revision(revision) => {
-                collect_para_objects(&revision.inlines, definitions, out);
+                collect_para_objects_at(&revision.inlines, definitions, out, true);
             }
             InlineNode::Sdt(sdt) => {
-                collect_para_objects(&sdt.inlines, definitions, out);
+                collect_para_objects_at(&sdt.inlines, definitions, out, true);
             }
             InlineNode::Field(field) => {
-                collect_para_objects(&field.inlines, definitions, out);
+                collect_para_objects_at(&field.inlines, definitions, out, true);
             }
             // Leaves: nothing inside them paints an object box of its own.
             InlineNode::Run(_)
@@ -25773,6 +25954,14 @@ impl ObjectHitPayload {
     #[must_use]
     pub fn can_move(&self) -> bool {
         self.capabilities.can_move
+    }
+
+    /// Whether this object sits directly in the text and can be dragged to
+    /// another place in it (`moveInlineObject`, `docs/109` UX-OB-02).
+    #[wasm_bindgen(getter, js_name = canMoveInText)]
+    #[must_use]
+    pub fn can_move_in_text(&self) -> bool {
+        self.capabilities.can_move_in_text
     }
 
     /// Whether this reference's root owns a mutable text-wrapping mode.
@@ -28479,10 +28668,23 @@ pub struct EditResult {
     /// because "this edit landed but degraded something" is a property of an edit,
     /// and the next path that degrades something must not invent a second channel.
     paste_loss: Vec<String>,
+    /// The id of an object this edit created where the user was pointing, which
+    /// the host then selects — the copy a Ctrl-drag dropped (`inline_move`).
+    /// Empty on every other path. A field rather than the caret, because the
+    /// caret must stay a TEXT position the host can draw.
+    placed_object: String,
 }
 
 #[wasm_bindgen]
 impl EditResult {
+    /// The object this edit placed for the host to select (a dragged copy), or
+    /// `""` when it placed none.
+    #[wasm_bindgen(getter, js_name = placedObject)]
+    #[must_use]
+    pub fn placed_object(&self) -> String {
+        self.placed_object.clone()
+    }
+
     /// The caret anchor node id (32-hex string).
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -47042,6 +47244,18 @@ mod tests {
                 ObjectCapabilities::inline_image(frame),
             ),
             (
+                "inline image that is a link's or a field's content",
+                "image",
+                false,
+                ObjectCapabilities::inline_image(frame).in_text(false),
+            ),
+            (
+                "inline chart inside a content control",
+                "chart",
+                false,
+                ObjectCapabilities::inline_embedded_object(frame).in_text(false),
+            ),
+            (
                 "inline text box",
                 "textbox",
                 false,
@@ -47108,7 +47322,7 @@ mod tests {
             for name in OBJECT_CAPABILITY_NAMES {
                 let available = capabilities
                     .has(name)
-                    .unwrap_or_else(|| panic!("{name} is not one of the ten capabilities"));
+                    .unwrap_or_else(|| panic!("{name} is not one of the capabilities"));
                 let reason = reasons.get(name);
                 assert_eq!(
                     available,
