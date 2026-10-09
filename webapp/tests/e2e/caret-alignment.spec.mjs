@@ -34,14 +34,22 @@ const blocks = (page) =>
     [...el.querySelectorAll("p,h1,h2,h3,h4,h5,h6,li,td,th")].map((n) => n.textContent.trim()),
   );
 
-const caretBox = async (page) => {
-  const boxes = [];
-  for (const c of await page.locator(".overlay .caret").all()) {
-    const b = await c.boundingBox().catch(() => null);
-    if (b && b.height > 0) boxes.push(b);
-  }
-  return boxes[0] ?? null;
-};
+/** The painted caret's viewport box, or `null` when none is painted.
+ *
+ *  Read in ONE page task, never as a locator round trip. The overlay is rebuilt
+ *  on every repaint — the edit, and the spell checker's rescan a few hundred ms
+ *  after it — so resolving `.caret` and then asking for its box in a second trip
+ *  can land on a node the repaint just detached, and report "no caret" while one
+ *  is on screen. That is what turned `main` red at dfac216: three attempts out of
+ *  three, on a caret that was there. Inside one task no repaint can interleave. */
+const caretBox = (page) =>
+  page.evaluate(() => {
+    for (const caret of document.querySelectorAll(".overlay .caret")) {
+      const { x, y, width, height } = caret.getBoundingClientRect();
+      if (height > 0) return { x, y, width, height };
+    }
+    return null;
+  });
 
 test("clicking returns the caret to the line the engine painted it on", async ({
   page,
@@ -87,10 +95,13 @@ test("clicking returns the caret to the line the engine painted it on", async ({
     const landed = marked.findIndex((t) => t.includes("@"));
     expect(landed, "typing after a click must insert somewhere").toBeGreaterThanOrEqual(0);
     await page.keyboard.press("Backspace");
-    await page.waitForTimeout(200);
 
+    // Waits on the caret, not on a clock: under load the repaint after the
+    // Backspace can land later than any fixed sleep.
+    await expect
+      .poll(() => caretBox(page), { message: "the caret must still be painted after clicking" })
+      .not.toBeNull();
     const back = await caretBox(page);
-    expect(back, "the caret must still be painted after clicking").not.toBeNull();
     const drift = Math.abs(back.y + back.height / 2 - target.y);
     expect(
       drift,
