@@ -15,6 +15,7 @@
 //! - [`text`] — line-level types + the [`text::LineShaper`] seam.
 //! - [`block`] — block/flow fragments (the galley).
 //! - [`chart`] — DrawingML chart composition from the typed projection (`docs/155`).
+//! - [`chart_number_format`] — Excel format codes for chart labels (`docs/155` §19).
 //! - [`arc`] — circular arcs and sectors as cubic path commands (`docs/155` §7.4).
 //! - [`page`] — immutable paginated output.
 //! - [`display`] — the backend-neutral paint list.
@@ -35,6 +36,8 @@ pub mod block;
 pub mod cascade;
 // Own line (anti-conflict): chart composition from the typed projection.
 pub mod chart;
+// Own line (anti-conflict): Excel number-format codes for chart labels.
+pub mod chart_number_format;
 pub mod columns;
 pub mod compose;
 pub mod display;
