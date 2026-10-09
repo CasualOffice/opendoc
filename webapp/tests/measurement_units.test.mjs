@@ -34,11 +34,12 @@
 // `decimal_places`), because a fake that returned a constant would let the
 // mutation pass and the guard would be decoration.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { EN_STRINGS } from "../src/en_strings.mjs";
 import { setCatalogue, setLocale } from "../src/i18n.mjs";
-import { UNIT_PREF_KEY, createMeasurementUnits } from "../src/measurement_units.mjs";
+import { UNIT_PREF_KEY, createMeasurementUnits, refusalText } from "../src/measurement_units.mjs";
 
 setCatalogue("en", { ...EN_STRINGS });
 setLocale("en");
@@ -84,12 +85,13 @@ function fakeEngine({ region = "inch", separator = "." } = {}) {
     parseMeasurement(text, unitId) {
       const { num, den } = UNITS[unitId];
       const raw = String(text).trim();
-      // The engine refuses a blank, a group separator and anything non-numeric
-      // with its own sentence. The refusals matter here because `parse` must
-      // return null rather than zero for each of them.
-      if (raw === "") throw new Error("a measurement is required");
-      if (/,\d{3}/.test(raw)) throw new Error("remove the group separator");
-      if (!/^-?\d+(\.\d+)?$/.test(raw)) throw new Error(`${raw} is not a measurement`);
+      // The engine refuses a blank, a group separator and anything non-numeric,
+      // in the facade's own words (`parse_measurement_inner`: "measurement: " and
+      // `QuantityError`'s `Display`). The refusals matter here because `parse`
+      // must return null rather than zero for each of them.
+      if (raw === "") throw new Error("measurement: no number");
+      if (/,\d{3}/.test(raw)) throw new Error("measurement: not a number");
+      if (!/^-?\d+(\.\d+)?$/.test(raw)) throw new Error("measurement: not a number");
       return Math.round((Number(raw) * num) / den);
     },
   };
@@ -216,8 +218,63 @@ test("a refusal is a refusal and never a silent zero", () => {
   assert.equal(status.length, 3, "each refusal says something");
   assert.ok(
     status.every((entry) => entry.kind === "error" && entry.text.length > 0),
-    "and says it as an error carrying the engine's own sentence",
+    "and says it as an error",
   );
+});
+
+// "measurement: no number" reached the status line verbatim when the reader
+// changed the unit: the engine's token, in English whatever the locale, naming
+// no field. MUTATION: `parse` passing `error.message` straight to `setStatus`
+// again (the old code) fails the first assertion with
+//   + actual - expected   + 'measurement: no number'   - 'Top: type a number.'
+test("a refusal names the field and says what to type, in the reader's words", () => {
+  const { units, status } = build({ seed: { [UNIT_PREF_KEY]: "cm" } });
+  assert.equal(units.parse("", "Top"), null);
+  assert.equal(status.at(-1).text, "Top: type a number.");
+  assert.equal(units.parse("1,234.5", "Width"), null);
+  assert.equal(
+    status.at(-1).text,
+    "Width: “1,234.5” is not a number. Type digits only, with no thousands separator.",
+  );
+  // A field the caller could not name still reads as a sentence.
+  units.parse("");
+  assert.equal(status.at(-1).text, "Measurement: type a number.");
+  assert.ok(status.every((entry) => !entry.text.includes("measurement:")), "never the engine's token");
+});
+
+// MUTATION: `read` reporting through `setStatus` like `parse` fails with
+//   status.length 1 !== 0, "converting a blank field is not a refusal"
+test("reading a field to convert or preview it says nothing", () => {
+  const { units, status } = build({ seed: { [UNIT_PREF_KEY]: "inch" } });
+  assert.equal(units.read(""), null, "a blank field reads as no value");
+  assert.equal(units.read("abc"), null);
+  assert.equal(units.read("2"), 2880, "and a good one as its twips");
+  assert.equal(status.length, 0, "converting a blank field is not a refusal");
+});
+
+// The table is keyed by the ENGINE's words, so it is checked against the engine's
+// source: a reason renamed in `quantity.rs` would otherwise fall through to the
+// generic sentence without anyone noticing. MUTATION: renaming `"no number"` to
+// `"empty"` in the Display impl fails with
+//   the engine says "measurement: empty" and the chrome has no sentence for it
+test("every reason the engine gives has its own sentence", () => {
+  const source = readFileSync(
+    new URL("../../crates/casual-doc-layout/src/quantity.rs", import.meta.url),
+    "utf8",
+  );
+  const display = source.slice(source.indexOf("impl core::fmt::Display for QuantityError"));
+  const reasons = [...display.slice(0, display.indexOf("\n}\n")).matchAll(/Self::\w+ => "([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(reasons.length >= 5, `the scan must find the reasons (found ${reasons.length})`);
+  const generic = refusalText("measurement: something new", { field: "F", value: "v" });
+  for (const reason of reasons) {
+    assert.notEqual(
+      refusalText(`measurement: ${reason}`, { field: "F", value: "v" }),
+      generic,
+      `the engine says "measurement: ${reason}" and the chrome has no sentence for it`,
+    );
+  }
 });
 
 test("a stored unit the engine does not recognise is discarded, not trusted", () => {

@@ -1368,6 +1368,15 @@ export const EN_STRINGS = Object.freeze({
   "units.point": "Points",
   "units.pica": "Picas",
   "units.command": "Measurement units: {unit}",
+  // A typed distance the engine could not read, said when the reader commits it
+  // (`measurement_units.mjs` `refusalText`). `{field}` is the field's own label.
+  "units.refused.field": "Measurement",
+  "units.refused.empty": "{field}: type a number.",
+  "units.refused.notANumber": "{field}: “{value}” is not a number. Type digits only, with no thousands separator.",
+  "units.refused.unknownUnit": "{field}: “{value}” ends in a unit this editor does not know. Type the number alone, or end it with cm, mm, in, pt or pi.",
+  "units.refused.tooPrecise": "{field}: “{value}” has more digits than a measurement can hold.",
+  "units.refused.outOfRange": "{field}: “{value}” is too large for a measurement.",
+  "units.refused.unreadable": "{field}: “{value}” could not be read as a measurement.",
 
   // The border line style's palette and context-menu row. The ellipsis is this
   // chrome's convention for a row that opens a control rather than acting.

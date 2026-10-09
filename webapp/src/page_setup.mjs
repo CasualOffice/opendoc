@@ -147,11 +147,15 @@ export function createPageSetup(io) {
   /** A distance field's value as twips, or `null` when the engine refuses it.
    *
    *  Was `inchesToTwips`, which read a blank or unparseable field as 0 and wrote a
-   *  zero-inch margin nobody typed. The engine refuses each bad input with its own
-   *  sentence and `measurement_units.mjs` shows it, so this returns `null` and
-   *  Apply declines rather than inventing a value (`AGENTS.md`: no silent data
-   *  loss). */
-  const fieldTwips = (input) => io.measure.parse(input.value);
+   *  zero-inch margin nobody typed. This returns `null` and Apply declines rather
+   *  than inventing a value (`AGENTS.md`: no silent data loss).
+   *
+   *  QUIET, because most readings are not a commit: converting the fields when the
+   *  unit changes, the live preview, the "did this move" comparison. Only a commit
+   *  (`commitTwips`) says what is wrong, naming the field. */
+  const fieldTwips = (input) => io.measure.read(input.value);
+  /** A field the reader is committing: a refusal is said, naming the field. */
+  const commitTwips = (input) => io.measure.parseField(input);
 
   /** Twips → the text a page-geometry field shows, in the reader's own unit.
    *
@@ -238,10 +242,10 @@ export function createPageSetup(io) {
     // unit-free arithmetic once the fields are read through the preference — which
     // is the whole reason this stopped reading `Number(input.value)` directly.
     //
-    // `?? 0` here and nowhere else: an unreadable field has already said why
-    // through `measure.parse`, and a picture drawn from a 0 is better than a
-    // preview that stops updating while someone is still typing. Apply refuses the
-    // same field rather than writing that 0 (`applyBtn`'s guard below).
+    // `?? 0` here and nowhere else: a picture drawn from a 0 is better than a
+    // preview that stops updating while someone is still typing, and a field
+    // half-typed is not yet a mistake, so the reading is quiet. Apply refuses the
+    // same field, and says why, rather than writing that 0 (`applyBtn`'s guard).
     const width = Math.max(1, fieldTwips(widthInput) ?? 0);
     const height = Math.max(1, fieldTwips(heightInput) ?? 0);
     const top = Math.max(0, fieldTwips(marginTop) ?? 0);
@@ -446,7 +450,7 @@ export function createPageSetup(io) {
   function geometryMoved(section, columns) {
     const size = section.pageSize ?? {};
     const margins = section.pageMargins ?? {};
-    const painted = (twip) => io.measure.parse(inchText(twip ?? 0));
+    const painted = (twip) => io.measure.read(inchText(twip ?? 0));
     const effective =
       section.orientation ??
       ((size.widthTwips ?? 0) > (size.heightTwips ?? 0) ? "landscape" : "portrait");
@@ -468,12 +472,12 @@ export function createPageSetup(io) {
     if (!doc || !current) return;
     // A REFUSAL, NEVER A ZERO. The previous reader turned a blank or unparseable
     // field into 0 and wrote it, so clearing the Top margin and pressing Apply set
-    // a zero-inch margin the reader never typed. `measure.parse` has already said
-    // what is wrong with the value, in the engine's own words; what is left is to
-    // decline to write and put the caret on the field, rather than letting the rest
-    // of the payload through with one invented number in it.
+    // a zero-inch margin the reader never typed. `commitTwips` says what is wrong
+    // with the value and names the field; what is left is to decline to write and
+    // put the caret on the field, rather than letting the rest of the payload
+    // through with one invented number in it.
     const unreadable = GEOMETRY_FIELDS().find(
-      (input) => input && !input.disabled && fieldTwips(input) === null,
+      (input) => input && !input.disabled && commitTwips(input) === null,
     );
     if (unreadable) {
       unreadable.focus();
@@ -630,7 +634,7 @@ export function createPageSetup(io) {
     input.addEventListener("change", async () => {
       const rule = lineNumbering();
       if (modeOf(rule) === "none") return; // nothing to number yet
-      const raw = scale === 1 ? Number(input.value) : fieldTwips(input);
+      const raw = scale === 1 ? Number(input.value) : commitTwips(input);
       if (!Number.isFinite(raw)) return;
       // The engine refuses out-of-domain values and leaves the section alone;
       // clamping here means the field cannot silently do nothing instead.
