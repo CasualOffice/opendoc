@@ -417,6 +417,8 @@ impl WireOperation {
             | Operation::SetShapeStroke { .. }
             | Operation::SetTextBoxBody { .. }
             | Operation::SetObjectLocks { .. }
+            | Operation::SetDefaultTabStop { .. }
+            | Operation::RestoreDefaultTabStop { .. }
             | Operation::SetTrackRevisions { .. }
             | Operation::SetSectionFormProtection { .. } => 0,
         };
@@ -530,6 +532,8 @@ impl WireOperation {
             | Operation::SetShapeStroke { .. }
             | Operation::SetTextBoxBody { .. }
             | Operation::SetObjectLocks { .. }
+            | Operation::SetDefaultTabStop { .. }
+            | Operation::RestoreDefaultTabStop { .. }
             | Operation::SetTrackRevisions { .. }
             | Operation::SetSectionFormProtection { .. } => Vec::new(),
         }

@@ -187,3 +187,34 @@ test("the object bar clears the rotation grip instead of sitting on it", async (
   );
   expect(owner).toContain("object-rotate-handle");
 });
+
+// Background proofing shares this overlay with the object handles.
+test("an overlay repaint during rotation preserves the gesture and its preview", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await selectImage(page);
+  await openInspector(page);
+  const grip = page.locator(".overlay .object-rotate-handle").first();
+  const g = await stableBox(grip);
+  const o = await stableBox(page.locator(".overlay .object-outline").first());
+  const centre = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
+  const radius = Math.hypot(g.x + g.width / 2 - centre.x, g.y + g.height / 2 - centre.y);
+  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await page.mouse.down();
+  await expect(page.locator(".object-rotate-preview")).toBeVisible();
+  await page.evaluate(() => {
+    window.__rotationGripBeforeRepaint = document.querySelector(".object-rotate-handle");
+    const toggle = document.getElementById("grammarCheckToggle");
+    toggle.checked = !toggle.checked;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__rotationGripBeforeRepaint.isConnected)).toBe(false);
+  await expect(page.locator(".object-rotate-preview")).toBeVisible();
+  const target = -Math.PI / 3; // 30 degrees clockwise from the top grip.
+  await page.mouse.move(centre.x + Math.cos(target) * radius, centre.y + Math.sin(target) * radius, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => modelAngle(page)).toBeGreaterThan(25);
+  expect(Math.abs((await modelAngle(page)) - 30)).toBeLessThanOrEqual(3);
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(() => modelAngle(page)).toBe(0);
+  expect(consoleErrors).toEqual([]);
+});

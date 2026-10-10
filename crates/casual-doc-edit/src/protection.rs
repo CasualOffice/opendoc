@@ -394,6 +394,8 @@ fn refuse_if_formatting_locked(
         // its alt text beside it in the same non-visual properties.
         | Operation::SetObjectLocks { .. }
         // A document setting, as `SetEvenAndOddHeaders` is.
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
         // Page and section setup, by the decision recorded above.
         | Operation::SetSectionFormProtection { .. } => Ok(()),
@@ -592,6 +594,8 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetObjectLocks { .. }
         // Not a comment. (Under `trackedChanges`, `is_tracked_only` admits turning
         // tracking ON before it gets here.)
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
         | Operation::SetSectionFormProtection { .. } => false,
     }

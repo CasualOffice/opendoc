@@ -801,6 +801,8 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
         | Operation::SetSectionFormProtection { .. } => {}
     }
@@ -883,6 +885,8 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetTextBoxBody { .. }
         | Operation::SetObjectLocks { .. }
         // A field of `Definitions::settings`, which always exists.
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. } => None,
     }
 }
@@ -1701,6 +1705,7 @@ impl Aspects {
     const OBJECT_LOCKS: Self = Self(1 << 26);
     const TRACK_REVISIONS: Self = Self(1 << 27);
     const SECTION_FORM_PROTECTION: Self = Self(1 << 28);
+    const DEFAULT_TAB_STOP: Self = Self(1 << 29);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1805,8 +1810,11 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         Operation::SetEvenAndOddHeaders { .. } => {
             Some((Target::Settings, Aspects::EVEN_AND_ODD_HEADERS))
         }
-        // The same settings record, its own aspect: one replica turning tracking on
-        // and another turning on even/odd headers do not contend.
+        // Each document setting has its own aspect: changing the tab interval,
+        // tracking, and even/odd headers concurrently must preserve every write.
+        Operation::SetDefaultTabStop { .. } | Operation::RestoreDefaultTabStop { .. } => {
+            Some((Target::Settings, Aspects::DEFAULT_TAB_STOP))
+        }
         Operation::SetTrackRevisions { .. } => Some((Target::Settings, Aspects::TRACK_REVISIONS)),
         Operation::SetSectionFormProtection { section, .. } => {
             Some((Target::Section(*section), Aspects::SECTION_FORM_PROTECTION))
@@ -1875,6 +1883,7 @@ fn run_property_write(operation: &Operation) -> Option<(EditRange, Option<&Forma
 fn delta_without(delta: &FormatDelta, overwritten_by: Option<&FormatDelta>) -> FormatDelta {
     let FormatDelta {
         bold,
+        rtl,
         italic,
         underline,
         underline_color,
@@ -1892,6 +1901,7 @@ fn delta_without(delta: &FormatDelta, overwritten_by: Option<&FormatDelta>) -> F
     };
     FormatDelta {
         bold: bold.filter(|_| other.bold.is_none()),
+        rtl: rtl.filter(|_| other.rtl.is_none()),
         italic: italic.filter(|_| other.italic.is_none()),
         underline: underline.filter(|_| other.underline.is_none()),
         underline_color: underline_color.filter(|_| other.underline_color.is_none()),

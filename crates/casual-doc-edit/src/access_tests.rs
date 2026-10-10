@@ -974,3 +974,37 @@ fn every_access_change_refusal_carries_a_distinct_routed_reason() {
     codes.dedup();
     assert_eq!(before, codes.len(), "two refusals share a routing code");
 }
+
+#[test]
+fn default_tab_stop_requires_editor_and_obeys_protection() {
+    let ops = [
+        Operation::SetDefaultTabStop {
+            position_twips: 1440,
+        },
+        Operation::RestoreDefaultTabStop {
+            position_twips: None,
+        },
+    ];
+    let d = document(None);
+    for op in &ops {
+        assert!(
+            refuse_if_not_permitted(Some(&d), std::slice::from_ref(op), Capabilities::viewer())
+                .is_err()
+        );
+        assert!(
+            refuse_if_not_permitted(Some(&d), std::slice::from_ref(op), Capabilities::editor())
+                .is_ok()
+        );
+        for restriction in [
+            DocumentProtectionEdit::ReadOnly,
+            DocumentProtectionEdit::Comments,
+            DocumentProtectionEdit::TrackedChanges,
+        ] {
+            let protected = document(Some(restriction));
+            assert!(
+                refuse_if_protected(&protected, std::slice::from_ref(op), Capabilities::editor())
+                    .is_err()
+            );
+        }
+    }
+}

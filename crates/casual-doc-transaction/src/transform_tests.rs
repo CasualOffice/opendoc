@@ -1545,3 +1545,83 @@ fn a_declared_affinity_answers_the_insertion_a_concurrent_join_absorbed() {
         "the following side is understood and still inexpressible: {following:?}"
     );
 }
+
+#[test]
+fn default_tab_stop_converges_and_does_not_conflict_with_tracking() {
+    let base = seed().document;
+    let a = Operation::SetDefaultTabStop {
+        position_twips: 720,
+    };
+    for b in [
+        Operation::SetDefaultTabStop {
+            position_twips: 1440,
+        },
+        Operation::RestoreDefaultTabStop {
+            position_twips: None,
+        },
+        Operation::SetTrackRevisions { enabled: true },
+    ] {
+        let left = diamond_side(&base, &a, &b, Side::Later).unwrap().unwrap();
+        let right = diamond_side(&base, &b, &a, Side::Earlier).unwrap().unwrap();
+        assert_eq!(left, right);
+        match b {
+            Operation::SetTrackRevisions { .. } => {
+                assert_eq!(left.definitions().settings.default_tab_stop, Some(720));
+                assert!(left.definitions().settings.track_changes);
+            }
+            Operation::SetDefaultTabStop { .. } => {
+                assert_eq!(left.definitions().settings.default_tab_stop, Some(1440))
+            }
+            _ => assert_eq!(left.definitions().settings.default_tab_stop, None),
+        }
+    }
+}
+
+#[test]
+fn run_direction_concurrent_writes_converge_independently_of_bold() {
+    let seed = seed();
+    let range = EditRange {
+        start: Pos::new(seed.paragraphs[0], 1),
+        end: Pos::new(seed.paragraphs[0], 4),
+    };
+    let a = Operation::FormatText {
+        range,
+        delta: FormatDelta {
+            rtl: Some(true),
+            ..FormatDelta::default()
+        },
+    };
+    for delta in [
+        FormatDelta {
+            rtl: Some(false),
+            ..FormatDelta::default()
+        },
+        FormatDelta {
+            bold: Some(true),
+            ..FormatDelta::default()
+        },
+    ] {
+        let b = Operation::FormatText { range, delta };
+        let left = diamond_side(&seed.document, &a, &b, Side::Later)
+            .unwrap()
+            .unwrap();
+        let right = diamond_side(&seed.document, &b, &a, Side::Earlier)
+            .unwrap()
+            .unwrap();
+        assert_eq!(left, right);
+        let paragraph = left.paragraph(seed.paragraphs[0]).unwrap();
+        let run = paragraph
+            .inlines
+            .iter()
+            .find_map(|inline| match inline {
+                InlineNode::Run(run) if run.text == "bcd" => Some(run),
+                _ => None,
+            })
+            .unwrap();
+        let Operation::FormatText { delta, .. } = b else {
+            unreachable!()
+        };
+        assert_eq!(run.properties.rtl, delta.rtl.or(Some(true)));
+        assert_eq!(run.properties.bold, delta.bold);
+    }
+}

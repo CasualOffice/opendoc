@@ -15,23 +15,6 @@
 // dialog. Google Docs has no dialog at all — its only surface is the ruler too —
 // so Docs does not outvote Word on whether one should exist.
 //
-// WHAT WORD OFFERS AND THIS DELIBERATELY DOES NOT. Each is absent, never present
-// and inert (`docs/63`; SKILL §10 "never a dead control"):
-//
-//   * DEFAULT TAB STOPS. `w:defaultTabStop` is modelled and honoured by
-//     `casual-doc-layout/src/tabs.rs`, and `casual-doc-wasm` exposes no reader and
-//     no writer. A stepper over it would display an invented number and write
-//     nowhere.
-//   * LEADER (none / dots / dashes / underline). `TabLeader` is modelled and the
-//     layout engine draws it, but `setTabStop` takes no leader argument — it only
-//     PRESERVES a leader already on the stop — and `paragraphTabs` answers
-//     `[position, alignment]` pairs with no leader in them. Nothing to show, no
-//     way to set.
-//   * "TAB STOPS TO BE CLEARED". Word's read-out of pending clears exists because
-//     Word defers everything to OK. Every action here applies immediately as its
-//     own undoable step, so nothing is ever pending — which is also the same
-//     shape the ruler already has, and one mechanism beats two (SKILL §8).
-//
 // BAR IS OFFERED, because the engine has it: alignment code 4 reaches
 // `TabAlignment::Bar` and the layout engine draws the rule. It is one of the gaps
 // SKILL §1 records against ONLYOFFICE, and until this dialog existed it was a
@@ -109,12 +92,12 @@ export function parsePosition(text, { twipsPerInch, maxInches = MAX_POSITION_INC
  * act on. The LAST entry at a position wins, matching `setTabStop`'s own
  * retain-then-push.
  */
-export function stopsFromFlat(flat) {
+export function stopsFromFlat(flat, stride = 2) {
   const byPosition = new Map();
-  for (let i = 0; i + 1 < (flat?.length ?? 0); i += 2) {
+  for (let i = 0; i + 1 < (flat?.length ?? 0); i += stride) {
     const position = flat[i];
     const code = flat[i + 1];
-    byPosition.set(position, { position, align: CODE_TO_VALUE.get(code) ?? "start" });
+    byPosition.set(position, { position, align: CODE_TO_VALUE.get(code) ?? "start", ...(stride === 3 ? { leader: flat[i + 2] ?? 0 } : {}) });
   }
   return [...byPosition.values()].sort((a, b) => a.position - b.position);
 }
@@ -187,6 +170,8 @@ export function createTabStopsDialog({
   const empty = el("tabStopsEmpty");
   const positionInput = el("tabStopsPosition");
   const alignSeg = el("tabStopsAlign");
+  const leaderInput = el("tabStopsLeader");
+  const defaultInput = el("tabStopsDefault");
   const note = el("tabStopsNote");
   const clearBtn = el("tabStopsClear");
   const clearAllBtn = el("tabStopsClearAll");
@@ -247,7 +232,7 @@ export function createTabStopsDialog({
     const node = caretNode();
     if (!doc || !node) return [];
     try {
-      return stopsFromFlat(doc.paragraphTabs(node));
+      return stopsFromFlat(doc.paragraphTabsWithLeaders(node), 3);
     } catch (error) {
       console.warn("tab stops read ignored:", error?.message ?? error);
       setStatus(error?.message ?? String(error), "error");
@@ -311,6 +296,7 @@ export function createTabStopsDialog({
     if (stop) {
       positionInput.value = formatInches(stop.position);
       alignGroup?.reflect(stop.align);
+      leaderInput.value = String(stop.leader ?? 0);
     }
     say("");
     markSelection();
@@ -348,7 +334,7 @@ export function createTabStopsDialog({
     selectedPosition = parsed.twips;
     reflect();
     await apply(
-      (a, b, c, d) => getDoc().setTabStop(a, b, c, d, parsed.twips, codeFor(align)),
+      (a, b, c, d) => getDoc().setTabStopWithLeader(a, b, c, d, parsed.twips, codeFor(align), Number(leaderInput.value)),
       parsed.twips,
     );
   }
@@ -366,6 +352,15 @@ export function createTabStopsDialog({
       await apply(PLAN_OPS[call.op](call), null);
     }
   }
+
+  defaultInput.addEventListener("change", async () => {
+    const parsed = parsePosition(defaultInput.value, { twipsPerInch });
+    if (parsed.error || parsed.twips <= 0) { say("tabStops.outOfRange"); defaultInput.focus(); return; }
+    // Document settings have no tracked-change representation. The generic route
+    // refuses in Suggesting rather than treating this as paragraph formatting.
+    await runToolbarEdit(() => getDoc().setDefaultTabStop(getSelection().focus.node, getSelection().focus.offset, parsed.twips));
+    defaultInput.value = formatInches(getDoc().defaultTabStop());
+  });
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -406,6 +401,8 @@ export function createTabStopsDialog({
     stops = readStops();
     selectedPosition = null;
     positionInput.value = "";
+    leaderInput.value = "0";
+    defaultInput.value = formatInches(getDoc().defaultTabStop());
     alignGroup?.reflect(stops[0]?.align ?? "start");
     say("");
     reflect();

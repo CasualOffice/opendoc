@@ -293,6 +293,12 @@ test("a passing accent lands on the running editor with no reload", async ({ pag
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
   );
 
+  // An early frame load can install the preview before the parser appends
+  // the editor stylesheet. Recreate that source order before the next update.
+  await frame.evaluate(() => {
+    document.head.append(document.querySelector('link[href="./src/style.css"]'));
+  });
+
   await page.locator("#pg-brand-accent-hex").fill("#0f766e");
   await expect(page.locator("[data-refusal]")).toBeHidden();
 

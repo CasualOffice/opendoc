@@ -935,9 +935,10 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         // A protection change is a document-wide policy edit and Word labels it that way
         // (Review ▸ Restrict Editing), so it shares `SetCoreProperties`' label rather than
         // getting a bespoke one (ADR-059).
-        Operation::SetCoreProperties { .. } | Operation::SetDocumentProtection { .. } => {
-            HistoryKind::DocumentProperties
-        }
+        Operation::SetCoreProperties { .. }
+        | Operation::SetDocumentProtection { .. }
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. } => HistoryKind::DocumentProperties,
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
@@ -3718,6 +3719,7 @@ impl WasmDocument {
                     _ => VerticalAlignment::Baseline,
                 }),
                 font: run.font.clone(),
+                rtl: None,
             };
             if delta != FormatDelta::default() {
                 ops.push(Operation::FormatText {
@@ -4232,6 +4234,7 @@ impl WasmDocument {
                     _ => VerticalAlignment::Baseline,
                 }),
                 font: run.font.clone(),
+                rtl: None,
             };
             let mut props = RunProperties::default();
             delta.apply_to(&mut props);
@@ -12591,6 +12594,316 @@ impl WasmDocument {
             })
     }
 
+    /// Sets paragraph reading direction in one undoable selection transaction.
+    /// Complexity: O(document + selected paragraphs), through the shared property index.
+    #[wasm_bindgen(js_name = setParagraphDirection)]
+    pub fn set_paragraph_direction(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        rtl: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(sn, so, en, eo, |p| p.bidi = Some(rtl))
+    }
+
+    /// Sets direct RTL run formatting over a text selection. Complexity: O(selected text).
+    #[wasm_bindgen(js_name = setTextDirection)]
+    pub fn set_text_direction(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        rtl: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_run_format(
+            sn,
+            so,
+            en,
+            eo,
+            FormatDelta {
+                rtl: Some(rtl),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Reflects effective selected run direction: 0 LTR, 1 RTL, 2 mixed.
+    /// Complexity: O(document + selected text), with one paragraph index.
+    #[wasm_bindgen(js_name = textDirectionState)]
+    pub fn text_direction_state(&self, sn: &str, so: u32, en: &str, eo: u32) -> u8 {
+        let Ok((start, end)) = self.order_endpoints(sn, so, en, eo) else {
+            return 0;
+        };
+        if start == end {
+            return u8::from(
+                effective_caret_run_properties(&self.document, start.node, start.offset)
+                    .is_some_and(|properties| properties.rtl.unwrap_or(false)),
+            );
+        }
+        let index = ParagraphIndex::build(&self.document);
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut values = Vec::new();
+        for (id, s, e) in self.selection_subranges(start, end) {
+            let Some(p) = index.paragraph(id) else {
+                continue;
+            };
+            let style = cascade.paragraph_style(&p.properties);
+            values.extend(
+                casual_doc_edit::run_properties_in_paragraph_range(p, s, e)
+                    .into_iter()
+                    .map(|r| cascade.resolve_run(style, r).rtl.unwrap_or(false)),
+            );
+        }
+        uniform_slice(&values).map_or(2, u8::from)
+    }
+
+    /// Sets widow/orphan control without changing other paragraph properties.
+    /// Complexity: O(document + selected paragraphs).
+    #[wasm_bindgen(js_name = setParagraphWidowControl)]
+    pub fn set_paragraph_widow_control(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(sn, so, en, eo, |p| p.widow_control = Some(on))
+    }
+
+    /// Sets spacing suppression between same-style paragraphs.
+    /// Complexity: O(document + selected paragraphs).
+    #[wasm_bindgen(js_name = setParagraphContextualSpacing)]
+    pub fn set_paragraph_contextual_spacing(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(sn, so, en, eo, |p| p.contextual_spacing = Some(on))
+    }
+
+    /// Sets outline level independently (0..8 headings; 9 body text).
+    /// Complexity: O(document + selected paragraphs).
+    #[wasm_bindgen(js_name = setParagraphOutlineLevel)]
+    pub fn set_paragraph_outline_level(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        level: u8,
+    ) -> Result<EditResult, JsValue> {
+        if level > 9 {
+            return Err(to_js("outline level must be 0..9".into()));
+        }
+        self.apply_paragraph_props(sn, so, en, eo, |p| p.outline_level = Some(level))
+    }
+
+    /// Reflects effective paragraph settings; flag states are 0 off, 1 on, 2 mixed.
+    /// Complexity: O(document + selected paragraphs), using one property index.
+    #[wasm_bindgen(js_name = selectionParagraphAdvanced)]
+    pub fn selection_paragraph_advanced(&self, sn: &str, so: u32, en: &str, eo: u32) -> String {
+        let Ok((start, end)) = self.order_endpoints(sn, so, en, eo) else {
+            return "{}".into();
+        };
+        let cascade = StyleCascade::new(self.document.definitions());
+        let properties: Vec<_> = self
+            .selected_properties(start, end)
+            .into_iter()
+            .map(|(_, p)| cascade.resolve_paragraph(&p))
+            .collect();
+        let state = |f: fn(&ParagraphProperties) -> bool| {
+            let values: Vec<_> = properties.iter().map(f).collect();
+            match uniform_slice(&values) {
+                Some(value) => u8::from(value),
+                None => 2,
+            }
+        };
+        let levels: Vec<_> = properties
+            .iter()
+            .map(|p| p.outline_level.unwrap_or(9))
+            .collect();
+        let outline = uniform_slice(&levels);
+        let mixed = outline.is_none();
+        serde_json::json!({"rtlState": state(|p| p.bidi.unwrap_or(false)), "widowState": state(|p| p.widow_control.unwrap_or(true)), "contextualState": state(|p| p.contextual_spacing.unwrap_or(false)), "outlineLevel": outline.unwrap_or(9), "outlineMixed": mixed}).to_string()
+    }
+
+    /// Sets widow control, same-style spacing and outline level (9 means body text).
+    /// Complexity: O(document + selected paragraphs).
+    #[wasm_bindgen(js_name = setParagraphPagination)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_paragraph_pagination(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        widow: bool,
+        contextual: bool,
+        outline: u8,
+    ) -> Result<EditResult, JsValue> {
+        if outline > 9 {
+            return Err(to_js("outline level must be 0..9".into()));
+        }
+        self.apply_paragraph_props(sn, so, en, eo, |p| {
+            p.widow_control = Some(widow);
+            p.contextual_spacing = Some(contextual);
+            p.outline_level = Some(outline);
+        })
+    }
+
+    /// Returns effective paragraph advanced settings as JSON. Complexity: O(document).
+    #[wasm_bindgen(js_name = paragraphAdvanced)]
+    pub fn paragraph_advanced(&self, node: &str) -> String {
+        let p = NodeId::from_str(node)
+            .ok()
+            .and_then(|id| paragraph_properties(&self.document, id))
+            .unwrap_or_default();
+        let p = StyleCascade::new(self.document.definitions()).resolve_paragraph(&p);
+        serde_json::json!({"rtl": p.bidi.unwrap_or(false), "widowControl": p.widow_control.unwrap_or(true), "contextualSpacing": p.contextual_spacing.unwrap_or(false), "outlineLevel": p.outline_level.unwrap_or(9)}).to_string()
+    }
+
+    /// Sets border edges explicitly, including between-paragraph rules and padding.
+    /// Complexity: O(document + selected paragraphs).
+    #[wasm_bindgen(js_name = setParagraphBorderAdvanced)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_paragraph_border_advanced(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        edges: &str,
+        style: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        size: u32,
+        padding: u32,
+    ) -> Result<EditResult, JsValue> {
+        if !matches!(
+            edges,
+            "none" | "box" | "top" | "bottom" | "left" | "right" | "between"
+        ) || !(2..=96).contains(&size)
+            || padding > 31
+        {
+            return Err(to_js("invalid paragraph border settings".into()));
+        }
+        let style = paragraph_border_style_token(style).map_err(to_js)?;
+        let edge = BorderEdge {
+            style: style.to_owned(),
+            size_eighth_points: Some(size),
+            color: Some(RgbColor { r, g, b }),
+            space_points: Some(padding),
+            theme_color: None,
+        };
+        self.apply_paragraph_props(sn, so, en, eo, |p| apply_advanced_border(p, edges, &edge))
+    }
+
+    /// Returns all effective border properties as JSON. Complexity: O(document).
+    #[wasm_bindgen(js_name = paragraphBorders)]
+    pub fn paragraph_borders(&self, node: &str) -> String {
+        let p = NodeId::from_str(node)
+            .ok()
+            .and_then(|id| paragraph_properties(&self.document, id))
+            .unwrap_or_default();
+        let p = StyleCascade::new(self.document.definitions()).resolve_paragraph(&p);
+        serde_json::to_string(&p.borders).unwrap_or_else(|_| "{}".into())
+    }
+
+    /// Clears direct paragraph presentation, preserving style, list, section and review structure.
+    /// Complexity: O(document + selected paragraphs).
+    #[wasm_bindgen(js_name = clearParagraphFormatting)]
+    pub fn clear_paragraph_formatting(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(sn, so, en, eo, reset_paragraph_presentation)
+    }
+
+    /// Sets a tab stop and its leader (0 none, 1 dot, 2 hyphen, 3 underscore,
+    /// 4 middle dot, 5 heavy). Complexity: O(document + selected tab stops).
+    #[wasm_bindgen(js_name = setTabStopWithLeader)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_tab_stop_with_leader(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        position: i32,
+        alignment: u8,
+        leader: u8,
+    ) -> Result<EditResult, JsValue> {
+        if alignment > 4 || leader > 5 || !(0..=31680).contains(&position) {
+            return Err(to_js("invalid tab alignment or leader".into()));
+        }
+        let leader = tab_leader_from_code(leader);
+        self.apply_paragraph_props(sn, so, en, eo, |p| {
+            p.tabs.retain(|t| t.position_twips != position);
+            p.tabs.push(TabStop {
+                position_twips: position,
+                alignment: tab_alignment_from_code(alignment),
+                leader,
+            });
+            p.tabs.sort_by_key(|t| t.position_twips);
+        })
+    }
+
+    /// Returns position/alignment/leader triples. Complexity: O(document + tabs).
+    #[wasm_bindgen(js_name = paragraphTabsWithLeaders)]
+    pub fn paragraph_tabs_with_leaders(&self, node: &str) -> Vec<i32> {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|id| paragraph_properties(&self.document, id))
+            .map(|p| {
+                p.tabs
+                    .iter()
+                    .flat_map(|t| {
+                        [
+                            t.position_twips,
+                            tab_alignment_code(t.alignment),
+                            tab_leader_code(t.leader),
+                        ]
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Sets the document-wide default tab interval in one undoable transaction.
+    /// Complexity: O(document) for relayout.
+    #[wasm_bindgen(js_name = setDefaultTabStop)]
+    pub fn set_default_tab_stop(
+        &mut self,
+        node: &str,
+        offset: u32,
+        position_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        let caret = Pos::new(node_id(node)?, offset);
+        self.apply_action_caret(vec![Operation::SetDefaultTabStop { position_twips }], caret)
+            .map_err(to_js)
+    }
+
+    /// Document default tab interval in twips. Complexity: O(1).
+    #[wasm_bindgen(js_name = defaultTabStop)]
+    pub fn default_tab_stop(&self) -> i32 {
+        self.document
+            .definitions()
+            .settings
+            .default_tab_stop
+            .unwrap_or(720)
+    }
+
     /// Applies a paragraph border `edges` preset over the selection: `"none"` clears
     /// all four edges; `"box"` sets all four; `"top"`/`"bottom"`/`"left"`/`"right"`
     /// toggle that single edge (start = left, end = right). Set edges use a single
@@ -15083,6 +15396,7 @@ impl WasmDocument {
                 _ => VerticalAlignment::Baseline,
             }),
             font,
+            rtl: None,
         };
         let start = Pos::new(node, offset);
         let caret = Pos::new(node, end);
@@ -23828,6 +24142,11 @@ fn formatting_delta_json(current: &RunProperties, prior: &RunProperties) -> serd
         serde_json::json!(current.bold),
     );
     push(
+        "rtl",
+        serde_json::json!(prior.rtl),
+        serde_json::json!(current.rtl),
+    );
+    push(
         "italic",
         serde_json::json!(prior.italic),
         serde_json::json!(current.italic),
@@ -24265,6 +24584,91 @@ fn alignment_name(alignment: Alignment) -> &'static str {
         Alignment::Center => "center",
         Alignment::End => "end",
         Alignment::Justify => "justify",
+    }
+}
+
+/// Author only border patterns the renderer distinguishes; explicit clears cancel inheritance.
+/// Imported unsupported styles remain untouched until an explicit supported replacement.
+/// Complexity: O(1).
+fn paragraph_border_style_token(style: &str) -> Result<&'static str, String> {
+    match style {
+        "nil" | "none" => Ok("none"),
+        _ => border_style_token(style).ok_or_else(|| {
+            casual_doc_edit::refusal::marked(
+                "paragraph.border-style-unknown",
+                &format!("{style} is not a supported paragraph border line style."),
+            )
+        }),
+    }
+}
+
+fn apply_advanced_border(p: &mut ParagraphProperties, edges: &str, edge: &BorderEdge) {
+    let value = Some(edge.clone());
+    match edges {
+        "none" => {
+            // Explicit none cancels a border inherited from a named style.
+            let off = Some(BorderEdge {
+                style: "none".into(),
+                size_eighth_points: None,
+                color: None,
+                space_points: None,
+                theme_color: None,
+            });
+            p.borders.top = off.clone();
+            p.borders.bottom = off.clone();
+            p.borders.start = off.clone();
+            p.borders.end = off.clone();
+            p.borders.between = off.clone();
+            p.borders.bar = off;
+        }
+        "box" => {
+            p.borders.top = value.clone();
+            p.borders.bottom = value.clone();
+            p.borders.start = value.clone();
+            p.borders.end = value;
+        }
+        "top" => p.borders.top = value,
+        "bottom" => p.borders.bottom = value,
+        "left" => p.borders.start = value,
+        "right" => p.borders.end = value,
+        "between" => p.borders.between = value,
+        _ => {}
+    }
+}
+
+fn reset_paragraph_presentation(p: &mut ParagraphProperties) {
+    *p = ParagraphProperties {
+        style_ref: p.style_ref,
+        numbering: p.numbering,
+        numbering_none: p.numbering_none,
+        section_break: p.section_break,
+        mark_revision: p.mark_revision.clone(),
+        prop_change: p.prop_change.clone(),
+        ..Default::default()
+    };
+}
+
+fn tab_leader_from_code(code: u8) -> Option<casual_doc_model::v1::TabLeader> {
+    use casual_doc_model::v1::TabLeader;
+    match code {
+        1 => Some(TabLeader::Dot),
+        2 => Some(TabLeader::Hyphen),
+        3 => Some(TabLeader::Underscore),
+        4 => Some(TabLeader::MiddleDot),
+        5 => Some(TabLeader::Heavy),
+        _ => None,
+    }
+}
+
+fn tab_leader_code(leader: Option<casual_doc_model::v1::TabLeader>) -> i32 {
+    use casual_doc_model::v1::TabLeader;
+    match leader {
+        None => 0,
+        Some(TabLeader::Dot) => 1,
+        Some(TabLeader::Hyphen) => 2,
+        Some(TabLeader::Underscore) => 3,
+        Some(TabLeader::MiddleDot) => 4,
+        Some(TabLeader::Heavy) => 5,
     }
 }
 
@@ -27689,6 +28093,7 @@ fn review_format_delta(
             _ => VerticalAlignment::Baseline,
         }),
         font,
+        rtl: None,
     }
 }
 
@@ -28966,7 +29371,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // editing is a policy change, and scrolling the reader away from what they were
         // looking at because they ticked a protection box would be a defect. Routed through
         // `apply_action_caret` with the caller's own caret like the others (ADR-059).
-        Operation::SetDocumentProtection { .. } => Pos::new(doc_id, 0),
+        Operation::SetDocumentProtection { .. } | Operation::SetDefaultTabStop { .. } | Operation::RestoreDefaultTabStop { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
         // Section-scoped, and the caret does not move: turning line numbers on
@@ -49893,5 +50298,292 @@ mod tests {
             d.formatting_marks().contains("\"color\":null"),
             "a refused override must not leave a colour behind"
         );
+    }
+}
+
+#[cfg(test)]
+mod batch5_paragraph_tests {
+    use super::*;
+
+    #[test]
+    fn advanced_paragraph_mutations_undo_and_roundtrip() {
+        let mut d = open_document(include_bytes!(
+            "../../../fixtures/corpus/real-producer-rich.docx"
+        ))
+        .unwrap();
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (nid, text) = nodes.iter().find(|(_, t)| t.len() >= 3).unwrap();
+        let node = nid.to_string();
+        let before = paragraph_properties(&d.document, *nid).unwrap();
+        d.set_paragraph_direction(&node, 0, &node, 0, true).unwrap();
+        d.set_paragraph_widow_control(&node, 0, &node, 0, false)
+            .unwrap();
+        d.set_paragraph_contextual_spacing(&node, 0, &node, 0, true)
+            .unwrap();
+        d.set_paragraph_outline_level(&node, 0, &node, 0, 2)
+            .unwrap();
+        d.set_tab_stop_with_leader(&node, 0, &node, 0, 1440, 3, 2)
+            .unwrap();
+        d.set_paragraph_border_advanced(&node, 0, &node, 0, "between", "double", 12, 34, 56, 24, 7)
+            .unwrap();
+        d.set_text_direction(&node, 0, &node, 3, true).unwrap();
+        let changed = paragraph_properties(&d.document, *nid).unwrap();
+        assert_eq!(changed.bidi, Some(true));
+        assert_eq!(changed.widow_control, Some(false));
+        assert_eq!(changed.contextual_spacing, Some(true));
+        assert_eq!(changed.outline_level, Some(2));
+        assert_eq!(changed.tabs[0].leader, tab_leader_from_code(2));
+        assert_eq!(
+            changed.borders.between.as_ref().unwrap().space_points,
+            Some(7)
+        );
+        let exported = d.export_docx().unwrap();
+        let reopened = open_document(&exported).unwrap();
+        let saved = paragraph_properties(&reopened.document, *nid)
+            .or_else(|| {
+                let mut saved_nodes = Vec::new();
+                collect_block_text(reopened.document.body(), &mut saved_nodes);
+                saved_nodes
+                    .iter()
+                    .find(|(_, t)| t == text)
+                    .and_then(|(id, _)| paragraph_properties(&reopened.document, *id))
+            })
+            .unwrap();
+        assert_eq!(saved.bidi, changed.bidi);
+        assert_eq!(saved.borders.between, changed.borders.between);
+        assert_eq!(saved.tabs, changed.tabs);
+        d.clear_paragraph_formatting(&node, 0, &node, 0).unwrap();
+        let cleared = paragraph_properties(&d.document, *nid).unwrap();
+        assert_eq!(cleared.style_ref, before.style_ref);
+        assert_eq!(cleared.numbering, before.numbering);
+        assert_eq!(cleared.section_break, before.section_break);
+        assert!(cleared.bidi.is_none());
+        assert!(cleared.tabs.is_empty());
+        d.undo().unwrap();
+        assert_eq!(paragraph_properties(&d.document, *nid).unwrap(), changed);
+        for _ in 0..7 {
+            d.undo().unwrap();
+        }
+        assert_eq!(paragraph_properties(&d.document, *nid).unwrap(), before);
+    }
+
+    #[test]
+    fn collapsed_caret_direction_reflects_effective_run() {
+        let mut d = open_document(include_bytes!(
+            "../../../fixtures/corpus/real-producer-rich.docx"
+        ))
+        .unwrap();
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (id, text) = nodes
+            .iter()
+            .find(|(_, t)| t.is_ascii() && t.len() >= 3)
+            .unwrap();
+        let node = id.to_string();
+        let length = text.len() as u32;
+        d.set_text_direction(&node, 0, &node, length, false)
+            .unwrap();
+        d.set_text_direction(&node, 0, &node, 1, true).unwrap();
+        assert_eq!(d.text_direction_state(&node, 0, &node, 0), 1);
+        assert_eq!(d.text_direction_state(&node, 1, &node, 1), 1);
+        assert_eq!(d.text_direction_state(&node, length, &node, length), 0);
+        assert_eq!(d.text_direction_state(&node, 0, &node, length), 2);
+    }
+
+    #[test]
+    fn tracked_run_direction_has_review_delta_and_survives_docx_roundtrip() {
+        let mut d = open_document(include_bytes!(
+            "../../../fixtures/corpus/real-producer-rich.docx"
+        ))
+        .unwrap();
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (id, text) = nodes.iter().find(|(_, t)| !t.is_empty()).unwrap();
+        let id = *id;
+        let end = text.chars().next().unwrap().len_utf8() as u32;
+        let group = RevisionGroup {
+            id: d.edit_ids.next_id().unwrap(),
+            kind: RevisionGroupKind::Formatting,
+        };
+        let mut body = review_paragraph_body(&d.document, id).unwrap();
+        assert!(
+            apply_review_format_change(
+                &NoteAnchorLengths::of(&d.document),
+                &mut body,
+                id,
+                0,
+                end,
+                FormatDelta {
+                    rtl: Some(true),
+                    ..Default::default()
+                },
+                Some("Reviewer".into()),
+                None,
+                group,
+                &mut d.revision_ids,
+                &mut d.edit_ids,
+            )
+            .unwrap()
+        );
+        let operation = update_review_operation(&d.document, &body, None).unwrap();
+        d.apply_action_caret_as(vec![operation], Pos::new(id, 0), HistoryKind::Review)
+            .unwrap();
+        for summary in [
+            d.review_summary(),
+            open_document(&d.export_docx().unwrap())
+                .unwrap()
+                .review_summary(),
+        ] {
+            let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
+            let item = summary["revisions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["kind"] == "formatting")
+                .unwrap();
+            let delta = item["formattingDelta"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|change| change["property"] == "rtl")
+                .expect("run direction is a named review change");
+            assert_eq!(delta["after"], true);
+            assert_ne!(delta["before"], delta["after"]);
+        }
+        let prior = RunProperties {
+            rtl: Some(true),
+            ..Default::default()
+        };
+        let current = RunProperties {
+            rtl: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            formatting_delta_json(&current, &prior),
+            serde_json::json!([{"property":"rtl","before":true,"after":false}])
+        );
+        assert_eq!(
+            formatting_delta_json(&current, &current),
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn paragraph_border_authoring_only_accepts_distinct_rendered_patterns() {
+        for style in [
+            "single",
+            "double",
+            "dotted",
+            "dashed",
+            "dotDash",
+            "dotDotDash",
+        ] {
+            assert_eq!(paragraph_border_style_token(style).unwrap(), style);
+        }
+        assert_eq!(
+            paragraph_border_style_token("dashSmallGap").unwrap(),
+            "dashed"
+        );
+        assert_eq!(
+            paragraph_border_style_token("dashDotStroked").unwrap(),
+            "dotDash"
+        );
+        for style in ["nil", "none"] {
+            assert_eq!(paragraph_border_style_token(style).unwrap(), "none");
+        }
+        for style in [
+            "triple",
+            "wave",
+            "doubleWave",
+            "thick",
+            "thickThinLargeGap",
+            "unrecognized",
+        ] {
+            assert!(
+                paragraph_border_style_token(style).is_err(),
+                "unsupported {style} must not silently paint as a single line"
+            );
+        }
+    }
+
+    #[test]
+    fn advanced_borders_replace_style_keep_between_and_clear_every_edge() {
+        let mut p = ParagraphProperties::default();
+        let edge = BorderEdge {
+            style: "double".into(),
+            size_eighth_points: Some(24),
+            color: Some(RgbColor {
+                r: 12,
+                g: 34,
+                b: 56,
+            }),
+            space_points: Some(7),
+            theme_color: None,
+        };
+        apply_advanced_border(&mut p, "box", &edge);
+        apply_advanced_border(&mut p, "between", &edge);
+        assert_eq!(p.borders.between.as_ref().unwrap().style, "double");
+        assert_eq!(p.borders.top.as_ref().unwrap().space_points, Some(7));
+        let changed = BorderEdge {
+            style: "dotted".into(),
+            ..edge.clone()
+        };
+        apply_advanced_border(&mut p, "top", &changed);
+        assert_eq!(p.borders.top.as_ref().unwrap().style, "dotted");
+        assert_eq!(
+            p.borders.bottom.as_ref().unwrap().size_eighth_points,
+            Some(24)
+        );
+        apply_advanced_border(&mut p, "none", &edge);
+        assert_eq!(p.borders.top.as_ref().unwrap().style, "none");
+        assert_eq!(p.borders.between.as_ref().unwrap().style, "none");
+    }
+
+    #[test]
+    fn clear_presentation_keeps_structural_properties() {
+        let style = StyleId::new(NodeId::from_parts(77, 1).unwrap());
+        let section = SectionId::new(NodeId::from_parts(77, 2).unwrap());
+        let numbering = casual_doc_model::v1::NumberingRef {
+            instance: casual_doc_model::v1::NumberingInstanceId::new(
+                NodeId::from_parts(77, 3).unwrap(),
+            ),
+            level: 2,
+        };
+        let mut p = ParagraphProperties {
+            style_ref: Some(style),
+            section_break: Some(section),
+            numbering: Some(numbering),
+            alignment: Some(Alignment::Center),
+            bidi: Some(true),
+            widow_control: Some(false),
+            contextual_spacing: Some(true),
+            outline_level: Some(2),
+            numbering_none: true,
+            tabs: vec![TabStop {
+                position_twips: 1440,
+                alignment: TabAlignment::Center,
+                leader: tab_leader_from_code(1),
+            }],
+            ..Default::default()
+        };
+        reset_paragraph_presentation(&mut p);
+        assert_eq!(p.style_ref, Some(style));
+        assert_eq!(p.section_break, Some(section));
+        assert_eq!(p.numbering, Some(numbering));
+        assert!(p.numbering_none);
+        assert!(p.alignment.is_none());
+        assert!(p.bidi.is_none());
+        assert!(p.widow_control.is_none());
+        assert!(p.contextual_spacing.is_none());
+        assert!(p.outline_level.is_none());
+        assert!(p.tabs.is_empty());
+    }
+
+    #[test]
+    fn tab_leaders_are_distinct_and_roundtrip() {
+        for code in 0..=5 {
+            assert_eq!(tab_leader_code(tab_leader_from_code(code)), i32::from(code));
+        }
     }
 }

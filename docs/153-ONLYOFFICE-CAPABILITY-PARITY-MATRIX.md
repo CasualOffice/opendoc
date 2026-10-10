@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 189 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 191 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 179 | both products ship it, and both anchors resolve |
+| Parity | 189 | both products ship it, and both anchors resolve |
 | Ours, ungated | 26 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 65 | we ship part of it; the row says what is missing |
-| Gap | 99 | their standalone browser session ships it and we do not |
+| Partial | 63 | we ship part of it; the row says what is missing |
+| Gap | 91 | their standalone browser session ships it and we do not |
 | Theirs, gated | 16 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -165,7 +165,6 @@ least two surfaces (`SKILL` §10).
 | 2 | Change chart type and style | `object.chart-type-style` | `btnChartType` | cmbChartStyle is the style half. |
 | 2 | Footnote and endnote settings | `page.note.settings` | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
 | 2 | Page size presets (A4, Letter, Legal) | `page.size.presets` | `DE.Views.PageSizeDialog.textPreset` | Their size dialog leads with a named paper list; ours has only the two number fields, so a user has to know A4 in inches. |
-| 2 | Right-to-left paragraph direction | `para.direction.rtl` | `DE.Views.ParagraphSettingsAdvanced.textDirRtl` | We import, render and round-trip w:bidi and run the Unicode bidi algorithm per line, but there is no way to set a paragraph's base direction from the editor. |
 | 2 | Multilevel list | `para.list.multilevel` | `btnMultilevels` | Multi-level numbering imports, renders and round-trips correctly on our side, but there is no gallery to start a multilevel list from scratch. Their button offers a library of chapter, heading and symbol schemes. |
 | 2 | Display mode: original (document as if every change were rejected) | `review.display-mode-original` | `Common.Views.ReviewChanges.txtOriginal` | There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline. |
 | 2 | Set the proofing language for the selection | `review.proofing-language-selection` | `btnLanguage` | We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome. |
@@ -196,13 +195,9 @@ least two surfaces (`SKILL` §10).
 | 3 | Remove table of contents | `page.toc.remove` | `DE.Views.Links.textContentsRemove` | The field can be inserted and updated but not deleted as a unit. |
 | 3 | Table of contents settings (page numbers, alignment, links) | `page.toc.settings` | `DE.Views.TableOfContentsSettings.strShowPages` | Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us. |
 | 3 | Table of contents style gallery | `page.toc.styles` | `DE.Views.TableOfContentsSettings.textStyles` | Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape. |
-| 3 | Don't add space between paragraphs of the same style | `para.contextual.spacing` | `DE.Views.ParagraphSettingsAdvanced.strSomeParagraphSpace` | w:contextualSpacing is modelled, rendered and reported in tracked-change labels on our side, but casual-doc-wasm exposes no setter, so it cannot be authored. |
 | 3 | Custom bullet from a symbol | `para.list.customBulletSymbol` | `DE.Views.ListSettingsDialog.txtNewBullet` | We ship a glyph picker for inserting symbols into text but it cannot be used to define a list marker; our bullet gallery is a fixed six. |
 | 3 | Set numbering value | `para.list.setNumberingValue` | `DE.Views.DocumentHolder.textNumberingValue` | Our restartList always restarts at 1; there is no way to start a list at an arbitrary number. |
 | 3 | List settings (per-level bullet, number format, alignment) | `para.list.settingsDialog` | `DE.Views.ListSettingsDialog.txtTitle` | Their dialog edits each level's marker type, font, size, colour, start value, alignment and follow character. We have no equivalent; our only list customisation is picking a marker from the two galleries. |
-| 3 | Paragraph outline level | `para.outlineLevel` | `cmbOutlinelevel` | Outline level is modelled and drives our outline panel, but it can only be set indirectly by applying a heading style; there is no direct level chooser. |
-| 3 | Tab leader (dots, dashes, underline) | `para.tabs.leader` | `cmbLeader` | TabLeader is modelled and the layout engine draws leaders on import, but `setTabStop` takes no leader argument, so a leader can only be preserved, never chosen. |
-| 3 | Widow and orphan control | `para.widowOrphan` | `DE.Views.ParagraphSettingsAdvanced.strOrphan` | Our layout engine honours w:`widowControl` and the tracked-change labels name it, but no wasm setter exists so the pagination section of our panel stops at the three keep flags. |
 | 3 | Sharing and access rights | `review.access-rights` | `btnShare` | Theirs is a callback into the integration (sharingSettingsUrl, canRequestSharingSettings), not a capability of the editor. Ours would belong to the embedding host too, but nothing declares it. |
 | 3 | Replace text as you type (AutoCorrect table) | `review.autocorrect-replace-as-you-type` | `Common.Views.AutoCorrectDialog.textReplaceText` | — |
 | 3 | Display mode: simple markup (change bars only) | `review.display-mode-simple-markup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
@@ -235,11 +230,8 @@ least two surfaces (`SKILL` §10).
 | 4 | Convert footnotes to endnotes | `page.note.convert` | `DE.Views.Links.mniConvertNote` | — |
 | 4 | Insert text from file | `page.textFromFile` | `btnTextFromFile` | We can open a document but not merge one into the caret's position. |
 | 4 | Add paragraph to table of contents | `page.toc.addText` | `DE.Views.Links.capBtnAddText` | Their Add text marks the current paragraph at a chosen contents level without restyling it as a heading. |
-| 4 | Border between paragraphs | `para.borders.between` | `DE.Views.ParagraphSettingsAdvanced.tipInner` | Their border picker has an inner-border button; our preset set covers only the four outer edges. |
-| 4 | Distance from text for paragraph borders | `para.borders.padding` | `DE.Views.ParagraphSettingsAdvanced.strMargins` | BorderEdge carries space_points in our model but the editor never writes it. |
 | 4 | Adjust list indents | `para.list.adjustIndents` | `DE.Views.ListIndentsDialog.textTitle` | Their separate dialog sets the marker position, the text indent and whether a tab, a space or nothing follows the marker. |
 | 4 | Picture bullet | `para.list.imageBullet` | `cmbBulletFormat` | Their bullet-type combo has image and new-image entries. On our side w:lvlPicBulletId and w:numPicBullet are not modelled at all, so picture bullets are dropped on import as well as unauthorable. |
-| 4 | Default tab stop interval | `para.tabs.default` | `DE.Views.ParagraphSettingsAdvanced.textDefault` | w:defaultTabStop is honoured by our layout engine but casual-doc-wasm exposes neither a reader nor a writer for it. |
 | 4 | Protect a form so only fields can be filled | `review.protect-form` | `btnProtectForm` | We render and fill form controls (docs/120) but cannot lock the rest of the document around them. |
 | 4 | Rebind a keyboard shortcut | `shell.customize-shortcuts` | `Common.Views.ShortcutsEditDialog.txtNewShortcut` | Theirs lets a user assign and restore chords per action. Ours has one keymap table (keymap.mjs) and no editor for it. |
 | 4 | Export as EPUB | `shell.export-epub` | `asc_docs_api.asc_DownloadAs` | Their EPUB row is FileMenuPanels.js:67. FB2 (FileMenuPanels.js:66) is the same gap and the same ranking. |
@@ -284,7 +276,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Clear formatting | Parity | `format.clear` | `btnClearStyle` | — |
 | Copy | Parity | `edit.copy` | `btnCopy` | — |
 | Cut | Parity | `edit.cut` | `btnCut` | — |
-| Right-to-left text direction | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `pub rtl` — missing: no command switches a paragraph or run to RTL — `w:bidi` and `w:rtl` are imported and laid out, never authored | `DE.Views.Toolbar.tipTextDir` | They have LTR/RTL buttons on the toolbar and a Direction row in Advanced. Arabic and Hebrew authoring is the one case where this is not optional. |
+| Right-to-left text direction | Parity | `format.direction.rtl` | `DE.Views.Toolbar.tipTextDir` | The paragraph panel and command palette author explicit LTR/RTL on selected runs, with mixed-state reflection, undo and DOCX round trip. The control refuses Suggesting because tracked run-direction formatting is not yet supported. |
 | Double strikethrough | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `double_strike` — missing: no command or control applies it — an imported `w:dstrike` run is kept and rendered but cannot be set or cleared | `DE.Views.ParagraphSettingsAdvanced.strDoubleStrike` | Their Paragraph ▸ Advanced ▸ Font tab has the checkbox beside Strikethrough. Ours is a read-only property today. |
 | Drop cap | Partial | `insert.dropCap` — missing: mode (none/dropped/in-margin) and a line count only — no drop-cap font, distance from text, frame border, margins or exact height | `btnDropCap` | Their DropcapSettingsAdvanced dialog carries font, height, distance, borders and margins on the frame. |
 | Text effects (outline, shadow, emboss, engrave) | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `pub emboss` — missing: no command applies outline, shadow, emboss or imprint | `ApiTextPr.SetOutLine` | Their engine exposes outline and text fill on a run; their document-editor chrome does not offer them either. Both sides are engine-only. |
@@ -332,13 +324,13 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Justify | Parity | `paragraph.align.justify` | `btnAlignJust` | — |
 | Align left | Parity | `paragraph.align.start` | `btnAlignLeft` | — |
 | Align right | Parity | `paragraph.align.end` | `btnAlignRight` | — |
-| Border between paragraphs | Gap | none (`paragraph.borders.between` undeclared) | `DE.Views.ParagraphSettingsAdvanced.tipInner` | Their border picker has an inner-border button; our preset set covers only the four outer edges. |
+| Border between paragraphs | Partial | `webapp/editor.html` · `paraBorderBetween` — missing: adjacent-paragraph border grouping and between-edge painting in the page renderer | `DE.Views.ParagraphSettingsAdvanced.tipInner` | The paragraph panel authors and saves the between edge for Word. A visible notice states that it is not drawn on this page; paragraph adjacency, grouping and page-fragment rendering remain open. |
 | Paragraph borders (edge presets) | Parity | `webapp/editor.html` · `border-presets` | `btnBorders` | We offer none / box / top / bottom / left / right plus a colour picker. |
-| Paragraph border line style and width | Partial | `webapp/editor.html` · `border-presets` — missing: no line-style or width chooser — set_paragraph_border always writes a single line and the UI passes a fixed weight | `cmbBorderSize` | Their advanced dialog pairs cmbBorderSize with cmbBorderType; ours has only a colour input beside the edge presets. |
-| Distance from text for paragraph borders | Gap | none (`paragraph.borders.padding` undeclared) | `DE.Views.ParagraphSettingsAdvanced.strMargins` | BorderEdge carries space_points in our model but the editor never writes it. |
-| Clear paragraph formatting | Partial | `format.clear` — missing: clears direct character formatting only — Operation::ClearFormatting leaves alignment, indents, spacing, borders and shading in place | `btnClearStyle` | Their btnClearStyle calls `api.ClearFormating()`, which reaches CDocument.ClearParagraphFormatting and resets paragraph properties as well as run properties. |
-| Don't add space between paragraphs of the same style | Gap | none (`paragraph.contextualSpacing` undeclared) | `DE.Views.ParagraphSettingsAdvanced.strSomeParagraphSpace` | w:contextualSpacing is modelled, rendered and reported in tracked-change labels on our side, but casual-doc-wasm exposes no setter, so it cannot be authored. |
-| Right-to-left paragraph direction | Gap | none (`paragraph.direction.rtl`, `paragraph.direction.ltr` undeclared) | `DE.Views.ParagraphSettingsAdvanced.textDirRtl` | We import, render and round-trip w:bidi and run the Unicode bidi algorithm per line, but there is no way to set a paragraph's base direction from the editor. |
+| Paragraph border line style and width | Parity | `webapp/editor.html` · `paraBorderStyle` | `cmbBorderSize` | The paragraph panel offers six painted line styles and editable width. Imported unsupported styles remain preserved, explicitly identified, and cannot be silently replaced by changing width. |
+| Distance from text for paragraph borders | Parity | `webapp/editor.html` · `paraBorderPadding` | `DE.Views.ParagraphSettingsAdvanced.strMargins` | The paragraph panel authors distance from text in points through the advanced border setter. |
+| Clear paragraph formatting | Parity | `webapp/editor.html` · `paraClearAll` | `btnClearStyle` | A dedicated paragraph-panel action clears direct paragraph formatting while preserving the paragraph style, numbering, section break and review metadata. |
+| Don't add space between paragraphs of the same style | Parity | `webapp/editor.html` · `paraContextual` | `DE.Views.ParagraphSettingsAdvanced.strSomeParagraphSpace` | The paragraph properties panel authors contextual spacing through the tracked paragraph formatting path. |
+| Right-to-left paragraph direction | Parity | `webapp/editor.html` · `paraDirection` | `DE.Views.ParagraphSettingsAdvanced.textDirRtl` | The paragraph properties panel authors LTR/RTL through the transaction-backed paragraph direction setter, including mixed selections and undo. |
 | Show non-printing characters | Parity | `view.formattingMarks` | `DE.Views.Toolbar.tipShowHiddenChars` | Shipped as a Home split button, a View menu submenu, the palette and the Cmd-8 chord, with five switchable marks. Three of Word's marks are still undrawn - the end-of-cell mark, the section-break rule and the no-break space - because each needs a layout change, not a chrome one. Their mechanism is the same split button; their defect we avoided is painting the marks in a fixed ink, which disappears on a dark page. |
 | Decrease indent | Parity | `paragraph.indent.decrease` | `btnDecLeftOffset` | — |
 | Exact left and right indent | Parity | `webapp/editor.html` · `indentRight` | `DE.Views.ParagraphSettingsAdvanced.strIndentsLeftText` | Ours are numeric fields in the paragraph properties panel, reachable from Home and from the Layout tab's Indent button. |
@@ -363,7 +355,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Restart numbering | Parity | `paragraph.list.restart` | `DE.Views.DocumentHolder.textStartNumberingFrom` | — |
 | Set numbering value | Gap | none (`paragraph.list.startAt` undeclared) | `DE.Views.DocumentHolder.textNumberingValue` | Our restartList always restarts at 1; there is no way to start a list at an arbitrary number. |
 | List settings (per-level bullet, number format, alignment) | Gap | none (`paragraph.list.settings` undeclared) | `DE.Views.ListSettingsDialog.txtTitle` | Their dialog edits each level's marker type, font, size, colour, start value, alignment and follow character. We have no equivalent; our only list customisation is picking a marker from the two galleries. |
-| Paragraph outline level | Gap | none (`paragraph.outlineLevel` undeclared) | `cmbOutlinelevel` | Outline level is modelled and drives our outline panel, but it can only be set indirectly by applying a heading style; there is no direct level chooser. |
+| Paragraph outline level | Parity | `webapp/editor.html` · `paraOutline` | `cmbOutlinelevel` | The paragraph properties panel authors levels 1–9 and body text directly, without replacing the paragraph style. |
 | Page break before | Parity | `webapp/editor.html` · `pgBreakBefore` | `DE.Views.ParagraphSettingsAdvanced.strBreakBefore` | — |
 | Paragraph shading (background fill) | Parity | `webapp/editor.html` · `paraShadeNone` | `btnParagraphColor` | — |
 | Space before and after a paragraph | Parity | `webapp/editor.html` · `paraSpaceBefore` | `DE.Views.ParagraphSettingsAdvanced.strIndentsSpacingBefore` | We also expose one-gesture add/remove space rows as the paragraph.space. command family. |
@@ -377,12 +369,12 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Suppress line numbers for this paragraph | Parity | `webapp/editor.html` · `lineNumberSuppress` | `DE.Views.ParagraphSettingsAdvanced.strSuppressLineNumbers` | Ours lives in the Layout tab's line-numbering menu as Skip this paragraph, theirs in the paragraph advanced dialog. |
 | Bar tab stop | Ours only | `webapp/src/tab_stops_dialog.mjs` · `bar` | none (searched `same grep -rn 'c_oAscTabType' over reference/web-apps/apps — _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128 has no Bar entry, although sdkjs/common/commonDefines.js:5610 defines c_oAscTabType.Bar`) | We are ahead: alignment code 4 reaches TabAlignment::Bar and the layout engine draws the vertical rule. |
 | Decimal tab stop | Ours only | `webapp/src/tab_stops_dialog.mjs` · `decimal` | none (searched `grep -rn 'c_oAscTabType' over reference/web-apps/apps — the only UI use is _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128, which lists Left, Center and Right only; Decimal exists in sdkjs/common/commonDefines.js:5613 but no client control ever selects it`) | We are ahead here: our tab dialog and ruler both offer decimal (alignment code 3) and the layout engine aligns on the decimal separator. Their engine has the enum value but their client never offers it. |
-| Default tab stop interval | Gap | none (`layout.defaultTabStops` undeclared) | `DE.Views.ParagraphSettingsAdvanced.textDefault` | w:defaultTabStop is honoured by our layout engine but casual-doc-wasm exposes neither a reader nor a writer for it. |
+| Default tab stop interval | Parity | `webapp/editor.html` · `tabStopsDefault` | `DE.Views.ParagraphSettingsAdvanced.textDefault` | The tab stops dialog reads and authors the document default interval as one undoable setting; Suggesting refuses an untracked settings change. |
 | Tab stops dialog | Parity | `layout.tabStops` | `DE.Views.ParagraphSettingsAdvanced.strTabs` | Both list the paragraph's stops with a position field and set / remove / remove-all. Ours applies each action immediately as its own undo step rather than batching on OK. |
-| Tab leader (dots, dashes, underline) | Gap | none (`layout.tabStops.leader` undeclared) | `cmbLeader` | TabLeader is modelled and the layout engine draws leaders on import, but `setTabStop` takes no leader argument, so a leader can only be preserved, never chosen. |
+| Tab leader (dots, dashes, underline) | Parity | `webapp/editor.html` · `tabStopsLeader` | `cmbLeader` | The tab stops dialog authors none, dots, hyphens, underline, heavy and middle-dot leaders alongside the stop alignment. |
 | Left, centre and right tab stops | Parity | `webapp/src/tab_stops_dialog.mjs` · `ALIGNMENTS` | `DE.Views.ParagraphSettingsAdvanced.textTabLeft` | — |
 | Place and move tab stops on the ruler | Parity | `webapp/src/ruler.mjs` · `moveTabStop` | `DE.Views.ParagraphSettingsAdvanced.textTabPosition` | Both allow ruler placement; theirs also opens the advanced dialog on a ruler double-click. |
-| Widow and orphan control | Gap | none (`paragraph.widowControl` undeclared) | `DE.Views.ParagraphSettingsAdvanced.strOrphan` | Our layout engine honours w:`widowControl` and the tracked-change labels name it, but no wasm setter exists so the pagination section of our panel stops at the three keep flags. |
+| Widow and orphan control | Parity | `webapp/editor.html` · `paraWidow` | `DE.Views.ParagraphSettingsAdvanced.strOrphan` | The paragraph properties panel authors widow/orphan control through the tracked paragraph formatting path. |
 
 ### Tables (55 rows)
 

@@ -420,6 +420,12 @@ test("no command is reachable from the command palette alone", async ({
     "ribbon",
   );
 
+  // Apply-now properties controls are durable, wired editor surfaces too.
+  claim(
+    await page.locator('.properties-panel [data-command]').evaluateAll((els) => els.map((e) => e.dataset.command)),
+    'properties panel',
+  );
+
   // The File page.
   await page.locator("#tabFile").click();
   claim(

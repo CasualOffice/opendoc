@@ -258,6 +258,7 @@ import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs
 import { createReflowChrome } from "./reflow_chrome.mjs";
 import { createFoldChrome } from "./fold_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
+import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
@@ -3841,9 +3842,12 @@ function exitObjectEditMode() {
   updateObjectContextBar();
 }
 
-/** Clears every page's caret/selection layer. */
+/** Clears caret/selection chrome while retaining previews of held object gestures. */
 function clearOverlays() {
-  for (let i = pageWindow.first; i <= pageWindow.last; i++) pages[i]?.overlay?.replaceChildren();
+  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
+    const overlay = pages[i]?.overlay;
+    overlay?.replaceChildren(...overlay.querySelectorAll(":scope > .object-resize-preview, :scope > .object-rotate-preview"));
+  }
 }
 
 /** Reads the current comment list once (JSON round-trip), or `[]` on
@@ -7638,6 +7642,8 @@ const tabStopsDialog = createTabStopsDialog({
   formatInches: twipsToDialogInches,
 });
 
+const paragraphAdvanced = createParagraphAdvanced({ getDoc: () => doc, getSelection: () => selection, getEndpoints: selEndpoints, runToolbarEdit, onButton });
+
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
 /** Device DPI the pages are rastered at (HiDPI-crisp, DPR-capped for memory). */
@@ -8652,7 +8658,7 @@ async function runToolbarEdit(thunk, { allowInSuggesting = false, paragraphLevel
     res = thunk(...ends);
   } catch (err) {
     console.warn("edit ignored:", err?.message ?? err);
-    setStatus("That tracked format is not supported for this selection yet", "error");
+    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason, routeRefusal: SESSION.sentenceFor }), "error");
     return;
   }
   const dirty = res.dirtyPages;
@@ -10288,6 +10294,7 @@ function setMixedCheckbox(input, state) {
 function reflectParagraphProperties() {
   if (!doc || !selection) return;
   const [startNode, startOffset, endNode, endOffset] = selEndpoints();
+  paragraphAdvanced.reflect();
   const state = doc.selectionParagraphState(startNode, startOffset, endNode, endOffset);
   paragraphPropertiesContext.textContent =
     state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
@@ -10415,15 +10422,6 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// Borders: presets toggle edges (box = all, none = clear) in the chosen color at a
-// 1 pt single line (8 eighth-points).
-for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
-  onButton(b, () => {
-    const [r, g, bl] = hexToRgb(document.getElementById("borderColor").value);
-    runToolbarEdit((a, x, c, d) => doc.setParagraphBorder(a, x, c, d, b.dataset.border, r, g, bl, 8));
-    reflectParagraphProperties();
-  });
-}
 paraPanelStyle.addEventListener("change", () =>
   runToolbarEdit((a, b, c, d) =>
     doc.setParagraphStyle(a, b, c, d, paraPanelStyle.value), { paragraphLevel: true }),
@@ -11971,6 +11969,7 @@ function editorCommands(context = { surface: "palette" }) {
     });
   }
   if (doc) {
+    cmds.push(...paragraphAdvanced.commands());
     cmds.push(...quickStyleCommands({ styles: () => doc.listStyles(), hasCaret: () => !!selection, apply: (name) => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }) }));
     for (const name of doc.listStyles()) {
       cmds.push({

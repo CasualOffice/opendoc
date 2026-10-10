@@ -340,6 +340,8 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             | Operation::SetShapeStroke { .. }
             | Operation::SetTextBoxBody { .. }
             | Operation::SetObjectLocks { .. }
+            | Operation::SetDefaultTabStop { .. }
+            | Operation::RestoreDefaultTabStop { .. }
             | Operation::SetTrackRevisions { .. }
             | Operation::SetSectionFormProtection { .. },
             _,

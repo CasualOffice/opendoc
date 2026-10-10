@@ -264,6 +264,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("edit.replace", null),
 
   // ---- format -------------------------------------------------------------
+  // Run direction has no tracked suggestion representation yet (RM-20).
+  exact("format.direction.rtl", "edit"),
+  exact("format.direction.ltr", "edit"),
   exact("format.bold", "mutate"),
   exact("format.italic", "mutate"),
   exact("format.underline", "mutate"),

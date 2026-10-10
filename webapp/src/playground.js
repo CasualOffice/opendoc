@@ -363,8 +363,10 @@ function paintFrameBrand(config) {
   if (!brandStyle || !brandStyle.isConnected || brandStyle.ownerDocument !== doc) {
     brandStyle = doc.createElement("style");
     brandStyle.dataset.playgroundBrand = "true";
-    doc.head.append(brandStyle);
   }
+  // A frame's early load can paint before its parser appends style.css.
+  // Keep the host override last on every update, including that first paint.
+  doc.head.append(brandStyle);
   brandStyle.textContent = css;
   doc.documentElement.style.removeProperty("--accent");
   // What the HOST's browser tab would say. The frame's own title is the thing

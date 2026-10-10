@@ -118,7 +118,8 @@ export function createObjectRotateDrag(io) {
       session.startDegrees - pointerAngle(session.centre, pointerIn(event)),
     );
     reflect(session.degrees);
-    event.currentTarget?.setPointerCapture?.(event.pointerId);
+    // The overlay survives proofing/selection redraws; the grip does not.
+    page.overlay.setPointerCapture?.(event.pointerId);
   }
 
   /** The pointer in the overlay's pixel space. */
