@@ -1645,6 +1645,10 @@ impl Writer {
             let mut levels = BTreeMap::new();
             let mut supported = true;
             for level in &abstract_numbering.levels {
+                if level.picture_bullet.is_some() {
+                    self.reporter
+                        .record("odt.export.picture_bullet", ModelOutcome::Omitted);
+                }
                 let label = match odt_list_label(
                     level.level,
                     level.num_fmt.as_ref(),
@@ -6404,6 +6408,7 @@ mod tests {
                     lvl_restart: None,
                     template_code: None,
                     tentative: false,
+                    picture_bullet: None,
                 }],
                 multi_level_type: None,
                 num_style_link: None,

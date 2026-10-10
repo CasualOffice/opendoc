@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 191 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 194 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,12 +139,12 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 189 | both products ship it, and both anchors resolve |
-| Ours, ungated | 26 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
+| Parity | 198 | both products ship it, and both anchors resolve |
+| Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 63 | we ship part of it; the row says what is missing |
-| Gap | 91 | their standalone browser session ships it and we do not |
-| Theirs, gated | 16 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
+| Partial | 67 | we ship part of it; the row says what is missing |
+| Gap | 80 | their standalone browser session ships it and we do not |
+| Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
 <!-- @end parity-tally -->
@@ -164,8 +164,6 @@ least two surfaces (`SKILL` §10).
 | 2 | Chart elements — title, legend, labels, gridlines | `object.chart-elements` | `btnChartElements` | Their Chart tab drives title, legend position, data labels and both axes. |
 | 2 | Change chart type and style | `object.chart-type-style` | `btnChartType` | cmbChartStyle is the style half. |
 | 2 | Footnote and endnote settings | `page.note.settings` | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
-| 2 | Page size presets (A4, Letter, Legal) | `page.size.presets` | `DE.Views.PageSizeDialog.textPreset` | Their size dialog leads with a named paper list; ours has only the two number fields, so a user has to know A4 in inches. |
-| 2 | Multilevel list | `para.list.multilevel` | `btnMultilevels` | Multi-level numbering imports, renders and round-trips correctly on our side, but there is no gallery to start a multilevel list from scratch. Their button offers a library of chapter, heading and symbol schemes. |
 | 2 | Display mode: original (document as if every change were rejected) | `review.display-mode-original` | `Common.Views.ReviewChanges.txtOriginal` | There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline. |
 | 2 | Set the proofing language for the selection | `review.proofing-language-selection` | `btnLanguage` | We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome. |
 | 2 | Protect the document | `review.protect-document` | `btnProtectDoc` | Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one. |
@@ -181,13 +179,9 @@ least two surfaces (`SKILL` §10).
 | 3 | Restore a picture to its original size | `object.original-size` | `btnOriginalSize` | The image's natural pixel size is read at insert time but is not kept anywhere a later command could restore it from. |
 | 3 | Replace a picture's bytes in place | `object.replace-image` | `asc_docs_api.ChangeImageFromFile` | We can delete and re-insert, which loses the object's size, wrap and position. The engine has no replace-bytes op. |
 | 3 | Reset crop | `object.reset-crop` | `btnResetCrop` | Committing a crop session with every inset back at zero does clear the crop, but there is no one-gesture reset from a cropped picture. |
-| 3 | Insert blank page | `page.blankPage` | `btnBlankPage` | Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed. |
-| 3 | Page colour | `page.color` | `btnPageColor` | We import and round-trip w:background but nothing can set it. |
 | 3 | Content controls / structured document tags | `page.contentControls` | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
 | 3 | Remove header or footer | `page.header.remove` | `DE.Views.Toolbar.mniRemoveHeader` | There is no removeRunningContent binding, so a band that exists can be emptied but not deleted. |
 | 3 | Hyphenation | `page.hyphenation` | `btnHyphenation` | The model carries w:autoHyphenation and w:hyphenationZone; no control reads or writes them. |
-| 3 | Mirrored margins | `page.margins.mirrored` | `DE.Views.PageMarginsDialog.textMirrorMargins` | Inside and outside margins for two-sided printing. Neither our dialog nor our section writer exposes a mirror flag. |
-| 3 | Margin presets (Normal, Narrow, Moderate, Wide) | `page.margins.presets` | `DE.Views.Toolbar.textMarginsNormal` | Their Margins button drops a preset list before the custom dialog; ours goes straight to four number fields. |
 | 3 | Go to next or previous note | `page.note.goto` | `DE.Views.Links.textGotoFootnote` | Reading a document with notes means scrolling for them. |
 | 3 | Page number position presets | `page.pageNumber.position` | `DE.Views.HeaderFooterTab.capCurrentPos` | They offer six top and bottom by left, centre and right placements; ours inserts at the caret only. |
 | 3 | Table of figures | `page.tableOfFigures` | `btnTableFigures` | We have captions but nothing that collects them into a table. |
@@ -195,9 +189,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Remove table of contents | `page.toc.remove` | `DE.Views.Links.textContentsRemove` | The field can be inserted and updated but not deleted as a unit. |
 | 3 | Table of contents settings (page numbers, alignment, links) | `page.toc.settings` | `DE.Views.TableOfContentsSettings.strShowPages` | Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us. |
 | 3 | Table of contents style gallery | `page.toc.styles` | `DE.Views.TableOfContentsSettings.textStyles` | Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape. |
-| 3 | Custom bullet from a symbol | `para.list.customBulletSymbol` | `DE.Views.ListSettingsDialog.txtNewBullet` | We ship a glyph picker for inserting symbols into text but it cannot be used to define a list marker; our bullet gallery is a fixed six. |
-| 3 | Set numbering value | `para.list.setNumberingValue` | `DE.Views.DocumentHolder.textNumberingValue` | Our restartList always restarts at 1; there is no way to start a list at an arbitrary number. |
-| 3 | List settings (per-level bullet, number format, alignment) | `para.list.settingsDialog` | `DE.Views.ListSettingsDialog.txtTitle` | Their dialog edits each level's marker type, font, size, colour, start value, alignment and follow character. We have no equivalent; our only list customisation is picking a marker from the two galleries. |
 | 3 | Sharing and access rights | `review.access-rights` | `btnShare` | Theirs is a callback into the integration (sharingSettingsUrl, canRequestSharingSettings), not a capability of the editor. Ours would belong to the embedding host too, but nothing declares it. |
 | 3 | Replace text as you type (AutoCorrect table) | `review.autocorrect-replace-as-you-type` | `Common.Views.AutoCorrectDialog.textReplaceText` | — |
 | 3 | Display mode: simple markup (change bars only) | `review.display-mode-simple-markup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
@@ -230,8 +221,6 @@ least two surfaces (`SKILL` §10).
 | 4 | Convert footnotes to endnotes | `page.note.convert` | `DE.Views.Links.mniConvertNote` | — |
 | 4 | Insert text from file | `page.textFromFile` | `btnTextFromFile` | We can open a document but not merge one into the caret's position. |
 | 4 | Add paragraph to table of contents | `page.toc.addText` | `DE.Views.Links.capBtnAddText` | Their Add text marks the current paragraph at a chosen contents level without restyling it as a heading. |
-| 4 | Adjust list indents | `para.list.adjustIndents` | `DE.Views.ListIndentsDialog.textTitle` | Their separate dialog sets the marker position, the text indent and whether a tab, a space or nothing follows the marker. |
-| 4 | Picture bullet | `para.list.imageBullet` | `cmbBulletFormat` | Their bullet-type combo has image and new-image entries. On our side w:lvlPicBulletId and w:numPicBullet are not modelled at all, so picture bullets are dropped on import as well as unauthorable. |
 | 4 | Protect a form so only fields can be filled | `review.protect-form` | `btnProtectForm` | We render and fill form controls (docs/120) but cannot lock the rest of the document around them. |
 | 4 | Rebind a keyboard shortcut | `shell.customize-shortcuts` | `Common.Views.ShortcutsEditDialog.txtNewShortcut` | Theirs lets a user assign and restore chords per action. Ours has one keymap table (keymap.mjs) and no editor for it. |
 | 4 | Export as EPUB | `shell.export-epub` | `asc_docs_api.asc_DownloadAs` | Their EPUB row is FileMenuPanels.js:67. FB2 (FileMenuPanels.js:66) is the same gap and the same ranking. |
@@ -341,30 +330,30 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Keep with next | Parity | `webapp/editor.html` · `pgKeepNext` | `DE.Views.ParagraphSettingsAdvanced.strKeepNext` | — |
 | Line spacing presets | Parity | family `paragraph.spacing.` | `btnLineSpace` | Our presets are generated from the spacing popover's own markup, so each preset also gets a command id. |
 | Line spacing rule (multiple / at least / exactly) | Parity | `webapp/src/spacing_menu.mjs` · `atLeast` | `cmbLineRule` | — |
-| Adjust list indents | Gap | none (`paragraph.list.indents` undeclared) | `DE.Views.ListIndentsDialog.textTitle` | Their separate dialog sets the marker position, the text indent and whether a tab, a space or nothing follows the marker. |
+| Adjust list indents | Parity | `webapp/src/list_advanced.mjs` · `alignedAt` | `DE.Views.ListIndentsDialog.textTitle` | List settings edit marker position, text indent and tab/space/no suffix through a definition transaction. |
 | Bulleted list | Parity | `paragraph.list.bullet` | `btnMarkers` | — |
 | Bullet library | Parity | family `paragraph.listFormat.` | `DE.Views.Toolbar.txtGroupBulletLib` | Ours is a six-glyph gallery on the bullet button's split caret; every cell also gets a command id generated from the markup. |
 | Change list level | Parity | `paragraph.indent.increase` | `DE.Views.Toolbar.textChangeLevel` | Ours routes through the indent commands and Tab / Shift+Tab, which is Word's behaviour; theirs adds an explicit level submenu on the list buttons. |
 | Checklist | Ours only | `paragraph.list.checklist` | none (searched `grep -rniE 'checklist' over reference/web-apps/apps/documenteditor and reference/sdkjs/word — no matches; the closest is the static checkmark bullet glyph behind DE.Views.Toolbar.tipMarkersCheckmark, which is a marker shape and not a tickable item`) | We are ahead: toggleList("checklist") produces a real checklist with a toggleable box, reachable from the ribbon and from a command id. |
 | Continue numbering | Parity | `paragraph.list.continue` | `DE.Views.DocumentHolder.textContinueNumbering` | — |
-| Custom bullet from a symbol | Gap | none (`paragraph.list.customBullet` undeclared) | `DE.Views.ListSettingsDialog.txtNewBullet` | We ship a glyph picker for inserting symbols into text but it cannot be used to define a list marker; our bullet gallery is a fixed six. |
-| Picture bullet | Gap | none (`paragraph.list.imageBullet` undeclared) | `cmbBulletFormat` | Their bullet-type combo has image and new-image entries. On our side w:lvlPicBulletId and w:numPicBullet are not modelled at all, so picture bullets are dropped on import as well as unauthorable. |
-| Multilevel list | Gap | none (`paragraph.list.multilevel` undeclared) | `btnMultilevels` | Multi-level numbering imports, renders and round-trips correctly on our side, but there is no gallery to start a multilevel list from scratch. Their button offers a library of chapter, heading and symbol schemes. |
+| Custom bullet from a symbol | Parity | `webapp/src/list_advanced.mjs` · `bullet:${symbol}` | `DE.Views.ListSettingsDialog.txtNewBullet` | A custom non-space Unicode scalar can define the current list marker, with covering-font loading. |
+| Picture bullet | Partial | `webapp/src/list_advanced.mjs` · `setListPictureBullet` — missing: cropped, transformed and unsupported picture-marker effects | `cmbBulletFormat` | Plain VML/DrawingML picture bullets resolve part-scoped resources, compose as images, save and can be authored. Unsupported effects report loss and keep textual fallback. |
+| Multilevel list | Parity | `webapp/src/list_advanced.mjs` · `setMultilevelList` | `btnMultilevels` | Decimal chapter, alternating outline and bullet schemes install nine levels while preserving nested items. |
 | Numbering format library | Parity | `webapp/editor.html` · `numberGalleryMenu` | `DE.Views.Toolbar.txtGroupNumLib` | Ours offers decimal, lower/upper letter and lower/upper Roman; theirs also groups formats already used in the document. |
 | Numbered list | Parity | `paragraph.list.numbered` | `btnNumbers` | — |
 | Restart numbering | Parity | `paragraph.list.restart` | `DE.Views.DocumentHolder.textStartNumberingFrom` | — |
-| Set numbering value | Gap | none (`paragraph.list.startAt` undeclared) | `DE.Views.DocumentHolder.textNumberingValue` | Our restartList always restarts at 1; there is no way to start a list at an arbitrary number. |
-| List settings (per-level bullet, number format, alignment) | Gap | none (`paragraph.list.settings` undeclared) | `DE.Views.ListSettingsDialog.txtTitle` | Their dialog edits each level's marker type, font, size, colour, start value, alignment and follow character. We have no equivalent; our only list customisation is picking a marker from the two galleries. |
+| Set numbering value | Parity | `webapp/src/list_advanced.mjs` · `start: Number(start.value)` | `DE.Views.DocumentHolder.textNumberingValue` | The list inspector authors arbitrary start values with exact undo and DOCX round trip. |
+| List settings (per-level bullet, number format, alignment) | Partial | `webapp/src/list_advanced.mjs` · `setListSettings` — missing: marker font, size, color and alignment authoring | `DE.Views.ListSettingsDialog.txtTitle` | The current-level inspector edits multilevel scheme, start, indentation, suffix and custom symbol/picture; richer marker typography remains open. |
 | Paragraph outline level | Parity | `webapp/editor.html` · `paraOutline` | `cmbOutlinelevel` | The paragraph properties panel authors levels 1–9 and body text directly, without replacing the paragraph style. |
 | Page break before | Parity | `webapp/editor.html` · `pgBreakBefore` | `DE.Views.ParagraphSettingsAdvanced.strBreakBefore` | — |
 | Paragraph shading (background fill) | Parity | `webapp/editor.html` · `paraShadeNone` | `btnParagraphColor` | — |
 | Space before and after a paragraph | Parity | `webapp/editor.html` · `paraSpaceBefore` | `DE.Views.ParagraphSettingsAdvanced.strIndentsSpacingBefore` | We also expose one-gesture add/remove space rows as the paragraph.space. command family. |
 | Style gallery and apply style | Parity | family `style.` | `DE.Views.Toolbar.tipParagraphStyle` | Our band ranks the document's own paragraph styles, offering six suggested names before the full list; each style also resolves as a style. command id. |
 | Create a new style from selection | Ours, ungated | `style.createFromSelection` | `DE.Views.Toolbar.textStyleMenuNew` behind `canEditStyles` | Same licence gate. Their StyleTitleDialog also asks for the next-paragraph style, which ours does not. |
-| Delete a custom style | Theirs, gated | none (`styles.delete` undeclared) | `DE.Views.Toolbar.textStyleMenuDelete` behind `canEditStyles` | Their style gallery's context menu deletes one custom style or all of them; we can create and update styles but never remove one. |
-| Style for the following paragraph | Theirs, gated | none (`styles.nextStyle` undeclared) | `DE.Views.StyleTitleDialog.textNextStyle` behind `canEditStyles` | w:next is honoured when a document supplies it, but our create-style flow never asks for one. |
+| Delete a custom style | Partial | `webapp/src/style_advanced.mjs` · `apply('deleteStyle')` — missing: deleting a referenced style with reference reassignment | `DE.Views.Toolbar.textStyleMenuDelete` behind `canEditStyles` | Unused custom styles can be deleted and restored by undo; referenced styles are refused to protect document integrity. |
+| Style for the following paragraph | Ours, ungated | `webapp/src/style_advanced.mjs` · `setStyleNext` | `DE.Views.StyleTitleDialog.textNextStyle` behind `canEditStyles` | Manage styles authors the following-paragraph style; Enter already honors w:next. |
 | Rename a style | Neither | none (`styles.rename` undeclared) | none (searched `grep -rniE 'renameStyle\|textRename' over reference/web-apps/apps/documenteditor/main/app/view/Toolbar.js and controller/Toolbar.js — no matches; ls of apps/documenteditor/main/app/view shows StyleTitleDialog.js as the only style dialog and it only names a NEW style`) | Neither product can rename an existing style, and neither ships a Word-style style manager. |
-| Restore a built-in style to its default | Theirs, gated | none (`styles.restoreDefault` undeclared) | `DE.Views.Toolbar.textStyleMenuRestore` behind `canEditStyles` | Undoing an over-eager Update style is only possible through undo on our side. |
+| Restore a built-in style to its default | Partial | `webapp/src/style_advanced.mjs` · `restoreStyleDefault` — missing: a factory-default reset independent of the document-open baseline | `DE.Views.Toolbar.textStyleMenuRestore` behind `canEditStyles` | Restore saved style restores the definition captured when this document opened; undo restores the edited definition. |
 | Update style from selection | Ours, ungated | `style.updateFromSelection` | `DE.Views.Toolbar.textStyleMenuUpdate` behind `canEditStyles` | canEditStyles is canLicense && canEdit in apps/documenteditor/main/app/controller/Main.js:1733, so a browser session without a licence result never sees their style menu. Ours is ungated. |
 | Suppress line numbers for this paragraph | Parity | `webapp/editor.html` · `lineNumberSuppress` | `DE.Views.ParagraphSettingsAdvanced.strSuppressLineNumbers` | Ours lives in the Layout tab's line-numbering menu as Skip this paragraph, theirs in the paragraph advanced dialog. |
 | Bar tab stop | Ours only | `webapp/src/tab_stops_dialog.mjs` · `bar` | none (searched `same grep -rn 'c_oAscTabType' over reference/web-apps/apps — _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128 has no Bar entry, although sdkjs/common/commonDefines.js:5610 defines c_oAscTabType.Bar`) | We are ahead: alignment code 4 reaches TabAlignment::Bar and the layout engine draws the vertical rule. |
@@ -504,7 +493,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 
 | Capability | Verdict | Ours | Theirs | Note |
 | --- | --- | --- | --- | --- |
-| Insert blank page | Gap | none (`insert.blankPage` undeclared) | `btnBlankPage` | Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed. |
+| Insert blank page | Parity | `webapp/src/break_commands.mjs` · `layout.blankPage` | `btnBlankPage` | Two page breaks in one undoable action, reached from Insert and the palette. |
 | Bookmarks | Parity | `insert.bookmark` | `btnBookmarks` | Create, rename, delete and go to, each one undoable action. |
 | Page borders | Neither | none (`layout.pageBorders` undeclared) | none (searched `No PageBorders view file in web-apps/apps/documenteditor/main/app/view, no PageBorder localeKey and no PageBorder apiMethod in the snapshot; sdkjs touches pgBorders only in fromToJSON.js serialisation.`) | Neither product ships a page-borders dialog although both model the property; we import and export w:pgBorders too. |
 | Column break | Parity | `layout.break.column` | `DE.Views.Toolbar.textInsColumnBreak` | `insertBreak('column')` had no caller; it is the second row of the same `Breaks` dropdown now, beside the page break, which is where theirs is (`Toolbar.js:2385`). |
@@ -512,10 +501,10 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Section break (next page, continuous, even, odd) | Parity | `layout.break.section.nextPage` | `DE.Views.Toolbar.textInsSectionBreak` | All four start types ship: `layout.break.section.continuous`, `evenPage` and `oddPage` are the other three, each its own command and its own row in the same dropdown theirs uses (`Toolbar.js:2372-2380`). Guarded on the EFFECT: the four are inserted into one document and the `sectionType` each wrote is read back out of a normalized-JSON export, so a chrome that sent one start type four times fails. |
 | Insert caption | Parity | `reference.caption` | `btnCaption` | Label, position, exclude label, number format, chapter level and separator, with a live preview of the composed caption. |
 | Update caption numbers | Ours only | `reference.updateCaptionNumbers` | none (searched `No caption-update control in the snapshot's controls (only btnContentsUpdate and btnTableFiguresUpdate) and no caption-renumber localeKey under DE.Views.Links.`) | Ours exists because deleting a caption deliberately does not renumber; they have no equivalent command. |
-| Page colour | Gap | none (`layout.pageColor` undeclared) | `btnPageColor` | We import and round-trip w:background but nothing can set it. |
+| Page colour | Parity | `webapp/src/page_setup.mjs` · `setPageColor` | `btnPageColor` | Document page color is transactionally editable, painted and DOCX round-tripped. |
 | Columns | Parity | `layout.columns` | `btnColumns` | Column count and spacing per section, in the Page setup dialog. |
 | Line between columns | Parity | `webapp/src/page_setup.mjs` · `pageColumnSeparator` | `DE.Views.CustomColumnsDialog.textSeparator` | — |
-| Unequal column widths | Partial | `layout.columns` — missing: per-column widths and the Left/Right unequal presets | `DE.Views.CustomColumnsDialog.textWidth` | Our writer always sends equal widths with an empty per-column list; their custom dialog edits each column. |
+| Unequal column widths | Partial | `webapp/src/page_columns.mjs` · `widthTwips` — missing: named Left/Right unequal presets | `DE.Views.CustomColumnsDialog.textWidth` | Up to four explicit column widths and per-column spaces are authorable; untouched imported geometry is preserved. |
 | Content controls / structured document tags | Gap | none (`insert.contentControl` undeclared) | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
 | Cross-reference | Parity | `reference.crossReference` | `btnCrossRef` | Heading, bookmark, footnote, endnote and caption labels, with the per-type reference-to mapping their dialog uses. |
 | Cross-reference to a numbered item | Partial | `reference.crossReference` — missing: Numbered item as a reference type | `DE.Views.CrossReferenceDialog.textParagraph` | The engine's referenceTargets has no numbered-paragraph enumeration, so the type is absent rather than present and empty. |
@@ -544,8 +533,8 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Mail merge | Theirs, gated | none (`tools.mailMerge` undeclared) | `btnMailMerge` behind `canUseMailMerge` | Theirs is licence-gated, so a browser session only sees it when the server says so. |
 | Custom page margins | Parity | `layout.margins` | `btnPageMargins` | Both open a dialog with the four margins; ours is the Page setup dialog opened on the margin fields. |
 | Gutter | Partial | `webapp/src/page_setup.mjs` · `marginGutter` — missing: the gutter position control (left or top) | `cmbGutterPosition` | We set the gutter width; they also choose which edge it sits on. |
-| Mirrored margins | Gap | none (`layout.margins.mirrored` undeclared) | `DE.Views.PageMarginsDialog.textMirrorMargins` | Inside and outside margins for two-sided printing. Neither our dialog nor our section writer exposes a mirror flag. |
-| Margin presets (Normal, Narrow, Moderate, Wide) | Gap | none (`layout.margins.preset` undeclared) | `DE.Views.Toolbar.textMarginsNormal` | Their Margins button drops a preset list before the custom dialog; ours goes straight to four number fields. |
+| Mirrored margins | Parity | `webapp/src/page_setup.mjs` · `setMirroredMargins` | `DE.Views.PageMarginsDialog.textMirrorMargins` | Facing-page inside/outside margin mirroring has a document setting control and exact undo. |
+| Margin presets (Normal, Narrow, Moderate, Wide) | Parity | `webapp/src/page_presets.mjs` · `MARGIN_PRESETS` | `DE.Views.Toolbar.textMarginsNormal` | Normal, Narrow, Moderate and Wide presets fill the existing transactional geometry dialog. |
 | Promote, demote and add headings from the outline | Partial | `view.outline` — missing: promote, demote, new heading and select-section from the panel | `DE.Views.Navigation.txtPromote` | Ours navigates only; theirs restructures the document from the panel. |
 | Navigation pane / outline | Parity | `view.outline` | `btnNavigation` | A heading tree that follows the caret. |
 | Convert footnotes to endnotes | Gap | none (`reference.convertNotes` undeclared) | `DE.Views.Links.mniConvertNote` | — |
@@ -557,7 +546,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Page number position presets | Gap | none (`insert.pageNumber.position` undeclared) | `DE.Views.HeaderFooterTab.capCurrentPos` | They offer six top and bottom by left, centre and right placements; ours inserts at the caret only. |
 | Start page numbering at | Parity | `webapp/editor.html` · `pageNumberStart` | `DE.Views.PageNumberingDlg.textFrom` | Continue from previous section versus Start at N, the same radio pair as theirs. |
 | Custom page size | Parity | `layout.size` | `btnPageSize` | Width and height in inches in the Page setup dialog. |
-| Page size presets (A4, Letter, Legal) | Gap | none (`layout.size.preset` undeclared) | `DE.Views.PageSizeDialog.textPreset` | Their size dialog leads with a named paper list; ours has only the two number fields, so a user has to know A4 in inches. |
+| Page size presets (A4, Letter, Legal) | Parity | `webapp/src/page_presets.mjs` · `PAPER_PRESETS` | `DE.Views.PageSizeDialog.textPreset` | Letter, Legal, A4 and A5 presets preserve orientation and reader measurement units. |
 | Table of figures | Gap | none (`reference.tableOfFigures` undeclared) | `btnTableFigures` | We have captions but nothing that collects them into a table. |
 | Insert text from file | Gap | none (`insert.textFromFile` undeclared) | `btnTextFromFile` | We can open a document but not merge one into the caret's position. |
 | Page thumbnails | Parity | `view.pages` | `btnThumbnails` | Ours renders a window of real page thumbnails around the page being read rather than one per page. |

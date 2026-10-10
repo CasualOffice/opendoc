@@ -246,10 +246,29 @@ pub enum LevelSuffix {
     Nothing,
 }
 
+/// An embedded image used instead of a textual list marker.
+///
+/// Dimensions are twips and bounded to 1..=31,680; the media table owns the
+/// package reference and the resource store owns its bytes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PictureBullet {
+    /// Embedded image reference.
+    pub media: MediaId,
+    /// Painted width in twips.
+    pub width: i32,
+    /// Painted height in twips.
+    pub height: i32,
+}
+
 /// One abstract numbering level.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NumberingLevel {
+    /// Embedded picture marker (`w:lvlPicBulletId`). Text remains the fallback
+    /// when the referenced resource cannot be painted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_bullet: Option<PictureBullet>,
     /// Level index.
     pub level: u8,
     /// Starting value.

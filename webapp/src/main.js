@@ -54,6 +54,9 @@ import { EMU_PER_PX, INSERTABLE_IMAGE_TYPES, canChangePicture, createPictureRepl
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
+import { createStyleAdvanced } from "./style_advanced.mjs";
+import { createListAdvanced } from "./list_advanced.mjs";
+import { wireListGallery } from "./list_gallery_wiring.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
@@ -7642,6 +7645,8 @@ const tabStopsDialog = createTabStopsDialog({
   formatInches: twipsToDialogInches,
 });
 
+const styleAdvanced = createStyleAdvanced({ getDoc: () => doc, hasCaret: () => !!selection, currentStyle: currentParagraphStyleName, runToolbarEdit, onButton, openPanel: (focus) => toggleParagraphProperties(true, focus), refresh: populateStyles });
+const listAdvanced = createListAdvanced({ getDoc: () => doc, getNode: () => selection?.focus.node, runNodeEdit, onButton, openPanel: (focus) => toggleParagraphProperties(true, focus), ensureGlyphCoverage });
 const paragraphAdvanced = createParagraphAdvanced({ getDoc: () => doc, getSelection: () => selection, getEndpoints: selEndpoints, runToolbarEdit, onButton });
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
@@ -10256,16 +10261,9 @@ function applyListFormatCommand(spec) {
   // (once) so it renders instead of a .notdef box, then re-render.
   if (applied && spec.startsWith("bullet:")) void ensureGlyphCoverage("list marker");
 }
-function wireListGallery(menu, popover) {
-  menu.addEventListener("click", (e) => {
-    const cell = e.target.closest("[data-spec]");
-    if (!cell || !selection || !doc) return;
-    closePopover(popover);
-    applyListFormatCommand(cell.dataset.spec);
-  });
+for (const [menu, popover] of [[bulletGalleryMenu, bulletGalleryPopover], [numberGalleryMenu, numberGalleryPopover]]) {
+  wireListGallery(menu, popover, { canApply: () => !!selection && !!doc, closePopover, apply: applyListFormatCommand });
 }
-wireListGallery(bulletGalleryMenu, bulletGalleryPopover);
-wireListGallery(numberGalleryMenu, numberGalleryPopover);
 
 // -- Line & paragraph spacing --------------------------------------------------
 // Wiring lives in `spacing_menu.mjs`; the competitive reference and the reason
@@ -10295,6 +10293,8 @@ function reflectParagraphProperties() {
   if (!doc || !selection) return;
   const [startNode, startOffset, endNode, endOffset] = selEndpoints();
   paragraphAdvanced.reflect();
+  listAdvanced.reflect();
+  styleAdvanced.reflect();
   const state = doc.selectionParagraphState(startNode, startOffset, endNode, endOffset);
   paragraphPropertiesContext.textContent =
     state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
@@ -11969,7 +11969,7 @@ function editorCommands(context = { surface: "palette" }) {
     });
   }
   if (doc) {
-    cmds.push(...paragraphAdvanced.commands());
+    cmds.push(...paragraphAdvanced.commands(), ...listAdvanced.commands(), ...styleAdvanced.commands());
     cmds.push(...quickStyleCommands({ styles: () => doc.listStyles(), hasCaret: () => !!selection, apply: (name) => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }) }));
     for (const name of doc.listStyles()) {
       cmds.push({

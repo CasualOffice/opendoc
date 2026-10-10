@@ -394,6 +394,8 @@ fn refuse_if_formatting_locked(
         // its alt text beside it in the same non-visual properties.
         | Operation::SetObjectLocks { .. }
         // A document setting, as `SetEvenAndOddHeaders` is.
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
         | Operation::SetDefaultTabStop { .. }
         | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
@@ -594,6 +596,8 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetObjectLocks { .. }
         // Not a comment. (Under `trackedChanges`, `is_tracked_only` admits turning
         // tracking ON before it gets here.)
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
         | Operation::SetDefaultTabStop { .. }
         | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
@@ -1921,6 +1925,27 @@ mod tests {
         Operation::SetParagraphProperties {
             node: n(10),
             properties: Box::new(properties),
+        }
+    }
+
+    #[test]
+    fn page_setup_commands_follow_the_existing_formatting_policy_and_refuse_read_only() {
+        let formatting =
+            formatting_restricted(DocumentProtectionEdit::None, true, false, Some(false));
+        let read_only = protected(DocumentProtectionEdit::ReadOnly, true);
+        for operation in [
+            Operation::SetDocumentBackground { color: None },
+            Operation::SetMirroredMargins { enabled: true },
+        ] {
+            assert_eq!(
+                refuse_if_protected(
+                    &formatting,
+                    std::slice::from_ref(&operation),
+                    Capabilities::local()
+                ),
+                Ok(()),
+            );
+            assert!(refuse_if_protected(&read_only, &[operation], Capabilities::local()).is_err());
         }
     }
 

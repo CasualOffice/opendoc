@@ -180,3 +180,19 @@ Collaboration/OT (the closed op set + position map are the seam that keeps it
 additive — I2/I3) and grapheme-range mark editing are out of scope here. Rich
 run clipboard support is additive; complete structured table/list/image
 clipboard fidelity remains outside this operation-set foundation.
+
+## Page color and mirrored margins (RM-22, 2026-10-10)
+
+`SetDocumentBackground { color: Option<RgbColor> }` replaces or clears the page
+fill. `SetMirroredMargins { enabled: bool }` replaces the document's facing-page
+margin flag. Existing section geometry cannot express either document field;
+these narrow operations extend the closed set instead of bypassing the log.
+Both run in O(1), return the previous value as their inverse, and carry no node
+coordinates. They have independent OT aspects, so changing color, mirroring,
+tracking or tab settings concurrently preserves every unrelated write. Same-field
+writes retain the existing later-writer rule.
+
+Read-only, comment-only and tracked-only document restrictions refuse these
+untracked settings changes through the shared choke point. The existing formatting
+restriction deliberately permits page setup; the new operations follow that policy.
+The web controls also use the existing Viewing/Suggesting gates.

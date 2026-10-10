@@ -2184,5 +2184,10 @@
   "watermarkDialog.textWatermarkFields": "علامة مائية نصية",
   "watermarkDialog.watermark": "علامة مائية",
   "zoomMenu.fitPage": "ملاءمة الصفحة",
-  "zoomMenu.fitWidth": "ملاءمة العرض"
+  "zoomMenu.fitWidth": "ملاءمة العرض",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted"
 }

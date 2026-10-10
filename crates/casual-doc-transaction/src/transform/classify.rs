@@ -109,6 +109,8 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
         | Operation::SetDefaultTabStop { .. }
         | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
@@ -186,6 +188,8 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetShapeStroke { .. } => "SetShapeStroke",
         Operation::SetTextBoxBody { .. } => "SetTextBoxBody",
         Operation::SetObjectLocks { .. } => "SetObjectLocks",
+        Operation::SetDocumentBackground { .. } => "SetDocumentBackground",
+        Operation::SetMirroredMargins { .. } => "SetMirroredMargins",
         Operation::SetDefaultTabStop { .. } => "SetDefaultTabStop",
         Operation::RestoreDefaultTabStop { .. } => "RestoreDefaultTabStop",
         Operation::SetTrackRevisions { .. } => "SetTrackRevisions",
@@ -340,6 +344,8 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetShapeStroke { .. }
         | Operation::SetTextBoxBody { .. }
         | Operation::SetObjectLocks { .. }
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
         | Operation::SetDefaultTabStop { .. }
         | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }

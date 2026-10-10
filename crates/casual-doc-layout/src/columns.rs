@@ -42,11 +42,9 @@
 //!   runs out of vertical space is moved whole when its alternate-width layout fits
 //!   the next column; an oversized paragraph may still retain its starting-width
 //!   line layout across that soft split until the shaper exposes a resumable cursor.
-//! - **No last-page balancing.** Columns fill in order; the final page of a section
-//!   is left unbalanced (Word balances the last page of a non-final column section).
-//!   Because a following `continuous` section must begin below *all* of the previous
-//!   section's columns to avoid overlap, an unbalanced last page can push the next
-//!   section onto a new page where balancing would have kept it.
+//! - Non-final multi-column sections balance their last page through bounded
+//!   repagination of that page's band. Explicit column/page breaks retain the
+//!   author's distribution. The final document section keeps sequential filling.
 //! - A table inside a multi-column section flows within the current column but does
 //!   not repeat its header rows across columns.
 
@@ -316,8 +314,12 @@ pub(crate) fn paginate_columns_with_reservations(
     reservations: &[Twip],
 ) -> PaginatedLayout {
     let mut p = ColPaginator::new(reservations);
-    for run in runs {
-        p.run_section(run);
+    for (index, run) in runs.iter().enumerate() {
+        if index + 1 < runs.len() && run.layout.columns.len() > 1 {
+            p.run_balanced_section(run);
+        } else {
+            p.run_section(run);
+        }
     }
     p.flush_page();
     PaginatedLayout { pages: p.pages }
@@ -325,9 +327,16 @@ pub(crate) fn paginate_columns_with_reservations(
 
 /// Mutable state for the column paginator, walked section by section and, within a
 /// section, column by column.
+#[derive(Clone)]
 struct ColPaginator {
     /// Emitted pages.
     pages: Vec<Page>,
+    /// Completed prefix pages moved aside while evaluating a section's trials.
+    page_offset: usize,
+    /// Optional physical-page index and bottom for last-page balancing trials.
+    balance_bottom: Option<(usize, Twip)>,
+    #[cfg(test)]
+    balance_trials: usize,
     /// Fragments placed on the page currently being built.
     placed: Vec<PlacedFragment>,
     /// The current section's page geometry (fixed while its run is processed).
@@ -376,6 +385,10 @@ impl ColPaginator {
     fn new(reservations: &[Twip]) -> Self {
         Self {
             pages: Vec::new(),
+            page_offset: 0,
+            balance_bottom: None,
+            #[cfg(test)]
+            balance_trials: 0,
             placed: Vec::new(),
             config: PageConfig {
                 section: casual_doc_model::v1::SectionId::new(NodeId::from_parts(1, 1).unwrap()),
@@ -407,6 +420,78 @@ impl ColPaginator {
             page_start: FlowPos::at(0),
             reservations: reservations.to_vec(),
         }
+    }
+
+    fn page_index(&self) -> usize {
+        self.page_offset + self.pages.len()
+    }
+
+    /// Balances only the last physical page of a non-final section. Existing
+    /// pagination remains the feasibility oracle, including keep/widow rules.
+    /// Complexity: O(section content * log(page height)), at most 31 trials;
+    /// O(section content) scratch. Completed prefix pages are moved, never cloned.
+    /// This runs only in full layout, outside per-keystroke incremental shaping.
+    fn run_balanced_section(&mut self, run: &SectionRun) {
+        let mut prefix = std::mem::take(&mut self.pages);
+        // Retain the preceding page as the parity-padding anchor.
+        if let Some(anchor) = prefix.pop() {
+            self.pages.push(anchor);
+        }
+        let prefix_offset = self.page_offset;
+        self.page_offset += prefix.len();
+        let before = self.clone();
+        self.run_section(run);
+        let last_page = self.page_index();
+        let has_manual_break = self.placed.iter().any(|placed| match &placed.fragment {
+            BlockFragment::Paragraph {
+                lines,
+                break_control,
+                ..
+            } => {
+                break_control.page_break_before
+                    || lines.lines.iter().any(|line| line.page_break_after)
+            }
+            _ => false,
+        });
+        if !self.placed.is_empty() && !has_manual_break {
+            let mut low = self.band_top.raw().saturating_add(1);
+            let mut high = self.page_max_y.raw().min(self.content.bottom().raw());
+            // There are at most 31 bits in a positive twip coordinate; each trial
+            // halves the remaining interval, irrespective of document length.
+            for _ in 0..31 {
+                if low >= high {
+                    break;
+                }
+                let target = low + (high - low) / 2;
+                let mut trial = before.clone();
+                trial.balance_bottom = Some((last_page, Twip(target)));
+                trial.run_section(run);
+                #[cfg(test)]
+                {
+                    self.balance_trials += 1;
+                }
+                if trial.page_index() == last_page
+                    && !trial.placed.is_empty()
+                    && trial.page_max_y.raw() <= target
+                {
+                    high = target;
+                    #[cfg(test)]
+                    {
+                        trial.balance_trials = self.balance_trials;
+                    }
+                    *self = trial;
+                } else {
+                    low = target.saturating_add(1);
+                }
+            }
+        }
+        // A later continuous section uses the physical content area, beginning
+        // below this balanced band's deepest column, not the trial's shortened box.
+        self.balance_bottom = None;
+        self.content = self.current_content_area();
+        let produced = std::mem::replace(&mut self.pages, prefix);
+        self.pages.extend(produced);
+        self.page_offset = prefix_offset;
     }
 
     /// Processes one section: enters its geometry, positions its column band
@@ -520,7 +605,7 @@ impl ColPaginator {
         let Some(anchor) = self.pages.last().map(|page| page.end) else {
             return;
         };
-        let next_number = self.pages.len() as u32 + 1;
+        let next_number = self.page_index() as u32 + 1;
         if parity.matches(next_number) {
             return;
         }
@@ -529,7 +614,7 @@ impl ColPaginator {
             end: self.at,
         };
         let content = self.current_content_area();
-        let page = build_blank_page(self.pages.len(), &self.config, content, flow, anchor);
+        let page = build_blank_page(self.page_index(), &self.config, content, flow, anchor);
         self.pages.push(page);
         // A blank page carries no band, so no separator rule can be owed on it.
         self.page_separators.clear();
@@ -540,7 +625,7 @@ impl ColPaginator {
     /// document that mirrors its margins — where Word swaps the inside and
     /// outside margins for two-sided printing.
     fn building_verso(&self) -> bool {
-        self.mirror_margins && (self.pages.len() as u32 + 1).is_multiple_of(2)
+        self.mirror_margins && (self.page_index() as u32 + 1).is_multiple_of(2)
     }
 
     /// The horizontal offset the page being built carries relative to the
@@ -769,6 +854,19 @@ impl ColPaginator {
                 _ => crate::text::LineBreak::Page,
             });
             let forced_offset = forced_line.map(|line| line.range.end.offset);
+            // Several zero-width breaks may share one model offset. Match the
+            // occurrence as well as the offset when resuming another galley.
+            let forced_occurrence = forced_line.map(|forced| {
+                active.lines[..start + take]
+                    .iter()
+                    .filter(|line| {
+                        line.page_break_after
+                            && line.range.end.offset == forced.range.end.offset
+                            && line.line_break == forced.line_break
+                    })
+                    .count()
+                    .saturating_sub(1)
+            });
             let forced = forced_kind.is_some();
 
             // Orphan control: don't strand fewer than the minimum head lines.
@@ -836,19 +934,25 @@ impl ColPaginator {
                         lines: alternate, ..
                     } = run.fragment_for_column(self.col, index)
                     && let Some(offset) = forced_offset
-                    && let Some(position) = alternate.lines.iter().position(|line| {
-                        line.page_break_after
-                            && line.range.end.offset == offset
-                            && match kind {
-                                crate::text::LineBreak::Column => {
-                                    line.line_break == crate::text::LineBreak::Column
+                    && let Some(position) = alternate
+                        .lines
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, line)| {
+                            line.page_break_after
+                                && line.range.end.offset == offset
+                                && match kind {
+                                    crate::text::LineBreak::Column => {
+                                        line.line_break == crate::text::LineBreak::Column
+                                    }
+                                    crate::text::LineBreak::Page => {
+                                        line.line_break != crate::text::LineBreak::Column
+                                    }
+                                    _ => false,
                                 }
-                                crate::text::LineBreak::Page => {
-                                    line.line_break != crate::text::LineBreak::Column
-                                }
-                                _ => false,
-                            }
-                    })
+                        })
+                        .nth(forced_occurrence.unwrap_or(0))
+                        .map(|(position, _)| position)
                 {
                     active = alternate.clone();
                     n = active.lines.len();
@@ -977,7 +1081,7 @@ impl ColPaginator {
                 end: self.at,
             };
             let mut page = build_page(
-                self.pages.len(),
+                self.page_index(),
                 &self.config,
                 self.content,
                 std::mem::take(&mut self.placed),
@@ -1016,11 +1120,16 @@ impl ColPaginator {
         }
         let reserved = self
             .reservations
-            .get(self.pages.len())
+            .get(self.page_index())
             .copied()
             .unwrap_or(Twip::ZERO);
         if reserved > Twip::ZERO {
             content.size.height = Twip((content.size.height.raw() - reserved.raw()).max(0));
+        }
+        if let Some((page, bottom)) = self.balance_bottom
+            && page == self.page_index()
+        {
+            content.size.height = Twip((bottom - content.origin.y).raw().max(0));
         }
         content
     }
@@ -1158,6 +1267,73 @@ mod tests {
             start_parity: None,
             mirror_margins: false,
         }
+    }
+
+    #[test]
+    fn a_nonfinal_column_section_balances_before_a_continuous_section() {
+        let config = letter_config();
+        let run = two_column_run(
+            config,
+            (1..=4).map(|id| paragraph(id, Twip(2000))).collect(),
+        );
+        let mut following = parity_run(config, 10, None, false);
+        following.starts_new_page = false;
+        let result = paginate_columns(&[run.clone(), following]);
+        assert_eq!(result.pages.len(), 1);
+        let placed = &result.pages[0].placed;
+        assert_eq!(placed.len(), 5, "no body fragment is lost while balancing");
+        assert_eq!(placed[2].rect.origin.y, config.content_area().origin.y);
+        assert!(placed[2].rect.origin.x > placed[0].rect.origin.x);
+        assert_eq!(
+            placed[4].rect.origin.y,
+            config.content_area().origin.y + Twip(4000)
+        );
+        let final_only = paginate_columns(&[run]);
+        assert_eq!(
+            final_only.pages[0].placed[2].rect.origin.x, placed[0].rect.origin.x,
+            "the final document section keeps sequential filling"
+        );
+    }
+
+    #[test]
+    fn an_explicit_column_break_retains_the_authors_column_distribution() {
+        let config = letter_config();
+        let mut galley: Vec<_> = (1..=4).map(|id| paragraph(id, Twip(2000))).collect();
+        let BlockFragment::Paragraph { lines, .. } = &mut galley[0] else {
+            unreachable!()
+        };
+        lines.lines[0].page_break_after = true;
+        lines.lines[0].line_break = crate::text::LineBreak::Column;
+        let mut following = parity_run(config, 10, None, false);
+        following.starts_new_page = false;
+        let result = paginate_columns(&[two_column_run(config, galley), following]);
+        assert_eq!(result.pages.len(), 1);
+        assert_eq!(
+            result.pages[0].placed[4].rect.origin.y,
+            config.content_area().origin.y + Twip(6000)
+        );
+    }
+
+    #[test]
+    fn column_balancing_search_is_bounded_independent_of_fragment_count() {
+        let config = letter_config();
+        let trials = |count: u64| {
+            let mut paginator = ColPaginator::new(&[]);
+            paginator.run_balanced_section(&two_column_run(
+                config,
+                (1..=count).map(|id| paragraph(id, Twip(20))).collect(),
+            ));
+            assert_eq!(paginator.placed.len(), count as usize);
+            assert!(paginator.balance_trials <= 31);
+            paginator.balance_trials
+        };
+        let small = trials(100);
+        let large = trials(200);
+        assert!(small > 0 && large > 0);
+        assert!(
+            large <= small + 1,
+            "doubling content adds at most one height-search bit"
+        );
     }
 
     #[test]

@@ -70,6 +70,7 @@ export const SECTION_STARTS = Object.freeze(["nextPage", "continuous", "evenPage
  *  The order is the order the dropdown and the Insert menu show, and the order
  *  is the references': the two forced breaks, then the four section starts. */
 export const BREAK_COMMANDS = Object.freeze([
+  Object.freeze({ command: "layout.blankPage", kind: "blank", labelKey: "break.blankPage", kw: "insert blank empty page" }),
   Object.freeze({ command: "layout.break.page", kind: "page", labelKey: "break.page", kw: "page break new page ctrl enter force next page pagination" }),
   Object.freeze({ command: "layout.break.column", kind: "column", labelKey: "break.column", kw: "column break newspaper columns next column force" }),
   ...SECTION_STARTS.map((start) =>
@@ -159,7 +160,7 @@ async function insertBreak(io, row) {
   if (!doc || !caret) return;
   const applied = await io.runEdit(
     () =>
-      row.kind === undefined
+      row.kind === "blank" ? doc.insertBlankPage(caret.node, caret.offset) : row.kind === undefined
         ? doc.insertSectionBreak(caret.node, caret.offset, row.start)
         : doc.insertBreak(caret.node, caret.offset, row.kind),
     { gate: true },
@@ -173,7 +174,8 @@ async function insertBreak(io, row) {
   // called-but-undeclared — the extractor is right to say so, because a key it
   // cannot read is a key no translator is ever shown.
   if (!applied) return;
-  if (row.kind === "page") io.setStatus(t("break.inserted.page"));
+  if (row.kind === "blank") io.setStatus(t("break.inserted.blankPage"));
+  else if (row.kind === "page") io.setStatus(t("break.inserted.page"));
   else if (row.kind === "column") io.setStatus(t("break.inserted.column"));
   else io.setStatus(t("break.inserted.section"));
 }

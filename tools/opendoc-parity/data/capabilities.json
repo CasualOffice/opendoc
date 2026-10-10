@@ -147,7 +147,7 @@
     {
       "id": "object.chart-elements",
       "area": "object",
-      "title": "Chart elements \u2014 title, legend, labels, gridlines",
+      "title": "Chart elements — title, legend, labels, gridlines",
       "ours": {
         "absent": [
           "chart.elements"
@@ -171,14 +171,14 @@
               "literal": "pub fn is_drawable"
             }
           },
-          "missing": "the families `is_drawable` refuses \u2014 every `*3DChart`, surface, stock, radar, bubble and pie-of-pie \u2014 which keep a text placeholder; and no chart is editable as a chart"
+          "missing": "the families `is_drawable` refuses — every `*3DChart`, surface, stock, radar, bubble and pie-of-pie — which keep a text placeholder; and no chart is editable as a chart"
         }
       },
       "theirs": {
         "api": "asc_docs_api.asc_getChartObject"
       },
       "rank": 1,
-      "note": "Bar/column, line, area, pie, doughnut and scatter are painted from the typed projection, and a chart the editor mints now writes its own `word/charts/chartN.xml` part. What is still partial is the rest of the families, which keep a text placeholder, and that no chart can be edited AS a chart \u2014 there is no data grid, no type switch and no host surface that inserts one."
+      "note": "Bar/column, line, area, pie, doughnut and scatter are painted from the typed projection, and a chart the editor mints now writes its own `word/charts/chartN.xml` part. What is still partial is the rest of the families, which keep a text placeholder, and that no chart can be edited AS a chart — there is no data grid, no type switch and no host surface that inserts one."
     },
     {
       "id": "object.chart-type-style",
@@ -273,7 +273,7 @@
         "localeKey": "DE.Views.DocumentHolder.textEditPoints"
       },
       "rank": 4,
-      "note": "Custom geometry is typed now \u2014 guides, every path command, adjust handles (docs/119) \u2014 and every preset's own definition is available to convert, so there is something to move; the gesture itself is not built (docs/109 FID-SH-02)."
+      "note": "Custom geometry is typed now — guides, every path command, adjust handles (docs/119) — and every preset's own definition is available to convert, so there is something to move; the gesture itself is not built (docs/109 FID-SH-02)."
     },
     {
       "id": "object.edit-smartart-structure",
@@ -389,7 +389,7 @@
         "control": "btnInsertChart"
       },
       "rank": 1,
-      "note": "Insert \u25b8 Chart and the command palette both create Word's own default, a clustered column chart, and the engine writes a real `word/charts/chartN.xml` part for the six typed families. What is missing is every choice AFTER the insert: there is no type picker, and nothing edits the data \u2014 their btnInsertChart opens straight into a data grid. The row was graded as a flat gap until `insert.chart` landed; the guard caught the UNDERSTATEMENT, which is the half of \u00a79 rule 6 that is easy to forget."
+      "note": "Insert ▸ Chart and the command palette both create Word's own default, a clustered column chart, and the engine writes a real `word/charts/chartN.xml` part for the six typed families. What is missing is every choice AFTER the insert: there is no type picker, and nothing edits the data — their btnInsertChart opens straight into a data grid. The row was graded as a flat gap until `insert.chart` landed; the guard caught the UNDERSTATEMENT, which is the half of §9 rule 6 that is easy to forget."
     },
     {
       "id": "object.insert-image-file",
@@ -999,15 +999,16 @@
       "area": "page",
       "title": "Insert blank page",
       "ours": {
-        "absent": [
-          "insert.blankPage"
-        ]
+        "anchor": {
+          "file": "webapp/src/break_commands.mjs",
+          "literal": "layout.blankPage"
+        }
       },
       "theirs": {
         "control": "btnBlankPage"
       },
       "rank": 3,
-      "note": "Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed."
+      "note": "Two page breaks in one undoable action, reached from Insert and the palette."
     },
     {
       "id": "page.bookmarks",
@@ -1111,15 +1112,16 @@
       "area": "page",
       "title": "Page colour",
       "ours": {
-        "absent": [
-          "layout.pageColor"
-        ]
+        "anchor": {
+          "file": "webapp/src/page_setup.mjs",
+          "literal": "setPageColor"
+        }
       },
       "theirs": {
         "control": "btnPageColor"
       },
       "rank": 3,
-      "note": "We import and round-trip w:background but nothing can set it."
+      "note": "Document page color is transactionally editable, painted and DOCX round-tripped."
     },
     {
       "id": "page.columns",
@@ -1156,16 +1158,19 @@
       "ours": {
         "partial": {
           "evidence": {
-            "command": "layout.columns"
+            "anchor": {
+              "file": "webapp/src/page_columns.mjs",
+              "literal": "widthTwips"
+            }
           },
-          "missing": "per-column widths and the Left/Right unequal presets"
+          "missing": "named Left/Right unequal presets"
         }
       },
       "theirs": {
         "localeKey": "DE.Views.CustomColumnsDialog.textWidth"
       },
       "rank": 3,
-      "note": "Our writer always sends equal widths with an empty per-column list; their custom dialog edits each column."
+      "note": "Up to four explicit column widths and per-column spaces are authorable; untouched imported geometry is preserved."
     },
     {
       "id": "page.contentControls",
@@ -1273,7 +1278,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "Their field-instruction parser handles no FILENAME, AUTHOR, TITLE or DOCPROPERTY keyword \u2014 grep for FILENAME, AUTHOR and DOCPROPERTY across sdkjs/word returns nothing \u2014 and no such localeKey exists in the snapshot."
+          "searched": "Their field-instruction parser handles no FILENAME, AUTHOR, TITLE or DOCPROPERTY keyword — grep for FILENAME, AUTHOR and DOCPROPERTY across sdkjs/word returns nothing — and no such localeKey exists in the snapshot."
         }
       },
       "rank": 4,
@@ -1419,7 +1424,7 @@
               "literal": "headerFooterLinkToPrevious"
             }
           },
-          "missing": "the ability to change it \u2014 the checkbox ships disabled and read-only"
+          "missing": "the ability to change it — the checkbox ships disabled and read-only"
         }
       },
       "theirs": {
@@ -1480,7 +1485,7 @@
               "literal": "linkPlaceSelect"
             }
           },
-          "missing": "linking straight to a heading \u2014 only bookmarks are listed"
+          "missing": "linking straight to a heading — only bookmarks are listed"
         }
       },
       "theirs": {
@@ -1543,7 +1548,7 @@
           "evidence": {
             "command": "layout.lineNumbers"
           },
-          "missing": "the Apply to choice \u2014 whole document or this point forward"
+          "missing": "the Apply to choice — whole document or this point forward"
         }
       },
       "theirs": {
@@ -1611,30 +1616,32 @@
       "area": "page",
       "title": "Mirrored margins",
       "ours": {
-        "absent": [
-          "layout.margins.mirrored"
-        ]
+        "anchor": {
+          "file": "webapp/src/page_setup.mjs",
+          "literal": "setMirroredMargins"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.PageMarginsDialog.textMirrorMargins"
       },
       "rank": 3,
-      "note": "Inside and outside margins for two-sided printing. Neither our dialog nor our section writer exposes a mirror flag."
+      "note": "Facing-page inside/outside margin mirroring has a document setting control and exact undo."
     },
     {
       "id": "page.margins.presets",
       "area": "page",
       "title": "Margin presets (Normal, Narrow, Moderate, Wide)",
       "ours": {
-        "absent": [
-          "layout.margins.preset"
-        ]
+        "anchor": {
+          "file": "webapp/src/page_presets.mjs",
+          "literal": "MARGIN_PRESETS"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textMarginsNormal"
       },
       "rank": 3,
-      "note": "Their Margins button drops a preset list before the custom dialog; ours goes straight to four number fields."
+      "note": "Normal, Narrow, Moderate and Wide presets fill the existing transactional geometry dialog."
     },
     {
       "id": "page.navigation.editHeadings",
@@ -1798,15 +1805,16 @@
       "area": "page",
       "title": "Page size presets (A4, Letter, Legal)",
       "ours": {
-        "absent": [
-          "layout.size.preset"
-        ]
+        "anchor": {
+          "file": "webapp/src/page_presets.mjs",
+          "literal": "PAPER_PRESETS"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.PageSizeDialog.textPreset"
       },
       "rank": 2,
-      "note": "Their size dialog leads with a named paper list; ours has only the two number fields, so a user has to know A4 in inches."
+      "note": "Letter, Legal, A4 and A5 presets preserve orientation and reader measurement units."
     },
     {
       "id": "page.tableOfFigures",
@@ -2368,15 +2376,16 @@
       "area": "para",
       "title": "Adjust list indents",
       "ours": {
-        "absent": [
-          "paragraph.list.indents"
-        ]
+        "anchor": {
+          "file": "webapp/src/list_advanced.mjs",
+          "literal": "alignedAt"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.ListIndentsDialog.textTitle"
       },
       "rank": 4,
-      "note": "Their separate dialog sets the marker position, the text indent and whether a tab, a space or nothing follows the marker."
+      "note": "List settings edit marker position, text indent and tab/space/no suffix through a definition transaction."
     },
     {
       "id": "para.list.bullet",
@@ -2425,7 +2434,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rniE 'checklist' over reference/web-apps/apps/documenteditor and reference/sdkjs/word \u2014 no matches; the closest is the static checkmark bullet glyph behind DE.Views.Toolbar.tipMarkersCheckmark, which is a marker shape and not a tickable item"
+          "searched": "grep -rniE 'checklist' over reference/web-apps/apps/documenteditor and reference/sdkjs/word — no matches; the closest is the static checkmark bullet glyph behind DE.Views.Toolbar.tipMarkersCheckmark, which is a marker shape and not a tickable item"
         }
       },
       "rank": 2,
@@ -2448,45 +2457,53 @@
       "area": "para",
       "title": "Custom bullet from a symbol",
       "ours": {
-        "absent": [
-          "paragraph.list.customBullet"
-        ]
+        "anchor": {
+          "file": "webapp/src/list_advanced.mjs",
+          "literal": "bullet:${symbol}"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.ListSettingsDialog.txtNewBullet"
       },
       "rank": 3,
-      "note": "We ship a glyph picker for inserting symbols into text but it cannot be used to define a list marker; our bullet gallery is a fixed six."
+      "note": "A custom non-space Unicode scalar can define the current list marker, with covering-font loading."
     },
     {
       "id": "para.list.imageBullet",
       "area": "para",
       "title": "Picture bullet",
       "ours": {
-        "absent": [
-          "paragraph.list.imageBullet"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/list_advanced.mjs",
+              "literal": "setListPictureBullet"
+            }
+          },
+          "missing": "cropped, transformed and unsupported picture-marker effects"
+        }
       },
       "theirs": {
         "control": "cmbBulletFormat"
       },
       "rank": 4,
-      "note": "Their bullet-type combo has image and new-image entries. On our side w:lvlPicBulletId and w:numPicBullet are not modelled at all, so picture bullets are dropped on import as well as unauthorable."
+      "note": "Plain VML/DrawingML picture bullets resolve part-scoped resources, compose as images, save and can be authored. Unsupported effects report loss and keep textual fallback."
     },
     {
       "id": "para.list.multilevel",
       "area": "para",
       "title": "Multilevel list",
       "ours": {
-        "absent": [
-          "paragraph.list.multilevel"
-        ]
+        "anchor": {
+          "file": "webapp/src/list_advanced.mjs",
+          "literal": "setMultilevelList"
+        }
       },
       "theirs": {
         "control": "btnMultilevels"
       },
       "rank": 2,
-      "note": "Multi-level numbering imports, renders and round-trips correctly on our side, but there is no gallery to start a multilevel list from scratch. Their button offers a library of chapter, heading and symbol schemes."
+      "note": "Decimal chapter, alternating outline and bullet schemes install nine levels while preserving nested items."
     },
     {
       "id": "para.list.numberGallery",
@@ -2533,30 +2550,37 @@
       "area": "para",
       "title": "Set numbering value",
       "ours": {
-        "absent": [
-          "paragraph.list.startAt"
-        ]
+        "anchor": {
+          "file": "webapp/src/list_advanced.mjs",
+          "literal": "start: Number(start.value)"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.textNumberingValue"
       },
       "rank": 3,
-      "note": "Our restartList always restarts at 1; there is no way to start a list at an arbitrary number."
+      "note": "The list inspector authors arbitrary start values with exact undo and DOCX round trip."
     },
     {
       "id": "para.list.settingsDialog",
       "area": "para",
       "title": "List settings (per-level bullet, number format, alignment)",
       "ours": {
-        "absent": [
-          "paragraph.list.settings"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/list_advanced.mjs",
+              "literal": "setListSettings"
+            }
+          },
+          "missing": "marker font, size, color and alignment authoring"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.ListSettingsDialog.txtTitle"
       },
       "rank": 3,
-      "note": "Their dialog edits each level's marker type, font, size, colour, start value, alignment and follow character. We have no equivalent; our only list customisation is picking a marker from the two galleries."
+      "note": "The current-level inspector edits multilevel scheme, start, indentation, suffix and custom symbol/picture; richer marker typography remains open."
     },
     {
       "id": "para.outlineLevel",
@@ -2572,7 +2596,7 @@
         "control": "cmbOutlinelevel"
       },
       "rank": 3,
-      "note": "The paragraph properties panel authors levels 1\u20139 and body text directly, without replacing the paragraph style."
+      "note": "The paragraph properties panel authors levels 1–9 and body text directly, without replacing the paragraph style."
     },
     {
       "id": "para.pageBreakBefore",
@@ -2656,9 +2680,15 @@
       "area": "para",
       "title": "Delete a custom style",
       "ours": {
-        "absent": [
-          "styles.delete"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/style_advanced.mjs",
+              "literal": "apply('deleteStyle')"
+            }
+          },
+          "missing": "deleting a referenced style with reference reassignment"
+        }
       },
       "theirs": {
         "gated": {
@@ -2669,16 +2699,17 @@
         }
       },
       "rank": 4,
-      "note": "Their style gallery's context menu deletes one custom style or all of them; we can create and update styles but never remove one."
+      "note": "Unused custom styles can be deleted and restored by undo; referenced styles are refused to protect document integrity."
     },
     {
       "id": "para.style.nextStyle",
       "area": "para",
       "title": "Style for the following paragraph",
       "ours": {
-        "absent": [
-          "styles.nextStyle"
-        ]
+        "anchor": {
+          "file": "webapp/src/style_advanced.mjs",
+          "literal": "setStyleNext"
+        }
       },
       "theirs": {
         "gated": {
@@ -2689,7 +2720,7 @@
         }
       },
       "rank": 4,
-      "note": "w:next is honoured when a document supplies it, but our create-style flow never asks for one."
+      "note": "Manage styles authors the following-paragraph style; Enter already honors w:next."
     },
     {
       "id": "para.style.rename",
@@ -2702,7 +2733,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rniE 'renameStyle|textRename' over reference/web-apps/apps/documenteditor/main/app/view/Toolbar.js and controller/Toolbar.js \u2014 no matches; ls of apps/documenteditor/main/app/view shows StyleTitleDialog.js as the only style dialog and it only names a NEW style"
+          "searched": "grep -rniE 'renameStyle|textRename' over reference/web-apps/apps/documenteditor/main/app/view/Toolbar.js and controller/Toolbar.js — no matches; ls of apps/documenteditor/main/app/view shows StyleTitleDialog.js as the only style dialog and it only names a NEW style"
         }
       },
       "rank": 4,
@@ -2713,9 +2744,15 @@
       "area": "para",
       "title": "Restore a built-in style to its default",
       "ours": {
-        "absent": [
-          "styles.restoreDefault"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/style_advanced.mjs",
+              "literal": "restoreStyleDefault"
+            }
+          },
+          "missing": "a factory-default reset independent of the document-open baseline"
+        }
       },
       "theirs": {
         "gated": {
@@ -2726,7 +2763,7 @@
         }
       },
       "rank": 4,
-      "note": "Undoing an over-eager Update style is only possible through undo on our side."
+      "note": "Restore saved style restores the definition captured when this document opened; undo restores the edited definition."
     },
     {
       "id": "para.style.updateFromSelection",
@@ -2774,7 +2811,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "same grep -rn 'c_oAscTabType' over reference/web-apps/apps \u2014 _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128 has no Bar entry, although sdkjs/common/commonDefines.js:5610 defines c_oAscTabType.Bar"
+          "searched": "same grep -rn 'c_oAscTabType' over reference/web-apps/apps — _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128 has no Bar entry, although sdkjs/common/commonDefines.js:5610 defines c_oAscTabType.Bar"
         }
       },
       "rank": 4,
@@ -2792,7 +2829,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rn 'c_oAscTabType' over reference/web-apps/apps \u2014 the only UI use is _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128, which lists Left, Center and Right only; Decimal exists in sdkjs/common/commonDefines.js:5613 but no client control ever selects it"
+          "searched": "grep -rn 'c_oAscTabType' over reference/web-apps/apps — the only UI use is _arrTabAlign in apps/documenteditor/main/app/view/ParagraphSettingsAdvanced.js:124-128, which lists Left, Center and Right only; Decimal exists in sdkjs/common/commonDefines.js:5613 but no client control ever selects it"
         }
       },
       "rank": 3,
@@ -3952,7 +3989,7 @@
     {
       "id": "shell.command-palette",
       "area": "shell",
-      "title": "Command palette \u2014 find any command by name",
+      "title": "Command palette — find any command by name",
       "ours": {
         "command": "help.commands"
       },
@@ -3976,7 +4013,7 @@
               "literal": "Sdt"
             }
           },
-          "missing": "any command to insert or configure one \u2014 content controls import, lay out, export and can be edited inside, but cannot be created"
+          "missing": "any command to insert or configure one — content controls import, lay out, export and can be edited inside, but cannot be created"
         }
       },
       "theirs": {
@@ -4043,7 +4080,7 @@
               "literal": "spellLanguage"
             }
           },
-          "missing": "any control that sets it \u2014 the preference exists and a host can set it, but no dialog or status-bar picker offers it to the user"
+          "missing": "any control that sets it — the preference exists and a host can set it, but no dialog or status-bar picker offers it to the user"
         }
       },
       "theirs": {
@@ -4097,7 +4134,7 @@
         }
       },
       "rank": 1,
-      "note": "Both mount an iframe. Theirs funnels every customization key through LayoutManager._applyCustomization, whose second line is `if (!_licensed || !config) return;` \u2014 an unlicensed integrator is ignored silently. Ours is ungated, derives the frame's sandbox from the capability set, and is graded option by option in docs/149."
+      "note": "Both mount an iframe. Theirs funnels every customization key through LayoutManager._applyCustomization, whose second line is `if (!_licensed || !config) return;` — an unlicensed integrator is ignored silently. Ours is ungated, derives the frame's sandbox from the capability set, and is graded option by option in docs/149."
     },
     {
       "id": "shell.export-docx",
@@ -4385,7 +4422,7 @@
         "localeKey": "DE.Views.Toolbar.mniHiddenChars"
       },
       "rank": 2,
-      "note": "The engine paints the pilcrow, the tab arrow, the space dot, the return arrow at a hard break and the rule at a page or column break, as a paint-only layer appended after a page's content: `crates/casual-doc-layout/tests/geometry_snapshot.rs` composes every fixture with every mark on and holds the geometry golden byte-identical, so a mark provably moves nothing and cannot export. `casual-doc-wasm` now rasterizes through `compose_page_with`, so the chrome reaches it in one call: `doc.setFormattingMarks('{\"all\":true}')` is the \u00b6 button, the five individual keys plus `color` are Word's *Display* pane, and `doc.formattingMarks` reads the state back. It is a **repaint** \u2014 the setter bumps the view epoch, issues no `Operation`, moves no page boundary and leaves the galley cache intact, which `turning_formatting_marks_on_repaints_and_never_repaginates` holds and which went red on making the setter repaginate (400 cached shaped paragraphs and 209,488 bytes thrown away). Not drawn: the end-of-cell mark, the section-break rule (a section end is not visible from one page), and a separate mark for a no-break space."
+      "note": "The engine paints the pilcrow, the tab arrow, the space dot, the return arrow at a hard break and the rule at a page or column break, as a paint-only layer appended after a page's content: `crates/casual-doc-layout/tests/geometry_snapshot.rs` composes every fixture with every mark on and holds the geometry golden byte-identical, so a mark provably moves nothing and cannot export. `casual-doc-wasm` now rasterizes through `compose_page_with`, so the chrome reaches it in one call: `doc.setFormattingMarks('{\"all\":true}')` is the ¶ button, the five individual keys plus `color` are Word's *Display* pane, and `doc.formattingMarks` reads the state back. It is a **repaint** — the setter bumps the view epoch, issues no `Operation`, moves no page boundary and leaves the galley cache intact, which `turning_formatting_marks_on_repaints_and_never_repaginates` holds and which went red on making the setter repaginate (400 cached shaped paragraphs and 209,488 bytes thrown away). Not drawn: the end-of-cell mark, the section-break rule (a section end is not visible from one page), and a separate mark for a no-break space."
     },
     {
       "id": "shell.go-to-page",
@@ -4505,7 +4542,7 @@
         "control": "cmbUnit"
       },
       "rank": 2,
-      "note": "The engine now carries the conversion layer `docs/149` said this needs: `casual_doc_layout::quantity` parses and formats `cm`, `mm`, `in`, `pt` and `pica` against the twip by exact integer arithmetic, so `2.54 cm` is 1440 twips and not a floating-point approximation of it, and an exhaustive guard holds every displayable value to a `parse`-then-`format` fixed point. Theirs offers three units, pivots through a floating-point value, and rounds at ~170 separate call sites. The chrome reaches ours in one call each way, now across the JS boundary too: `parseMeasurement(text, unitId)` and `formatMeasurement(twips, unitId, separator)`, with `measurementUnits()` for the chooser's rows, `defaultMeasurementUnit(region)` for the first run and `decimalSeparatorForLanguage(tag)` for the separator. Every one of them speaks the **string id**, so there is no ordinal anywhere on the boundary for a host to persist \u2014 which is what ONLYOFFICE's two disagreeing unit enums cost them \u2014 and every `QuantityError` arrives as a thrown refusal carrying the engine's message rather than a silent zero. Not done: the chosen unit is not yet stored or offered anywhere in the chrome, and the ruler keeps its own tick lattice."
+      "note": "The engine now carries the conversion layer `docs/149` said this needs: `casual_doc_layout::quantity` parses and formats `cm`, `mm`, `in`, `pt` and `pica` against the twip by exact integer arithmetic, so `2.54 cm` is 1440 twips and not a floating-point approximation of it, and an exhaustive guard holds every displayable value to a `parse`-then-`format` fixed point. Theirs offers three units, pivots through a floating-point value, and rounds at ~170 separate call sites. The chrome reaches ours in one call each way, now across the JS boundary too: `parseMeasurement(text, unitId)` and `formatMeasurement(twips, unitId, separator)`, with `measurementUnits()` for the chooser's rows, `defaultMeasurementUnit(region)` for the first run and `decimalSeparatorForLanguage(tag)` for the separator. Every one of them speaks the **string id**, so there is no ordinal anywhere on the boundary for a host to persist — which is what ONLYOFFICE's two disagreeing unit enums cost them — and every `QuantityError` arrives as a thrown refusal carrying the engine's message rather than a silent zero. Not done: the chosen unit is not yet stored or offered anywhere in the chrome, and the ruler keeps its own tick lattice."
     },
     {
       "id": "shell.mobile-layout",
@@ -4521,7 +4558,7 @@
         "localeKey": "DE.Views.FileMenu.btnSwitchToMobileCaption"
       },
       "rank": 2,
-      "note": "Theirs is a second front end \u2014 a Framework7 app under apps/documenteditor/mobile beside the desktop one \u2014 reached by switching. Ours is one bundle and one command registry with a region preset for the phone rung, which is what keeps an embedded editor the same product on every screen."
+      "note": "Theirs is a second front end — a Framework7 app under apps/documenteditor/mobile beside the desktop one — reached by switching. Ours is one bundle and one command registry with a region preset for the phone rung, which is what keeps an embedded editor the same product on every screen."
     },
     {
       "id": "shell.multiple-pages-view",
@@ -4601,7 +4638,7 @@
         }
       },
       "rank": 1,
-      "note": "Their File > Open menu item is appended only inside `if (Common.Controllers.Desktop.isActive())` (FileMenu.js:511), so a browser session has no Open at all \u2014 the document arrives from the host's config. Ours is a live command in the browser."
+      "note": "Their File > Open menu item is appended only inside `if (Common.Controllers.Desktop.isActive())` (FileMenu.js:511), so a browser session has no Open at all — the document arrives from the host's config. Ours is a live command in the browser."
     },
     {
       "id": "shell.open-file-offline",
@@ -4615,7 +4652,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rl WebAssembly across sdkjs/ returns only the PDF viewer, libfont and hash engines \u2014 nothing under sdkjs/word; asc_isOffline is defined only in sdkjs/*/Local/api.js (the desktop builds); format I/O goes through asc_DownloadAs/openDocument to the document server"
+          "searched": "grep -rl WebAssembly across sdkjs/ returns only the PDF viewer, libfont and hash engines — nothing under sdkjs/word; asc_isOffline is defined only in sdkjs/*/Local/api.js (the desktop builds); format I/O goes through asc_DownloadAs/openDocument to the document server"
         }
       },
       "rank": 1,
@@ -5097,7 +5134,7 @@
         "localeKey": "DE.Views.TableSettings.textAutofit"
       },
       "rank": 3,
-      "note": "Both sides expose one boolean over w:tblLayout \u2014 ours as 'Fixed column widths', theirs as 'Automaticaly resize to fit content'. Neither ships Word's three-way AutoFit to contents / window / fixed."
+      "note": "Both sides expose one boolean over w:tblLayout — ours as 'Fixed column widths', theirs as 'Automaticaly resize to fit content'. Neither ships Word's three-way AutoFit to contents / window / fixed."
     },
     {
       "id": "table.banded-rows-columns",
@@ -5475,7 +5512,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rin 'GridLines' over web-apps/apps/documenteditor \u2014 the only hits are chart gridlines (DocumentHolderExt.js, ImageSettingsAdvanced.js); isShowTableEmptyLine exists only in sdkjs/slide, not sdkjs/word, and no View tab entry toggles it"
+          "searched": "grep -rin 'GridLines' over web-apps/apps/documenteditor — the only hits are chart gridlines (DocumentHolderExt.js, ImageSettingsAdvanced.js); isShowTableEmptyLine exists only in sdkjs/slide, not sdkjs/word, and no View tab entry toggles it"
         }
       },
       "rank": 4,
@@ -5598,7 +5635,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rin 'keep.*together|KeepTogether' over web-apps/apps/documenteditor table views \u2014 no table-level control; both products only offer the paragraph-level Keep with next / Keep lines together"
+          "searched": "grep -rin 'keep.*together|KeepTogether' over web-apps/apps/documenteditor table views — no table-level control; both products only offer the paragraph-level Keep with next / Keep lines together"
         }
       },
       "rank": 4,
@@ -5616,7 +5653,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -n 'Shortcuts.*Column|Shortcuts.*Resize|Shortcuts.*Width' over web-apps/apps/documenteditor/main/locale/en.json across its 147 shortcut descriptions \u2014 none resize a table band; their only band sizing is the pointer border drag and the numeric fields"
+          "searched": "grep -n 'Shortcuts.*Column|Shortcuts.*Resize|Shortcuts.*Width' over web-apps/apps/documenteditor/main/locale/en.json across its 147 shortcut descriptions — none resize a table band; their only band sizing is the pointer border drag and the numeric fields"
         }
       },
       "rank": 3,
@@ -5650,7 +5687,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rin 'MoveRowUp|moveTableRow|MoveColumnLeft|textMoveRow' over web-apps/apps/documenteditor and sdkjs/word/api.js \u2014 no move-row or move-column control, menu row, shortcut or API"
+          "searched": "grep -rin 'MoveRowUp|moveTableRow|MoveColumnLeft|textMoveRow' over web-apps/apps/documenteditor and sdkjs/word/api.js — no move-row or move-column control, menu row, shortcut or API"
         }
       },
       "rank": 3,
@@ -5721,7 +5758,7 @@
         "localeKey": "DE.Views.DocumentHolder.advancedTableText"
       },
       "rank": 2,
-      "note": "Ours is a live side panel that applies on change (caption, description, alignment, width, indent, layout, row, column, margins, spacing, formula). Theirs is a modal advanced dialog with more tabs \u2014 position, wrapping, per-cell margins and a border preview."
+      "note": "Ours is a live side panel that applies on change (caption, description, alignment, width, indent, layout, row, column, margins, spacing, formula). Theirs is a modal advanced dialog with more tabs — position, wrapping, per-cell margins and a border preview."
     },
     {
       "id": "table.row-break-across-pages",
@@ -5734,7 +5771,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rin 'cantSplit' over web-apps/apps/documenteditor \u2014 no hits; in sdkjs it appears only in Serialize2.js and fromToJSON.js, i.e. serialization, with no control, locale key or Api method"
+          "searched": "grep -rin 'cantSplit' over web-apps/apps/documenteditor — no hits; in sdkjs it appears only in Serialize2.js and fromToJSON.js, i.e. serialization, with no control, locale key or Api method"
         }
       },
       "rank": 4,
@@ -5802,7 +5839,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rin 'sort' over web-apps/apps/documenteditor/main/app/view/{TableSettings,TableSettingsAdvanced,DocumentHolder,Toolbar}.js \u2014 nothing; grep -n 'btnSort|menuSort|mniSort' over web-apps/apps/documenteditor \u2014 nothing; the only Sort strings in their en.json are comment sorting, bookmark sorting and a flowchart shape name; grep -c 'Sort' sdkjs/word/api.js is 0"
+          "searched": "grep -rin 'sort' over web-apps/apps/documenteditor/main/app/view/{TableSettings,TableSettingsAdvanced,DocumentHolder,Toolbar}.js — nothing; grep -n 'btnSort|menuSort|mniSort' over web-apps/apps/documenteditor — nothing; the only Sort strings in their en.json are comment sorting, bookmark sorting and a flowchart shape name; grep -c 'Sort' sdkjs/word/api.js is 0"
         }
       },
       "rank": 1,
@@ -5940,7 +5977,7 @@
         "control": "btnWrapParallel"
       },
       "rank": 3,
-      "note": "Our importer and layout do place a w:tblpPr table on the float layer and wrap body text beside it, but nothing in the editor authors or changes that \u2014 the properties inspector has no wrapping control."
+      "note": "Our importer and layout do place a w:tblpPr table on the float layer and wrap body text beside it, but nothing in the editor authors or changes that — the properties inspector has no wrapping control."
     },
     {
       "id": "table.unmerge-cells",
@@ -5954,7 +5991,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -rin 'unmerge\\|UnmergeCells\\|splitMerged' over web-apps/apps/documenteditor and sdkjs/word \u2014 no unmerge control, menu row, locale key or API; only SplitTableCells, which refuses a 1x1 split"
+          "searched": "grep -rin 'unmerge\\|UnmergeCells\\|splitMerged' over web-apps/apps/documenteditor and sdkjs/word — no unmerge control, menu row, locale key or API; only SplitTableCells, which refuses a 1x1 split"
         }
       },
       "rank": 3,
@@ -6009,7 +6046,7 @@
         "control": "btnAutoCorrect"
       },
       "rank": 2,
-      "note": "Their File \u25b8 Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table \u2014 `webapp/src/text_rules.mjs` implements smart quotes and nothing else."
+      "note": "Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else."
     },
     {
       "id": "text.autoformat-dashes",
@@ -6103,7 +6140,7 @@
         "api": "ApiTextPr.SetPosition"
       },
       "rank": 4,
-      "note": "Their chrome exposes it as Position in the Advanced \u25b8 Font tab and the engine as ApiTextPr.SetPosition."
+      "note": "Their chrome exposes it as Position in the Advanced ▸ Font tab and the engine as ApiTextPr.SetPosition."
     },
     {
       "id": "text.character-scaling",
@@ -6122,11 +6159,11 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -riE 'textscale|put_TextPrScale' over web-apps/apps/documenteditor and sdkjs/word \u2014 the only textScale keys are DE.Views.FormSettings and the watermark size, and Serialize2.js's rPr property table has no scale entry"
+          "searched": "grep -riE 'textscale|put_TextPrScale' over web-apps/apps/documenteditor and sdkjs/word — the only textScale keys are DE.Views.FormSettings and the watermark size, and Serialize2.js's rPr property table has no scale entry"
         }
       },
       "rank": 5,
-      "note": "Word's Font \u25b8 Advanced \u25b8 Scale. Neither product can set it; we at least keep and render an imported value."
+      "note": "Word's Font ▸ Advanced ▸ Scale. Neither product can set it; we at least keep and render an imported value."
     },
     {
       "id": "text.character-spacing",
@@ -6140,14 +6177,14 @@
               "literal": "character_spacing_twips"
             }
           },
-          "missing": "no command or dialog field sets it \u2014 `w:spacing` on a run is imported, laid out and exported only"
+          "missing": "no command or dialog field sets it — `w:spacing` on a run is imported, laid out and exported only"
         }
       },
       "theirs": {
         "localeKey": "DE.Views.ParagraphSettingsAdvanced.textCharacterSpacing"
       },
       "rank": 3,
-      "note": "Their Advanced \u25b8 Font tab has the spinner. Ours is the same property with no way in."
+      "note": "Their Advanced ▸ Font tab has the spinner. Ours is the same property with no way in."
     },
     {
       "id": "text.clear-formatting",
@@ -6210,14 +6247,14 @@
               "literal": "double_strike"
             }
           },
-          "missing": "no command or control applies it \u2014 an imported `w:dstrike` run is kept and rendered but cannot be set or cleared"
+          "missing": "no command or control applies it — an imported `w:dstrike` run is kept and rendered but cannot be set or cleared"
         }
       },
       "theirs": {
         "localeKey": "DE.Views.ParagraphSettingsAdvanced.strDoubleStrike"
       },
       "rank": 3,
-      "note": "Their Paragraph \u25b8 Advanced \u25b8 Font tab has the checkbox beside Strikethrough. Ours is a read-only property today."
+      "note": "Their Paragraph ▸ Advanced ▸ Font tab has the checkbox beside Strikethrough. Ours is a read-only property today."
     },
     {
       "id": "text.drop-cap",
@@ -6228,7 +6265,7 @@
           "evidence": {
             "command": "insert.dropCap"
           },
-          "missing": "mode (none/dropped/in-margin) and a line count only \u2014 no drop-cap font, distance from text, frame border, margins or exact height"
+          "missing": "mode (none/dropped/in-margin) and a line count only — no drop-cap font, distance from text, frame border, margins or exact height"
         }
       },
       "theirs": {
@@ -6267,7 +6304,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -ril emoji over /Users/sachin/Desktop/melp/reference/web-apps and sdkjs \u2014 every hit is in vendored third-party code (monaco, underscore, es6-promise, ace, package locks); nothing in apps/documenteditor or sdkjs/word"
+          "searched": "grep -ril emoji over /Users/sachin/Desktop/melp/reference/web-apps and sdkjs — every hit is in vendored third-party code (monaco, underscore, es6-promise, ace, package locks); nothing in apps/documenteditor or sdkjs/word"
         }
       },
       "note": "We ship a nine-group emoji picker beside the symbol picker. Their document editor has no emoji surface at all."
@@ -6388,7 +6425,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -riE 'kerning' over web-apps/apps/documenteditor and sdkjs/word \u2014 no hits; the surface snapshot has no control, locale key or API method matching /kern/"
+          "searched": "grep -riE 'kerning' over web-apps/apps/documenteditor and sdkjs/word — no hits; the surface snapshot has no control, locale key or API method matching /kern/"
         }
       },
       "rank": 5,
@@ -6407,7 +6444,7 @@
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs \u2014 nothing tags a selection, so a mixed-language document cannot be proofed correctly."
+      "note": "Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly."
     },
     {
       "id": "text.ligatures",
@@ -6422,7 +6459,7 @@
         "control": "cmbLigatures"
       },
       "rank": 5,
-      "note": "Their Advanced \u25b8 Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all \u2014 shaping decides."
+      "note": "Their Advanced ▸ Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all — shaping decides."
     },
     {
       "id": "text.math-autocorrect",
@@ -6451,7 +6488,7 @@
               "literal": "NoBreakHyphen"
             }
           },
-          "missing": "no command or shortcut inserts one \u2014 `w:noBreakHyphen` and `w:softHyphen` are imported, laid out and exported only"
+          "missing": "no command or shortcut inserts one — `w:noBreakHyphen` and `w:softHyphen` are imported, laid out and exported only"
         }
       },
       "theirs": {
@@ -6514,7 +6551,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep over the surface snapshot for /paste/ \u2014 their paste surface is btnPaste, btnSpecialPaste and the asc_*SpecialPaste APIs; the only paste-adjacent warning is Common.Views.CopyWarningDialog, which is about the browser clipboard shortcut, not about content that was dropped"
+          "searched": "grep over the surface snapshot for /paste/ — their paste surface is btnPaste, btnSpecialPaste and the asc_*SpecialPaste APIs; the only paste-adjacent warning is Common.Views.CopyWarningDialog, which is about the browser clipboard shortcut, not about content that was dropped"
         }
       },
       "note": "We name the references a same-document copy could not duplicate (bookmarks, comments, notes, field ranges, tracked moves) instead of dropping them silently."
@@ -6528,7 +6565,7 @@
           "evidence": {
             "command": "edit.pasteText"
           },
-          "missing": "no post-paste options control \u2014 the choice between keep-source-formatting and text-only must be made before pasting, and there is no merge-formatting option at all"
+          "missing": "no post-paste options control — the choice between keep-source-formatting and text-only must be made before pasting, and there is no merge-formatting option at all"
         }
       },
       "theirs": {
@@ -6573,7 +6610,7 @@
               "literal": "small_caps"
             }
           },
-          "missing": "no command or control applies it \u2014 `w:smallCaps` is imported, laid out and exported but cannot be turned on"
+          "missing": "no command or control applies it — `w:smallCaps` is imported, laid out and exported but cannot be turned on"
         }
       },
       "theirs": {
@@ -6604,7 +6641,7 @@
           "evidence": {
             "command": "insert.symbol"
           },
-          "missing": "no keyboard shortcut inserts a special character \u2014 every one of them costs a trip through the picker"
+          "missing": "no keyboard shortcut inserts a special character — every one of them costs a trip through the picker"
         }
       },
       "theirs": {
@@ -6722,7 +6759,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -riE 'underline' over web-apps/apps/documenteditor/main/app/view and grep for put_TextPrUnderline in sdkjs/word/api.js \u2014 the value is a boolean, and no control or locale key names an underline colour"
+          "searched": "grep -riE 'underline' over web-apps/apps/documenteditor/main/app/view and grep for put_TextPrUnderline in sdkjs/word/api.js — the value is a boolean, and no control or locale key names an underline colour"
         }
       },
       "rank": 4,
@@ -6737,7 +6774,7 @@
       },
       "theirs": {
         "absent": {
-          "searched": "grep -riE 'underline' over web-apps/apps/documenteditor/main/app/view \u2014 btnUnderline is a plain enableToggle Common.UI.Button in Toolbar.js with no menu, and asc_docs_api.put_TextPrUnderline in sdkjs/word/api.js takes a boolean; no style picker anywhere"
+          "searched": "grep -riE 'underline' over web-apps/apps/documenteditor/main/app/view — btnUnderline is a plain enableToggle Common.UI.Button in Toolbar.js with no menu, and asc_docs_api.put_TextPrUnderline in sdkjs/word/api.js takes a boolean; no style picker anywhere"
         }
       },
       "rank": 3,

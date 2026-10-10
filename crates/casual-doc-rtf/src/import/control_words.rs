@@ -1019,6 +1019,7 @@ impl Importer<'_> {
                 pstyle: None,
                 template_code: None,
                 tentative: false,
+                picture_bullet: None,
             })
             .collect();
         if levels.is_empty() {
@@ -1040,6 +1041,7 @@ impl Importer<'_> {
                 pstyle: None,
                 template_code: None,
                 tentative: false,
+                picture_bullet: None,
             });
             self.losses.record(
                 "rtf.list.level-defaulted",

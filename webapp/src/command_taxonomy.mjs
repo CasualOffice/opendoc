@@ -389,6 +389,7 @@ export const APP_MENU_SECTIONS = {
     // close.
     sub(
       "menuGroup.breaks",
+      "layout.blankPage",
       "layout.break.page",
       "layout.break.column",
       "layout.break.section.nextPage",

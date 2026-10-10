@@ -605,6 +605,7 @@ fn a_fold_inside_a_numbered_list_keeps_the_visible_numbers() {
                 pstyle: None,
                 template_code: None,
                 tentative: false,
+                picture_bullet: None,
             }],
             multi_level_type: None,
             num_style_link: None,

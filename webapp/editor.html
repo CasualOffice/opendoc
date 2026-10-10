@@ -1343,6 +1343,7 @@
             </fieldset>
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.pageSize">Page size</legend>
+              <label class="dialog-field"><span data-i18n="pagePresets.paper">Paper size preset</span><select id="pagePaperPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="letter" data-i18n="pagePresets.letter">Letter</option><option value="legal" data-i18n="pagePresets.legal">Legal</option><option value="a4">A4</option><option value="a5">A5</option></select></label>
               <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
                 <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
@@ -1350,6 +1351,8 @@
             </fieldset>
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.margins">Margins</legend>
+              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label><button id="pageMirrorApply" type="button" class="chip-btn" data-i18n="pageExtras.applyMirror">Apply mirrored margins to document</button>
+              <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
               <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
                 <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
@@ -1394,6 +1397,7 @@
                  it costs a full repagination per edit. -->
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.layout">Layout</legend>
+              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label><button id="pageBackgroundApply" type="button" class="chip-btn" data-i18n="pageExtras.applyColor">Apply page color to document</button><button id="pageBackgroundClear" type="button" class="chip-btn" data-i18n="pageExtras.clearColor">Automatic page color</button>
               <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
                   <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
@@ -1412,6 +1416,16 @@
                 <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" data-measure-min-twip="0" data-measure-max-twip="7200" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
               </div>
               <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /> Line between columns</label>
+<label class="dialog-check"><input id="pageColumnEqual" type="checkbox" checked /><span data-i18n="pageColumns.equal">Equal column widths</span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.width0">Column 1 width</span><span class="number-control"><input id="pageColumnWidth0" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.space0">Space after column 1</span><span class="number-control"><input id="pageColumnSpace0" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.width1">Column 2 width</span><span class="number-control"><input id="pageColumnWidth1" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.space1">Space after column 2</span><span class="number-control"><input id="pageColumnSpace1" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.width2">Column 3 width</span><span class="number-control"><input id="pageColumnWidth2" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.space2">Space after column 3</span><span class="number-control"><input id="pageColumnSpace2" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.width3">Column 4 width</span><span class="number-control"><input id="pageColumnWidth3" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+<label class="dialog-field"><span data-i18n="pageColumns.space3">Space after column 4</span><span class="number-control"><input id="pageColumnSpace3" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+
             </fieldset>
           </div>
         </div>
@@ -1838,6 +1852,7 @@
          one scans `.ribbon-panel .rgroup button[data-command]`, and a popover is
          not inside a ribbon panel. -->
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
+      <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
       <button data-i18n="break.column" type="button" role="menuitem" class="menu-item" data-command="layout.break.column">Column break</button>
       <div class="menu-divider"></div>
@@ -3063,6 +3078,27 @@
           <button id="paraClearAll" type="button" class="chip-btn" data-i18n="paragraphAdvanced.clear">Clear all paragraph formatting</button>
           <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
           <div class="properties-panel-grid">
+<fieldset class="dialog-group property-section"><legend data-i18n="styleAdvanced.title">Manage paragraph styles</legend>
+<label class="dialog-field"><span data-i18n="styleAdvanced.target">Style</span><select id="styleAdvancedTarget" class="dialog-select"></select></label>
+<label class="dialog-field"><span data-i18n="styleAdvanced.next">Style for following paragraph</span><select id="styleAdvancedNext" class="dialog-select"></select></label><button id="styleAdvancedNextApply" type="button" class="chip-btn" data-i18n="styleAdvanced.applyNext">Apply following style</button>
+<button id="styleAdvancedDelete" type="button" class="chip-btn" data-i18n="styleAdvanced.delete">Delete unused style</button><button id="styleAdvancedRestore" type="button" class="chip-btn" data-i18n="styleAdvanced.restore">Restore saved style</button>
+<p class="dialog-note" data-i18n="styleAdvanced.notice">Used styles cannot be deleted. Restore uses the definition saved when this document was opened.</p>
+</fieldset>
+<fieldset class="dialog-group property-section"><legend data-i18n="listAdvanced.title">List settings</legend>
+<p id="listAdvancedReason" class="dialog-note" data-i18n="listAdvanced.reason">Place the caret in a list item to change its definition.</p>
+<label class="dialog-field"><span data-i18n="listAdvanced.scheme">Multilevel list</span><select id="listAdvancedScheme" class="dialog-select"><option value="decimal">1. / 1.1. / 1.1.1.</option><option value="outline">1. / a. / i.</option><option value="bullet">• / ○ / ▪</option></select></label><button id="listAdvancedSchemeApply" type="button" class="chip-btn" data-i18n="listAdvanced.applyScheme">Apply multilevel list</button>
+<label class="dialog-field"><span data-i18n="listAdvanced.start">Start numbering at</span><input id="listAdvancedStart" type="number" min="1" max="32767" step="1" value="1" /></label>
+<label class="dialog-field"><span data-i18n="listAdvanced.aligned">Marker aligned at (in)</span><input id="listAdvancedAligned" type="number" min="-22" max="22" step="0.05" value="0" /></label>
+<label class="dialog-field"><span data-i18n="listAdvanced.indent">Text indent (in)</span><input id="listAdvancedIndent" type="number" min="-22" max="22" step="0.05" value="0.5" /></label>
+<label class="dialog-field"><span data-i18n="listAdvanced.suffix">Follow marker with</span><select id="listAdvancedSuffix" class="dialog-select"><option value="tab" data-i18n="listAdvanced.tab">Tab</option><option value="space" data-i18n="listAdvanced.space">Space</option><option value="nothing" data-i18n="listAdvanced.nothing">Nothing</option></select></label>
+<button id="listAdvancedApply" type="button" class="chip-btn" data-i18n="listAdvanced.apply">Apply list settings</button>
+<label class="dialog-field"><span data-i18n="listAdvanced.symbol">Custom bullet symbol</span><input id="listAdvancedSymbol" type="text" value="•" /></label><button id="listAdvancedSymbolApply" type="button" class="chip-btn" data-i18n="listAdvanced.applySymbol">Apply bullet symbol</button>
+<label class="dialog-field"><span data-i18n="listAdvanced.picture">Picture bullet</span><input id="listAdvancedPicture" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+<label class="dialog-field"><span data-i18n="listAdvanced.pictureWidth">Picture width (in)</span><input id="listAdvancedPictureWidth" type="number" min="0.05" max="22" step="0.05" value="0.15" /></label>
+<label class="dialog-field"><span data-i18n="listAdvanced.pictureHeight">Picture height (in)</span><input id="listAdvancedPictureHeight" type="number" min="0.05" max="22" step="0.05" value="0.15" /></label>
+<button id="listAdvancedPictureApply" type="button" class="chip-btn" data-i18n="listAdvanced.applyPicture">Apply picture bullet</button>
+
+</fieldset>
 <fieldset class="dialog-group property-section"><legend data-i18n="paragraphAdvanced.title">Direction and pagination</legend>
               <span id="runDirectionReason" hidden data-i18n="paragraphAdvanced.selectText">Select text to change its direction.</span>
               <button id="runDirectionRtl" data-command="format.direction.rtl" aria-pressed="false" type="button" class="chip-btn" data-i18n="paragraphAdvanced.runRtl">Selected text: right to left</button>

@@ -801,6 +801,8 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
         | Operation::SetDefaultTabStop { .. }
         | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
@@ -885,6 +887,8 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetTextBoxBody { .. }
         | Operation::SetObjectLocks { .. }
         // A field of `Definitions::settings`, which always exists.
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
         | Operation::SetDefaultTabStop { .. }
         | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. } => None,
@@ -1706,6 +1710,8 @@ impl Aspects {
     const TRACK_REVISIONS: Self = Self(1 << 27);
     const SECTION_FORM_PROTECTION: Self = Self(1 << 28);
     const DEFAULT_TAB_STOP: Self = Self(1 << 29);
+    const DOCUMENT_BACKGROUND: Self = Self(1 << 30);
+    const MIRRORED_MARGINS: Self = Self(1 << 31);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1812,6 +1818,10 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         }
         // Each document setting has its own aspect: changing the tab interval,
         // tracking, and even/odd headers concurrently must preserve every write.
+        Operation::SetDocumentBackground { .. } => {
+            Some((Target::Settings, Aspects::DOCUMENT_BACKGROUND))
+        }
+        Operation::SetMirroredMargins { .. } => Some((Target::Settings, Aspects::MIRRORED_MARGINS)),
         Operation::SetDefaultTabStop { .. } | Operation::RestoreDefaultTabStop { .. } => {
             Some((Target::Settings, Aspects::DEFAULT_TAB_STOP))
         }

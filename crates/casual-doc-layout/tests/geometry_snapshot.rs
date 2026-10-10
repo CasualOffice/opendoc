@@ -311,6 +311,7 @@ fn multilevel_list() -> Document {
             pstyle: None,
             template_code: None,
             tentative: false,
+            picture_bullet: None,
         }
     };
     let mut definitions = Definitions::default();
@@ -401,6 +402,7 @@ fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
                 pstyle: None,
                 template_code: None,
                 tentative: false,
+                picture_bullet: None,
             }],
             multi_level_type: None,
             num_style_link: None,

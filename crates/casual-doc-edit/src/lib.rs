@@ -1307,6 +1307,16 @@ pub enum Operation {
         /// The complete replacement locks.
         locks: ObjectLocks,
     },
+    /// Replace or clear the document page color. Self-inverse; O(1).
+    SetDocumentBackground {
+        /// sRGB page fill; absent restores the default page background.
+        color: Option<RgbColor>,
+    },
+    /// Mirror inside/outside page margins on alternating pages. Self-inverse; O(1).
+    SetMirroredMargins {
+        /// Whether verso pages exchange their inside and outside margins.
+        enabled: bool,
+    },
     /// Set the document default tab interval in twips (1 through 31,680). O(1).
     SetDefaultTabStop {
         /// Positive tab interval in twips.
@@ -3108,6 +3118,17 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let previous = settings.even_and_odd_headers;
             settings.even_and_odd_headers = *enabled;
             Ok(Operation::SetEvenAndOddHeaders { enabled: previous })
+        }
+        Operation::SetDocumentBackground { color } => {
+            let previous = doc.background();
+            doc.set_background(*color);
+            Ok(Operation::SetDocumentBackground { color: previous })
+        }
+        Operation::SetMirroredMargins { enabled } => {
+            let settings = &mut doc.definitions_mut().settings;
+            let previous = settings.mirror_margins;
+            settings.mirror_margins = *enabled;
+            Ok(Operation::SetMirroredMargins { enabled: previous })
         }
         Operation::SetDefaultTabStop { position_twips } => {
             if !(1..=31_680).contains(position_twips) {
@@ -11108,6 +11129,34 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         );
+    }
+
+    #[test]
+    fn page_background_and_mirror_settings_undo_exactly() {
+        let mut d = doc(vec![para(2, vec![run(3, "body")])]);
+        let mut ids = IdGenerator::new(9);
+        let color = RgbColor {
+            r: 12,
+            g: 34,
+            b: 56,
+        };
+        for op in [
+            Operation::SetDocumentBackground { color: Some(color) },
+            Operation::SetMirroredMargins { enabled: true },
+        ] {
+            let original = d.clone();
+            let inverse = apply(&mut d, &mut ids, &op).unwrap();
+            match op {
+                Operation::SetDocumentBackground { .. } => assert_eq!(d.background(), Some(color)),
+                _ => assert!(d.definitions().settings.mirror_margins),
+            }
+            let changed = d.clone();
+            let redo = apply(&mut d, &mut ids, &inverse).unwrap();
+            assert_eq!(d, original);
+            apply(&mut d, &mut ids, &redo).unwrap();
+            assert_eq!(d, changed);
+            apply(&mut d, &mut ids, &inverse).unwrap();
+        }
     }
 
     #[test]

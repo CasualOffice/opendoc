@@ -304,6 +304,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("paragraph.align.justify", "mutate"),
   exact("paragraph.indent.increase", "mutate"),
   exact("paragraph.indent.decrease", "mutate"),
+  exact("paragraph.list.settings", "mutate"),
+  exact("style.manage", "mutate"),
   exact("paragraph.list.bullet", "mutate"),
   exact("paragraph.list.numbered", "mutate"),
   exact("paragraph.list.checklist", "mutate"),
@@ -336,6 +338,7 @@ export const COMMAND_CONTRACT = Object.freeze([
 
   // ---- layout / section ---------------------------------------------------
   exact("layout.pageSetup", "mutate"),
+  exact("layout.blankPage", "mutate"),
   exact("layout.paragraph", "mutate"),
   exact("layout.margins", "mutate"),
   exact("layout.orientation", "mutate"),

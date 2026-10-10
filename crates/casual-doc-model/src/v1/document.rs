@@ -149,6 +149,12 @@ impl Document {
         Ok(self)
     }
 
+    /// Sets or clears the page background color. Complexity: O(1).
+    /// Public editing routes through a transaction so undo retains the old fill.
+    pub fn set_background(&mut self, color: Option<RgbColor>) {
+        self.background = color;
+    }
+
     /// Returns the page background color, if the document sets one.
     #[must_use]
     pub const fn background(&self) -> Option<RgbColor> {
@@ -889,6 +895,15 @@ impl Document {
 
     fn validate_numbering_level(&self, level: &NumberingLevel) -> Result<(), ModelError> {
         check_domain(level.start <= 32_767, "numbering.level.start")?;
+        if let Some(picture) = level.picture_bullet {
+            check_domain(
+                (1..=31_680).contains(&picture.width) && (1..=31_680).contains(&picture.height),
+                "numbering.level.pictureBullet.dimensions",
+            )?;
+            if !self.definitions.media.contains_key(&picture.media) {
+                return Err(ModelError::DanglingMediaRef(picture.media.node_id()));
+            }
+        }
         if let Some(NumberFormat::Other(token)) = &level.num_fmt {
             check_domain(
                 !token.is_empty() && token.len() <= 64,

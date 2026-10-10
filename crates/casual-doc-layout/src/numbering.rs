@@ -62,7 +62,7 @@ use casual_doc_model::v1::NumberingInstance;
 // `w:numPr` paints) goes on its own line.
 use casual_doc_model::v1::NumberingResolver;
 
-use crate::text::{GlyphRun, Line, LineLayout};
+use crate::text::{GlyphRun, InlineImage, Line, LineLayout};
 use crate::units::{Point, Twip};
 
 /// The per-document numbering counter state, threaded through the flow in document
@@ -88,6 +88,8 @@ pub struct ResolvedMarker {
     /// The formatted marker string (e.g. `1.`, `4.1`, `a)`, or a bullet glyph).
     /// Empty when the level's format is `none` (the counter still advanced).
     pub text: String,
+    /// Picture replacing the textual marker, resolved through the same level.
+    pub picture_bullet: Option<casual_doc_model::v1::PictureBullet>,
     /// The level's `w:rPr` (`None` when the level declares none); the flow engine
     /// resolves this through the cascade to size/color/face the marker.
     pub run_properties: Option<RunProperties>,
@@ -164,6 +166,7 @@ impl NumberingState {
 
         Some(ResolvedMarker {
             text,
+            picture_bullet: level.picture_bullet,
             run_properties: level.run_properties.clone(),
             suffix: level.suff.unwrap_or(LevelSuffix::Tab),
             level_indent: level
@@ -587,6 +590,7 @@ pub struct PreparedMarker {
     /// The marker's glyph runs, already shifted to the marker's x; their baseline y
     /// is stamped onto the paragraph's first line at injection.
     runs: Vec<GlyphRun>,
+    picture: Option<InlineImage>,
     /// The marker's ascent/descent, used to synthesize a line box for an otherwise
     /// empty list paragraph (so a bullet with no text still shows).
     ascent: Twip,
@@ -606,8 +610,21 @@ impl PreparedMarker {
         }
         Self {
             runs,
+            picture: None,
             ascent,
             descent,
+        }
+    }
+
+    /// Prepares a picture at the same hanging-indent position as a glyph marker.
+    #[must_use]
+    pub fn picture(image: InlineImage) -> Self {
+        let ascent = image.size.height;
+        Self {
+            runs: Vec::new(),
+            picture: Some(image),
+            ascent,
+            descent: Twip::ZERO,
         }
     }
 
@@ -615,7 +632,7 @@ impl PreparedMarker {
     /// that line's baseline. When the body produced no line (an empty list item),
     /// synthesizes a line from the marker's own metrics so the marker still renders.
     pub fn inject(self, layout: &mut LineLayout, range: crate::model::ModelRange) {
-        if self.runs.is_empty() {
+        if self.runs.is_empty() && self.picture.is_none() {
             return;
         }
         if layout.lines.is_empty() {
@@ -639,6 +656,24 @@ impl PreparedMarker {
             });
         }
         let first = layout.lines.first_mut().expect("a line exists");
+        if let Some(mut image) = self.picture {
+            // Normal line spacing grows to accommodate the marker. Exact spacing
+            // keeps its authored box and clipping, just like an inline picture.
+            let growth = if first.clip {
+                Twip::ZERO
+            } else {
+                (image.size.height - first.ascent).max(Twip::ZERO)
+            };
+            first.translate_contents_y(growth);
+            first.ascent = first.ascent + growth;
+            first.height = first.height + growth;
+            image.origin.y = first.ascent - image.size.height;
+            first.images.insert(0, image);
+            for line in layout.lines.iter_mut().skip(1) {
+                line.translate_contents_y(growth);
+            }
+            return;
+        }
         let baseline = first.ascent;
         // Prepend so the marker paints first (position is by origin.x, so visual
         // order is unaffected; paint order is marker-then-body).
@@ -926,6 +961,7 @@ mod tests {
             pstyle: None,
             template_code: None,
             tentative: false,
+            picture_bullet: None,
         }
     }
 

@@ -2160,5 +2160,10 @@
   "watermarkDialog.textWatermarkFields": "Filigrane texte",
   "watermarkDialog.watermark": "Filigrane",
   "zoomMenu.fitPage": "Page entière",
-  "zoomMenu.fitWidth": "Largeur de page"
+  "zoomMenu.fitWidth": "Largeur de page",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted"
 }

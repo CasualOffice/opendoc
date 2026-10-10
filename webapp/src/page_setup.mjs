@@ -23,6 +23,8 @@
 import { TWIPS_PER_INCH } from "./units.mjs";
 import { t } from "./i18n.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
+import { createColumnEditor } from "./page_columns.mjs";
+import { mountPagePresets } from "./page_presets.mjs";
 
 /** The Line Numbers presets, in Word's order. `rule` is merged over the
  *  section's current numbering, so switching mode keeps Start at / Count by /
@@ -92,6 +94,20 @@ export function createPageSetup(io) {
   const columnGap = el("pageColumnGap");
   const columnSeparator = el("pageColumnSeparator");
 
+  const columnEditor = createColumnEditor({ el, measure: io.measure, count: columnCount, gap: columnGap, separator: columnSeparator, contentWidth: () => fieldTwips(widthInput) - fieldTwips(marginLeft) - fieldTwips(marginRight) - fieldTwips(marginGutter) });
+
+  for (const [id, change] of [
+    ['pageMirrorApply', doc => doc.setMirroredMargins(el('pageMirrorMargins').checked)],
+    ['pageBackgroundApply', doc => doc.setPageColor(el('pageBackgroundColor').value)],
+    ['pageBackgroundClear', doc => doc.setPageColor('')],
+  ]) el(id).addEventListener('click', async () => { const doc = io.getDoc(); if (doc) { await io.runEdit(() => change(doc), { gate: true }); reflectDocumentSettings(); } });
+  function reflectDocumentSettings() {
+    const doc = io.getDoc();
+    if (!doc) return;
+    el('pageMirrorMargins').checked = doc.mirroredMargins();
+    el('pageBackgroundColor').value = doc.pageColor() || '#ffffff';
+  }
+
   // ---- Line numbers --------------------------------------------------------
   const lineNumbersBtn = el("lineNumbersBtn");
   const lineNumbersMenu = el("lineNumbersMenu");
@@ -134,6 +150,7 @@ export function createPageSetup(io) {
     marginRight,
     marginGutter,
     columnGap,
+    ...columnEditor.fields,
   ];
 
   /** The geometry fields plus the Line Numbers popover's "From text" distance,
@@ -212,6 +229,7 @@ export function createPageSetup(io) {
     columnCount.value = String(Math.min(4, Math.max(1, value.count ?? 1)));
     columnGap.value = inchText(value.spaceTwips ?? 0);
     columnSeparator.checked = value.separator === true;
+    columnEditor.reflect(columns);
   }
 
   /** The columns half of a `setPageSetup` payload, compared against `section`'s
@@ -219,22 +237,7 @@ export function createPageSetup(io) {
    *  document fresh, so what counts as "the column controls did not change" has to
    *  be measured against the same fresh answer. */
   function columnsPayload(section) {
-    const previous = section.columns;
-    const count = Number(columnCount.value) || 1;
-    const spaceTwips = fieldTwips(columnGap);
-    const separator = columnSeparator.checked;
-    // Opening Page Setup and changing only page size/margins must not erase
-    // explicit unequal column widths. Normalize to equal columns only when a
-    // column control itself actually changed.
-    if (
-      previous &&
-      count === previous.count &&
-      spaceTwips === (previous.spaceTwips ?? 0) &&
-      separator === (previous.separator === true)
-    ) {
-      return previous;
-    }
-    return { ...(previous ?? {}), count, spaceTwips, separator, equalWidth: true, columns: [] };
+    return columnEditor.payload(section.columns);
   }
 
   function updatePreview() {
@@ -310,8 +313,11 @@ export function createPageSetup(io) {
    *  and the Section dropdown's change handler come through here; they were two
    *  copies of the same fourteen lines, which is how the column fields came to
    *  be repainted in one and not the other. */
+  const presets = mountPagePresets({ el, measure: io.measure, orientation: () => orientationGroup.value(), updatePreview });
+
   function paintSection(section) {
     current = section;
+    reflectDocumentSettings();
     const { pageSize, pageMargins, orientation } = section;
     widthInput.value = inchText(pageSize.widthTwips);
     heightInput.value = inchText(pageSize.heightTwips);
@@ -330,6 +336,7 @@ export function createPageSetup(io) {
     const active =
       orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
     orientationGroup.reflect(active);
+    presets.reflect();
     updatePreview();
   }
 

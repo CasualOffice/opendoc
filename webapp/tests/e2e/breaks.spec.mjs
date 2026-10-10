@@ -43,7 +43,7 @@ const MOD = process.platform === "darwin" ? "Meta" : "Control";
 async function blankDocumentWithText(page, text = "Alpha Beta Gamma") {
   await page.goto("/editor.html?blank=1");
   await page.waitForFunction(
-    () => document.getElementById("status")?.textContent !== "Loading engine…",
+    () => document.getElementById("status")?.textContent.startsWith("Ready — open"),
     null,
     { timeout: 45_000 },
   );
@@ -67,7 +67,7 @@ async function insertBreakFromRibbon(page, commandId) {
   await expect(page.locator("#insertBreaksMenu")).toBeHidden();
 }
 
-test("the Breaks dropdown offers all six, from the ribbon and from the Insert menu", async ({
+test("the Breaks dropdown offers all seven, from the ribbon and from the Insert menu", async ({
   page,
 }) => {
   await blankDocumentWithText(page);
@@ -77,6 +77,7 @@ test("the Breaks dropdown offers all six, from the ribbon and from the Insert me
   // Google Docs' flat Insert ▸ Break with the kind spelled out, not Word's
   // heading-over-short-name — the same label has to serve the command palette.
   await expect(page.locator("#insertBreaksMenu [data-command]")).toHaveText([
+    "Blank page",
     "Page break",
     "Column break",
     "Section break (next page)",
@@ -88,10 +89,11 @@ test("the Breaks dropdown offers all six, from the ribbon and from the Insert me
 
   // THE SECOND SURFACE, and the one that matters in compact chrome: the ribbon is
   // hidden there, so a command with only a band face is palette-only — the hole
-  // the References menu was added to close. Every one of the six is a real row in
+  // the References menu was added to close. Every one of the seven is a real row in
   // the Insert menu's Breaks submenu, and `runAppMenuCommand` asserts each is
   // present and ENABLED before it clicks.
   for (const id of [
+    "layout.blankPage",
     "layout.break.page",
     "layout.break.column",
     "layout.break.section.nextPage",

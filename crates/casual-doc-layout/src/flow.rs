@@ -8077,6 +8077,60 @@ fn prepare_list_marker(
     // (the marker protrudes left of the body, into the hanging space).
     let marker_x = constraints.first_line_indent;
 
+    if let Some(picture) = resolved.picture_bullet.as_ref()
+        && let Some(media) = ctx.media.get(&picture.media)
+    {
+        let marker_width = Twip(picture.width);
+        // A space suffix remains a real gap; a tab advances past the image's
+        // right edge through the existing explicit/default tab-stop resolver.
+        let suffix_width = if resolved.suffix == LevelSuffix::Space {
+            let effective = ctx.cascade.resolve_run_in_table(
+                ctx.para_style,
+                &resolved.run_properties.clone().unwrap_or_default(),
+                ctx.table_style.as_ref(),
+            );
+            let space = build_styled_run(" ", &effective, ctx);
+            let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+            shaper
+                .shape_paragraph(
+                    &[space],
+                    LineConstraints {
+                        max_width: Twip(1 << 28),
+                        ..LineConstraints::default()
+                    },
+                    range,
+                )
+                .lines
+                .first()
+                .map_or(Twip::ZERO, |line| {
+                    line.runs
+                        .iter()
+                        .flat_map(|run| &run.glyphs)
+                        .fold(Twip::ZERO, |width, glyph| width + glyph.advance)
+                })
+        } else {
+            Twip::ZERO
+        };
+        constraints.first_line_indent = numbering::body_indent(
+            resolved.suffix,
+            marker_x,
+            marker_width + suffix_width,
+            constraints.indent_start,
+            &marker_tabs,
+            ctx.default_tab,
+        );
+        return (
+            constraints,
+            Some(PreparedMarker::picture(InlineImage {
+                media: media.part_name.clone(),
+                origin: Point::new(marker_x, Twip::ZERO),
+                size: Size::new(marker_width, Twip(picture.height)),
+                crop: None,
+                opacity: None,
+                transform: Default::default(),
+            })),
+        );
+    }
     // Build the marker run through the cascade so it inherits the paragraph's
     // size/color, with the level's own `w:rPr` (face/size/color of the number or
     // bullet) layered on top. A space suffix is folded into the run's text.
@@ -16507,6 +16561,7 @@ mod tests {
                     pstyle: None,
                     template_code: None,
                     tentative: false,
+                    picture_bullet: None,
                 }],
                 multi_level_type: None,
                 num_style_link: None,
@@ -16533,6 +16588,86 @@ mod tests {
             inlines: vec![run_node(11, "Body", RunProperties::default())],
         });
         Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap()
+    }
+
+    #[test]
+    fn a_picture_bullet_flows_at_the_hanging_indent_and_composes_as_an_image() {
+        use casual_doc_model::v1::{MediaId, MediaReference, PictureBullet};
+        let mut doc = numbered_document(casual_doc_model::v1::NumberFormat::Bullet, "•", None);
+        let media = MediaId::new(NodeId::from_parts(902, 1).unwrap());
+        doc.definitions_mut().media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdPictureBullet".into(),
+                media_type: "image/png".into(),
+                part_name: "word/media/bullet.png".into(),
+            },
+        );
+        let abstract_id = *doc
+            .definitions()
+            .abstract_numbering
+            .iter()
+            .next()
+            .unwrap()
+            .0;
+        let level = doc
+            .definitions_mut()
+            .abstract_numbering
+            .get_mut(&abstract_id)
+            .unwrap()
+            .levels
+            .first_mut()
+            .unwrap();
+        level.picture_bullet = Some(PictureBullet {
+            media,
+            width: 300,
+            height: 600,
+        });
+        level.suff = Some(LevelSuffix::Tab);
+        level.paragraph_properties = Some(ParagraphProperties {
+            indentation: Some(Indentation {
+                start_twips: Some(720),
+                hanging_twips: Some(360),
+                ..Indentation::default()
+            }),
+            tabs: vec![TabStop {
+                position_twips: 720,
+                alignment: TabAlignment::Start,
+                leader: None,
+            }],
+            ..ParagraphProperties::default()
+        });
+        let galley = build_galley(&doc, &ParleyShaper::new(), Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("paragraph");
+        };
+        let first = &lines.lines[0];
+        assert_eq!(first.images.len(), 1);
+        assert!(
+            !first.runs.iter().any(|run| run.is_marker),
+            "picture replaces the fallback glyph"
+        );
+        let image = &first.images[0];
+        assert_eq!(image.media, "word/media/bullet.png");
+        assert_eq!(image.origin.x, Twip(-360));
+        assert_eq!(image.size, Size::new(Twip(300), Twip(600)));
+        assert_eq!(
+            image.origin.y + image.size.height,
+            first.ascent,
+            "picture aligns to baseline"
+        );
+        assert!(
+            first.height >= Twip(600),
+            "picture reserves its line height"
+        );
+        assert_eq!(
+            first.runs[0].origin.x,
+            Twip::ZERO,
+            "suffix tab reaches the body indent"
+        );
+        let display = crate::compose::compose_paragraph(lines, Point::new(Twip(1000), Twip(2000)));
+        assert!(display.items.iter().any(|item| matches!(item, crate::display::PaintItem::Image { media, rect, .. }
+            if media == "word/media/bullet.png" && rect.origin.x == Twip(640) && rect.size.height == Twip(600))));
     }
 
     #[test]

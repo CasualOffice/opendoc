@@ -1625,3 +1625,36 @@ fn run_direction_concurrent_writes_converge_independently_of_bold() {
         assert_eq!(run.properties.bold, delta.bold);
     }
 }
+
+#[test]
+fn page_background_and_mirror_writes_converge_without_losing_other_settings() {
+    let base = seed().document;
+    let a = Operation::SetMirroredMargins { enabled: true };
+    let color = casual_doc_model::v1::RgbColor {
+        r: 12,
+        g: 34,
+        b: 56,
+    };
+    for b in [
+        Operation::SetMirroredMargins { enabled: false },
+        Operation::SetDocumentBackground { color: Some(color) },
+        Operation::SetTrackRevisions { enabled: true },
+    ] {
+        let left = diamond_side(&base, &a, &b, Side::Later).unwrap().unwrap();
+        let right = diamond_side(&base, &b, &a, Side::Earlier).unwrap().unwrap();
+        assert_eq!(left, right);
+        match b {
+            Operation::SetMirroredMargins { .. } => {
+                assert!(!left.definitions().settings.mirror_margins)
+            }
+            Operation::SetDocumentBackground { .. } => {
+                assert!(left.definitions().settings.mirror_margins);
+                assert_eq!(left.background(), Some(color));
+            }
+            _ => {
+                assert!(left.definitions().settings.mirror_margins);
+                assert!(left.definitions().settings.track_changes);
+            }
+        }
+    }
+}
