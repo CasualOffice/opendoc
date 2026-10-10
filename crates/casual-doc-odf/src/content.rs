@@ -10073,6 +10073,7 @@ fn build_document(
                         lvl_restart: None,
                         template_code: None,
                         tentative: false,
+                        picture_bullet: None,
                     })
                     .collect(),
                 multi_level_type: None,

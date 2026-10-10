@@ -2168,5 +2168,10 @@
   "watermarkDialog.textWatermarkFields": "Текстовая подложка",
   "watermarkDialog.watermark": "Подложка",
   "zoomMenu.fitPage": "По размеру страницы",
-  "zoomMenu.fitWidth": "По ширине страницы"
+  "zoomMenu.fitWidth": "По ширине страницы",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted"
 }

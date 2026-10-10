@@ -8840,8 +8840,8 @@ fn an_unmodeled_child_of_the_style_part_is_reported() {
 
 #[test]
 fn a_picture_bullet_is_reported_rather_than_silently_dropped() {
-    // `w:numPicBullet` (an image used as the list marker) is not modeled and the
-    // numbering part is regenerated, so the bullet vanishes on save.
+    // XML-only import has no numbering-part image relationships. A missing
+    // marker resource is reported once rather than silently discarded.
     let numbering = br#"<w:numbering xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v">
         <w:numPicBullet w:numPicBulletId="0">
             <w:pict><v:shape id="_x0000_i1025" style="width:9pt;height:9pt"><v:imagedata r:id="rId1"/></v:shape></w:pict>

@@ -1767,4 +1767,9 @@ export const EN_STRINGS = Object.freeze({
   "chart.palette.mono4": "Monochrome 4",
   "chart.palette.mono5": "Monochrome 5",
   "chart.palette.mono6": "Monochrome 6",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted",
 });

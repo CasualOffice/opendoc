@@ -658,6 +658,7 @@ pub struct WasmDocument {
     /// The shared bullet / numbered list definitions this editor created, if any —
     /// allocated lazily on the first list toggle and reused for every later one, so
     /// the document grows at most one abstract+instance per list kind.
+    saved_styles: BTreeMap<StyleId, Style>,
     bullet_list: Option<NumberingInstanceId>,
     numbered_list: Option<NumberingInstanceId>,
     /// The two checklist numbering definitions (unchecked `☐` / checked `☑`),
@@ -938,7 +939,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetCoreProperties { .. }
         | Operation::SetDocumentProtection { .. }
         | Operation::SetDefaultTabStop { .. }
-        | Operation::RestoreDefaultTabStop { .. } => HistoryKind::DocumentProperties,
+        | Operation::RestoreDefaultTabStop { .. }
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. } => HistoryKind::DocumentProperties,
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
@@ -6812,6 +6815,22 @@ impl WasmDocument {
     /// level. Bullets and non-list paragraphs are rejected.
     #[wasm_bindgen(js_name = restartList)]
     pub fn restart_list(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        self.set_list_numbering_value(node, 1)
+    }
+
+    /// Starts the caret item at `value`, retaining nested descendants in the same
+    /// list instance. One transaction; O(P) with a single paragraph index.
+    #[wasm_bindgen(js_name = setListNumberingValue)]
+    pub fn set_list_numbering_value(
+        &mut self,
+        node: &str,
+        value: u16,
+    ) -> Result<EditResult, JsValue> {
+        if !(1..=32767).contains(&value) {
+            return Err(to_js(
+                "list.start-out-of-range: Choose a value from 1 to 32767.".into(),
+            ));
+        }
         let start_node = node_id(node)?;
         let Some(current) =
             paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
@@ -6825,13 +6844,23 @@ impl WasmDocument {
                 "restart numbering requires a numbered list item".into(),
             ));
         }
-        let abstract_ref = self
+        let original = self
             .document
             .definitions()
             .numbering
             .get(&current.instance)
-            .ok_or_else(|| to_js("numbering definition not found".into()))?
-            .abstract_ref;
+            .ok_or_else(|| to_js("numbering definition not found".into()))?;
+        let abstract_ref = original.abstract_ref;
+        let mut overrides = original.overrides.clone();
+        if let Some(existing) = overrides.iter_mut().find(|o| o.level == current.level) {
+            existing.start = Some(value);
+        } else {
+            overrides.push(NumberingOverride {
+                level: current.level,
+                start: Some(value),
+                definition: None,
+            });
+        }
         let new_instance = NumberingInstanceId::new(
             self.edit_ids
                 .next_id()
@@ -6849,11 +6878,7 @@ impl WasmDocument {
             id: new_instance,
             instance: Some(Box::new(NumberingInstance {
                 abstract_ref,
-                overrides: vec![NumberingOverride {
-                    level: current.level,
-                    start: Some(1),
-                    definition: None,
-                }],
+                overrides,
             })),
         };
 
@@ -6873,13 +6898,13 @@ impl WasmDocument {
             let Some(numbering) = properties.numbering else {
                 break;
             };
-            if numbering.instance != current.instance || numbering.level != current.level {
+            if numbering.instance != current.instance || numbering.level < current.level {
                 break;
             }
             let mut next = properties.clone();
             next.numbering = Some(NumberingRef {
                 instance: new_instance,
-                level: current.level,
+                level: numbering.level,
             });
             ops.push(Operation::SetParagraphProperties {
                 node: id,
@@ -7016,18 +7041,8 @@ impl WasmDocument {
         else {
             return String::new();
         };
-        let defs = self.document.definitions();
-        let Some(level) = defs
-            .numbering
-            .get(&reference.instance)
-            .and_then(|inst| defs.abstract_numbering.get(&inst.abstract_ref))
-            .and_then(|abs| {
-                abs.levels
-                    .iter()
-                    .find(|l| l.level == reference.level)
-                    .or_else(|| abs.levels.first())
-            })
-        else {
+        let resolver = self.document.definitions().numbering_resolver();
+        let Some(level) = resolver.level(reference) else {
             return String::new();
         };
         match &level.num_fmt {
@@ -7061,6 +7076,209 @@ impl WasmDocument {
     /// no supported format.
     #[wasm_bindgen(js_name = setListFormat)]
     pub fn set_list_format(&mut self, node: &str, spec: &str) -> Result<EditResult, JsValue> {
+        self.edit_list_definition(node, |definition, level| {
+            let target = definition
+                .levels
+                .iter_mut()
+                .find(|l| l.level == level)
+                .ok_or_else(|| "numbering level not found".to_owned())?;
+            apply_marker_spec(target, spec)
+        })
+    }
+
+    /// The effective caret level, including instance overrides. O(1) levels
+    /// after the paragraph lookup; the dialog writes this same shape back.
+    #[wasm_bindgen(js_name = listSettings)]
+    pub fn list_settings(&self, node: &str) -> String {
+        let Some(reference) = NodeId::from_str(node)
+            .ok()
+            .and_then(|id| paragraph_properties(&self.document, id))
+            .and_then(|p| p.numbering)
+        else {
+            return "null".into();
+        };
+        let resolver = self.document.definitions().numbering_resolver();
+        let Some(level) = resolver.level(reference) else {
+            return "null".into();
+        };
+        let indentation = level
+            .paragraph_properties
+            .as_ref()
+            .and_then(|p| p.indentation);
+        let text_indent = indentation.and_then(|i| i.start_twips).unwrap_or(0);
+        let aligned_at = text_indent - indentation.and_then(|i| i.hanging_twips).unwrap_or(0);
+        let start = resolver
+            .instance(reference.instance)
+            .and_then(|i| i.overrides.iter().find(|o| o.level == reference.level))
+            .and_then(|o| o.start)
+            .unwrap_or(level.start);
+        serde_json::json!({ "level": reference.level, "format": self.list_format_at(node),
+            "text": level.lvl_text, "start": start, "alignedAt": aligned_at,
+            "textIndent": text_indent, "suffix": match level.suff {
+                Some(LevelSuffix::Space) => "space", Some(LevelSuffix::Nothing) => "nothing", _ => "tab",
+            }}).to_string()
+    }
+
+    /// Edits one list level's marker, indentation and suffix atomically. The
+    /// replacement definition preserves all other effective levels and overrides.
+    #[wasm_bindgen(js_name = setListSettings)]
+    pub fn set_list_settings(&mut self, node: &str, json: &str) -> Result<EditResult, JsValue> {
+        let payload: ListSettingsJson =
+            serde_json::from_str(json).map_err(|e| to_js(format!("invalid list settings: {e}")))?;
+        if payload.level > 8
+            || !(1..=32767).contains(&payload.start)
+            || !(-31680..=31680).contains(&payload.aligned_at)
+            || !(-31680..=31680).contains(&payload.text_indent)
+            || !(-31680..=31680).contains(&(payload.text_indent - payload.aligned_at))
+            || payload.text.len() > 255
+        {
+            return Err(to_js(
+                "list.settings-out-of-range: List settings exceed supported bounds.".into(),
+            ));
+        }
+        let suffix = match payload.suffix.as_str() {
+            "tab" => LevelSuffix::Tab,
+            "space" => LevelSuffix::Space,
+            "nothing" => LevelSuffix::Nothing,
+            _ => {
+                return Err(to_js(
+                    "list.invalid-suffix: Choose tab, space or nothing.".into(),
+                ));
+            }
+        };
+        self.edit_list_definition(node, |definition, current| {
+            let level = definition
+                .levels
+                .iter_mut()
+                .find(|l| l.level == current)
+                .ok_or_else(|| "numbering level not found".to_owned())?;
+            apply_marker_spec(level, &payload.format)?;
+            level.start = payload.start;
+            level.lvl_text = Some(payload.text);
+            level.suff = Some(suffix);
+            let paragraph = level
+                .paragraph_properties
+                .get_or_insert_with(ParagraphProperties::default);
+            let mut indentation = paragraph.indentation.unwrap_or(Indentation {
+                start_twips: None,
+                end_twips: None,
+                first_line_twips: None,
+                hanging_twips: None,
+            });
+            indentation.start_twips = Some(payload.text_indent);
+            indentation.hanging_twips = Some(payload.text_indent - payload.aligned_at);
+            indentation.first_line_twips = None;
+            paragraph.indentation = Some(indentation);
+            Ok(())
+        })
+    }
+
+    /// Applies a nine-level gallery scheme to the caret's contiguous list as one
+    /// undoable action. The caret must already be a list item.
+    #[wasm_bindgen(js_name = setMultilevelList)]
+    pub fn set_multilevel_list(&mut self, node: &str, preset: &str) -> Result<EditResult, JsValue> {
+        if !matches!(preset, "decimal" | "outline" | "bullet") {
+            return Err(to_js(
+                "list.unknown-preset: Choose a supported multilevel scheme.".into(),
+            ));
+        }
+        self.edit_list_definition(node, |definition, _| {
+            definition.multi_level_type = Some(casual_doc_model::v1::MultiLevelType::Multilevel);
+            definition.levels = (0..9)
+                .map(|index| {
+                    let mut level = list_level(preset != "bullet", index);
+                    if preset == "outline" {
+                        apply_marker_spec(
+                            &mut level,
+                            ["decimal", "lowerLetter", "lowerRoman"][usize::from(index) % 3],
+                        )?;
+                    }
+                    Ok(level)
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(())
+        })
+    }
+
+    /// Authors a picture marker for the caret's list level. Media registration,
+    /// replacement definition and list references share one undoable transaction.
+    #[wasm_bindgen(js_name = setListPictureBullet)]
+    pub fn set_list_picture_bullet(
+        &mut self,
+        node: &str,
+        bytes: Vec<u8>,
+        width_twips: i32,
+        height_twips: i32,
+        mime: &str,
+    ) -> Result<EditResult, JsValue> {
+        use casual_doc_model::v1::{MediaId, MediaReference, PictureBullet};
+        if bytes.is_empty()
+            || bytes.len() > 16 * 1024 * 1024
+            || !(1..=31680).contains(&width_twips)
+            || !(1..=31680).contains(&height_twips)
+        {
+            return Err(to_js("list.picture-bounds: Choose a picture up to 16 MiB with dimensions from 1 to 31680 twips.".into()));
+        }
+        let Some((media_type, ext)) = image_part_type(mime) else {
+            return Err(to_js(
+                "list.picture-type: Choose a supported image type.".into(),
+            ));
+        };
+        let seq = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let media = MediaId::new(seq);
+        let part_name = format!("word/media/editor-bullet-{seq}.{ext}");
+        let op = Operation::SetMediaReference {
+            id: media,
+            reference: Some(Box::new(MediaReference {
+                relationship_id: format!("rIdEditorBullet{seq}"),
+                media_type: media_type.to_owned(),
+                part_name: part_name.clone(),
+            })),
+        };
+        let result = self.edit_list_definition_after(node, vec![op], |definition, current| {
+            let level = definition
+                .levels
+                .iter_mut()
+                .find(|l| l.level == current)
+                .ok_or_else(|| "numbering level not found".to_owned())?;
+            level.num_fmt = Some(NumberFormat::Bullet);
+            level.lvl_text = Some(String::new());
+            level.picture_bullet = Some(PictureBullet {
+                media,
+                width: width_twips,
+                height: height_twips,
+            });
+            Ok(())
+        });
+        // Register bytes only after the model transaction succeeds: refused
+        // attempts must not accumulate immutable resources. Layout uses the
+        // supplied marker dimensions; rendering reads these bytes afterward.
+        if result.is_ok() {
+            self.resources.insert(part_name, bytes);
+        }
+        result
+    }
+
+    // Copy-on-write: materialize effective levels, then register the replacement
+    // and repoint the contiguous list in one transaction. O(P + L), one paragraph
+    // index rather than a document lookup per list item.
+    fn edit_list_definition(
+        &mut self,
+        node: &str,
+        edit: impl FnOnce(&mut AbstractNumbering, u8) -> Result<(), String>,
+    ) -> Result<EditResult, JsValue> {
+        self.edit_list_definition_after(node, Vec::new(), edit)
+    }
+
+    fn edit_list_definition_after(
+        &mut self,
+        node: &str,
+        prefix: Vec<Operation>,
+        edit: impl FnOnce(&mut AbstractNumbering, u8) -> Result<(), String>,
+    ) -> Result<EditResult, JsValue> {
         let start_node = node_id(node)?;
         let Some(current) =
             paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
@@ -7090,12 +7308,32 @@ impl WasmDocument {
             .get(&abstract_ref)
             .ok_or_else(|| to_js("abstract numbering not found".into()))?
             .clone();
-        let target_level = abstract_def
-            .levels
-            .iter_mut()
-            .find(|l| l.level == level)
-            .ok_or_else(|| to_js("numbering level not found".into()))?;
-        apply_marker_spec(target_level, spec).map_err(to_js)?;
+        let resolver = self.document.definitions().numbering_resolver();
+        let instance = resolver
+            .instance(current.instance)
+            .ok_or_else(|| to_js("numbering definition not found".into()))?;
+        abstract_def.levels = (0..9)
+            .filter_map(|index| {
+                let mut effective = resolver
+                    .level(NumberingRef {
+                        instance: current.instance,
+                        level: index,
+                    })?
+                    .clone();
+                if let Some(start) = instance
+                    .overrides
+                    .iter()
+                    .find(|o| o.level == index)
+                    .and_then(|o| o.start)
+                {
+                    effective.start = start;
+                }
+                Some(effective)
+            })
+            .collect();
+        abstract_def.num_style_link = None;
+        abstract_def.style_link = None;
+        edit(&mut abstract_def, level).map_err(to_js)?;
 
         // Mint a fresh abstract + instance so only this list changes.
         let exhausted = || to_js("id space exhausted".into());
@@ -7174,7 +7412,7 @@ impl WasmDocument {
         }
         // Registration first, and the abstract before the instance that names it: an
         // operation must never be ordered before the thing it references.
-        let ops = install.into_iter().chain(ops).collect();
+        let ops = prefix.into_iter().chain(install).chain(ops).collect();
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
     }
@@ -9571,6 +9809,84 @@ impl WasmDocument {
                 }),
             }],
             caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// Whether inside/outside margins swap on facing pages.
+    #[wasm_bindgen(js_name = mirroredMargins)]
+    pub fn mirrored_margins(&self) -> bool {
+        self.document.definitions().settings.mirror_margins
+    }
+
+    /// Changes document-wide facing-page margins transactionally.
+    #[wasm_bindgen(js_name = setMirroredMargins)]
+    pub fn set_mirrored_margins(&mut self, enabled: bool) -> Result<EditResult, JsValue> {
+        self.apply_action_caret(
+            vec![Operation::SetMirroredMargins { enabled }],
+            Pos::new(self.document.id(), 0),
+        )
+        .map_err(to_js)
+    }
+
+    /// Page background as #rrggbb; empty means automatic white.
+    #[wasm_bindgen(js_name = pageColor)]
+    pub fn page_color(&self) -> String {
+        self.document
+            .background()
+            .map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b))
+            .unwrap_or_default()
+    }
+
+    /// Sets a solid page background, or clears it with an empty string.
+    #[wasm_bindgen(js_name = setPageColor)]
+    pub fn set_page_color(&mut self, color: &str) -> Result<EditResult, JsValue> {
+        let color =
+            if color.trim().is_empty() {
+                None
+            } else {
+                Some(parse_hex_color(color).ok_or_else(|| {
+                    to_js("page.invalid-color: Choose a six-digit RGB color.".into())
+                })?)
+            };
+        self.apply_action_caret(
+            vec![Operation::SetDocumentBackground { color }],
+            Pos::new(self.document.id(), 0),
+        )
+        .map_err(to_js)
+    }
+
+    /// Inserts two page breaks at the caret, leaving one empty intervening page.
+    /// One undoable action; the host retains selection at the insertion site.
+    #[wasm_bindgen(js_name = insertBlankPage)]
+    pub fn insert_blank_page(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        if let BreakSite::Elsewhere(refusal) = break_site(&self.document, nid) {
+            return Err(to_js(refusal.reason().to_owned()));
+        }
+        let first = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let second = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        self.apply_action_caret_as(
+            vec![
+                casual_doc_edit::breaks::insert_break_op(
+                    Pos::new(nid, offset),
+                    first,
+                    BreakKind::Page,
+                ),
+                casual_doc_edit::breaks::insert_break_op(
+                    Pos::new(nid, offset),
+                    second,
+                    BreakKind::Page,
+                ),
+            ],
+            Pos::new(nid, offset),
+            HistoryKind::PageBreak,
         )
         .map_err(to_js)
     }
@@ -13410,6 +13726,102 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Name of the following-paragraph style; empty means keep this style.
+    #[wasm_bindgen(js_name = styleNext)]
+    pub fn style_next(&self, name: &str) -> String {
+        self.style_id_by_name(name)
+            .and_then(|id| self.document.definitions().styles.get(&id))
+            .and_then(|style| style.next)
+            .and_then(|id| self.document.definitions().styles.get(&id))
+            .and_then(|style| style.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Sets the following-paragraph style in one undoable registry transaction.
+    #[wasm_bindgen(js_name = setStyleNext)]
+    pub fn set_style_next(&mut self, name: &str, next_name: &str) -> Result<EditResult, JsValue> {
+        let id = self
+            .style_id_by_name(name)
+            .ok_or_else(|| to_js("style.unknown: Choose an existing style.".into()))?;
+        let next = if next_name.trim().is_empty() {
+            None
+        } else {
+            Some(self.style_id_by_name(next_name).ok_or_else(|| {
+                to_js("style.unknown-next: Choose an existing following style.".into())
+            })?)
+        };
+        let mut style = self
+            .document
+            .definitions()
+            .styles
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| to_js("style not found".into()))?;
+        style.next = next;
+        self.apply_action_caret_as(
+            vec![Operation::SetStyleDefinition {
+                id,
+                style: Some(Box::new(style)),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::StyleChange,
+        )
+        .map_err(to_js)
+    }
+
+    /// Restores the definition saved when this document was opened. Imported
+    /// template definitions remain authoritative; no fabricated factory defaults.
+    #[wasm_bindgen(js_name = restoreStyleDefault)]
+    pub fn restore_style_default(&mut self, name: &str) -> Result<EditResult, JsValue> {
+        let id = self
+            .style_id_by_name(name)
+            .ok_or_else(|| to_js("style.unknown: Choose an existing style.".into()))?;
+        let style = self.saved_styles.get(&id).cloned().ok_or_else(|| {
+            to_js(
+                "style.no-saved-default: This style was created after the document was opened."
+                    .into(),
+            )
+        })?;
+        self.apply_action_caret_as(
+            vec![Operation::SetStyleDefinition {
+                id,
+                style: Some(Box::new(style)),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::StyleChange,
+        )
+        .map_err(to_js)
+    }
+
+    /// Removes an unused, non-default style. Referenced styles are refused by
+    /// model validation, preserving content rather than silently changing it.
+    #[wasm_bindgen(js_name = deleteStyle)]
+    pub fn delete_style(&mut self, name: &str) -> Result<EditResult, JsValue> {
+        self.delete_style_inner(name).map_err(to_js)
+    }
+
+    fn delete_style_inner(&mut self, name: &str) -> Result<EditResult, String> {
+        let id = self
+            .style_id_by_name(name)
+            .ok_or_else(|| "style.unknown: Choose an existing style.".to_owned())?;
+        if self
+            .document
+            .definitions()
+            .styles
+            .get(&id)
+            .is_some_and(|s| s.is_default)
+        {
+            return Err(
+                "style.default-delete: The document default style cannot be deleted.".into(),
+            );
+        }
+        self.apply_action_caret_as(vec![Operation::SetStyleDefinition { id, style: None }],
+            Pos::new(self.document.id(), 0), HistoryKind::StyleChange)
+            .map_err(|error| if error == "ValueTooLarge" {
+                "style.in-use: This style is used by document content or another definition. Apply another style before deleting it.".into()
+            } else { error })
+    }
+
     /// The effective run properties at `start` — the "formatting to match" when
     /// updating or creating a style from a selection. Word samples the selection's
     /// start, so a collapsed caret works too. The character-style link is cleared
@@ -16077,6 +16489,11 @@ impl WasmDocument {
         };
         self.layout = BodyLayout::Whole(update.layout);
         self.restore_reflow_table_scroll();
+        let dirty = if damage.is_all() {
+            (0..self.page_count()).collect()
+        } else {
+            dirty
+        };
         EditResult {
             node: caret.node.to_string(),
             offset: caret.offset,
@@ -17897,6 +18314,19 @@ fn parse_paint_color(text: &str) -> Result<PaintColor, String> {
 /// JSON, mirrors [`page_setup`](WasmDocument::page_setup)/
 /// [`set_page_setup`](WasmDocument::set_page_setup). `section` is the
 /// section's `NodeId` as a hex string, opaque to JS, passed back unchanged.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ListSettingsJson {
+    #[serde(default)]
+    level: u8,
+    format: String,
+    text: String,
+    start: u16,
+    aligned_at: i32,
+    text_indent: i32,
+    suffix: String,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PageSetupJson {
@@ -18901,6 +19331,14 @@ fn inlines_contain_node(inlines: &[InlineNode], node: NodeId) -> bool {
 /// `O(ops)`.
 #[must_use]
 fn damage_of(ops: &[Operation]) -> DirtySet {
+    // Page color changes paint outside paragraph/layout equality. Carry an all-
+    // page invalidation through edits, undo, redo and remote operation replay.
+    if ops
+        .iter()
+        .any(|op| matches!(op, Operation::SetDocumentBackground { .. }))
+    {
+        return DirtySet::everything();
+    }
     let mut nodes = Vec::with_capacity(ops.len());
     for op in ops {
         let node = match op {
@@ -27678,6 +28116,12 @@ fn open_document_bounded(
         ))
     };
 
+    let saved_styles = document
+        .definitions()
+        .styles
+        .iter()
+        .map(|(id, style)| (*id, style.clone()))
+        .collect();
     Ok(WasmDocument {
         edit_context: EditContext::Body,
         document,
@@ -27705,6 +28149,7 @@ fn open_document_bounded(
         // above uses the full path since there is nothing yet to reuse.
         galley_cache: GalleyCache::new(),
         // List definitions are created on demand by the first bullet/numbered toggle.
+        saved_styles,
         bullet_list: None,
         numbered_list: None,
         checklist_unchecked: None,
@@ -29143,6 +29588,7 @@ fn checklist_level(checked: bool, level: u8) -> NumberingLevel {
         CHECKBOX_UNCHECKED
     };
     NumberingLevel {
+        picture_bullet: None,
         num_fmt: Some(NumberFormat::Bullet),
         lvl_text: Some(glyph.to_string()),
         ..list_level(false, level)
@@ -29161,6 +29607,7 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         (NumberFormat::Bullet, glyph.to_string())
     };
     NumberingLevel {
+        picture_bullet: None,
         level,
         start: 1,
         num_fmt: Some(num_fmt),
@@ -29261,6 +29708,7 @@ fn number_format_from_token(token: &str) -> Option<NumberFormat> {
 /// bullet list to a numbered one produces a rendering template rather than a
 /// stale glyph. Errors when the spec is empty or unrecognized.
 fn apply_marker_spec(level: &mut NumberingLevel, spec: &str) -> Result<(), String> {
+    level.picture_bullet = None;
     if let Some(glyph) = spec.strip_prefix("bullet:") {
         if glyph.is_empty() {
             return Err(
@@ -29371,7 +29819,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // editing is a policy change, and scrolling the reader away from what they were
         // looking at because they ticked a protection box would be a defect. Routed through
         // `apply_action_caret` with the caller's own caret like the others (ADR-059).
-        Operation::SetDocumentProtection { .. } | Operation::SetDefaultTabStop { .. } | Operation::RestoreDefaultTabStop { .. } => Pos::new(doc_id, 0),
+        Operation::SetDocumentProtection { .. } | Operation::SetDefaultTabStop { .. } | Operation::RestoreDefaultTabStop { .. } | Operation::SetDocumentBackground { .. } | Operation::SetMirroredMargins { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
         // Section-scoped, and the caret does not move: turning line numbers on
@@ -30678,6 +31126,222 @@ fn collect_review_format_ids_all(document: &Document, out: &mut Vec<NodeId>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn batch67_picture_authoring_registers_saves_and_undoes_one_definition_transaction() {
+        let mut d = open_document(RICH_DOCX).expect("open");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        d.toggle_list(&node, 0, &node, 0, "numbered").unwrap();
+        let original = d.document.clone();
+        d.set_list_picture_bullet(&node, b"BULLET_IMAGE_BYTES".to_vec(), 240, 300, "image/png")
+            .unwrap();
+        let reference = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap();
+        let picture = d
+            .document
+            .definitions()
+            .numbering_resolver()
+            .level(reference)
+            .unwrap()
+            .picture_bullet
+            .unwrap();
+        assert_eq!((picture.width, picture.height), (240, 300));
+        let resource = d.document.definitions().media.get(&picture.media).unwrap();
+        assert_eq!(
+            d.resources.get(&resource.part_name),
+            Some(b"BULLET_IMAGE_BYTES".as_slice())
+        );
+        let saved = d.export_docx().unwrap();
+        let reopened = open_document(&saved).unwrap();
+        let reference =
+            paragraph_properties(&reopened.document, reopened.ordered_paragraphs()[0].0)
+                .unwrap()
+                .numbering
+                .unwrap();
+        assert!(
+            reopened
+                .document
+                .definitions()
+                .numbering_resolver()
+                .level(reference)
+                .unwrap()
+                .picture_bullet
+                .is_some()
+        );
+        d.undo().unwrap();
+        assert_eq!(d.document, original);
+    }
+
+    #[test]
+    fn batch67_list_settings_preserve_effective_overrides_and_undo_round_trip() {
+        let mut d = open_document(RICH_DOCX).expect("open");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        d.toggle_list(&node, 0, &node, 0, "numbered").expect("list");
+        d.set_list_numbering_value(&node, 7).expect("start seven");
+        let old = d.document.definitions().clone();
+        let mut settings: serde_json::Value =
+            serde_json::from_str(&d.list_settings(&node)).unwrap();
+        assert_eq!(settings["start"], 7);
+        settings["alignedAt"] = 180.into();
+        settings["textIndent"] = 900.into();
+        settings["suffix"] = "space".into();
+        d.set_list_settings(&node, &settings.to_string())
+            .expect("settings");
+        let after: serde_json::Value = serde_json::from_str(&d.list_settings(&node)).unwrap();
+        assert_eq!(after["start"], 7);
+        assert_eq!(after["alignedAt"], 180);
+        assert_eq!(after["textIndent"], 900);
+        assert_eq!(after["suffix"], "space");
+        let bytes = d.export_docx().expect("save");
+        let reopened = open_document(&bytes).expect("reopen");
+        let n = reopened.ordered_paragraphs()[0].0.to_string();
+        let saved: serde_json::Value = serde_json::from_str(&reopened.list_settings(&n)).unwrap();
+        assert_eq!(saved["start"], 7);
+        assert_eq!(saved["textIndent"], 900);
+        d.undo().expect("undo");
+        assert_eq!(d.document.definitions(), &old);
+    }
+
+    #[test]
+    fn batch67_multilevel_gallery_and_start_value_keep_nested_descendants() {
+        let mut d = open_document(RICH_DOCX).expect("open");
+        let first = d.ordered_paragraphs()[0].0.to_string();
+        let second = d.split_paragraph(&first, 0).expect("split").node();
+        d.toggle_list(&first, 0, &second, 0, "numbered")
+            .expect("two items");
+        d.adjust_list_level(&second, 0, &second, 0, 1)
+            .expect("nested");
+        d.set_multilevel_list(&first, "outline").expect("outline");
+        assert_eq!(d.list_format_at(&second), "lowerLetter");
+        let before = d.document.definitions().clone();
+        d.set_list_numbering_value(&first, 9).expect("start");
+        let a = paragraph_properties(&d.document, NodeId::from_str(&first).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap();
+        let b = paragraph_properties(&d.document, NodeId::from_str(&second).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap();
+        assert_eq!(
+            a.instance, b.instance,
+            "nested items must travel with their parent"
+        );
+        assert_eq!(b.level, 1);
+        let state: serde_json::Value = serde_json::from_str(&d.list_settings(&first)).unwrap();
+        assert_eq!(state["start"], 9);
+        d.undo().expect("undo start");
+        assert_eq!(d.document.definitions(), &before);
+    }
+
+    #[test]
+    fn batch67_style_next_saved_restore_and_unused_deletion_are_undoable() {
+        let mut d = open_document(RICH_DOCX).expect("open");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        let names = d.list_styles();
+        let original = names.first().unwrap().clone();
+        let next = names.iter().find(|n| **n != original).unwrap().clone();
+        let before = d.document.definitions().styles.clone();
+        d.set_style_next(&original, &next).expect("next");
+        assert_eq!(d.style_next(&original), next);
+        d.restore_style_default(&original).expect("saved default");
+        assert_eq!(d.document.definitions().styles, before);
+        d.undo().expect("undo restore");
+        assert_eq!(d.style_next(&original), next);
+        d.create_style_from_selection(&node, 0, &node, 0, "Unused batch67 style")
+            .expect("new style");
+        let used = d.document.clone();
+        assert!(
+            d.delete_style_inner("Unused batch67 style")
+                .unwrap_err()
+                .starts_with("style.in-use:")
+        );
+        assert_eq!(
+            d.document, used,
+            "refusal must leave references and definitions intact"
+        );
+        d.set_paragraph_style(&node, 0, &node, 0, &original)
+            .expect("detach");
+        d.delete_style("Unused batch67 style")
+            .expect("delete unused");
+        assert!(!d.list_styles().contains(&"Unused batch67 style".to_owned()));
+        d.undo().expect("undo delete");
+        assert!(d.list_styles().contains(&"Unused batch67 style".to_owned()));
+        d.document.definitions_mut().settings.document_protection = Some(DocumentProtection {
+            edit: DocumentProtectionEdit::ReadOnly,
+            enforcement: true,
+            formatting: false,
+            password: None,
+        });
+        let protected = d.document.clone();
+        let error = d.delete_style_inner("Unused batch67 style").unwrap_err();
+        assert!(
+            error.contains("document.protected-read-only"),
+            "preserve the policy refusal rather than claiming the style is in use: {error}"
+        );
+        assert_eq!(d.document, protected);
+    }
+
+    #[test]
+    fn batch67_page_color_and_mirrored_margins_round_trip_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open");
+        let old = d.page_color();
+        let mirrored = d.mirrored_margins();
+        let color_edit = d.set_page_color("#aabbcc").expect("color");
+        assert_eq!(
+            color_edit.dirty,
+            (0..d.page_count()).collect::<Vec<_>>(),
+            "background changes repaint every page even when layout is identical"
+        );
+        d.set_mirrored_margins(!mirrored).expect("mirror");
+        assert_eq!(d.page_color(), "#aabbcc");
+        assert_eq!(d.mirrored_margins(), !mirrored);
+        let reopened = open_document(&d.export_docx().expect("save")).expect("reopen");
+        assert_eq!(reopened.page_color(), "#aabbcc");
+        assert_eq!(reopened.mirrored_margins(), !mirrored);
+        d.undo().expect("undo mirror");
+        let color_undo = d.undo().expect("undo color");
+        assert_eq!(
+            color_undo.dirty,
+            (0..d.page_count()).collect::<Vec<_>>(),
+            "undo also repaints every page"
+        );
+        assert_eq!(d.page_color(), old);
+        assert_eq!(d.mirrored_margins(), mirrored);
+    }
+
+    #[test]
+    fn batch67_blank_page_is_one_undoable_action() {
+        let mut d = open_document(RICH_DOCX).expect("open");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        let before = d.document.clone();
+        let count = d.page_count();
+        d.insert_blank_page(&node, 0).expect("blank page");
+        let paragraph =
+            find_paragraph(d.document.body(), NodeId::from_str(&node).unwrap()).unwrap();
+        assert!(
+            paragraph.inlines.windows(2).any(|pair| {
+                matches!(&pair[0], InlineNode::Break(first) if first.kind == BreakKind::Page)
+                    && matches!(&pair[1], InlineNode::Break(second) if second.kind == BreakKind::Page)
+            }),
+            "the two zero-width breaks must be adjacent so the inserted page is empty"
+        );
+        assert_eq!(
+            d.page_count(),
+            count + 2,
+            "two breaks insert one empty page before the current content"
+        );
+        d.undo().expect("undo");
+        assert_eq!(d.document, before);
+        let paragraph =
+            find_paragraph(d.document.body(), NodeId::from_str(&node).unwrap()).unwrap();
+        let end = node_plain_text(&paragraph.inlines).len() as u32;
+        d.insert_blank_page(&node, end)
+            .expect("blank page at paragraph end");
+        d.undo().expect("undo at paragraph end");
+        assert_eq!(d.document, before);
+    }
     use super::*;
     use casual_doc_edit::find_paragraph;
     use casual_doc_model::v1::TabLeader;
@@ -36417,6 +37081,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
             checklist_unchecked: None,
@@ -36868,6 +37533,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
             checklist_unchecked: None,
@@ -37179,6 +37845,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
             checklist_unchecked: None,
@@ -41041,6 +41708,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
             checklist_unchecked: None,
@@ -42223,6 +42891,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
             checklist_unchecked: None,
@@ -43719,6 +44388,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
             checklist_unchecked: None,

@@ -6393,6 +6393,204 @@ mod semantic_tests {
         );
     }
 
+    fn picture_bullet_source(marker: &[u8]) -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Picture list</w:t></w:r></w:p></w:body></w:document>"#;
+        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let image_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/bullet.png"/></Relationships>"#;
+        let mut numbering = br#"<w:numbering xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v" xmlns:a="urn:a" xmlns:wp="urn:wp">"#.to_vec();
+        numbering.extend_from_slice(marker);
+        numbering.extend_from_slice(br#"<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="*"/><w:lvlPicBulletId w:val="7"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#);
+        zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/numbering.xml", &numbering),
+            ("word/_rels/numbering.xml.rels", image_rels),
+            ("word/media/bullet.png", b"BULLET_PNG_BYTES"),
+        ])
+    }
+
+    #[test]
+    fn picture_bullets_resolve_part_scoped_images_and_survive_semantic_save() {
+        let markers: &[&[u8]] = &[
+            br#"<w:numPicBullet w:numPicBulletId="7"><w:pict><v:shape style="width:9pt;height:12pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>"#,
+            br#"<w:numPicBullet w:numPicBulletId="7"><w:drawing><wp:inline><wp:extent cx="114300" cy="152400"/><a:graphic><a:graphicData><a:pic><a:blipFill><a:blip r:embed="rId1"/></a:blipFill></a:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:numPicBullet>"#,
+        ];
+        for marker in markers {
+            let source = picture_bullet_source(marker);
+            let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+            let imported = import_package(&mut package, ImportConfig::default()).unwrap();
+            assert!(
+                imported.report.entries.is_empty(),
+                "{:?}",
+                imported.report.entries
+            );
+            let level = &imported
+                .document
+                .definitions()
+                .abstract_numbering
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .levels[0];
+            let picture = level.picture_bullet.expect("image marker must be modeled");
+            assert_eq!((picture.width, picture.height), (180, 240));
+            let resource = imported
+                .document
+                .definitions()
+                .media
+                .get(&picture.media)
+                .unwrap();
+            assert_eq!(resource.part_name, "word/media/bullet.png");
+            let bytes = write_document(&imported.document, &binary_parts(&source)).unwrap();
+            let mut written = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+            let rels = written.part_relationships("word/numbering.xml").unwrap();
+            assert_eq!(rels.len(), 1);
+            assert_eq!(
+                rels[0].resolved_part.as_deref(),
+                Some("word/media/bullet.png")
+            );
+            assert_eq!(
+                written.read_part("word/media/bullet.png").unwrap(),
+                b"BULLET_PNG_BYTES"
+            );
+            let reopened = import_package(&mut written, ImportConfig::default()).unwrap();
+            assert!(
+                reopened.report.entries.is_empty(),
+                "{:?}",
+                reopened.report.entries
+            );
+            let level = &reopened
+                .document
+                .definitions()
+                .abstract_numbering
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .levels[0];
+            let picture = level
+                .picture_bullet
+                .expect("save must retain the image marker");
+            assert_eq!((picture.width, picture.height), (180, 240));
+            let fixed = write_document(&reopened.document, &binary_parts(&bytes)).unwrap();
+            assert_eq!(bytes, fixed, "normalized save must be deterministic");
+        }
+    }
+
+    #[test]
+    fn picture_bullet_invalid_dimensions_and_missing_media_are_rejected() {
+        let source = picture_bullet_source(br#"<w:numPicBullet w:numPicBulletId="7"><w:pict><v:shape style="width:9pt;height:12pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>"#);
+        let mut document = reopen(&source);
+        let id = *document
+            .definitions()
+            .abstract_numbering
+            .iter()
+            .next()
+            .unwrap()
+            .0;
+        document
+            .definitions_mut()
+            .abstract_numbering
+            .get_mut(&id)
+            .unwrap()
+            .levels[0]
+            .picture_bullet
+            .as_mut()
+            .unwrap()
+            .width = 0;
+        assert!(
+            document.validate().is_err(),
+            "zero-width markers are invalid"
+        );
+        document
+            .definitions_mut()
+            .abstract_numbering
+            .get_mut(&id)
+            .unwrap()
+            .levels[0]
+            .picture_bullet
+            .as_mut()
+            .unwrap()
+            .width = 180;
+        document.definitions_mut().media = Default::default();
+        assert!(
+            document.validate().is_err(),
+            "markers must reference existing media"
+        );
+    }
+
+    #[test]
+    fn picture_bullet_missing_bytes_are_reported_on_recovery() {
+        let source = picture_bullet_source(br#"<w:numPicBullet w:numPicBulletId="7"><w:pict><v:shape style="width:9pt;height:12pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>"#);
+        let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let names: Vec<String> = package
+            .entries()
+            .iter()
+            .filter(|e| e.part_name != "word/media/bullet.png")
+            .map(|e| e.part_name.clone())
+            .collect();
+        let parts: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), package.read_part(name).unwrap()))
+            .collect();
+        let refs: Vec<_> = parts
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect();
+        let missing = zip_named(&refs);
+        let mut package = DocxPackage::open(&missing, PackageLimits::default()).unwrap();
+        let imported = import_package(
+            &mut package,
+            ImportConfig {
+                recover: true,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            imported
+                .recovery
+                .repairs()
+                .iter()
+                .any(|repair| repair.part.as_deref() == Some("word/media/bullet.png")),
+            "missing image bytes must be reported"
+        );
+    }
+
+    #[test]
+    fn picture_bullet_crops_are_reported_and_keep_the_text_fallback() {
+        for effect in ["croptop", "gain", "gamma", "grayscale"] {
+            let marker = br#"<w:numPicBullet w:numPicBulletId="7"><w:pict><v:shape style="width:9pt;height:12pt"><v:imagedata r:id="rId1" croptop="0.25"/></v:shape></w:pict></w:numPicBullet>"#;
+            let marker = String::from_utf8_lossy(marker).replace("croptop", effect);
+            let source = picture_bullet_source(marker.as_bytes());
+            let mut package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+            let imported = import_package(&mut package, ImportConfig::default()).unwrap();
+            assert!(
+                imported
+                    .report
+                    .entries
+                    .iter()
+                    .any(|entry| entry.feature == "numPicBullet")
+            );
+            let level = &imported
+                .document
+                .definitions()
+                .abstract_numbering
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .levels[0];
+            assert!(level.picture_bullet.is_none());
+            assert_eq!(level.lvl_text.as_deref(), Some("*"));
+        }
+    }
+
     #[test]
     fn multi_level_numbering_detail_survives_the_semantic_round_trip() {
         // A multi-level list: level 0 decimal "%1." with an indent pPr, level 1 a

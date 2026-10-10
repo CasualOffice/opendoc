@@ -47,6 +47,7 @@ mod metadata;
 mod noop;
 mod numbering;
 mod opaque;
+mod picture_bullets;
 mod properties;
 mod recovery;
 mod report;
@@ -354,6 +355,31 @@ pub fn import_package(
     for source in &media_sources {
         consumed.insert(source.part_name.clone());
     }
+    let numbering_images = match numbering_part.as_deref() {
+        Some(part) => package
+            .part_relationships(part)
+            .map_err(ImportError::Package)?
+            .into_iter()
+            .filter(|rel| rel.relationship_type.ends_with("/image"))
+            .filter_map(|rel| {
+                let part_name = rel.resolved_part?;
+                let media_type = package
+                    .content_type(&part_name)
+                    .unwrap_or("application/octet-stream")
+                    .to_owned();
+                Some(MediaSource {
+                    relationship_id: rel.id,
+                    media_type,
+                    part_name,
+                })
+            })
+            .collect::<Vec<_>>(),
+        None => Vec::new(),
+    };
+    for source in &numbering_images {
+        consumed.insert(source.part_name.clone());
+    }
+
     // An image relationship whose target is not in the package. The model keeps
     // the reference (no bytes are decoded at import), so nothing here fails and
     // nothing here used to be said — the drawing simply came out as a frame with
@@ -367,7 +393,7 @@ pub fn import_package(
             .iter()
             .map(|entry| entry.part_name.as_str())
             .collect();
-        for source in &media_sources {
+        for source in media_sources.iter().chain(&numbering_images) {
             if !admitted.contains(source.part_name.as_str()) {
                 repairs.push(Repair::in_part(
                     RepairKind::PartMissing,
@@ -728,6 +754,7 @@ pub fn import_package(
         main: Some(&main_part),
         styles: styles_part.as_deref(),
         numbering: numbering_part.as_deref(),
+        numbering_images: Some(&numbering_images),
         font_table: font_table_part.as_deref(),
         theme: theme_part.as_deref(),
         settings: settings_part.as_deref(),
@@ -1753,6 +1780,8 @@ pub(crate) struct DefinitionPartNames<'a> {
     pub main: Option<&'a str>,
     pub styles: Option<&'a str>,
     pub numbering: Option<&'a str>,
+    /// Numbering-part image sources, independent of the main document rIds.
+    pub numbering_images: Option<&'a [MediaSource]>,
     pub font_table: Option<&'a str>,
     pub theme: Option<&'a str>,
     pub settings: Option<&'a str>,
@@ -1896,9 +1925,32 @@ pub(crate) fn import_with_named_sources(
         None => Styles::default(),
     };
     reporter.set_part(names.numbering);
+    let mut media = DefinitionMap::default();
+    let picture_media = media::build_into(
+        names.numbering_images.unwrap_or(&[]),
+        &mut media,
+        &mut ids,
+        &mut reporter,
+    )?;
+    let picture_bullets = match numbering_xml {
+        Some(xml) => recover_part(
+            picture_bullets::parse(xml, &picture_media, config, &mut reporter),
+            &mut reporter,
+            PartRole::Numbering,
+            std::collections::BTreeMap::new,
+        )?,
+        None => std::collections::BTreeMap::new(),
+    };
     let numbering = match numbering_xml {
         Some(xml) => recover_part(
-            numbering::parse(xml, &mut ids, &mut reporter, config, &styles),
+            numbering::parse(
+                xml,
+                &mut ids,
+                &mut reporter,
+                config,
+                &styles,
+                &picture_bullets,
+            ),
             &mut reporter,
             PartRole::Numbering,
             Numbering::default,
@@ -1973,7 +2025,6 @@ pub(crate) fn import_with_named_sources(
     // collide across parts) resolve independently. Deterministic id order:
     // document -> styles -> numbering -> main media -> [footnotes media, content]
     // -> [endnotes ...] -> [headers ...] -> [footers ...] -> body.
-    let mut media = DefinitionMap::default();
     reporter.set_part(names.main);
     let media_index = media::build_into(media_sources, &mut media, &mut ids, &mut reporter)?;
 

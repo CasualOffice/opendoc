@@ -935,17 +935,22 @@ pub fn export_package_with_options(
         ));
     }
     if !definitions.abstract_numbering.is_empty() || !definitions.numbering.is_empty() {
-        extras.push(ExtraPart::new(
-            "word/numbering.xml",
-            NUMBERING_CT,
-            NUMBERING_REL_TYPE,
-            "numbering.xml",
-            numbering_xml(
-                &definitions.abstract_numbering,
-                &definitions.numbering,
-                &id_tokens,
-            )?,
-        ));
+        let (bytes, own_media) = numbering_xml(
+            &definitions.abstract_numbering,
+            &definitions.numbering,
+            &id_tokens,
+            &available_media,
+        )?;
+        extras.push(
+            ExtraPart::new(
+                "word/numbering.xml",
+                NUMBERING_CT,
+                NUMBERING_REL_TYPE,
+                "numbering.xml",
+                bytes,
+            )
+            .with_own_media(own_media),
+        );
     }
     if !definitions.footnotes.is_empty() {
         let own_embedded = collect_embedded_rels(
@@ -4302,12 +4307,70 @@ fn numbering_xml(
     abstracts: &DefinitionMap<AbstractNumberingId, AbstractNumbering>,
     instances: &DefinitionMap<NumberingInstanceId, NumberingInstance>,
     tokens: &IdTokens,
-) -> Result<Vec<u8>, ExportError> {
+    media: &DefinitionMap<MediaId, MediaReference>,
+) -> Result<(Vec<u8>, Vec<MediaRel>), ExportError> {
+    // Intern the marker shape rather than duplicating an image for each level.
+    // BTree ordering makes numbering.xml and its relationships deterministic.
+    let mut pictures = BTreeMap::new();
+    for level in abstracts.iter().flat_map(|(_, a)| &a.levels).chain(
+        instances
+            .iter()
+            .flat_map(|(_, n)| &n.overrides)
+            .filter_map(|o| o.definition.as_ref()),
+    ) {
+        if let Some(picture) = level.picture_bullet
+            && media.contains_key(&picture.media)
+        {
+            pictures.insert((picture.media, picture.width, picture.height), 0_u32);
+        }
+    }
+    for (index, id) in pictures.values_mut().enumerate() {
+        *id = index as u32;
+    }
+    let mut own_media = Vec::new();
     let mut w = new_writer();
     let mut root = start("w:numbering");
     root.push_attribute(("xmlns:w", W_NS));
+    root.push_attribute(("xmlns:r", R_NS));
+    root.push_attribute(("xmlns:v", "urn:schemas-microsoft-com:vml"));
     declare_fold_namespaces(&mut root);
     w.write_event(Event::Start(root)).map_err(pkg)?;
+    for ((media_id, width, height), id) in &pictures {
+        let reference = media
+            .get(media_id)
+            .expect("picture map contains only available media");
+        let relationship = format!("rIdPictureBullet{id}");
+        own_media.push((
+            relationship.clone(),
+            media_target(&reference.part_name).to_owned(),
+        ));
+        let mut bullet = start("w:numPicBullet");
+        bullet.push_attribute(("w:numPicBulletId", id.to_string().as_str()));
+        w.write_event(Event::Start(bullet)).map_err(pkg)?;
+        w.write_event(Event::Start(start("w:pict"))).map_err(pkg)?;
+        let mut shape = start("v:shape");
+        shape.push_attribute(("id", format!("_x0000_i{}", 1025 + id).as_str()));
+        shape.push_attribute(("type", "#_x0000_t75"));
+        shape.push_attribute((
+            "style",
+            format!(
+                "width:{:.2}pt;height:{:.2}pt",
+                f64::from(*width) / 20.0,
+                f64::from(*height) / 20.0
+            )
+            .as_str(),
+        ));
+        w.write_event(Event::Start(shape)).map_err(pkg)?;
+        let mut image = start("v:imagedata");
+        image.push_attribute(("r:id", relationship.as_str()));
+        w.write_event(Event::Empty(image)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("v:shape")))
+            .map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w:pict")))
+            .map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w:numPicBullet")))
+            .map_err(pkg)?;
+    }
     for (id, abstract_num) in abstracts.iter() {
         let mut el = start("w:abstractNum");
         el.push_attribute(("w:abstractNumId", tokens.abstract_numbering(*id).as_str()));
@@ -4339,7 +4402,7 @@ fn numbering_xml(
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
         for level in &abstract_num.levels {
-            write_level(&mut w, level, tokens)?;
+            write_level(&mut w, level, tokens, &pictures)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:abstractNum")))
             .map_err(pkg)?;
@@ -4370,7 +4433,7 @@ fn numbering_xml(
                 w.write_event(Event::Empty(so)).map_err(pkg)?;
             }
             if let Some(definition) = &over.definition {
-                write_level(&mut w, definition, tokens)?;
+                write_level(&mut w, definition, tokens, &pictures)?;
             }
             w.write_event(Event::End(BytesEnd::new("w:lvlOverride")))
                 .map_err(pkg)?;
@@ -4380,7 +4443,7 @@ fn numbering_xml(
     }
     w.write_event(Event::End(BytesEnd::new("w:numbering")))
         .map_err(pkg)?;
-    Ok(finish(w))
+    Ok((finish(w), own_media))
 }
 
 /// Emits one `w:lvl` with its modeled detail in `CT_Lvl` schema order. A
@@ -4391,6 +4454,7 @@ fn write_level(
     w: &mut Writer<Cursor<Vec<u8>>>,
     level: &NumberingLevel,
     tokens: &IdTokens,
+    pictures: &BTreeMap<(MediaId, i32, i32), u32>,
 ) -> Result<(), ExportError> {
     let mut lvl = start("w:lvl");
     lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
@@ -4436,6 +4500,13 @@ fn write_level(
     if let Some(text) = &level.lvl_text {
         let mut el = start("w:lvlText");
         el.push_attribute(("w:val", text.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(picture) = level.picture_bullet
+        && let Some(id) = pictures.get(&(picture.media, picture.width, picture.height))
+    {
+        let mut el = start("w:lvlPicBulletId");
+        el.push_attribute(("w:val", id.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(justification) = level.lvl_jc {

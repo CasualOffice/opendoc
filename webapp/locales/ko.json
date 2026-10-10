@@ -2144,5 +2144,10 @@
   "watermarkDialog.textWatermarkFields": "텍스트 워터마크",
   "watermarkDialog.watermark": "워터마크",
   "zoomMenu.fitPage": "페이지 맞춤",
-  "zoomMenu.fitWidth": "너비 맞춤"
+  "zoomMenu.fitWidth": "너비 맞춤",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted"
 }

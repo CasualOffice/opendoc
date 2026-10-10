@@ -1115,6 +1115,7 @@ fn a_numbered_list_in_a_footer_carries_its_list_style_into_styles_xml() {
                     pstyle: None,
                     template_code: None,
                     tentative: false,
+                    picture_bullet: None,
                 }],
                 multi_level_type: None,
                 num_style_link: None,

@@ -222,6 +222,7 @@ fn incremental_matches_the_fresh_path_with_a_numbered_list() {
                 pstyle: None,
                 template_code: None,
                 tentative: false,
+                picture_bullet: None,
             }],
             multi_level_type: None,
             num_style_link: None,

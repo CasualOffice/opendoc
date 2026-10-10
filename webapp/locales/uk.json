@@ -2168,5 +2168,10 @@
   "watermarkDialog.textWatermarkFields": "Текстова підкладка",
   "watermarkDialog.watermark": "Підкладка",
   "zoomMenu.fitPage": "За розміром сторінки",
-  "zoomMenu.fitWidth": "За шириною"
+  "zoomMenu.fitWidth": "За шириною",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted"
 }

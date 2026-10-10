@@ -144,6 +144,7 @@ struct RawLevel {
     template_code: Option<String>,
     /// `w:tentative`.
     tentative: bool,
+    picture_id: Option<String>,
     paragraph: ParagraphProperties,
     has_paragraph: bool,
     run: RunProperties,
@@ -186,6 +187,7 @@ pub(crate) fn parse(
     reporter: &mut Reporter,
     config: ImportConfig,
     styles: &Styles,
+    pictures: &BTreeMap<String, casual_doc_model::v1::PictureBullet>,
 ) -> Result<Numbering, ImportError> {
     let (abstracts, nums) = parse_raw(xml, reporter, config)?;
 
@@ -207,7 +209,7 @@ pub(crate) fn parse(
         let mut seen = BTreeSet::new();
         for level in raw.levels {
             if seen.insert(level.level) {
-                levels.push(build_level(level, styles, reporter));
+                levels.push(build_level(level, styles, reporter, pictures));
             }
         }
         abstract_by_key.insert(raw.id.clone(), id);
@@ -257,7 +259,7 @@ pub(crate) fn parse(
         for raw_override in raw.overrides {
             let definition = raw_override
                 .level
-                .map(|level| build_level(level, styles, reporter));
+                .map(|level| build_level(level, styles, reporter, pictures));
             match overrides.iter_mut().find(|o| o.level == raw_override.ilvl) {
                 Some(existing) => {
                     if let Some(start) = raw_override.start {
@@ -322,8 +324,22 @@ fn resolve_style_link(
 /// Converts a parsed raw level into the typed model level, resolving its
 /// `w:pStyle` binding and clamping its start value. Shared by abstract levels
 /// and per-instance `w:lvlOverride/w:lvl` redefinitions.
-fn build_level(level: RawLevel, styles: &Styles, reporter: &mut Reporter) -> NumberingLevel {
+fn build_level(
+    level: RawLevel,
+    styles: &Styles,
+    reporter: &mut Reporter,
+    pictures: &BTreeMap<String, casual_doc_model::v1::PictureBullet>,
+) -> NumberingLevel {
+    let picture_bullet = level
+        .picture_id
+        .as_ref()
+        .and_then(|id| pictures.get(id))
+        .copied();
+    if level.picture_id.is_some() && picture_bullet.is_none() {
+        reporter.report(b"lvlPicBulletId");
+    }
     NumberingLevel {
+        picture_bullet,
         level: level.level,
         start: level.start.min(32_767),
         num_fmt: level.num_fmt,
@@ -492,8 +508,12 @@ fn on_start(
         // reference is modeled, and the part is regenerated on save, so the
         // bullet is dropped: report it once and skip its subtree.
         b"numPicBullet" => {
-            reporter.report(local);
             state.pic_bullet_depth = 1;
+        }
+        b"lvlPicBulletId" => {
+            set_level(state, |level| {
+                level.picture_id = attribute_value(element, b"val")
+            });
         }
         b"abstractNum" => {
             state.current_abstract = Some(RawAbstract {

@@ -389,6 +389,7 @@ export const APP_MENU_SECTIONS = {
     // close.
     sub(
       "menuGroup.breaks",
+      "layout.blankPage",
       "layout.break.page",
       "layout.break.column",
       "layout.break.section.nextPage",
@@ -487,6 +488,7 @@ export const APP_MENU_SECTIONS = {
       "paragraph.list.checklist",
       "paragraph.list.restart",
       "paragraph.list.continue",
+      "paragraph.list.settings",
     ),
     // Tab stops join the paragraph band because that is where Word keeps them —
     // the Tabs… dialog opens off the Paragraph launcher on both Home and Layout

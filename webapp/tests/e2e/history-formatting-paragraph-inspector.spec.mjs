@@ -86,7 +86,15 @@ test("paragraph properties use a rounded live inspector with per-action undo", a
   );
   await expect(page.locator("#paraOptsMenu")).toHaveCount(0);
   await expect(panel.getByText("Changes apply automatically")).toBeVisible();
-  await expect(panel.locator('button:has-text("Apply")')).toHaveCount(0);
+  // Paragraph formatting remains live. List/style definition editors commit
+  // explicit atomic actions, so their named buttons are separate from a global
+  // Apply button; the indent edit below must land without clicking any of them.
+  const liveParagraphSections = panel.locator(".property-section").filter({
+    hasNot: page.locator("#listAdvancedScheme, #styleAdvancedTarget"),
+  });
+  await expect(liveParagraphSections.locator("#indentLeft")).toBeVisible();
+  await expect(liveParagraphSections.locator('button:has-text("Apply")')).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
   await expect(panel.locator('button:has-text("Reset")')).toHaveCount(0);
   await expect(panel).toHaveCSS("border-radius", "10px");
 

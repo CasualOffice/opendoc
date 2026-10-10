@@ -2152,5 +2152,10 @@
   "watermarkDialog.textWatermarkFields": "टेक्स्ट वॉटरमार्क",
   "watermarkDialog.watermark": "वॉटरमार्क",
   "zoomMenu.fitPage": "पृष्ठ फ़िट करें",
-  "zoomMenu.fitWidth": "चौड़ाई फ़िट करें"
+  "zoomMenu.fitWidth": "चौड़ाई फ़िट करें",
+  "listAdvanced.oneSymbol": "Enter one non-whitespace bullet symbol.",
+  "listAdvanced.pictureBounds": "Choose a PNG, JPEG, WebP or GIF image up to 16 MiB.",
+  "listAdvanced.selectPicture": "Choose a picture first.",
+  "styleAdvanced.keep": "Keep the current style",
+  "break.inserted.blankPage": "Blank page inserted"
 }
