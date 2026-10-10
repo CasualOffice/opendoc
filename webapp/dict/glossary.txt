@@ -333,6 +333,7 @@ config
 conformant
 contenteditable
 contextualSpacing
+copyable
 crypto
 cryptographic
 customXml

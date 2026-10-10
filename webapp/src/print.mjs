@@ -107,6 +107,14 @@ async function printViaPdf(doc) {
   frame.id = "printFrame";
   frame.setAttribute("aria-hidden", "true");
   frame.setAttribute("tabindex", "-1");
+  // Loading the off-screen PDF must not redirect the editor's keyboard.
+  frame.inert = true;
+  const previousFocus = document.activeElement;
+  const restoreFocus = () => {
+    if (document.activeElement !== frame) return;
+    frame.blur();
+    if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+  };
   // Off-screen rather than `display:none`: a frame that is not laid out has no
   // print view to invoke in Chromium.
   frame.style.cssText =
@@ -133,13 +141,19 @@ async function printViaPdf(doc) {
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
+      restoreFocus();
       frame.remove();
       URL.revokeObjectURL(url);
     };
     view.addEventListener?.("afterprint", cleanup, { once: true });
     setTimeout(cleanup, PRINT_FRAME_TTL_MS);
+    frame.inert = false;
     view.focus();
-    view.print();
+    try {
+      view.print();
+    } finally {
+      restoreFocus();
+    }
     return true;
   } catch (err) {
     console.warn("print: PDF handoff failed, falling back to raster:", err?.message ?? err);

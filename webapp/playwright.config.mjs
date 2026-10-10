@@ -40,7 +40,7 @@ export default defineConfig({
   timeout: 60_000,
   fullyParallel: true,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
+  reporter: process.env.CI ? [["html", { open: "never" }], ["list"], ["github"]] : "list",
   use: {
     baseURL,
     trace: "retain-on-failure",
