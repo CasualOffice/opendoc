@@ -200,6 +200,8 @@ pub fn reset_document_scans() {
 pub struct FormatDelta {
     /// Set bold on/off.
     pub bold: Option<bool>,
+    /// Set the right-to-left character direction (`w:rtl`).
+    pub rtl: Option<bool>,
     /// Set italic on/off.
     pub italic: Option<bool>,
     /// Set underline on/off.
@@ -232,6 +234,9 @@ impl FormatDelta {
     /// exposed so a freshly built run (e.g. an external structured paste) can carry
     /// clipboard formatting without duplicating the property mapping.
     pub fn apply_to(&self, props: &mut RunProperties) {
+        if let Some(rtl) = self.rtl {
+            props.rtl = Some(rtl);
+        }
         if let Some(b) = self.bold {
             props.bold = Some(b);
         }
@@ -1301,6 +1306,16 @@ pub enum Operation {
         object: NodeId,
         /// The complete replacement locks.
         locks: ObjectLocks,
+    },
+    /// Set the document default tab interval in twips (1 through 31,680). O(1).
+    SetDefaultTabStop {
+        /// Positive tab interval in twips.
+        position_twips: i32,
+    },
+    /// Restore the retained default tab setting, including an absent imported value. O(1).
+    RestoreDefaultTabStop {
+        /// Previously stored tab interval; absent means the format default.
+        position_twips: Option<i32>,
     },
     /// Turn the document's Track Changes setting (`w:trackRevisions`, ECMA-376
     /// §17.15.1.89) on or off — the flag a Word document is saved with, and opens
@@ -3093,6 +3108,27 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             let previous = settings.even_and_odd_headers;
             settings.even_and_odd_headers = *enabled;
             Ok(Operation::SetEvenAndOddHeaders { enabled: previous })
+        }
+        Operation::SetDefaultTabStop { position_twips } => {
+            if !(1..=31_680).contains(position_twips) {
+                return Err(EditError::ValueTooLarge);
+            }
+            let previous = doc.definitions().settings.default_tab_stop;
+            doc.definitions_mut().settings.default_tab_stop = Some(*position_twips);
+            Ok(Operation::RestoreDefaultTabStop {
+                position_twips: previous,
+            })
+        }
+        Operation::RestoreDefaultTabStop { position_twips } => {
+            // Imported zero is model-valid and must survive undo exactly.
+            if position_twips.is_some_and(|value| !(0..=31_680).contains(&value)) {
+                return Err(EditError::ValueTooLarge);
+            }
+            let previous = doc.definitions().settings.default_tab_stop;
+            doc.definitions_mut().settings.default_tab_stop = *position_twips;
+            Ok(Operation::RestoreDefaultTabStop {
+                position_twips: previous,
+            })
         }
         Operation::SetTrackRevisions { enabled } => {
             let settings = &mut doc.definitions_mut().settings;
@@ -5269,6 +5305,20 @@ pub fn run_properties_in_range(document: &Document, range: Range) -> Vec<&RunPro
     let Some(para) = find_paragraph_any(document, range.start.node) else {
         return Vec::new();
     };
+    run_properties_in_paragraph_range(para, range.start.offset, range.end.offset)
+}
+
+/// Direct run properties overlapping a non-empty byte range in a resolved paragraph.
+/// O(inlines in the paragraph), without a document scan; includes contributing wrappers.
+#[must_use]
+pub fn run_properties_in_paragraph_range(
+    para: &Paragraph,
+    start: u32,
+    end: u32,
+) -> Vec<&RunProperties> {
+    if end <= start {
+        return Vec::new();
+    }
     // Descend into final-with-markup-contributing wrappers so a selection that
     // touches a run inside a pending tracked revision (or hyperlink/SDT)
     // reflects that run's real formatting, matching the copy/layout projections
@@ -5277,7 +5327,7 @@ pub fn run_properties_in_range(document: &Document, range: Range) -> Vec<&RunPro
     // separate work (REVIEW-GAP-007).
     flatten_run_segments(&para.inlines)
         .into_iter()
-        .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
+        .filter(|s| s.end > start && s.start < end && s.start < s.end)
         .map(|s| s.properties)
         .collect()
 }
@@ -9481,6 +9531,43 @@ mod tests {
     }
 
     #[test]
+    fn run_direction_formats_only_the_selection_and_undo_restores_it() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "abcd")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 3),
+                },
+                delta: FormatDelta {
+                    rtl: Some(true),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .unwrap();
+        let paragraph = d.paragraph(p).unwrap();
+        let actual: Vec<_> = paragraph
+            .inlines
+            .iter()
+            .map(|inline| {
+                let InlineNode::Run(run) = inline else {
+                    panic!("run")
+                };
+                (run.text.as_str(), run.properties.rtl)
+            })
+            .collect();
+        assert_eq!(actual, vec![("a", None), ("bc", Some(true)), ("d", None)]);
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d, original);
+    }
+
+    #[test]
     fn typed_underline_format_sets_clears_and_undoes_exactly() {
         let p = n(2);
         let original = para(2, vec![run(3, "abcd")]);
@@ -11021,6 +11108,42 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         );
+    }
+
+    #[test]
+    fn default_tab_stop_is_bounded_and_undo_restores_absence_and_imported_zero() {
+        for previous in [None, Some(0), Some(720)] {
+            let mut d = doc(vec![para(2, vec![run(3, "body")])]);
+            d.definitions_mut().settings.default_tab_stop = previous;
+            let original = d.clone();
+            let mut ids = IdGenerator::new(9);
+            for invalid in [-1, 0, 31_681, i32::MAX] {
+                assert_eq!(
+                    apply(
+                        &mut d,
+                        &mut ids,
+                        &Operation::SetDefaultTabStop {
+                            position_twips: invalid,
+                        }
+                    ),
+                    Err(EditError::ValueTooLarge)
+                );
+                assert_eq!(d, original);
+            }
+            let inverse = apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetDefaultTabStop {
+                    position_twips: 31_680,
+                },
+            )
+            .unwrap();
+            assert_eq!(d.definitions().settings.default_tab_stop, Some(31_680));
+            let redo = apply(&mut d, &mut ids, &inverse).unwrap();
+            assert_eq!(d, original);
+            apply(&mut d, &mut ids, &redo).unwrap();
+            assert_eq!(d.definitions().settings.default_tab_stop, Some(31_680));
+        }
     }
 
     /// Word's "Different Odd & Even Pages" is document-scoped, matching where

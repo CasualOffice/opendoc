@@ -109,6 +109,8 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
         | Operation::SetSectionFormProtection { .. }
         // Document-global policy with no node and no registry key: the definition of
@@ -184,6 +186,8 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetShapeStroke { .. } => "SetShapeStroke",
         Operation::SetTextBoxBody { .. } => "SetTextBoxBody",
         Operation::SetObjectLocks { .. } => "SetObjectLocks",
+        Operation::SetDefaultTabStop { .. } => "SetDefaultTabStop",
+        Operation::RestoreDefaultTabStop { .. } => "RestoreDefaultTabStop",
         Operation::SetTrackRevisions { .. } => "SetTrackRevisions",
         Operation::SetSectionFormProtection { .. } => "SetSectionFormProtection",
     }
@@ -336,6 +340,8 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetShapeStroke { .. }
         | Operation::SetTextBoxBody { .. }
         | Operation::SetObjectLocks { .. }
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
         | Operation::SetTrackRevisions { .. }
         | Operation::SetSectionFormProtection { .. } => Coordinates::None,
     }

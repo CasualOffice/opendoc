@@ -232,6 +232,24 @@ test("a commentor may suggest but may not decide, and may not save", () => {
   assert.equal(grantsRequirement(commandContract("file.save").requires, capabilities), false);
 });
 
+test("run direction host commands require editing and refuse a commentor before dispatch", async () => {
+  const ids = ["format.direction.rtl", "format.direction.ltr"];
+  for (const id of ids) assert.equal(commandContract(id)?.requires, "edit", `${id} must declare its untracked edit requirement`);
+  for (const role of ["edit", "commentor"]) {
+    const ran = [];
+    const session = createHostSession({
+      capabilities: resolveCapabilities({ mode: role, framed: true }),
+      registry: () => ids.map((id) => ({ id, label: id, enabled: true, run: () => ran.push(id) })),
+    });
+    for (const id of ids) {
+      const result = await session.execute(id);
+      assert.equal(result.ok, role === "edit", `${role} has the wrong authority for ${id}`);
+      if (role === "commentor") assert.equal(result.refusal.code, "capability-withheld");
+    }
+    assert.deepEqual(ran, role === "edit" ? ids : [], "a refused run-direction change reached the document");
+  }
+});
+
 test("the role chain is monotone through the API gate, not only through the capability set", () => {
   // `roles.test.mjs` asserts the capability sets are monotone. This asserts the
   // consequence a host actually experiences: a higher role never loses a command

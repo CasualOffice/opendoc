@@ -2308,22 +2308,6 @@
          Google Docs has no dialog at all — its only surface is the ruler too — so
          Docs does not outvote Word here.
 
-         WHAT WORD OFFERS THAT THIS DOES NOT. Each is ABSENT rather than present
-         and dead (`docs/63`, SKILL §10):
-
-           * "Default tab stops". `w:defaultTabStop` is modelled and the layout
-             engine honours it (`casual-doc-layout/src/tabs.rs`), but
-             `casual-doc-wasm` exposes neither a reader nor a writer, so a stepper
-             here would show a number it invented and write nowhere.
-           * "Leader" (none / dots / dashes / underline). `TabLeader` is modelled
-             and drawn, but `setTabStop` takes no leader argument — it only
-             PRESERVES a leader already on the stop — and `paragraphTabs` reports
-             position and alignment only. There is nothing to show and no way to
-             set one.
-           * "Tab stops to be cleared". Word keeps that read-out because Word
-             defers every change to OK. Each action here applies immediately as
-             its own undoable step, so nothing is ever pending.
-
          BAR IS OFFERED. The engine takes alignment code 4 and the layout engine
          draws the rule (`flow.rs`, `tabs.rs`), so it is a capability the product
          has and had no way to reach. -->
@@ -2341,6 +2325,14 @@
           </button>
         </header>
         <form id="tabStopsForm" class="dialog-body bookmark-body">
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.tabLeader">Leader</span><select id="tabStopsLeader" class="dialog-select"><option value="0" data-i18n="paragraphAdvanced.leader0">None</option>
+                  <option value="1" data-i18n="paragraphAdvanced.leader1">Dots</option>
+                  <option value="2" data-i18n="paragraphAdvanced.leader2">Dashes</option>
+                  <option value="3" data-i18n="paragraphAdvanced.leader3">Underline</option>
+                  <option value="4" data-i18n="paragraphAdvanced.leader4">Middle dots</option>
+                  <option value="5" data-i18n="paragraphAdvanced.leader5">Heavy line</option></select></label>
+
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.defaultTabs">Default tab stop interval (in)</span><input id="tabStopsDefault" type="text" inputmode="decimal" /></label>
           <div>
             <span data-i18n="tabStopsDialog.inTheseParagraphs" id="tabStopsListLabel" class="bookmark-list-head">In these paragraphs</span>
             <ul id="tabStopsList" class="bookmark-list" role="listbox" aria-labelledby="tabStopsListLabel"></ul>
@@ -3068,8 +3060,30 @@
           </button>
         </header>
         <div class="panel-body properties-panel-body">
+          <button id="paraClearAll" type="button" class="chip-btn" data-i18n="paragraphAdvanced.clear">Clear all paragraph formatting</button>
           <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
           <div class="properties-panel-grid">
+<fieldset class="dialog-group property-section"><legend data-i18n="paragraphAdvanced.title">Direction and pagination</legend>
+              <span id="runDirectionReason" hidden data-i18n="paragraphAdvanced.selectText">Select text to change its direction.</span>
+              <button id="runDirectionRtl" data-command="format.direction.rtl" aria-pressed="false" type="button" class="chip-btn" data-i18n="paragraphAdvanced.runRtl">Selected text: right to left</button>
+              <button id="runDirectionLtr" data-command="format.direction.ltr" aria-pressed="false" type="button" class="chip-btn" data-i18n="paragraphAdvanced.runLtr">Selected text: left to right</button>
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.direction">Text direction</span><select id="paraDirection" class="dialog-select"><option value="" disabled data-i18n="paragraphAdvanced.mixed">Mixed</option><option value="false" data-i18n="paragraphAdvanced.directionfalse">Left to right</option>
+                  <option value="true" data-i18n="paragraphAdvanced.directiontrue">Right to left</option></select></label>
+
+              <label class="dialog-check"><input id="paraWidow" type="checkbox" /><span data-i18n="paragraphAdvanced.paraWidow">Widow and orphan control</span></label>
+              <label class="dialog-check"><input id="paraContextual" type="checkbox" /><span data-i18n="paragraphAdvanced.paraContextual">No space between paragraphs of the same style</span></label>
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.outline">Outline level</span><select id="paraOutline" class="dialog-select"><option value="" disabled data-i18n="paragraphAdvanced.mixed">Mixed</option><option value="0" data-i18n="paragraphAdvanced.outline0">Level 1</option>
+                  <option value="1" data-i18n="paragraphAdvanced.outline1">Level 2</option>
+                  <option value="2" data-i18n="paragraphAdvanced.outline2">Level 3</option>
+                  <option value="3" data-i18n="paragraphAdvanced.outline3">Level 4</option>
+                  <option value="4" data-i18n="paragraphAdvanced.outline4">Level 5</option>
+                  <option value="5" data-i18n="paragraphAdvanced.outline5">Level 6</option>
+                  <option value="6" data-i18n="paragraphAdvanced.outline6">Level 7</option>
+                  <option value="7" data-i18n="paragraphAdvanced.outline7">Level 8</option>
+                  <option value="8" data-i18n="paragraphAdvanced.outline8">Level 9</option>
+                  <option value="9" data-i18n="paragraphAdvanced.outline9">Body text</option></select></label>
+
+            </fieldset>
             <fieldset class="dialog-group property-section">
               <legend data-i18n="paragraphPropertiesPanel.styleAmpAlignment">Style &amp; alignment</legend>
               <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
@@ -3141,7 +3155,16 @@
                   <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
                 </div>
                 <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
-                <span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
+                <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderStyle">Border line style</span><select id="paraBorderStyle" class="dialog-select"><option value="single" data-i18n="paragraphAdvanced.bordersingle">Single</option>
+                  <option value="double" data-i18n="paragraphAdvanced.borderdouble">Double</option>
+                  <option value="dotted" data-i18n="paragraphAdvanced.borderdotted">Dotted</option>
+                  <option value="dashed" data-i18n="paragraphAdvanced.borderdashed">Dashed</option>
+                  <option value="dotDash" data-i18n="paragraphAdvanced.borderdotDash">Dot dash</option>
+                  <option value="dotDotDash" data-i18n="paragraphAdvanced.borderdotDotDash">Dot dot dash</option><option value="imported" disabled data-i18n="paragraphAdvanced.importedStyle">Imported style</option></select></label>
+              <p id="paraBorderImportedNote" hidden class="dialog-note" data-i18n="paragraphAdvanced.importedNote">This imported border style is preserved and shown as a single line. Choose a supported style to author a border.</p>
+
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderWidth">Border width (pt)</span><input id="paraBorderWidth" type="number" min="0.25" max="12" step="0.125" value="1" /></label>
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderPadding">Border distance from text (pt)</span><input id="paraBorderPadding" type="number" min="0" max="31" step="1" value="0" /></label><button type="button" class="chip-btn" aria-pressed="false" id="paraBorderBetween" data-i18n="paragraphAdvanced.between">Border between paragraphs</button><p class="dialog-note" data-i18n="paragraphAdvanced.betweenNotice">Between-paragraph borders are saved for Word but are not shown on this page yet.</p><span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
               </div>
             </fieldset>
 

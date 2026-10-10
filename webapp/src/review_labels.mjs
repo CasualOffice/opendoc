@@ -117,6 +117,7 @@ export function reviewFormattingDescription(changes) {
     italic: "Italic",
     underline: "Underline",
     strike: "Strikethrough",
+    rtl: "Text direction: right-to-left",
     font: "Font",
     sizeHalfPoints: "Font size",
     color: "Text color",

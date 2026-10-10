@@ -154,7 +154,8 @@ export function createObjectResizeDrag(io) {
       snap: io.snapContextFor(page),
       guideEls: null,
     };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // The overlay survives proofing/selection redraws; the grip does not.
+    page.overlay.setPointerCapture?.(event.pointerId);
   }
 
   /** Updates the resize preview from the pointer delta. Per-handle signs decide

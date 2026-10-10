@@ -346,3 +346,31 @@ test("the properties panel resizes an in-line picture, which it could not (UX-OB
   await expect(page.locator("#status")).not.toContainText("not moved");
   expect(consoleErrors).toEqual([]);
 });
+
+test('an overlay repaint during resize keeps the active pointer gesture and preview', async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await selectImage(page);
+  const before = await outlineSize(page);
+  const handle = page.locator('.overlay .object-handle[data-handle="4"]').first();
+  await handle.scrollIntoViewIfNeeded();
+  const box = await stableBox(handle);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(page.locator('.object-resize-preview')).toBeVisible();
+  // Proofing can finish or change while a pointer is held. Its normal setting
+  // handler repaints this SAME overlay, replacing the transient resize grip.
+  await page.evaluate(() => {
+    window.__resizeGripBeforeRepaint = document.querySelector('.object-handle[data-handle="4"]');
+    const toggle = document.getElementById('grammarCheckToggle');
+    toggle.checked = !toggle.checked;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__resizeGripBeforeRepaint.isConnected)).toBe(false);
+  await expect(page.locator('.object-resize-preview')).toBeVisible();
+  await page.mouse.move(box.x + box.width / 2 + 70, box.y + box.height / 2 + 50, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => (await outlineSize(page)).w).toBeGreaterThan(before.w + 20);
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(async () => (await outlineSize(page)).w).toBe(before.w);
+  expect(consoleErrors).toEqual([]);
+});
