@@ -8,7 +8,7 @@ export function mountPagePresets({ el, measure, orientation, updatePreview }) {
   const margins = el('pageMarginsPreset');
   const dimensions = ['pageWidth', 'pageHeight'].map(el);
   const edges = ['pageMarginTop', 'pageMarginBottom', 'pageMarginLeft', 'pageMarginRight'].map(el);
-  const read = fields => fields.map(field => measure.parse(field.value));
+  const read = fields => fields.map(field => measure.read(field.value));
   const match = (presets, values) => Object.entries(presets).find(([, candidate]) => candidate.every((value, index) => Math.abs(value - values[index]) <= 1))?.[0] ?? 'custom';
   const oriented = values => orientation() === 'landscape' ? [...values].reverse() : values;
   function reflect() {

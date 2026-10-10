@@ -2543,20 +2543,35 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   font-variant-numeric: tabular-nums;
 }
 
-/* Two columns of GROUPS, not one tall stack — a BALANCED MULTI-COLUMN FLOW and
-   not a grid, which is the point worth recording.
-   A two-column grid aligns rows, so each row is as tall as its taller group: the
-   160px Margins group would have pinned an 88px Page size group's row to 160px
-   and left 72px of white space beside it, and the total would have been the sum of
-   the row maxima rather than half the content. `columns` balances instead — it is
-   the mechanism designed for "flow these blocks into n columns of equal height",
-   and the groups here are exactly a flow of independent blocks.
-   `break-inside: avoid` keeps a group whole; the DOM order is unchanged, so tab
-   order still reads down the first column and then the second. */
+/* Balance independent groups across three columns on a laptop. With the
+   presets and document controls, two columns held 712px of content in a 560px
+   body at 1280x720. Three columns fit the same controls in 530px without
+   reducing their font or touch size. Keep each group whole and preserve DOM
+   tab order; the narrow-screen rule below returns to one column. */
 .page-setup-fields {
   min-width: 0;
-  columns: 2;
-  column-gap: clamp(20px, 2.4vw, 28px);
+  columns: 3;
+  column-gap: clamp(16px, 2vw, 20px);
+}
+
+/* Text labels carry orientation without the decorative icons in these narrow
+   tracks. Action labels may wrap; their buttons grow with the text. */
+.page-setup-fields .orientation-segmented {
+  height: auto;
+}
+.page-setup-fields .orientation-segmented.segmented button {
+  height: auto;
+  min-height: 28px;
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+.page-setup-fields .orientation-segmented .ms {
+  display: none;
+}
+.page-setup-fields .chip-btn {
+  height: auto;
+  min-height: 24px;
+  white-space: normal;
 }
 
 /* The rhythm is a bottom margin rather than the flex `gap` this was, because a
@@ -10256,10 +10271,7 @@ body:not(.doc-loaded) .drop-title {
     width: 130px;
   }
 
-  /* One column on a phone. `columns: 2` in ~360px of card would give two ~160px
-     columns, and a `.dialog-field-grid` cell is already 112px minimum — so the
-     Margins pair would have stacked, which is the outcome `.dialog-field-grid`
-     exists to refuse. */
+  /* One column on a phone keeps each group wide enough for its controls. */
   .page-setup-fields {
     columns: 1;
   }

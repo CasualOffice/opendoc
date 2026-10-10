@@ -5,7 +5,7 @@ function setup(landscape = false) {
   const fields = new Map();
   const el = id => { if (!fields.has(id)) fields.set(id, { value: '0', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; } }); return fields.get(id); };
   let previews = 0;
-  const api = mountPagePresets({ el, measure: { format: n => String(n / 1440), parse: n => Math.round(Number(n) * 1440) }, orientation: () => landscape ? 'landscape' : 'portrait', updatePreview: () => previews++ });
+  const api = mountPagePresets({ el, measure: { format: n => String(n / 1440), read: n => Math.round(Number(n) * 1440) }, orientation: () => landscape ? 'landscape' : 'portrait', updatePreview: () => previews++ });
   const choose = (id, value) => { el(id).value = value; el(id).listeners.change(); };
   return { el, api, choose, previews: () => previews };
 }
