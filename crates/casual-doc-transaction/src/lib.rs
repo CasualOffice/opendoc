@@ -79,6 +79,7 @@ pub mod combine;
 pub mod intent;
 pub mod presence;
 pub mod protocol;
+pub mod recovery;
 pub mod session;
 pub mod transform;
 pub mod v0;
@@ -279,6 +280,11 @@ pub struct PositionMap {
 }
 
 impl PositionMap {
+    /// Appends a later map, preserving transaction order.
+    pub fn append(&mut self, later: &Self) {
+        self.steps.extend_from_slice(later.steps());
+    }
+
     /// Returns mapping steps in transaction order.
     #[must_use]
     pub fn steps(&self) -> &[MappingStep] {
@@ -732,6 +738,11 @@ impl RevisionLog {
     pub(crate) fn settle(&mut self, revision: RevisionId) {
         self.horizon = revision.min(self.head).max(self.horizon);
         self.settled = true;
+    }
+
+    /// Marks the current document as the seed of a newly created shared room.
+    pub fn begin_shared(&mut self) {
+        self.settle(self.head());
     }
 
     /// How many commits no relay has ordered yet.
@@ -1314,6 +1325,7 @@ mod tests {
             SourceFile::new("intent.rs", include_str!("intent.rs")),
             SourceFile::new("presence.rs", include_str!("presence.rs")),
             SourceFile::new("protocol.rs", include_str!("protocol.rs")),
+            SourceFile::new("recovery.rs", include_str!("recovery.rs")),
             SourceFile::new("session.rs", include_str!("session.rs")),
             SourceFile::new("transform.rs", include_str!("transform.rs")),
             SourceFile::new(

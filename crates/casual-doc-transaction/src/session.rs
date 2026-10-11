@@ -185,6 +185,8 @@ impl Error for SessionError {}
 /// What merging one arrival did.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reception {
+    /// Maps positions from the pre-arrival optimistic view to the rebased view.
+    pub position_map: crate::PositionMap,
     /// Where the arrival landed in the order.
     pub revision: Revision,
     /// How many of this replica's own unordered commits were rolled back and replayed.
@@ -247,6 +249,8 @@ impl ClientSession {
         log: &mut RevisionLog,
     ) -> Result<Self, SessionError> {
         let ServerMessage::Welcome {
+            base_revision,
+            missed: _,
             protocol,
             client,
             revision,
@@ -273,7 +277,7 @@ impl ClientSession {
             capabilities,
             space,
             document_space,
-            revision,
+            revision: base_revision.unwrap_or(revision),
             chunks: 0,
             sent: Vec::new(),
             flushed: log.head(),
@@ -281,6 +285,26 @@ impl ClientSession {
             desynced: false,
             stopped: None,
         })
+    }
+
+    /// Installs a checked snapshot position without reusing submission sequence numbers.
+    /// Replayed local edits in `log` remain unordered and are offered by the next flush.
+    pub fn recovered(
+        &mut self,
+        document: &Document,
+        revision: Revision,
+        log: &RevisionLog,
+    ) -> Result<(), SessionError> {
+        if wire::document_space(document) != self.document_space {
+            return Err(SessionError::OutOfOrder);
+        }
+        self.revision = revision;
+        self.flushed = log.horizon();
+        self.sent.clear();
+        self.awaiting = None;
+        self.desynced = false;
+        self.stopped = None;
+        Ok(())
     }
 
     /// Adopts a [`ServerMessage::Resumed`].
@@ -592,6 +616,40 @@ impl ClientSession {
             // exposed this, which is the value of driving a guard red rather than trusting it.
             return Err(SessionError::OutOfOrder);
         }
+        // A chunk is a sequential program, not independent operations at one base.
+        // Feed its steps through the same rollback/replay driver one at a time so
+        // later coordinates see earlier remote steps. Keep the complete chunk atomic.
+        if arrival.operations.len() > 1 && log.unordered_commits() > 0 {
+            let saved = (self.clone(), document.clone(), ids.clone(), log.clone());
+            let mut combined = Reception {
+                revision: arrival.revision,
+                replayed: 0,
+                tombstones: Vec::new(),
+                position_map: crate::PositionMap::default(),
+            };
+            for operation in &arrival.operations {
+                let step = Arrival {
+                    revision: arrival.revision,
+                    client: arrival.client,
+                    operations: vec![operation.clone()],
+                };
+                match self.receive(&step, document, ids, log) {
+                    Ok(received) => {
+                        combined.replayed += received.replayed;
+                        combined.tombstones.extend(received.tombstones);
+                        combined.position_map.append(&received.position_map);
+                    }
+                    Err(error) => {
+                        *self = saved.0;
+                        *document = saved.1;
+                        *ids = saved.2;
+                        *log = saved.3;
+                        return Err(error);
+                    }
+                }
+            }
+            return Ok(combined);
+        }
         let sender =
             wire::space_of(self.document_space, arrival.client).ok_or(SessionError::NoIdSpace)?;
         let mut carried = Carried {
@@ -621,6 +679,11 @@ impl ClientSession {
             log.settle(revision);
             self.revision = self.revision.max(arrival.revision);
             return Ok(Reception {
+                position_map: log
+                    .commits()
+                    .last()
+                    .map(|c| c.position_map().clone())
+                    .unwrap_or_default(),
                 revision: arrival.revision,
                 replayed: 0,
                 tombstones: Vec::new(),
@@ -698,6 +761,7 @@ impl ClientSession {
         // Phase 1: roll back newest-first. Rolling commit `i` back arrives at commit `i`'s
         // own base, which is exactly where `images[i]`'s inverse has to be taken, so the
         // probe happens on the way past.
+        let mut position_map = crate::PositionMap::default();
         let mut probed: Vec<Vec<(Operation, Operation)>> = Vec::with_capacity(unordered.len());
         for (commit, image) in unordered.iter().zip(images).rev() {
             // `inverse_operations` is stored newest-first, so position `p` undoes operation
@@ -712,8 +776,9 @@ impl ClientSession {
                         EditError::IdExhausted,
                     )))?
                     .inverse();
-                casual_doc_edit::apply(document, lane, operation)
+                let inverse = casual_doc_edit::apply(document, lane, operation)
                     .map_err(|error| SessionError::Refused(TransactionError::Edit(error)))?;
+                crate::push_mapping_step(&mut position_map, operation, &inverse);
             }
             probed.push(probe(document, ids, image)?);
         }
@@ -733,6 +798,11 @@ impl ClientSession {
         // under spaces of this replica's own. That is the whole point of carrying them.
         let ordered_at = apply_remote(document, remote_mints, remote_intents, log, at_horizon)?;
         log.settle(ordered_at);
+        if let Some(commit) = log.commits().last() {
+            position_map
+                .steps
+                .extend_from_slice(commit.position_map().steps());
+        }
 
         // Phase 3: replay each step rebased, keeping its identity so undo is untouched. The
         // placement is resolved here and nowhere else, because *here* the document is at the
@@ -803,6 +873,11 @@ impl ClientSession {
             let landed = log
                 .append_rebased(document, mints, commit, rebased)
                 .map_err(SessionError::Refused)?;
+            if let Some(commit) = log.commits().last() {
+                position_map
+                    .steps
+                    .extend_from_slice(commit.position_map().steps());
+            }
             moved.push((commit.revision(), Some(landed)));
             replayed += 1;
         }
@@ -824,6 +899,7 @@ impl ClientSession {
         self.flushed = reanchor(self.flushed);
         self.revision = self.revision.max(arrival.revision);
         Ok(Reception {
+            position_map,
             revision: arrival.revision,
             replayed,
             tombstones,
@@ -1331,6 +1407,29 @@ impl ServerSession {
                 );
             }
         }
+        let base_revision = resume
+            .as_ref()
+            .map_or(self.revision, |resume| resume.revision);
+        let Some(missed) = self.history_since(base_revision).map(|entries| {
+            entries
+                .map(|entry| Arrival {
+                    revision: entry.revision,
+                    client: entry.client,
+                    operations: entry.operations.clone(),
+                })
+                .collect::<Vec<_>>()
+        }) else {
+            return (
+                ServerMessage::Refused {
+                    seq: None,
+                    reason: Refusal::TooFarBehind {
+                        oldest: self.oldest,
+                        current: self.revision,
+                    },
+                },
+                None,
+            );
+        };
         let client = ClientId::new(self.next_client);
         self.next_client = self.next_client.saturating_add(1);
         let admission = self.admit(
@@ -1342,6 +1441,8 @@ impl ServerSession {
         );
         (
             ServerMessage::Welcome {
+                base_revision: Some(base_revision),
+                missed,
                 protocol: PROTOCOL_VERSION,
                 client,
                 revision: self.revision,

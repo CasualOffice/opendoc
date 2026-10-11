@@ -22,8 +22,8 @@
 //!   connection-state change, and for good reason: a caret that outlives its
 //!   owner tells the reader somebody is there who is not). Dropping a handle is
 //!   how that is expressed;
-//! - it must cost a keystroke nothing (`107` §4 B1). A roster the document does
-//!   not own cannot be walked by anything on the editing path.
+//! - a disconnected document constructs no roster. Connected editors map only
+//!   the bounded participant roster through each edit's position map.
 //!
 //! A standalone document in **mode 1** — opened from a file, no link, no host
 //! embedding it — never constructs one of these and needs nothing from this
@@ -38,22 +38,15 @@
 //! takes the participant number as a *separate argument*, which the host fills
 //! from the session the frame arrived on, not from the frame's contents.
 //!
-//! # The payload is opaque, and stays opaque
+//! # Typed caret payloads and geometry
 //!
-//! `107` P-4 owes an anchor mapping before a remote caret can survive a
-//! concurrent structural edit, so a typed position here would promise what the
-//! engine cannot keep. The payload is bytes: the host fills them, the engine
-//! carries them, and this module hands them back **unchanged**. It is not decoded
-//! as text or as JSON at the boundary, because a lossy decode of an opaque
-//! payload is a payload whose meaning changed silently — the same reason the
-//! engine refuses an oversized payload instead of truncating it.
+//! The raw opaque-payload API remains lossless. Typed carets use stable node IDs,
+//! offsets and affinity; the session facade encodes frames and the engine maps
+//! anchors through each edit. Geometry comes from the document layout. Presence
+//! never mutates a document or enters its transaction log.
 //!
-//! # Complexity
-//!
-//! O(log participants) per update, O(participants) to read the roster, and
-//! **nothing here touches the document**. Both axes are capped by the engine
-//! ([`max_presence_bytes`], [`max_participants`]), so neither is unbounded
-//! network input.
+//! Updates cost O(log participants); mapping and geometry visit a bounded roster.
+//! Payload size and participant count use the engine's admission limits.
 
 use casual_doc_transaction::presence::{
     Accepted, MAX_PARTICIPANTS, MAX_PRESENCE_BYTES, PresenceClock, PresenceUpdate, Roster,
@@ -100,7 +93,10 @@ pub fn max_participants() -> u32 {
 #[wasm_bindgen]
 #[derive(Debug, Default)]
 pub struct WasmRoster {
-    roster: Roster,
+    pub(crate) roster: Roster,
+    pub(crate) sender: casual_doc_transaction::presence::PresenceSender,
+    mapped_head: Option<casual_doc_transaction::RevisionId>,
+    mapped_epoch: Option<u32>,
 }
 
 /// An empty roster, for a host that has just joined a room.
@@ -110,13 +106,62 @@ pub struct WasmRoster {
 #[wasm_bindgen(js_name = newRoster)]
 #[must_use]
 pub fn new_roster() -> WasmRoster {
-    WasmRoster {
-        roster: Roster::new(),
-    }
+    WasmRoster::default()
 }
 
 #[wasm_bindgen]
 impl WasmRoster {
+    /// Clears transient membership and resends the current position after reconnect.
+    pub fn clear(&mut self) {
+        self.roster = Roster::new();
+        self.sender.rejoined();
+    }
+
+    /// Reads awareness and departures through the engine codec. No browser wire parsing.
+    #[wasm_bindgen(js_name = receiveFrame)]
+    pub fn receive_frame(&mut self, frame: &[u8]) -> Result<(), JsValue> {
+        self.receive_frame_inner(frame).map_err(to_js)
+    }
+
+    /// Builds a typed, bounded caret frame. Unchanged positions produce no frame.
+    #[wasm_bindgen(js_name = caretFrame)]
+    pub fn caret_frame(
+        &mut self,
+        document: &crate::WasmDocument,
+        anchor: &str,
+        anchor_offset: u32,
+        head: &str,
+        head_offset: u32,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        self.caret_frame_inner(document, anchor, anchor_offset, head, head_offset)
+            .map_err(to_js)
+    }
+
+    /// Maps the roster across edits and returns geometry from the document engine.
+    #[wasm_bindgen(js_name = remoteSelections)]
+    pub fn remote_selections(&mut self, document: &crate::WasmDocument) -> String {
+        self.sync(document);
+        let rows: Vec<_> = self
+            .roster
+            .participants()
+            .filter_map(|held| {
+                let caret = casual_doc_transaction::presence::Caret::decode(&held.payload).ok()?;
+                let anchor = caret.anchor.position;
+                let head = caret.head.position;
+                let rect = document.caret_rect(&head.node.to_string(), head.offset);
+                if rect.is_empty() {
+                    return None;
+                }
+                Some(serde_json::json!({
+                    "client": held.client.get(), "caret": rect,
+                    "selection": document.selection_rects(&anchor.node.to_string(), anchor.offset,
+                        &head.node.to_string(), head.offset)
+                }))
+            })
+            .collect();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned())
+    }
+
     /// Records `client`'s presence, replacing whatever that client had.
     ///
     /// `client` is the participant number **the relay assigned**, which the host
@@ -232,6 +277,30 @@ impl WasmRoster {
 }
 
 impl WasmRoster {
+    pub(crate) fn sync(&mut self, document: &crate::WasmDocument) {
+        if self.mapped_epoch == Some(document.revision) {
+            return;
+        }
+        if let Some(previous) = self.mapped_head {
+            let target = casual_doc_transaction::transform::BlockIndex::of(&document.document);
+            if let Some((epoch, map)) = &document.last_collab_map {
+                if *epoch == document.revision {
+                    self.roster.rebase(map, &target);
+                } else {
+                    for commit in document.log.commits().filter(|c| c.revision() > previous) {
+                        self.roster.rebase(commit.position_map(), &target);
+                    }
+                }
+            } else {
+                for commit in document.log.commits().filter(|c| c.revision() > previous) {
+                    self.roster.rebase(commit.position_map(), &target);
+                }
+            }
+        }
+        self.mapped_head = Some(document.log.head());
+        self.mapped_epoch = Some(document.revision);
+    }
+
     /// See [`WasmRoster::presence_update`]. Plain `Result<_, String>` so the
     /// guards run under `cargo test` on native targets, where constructing a
     /// `JsValue` panics.

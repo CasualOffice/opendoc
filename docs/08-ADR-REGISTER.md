@@ -4223,3 +4223,34 @@ contents line and a header line — and keeps the default grid elsewhere, report
   text.
 - **Chart labels as glyph outlines** (the page's shaped glyphs as paths). Exact placement, but
   the labels stop being text; the estimate is a few percent off and the text stays text.
+
+## ADR-067 — Share seeds are paired with room revisions; presence stays separate and recovery preserves uncertain work
+
+**Status:** Accepted, owner-approved 2026-10-11. **Design:** `docs/169`.
+
+Share persists a normalized document through a host provider before joining its room.
+Links carry the immutable seed URL and exact room revision and confer no grant. A fresh
+participant applies Welcome's missed history before editing. Protocol 6 adds Welcome's
+`base_revision` and `missed`; although serde can skip new fields, a protocol-5 peer would
+silently omit required document history, so exact version equality must reject it.
+Journal admission and ordered record formats do not change.
+
+Presence uses a separate roster and ephemeral transport frames. The existing collaboration
+facade owns the codec. The engine maps remote positions across the complete change from
+optimistic view to rebased view and supplies geometry; the browser schedules and paints.
+No presence state enters document Undo or durable room history.
+
+When a transform is unsupported, keep the optimistic document while fetching a host-owned
+snapshot. Replay only text transactions whose complete source paragraphs still match.
+Retain uncertain edits as directly reopenable original document backups. An invalid
+snapshot or exhausted backup bound refuses recovery atomically. An acknowledged-only
+checkpoint rolls pending work back on a clone; a production host verifies its authority.
+Snapshots package the canonical model and binary image/font resources with explicit
+version and admission bounds. Adapter-private source envelopes remain with the host's
+original file rather than being advertised as portable collaboration data.
+The relay never becomes a document storage service. The optional loopback Share host is
+an executable development example, not mandatory product infrastructure.
+
+Rejected: stale-coordinate replay (silently misapplies work), clearing pending edits on
+reload (loses work), encoding grants in share links (confuses invitation with authority),
+and putting presence in document state (pollutes Undo and durable history).

@@ -884,3 +884,16 @@ test("a storage that is absent or throws still yields a usable key", () => {
   };
   assert.equal(resumeKey(throwsOnWrite, mint), "fresh");
 });
+
+test('recovery pauses local chunks until checked resync, and presence never queues offline', () => {
+  const session = engine({outcome:{kind:'recoveryRequired',revision:9}});
+  const {pipe,wire} = transport({session});pipe.start();wire.last().accept();
+  wire.last().deliver(new Uint8Array([1]));
+  const chunk = new Uint8Array([7]);session.pending.push(chunk);pipe.flush();
+  assert.equal(session.pending.length,1);
+  const before = wire.last().sent.length;pipe.resync();wire.last().accept();
+  assert.equal(session.pending.length,0);assert.ok(wire.last().sent.includes(chunk));
+  wire.last().drop();assert.equal(pipe.awareness(new Uint8Array([3])),false);
+  assert.equal(pipe.state().queued,0);
+  assert.ok(before > 0);
+});

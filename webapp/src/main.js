@@ -30,7 +30,7 @@ import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
 import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
 import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
-import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
+import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
@@ -153,13 +153,13 @@ import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
-import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { createAccessChrome } from "./access_chrome.mjs";
 import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 import { insertChartAtCaret } from "./chart_insert.mjs";
 // Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
 import { createChartSurface } from "./chart_surface.mjs";
 import { newestObject, placedObjectIds } from "./placed_objects.mjs";
+import { createCollaborationShell } from "./collab_shell.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
@@ -2493,6 +2493,16 @@ let doc = null;
 const regionCycle = createRegionCycle({ root: document, focusEditor: () => focusEditorSurface(), documentOpen: () => !!doc, modalOpen: modalIsOpen });
 /** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
 let collab = null;
+const { presence: remotePresence, recovery, share, chrome: shareChrome,
+  start: startCollaboration, commands: collabFeatureCommands, loadStartup: loadSharedStartup, beforeReplace: leaveSharedDocument } = createCollaborationShell({
+  root: document, getDocument: () => doc, getTransport: () => collab, setTransport: (pipe) => { collab = pipe; },
+  getSelection: () => selection, getSettings: () => settings, getName: () => currentName, hostConfig,
+  paintOverlay: () => paintOverlayLayer(), receiveAccess: (outcome) => accessChrome.received(outcome),
+  arrival: (outcome) => { arrivalPaint = arrivalPaint.then(() => paintArrival(outcome)); },
+  repaintRecovered: renderAll, edited: () => noteDocumentEdited(doc.revision),
+  setSelection: (next) => { selection = next; }, status: setStatus, t,
+});
+
 /** Arrivals paint one at a time: two must not interleave two `renderAll()`s. */
 let arrivalPaint = Promise.resolve();
 /** Measures the rest of a document that opened on a prefix (`docs/116` §7). */
@@ -2917,7 +2927,8 @@ async function boot() {
   // whose specs assert on its exact content. ?blank=1 opts out for the bare
   // local-upload state.
   const demo = params.get("demo");
-  if (params.get("fixture") === "rich") {
+  if (await loadSharedStartup(params, loadStartupDocument)) {
+  } else if (params.get("fixture") === "rich") {
     await loadStartupDocument("./demo.docx", "opendoc-demo.docx");
   } else if (params.get("fixture") === "styled") {
     // A document whose styles carry EXPLICIT colors — Word's own built-in
@@ -3062,6 +3073,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // gap by construction instead of relying on the gap being short.
     backgroundMeasure?.stop();
     backgroundMeasure = null;
+    leaveSharedDocument();
     if (doc) doc.free();
     doc = next;
     // A different document, so the remembered object answer belongs to a
@@ -3073,13 +3085,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     const grantProblem = SESSION.adopt(doc) || SESSION.problemMessage();
     // The shared session, per DOCUMENT and for the same reason the grant is: a
     // new document is a new minting base for the NodeIds an op names.
-    collab?.stop();
-    collab = openRoom(doc, hostConfig().room, globalThis.WebSocket, {
-      identity: settings.authorName.trim() || "You",
-      resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
-      onOutcome: (o) => { const said = accessChrome.received(o); if (said) setStatus(said); if (o.documentChanged) arrivalPaint = arrivalPaint.then(() => paintArrival(o)); },
-      onState: (s) => setStatus(t(s.key), s.name === "connected" ? "" : "warn"),
-    });
+    startCollaboration();
     // Word/Docs: an open document always has an insertion point, so Insert ▸
     // Picture / Symbol / Emoji / Field / Table are live the instant it loads
     // instead of demanding a click first. Seeded from the engine's own
@@ -4110,6 +4116,7 @@ function paintOverlayLayer() {
   // Outside the `selection` branch: a strip is armed by the POINTER, and being
   // over a table is not a reason to require a caret.
   tableGutter.paint(pages);
+  remotePresence.paint(place);
 }
 
 function drawSelection() {
@@ -4126,6 +4133,7 @@ function drawSelection() {
   rulerView.syncToCaret();
   positionSelToolbar();
   hostSession?.noteSelection();
+  remotePresence.changed();
 }
 
 function paintTableSelection() {
@@ -8176,19 +8184,6 @@ let revisionUnreadable = false;
 // two. Cleared by the same two places that clear the others.
 let restoredFromDraft = false;
 
-/** The engine's post-edit revision, or null if it cannot be read. Never throws:
- *  a wrapper that has already been freed, or a build whose `EditResult` predates
- *  the getter, must degrade to "unknown" (and therefore dirty) rather than take
- *  down the edit that just succeeded. */
-function readRevision(res) {
-  try {
-    const revision = res.revision;
-    return Number.isFinite(revision) ? revision : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Everything true of EVERY landed edit, whichever path applied it.
  *
  *  Four apply paths grew independently and diverged: `applyEditResult` cleared
@@ -8223,6 +8218,8 @@ function noteDocumentEdited(revision) {
   spellChecker.noteEdited();
   // And the host's, under the same constraint: one revision integer, one boolean.
   hostSession?.noteChange();
+  remotePresence.sync(); // Map each view change before a later arrival can replace its map.
+  collab?.flush(); // Send local edits even when no remote presence changes.
   // An edit that changed the document's Track Changes setting — an Undo, a co-author — moves the mode with it (HF-283).
   reviewTracking.follow(doc?.trackRevisions, reviewMode, (mode) => SESSION.modeAuthority?.allows(mode).allowed !== false && setReviewMode(mode, { restoreFocus: false }));
 }
@@ -8819,6 +8816,7 @@ function formatToggleButtons(key) {
 /** Reflects the selection in the toolbar: active states + which controls are
  *  enabled (run controls need a text range; paragraph controls need a caret). */
 function updateToolbar() {
+  shareChrome.reflect();
   const hasSel = !!selection;
   const range = hasRange();
   const runState = selectionFormat();
@@ -11739,6 +11737,7 @@ function editorCommands(context = { surface: "palette" }) {
     // the module's one table so no two surfaces can offer different sets.
     ...foldView.commands(),
     ...collabCommands({ transport: () => collab, t }),
+    ...collabFeatureCommands(),
     // The ¶ toggle and its five switches, the measurement-unit preference, and
     // Restrict Editing. Each module generates its own rows from its own table, so
     // the palette, the menu and the control cannot offer different sets — and

@@ -68,11 +68,17 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
  *  exports opt-level `z`, so this is the engine growing, decided and recorded
  *  rather than absorbed; the next feature of this size meets the same
  *  decision. */
-const MAX_TOTAL_BYTES = 25_700_000;
+// 2026-10-11, docs/169: remote presence, refusal recovery, resource-preserving
+// snapshots and Share add 249,476 B total / 235,115 B code to the §19 measurement.
+// Binaryen 117, the existing -Oz flags and release opt-level z produce
+// 25,711,106 B total / 11,820,216 B code. Snapshot resources account for only
+// 6,454 B / 5,865 B versus the same collaboration build without the package.
+// Retain bounded headroom; optimization settings and the non-stub floor stay armed.
+const MAX_TOTAL_BYTES = 25_850_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19. opt-level 3 measured 12,376,042 B on the smaller #805 engine, so
  *  a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 11_800_000;
+const MAX_CODE_BYTES = 11_950_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

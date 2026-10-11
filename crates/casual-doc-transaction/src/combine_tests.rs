@@ -492,6 +492,8 @@ fn offline_combine_agrees_with_the_live_session_path() {
     let mut ada = ClientSession::joined(
         &ada_document,
         &ServerMessage::Welcome {
+            base_revision: None,
+            missed: Vec::new(),
             protocol: PROTOCOL_VERSION,
             client: ClientId::new(0),
             revision: Revision::new(0),
@@ -522,6 +524,8 @@ fn offline_combine_agrees_with_the_live_session_path() {
     let mut grace = ClientSession::joined(
         &grace_document,
         &ServerMessage::Welcome {
+            base_revision: None,
+            missed: Vec::new(),
             protocol: PROTOCOL_VERSION,
             client: ClientId::new(1),
             revision: Revision::new(0),

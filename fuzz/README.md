@@ -40,3 +40,10 @@ Crashes belong under `fuzz/artifacts/` during investigation and are not
 committed directly. Minimize and review a reproducer, then add it to the
 repository fixture corpus with provenance, checksum, expected outcome, and a
 regression test.
+
+## Collaboration convergence
+
+`bash fuzz/convergence.sh 24` exercises concurrent insert/delete schedules through
+three real WebSocket replicas and the production relay. Increase the seed count for
+a deterministic soak. This stable-Rust target complements the libFuzzer parser targets;
+it needs neither nightly nor a separate running relay. See `docs/169` for coverage.

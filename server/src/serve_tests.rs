@@ -290,7 +290,16 @@ impl Peer {
                     .unwrap_or_else(|error| panic!("the join was refused: {error} ({answer:?})"));
                 let space = wire::space_of(IdSpace::of_document(document.id()), session.client())
                     .expect("the participant number has a space");
-                (session, log, IdGenerator::new(space.get()), 0)
+                let mut session = session;
+                let mut ids = IdGenerator::new(space.get());
+                if let ServerMessage::Welcome { missed, .. } = &answer {
+                    for arrival in missed {
+                        session
+                            .receive(arrival, &mut document, &mut ids, &mut log)
+                            .expect("fresh snapshot catch-up");
+                    }
+                }
+                (session, log, ids, 0)
             }
             Some((mut session, mut log, ids, next, _)) => {
                 session
@@ -376,7 +385,7 @@ impl Peer {
             ServerMessage::Apply(arrival) => {
                 self.session
                     .receive(arrival, &mut self.document, &mut self.ids, &mut self.log)
-                    .expect("the arrival merges");
+                    .unwrap_or_else(|error| panic!("arrival failed: {error:?}; arrival={arrival:?}; local={:?}; text={}", self.log.commits().filter(|c| c.revision() > self.log.horizon()).collect::<Vec<_>>(), self.text()));
             }
             ServerMessage::Refused { seq, reason } => {
                 self.session
@@ -849,4 +858,115 @@ fn a_keystrokes_wire_cost_grows_with_neither_the_document_nor_the_session() {
          flush is re-offering work it has already had acknowledged, which costs O(session) per \
          keystroke and converges to a document that will not load"
     );
+}
+
+/// Reproducible concurrent insert/delete schedules across three real websocket replicas.
+/// Override OPENDOC_CONVERGENCE_SEEDS for a longer soak; failures report the seed/round.
+#[test]
+fn randomized_relay_convergence() {
+    let seeds = std::env::var("OPENDOC_CONVERGENCE_SEEDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(24);
+    for seed_number in 1..=seeds {
+        let path = scratch(&format!("random-{seed_number}"));
+        Room::create(&path).expect("room");
+        let (ancestor, paragraphs) = seed(3);
+        let running = Running::start(&path, Access::Open(Capabilities::owner()), 3);
+        let mut peers: Vec<_> = ["one", "two", "three"]
+            .into_iter()
+            .map(|name| Peer::join(running.address, name, &ancestor))
+            .collect();
+        let mut random = seed_number;
+        let mut next = || {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            random
+        };
+        for round in 0..16 {
+            for peer in &mut peers {
+                for _ in 0..(1 + next() % 3) {
+                    let node = paragraphs[next() as usize % paragraphs.len()];
+                    let text: String = peer
+                        .document
+                        .paragraph(node)
+                        .expect("paragraph")
+                        .inlines
+                        .iter()
+                        .filter_map(|inline| match inline {
+                            InlineNode::Run(run) => Some(run.text.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    let mut boundaries: Vec<_> =
+                        text.char_indices().map(|(at, _)| at as u32).collect();
+                    boundaries.push(text.len() as u32);
+                    let index = next() as usize % boundaries.len();
+                    let at = boundaries[index];
+                    let operation = if index + 1 < boundaries.len() && next() % 3 == 0 {
+                        Operation::DeleteText {
+                            range: casual_doc_edit::Range {
+                                start: Pos::new(node, at),
+                                end: Pos::new(node, boundaries[index + 1]),
+                            },
+                        }
+                    } else {
+                        typing(node, at, ["x", "é", "中", "🙂"][next() as usize % 4])
+                    };
+                    peer.edit("Random concurrent edit", vec![operation]);
+                }
+            }
+            let mut order = [0, 1, 2];
+            for index in (1..3).rev() {
+                order.swap(index, next() as usize % (index + 1));
+            }
+            for sender in order {
+                if !peers[sender].send() {
+                    assert_eq!(
+                        peers[sender].log.unordered_commits(),
+                        0,
+                        "seed={seed_number}, round={round}"
+                    );
+                    continue; // Concurrent deletions can fully satisfy this participant's work.
+                }
+                peers[sender].pump_until(|m| matches!(m, ServerMessage::Ack { .. }));
+                for (index, peer) in peers.iter_mut().enumerate() {
+                    if index != sender {
+                        peer.pump_until(|m| matches!(m, ServerMessage::Apply(_)));
+                    }
+                }
+            }
+            for peer in &peers[1..] {
+                assert_eq!(
+                    peer.document, peers[0].document,
+                    "seed={seed_number}, round={round}"
+                );
+                assert_eq!(peer.session.revision(), peers[0].session.revision());
+                assert!(!peer.session.has_unacknowledged());
+            }
+        }
+        drop(peers);
+        running.stop();
+        std::fs::remove_file(path).expect("cleanup");
+    }
+}
+
+#[test]
+fn fresh_participant_replays_the_room_tail_from_its_seed() {
+    let path = scratch("fresh-tail");
+    Room::create(&path).expect("room");
+    let (ancestor, paragraphs) = seed(1);
+    let running = Running::start(&path, Access::Open(Capabilities::owner()), 2);
+    let mut host = Peer::join(running.address, "host", &ancestor);
+    host.edit("Typing", vec![typing(paragraphs[0], 2, "shared")]);
+    assert!(host.send());
+    host.pump_until(|m| matches!(m, ServerMessage::Ack { .. }));
+    let guest = Peer::join(running.address, "guest", &ancestor);
+    assert_eq!(host.document, guest.document);
+    assert_eq!(host.session.revision(), guest.session.revision());
+    drop(host);
+    drop(guest);
+    running.stop();
+    std::fs::remove_file(path).expect("cleanup");
 }
