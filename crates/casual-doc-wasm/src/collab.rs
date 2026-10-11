@@ -81,6 +81,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::{WasmDocument, damage_of, to_js};
 use casual_doc_edit::Pos;
+use casual_doc_io::DocumentResources;
+use std::collections::BTreeMap;
 
 /// What feeding one frame to the session did, as the browser's transport reads it.
 ///
@@ -262,6 +264,82 @@ impl WasmDocument {
         self.collab_receive_frame_inner(frame).map_err(to_js)
     }
 
+    /// Begins a new room whose seed is this exact document. Call only after host persistence.
+    #[wasm_bindgen(js_name = collabPrepare)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "checked safe integer"
+    )]
+    pub fn collab_prepare(&mut self, revision: f64) -> Result<(), JsValue> {
+        if !revision.is_finite()
+            || revision < 0.0
+            || revision.fract() != 0.0
+            || revision > 9_007_199_254_740_991.0
+        {
+            return Err(to_js("Invalid shared snapshot revision.".to_owned()));
+        }
+        self.session = None;
+        self.bootstrap_revision = Some(revision as u64);
+        self.log.begin_shared();
+        Ok(())
+    }
+
+    /// Atomically reloads a checked snapshot and replays safely anchored pending text edits.
+    /// Uncertain work remains downloadable through `collabRecoveryDocument`.
+    #[wasm_bindgen(js_name = collabRecover)]
+    pub fn collab_recover(&mut self, snapshot: &[u8], revision: f64) -> Result<String, JsValue> {
+        self.collab_recover_inner(snapshot, revision).map_err(to_js)
+    }
+
+    /// Number of preserved local document snapshots, each directly reopenable.
+    #[wasm_bindgen(js_name = collabRecoveryCount)]
+    pub fn collab_recovery_count(&self) -> usize {
+        self.recovery_backups.len()
+    }
+
+    /// A retained original document and its resources in a reopenable snapshot package.
+    #[wasm_bindgen(js_name = collabRecoveryDocument)]
+    pub fn collab_recovery_document(&self, index: usize) -> Result<Vec<u8>, JsValue> {
+        self.recovery_backups
+            .get(index)
+            .cloned()
+            .ok_or_else(|| to_js("No retained document at that index.".to_owned()))
+    }
+
+    /// Current normalized document with its image and font resources, bounded for sharing.
+    #[wasm_bindgen(js_name = collabSnapshot)]
+    pub fn collab_snapshot(&self) -> Result<Vec<u8>, JsValue> {
+        snapshot_bytes(&self.document, &self.resources).map_err(to_js)
+    }
+
+    /// An acknowledged-only checkpoint: pending optimistic work is rolled back on a clone.
+    #[wasm_bindgen(js_name = collabCheckpoint)]
+    pub fn collab_checkpoint(&self) -> Result<Vec<u8>, JsValue> {
+        if self
+            .log
+            .commits()
+            .filter(|c| c.revision() > self.log.horizon())
+            .any(|c| {
+                c.operations().iter().any(|op| {
+                    !matches!(
+                        op,
+                        casual_doc_edit::Operation::InsertText { .. }
+                            | casual_doc_edit::Operation::DeleteText { .. }
+                    )
+                })
+            })
+        {
+            return Err(to_js(
+                "A resource-bearing checkpoint waits for structural edits to be acknowledged."
+                    .to_owned(),
+            ));
+        }
+        let document = casual_doc_transaction::recovery::acknowledged(&self.document, &self.log)
+            .map_err(to_js)?;
+        snapshot_bytes(&document, &self.resources).map_err(to_js)
+    }
+
     /// The next chunk of this replica's own work to send, or `None` when there is nothing to
     /// send or no room to send it.
     ///
@@ -335,7 +413,10 @@ impl WasmDocument {
         let state = State {
             joined: self.session.is_some(),
             participant: self.session.as_ref().map(|s| s.client().get()),
-            revision: self.session.as_ref().map_or(0, |s| s.revision().get()),
+            revision: self
+                .session
+                .as_ref()
+                .map_or(self.bootstrap_revision.unwrap_or(0), |s| s.revision().get()),
             unacknowledged: self
                 .session
                 .as_ref()
@@ -356,6 +437,68 @@ impl WasmDocument {
 }
 
 impl WasmDocument {
+    fn collab_recover_inner(&mut self, snapshot: &[u8], revision: f64) -> Result<String, String> {
+        if !revision.is_finite()
+            || revision < 0.0
+            || revision.fract() != 0.0
+            || revision > 9_007_199_254_740_991.0
+        {
+            return Err("A recovery snapshot needs an exact non-negative revision.".to_owned());
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "checked safe integer"
+        )]
+        let revision = Revision::new(revision as u64);
+        let session = self.session.clone();
+        if revision
+            < session.as_ref().map_or(
+                Revision::new(self.bootstrap_revision.unwrap_or(0)),
+                ClientSession::revision,
+            )
+        {
+            return Err("The recovery snapshot is older than this replica.".to_owned());
+        }
+        if self.recovery_backups.len() >= 4 {
+            return Err("The retained document limit was reached. Save your current document and open a fresh shared tab.".to_owned());
+        }
+        let mut next = crate::open_document(snapshot)?;
+        let recovery = casual_doc_transaction::recovery::recover(
+            &self.document,
+            &self.log,
+            &next.document,
+            self.capabilities,
+        )?;
+        let retained = recovery.retained.len();
+        let replayed = recovery.replayed;
+        let mut backups = self.recovery_backups.clone();
+        if retained > 0 {
+            backups.push(snapshot_bytes(&self.document, &self.resources)?);
+        }
+        next.document = recovery.document;
+        next.log = recovery.log;
+        next.capabilities = self.capabilities;
+        next.host_ceiling = self.host_ceiling;
+        if let Some(mut session) = session {
+            session
+                .recovered(&next.document, revision, &next.log)
+                .map_err(|e| e.to_string())?;
+            next.collab_adopt(session.client().get(), session.capabilities())?;
+            next.session = Some(session);
+        } else {
+            next.bootstrap_revision = Some(revision.get());
+        }
+        next.recovery_backups = backups;
+        next.revision = self.revision;
+        next.finish_edit(Pos::new(next.document.id(), 0));
+        let outcome = serde_json::json!({ "kind": "recovered", "replayed": replayed,
+            "retained": retained, "revision": revision.get(), "viewRevision": next.revision,
+            "documentChanged": true, "pageCount": next.page_count() });
+        *self = next;
+        Ok(outcome.to_string())
+    }
+
     /// See [`WasmDocument::collab_join_frame`]. Plain `Result<_, String>` so the session guards
     /// run under `cargo test` on native targets.
     fn collab_join_frame_inner(
@@ -431,7 +574,27 @@ impl WasmDocument {
     /// See [`WasmDocument::collab_receive_frame`].
     fn collab_receive_frame_inner(&mut self, frame: &[u8]) -> Result<String, String> {
         let message: ServerMessage = decode_frame(frame).map_err(|error| malformed(&error))?;
-        let outcome = self.collab_apply_message(&message)?;
+        let outcome = match self.collab_apply_message(&message) {
+            Ok(outcome) => outcome,
+            Err(error)
+                if casual_doc_edit::refusal::split(&error).1
+                    == Some(Refusal::CannotMerge.code()) =>
+            {
+                if let Some(session) = self.session.as_mut() {
+                    session.stop(Refusal::CannotMerge);
+                }
+                let mut outcome = Outcome::of("recoveryRequired");
+                outcome.code = Some(Refusal::CannotMerge.code());
+                outcome.revision = match &message {
+                    ServerMessage::Apply(arrival) => arrival.revision.get(),
+                    ServerMessage::Welcome { revision, .. }
+                    | ServerMessage::Resumed { revision, .. } => revision.get(),
+                    _ => self.session.as_ref().map_or(0, |s| s.revision().get()),
+                };
+                outcome
+            }
+            Err(error) => return Err(error),
+        };
         serde_json::to_string(&outcome).map_err(|error| error.to_string())
     }
 
@@ -441,10 +604,17 @@ impl WasmDocument {
             ServerMessage::Welcome {
                 client,
                 revision,
+                missed,
                 capabilities,
                 participants,
                 ..
             } => {
+                if self.session.is_some() && self.log.unordered_commits() > 0 {
+                    return Err(marked(
+                        Refusal::CannotMerge.code(),
+                        "Pending local work needs recovery before a fresh join.",
+                    ));
+                }
                 let session = ClientSession::joined(&self.document, message, &mut self.log)
                     .map_err(|error| {
                         marked(
@@ -455,7 +625,27 @@ impl WasmDocument {
                 let participant = session.client().get();
                 self.session = Some(session);
                 self.collab_adopt(participant, *capabilities)?;
+                let mut replayed = 0;
+                let mut tombstones = Vec::new();
+                for arrival in missed {
+                    let reception = self.collab_merge(arrival)?;
+                    replayed += reception.1;
+                    tombstones.extend(reception.0);
+                }
+                let relaid = if missed.is_empty() {
+                    None
+                } else {
+                    Some(self.collab_relayout())
+                };
                 let mut outcome = Outcome::of("welcome");
+                outcome.missed = Some(missed.len());
+                outcome.replayed = Some(replayed);
+                outcome.tombstones = tombstones;
+                if let Some((dirty, pages)) = relaid {
+                    outcome.document_changed = true;
+                    outcome.dirty = dirty;
+                    outcome.page_count = pages;
+                }
                 outcome.participant = Some(client.get());
                 outcome.capabilities = Some(self.participant_capabilities());
                 outcome.members = membership(participants);
@@ -556,6 +746,14 @@ impl WasmDocument {
                 Ok(outcome)
             }
             ServerMessage::Refused { seq, reason } => {
+                if self.session.is_none() && matches!(reason, Refusal::TooFarBehind { .. }) {
+                    let mut outcome = Outcome::of("recoveryRequired");
+                    outcome.code = Some(reason.code());
+                    if let Refusal::TooFarBehind { current, .. } = reason {
+                        outcome.revision = current.get();
+                    }
+                    return Ok(outcome);
+                }
                 let Some(session) = self.session.as_mut() else {
                     return Err(malformed_state("a refusal"));
                 };
@@ -565,11 +763,23 @@ impl WasmDocument {
                         &format!("The shared session has stopped: {error}."),
                     )
                 })?;
-                let mut outcome = Outcome::of("refused");
+                let needs_recovery =
+                    matches!(reason, Refusal::TooFarBehind { .. } | Refusal::CannotMerge);
+                if needs_recovery {
+                    session.stop(Refusal::CannotMerge);
+                }
+                let mut outcome = Outcome::of(if needs_recovery {
+                    "recoveryRequired"
+                } else {
+                    "refused"
+                });
                 outcome.code = Some(reason.code());
                 outcome.retryable = reason.is_retryable();
-                outcome.terminal = reason.is_terminal();
-                outcome.revision = session.revision().get();
+                outcome.terminal = !needs_recovery && reason.is_terminal();
+                outcome.revision = match reason {
+                    Refusal::TooFarBehind { current, .. } => current.get(),
+                    _ => session.revision().get(),
+                };
                 outcome.view_revision = self.revision;
                 Ok(outcome)
             }
@@ -678,6 +888,10 @@ impl WasmDocument {
                     &format!("A change from the shared session could not be applied: {error}."),
                 )
             })?;
+        match self.last_collab_map.as_mut() {
+            Some((epoch, map)) if *epoch == u32::MAX => map.append(&reception.position_map),
+            _ => self.last_collab_map = Some((u32::MAX, reception.position_map.clone())),
+        }
         Ok((
             reception
                 .tombstones
@@ -705,6 +919,9 @@ impl WasmDocument {
         let damage = damage_of(&operations);
         let anchor = Pos::new(self.document.id(), 0);
         let result = self.finish_edit_with(anchor, &damage);
+        if let Some((epoch, _)) = self.last_collab_map.as_mut() {
+            *epoch = self.revision;
+        }
         (result.dirty_pages(), result.page_count())
     }
 }
@@ -762,3 +979,123 @@ fn capability_names(granted: Capabilities) -> Vec<String> {
 #[cfg(test)]
 #[path = "collab_tests.rs"]
 mod tests;
+
+impl crate::presence::WasmRoster {
+    pub(crate) fn receive_frame_inner(&mut self, frame: &[u8]) -> Result<(), String> {
+        use casual_doc_transaction::protocol::ServerMessage;
+        let message = casual_doc_transaction::codec::decode_frame::<ServerMessage>(frame)
+            .map_err(|error| format!("presence: {error}"))?;
+        match message {
+            ServerMessage::Awareness { client, update } => {
+                self.roster
+                    .accept(client, update)
+                    .map_err(|error| format!("presence: {error}"))?;
+            }
+            ServerMessage::Departed { client } => {
+                self.roster.forget(client);
+            }
+            ServerMessage::Welcome { .. } | ServerMessage::Resumed { .. } => self.clear(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn caret_frame_inner(
+        &mut self,
+        document: &crate::WasmDocument,
+        anchor: &str,
+        anchor_offset: u32,
+        head: &str,
+        head_offset: u32,
+    ) -> Result<Option<Vec<u8>>, String> {
+        use casual_doc_transaction::presence::{Caret, CaretEnd};
+        use casual_doc_transaction::{Affinity, BlockTarget, Position};
+        self.sync(document);
+        let target = casual_doc_transaction::transform::BlockIndex::of(&document.document);
+        let end = |node: &str, offset| {
+            let pos = crate::parse_pos(node, offset)
+                .ok_or_else(|| "invalid cursor position".to_owned())?;
+            let container = target
+                .block_position(pos.node)
+                .map(|(container, _)| container)
+                .unwrap_or(Some(document.document.id()));
+            Ok::<_, String>(CaretEnd::new(
+                Position::new(pos.node, offset, Affinity::After),
+                container,
+            ))
+        };
+        let caret = Caret {
+            anchor: end(anchor, anchor_offset)?,
+            head: end(head, head_offset)?,
+        };
+        let update = self
+            .sender
+            .send_caret(caret)
+            .map_err(|error| format!("presence: {error}"))?;
+        Ok(update.map(|update| {
+            casual_doc_transaction::codec::encode_frame(
+                &casual_doc_transaction::protocol::ClientMessage::Presence(update),
+            )
+        }))
+    }
+}
+
+// Canonical marker first: plain normalized JSON remains a supported recovery input.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SnapshotPackage {
+    collab_snapshot_version: u32,
+    pub(crate) document: String,
+    pub(crate) resources: BTreeMap<String, Vec<u8>>,
+}
+
+const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SNAPSHOT_RESOURCES: usize = 32 * 1024 * 1024;
+
+fn check_resources(resources: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+    if resources.len() > 2048
+        || resources.keys().any(|id| id.is_empty() || id.len() > 1024)
+        || resources.values().map(Vec::len).sum::<usize>() > MAX_SNAPSHOT_RESOURCES
+    {
+        return Err("The shared snapshot resource limit was exceeded.".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn read_snapshot_package(bytes: &[u8]) -> Result<Option<SnapshotPackage>, String> {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    if !bytes[start..].starts_with(b"{\"collabSnapshotVersion\":") {
+        return Ok(None);
+    }
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return Err("The shared snapshot exceeds 64 MiB.".to_owned());
+    }
+    let package: SnapshotPackage = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if package.collab_snapshot_version != 1 {
+        return Err("Unsupported shared snapshot version.".to_owned());
+    }
+    check_resources(&package.resources)?;
+    Ok(Some(package))
+}
+
+fn snapshot_bytes(
+    document: &casual_doc_model::v1::Document,
+    resources: &DocumentResources,
+) -> Result<Vec<u8>, String> {
+    check_resources(resources.as_map())?;
+    let document = String::from_utf8(document.to_json().map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    let package = SnapshotPackage {
+        collab_snapshot_version: 1,
+        document,
+        resources: resources.as_map().clone(),
+    };
+    let bytes = serde_json::to_vec(&package).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return Err("The shared snapshot exceeds 64 MiB.".to_owned());
+    }
+    Ok(bytes)
+}

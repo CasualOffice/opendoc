@@ -296,6 +296,8 @@ export function openRoom(session, room, WebSocketImpl, hooks = {}) {
     open: webSocketOpener(WebSocketImpl),
     onOutcome: hooks.onOutcome,
     onState: hooks.onState,
+    onFrame: hooks.onFrame,
+    initialRevision: hooks.initialRevision,
   });
   pipe.start();
   return pipe;
@@ -346,6 +348,8 @@ export function collabTransport(options) {
     random = Math.random,
     onOutcome = () => {},
     onState = () => {},
+    onFrame = () => {},
+    initialRevision = 0,
     baseDelayMs = 500,
     maxDelayMs = 30_000,
     attemptCeiling = 8,
@@ -355,6 +359,7 @@ export function collabTransport(options) {
    *  is the only one nothing leaves on its own. */
   let phase = "idle";
   let socket = null;
+  let recoveryPaused = false;
   let timer = null;
   let attempt = 0;
   /** The code the reader's sentence is keyed by, or `null` when there is nothing
@@ -405,7 +410,7 @@ export function collabTransport(options) {
   function revisionNow() {
     try {
       const parsed = JSON.parse(session.collabState);
-      const value = Number(parsed?.revision);
+      const value = Number(parsed?.revision || (!parsed?.joined ? initialRevision : 0));
       return Number.isSafeInteger(value) && value >= 0 ? value : 0;
     } catch {
       return 0;
@@ -426,7 +431,7 @@ export function collabTransport(options) {
   /** Hands the queue to the wire in order, stopping at the first refusal. The
    *  order is the protocol: sequence numbers are monotonic per client. */
   function drain() {
-    while (phase === "open" && queue.length > 0) {
+    while (phase === "open" && !recoveryPaused && queue.length > 0) {
       if (!sendNow(queue[0])) return;
       queue.shift();
     }
@@ -438,7 +443,7 @@ export function collabTransport(options) {
    *  `flush` returns `None` once `MAX_OUTSTANDING` chunks are outstanding, and
    *  every chunk it does return consumes at least one commit. */
   function pump() {
-    if (phase !== "open") return;
+    if (phase !== "open" || recoveryPaused) return;
     for (;;) {
       let chunk;
       try {
@@ -481,6 +486,8 @@ export function collabTransport(options) {
     } catch {
       return;
     }
+    if (outcome.kind === "recoveryRequired") recoveryPaused = true;
+    try { onFrame(bytes); } catch { /* Invalid awareness cannot stop document delivery. */ }
     onOutcome(Object.freeze(outcome));
     if (outcome?.terminal === true) {
       halt(outcome.code ?? null, false);
@@ -663,6 +670,19 @@ export function collabTransport(options) {
      *  @param {Uint8Array|null|undefined} bytes a frame from the engine
      *  @returns {boolean} whether it was taken
      */
+    /** Sends transient engine-built awareness only while connected; never queues it. */
+    awareness(bytes) {
+      return phase === "open" && bytes?.length > 0 ? sendNow(bytes) : false;
+    },
+    /** Rejoins from a recovered snapshot, discarding superseded wire chunks. */
+    resync() {
+      queue.length = 0;
+      recoveryPaused = false;
+      halt(null, false);
+      phase = "idle";
+      attempt = 0;
+      connect();
+    },
     request(bytes) {
       if (phase === "stopped" || !bytes || bytes.length === 0) return false;
       queue.push(bytes);

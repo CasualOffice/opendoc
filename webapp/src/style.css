@@ -12691,3 +12691,12 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
 .chart-data-note.error {
   color: var(--danger);
 }
+
+/* Remote awareness never intercepts document interaction. */
+.remote-caret { position: absolute; border-left: 2px solid; pointer-events: none; z-index: 6; }
+.remote-caret > span { position: absolute; bottom: 100%; left: -2px; color: white; font: 11px sans-serif; padding: 2px 4px; white-space: nowrap; border-radius: 3px; }
+.remote-selection { position: absolute; opacity: .18; pointer-events: none; z-index: 5; }
+
+.shared-link-dialog { max-width: min(560px, 90vw); border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
+.shared-link-dialog label { display: block; }
+.shared-link-dialog input { display: block; width: 100%; margin: 12px 0; }

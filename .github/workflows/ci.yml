@@ -248,6 +248,8 @@ jobs:
       - name: Run webapp unit tests
         if: matrix.shard == 1
         run: npm run --prefix webapp test:unit
+      - name: Build optional Share host relay
+        run: cargo build -p opendoc-relay --locked
       - name: Run browser smoke suite
         run: npx playwright test --shard=${{ matrix.shard }}/4
         working-directory: webapp

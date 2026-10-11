@@ -330,6 +330,8 @@ fn a_protocol_mismatch_stops_the_session_and_is_never_retried() {
     let error = ClientSession::joined(
         &document,
         &ServerMessage::Welcome {
+            base_revision: None,
+            missed: Vec::new(),
             protocol: PROTOCOL_VERSION + 1,
             client: ClientId::new(0),
             revision: Revision::new(0),

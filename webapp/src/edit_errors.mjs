@@ -111,3 +111,16 @@ export function editRefusalMessage(error, context = {}) {
   if (EXPLAINED.test(text)) return text.replace(EXPLAINED, "");
   return HISTORY_FAILURE.test(text) ? HISTORY : GENERIC;
 }
+
+/** The engine's post-edit revision, or null if it cannot be read. Never throws:
+ *  a wrapper that has already been freed, or a build whose `EditResult` predates
+ *  the getter, must degrade to "unknown" (and therefore dirty) rather than take
+ *  down the edit that just succeeded. */
+export function readRevision(res) {
+  try {
+    const revision = res.revision;
+    return Number.isFinite(revision) ? revision : null;
+  } catch {
+    return null;
+  }
+}

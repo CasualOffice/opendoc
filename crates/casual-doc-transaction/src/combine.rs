@@ -262,6 +262,8 @@ pub fn combine(
     let mut session = ClientSession::joined(
         &document,
         &ServerMessage::Welcome {
+            base_revision: None,
+            missed: Vec::new(),
             protocol: PROTOCOL_VERSION,
             client: ours.client,
             revision: Revision::new(0),

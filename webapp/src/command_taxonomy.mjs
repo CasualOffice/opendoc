@@ -66,7 +66,7 @@
 // ribbon group called something else would read as two products.
 export const FILE_SURFACE = [
   { nameKey: "menuGroup.newAndOpen", ids: ["file.new", "file.open", "file.recoverDrafts"] },
-  { nameKey: "menuGroup.save", ids: ["file.save"] },
+  { nameKey: "menuGroup.save", ids: ["file.save", "collab.share"] },
   // The nine export formats behind one row. Google Docs files exactly these
   // under Download; Word's backstage gives Export its own page. Ten rows of
   // which nine say "export as" is the shape that made this menu long, and Save
@@ -643,7 +643,7 @@ export const APP_MENU_SECTIONS = {
     // for. A band of its own would have cost a new `menuGroup.*` key in
     // nineteen catalogues to separate two rows nobody is looking for
     // separately.
-    band("menuGroup.protect", "review.restrictEditing", "review.manageAccess"),
+    band("menuGroup.protect", "review.restrictEditing", "review.manageAccess", "collab.recover", "collab.downloadRetained"),
   ],
 };
 

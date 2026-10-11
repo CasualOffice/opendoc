@@ -122,9 +122,13 @@ transactions (ADR-033) and an optional relay, `opendoc-relay`, that orders and
 forwards changes and never holds the document (ADR-047). Rooms carry a role —
 viewer, commenter, suggester, editor or owner — that caps every participant.
 
-It is **not on the public demo yet**, and it is not a product surface: there is no
-Share button, presence and remote cursors are not shown, and each participant opens
-the same file themselves. To try it locally, see
+The editor shows remote cursors and selections in a room. Share uses an optional
+host provider to persist a document and create a link that opens it automatically.
+Unsupported transforms preserve pending work during snapshot recovery; uncertain
+edits remain downloadable as original document backups. See
+[sharing and recovery](docs/169-SHARING-PRESENCE-AND-SNAPSHOT-RECOVERY.md) for the
+provider contract and runnable local Share host. The public demo has no Share host.
+For an independent relay deployment, see
 [deployment §5](docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md):
 
 ```sh

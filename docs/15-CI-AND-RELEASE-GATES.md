@@ -398,3 +398,12 @@ content commits are safe. The detailed ownership and per-phase checkboxes live i
 - a security advisory is evaluated before dependency update automation is
   merged;
 - checks may be temporarily relaxed only through a documented, time-bounded ADR.
+
+## Collaboration Share and recovery (ADR-067)
+
+Workspace tests include 24 seeded three-client convergence schedules through the real
+relay. Browser shards build `opendoc-relay` for `collaboration.spec.mjs`, which starts
+and stops its own optional Share host and checks seed loading, late-join replay, remote
+editing, cursor/selection geometry, checkpoints and departure cleanup. Native WASM
+facade guards verify safe pending-text replay, uncertain-work backups and atomic invalid
+snapshot refusal. New collaboration strings use English fallback until translation review.

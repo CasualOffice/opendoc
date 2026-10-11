@@ -14,6 +14,26 @@
 // `.few` and `.many` without any call site changing, which is the entire
 // reason plural selection lives in the seam (`i18n.mjs`).
 export const EN_STRINGS = Object.freeze({
+  "collab.retainedDocuments": "Retained local documents",
+  "collab.downloadDocument": "Download document {number}",
+
+  "collab.share": "Share",
+  "collab.shareLink": "Link to this shared document",
+  "collab.close": "Close",
+  "collab.participant": "Participant {number}",
+  "collab.shareCopied": "Share link copied.",
+  "collab.shareCopyManually": "Copy this link to invite someone.",
+  "collab.shareHostRequired": "Your host must configure document sharing.",
+  "collab.shareDocumentChanged": "The document changed while creating the room. Share again to include your latest edits.",
+  "collab.shareInvalid": "The host returned an invalid share link.",
+  "collab.recoveryNeeded": "Local edits are preserved. Reload an authoritative snapshot to resume collaboration.",
+  "collab.snapshotInvalid": "The recovery snapshot is invalid or older than the required revision.",
+  "collab.recoveryRetained": "Replayed {replayed} local edits. {retained} uncertain edits remain in retained document backups; download them from Review.",
+  "collab.recoveryComplete": "Recovered the shared document and replayed {replayed} local edits.",
+  "collab.recover": "Retry shared document recovery",
+  "collab.downloadRetained": "Download retained local documents",
+  "collab.checkpointFailed": "The host could not save the latest collaboration checkpoint.",
+
   // ---- Menu band names ------------------------------------------------------
   //
   // Every band of every menu, and every band of the File page, names itself

@@ -449,9 +449,13 @@ impl<W: Write> Relay<W> {
                 protocol,
                 client,
                 revision,
+                base_revision,
+                missed,
                 capabilities,
                 ..
             } => ServerMessage::Welcome {
+                base_revision,
+                missed,
                 protocol,
                 client,
                 revision,

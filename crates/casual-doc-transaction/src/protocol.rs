@@ -95,7 +95,9 @@ use crate::wire::WireOperation;
 /// The case for bumping anyway is that a grantless client is refused from a room that requires
 /// one; that refusal is `ODC-7003` with a reason, which is the opposite of the **silent**
 /// disagreement version 2 existed for. A loud refusal is not a protocol break.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// - **6** — fresh Welcome carries its snapshot base and required missed history.
+///   An older peer could decode but skip that history, silently opening a stale replica.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
 ///
@@ -465,6 +467,12 @@ pub struct Arrival {
 pub enum ServerMessage {
     /// A first join: the participant's identity and where the document is.
     Welcome {
+        /// The snapshot position requested by a fresh join; absent means `revision`.
+        #[serde(default)]
+        base_revision: Option<Revision>,
+        /// Ordered catch-up from that snapshot, applied before any local flush.
+        #[serde(default)]
+        missed: Vec<Arrival>,
         /// The version the server speaks.
         protocol: u32,
         /// The identity assigned to this participant.
@@ -612,7 +620,7 @@ pub enum Refusal {
     /// The ordered session cannot persist work. **Copy it out.**
     NotSaving,
     /// The client is behind the retained history and cannot be caught up by replay. It
-    /// needs a fresh snapshot, and the work it had not had acknowledged is lost.
+    /// needs a fresh snapshot; pending work must be preserved and safely replayed or retained.
     TooFarBehind {
         /// The oldest position replay can still start from.
         oldest: Revision,

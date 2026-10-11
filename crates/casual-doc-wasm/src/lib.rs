@@ -591,6 +591,9 @@ pub struct WasmDocument {
     /// `Welcome` to `collab_receive_frame`; the `collab` module's header records
     /// why the socket is the host's and the session is the engine's.
     session: Option<casual_doc_transaction::session::ClientSession>,
+    last_collab_map: Option<(u32, casual_doc_transaction::PositionMap)>,
+    recovery_backups: Vec<Vec<u8>>,
+    bootstrap_revision: Option<u64>,
     /// Mints transaction identities for this session. Monotonic and never
     /// reused, including after Undo — the same rule `edit_ids` and
     /// `revision_ids` follow, and for the same reason: an id that comes back is
@@ -16094,6 +16097,13 @@ impl WasmDocument {
     /// which is a real state Word round-trips — so the flag is checked, not
     /// just the mode.
     fn refuse_if_protected(&self, ops: &[Operation]) -> Result<(), String> {
+        if self.bootstrap_revision.is_some() && self.session.is_none() {
+            return Err(refused!(
+                "session.joining",
+                "Wait for the shared document to connect before editing."
+            )
+            .to_string());
+        }
         // **The grant is the outer gate, and it is outside the form-field exemption too.**
         // A participant's access level is not a question about where their caret is: a
         // read-only guest in a room may not fill in a form field either, and `152` §10 Q5 is
@@ -28019,11 +28029,18 @@ fn open_document_bounded(
     if let Some(refusal) = viewer_admission_error(bytes) {
         return Err(refusal);
     }
+    let package = collab::read_snapshot_package(bytes)?;
+    if package.is_some()
+        && matches!(&selection, FormatSelection::Explicit(format) if format.as_str() != casual_doc_io::formats::NORMALIZED_JSON)
+    {
+        return Err("A shared snapshot contains normalized JSON.".to_owned());
+    }
+    let import_bytes = package.as_ref().map_or(bytes, |p| p.document.as_bytes());
     let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
-    let imported = registry
+    let mut imported = registry
         .import(
             DetectionRequest {
-                bytes,
+                bytes: import_bytes,
                 selection,
                 file_name_hint: None,
                 mime_hint: None,
@@ -28031,6 +28048,11 @@ fn open_document_bounded(
             true,
         )
         .map_err(|error| format!("import document: {error}"))?;
+    if let Some(package) = package {
+        for (id, data) in package.resources {
+            imported.resources.insert(id, data);
+        }
+    }
     let blocks = count_blocks(imported.document.body());
     if blocks > MAX_VIEWER_BLOCKS {
         return Err(too_many_blocks(blocks));
@@ -28137,6 +28159,9 @@ fn open_document_bounded(
         default_config,
         edit_ids,
         session: None,
+        last_collab_map: None,
+        recovery_backups: Vec::new(),
+        bootstrap_revision: None,
         log: RevisionLog::default(),
         next_transaction: 0,
         typing_history: None,
@@ -37075,6 +37100,9 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5d),
             session: None,
+            last_collab_map: None,
+            recovery_backups: Vec::new(),
+            bootstrap_revision: None,
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
@@ -37527,6 +37555,9 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5c),
             session: None,
+            last_collab_map: None,
+            recovery_backups: Vec::new(),
+            bootstrap_revision: None,
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
@@ -37839,6 +37870,9 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5b),
             session: None,
+            last_collab_map: None,
+            recovery_backups: Vec::new(),
+            bootstrap_revision: None,
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
@@ -41702,6 +41736,9 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
             session: None,
+            last_collab_map: None,
+            recovery_backups: Vec::new(),
+            bootstrap_revision: None,
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
@@ -42903,6 +42940,9 @@ mod tests {
             layout_view: LayoutView::Paged,
             reflow_table_scroll: BTreeMap::new(),
             session: None,
+            last_collab_map: None,
+            recovery_backups: Vec::new(),
+            bootstrap_revision: None,
         }
     }
 
@@ -44382,6 +44422,9 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5a),
             session: None,
+            last_collab_map: None,
+            recovery_backups: Vec::new(),
+            bootstrap_revision: None,
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,

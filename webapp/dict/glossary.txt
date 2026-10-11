@@ -31,6 +31,7 @@ CJK
 CKEditor
 CLI
 COEP
+COLLAB
 COLR
 COV
 CPU
@@ -452,6 +453,7 @@ lifecycle
 liveness
 lockfile
 lookups
+loopback
 lossy
 macOS
 margined
@@ -673,7 +675,6 @@ virtualized
 vml
 wasm
 webapp
-websocket
 webview
 whitespace
 widthless

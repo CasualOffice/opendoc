@@ -14,7 +14,7 @@ use casual_doc_transaction::protocol::{
     ClientId, ClientMessage, PROTOCOL_VERSION, Refusal, Revision, ServerMessage,
 };
 
-use super::capability_names;
+use super::{capability_names, snapshot_bytes};
 
 /// A one-paragraph document through the real open path, so the facade under test is the one the
 /// browser gets.
@@ -41,6 +41,8 @@ fn text(document: &crate::WasmDocument) -> String {
 
 fn welcome(client: u64, capabilities: Capabilities) -> Vec<u8> {
     encode_frame(&ServerMessage::Welcome {
+        base_revision: None,
+        missed: Vec::new(),
         protocol: PROTOCOL_VERSION,
         client: ClientId::new(client),
         revision: Revision::new(0),
@@ -323,4 +325,202 @@ fn facade_code(source: &str) -> String {
         .filter(|line| !line.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn recovery_replays_pending_text_and_preserves_changed_paragraph_backups() {
+    use casual_doc_edit::{Operation, Pos};
+    let mut doc = document();
+    doc.collab_receive_frame_inner(&welcome(0, Capabilities::owner()))
+        .expect("join");
+    let node = match &doc.document.body()[0] {
+        casual_doc_model::v1::BlockNode::Paragraph(p) => p.id,
+        _ => panic!("paragraph"),
+    };
+    let original = doc
+        .export_as_inner(casual_doc_io::formats::NORMALIZED_JSON, "semantic")
+        .expect("export")
+        .bytes;
+    doc.apply(Operation::InsertText {
+        at: Pos::new(node, 2),
+        text: "LOCAL".to_owned(),
+    })
+    .expect("edit");
+    let sent = doc.collab_next_chunk().expect("a pending chunk");
+    let ClientMessage::Submit(first) =
+        casual_doc_transaction::codec::decode_frame(&sent).expect("submission")
+    else {
+        panic!("submit");
+    };
+    let checkpoint = doc.collab_checkpoint().expect("checkpoint");
+    let acknowledged = crate::open_document(&checkpoint).expect("checkpoint opens");
+    assert_eq!(text(&acknowledged), "abcdefgh\n");
+    let result: serde_json::Value =
+        serde_json::from_str(&doc.collab_recover_inner(&original, 1.0).expect("recover"))
+            .expect("result");
+    assert_eq!(result["replayed"], 1);
+    assert_eq!(doc.log.unordered_commits(), 1);
+    assert_eq!(text(&doc), "abLOCALcdefgh\n");
+    let resent = doc.collab_next_chunk().expect("recovered pending chunk");
+    let ClientMessage::Submit(second) =
+        casual_doc_transaction::codec::decode_frame(&resent).expect("submission")
+    else {
+        panic!("submit");
+    };
+    assert!(
+        second.seq > first.seq,
+        "snapshot recovery must not restart a participant's sequence counter"
+    );
+    let mut changed = crate::open_document(&original).expect("same base");
+    changed
+        .apply(Operation::InsertText {
+            at: Pos::new(node, 0),
+            text: "REMOTE".to_owned(),
+        })
+        .expect("remote edit");
+    let changed = changed
+        .export_as_inner(casual_doc_io::formats::NORMALIZED_JSON, "semantic")
+        .expect("export")
+        .bytes;
+    doc.resources
+        .insert("local/picture.png".to_owned(), vec![0, 255, 128]);
+    let result: serde_json::Value = serde_json::from_str(
+        &doc.collab_recover_inner(&changed, 2.0)
+            .expect("recover uncertain"),
+    )
+    .expect("result");
+    assert_eq!(result["retained"], 1);
+    assert_eq!(text(&doc), "REMOTEabcdefgh\n");
+    assert_eq!(doc.collab_recovery_count(), 1);
+    let retained = crate::open_document(&doc.collab_recovery_document(0).expect("backup"))
+        .expect("backup opens");
+    assert_eq!(
+        retained.resources.get("local/picture.png"),
+        Some([0, 255, 128].as_slice())
+    );
+    assert_eq!(text(&retained), "abLOCALcdefgh\n");
+}
+
+#[test]
+fn recovery_refuses_wrong_document_and_invalid_revision_atomically() {
+    use casual_doc_edit::{Operation, Pos};
+    let mut doc = document();
+    doc.collab_receive_frame_inner(&welcome(0, Capabilities::owner()))
+        .expect("join");
+    let node = match &doc.document.body()[0] {
+        casual_doc_model::v1::BlockNode::Paragraph(p) => p.id,
+        _ => panic!("paragraph"),
+    };
+    doc.apply(Operation::InsertText {
+        at: Pos::new(node, 0),
+        text: "LOCAL".to_owned(),
+    })
+    .expect("edit");
+    let before = doc.document.clone();
+    let pending = doc.log.unordered_commits();
+    let mut other = crate::open_document(b"a different document").expect("open");
+    other.document = casual_doc_model::v1::Document::new(
+        casual_doc_model::NodeId::new(99).expect("id"),
+        other.document.body().to_vec(),
+        casual_doc_model::v1::Definitions::default(),
+    )
+    .expect("different identity");
+    let bytes = other
+        .export_as_inner(casual_doc_io::formats::NORMALIZED_JSON, "semantic")
+        .expect("export")
+        .bytes;
+    assert!(doc.collab_recover_inner(&bytes, f64::NAN).is_err());
+    assert!(doc.collab_recover_inner(b"not valid JSON", 1.0).is_err());
+    assert!(doc.collab_recover_inner(&bytes, 1.0).is_err());
+    assert_eq!(doc.document, before);
+    assert_eq!(doc.log.unordered_commits(), pending);
+}
+
+#[test]
+fn framed_carets_rebase_over_edits_and_departures_remove_them() {
+    use casual_doc_edit::{Operation, Pos};
+    use casual_doc_transaction::codec::{decode_frame, encode_frame};
+    use casual_doc_transaction::protocol::{ClientMessage, ServerMessage};
+    let mut doc = crate::open_document(b"abcdefgh").expect("document");
+    let node = match &doc.document.body()[0] {
+        casual_doc_model::v1::BlockNode::Paragraph(p) => p.id,
+        _ => panic!("paragraph"),
+    };
+    let mut sender = crate::presence::new_roster();
+    let frame = sender
+        .caret_frame_inner(&doc, &node.to_string(), 1, &node.to_string(), 3)
+        .expect("frame")
+        .expect("changed");
+    assert!(
+        sender
+            .caret_frame_inner(&doc, &node.to_string(), 1, &node.to_string(), 3)
+            .expect("same")
+            .is_none()
+    );
+    let ClientMessage::Presence(update) = decode_frame(&frame).expect("decode") else {
+        panic!("presence");
+    };
+    let mut receiver = crate::presence::new_roster();
+    receiver.sync(&doc);
+    let client = ClientId::new(7);
+    receiver
+        .receive_frame_inner(&encode_frame(&ServerMessage::Awareness { client, update }))
+        .expect("receive");
+    let before = doc.revision;
+    doc.apply(Operation::InsertText {
+        at: Pos::new(node, 0),
+        text: "XY".to_owned(),
+    })
+    .expect("edit");
+    receiver.sync(&doc);
+    let held = receiver.roster.participants().next().expect("caret");
+    let caret = casual_doc_transaction::presence::Caret::decode(&held.payload).expect("typed");
+    assert_eq!(caret.anchor.position.offset, 3);
+    assert_eq!(caret.head.position.offset, 5);
+    assert!(doc.revision > before);
+    receiver
+        .receive_frame_inner(&encode_frame(&ServerMessage::Departed { client }))
+        .expect("depart");
+    assert!(receiver.is_empty());
+}
+
+#[test]
+fn snapshot_packages_preserve_resources_for_share_checkpoint_and_recovery_backups() {
+    let mut doc = document();
+    doc.resources
+        .insert("word/media/picture.png".to_owned(), vec![0, 255, 7, 128]);
+    let snapshot = snapshot_bytes(&doc.document, &doc.resources).expect("snapshot");
+    let opened = crate::open_document(&snapshot).expect("packaged document");
+    assert_eq!(opened.document, doc.document);
+    assert_eq!(opened.resources, doc.resources);
+    let checkpoint = doc.collab_checkpoint().expect("checkpoint");
+    let opened = crate::open_document(&checkpoint).expect("checkpoint opens");
+    assert_eq!(opened.resources, doc.resources);
+    let mut package: serde_json::Value = serde_json::from_slice(&snapshot).expect("JSON");
+    package["collabSnapshotVersion"] = serde_json::json!(2);
+    // Preserve the canonical first-field marker when exercising version admission.
+    let invalid = format!(
+        "{{\"collabSnapshotVersion\":2,\"document\":{},\"resources\":{}}}",
+        package["document"], package["resources"]
+    );
+    assert!(crate::open_document(invalid.as_bytes()).is_err());
+    let invalid = format!(
+        "{{\"collabSnapshotVersion\":1,\"document\":{},\"resources\":{{\"\":[]}}}}",
+        package["document"]
+    );
+    assert!(crate::open_document(invalid.as_bytes()).is_err());
+}
+
+#[test]
+fn shared_picture_document_keeps_its_binary_image() {
+    let doc = crate::open_document(include_bytes!(
+        "../../../fixtures/generated/picture-hyperlink.docx"
+    ))
+    .expect("picture DOCX");
+    assert!(!doc.resources.is_empty());
+    let bytes = snapshot_bytes(&doc.document, &doc.resources).expect("snapshot");
+    let opened = crate::open_document(&bytes).expect("shared snapshot");
+    assert_eq!(opened.document, doc.document);
+    assert_eq!(opened.resources, doc.resources);
+    assert_eq!(opened.page_count(), doc.page_count());
 }
