@@ -22,8 +22,8 @@ casual-doc-layout.workspace = true
 # The display list's `PaintItem::Image` carries the model's `CropRect`
 # (`a:srcRect`), applied when blitting a cropped picture. Pure-Rust, WASM-clean.
 casual-doc-model.workspace = true
-skrifa = "0.43"
-tiny-skia = "0.11"
+skrifa = "0.44"
+tiny-skia = "0.12"
 # Raster image decoding for inline pictures. Permissive (MIT-or-Apache-2.0),
 # pure-Rust and WASM-clean: only these codec features are enabled, so no
 # native/C backends are pulled in. PNG/JPEG are the common web formats; GIF/BMP/
@@ -59,7 +59,7 @@ casual-doc-layout = { workspace = true, features = ["system-fonts"] }
 # (RUSTSEC-2026-0206) and `ttf-parser` (RUSTSEC-2026-0192) that `usvg/text` pulls.
 # The documented trade-off: SVG `<text>` is not rendered (paths/shapes/gradients
 # are). Doc-embedded SVGs are logos/vector paths, so this is acceptable.
-resvg = { version = "0.45", default-features = false }
+resvg = { version = "0.48", default-features = false }
 
 [dev-dependencies]
 casual-doc-import.workspace = true
