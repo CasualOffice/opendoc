@@ -262,6 +262,7 @@ jobs:
           npm run --prefix webapp test:unit 2>&1 | tee "$RUNNER_TEMP/opendoc-web-tests.log" || unit_status=$?
           if [ "$unit_status" -ne 0 ]; then
             awk '/^not ok / { print "::error title=Webapp unit test failed::" $0 }' "$RUNNER_TEMP/opendoc-web-tests.log"
+            awk '/engine module is [0-9,]+ B|code section is [0-9,]+ B/ { print "::notice title=WASM size measurement::" $0 }' "$RUNNER_TEMP/opendoc-web-tests.log"
           fi
           exit "$unit_status"
       - name: Build optional Share host relay

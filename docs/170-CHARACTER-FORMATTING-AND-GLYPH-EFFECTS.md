@@ -91,3 +91,9 @@ Review cards include named advanced character deltas and show spacing, position,
 scale and kerning in user units. The effective-format query aggregates one
 paragraph at a time and serializes only character fields, so it does not clone
 JSON or nested revision snapshots for every run in a large selection.
+
+The shared select and ribbon-face guards caught missing declarations on the
+new controls. Both selects now carry `dialog-select`, and the Font launcher
+names `format.character.dialog` in the shared ribbon roster. The wasm artifact
+crossed its existing size ceilings; CI reports the measured byte counts before
+any budget decision. Optimization flags and the non-stub floor remain unchanged.
