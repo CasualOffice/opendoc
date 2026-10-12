@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 197 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 213 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 198 | both products ship it, and both anchors resolve |
+| Parity | 206 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
-| Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 68 | we ship part of it; the row says what is missing |
-| Gap | 79 | their standalone browser session ships it and we do not |
+| Ours only | 26 | we ship it and their tree has no such surface |
+| Partial | 59 | we ship part of it; the row says what is missing |
+| Gap | 78 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -236,7 +236,6 @@ least two surfaces (`SKILL` §10).
 | 5 | Merge shapes (union, subtract, intersect) | `object.merge-shapes` | `btnShapesMerge` | Their merge writes custom geometry, which our model now types and round-trips (docs/109 FID-G-02); the boolean operation that would produce it is what is absent. |
 | 5 | Texture, pattern and picture fill | `object.shape-fill-texture-pattern` | `btnTexture` | cmbPattern and the shape panel's picture chooser are their other two; we model none of the three as an authorable fill. |
 | 5 | Macros | `shell.macros` | `btnMacros` | Deliberate, not a gap to close: docs/149 records macros as declined, because a document format that can execute code in the reader's browser is the largest attack surface an office suite has and .docm is refused at open. |
-| 5 | OpenType ligature control | `text.ligatures` | `cmbLigatures` | Their Advanced ▸ Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all — shaping decides. |
 | 5 | Math AutoCorrect (\alpha to the glyph) | `text.math-autocorrect` | `Common.Views.AutoCorrectDialog.textMathCorrect` | Their AutoCorrect dialog has a math tab with an editable recognised-function and symbol table. |
 <!-- @end parity-gaps -->
 
@@ -250,24 +249,24 @@ that stops resolving fails the build rather than quietly downgrading a row.
 
 | Capability | Verdict | Ours | Theirs | Note |
 | --- | --- | --- | --- | --- |
-| All capitals (as a character effect) | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `all_caps` — missing: no command applies `w:caps`; `format.case.upper` rewrites the letters instead, which is a different operation | `DE.Views.ParagraphSettingsAdvanced.strAllCaps` | Change case rewrites the text; the caps effect leaves the stored text alone. Only the second survives a style change or a copy into a lowercase context. |
+| All capitals (as a character effect) | Parity | `format.character.allCaps` | `DE.Views.ParagraphSettingsAdvanced.strAllCaps` | The caps effect changes rendering without rewriting stored letters. Font dialog and palette author selected ranges or arm typing; guarded by character_format engine tests and batches-3.spec.mjs. |
 | Capitalise the first letter of a sentence | Gap | none (`tools.autoCapitalise` undeclared) | `Common.Views.AutoCorrectDialog.textFLSentence` | Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all. |
 | Replace text as you type (AutoCorrect table) | Gap | none (`tools.autoCorrect` undeclared) | `btnAutoCorrect` | Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else. |
 | Turn typed hyphens into dashes | Gap | none (`tools.autoFormatDashes` undeclared) | `Common.Views.AutoCorrectDialog.textHyphens` | Word and Docs both do this; it is the second most-noticed AutoCorrect after smart quotes. |
 | Turn a typed URL into a hyperlink | Gap | none (`tools.autoFormatHyperlink` undeclared) | `Common.Views.AutoCorrectDialog.textHyperlink` | We have `insert.link` but nothing recognises a URL as it is typed, so every pasted address needs the dialog. |
 | Bold | Parity | `format.bold` | `btnBold` | — |
-| Borders around text | Partial | `layout.paragraph` — missing: paragraph borders and shading only; no character-level border (`w:bdr`) control | `btnBorders` | Their Borders button is a toolbar split button; ours lives in the paragraph properties panel. Neither sets a run border, which we import but cannot author. |
+| Borders around text | Parity | `format.character.border` | `btnBorders` | Font settings author run borders and emphasis marks using the existing paint pipeline. Untouched imported borders, theme colors and padding are preserved; borders and emphasis remain undoable character properties. |
 | Change case | Parity | `format.case.sentence` | `btnChangeCase` | We declare five: upper, lower, title, sentence and toggle, each its own command id. |
-| Character position (raised / lowered baseline) | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `position_half_points` — missing: no command sets `w:position`; only the fixed superscript and subscript toggles exist | `ApiTextPr.SetPosition` | Their chrome exposes it as Position in the Advanced ▸ Font tab and the engine as ApiTextPr.SetPosition. |
-| Horizontal character scaling | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `character_scale_percent` — missing: no command sets `w:w`; the property is imported, laid out and exported only | none (searched `grep -riE 'textscale\|put_TextPrScale' over web-apps/apps/documenteditor and sdkjs/word — the only textScale keys are DE.Views.FormSettings and the watermark size, and Serialize2.js's rPr property table has no scale entry`) | Word's Font ▸ Advanced ▸ Scale. Neither product can set it; we at least keep and render an imported value. |
-| Character spacing (expanded / condensed) | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `character_spacing_twips` — missing: no command or dialog field sets it — `w:spacing` on a run is imported, laid out and exported only | `DE.Views.ParagraphSettingsAdvanced.textCharacterSpacing` | Their Advanced ▸ Font tab has the spinner. Ours is the same property with no way in. |
+| Character position (raised / lowered baseline) | Parity | `format.character.position` | `ApiTextPr.SetPosition` | Font settings Advanced authors raised or lowered baseline positions in half-point units without changing stored text. Engine range/undo and browser guards cover the authoring path. |
+| Horizontal character scaling | Ours only | `format.character.scale` | none (searched `grep -riE 'textscale\|put_TextPrScale' over web-apps/apps/documenteditor and sdkjs/word — the only textScale keys are DE.Views.FormSettings and the watermark size, and Serialize2.js's rPr property table has no scale entry`) | Font settings Advanced authors horizontal scale from 1 through 600 percent; the existing layout path changes horizontal advances without changing vertical metrics. |
+| Character spacing (expanded / condensed) | Parity | `format.character.spacing` | `DE.Views.ParagraphSettingsAdvanced.textCharacterSpacing` | Font settings Advanced authors expanded or condensed spacing in points, mapped exactly to signed model twips. Mixed and unchanged fields are preserved; selected ranges and armed typing share FormatText history. |
 | Clear formatting | Parity | `format.clear` | `btnClearStyle` | — |
 | Copy | Parity | `edit.copy` | `btnCopy` | — |
 | Cut | Parity | `edit.cut` | `btnCut` | — |
 | Right-to-left text direction | Parity | `format.direction.rtl` | `DE.Views.Toolbar.tipTextDir` | The paragraph panel and command palette author explicit LTR/RTL on selected runs, with mixed-state reflection, undo and DOCX round trip. The control refuses Suggesting because tracked run-direction formatting is not yet supported. |
-| Double strikethrough | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `double_strike` — missing: no command or control applies it — an imported `w:dstrike` run is kept and rendered but cannot be set or cleared | `DE.Views.ParagraphSettingsAdvanced.strDoubleStrike` | Their Paragraph ▸ Advanced ▸ Font tab has the checkbox beside Strikethrough. Ours is a read-only property today. |
+| Double strikethrough | Parity | `format.character.doubleStrike` | `DE.Views.ParagraphSettingsAdvanced.strDoubleStrike` | Double strike is authorable on selected runs and armed typing; its existing two-line renderer remains the painting path. Font dialog and engine guards cover persisted state and undo. |
 | Drop cap | Partial | `insert.dropCap` — missing: mode (none/dropped/in-margin) and a line count only — no drop-cap font, distance from text, frame border, margins or exact height | `btnDropCap` | Their DropcapSettingsAdvanced dialog carries font, height, distance, borders and margins on the frame. |
-| Text effects (outline, shadow, emboss, engrave) | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `pub emboss` — missing: no command applies outline, shadow, emboss or imprint | `ApiTextPr.SetOutLine` | Their engine exposes outline and text fill on a run; their document-editor chrome does not offer them either. Both sides are engine-only. |
+| Text effects (outline, shadow, emboss, engrave) | Parity | `format.character.outline` | `ApiTextPr.SetOutLine` | Font settings and palette author outline, shadow, emboss and engrave. CPU glyph ink and real-text PDF consume the effects; vector PDF relief keeps one extractable text copy. Color glyphs use bounded alpha masks; a visible box exceeding 1,048,576 pixels retains original color artwork instead of allocating an unbounded effect buffer. Native ink and PDF guards plus batches-3.spec.mjs verify the behavior. |
 | Insert emoji | Ours only | `insert.emoji` | none (searched `grep -ril emoji over /Users/sachin/Desktop/melp/reference/web-apps and sdkjs — every hit is in vendored third-party code (monaco, underscore, es6-promise, ace, package locks); nothing in apps/documenteditor or sdkjs/word`) | We ship a nine-group emoji picker beside the symbol picker. Their document editor has no emoji surface at all. |
 | Font colour | Parity | `format.color` | `btnFontColor` | — |
 | Font family | Parity | `format.family` | `cmbFontName` | The applied values are the `format.family.` family, generated from the font inventory. |
@@ -277,9 +276,9 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Highlight colour | Parity | `format.highlight` | `btnHighlightColor` | — |
 | Insert symbol | Parity | `insert.symbol` | `btnInsertSymbol` | — |
 | Italic | Parity | `format.italic` | `btnItalic` | — |
-| Font kerning threshold | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `kerning_half_points` — missing: no command sets `w:kern` | none (searched `grep -riE 'kerning' over web-apps/apps/documenteditor and sdkjs/word — no hits; the surface snapshot has no control, locale key or API method matching /kern/`) | Neither product exposes Word's kerning threshold. We carry the property through the round trip. |
+| Font kerning threshold | Ours only | `format.character.kerning` | none (searched `grep -riE 'kerning' over web-apps/apps/documenteditor and sdkjs/word — no hits; the surface snapshot has no control, locale key or API method matching /kern/`) | Font settings Advanced authors the half-point threshold. OpenType kern is enabled at or above the unscaled font-size threshold and disabled below it; absence preserves font defaults. The native shaping guard compares actual AV advances. |
 | Language of the selected text | Gap | none (`format.language` undeclared) | `btnLanguage` | Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly. |
-| OpenType ligature control | Gap | none (`format.ligatures` undeclared) | `cmbLigatures` | Their Advanced ▸ Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all — shaping decides. |
+| OpenType ligature control | Parity | `format.character.ligatures` | `cmbLigatures` | Font settings Advanced authors standard, contextual, historical and discretional groups and can restore style inheritance. All 16 Word 2010 tokens survive DOCX save/reopen; none and inherited values cascade correctly. Shaping controls liga/clig/hlig/dlig without disabling mandatory script features. |
 | Math AutoCorrect (\alpha to the glyph) | Gap | none (`tools.mathAutoCorrect` undeclared) | `Common.Views.AutoCorrectDialog.textMathCorrect` | Their AutoCorrect dialog has a math tab with an editable recognised-function and symbol table. |
 | Insert a non-breaking or soft hyphen | Partial | `crates/casual-doc-import/src/body.rs` · `NoBreakHyphen` — missing: no command or shortcut inserts one — `w:noBreakHyphen` and `w:softHyphen` are imported, laid out and exported only | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingHyphen` | They bind both the non-breaking hyphen and the soft hyphen. Ours survive a round trip but cannot be typed. |
 | Insert a non-breaking space | Gap | none (`insert.nonBreakingSpace` undeclared) | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingSpace` | They bind it and list it in the symbol dialog's special characters. We have neither the shortcut nor a picker entry, so keeping "10 kg" or "Fig. 3" on one line is not expressible. |
@@ -289,7 +288,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Paste special options after a paste | Partial | `edit.pasteText` — missing: no post-paste options control — the choice between keep-source-formatting and text-only must be made before pasting, and there is no merge-formatting option at all | `btnSpecialPaste` | Theirs is the floating badge that appears at the paste point (DE.Views.DocumentHolder.txtPasteSourceFormat and friends), so the decision can be changed after seeing the result. |
 | Paste without formatting | Parity | `edit.pasteText` | `Common.Controllers.Shortcuts.txtDescriptionPasteTextWithoutFormat` | — |
 | Shrink font | Parity | `format.shrink` | `btnDecFontSize` | — |
-| Small capitals | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `small_caps` — missing: no command or control applies it — `w:smallCaps` is imported, laid out and exported but cannot be turned on | `DE.Views.ParagraphSettingsAdvanced.strSmallCaps` | Small caps is a common heading and legal-document effect, and a round-trip that keeps it while refusing to apply it is the awkward half. |
+| Small capitals | Parity | `format.character.smallCaps` | `DE.Views.ParagraphSettingsAdvanced.strSmallCaps` | Small caps are authorable from Font settings or the palette, including armed typing, mixed selections, undo and tracked formatting. Existing layout transforms lowercase glyphs without rewriting source text. |
 | Smart quotes as you type | Parity | `tools.smartQuotes` | `Common.Views.AutoCorrectDialog.textQuotes` | Ours is a single switch in Review and the command palette; theirs is a checkbox inside the AutoCorrect dialog. |
 | Keyboard shortcuts for em dash, copyright and friends | Partial | `insert.symbol` — missing: no keyboard shortcut inserts a special character — every one of them costs a trip through the picker | `Common.Controllers.Shortcuts.txtDescriptionEmDash` | They bind em dash, en dash, copyright, registered, trade mark, euro and horizontal ellipsis, and list them in the shortcuts sheet. |
 | Special characters (em dash, en dash, ellipsis, copyright, trade mark) | Parity | `webapp/src/glyph_sets.mjs` · `Em dash` | `Common.Views.SymbolTableDialog.textSpecial` | Both offer them; theirs is a named Special-characters tab with shortcut hints, ours is the Punctuation and Fractions groups of the symbol picker. |

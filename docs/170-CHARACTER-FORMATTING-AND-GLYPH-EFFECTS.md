@@ -1,0 +1,76 @@
+# 170 — Character formatting and glyph effects
+
+Implementation design for the owner's requested `docs/168` batch 3 (RM-18).
+Uses the transaction and backend boundaries in docs/43, docs/58 and docs/108.
+
+## Authoring and policy
+
+Extend `FormatText` with an optional boxed character-property delta. Missing
+fields preserve each selected run; explicit null clears direct formatting so
+its named style can apply again. The default delta keeps its existing wire
+shape. Apply a multi-paragraph selection as one undo action, preserving text,
+paragraph structure, field markers, revision wrappers and every unrelated run
+property. Viewing and document protection refuse mutation. Suggesting must
+record the property change through the existing formatting-revision path.
+
+Expose a bounded WASM character-format patch and a uniform/mixed-state query.
+The Font dialog is a separate web module, with Font and Advanced tabs. Caps,
+small caps and double strike also have individual commands. Collapsed-caret
+changes arm the existing pending typing format and apply to the next insertion;
+they do not rewrite letters or format an entire paragraph unexpectedly.
+
+Spacing, position, scale, kerning, borders and emphasis use the existing model
+and validation domains. Invalid values are refused before mutation, rather than
+clamped. Applying unchanged or mixed controls must preserve imported values.
+
+## Glyph ink and shaping
+
+Carry outline, shadow, emboss and imprint through the backend-neutral glyph
+run and the paragraph-cache signature. Effects change ink, not advances or
+stored text. Default runs keep their existing serialization and paint path.
+CPU rendering and PDF consume the same effect geometry; PDF retains real,
+selectable text. Colored/bitmap glyphs must remain visible when effects apply.
+Effect work and temporary buffers are bounded to visible glyph ink, not a full
+page allocation for every run.
+
+Kerning uses the authored half-point threshold against the vertically unscaled
+font size. No threshold preserves existing shaping defaults. Add the Office
+2010 ligature vocabulary from Microsoft's Open XML SDK `LigaturesValues`:
+all sixteen combinations, including the XML spelling `discretional`. Map its
+four groups to OpenType liga/clig/dlig/hlig; mandatory shaping features remain
+untouched. Import/export and the style cascade preserve explicit none, inherited
+settings and combined modes. Unsupported tokens remain reported.
+
+## Evidence and scope
+
+One browser spec covers the four tasks. Engine guards cover selected ranges,
+undo, policies, DOCX round trips, mixed values, actual ink, kerning and ligature
+shaping. Pure web guards cover patch validation and unchanged/mixed controls.
+Drive guards red with targeted mutations. Run the shared gates once at the end
+of the batch, then refresh docs/153 and docs/168 from evidence. A task with an
+unresolved limitation stays open; do not mark the character family fully drawn
+until the named rendering work is verified.
+
+## UI and review status
+
+The owner asked to maintain UX and the project UI guidelines. The Font surface
+uses docs/63's standard modal, shared controls, token colors, Font/Advanced tabs,
+Close/Cancel/Apply, roving tab focus and the shared focus trap. A Home Font-group
+launcher and Format > Font menu entry complement the palette. The body scrolls
+while actions stay reachable; numeric controls remain content-sized. Mixed
+checkboxes and fields show mixed state, and untouched imported border values
+survive unrelated edits. Ligatures can return to style inheritance.
+
+The modal is registered in the shared roster, so desktop clipping, dismissal,
+focus restoration and phone sheet checks run alongside the feature checks.
+Final UX and shared gates will run in GitHub CI: the owner explicitly requested
+CI monitoring instead of further local test execution. Prior to that request,
+the five feature browser tests and the targeted engine checks passed. Mutation
+runs proved range properties, ligature round trips, CPU/PDF ink, color masks,
+OpenType shaping, concurrency and all five browser checks fail when their
+behavior is removed. The subsequent UI refinement still needs CI validation.
+
+Color glyph effects allocate only the visible glyph box, with a one-megapixel
+ceiling and a four-pixel outline-mask radius. Above the allocation ceiling,
+original colored artwork remains visible. Ordinary vector glyph effects do not
+need that buffer and keep their outline path at large sizes.

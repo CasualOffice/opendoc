@@ -1,0 +1,37 @@
+/* RM-18 follows docs/63: standard dialog, shared controls, scrollable body,
+   reachable actions, token colors, and full-label checkbox targets. */
+.font-advanced-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.font-advanced-form .dialog-foot { flex-shrink: 0; }
+.font-advanced-tabs { margin-block: var(--space-4); }
+.font-advanced-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: var(--space-2) var(--space-4);
+}
+.font-advanced-checks .dialog-check {
+  min-height: var(--h-field);
+  align-items: center;
+}
+.font-advanced-borders { margin-block-start: var(--space-4); }
+.font-advanced-group {
+  border: 0;
+  padding: 0;
+  margin: var(--space-5) 0 0;
+}
+.font-advanced-group legend { margin-block-end: var(--space-3); }
+.font-advanced-group > .dialog-button { margin-block-start: var(--space-3); }
+.font-advanced-dialog .dialog-field > input[type='number'] {
+  inline-size: 10ch;
+  max-inline-size: 100%;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.font-advanced-dialog .dialog-field > input[type='color'] {
+  inline-size: 3.5rem;
+  padding: 2px;
+}

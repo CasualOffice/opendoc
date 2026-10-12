@@ -9515,6 +9515,20 @@ fn write_run_property_children(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &RunProperties,
 ) -> Result<(), ExportError> {
+    if let Some(mode) = properties.ligatures {
+        let mut el = start("w14:ligatures");
+        el.push_attribute((
+            "xmlns:w14",
+            "http://schemas.microsoft.com/office/word/2010/wordml",
+        ));
+        el.push_attribute((
+            "xmlns:mc",
+            "http://schemas.openxmlformats.org/markup-compatibility/2006",
+        ));
+        el.push_attribute(("mc:Ignorable", "w14"));
+        el.push_attribute(("w14:val", mode.ooxml_token()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(style_ref) = properties.style_ref {
         let mut el = start("w:rStyle");
         el.push_attribute(("w:val", style_id_token(style_ref).as_str()));

@@ -113,6 +113,15 @@ pub(crate) fn apply_run_property(
                 .as_deref()
                 .and_then(parse_rgb);
         }
+        b"ligatures" => {
+            let Some(mode) = value
+                .as_deref()
+                .and_then(casual_doc_model::v1::Ligatures::from_ooxml_token)
+            else {
+                return false;
+            };
+            properties.ligatures = Some(mode);
+        }
         b"strike" => properties.strike = Some(is_true(value.as_deref())),
         b"sz" => {
             match value

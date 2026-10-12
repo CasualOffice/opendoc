@@ -1812,6 +1812,9 @@ pub struct RunProperties {
     /// Kerning activation threshold in half-points (`w:kern`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kerning_half_points: Option<u32>,
+    /// OpenType ligature groups (`w14:ligatures`), including explicit none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ligatures: Option<Ligatures>,
     /// Baseline offset in half-points (`w:position`), may be negative.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub position_half_points: Option<i32>,
@@ -1878,5 +1881,93 @@ impl Language {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+}
+
+/// Word 2010 ligature combinations. Discretional is the schema token.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Hash)]
+#[serde(rename_all = "camelCase")]
+#[repr(u8)]
+pub enum Ligatures {
+    /// none ligature groups.
+    None = 0,
+    /// standard ligature groups.
+    Standard = 1,
+    /// contextual ligature groups.
+    Contextual = 2,
+    /// standardContextual ligature groups.
+    StandardContextual = 3,
+    /// historical ligature groups.
+    Historical = 4,
+    /// standardHistorical ligature groups.
+    StandardHistorical = 5,
+    /// contextualHistorical ligature groups.
+    ContextualHistorical = 6,
+    /// standardContextualHistorical ligature groups.
+    StandardContextualHistorical = 7,
+    /// discretional ligature groups.
+    Discretional = 8,
+    /// standardDiscretional ligature groups.
+    StandardDiscretional = 9,
+    /// contextualDiscretional ligature groups.
+    ContextualDiscretional = 10,
+    /// standardContextualDiscretional ligature groups.
+    StandardContextualDiscretional = 11,
+    /// historicalDiscretional ligature groups.
+    HistoricalDiscretional = 12,
+    /// standardHistoricalDiscretional ligature groups.
+    StandardHistoricalDiscretional = 13,
+    /// contextualHistoricalDiscretional ligature groups.
+    ContextualHistoricalDiscretional = 14,
+    /// all ligature groups.
+    All = 15,
+}
+impl Ligatures {
+    /// Parse the exact OOXML token; unsupported tokens remain unmapped.
+    pub fn from_ooxml_token(token: &str) -> Option<Self> {
+        match token {
+            "none" => Some(Self::None),
+            "standard" => Some(Self::Standard),
+            "contextual" => Some(Self::Contextual),
+            "standardContextual" => Some(Self::StandardContextual),
+            "historical" => Some(Self::Historical),
+            "standardHistorical" => Some(Self::StandardHistorical),
+            "contextualHistorical" => Some(Self::ContextualHistorical),
+            "standardContextualHistorical" => Some(Self::StandardContextualHistorical),
+            "discretional" => Some(Self::Discretional),
+            "standardDiscretional" => Some(Self::StandardDiscretional),
+            "contextualDiscretional" => Some(Self::ContextualDiscretional),
+            "standardContextualDiscretional" => Some(Self::StandardContextualDiscretional),
+            "historicalDiscretional" => Some(Self::HistoricalDiscretional),
+            "standardHistoricalDiscretional" => Some(Self::StandardHistoricalDiscretional),
+            "contextualHistoricalDiscretional" => Some(Self::ContextualHistoricalDiscretional),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+    /// The canonical OOXML token.
+    pub fn ooxml_token(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Standard => "standard",
+            Self::Contextual => "contextual",
+            Self::StandardContextual => "standardContextual",
+            Self::Historical => "historical",
+            Self::StandardHistorical => "standardHistorical",
+            Self::ContextualHistorical => "contextualHistorical",
+            Self::StandardContextualHistorical => "standardContextualHistorical",
+            Self::Discretional => "discretional",
+            Self::StandardDiscretional => "standardDiscretional",
+            Self::ContextualDiscretional => "contextualDiscretional",
+            Self::StandardContextualDiscretional => "standardContextualDiscretional",
+            Self::HistoricalDiscretional => "historicalDiscretional",
+            Self::StandardHistoricalDiscretional => "standardHistoricalDiscretional",
+            Self::ContextualHistoricalDiscretional => "contextualHistoricalDiscretional",
+            Self::All => "all",
+        }
+    }
+    /// Group mask: standard, contextual, historical, discretional.
+    pub const fn bits(self) -> u8 {
+        self as u8
     }
 }

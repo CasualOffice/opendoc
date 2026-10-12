@@ -6004,21 +6004,13 @@
       "area": "text",
       "title": "All capitals (as a character effect)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "all_caps"
-            }
-          },
-          "missing": "no command applies `w:caps`; `format.case.upper` rewrites the letters instead, which is a different operation"
-        }
+        "command": "format.character.allCaps"
       },
       "theirs": {
         "localeKey": "DE.Views.ParagraphSettingsAdvanced.strAllCaps"
       },
       "rank": 4,
-      "note": "Change case rewrites the text; the caps effect leaves the stored text alone. Only the second survives a style change or a copy into a lowercase context."
+      "note": "The caps effect changes rendering without rewriting stored letters. Font dialog and palette author selected ranges or arm typing; guarded by character_format engine tests and batches-3.spec.mjs."
     },
     {
       "id": "text.autocapitalise",
@@ -6097,18 +6089,13 @@
       "area": "text",
       "title": "Borders around text",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "layout.paragraph"
-          },
-          "missing": "paragraph borders and shading only; no character-level border (`w:bdr`) control"
-        }
+        "command": "format.character.border"
       },
       "theirs": {
         "control": "btnBorders"
       },
       "rank": 3,
-      "note": "Their Borders button is a toolbar split button; ours lives in the paragraph properties panel. Neither sets a run border, which we import but cannot author."
+      "note": "Font settings author run borders and emphasis marks using the existing paint pipeline. Untouched imported borders, theme colors and padding are preserved; borders and emphasis remain undoable character properties."
     },
     {
       "id": "text.change-case",
@@ -6128,36 +6115,20 @@
       "area": "text",
       "title": "Character position (raised / lowered baseline)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "position_half_points"
-            }
-          },
-          "missing": "no command sets `w:position`; only the fixed superscript and subscript toggles exist"
-        }
+        "command": "format.character.position"
       },
       "theirs": {
         "api": "ApiTextPr.SetPosition"
       },
       "rank": 4,
-      "note": "Their chrome exposes it as Position in the Advanced ▸ Font tab and the engine as ApiTextPr.SetPosition."
+      "note": "Font settings Advanced authors raised or lowered baseline positions in half-point units without changing stored text. Engine range/undo and browser guards cover the authoring path."
     },
     {
       "id": "text.character-scaling",
       "area": "text",
       "title": "Horizontal character scaling",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "character_scale_percent"
-            }
-          },
-          "missing": "no command sets `w:w`; the property is imported, laid out and exported only"
-        }
+        "command": "format.character.scale"
       },
       "theirs": {
         "absent": {
@@ -6165,28 +6136,20 @@
         }
       },
       "rank": 5,
-      "note": "Word's Font ▸ Advanced ▸ Scale. Neither product can set it; we at least keep and render an imported value."
+      "note": "Font settings Advanced authors horizontal scale from 1 through 600 percent; the existing layout path changes horizontal advances without changing vertical metrics."
     },
     {
       "id": "text.character-spacing",
       "area": "text",
       "title": "Character spacing (expanded / condensed)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "character_spacing_twips"
-            }
-          },
-          "missing": "no command or dialog field sets it — `w:spacing` on a run is imported, laid out and exported only"
-        }
+        "command": "format.character.spacing"
       },
       "theirs": {
         "localeKey": "DE.Views.ParagraphSettingsAdvanced.textCharacterSpacing"
       },
       "rank": 3,
-      "note": "Their Advanced ▸ Font tab has the spinner. Ours is the same property with no way in."
+      "note": "Font settings Advanced authors expanded or condensed spacing in points, mapped exactly to signed model twips. Mixed and unchanged fields are preserved; selected ranges and armed typing share FormatText history."
     },
     {
       "id": "text.clear-formatting",
@@ -6242,21 +6205,13 @@
       "area": "text",
       "title": "Double strikethrough",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "double_strike"
-            }
-          },
-          "missing": "no command or control applies it — an imported `w:dstrike` run is kept and rendered but cannot be set or cleared"
-        }
+        "command": "format.character.doubleStrike"
       },
       "theirs": {
         "localeKey": "DE.Views.ParagraphSettingsAdvanced.strDoubleStrike"
       },
       "rank": 3,
-      "note": "Their Paragraph ▸ Advanced ▸ Font tab has the checkbox beside Strikethrough. Ours is a read-only property today."
+      "note": "Double strike is authorable on selected runs and armed typing; its existing two-line renderer remains the painting path. Font dialog and engine guards cover persisted state and undo."
     },
     {
       "id": "text.drop-cap",
@@ -6281,21 +6236,13 @@
       "area": "text",
       "title": "Text effects (outline, shadow, emboss, engrave)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "pub emboss"
-            }
-          },
-          "missing": "no command applies outline, shadow, emboss or imprint"
-        }
+        "command": "format.character.outline"
       },
       "theirs": {
         "api": "ApiTextPr.SetOutLine"
       },
       "rank": 5,
-      "note": "Their engine exposes outline and text fill on a run; their document-editor chrome does not offer them either. Both sides are engine-only."
+      "note": "Font settings and palette author outline, shadow, emboss and engrave. CPU glyph ink and real-text PDF consume the effects; vector PDF relief keeps one extractable text copy. Color glyphs use bounded alpha masks; a visible box exceeding 1,048,576 pixels retains original color artwork instead of allocating an unbounded effect buffer. Native ink and PDF guards plus batches-3.spec.mjs verify the behavior."
     },
     {
       "id": "text.emoji",
@@ -6415,15 +6362,7 @@
       "area": "text",
       "title": "Font kerning threshold",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "kerning_half_points"
-            }
-          },
-          "missing": "no command sets `w:kern`"
-        }
+        "command": "format.character.kerning"
       },
       "theirs": {
         "absent": {
@@ -6431,7 +6370,7 @@
         }
       },
       "rank": 5,
-      "note": "Neither product exposes Word's kerning threshold. We carry the property through the round trip."
+      "note": "Font settings Advanced authors the half-point threshold. OpenType kern is enabled at or above the unscaled font-size threshold and disabled below it; absence preserves font defaults. The native shaping guard compares actual AV advances."
     },
     {
       "id": "text.language-of-selection",
@@ -6453,15 +6392,13 @@
       "area": "text",
       "title": "OpenType ligature control",
       "ours": {
-        "absent": [
-          "format.ligatures"
-        ]
+        "command": "format.character.ligatures"
       },
       "theirs": {
         "control": "cmbLigatures"
       },
       "rank": 5,
-      "note": "Their Advanced ▸ Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all — shaping decides."
+      "note": "Font settings Advanced authors standard, contextual, historical and discretional groups and can restore style inheritance. All 16 Word 2010 tokens survive DOCX save/reopen; none and inherited values cascade correctly. Shaping controls liga/clig/hlig/dlig without disabling mandatory script features."
     },
     {
       "id": "text.math-autocorrect",
@@ -6605,21 +6542,13 @@
       "area": "text",
       "title": "Small capitals",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-model/src/v1/properties.rs",
-              "literal": "small_caps"
-            }
-          },
-          "missing": "no command or control applies it — `w:smallCaps` is imported, laid out and exported but cannot be turned on"
-        }
+        "command": "format.character.smallCaps"
       },
       "theirs": {
         "localeKey": "DE.Views.ParagraphSettingsAdvanced.strSmallCaps"
       },
       "rank": 3,
-      "note": "Small caps is a common heading and legal-document effect, and a round-trip that keeps it while refusing to apply it is the awkward half."
+      "note": "Small caps are authorable from Font settings or the palette, including armed typing, mixed selections, undo and tracked formatting. Existing layout transforms lowercase glyphs without rewriting source text."
     },
     {
       "id": "text.smart-quotes",

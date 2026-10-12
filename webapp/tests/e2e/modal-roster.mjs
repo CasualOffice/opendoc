@@ -88,6 +88,16 @@ export const MODALS = [
     },
   },
   {
+    id: "fontAdvancedDialog",
+    name: "Font settings",
+    opener: "#fontAdvancedBtn",
+    focus: "#fontTab",
+    async open(page) {
+      await gotoEditor(page); await clickIntoFirstPage(page);
+      await page.locator('#fontAdvancedBtn').click();
+    },
+  },
+  {
     id: "propertiesPanel",
     name: "Document properties",
     opener: "#propertiesBtn",
