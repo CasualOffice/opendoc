@@ -39,6 +39,14 @@ URLs must be HTTP(S), same-origin and without credentials; HTTPS pages require W
 The host must authorize document reads and room joins separately from possession of
 the link. Links are invitations, not capability grants.
 
+The host command contract declares `collab.share` with the `save` grant because
+it persists document bytes, and `collab.downloadRetained` with the `download`
+grant. `collab.recover`, like reconnecting, needs no new mutation grant: it
+synchronizes authoritative state and previously authorized work, with the engine
+checking protection and capabilities during replay. Both host transports apply
+these same requirements. Unavailable recovery and backup commands explain why
+they cannot run, including a recovery already in progress.
+
 A participant opens the seed automatically. Editing is refused until Welcome. Protocol
 6's Welcome carries `base_revision` and `missed`: the fresh replica applies the room
 history between the seed and the current revision before editing or flushing. A seed

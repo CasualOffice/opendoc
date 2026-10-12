@@ -2183,5 +2183,8 @@
   "collab.downloadRetained": "Download retained local documents",
   "collab.checkpointFailed": "The host could not save the latest collaboration checkpoint.",
   "collab.retainedDocuments": "Retained local documents",
-  "collab.downloadDocument": "Download document {number}"
+  "collab.downloadDocument": "Download document {number}",
+  "collab.recoveryNotNeeded": "Questo documento non ha un recupero condiviso da ritentare.",
+  "collab.recoveryPending": "Il recupero del documento condiviso è già in corso.",
+  "collab.noRetainedDocuments": "Non ci sono documenti locali conservati da scaricare."
 }

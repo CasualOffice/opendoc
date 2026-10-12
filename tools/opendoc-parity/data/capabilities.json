@@ -3004,16 +3004,18 @@
       "area": "review",
       "title": "Sharing and access rights",
       "ours": {
-        "absent": [
-          "file.share",
-          "file.accessRights"
-        ]
+        "partial": {
+          "evidence": {
+            "command": "collab.share"
+          },
+          "missing": "Host-managed Share/join is implemented; invitation access settings backed by a host user directory remain open."
+        }
       },
       "theirs": {
         "control": "btnShare"
       },
       "rank": 3,
-      "note": "Theirs is a callback into the integration (sharingSettingsUrl, canRequestSharingSettings), not a capability of the editor. Ours would belong to the embedding host too, but nothing declares it."
+      "note": "Both editors delegate storage and authorization to the embedding host. Ours declares collab.share with a save grant; collaboration.spec.mjs verifies a real Share link, late join and remote selections against the local host. review.manageAccess handles roles of connected participants, but is not a host invitation/access-settings dialog. See docs/169; production host integration and translation review remain follow-up work."
     },
     {
       "id": "review.accessibility-checker",

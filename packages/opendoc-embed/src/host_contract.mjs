@@ -560,6 +560,12 @@ export const COMMAND_CONTRACT = Object.freeze([
   // and only ever NARROWS what this host already allowed, so reconnecting cannot
   // widen a reader's reach (ADR-063).
   exact("collab.reconnect", null),
+  // Sharing persists document bytes through the host; retained backups are
+  // downloads. Recovery synchronizes already-authorized work and authoritative
+  // arrivals, like reconnecting, rather than granting permission for a new edit.
+  exact("collab.share", "save"),
+  exact("collab.recover", null),
+  exact("collab.downloadRetained", "download"),
   // Folding — the heading at the caret, Collapse/Expand All, and the nine level
   // rungs (ADR-049, `109` FOLD-001). EXACT rows and not a family, by this file's
   // own addressing rule: a family is for a roster generated from the document,

@@ -93,9 +93,11 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
       { id: "collab.share", label: t("collab.share"), group: "File", kw: "share link collaborate join room",
       enabled: share.available(), disabledReason: t("collab.shareHostRequired"), run: shareDocument },
       { id: "collab.recover", label: t("collab.recover"), group: "Review", kw: "recover pending local edits snapshot",
-        enabled: Boolean(getTransport()) && recovery.needed() && !recovery.pending(), run: () => recovery.receive({ kind: "recoveryRequired", revision: Number(JSON.parse(getDocument().collabState).revision) }) },
+        enabled: Boolean(getTransport()) && recovery.needed() && !recovery.pending(),
+        disabledReason: t(recovery.pending() ? "collab.recoveryPending" : "collab.recoveryNotNeeded"),
+        run: () => recovery.receive({ kind: "recoveryRequired", revision: Number(JSON.parse(getDocument().collabState).revision) }) },
       { id: "collab.downloadRetained", label: t("collab.downloadRetained"), group: "Review", kw: "recovery retained local edits backup download",
-        enabled: Boolean(getDocument()?.collabRecoveryCount()), run: downloadRetainedEdits },
+        enabled: Boolean(getDocument()?.collabRecoveryCount()), disabledReason: t("collab.noRetainedDocuments"), run: downloadRetainedEdits },
 
     ];
   }

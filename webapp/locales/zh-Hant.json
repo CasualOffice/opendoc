@@ -2167,5 +2167,8 @@
   "collab.downloadRetained": "Download retained local documents",
   "collab.checkpointFailed": "The host could not save the latest collaboration checkpoint.",
   "collab.retainedDocuments": "Retained local documents",
-  "collab.downloadDocument": "Download document {number}"
+  "collab.downloadDocument": "Download document {number}",
+  "collab.recoveryNotNeeded": "此文件沒有需要重試的共用復原。",
+  "collab.recoveryPending": "共用文件復原已在進行中。",
+  "collab.noRetainedDocuments": "沒有可下載的保留本機文件。"
 }
