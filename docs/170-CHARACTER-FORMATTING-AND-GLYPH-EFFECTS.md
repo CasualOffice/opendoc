@@ -74,3 +74,9 @@ Color glyph effects allocate only the visible glyph box, with a one-megapixel
 ceiling and a four-pixel outline-mask radius. Above the allocation ceiling,
 original colored artwork remains visible. Ordinary vector glyph effects do not
 need that buffer and keep their outline path at large sizes.
+
+CI reporting preserves the workspace command's exit status and now lists failed
+Rust cases as check annotations. This makes failures inspectable through the
+GitHub checks API even when the environment cannot download the separate
+Actions blob-storage logs. The full workspace still runs with all features and
+the frozen lockfile; no guard is disabled.
