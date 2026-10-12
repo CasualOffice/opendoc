@@ -1658,3 +1658,77 @@ fn page_background_and_mirror_writes_converge_without_losing_other_settings() {
         }
     }
 }
+
+#[test]
+fn concurrent_character_properties_preserve_independent_writes_and_later_clears() {
+    use casual_doc_edit::CharacterFormatDelta;
+    let seed = seed();
+    let range = EditRange {
+        start: Pos::new(seed.paragraphs[0], 1),
+        end: Pos::new(seed.paragraphs[0], 4),
+    };
+    let a = Operation::FormatText {
+        range,
+        delta: FormatDelta {
+            character: Some(Box::new(CharacterFormatDelta {
+                all_caps: Some(Some(true)),
+                shadow: Some(Some(true)),
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+    };
+    for character in [
+        CharacterFormatDelta {
+            all_caps: Some(None),
+            ligatures: Some(Some(casual_doc_model::v1::Ligatures::None)),
+            ..Default::default()
+        },
+        CharacterFormatDelta {
+            shadow: Some(Some(false)),
+            character_spacing_twips: Some(Some(30)),
+            ..Default::default()
+        },
+    ] {
+        let b = Operation::FormatText {
+            range,
+            delta: FormatDelta {
+                character: Some(Box::new(character.clone())),
+                ..Default::default()
+            },
+        };
+        let left = diamond_side(&seed.document, &a, &b, Side::Later)
+            .unwrap()
+            .unwrap();
+        let right = diamond_side(&seed.document, &b, &a, Side::Earlier)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            left, right,
+            "advanced properties must converge in both edit orders"
+        );
+        let run = left
+            .paragraph(seed.paragraphs[0])
+            .unwrap()
+            .inlines
+            .iter()
+            .find_map(|inline| match inline {
+                InlineNode::Run(run) if run.text == "bcd" => Some(run),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            run.properties.all_caps,
+            character.all_caps.unwrap_or(Some(true))
+        );
+        assert_eq!(
+            run.properties.shadow,
+            character.shadow.unwrap_or(Some(true))
+        );
+        assert_eq!(run.properties.ligatures, character.ligatures.flatten());
+        assert_eq!(
+            run.properties.character_spacing_twips,
+            character.character_spacing_twips.flatten()
+        );
+    }
+}

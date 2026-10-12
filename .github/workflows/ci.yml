@@ -87,7 +87,16 @@ jobs:
       - name: Oracle geometry gate (docs/94 H2, FID-P-01)
         run: cargo test -p casual-doc-render --test oracle_geometry --all-features --locked
       - name: Run workspace tests
-        run: cargo test --workspace --all-features --locked
+        shell: bash
+        run: |
+          test_status=0
+          cargo test --workspace --all-features --locked --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/opendoc-rust-tests.log" || test_status=$?
+          if [ "$test_status" -ne 0 ]; then
+            # Keep failed case names visible through the checks API when the
+            # separate Actions log-storage download is unavailable.
+            awk '/^test .* \.\.\. FAILED$/ { print "::error title=Rust test failed::" $0 }' "$RUNNER_TEMP/opendoc-rust-tests.log"
+          fi
+          exit "$test_status"
       - name: Run documentation tests
         run: cargo test --doc --workspace --all-features --locked
 
@@ -247,7 +256,15 @@ jobs:
       # shard and takes the same time, so running it four times buys nothing.
       - name: Run webapp unit tests
         if: matrix.shard == 1
-        run: npm run --prefix webapp test:unit
+        shell: bash
+        run: |
+          unit_status=0
+          npm run --prefix webapp test:unit 2>&1 | tee "$RUNNER_TEMP/opendoc-web-tests.log" || unit_status=$?
+          if [ "$unit_status" -ne 0 ]; then
+            awk '/^not ok / { print "::error title=Webapp unit test failed::" $0 }' "$RUNNER_TEMP/opendoc-web-tests.log"
+            awk '/engine module is [0-9,]+ B|code section is [0-9,]+ B/ { print "::notice title=WASM size measurement::" $0 }' "$RUNNER_TEMP/opendoc-web-tests.log"
+          fi
+          exit "$unit_status"
       - name: Build optional Share host relay
         run: cargo build -p opendoc-relay --locked
       - name: Run browser smoke suite

@@ -74,11 +74,18 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // 25,711,106 B total / 11,820,216 B code. Snapshot resources account for only
 // 6,454 B / 5,865 B versus the same collaboration build without the package.
 // Retain bounded headroom; optimization settings and the non-stub floor stay armed.
-const MAX_TOTAL_BYTES = 25_850_000;
+// RM-18 / PR #835, measured in CI on 42a70e6b (Binaryen 117, existing -Oz
+// and release z): 25,869,487 B total / 11,960,785 B code. Against the merged
+// collaboration baseline this adds 158,381 B / 140,569 B for character patches,
+// ligature parsing/shaping and CPU/PDF ink effects. This is 0.62% download growth,
+// with all optimization settings retained. Keep about 130 KiB of headroom rather
+// than making CI byte-exact; the code ceiling remains below even the smaller
+// #805 opt-level-3 measurement (12,376,042 B). The non-stub floor is unchanged.
+const MAX_TOTAL_BYTES = 26_000_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19. opt-level 3 measured 12,376,042 B on the smaller #805 engine, so
  *  a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 11_950_000;
+const MAX_CODE_BYTES = 12_100_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

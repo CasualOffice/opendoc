@@ -719,6 +719,24 @@ fn render_glyph_run(
     let mut builder = PathBuilder::new();
     let mut wrote_any = false;
     for glyph in &run.glyphs {
+        if !run.decoration.effects.is_empty()
+            && render_color_effect_glyph(
+                &font,
+                glyph.id,
+                pen_x,
+                baseline_y,
+                size_px,
+                scale_x,
+                run.color,
+                run.decoration.effects,
+                surface,
+                clip,
+            )
+        {
+            wrote_any = true;
+            pen_x += glyph.advance.to_device_px(dpi);
+            continue;
+        }
         if render_bitmap_glyph(
             &font, glyph.id, pen_x, baseline_y, size_px, scale_x, surface, clip,
         ) {
@@ -753,13 +771,56 @@ fn render_glyph_run(
         let mut paint = Paint::default();
         paint.set_color_rgba8(run.color[0], run.color[1], run.color[2], run.color[3]);
         paint.anti_alias = true;
-        surface.pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            clip,
-        );
+        let effects = run.decoration.effects;
+        let offset = (size_px / 24.0).max(0.5);
+        if effects.shadow {
+            let mut shadow = paint.clone();
+            shadow.set_color_rgba8(0, 0, 0, run.color[3] / 2);
+            surface.pixmap.fill_path(
+                &path,
+                &shadow,
+                FillRule::Winding,
+                Transform::from_translate(offset, offset),
+                clip,
+            );
+        }
+        if effects.emboss || effects.imprint {
+            let direction = if effects.imprint { -1.0 } else { 1.0 };
+            let mut relief = paint.clone();
+            relief.set_color_rgba8(255, 255, 255, run.color[3]);
+            surface.pixmap.fill_path(
+                &path,
+                &relief,
+                FillRule::Winding,
+                Transform::from_translate(-offset * direction, -offset * direction),
+                clip,
+            );
+            relief.set_color_rgba8(0, 0, 0, run.color[3] / 2);
+            surface.pixmap.fill_path(
+                &path,
+                &relief,
+                FillRule::Winding,
+                Transform::from_translate(offset * direction, offset * direction),
+                clip,
+            );
+        }
+        if effects.outline {
+            let stroke = tiny_skia::Stroke {
+                width: (size_px / 32.0).max(0.5),
+                ..Default::default()
+            };
+            surface
+                .pixmap
+                .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+        } else {
+            surface.pixmap.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                clip,
+            );
+        }
     }
 
     // Underline / strikethrough (`w:u`/`w:strike`): drawn as thin filled rects in
@@ -819,6 +880,161 @@ fn render_glyph_run(
                 }
             }
         }
+    }
+}
+
+// Color glyph ink is rasterized into its visible glyph box, never a page-sized
+// buffer per text run. The direct vector path above stays unchanged for normal text.
+#[allow(clippy::too_many_arguments)]
+fn render_color_effect_glyph(
+    font: &FontRef<'_>,
+    id: u32,
+    pen_x: f32,
+    baseline: f32,
+    size: f32,
+    scale: f32,
+    color: [u8; 4],
+    effects: casual_doc_layout::text::GlyphEffects,
+    surface: &mut Surface,
+    clip: Option<&Mask>,
+) -> bool {
+    if font.color_glyphs().get(GlyphId::new(id)).is_none()
+        && font
+            .bitmap_strikes()
+            .glyph_for_size(Size::new(size), GlyphId::new(id))
+            .is_none()
+    {
+        return false;
+    }
+    let metrics = Metrics::new(font, Size::new(size), LocationRef::default());
+    let (xmin, ymin, xmax, ymax) = metrics
+        .bounds
+        .map(|b| (b.x_min, b.y_min, b.x_max, b.y_max))
+        .unwrap_or((-size, -size, size * 2.0, size * 2.0));
+    let pad = (size / 12.0).max(3.0);
+    let left = (pen_x + xmin * scale - pad).floor().max(0.0);
+    let top = (baseline - ymax - pad).floor().max(0.0);
+    let right = (pen_x + xmax * scale + pad)
+        .ceil()
+        .min(surface.pixmap.width() as f32);
+    let bottom = (baseline - ymin + pad)
+        .ceil()
+        .min(surface.pixmap.height() as f32);
+    if right <= left || bottom <= top {
+        return false;
+    }
+    let (w, h) = ((right - left) as u32, (bottom - top) as u32);
+    // A malformed face cannot demand an unbounded effect buffer. Keep its
+    // original artwork via the existing color fallback when this limit is hit.
+    if u64::from(w) * u64::from(h) > 1_048_576 {
+        return false;
+    }
+    let Some(pixmap) = Pixmap::new(w, h) else {
+        return false;
+    };
+    let mut ink = Surface { pixmap };
+    if !render_bitmap_glyph(
+        font,
+        id,
+        pen_x - left,
+        baseline - top,
+        size,
+        scale,
+        &mut ink,
+        None,
+    ) && !render_colr_glyph(
+        font,
+        id,
+        pen_x - left,
+        baseline - top,
+        size,
+        scale,
+        &mut ink,
+        None,
+    ) {
+        return false;
+    }
+    paint_color_effects(&ink.pixmap, left, top, size, color, effects, surface, clip);
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_color_effects(
+    ink: &Pixmap,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: [u8; 4],
+    effects: casual_doc_layout::text::GlyphEffects,
+    surface: &mut Surface,
+    clip: Option<&Mask>,
+) {
+    let mut mask = ink.clone();
+    let tint = |mask: &mut Pixmap, rgba: [u8; 4]| {
+        for (source, dest) in ink
+            .data()
+            .chunks_exact(4)
+            .zip(mask.data_mut().chunks_exact_mut(4))
+        {
+            let alpha = (u16::from(source[3]) * u16::from(rgba[3]) / 255) as u8;
+            for channel in 0..3 {
+                dest[channel] = (u16::from(rgba[channel]) * u16::from(alpha) / 255) as u8;
+            }
+            dest[3] = alpha;
+        }
+    };
+    let draw = |surface: &mut Surface, mask: &Pixmap, dx: f32, dy: f32| {
+        surface.pixmap.draw_pixmap(
+            0,
+            0,
+            mask.as_ref(),
+            &PixmapPaint::default(),
+            Transform::from_translate(x + dx, y + dy),
+            clip,
+        );
+    };
+    let offset = (size / 24.0).max(0.5);
+    if effects.shadow {
+        tint(&mut mask, [0, 0, 0, color[3] / 2]);
+        draw(surface, &mask, offset, offset);
+    }
+    if effects.emboss || effects.imprint {
+        let sign = if effects.imprint { -1.0 } else { 1.0 };
+        tint(&mut mask, [255, 255, 255, color[3]]);
+        draw(surface, &mask, -offset * sign, -offset * sign);
+        tint(&mut mask, [0, 0, 0, color[3] / 2]);
+        draw(surface, &mask, offset * sign, offset * sign);
+    }
+    if effects.outline {
+        let radius = (size / 64.0).ceil().clamp(1.0, 4.0) as i32;
+        let width = ink.width() as i32;
+        let height = ink.height() as i32;
+        for py in 0..height {
+            for px in 0..width {
+                let (mut low, mut high) = (255u8, 0u8);
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        let (sx, sy) = (px + dx, py + dy);
+                        let alpha = if sx >= 0 && sy >= 0 && sx < width && sy < height {
+                            ink.data()[((sy * width + sx) * 4 + 3) as usize]
+                        } else {
+                            0
+                        };
+                        low = low.min(alpha);
+                        high = high.max(alpha);
+                    }
+                }
+                let alpha = (u16::from(high - low) * u16::from(color[3]) / 255) as u8;
+                let pixel = &mut mask.data_mut()[((py * width + px) * 4) as usize..][..4];
+                for channel in 0..3 {
+                    pixel[channel] = (u16::from(color[channel]) * u16::from(alpha) / 255) as u8;
+                }
+                pixel[3] = alpha;
+            }
+        }
+        draw(surface, &mask, 0.0, 0.0);
+    } else {
+        draw(surface, ink, 0.0, 0.0);
     }
 }
 
@@ -2460,6 +2676,129 @@ mod tests {
     /// Surface dimensions used by the decoration tests.
     const DECO_W: u32 = 300;
     const DECO_H: u32 = 140;
+
+    #[test]
+    fn character_color_effects_preserve_intrinsic_fill_and_outline_the_alpha_boundary() {
+        use casual_doc_layout::text::GlyphEffects;
+        let mut ink = Pixmap::new(16, 16).unwrap();
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(240, 30, 20, 255);
+        ink.fill_rect(
+            tiny_skia::Rect::from_xywh(4.0, 4.0, 8.0, 8.0).unwrap(),
+            &paint,
+            Transform::identity(),
+            None,
+        );
+        let mut shadow = Surface::new(40, 40).unwrap();
+        paint_color_effects(
+            &ink,
+            8.0,
+            8.0,
+            24.0,
+            [0, 0, 0, 255],
+            GlyphEffects {
+                shadow: true,
+                ..Default::default()
+            },
+            &mut shadow,
+            None,
+        );
+        assert_eq!(
+            pixel_at(&shadow, 40, 16, 16),
+            [240, 30, 20, 255],
+            "intrinsic color must survive effects"
+        );
+        assert!(
+            pixel_at(&shadow, 40, 20, 20)[0] < 255,
+            "shadow extends past original ink"
+        );
+        let mut outline = Surface::new(40, 40).unwrap();
+        paint_color_effects(
+            &ink,
+            8.0,
+            8.0,
+            24.0,
+            [0, 0, 0, 255],
+            GlyphEffects {
+                outline: true,
+                ..Default::default()
+            },
+            &mut outline,
+            None,
+        );
+        assert_eq!(
+            pixel_at(&outline, 40, 16, 16),
+            [255, 255, 255, 255],
+            "color glyph outline must have a hollow interior"
+        );
+        assert!(
+            pixel_at(&outline, 40, 12, 12)[0] < 80,
+            "alpha boundary must remain visible"
+        );
+    }
+
+    #[test]
+    fn character_effects_change_ink_and_outline_keeps_a_hollow_interior() {
+        use casual_doc_layout::text::GlyphEffects;
+        let (plain, _) = render_decorated(Decoration::default());
+        let (outline, _) = render_decorated(Decoration {
+            effects: GlyphEffects {
+                outline: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let opaque = |surface: &Surface| {
+            surface
+                .data()
+                .chunks_exact(4)
+                .filter(|p| p[0] < 80 && p[3] > 200)
+                .count()
+        };
+        assert!(
+            plain
+                .data()
+                .chunks_exact(4)
+                .zip(outline.data().chunks_exact(4))
+                .any(|(a, b)| a[0] < 80 && a[3] > 200 && (b[3] < 80 || b[0] > 200)),
+            "outline must remove filled interior pixels (plain {}, outline {})",
+            opaque(&plain),
+            opaque(&outline)
+        );
+        let (shadow, _) = render_decorated(Decoration {
+            effects: GlyphEffects {
+                shadow: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let (emboss, _) = render_decorated(Decoration {
+            effects: GlyphEffects {
+                emboss: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let (imprint, _) = render_decorated(Decoration {
+            effects: GlyphEffects {
+                imprint: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        for surface in [&outline, &shadow, &emboss, &imprint] {
+            assert_ne!(
+                surface.data(),
+                plain.data(),
+                "the effect must reach actual glyph ink"
+            );
+        }
+        assert_ne!(
+            emboss.data(),
+            imprint.data(),
+            "raised and inset relief have opposite lighting"
+        );
+    }
 
     /// Renders "Hello" (no descenders below the baseline) with the given
     /// decoration and returns the surface together with the glyph baseline row (in

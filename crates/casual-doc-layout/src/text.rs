@@ -50,6 +50,15 @@ pub struct Glyph {
 /// Text decoration flags applied to a glyph run.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Decoration {
+    /// Backend-neutral glyph ink effects; empty keeps the historic display list.
+    #[serde(default, skip_serializing_if = "GlyphEffects::is_empty")]
+    pub effects: GlyphEffects,
+    /// Explicit kerning threshold in half-points; absent keeps font defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kerning_half_points: Option<u32>,
+    /// Explicit ligature groups; absent keeps font defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ligatures: Option<casual_doc_model::v1::Ligatures>,
     /// Underline.
     pub underline: bool,
     /// The underline line style (`w:u@val`), drawn only when `underline` is on.
@@ -1149,5 +1158,24 @@ mod tests {
         let json = serde_json::to_string(&run).unwrap();
         let back: GlyphRun = serde_json::from_str(&json).unwrap();
         assert_eq!(back.glyphs.len(), 1);
+    }
+}
+
+/// Glyph effects shared by CPU and PDF renderers. Effects do not change advances.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct GlyphEffects {
+    /// Hollow glyph outline.
+    pub outline: bool,
+    /// Offset shadow behind the glyph ink.
+    pub shadow: bool,
+    /// Raised relief.
+    pub emboss: bool,
+    /// Inset relief (`w:imprint`).
+    pub imprint: bool,
+}
+impl GlyphEffects {
+    /// Whether no extra ink pass is needed.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
     }
 }

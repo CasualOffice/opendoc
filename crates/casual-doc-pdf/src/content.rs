@@ -42,10 +42,12 @@ use casual_doc_model::v1::LineEndSize;
 use casual_doc_model::v1::OPACITY_FULL;
 use casual_doc_model::v1::UnderlineStyle;
 use skrifa::FontRef;
+use skrifa::GlyphId;
 use skrifa::MetadataProvider;
 use skrifa::instance::LocationRef;
 use skrifa::instance::Size as FontSize;
 use skrifa::metrics::Metrics;
+use skrifa::outline::{DrawSettings, OutlinePen};
 
 use crate::font::FontError;
 use crate::font::FontTable;
@@ -368,26 +370,6 @@ impl<'a> Transcriber<'a> {
             .ok_or(FontError::Unavailable(run.font.0))?;
         let face = FontRef::from_index(bytes, self.font_source.face_index(run.font)).ok();
 
-        self.alpha(out, run.color[3]);
-        out.bytes.extend_from_slice(
-            format!("BT\n{} {} Tf\n", pdf_name(&resource), num(size)).as_bytes(),
-        );
-        if (scale - 1.0).abs() > f32::EPSILON {
-            out.bytes
-                .extend_from_slice(format!("{} Tz\n", num(scale * 100.0)).as_bytes());
-        }
-        out.bytes.extend_from_slice(
-            format!(
-                "{} {} {} rg\n1 0 0 1 {} {} Tm\n",
-                channel(run.color[0]),
-                channel(run.color[1]),
-                channel(run.color[2]),
-                num(pt(run.origin.x)),
-                num(out.height - pt(run.origin.y)),
-            )
-            .as_bytes(),
-        );
-
         // One `TJ` array: consecutive glyphs whose PDF advance already equals
         // the shaper's advance share a hex string, and any difference becomes
         // an explicit adjustment. The glyphs therefore land exactly where the
@@ -428,8 +410,97 @@ impl<'a> Transcriber<'a> {
             array.push('>');
         }
         array.push_str("] TJ\nET\n");
+        let effects = run.decoration.effects;
+        let offset = (size / 24.0).max(0.375);
+        let mut passes = Vec::new();
+        if effects.shadow {
+            passes.push((offset, -offset, [0, 0, 0, run.color[3] / 2]));
+        }
+        if effects.emboss || effects.imprint {
+            let direction = if effects.imprint { -1.0 } else { 1.0 };
+            passes.push((
+                -offset * direction,
+                offset * direction,
+                [255, 255, 255, run.color[3]],
+            ));
+            passes.push((
+                offset * direction,
+                -offset * direction,
+                [0, 0, 0, run.color[3] / 2],
+            ));
+        }
+        if !passes.is_empty()
+            && let Some(face) = &face
+        {
+            let mut path = PdfGlyphPen::default();
+            let outlines = face.outline_glyphs();
+            let mut x = pt(run.origin.x);
+            for glyph in &run.glyphs {
+                path.origin = (x, out.height - pt(run.origin.y));
+                path.scale = scale;
+                if let Some(outline) = outlines.get(GlyphId::new(glyph.id)) {
+                    let _ = outline.draw(
+                        DrawSettings::unhinted(FontSize::new(size), LocationRef::default()),
+                        &mut path,
+                    );
+                }
+                x += pt(glyph.advance);
+            }
+            for (dx, dy, color) in passes {
+                out.bytes.extend_from_slice(b"q\n");
+                self.alpha(out, color[3]);
+                out.bytes.extend_from_slice(
+                    format!(
+                        "1 0 0 1 {} {} cm\n{} {} {} rg\n",
+                        num(dx),
+                        num(dy),
+                        channel(color[0]),
+                        channel(color[1]),
+                        channel(color[2])
+                    )
+                    .as_bytes(),
+                );
+                out.bytes.extend_from_slice(path.commands.as_bytes());
+                out.bytes.extend_from_slice(b"f\nQ\n");
+            }
+        }
+        self.alpha(out, run.color[3]);
+        out.bytes.extend_from_slice(
+            format!("BT\n{} {} Tf\n", pdf_name(&resource), num(size)).as_bytes(),
+        );
+        if (scale - 1.0).abs() > f32::EPSILON {
+            out.bytes
+                .extend_from_slice(format!("{} Tz\n", num(scale * 100.0)).as_bytes());
+        }
+        out.bytes.extend_from_slice(
+            format!(
+                "{} {} {} rg\n1 0 0 1 {} {} Tm\n",
+                channel(run.color[0]),
+                channel(run.color[1]),
+                channel(run.color[2]),
+                num(pt(run.origin.x)),
+                num(out.height - pt(run.origin.y)),
+            )
+            .as_bytes(),
+        );
+
+        if effects.outline {
+            out.bytes.extend_from_slice(
+                format!(
+                    "1 Tr\n{} w\n{} {} {} RG\n",
+                    num((size / 32.0).max(0.375)),
+                    channel(run.color[0]),
+                    channel(run.color[1]),
+                    channel(run.color[2])
+                )
+                .as_bytes(),
+            );
+        }
         out.bytes.extend_from_slice(array.as_bytes());
 
+        if effects.outline {
+            out.bytes.extend_from_slice(b"0 Tr\n");
+        }
         self.decorations(out, run, face.as_ref(), size);
         Ok(())
     }
@@ -1523,5 +1594,66 @@ mod path_tests {
         ];
         assert!(stream(&commands, true).contains("h\n"));
         assert!(!stream(&commands, false).contains("h\n"));
+    }
+}
+
+// Extra ink passes are vector paths, so PDF extraction sees each character once.
+#[derive(Default)]
+struct PdfGlyphPen {
+    commands: String,
+    origin: (f32, f32),
+    scale: f32,
+    current: (f32, f32),
+}
+impl PdfGlyphPen {
+    fn point(&self, x: f32, y: f32) -> (f32, f32) {
+        (self.origin.0 + x * self.scale, self.origin.1 + y)
+    }
+}
+impl OutlinePen for PdfGlyphPen {
+    fn move_to(&mut self, x: f32, y: f32) {
+        let (x, y) = self.point(x, y);
+        self.current = (x, y);
+        self.commands
+            .push_str(&format!("{} {} m\n", num(x), num(y)));
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        let (x, y) = self.point(x, y);
+        self.current = (x, y);
+        self.commands
+            .push_str(&format!("{} {} l\n", num(x), num(y)));
+    }
+    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+        let (cx, cy) = self.point(cx, cy);
+        let (x, y) = self.point(x, y);
+        let (px, py) = self.current;
+        self.commands.push_str(&format!(
+            "{} {} {} {} {} {} c\n",
+            num(px + (cx - px) * 2.0 / 3.0),
+            num(py + (cy - py) * 2.0 / 3.0),
+            num(x + (cx - x) * 2.0 / 3.0),
+            num(y + (cy - y) * 2.0 / 3.0),
+            num(x),
+            num(y)
+        ));
+        self.current = (x, y);
+    }
+    fn curve_to(&mut self, cx: f32, cy: f32, dx: f32, dy: f32, x: f32, y: f32) {
+        let (cx, cy) = self.point(cx, cy);
+        let (dx, dy) = self.point(dx, dy);
+        let (x, y) = self.point(x, y);
+        self.commands.push_str(&format!(
+            "{} {} {} {} {} {} c\n",
+            num(cx),
+            num(cy),
+            num(dx),
+            num(dy),
+            num(x),
+            num(y)
+        ));
+        self.current = (x, y);
+    }
+    fn close(&mut self) {
+        self.commands.push_str("h\n");
     }
 }

@@ -280,6 +280,7 @@ test("the running-content variants have an Insert band face that reflects their 
 // `#fontFamily` and every `format.family.*` row becomes a real orphan, which is
 // the behaviour an exemption list has to have to be worth keeping.
 const VALUE_FAMILIES = [
+  ["format.character.", "#fontAdvancedBtn", "Font settings on Home owns effects, borders, emphasis and Advanced fields"],
   ["format.family.", "#fontFamily", "the Font control on the Home band opens this list"],
   ["format.size.", "#fontSize", "the Font size control on the Home band"],
   ["format.underline.", "#underlineMenuBtn", "the underline-style menu on the Home band"],

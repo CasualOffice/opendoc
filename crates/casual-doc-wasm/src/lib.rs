@@ -3726,6 +3726,7 @@ impl WasmDocument {
                 }),
                 font: run.font.clone(),
                 rtl: None,
+                character: None,
             };
             if delta != FormatDelta::default() {
                 ops.push(Operation::FormatText {
@@ -4241,6 +4242,7 @@ impl WasmDocument {
                 }),
                 font: run.font.clone(),
                 rtl: None,
+                character: None,
             };
             let mut props = RunProperties::default();
             delta.apply_to(&mut props);
@@ -11599,6 +11601,41 @@ impl WasmDocument {
         date: Option<String>,
         typing_session: Option<u32>,
     ) -> Result<EditResult, JsValue> {
+        let delta = review_format_delta(
+            bold,
+            italic,
+            underline,
+            strike,
+            size_half_points,
+            color,
+            highlight,
+            vert_align,
+            font,
+        );
+        self.suggest_delta_insert(
+            node,
+            offset,
+            text,
+            delta,
+            author,
+            date,
+            typing_session,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn suggest_delta_insert(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: &str,
+        delta: FormatDelta,
+        author: Option<String>,
+        date: Option<String>,
+        typing_session: Option<u32>,
+        inherit_caret: bool,
+    ) -> Result<EditResult, JsValue> {
         if text.is_empty() {
             return Err(to_js("suggested text must be non-empty".to_string()));
         }
@@ -11627,23 +11664,18 @@ impl WasmDocument {
             .map_err(|_| to_js("id space exhausted".to_string()))?;
         let mut inlines = vec![InlineNode::Run(Run {
             id: run,
-            properties: RunProperties::default().into(),
+            properties: if inherit_caret {
+                let mut props = caret_run_properties(&self.document, node, offset)
+                    .cloned()
+                    .unwrap_or_default();
+                props.prop_change = None;
+                props.into()
+            } else {
+                RunProperties::default().into()
+            },
             text: text.to_owned(),
         })];
-        apply_review_delta(
-            &mut inlines,
-            &review_format_delta(
-                bold,
-                italic,
-                underline,
-                strike,
-                size_half_points,
-                color,
-                highlight,
-                vert_align,
-                font,
-            ),
-        );
+        apply_review_delta(&mut inlines, &delta);
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
         // The note-ordinal index for this one command, built once before the
         // review body is spliced. O(notes); see `NoteAnchorLengths`.
@@ -12699,7 +12731,10 @@ impl WasmDocument {
             group,
         )
         .map_err(to_js)?;
-        let mut body = review_paragraph_body(&self.document, validated.node).map_err(to_js)?;
+        let mut body = Vec::new();
+        for node in &validated.nodes {
+            body.extend(review_paragraph_body(&self.document, *node).map_err(to_js)?);
+        }
         for target in validated.targets {
             let decided = match target {
                 ReviewDecisionTarget::Revision(id) => decide_review_revision(&mut body, id, accept),
@@ -15777,11 +15812,6 @@ impl WasmDocument {
         if text.is_empty() {
             return Err("nothing to type".into());
         }
-        let text_len =
-            u32::try_from(text.len()).map_err(|_| "inserted text is too large".to_owned())?;
-        let end = offset
-            .checked_add(text_len)
-            .ok_or_else(|| "text offset overflow".to_owned())?;
         let underline_style = underline_style
             .as_deref()
             .map(parse_underline_style)
@@ -15812,7 +15842,25 @@ impl WasmDocument {
             }),
             font,
             rtl: None,
+            character: None,
         };
+        self.styled_delta_action(node, offset, text, delta, typing_session)
+    }
+
+    fn styled_delta_action(
+        &mut self,
+        node: NodeId,
+        offset: u32,
+        text: String,
+        delta: FormatDelta,
+        typing_session: Option<u32>,
+    ) -> Result<EditResult, String> {
+        if text.is_empty() {
+            return Err("nothing to type".into());
+        }
+        let end = offset
+            .checked_add(u32::try_from(text.len()).map_err(|_| "inserted text is too large")?)
+            .ok_or("text offset overflow")?;
         let start = Pos::new(node, offset);
         let caret = Pos::new(node, end);
         let one_line = !text.contains('\r') && !text.contains('\n');
@@ -23489,6 +23537,7 @@ enum ReviewDecisionTarget {
 
 #[derive(Clone, Debug)]
 struct ValidatedReviewGroup {
+    nodes: Vec<NodeId>,
     node: NodeId,
     start: u32,
     targets: Vec<ReviewDecisionTarget>,
@@ -23505,9 +23554,13 @@ fn validate_review_group(
         return Err("revision group not found".to_owned());
     }
     let group = members[0].group;
+    let across_paragraphs = group.kind == RevisionGroupKind::Formatting
+        && members
+            .iter()
+            .all(|member| member.kind == ReviewMemberKind::Formatting);
     if members.iter().any(|member| {
         member.group != group
-            || member.node != members[0].node
+            || (!across_paragraphs && member.node != members[0].node)
             || member.top_level_index.is_none()
             || member.end < member.start
             || (member.end == member.start
@@ -23526,10 +23579,13 @@ fn validate_review_group(
     }) {
         return Err("revision group metadata or placement is inconsistent".to_owned());
     }
-    members.sort_by_key(|member| member.top_level_index);
+    if !across_paragraphs {
+        members.sort_by_key(|member| member.top_level_index);
+    }
     if members.windows(2).any(|pair| {
-        pair[1].top_level_index.expect("checked top-level")
-            != pair[0].top_level_index.expect("checked top-level") + 1
+        pair[0].node == pair[1].node
+            && pair[1].top_level_index.expect("checked top-level")
+                != pair[0].top_level_index.expect("checked top-level") + 1
     }) {
         return Err("revision group members are not contiguous".to_owned());
     }
@@ -23573,7 +23629,14 @@ fn validate_review_group(
         _ => return Err("revision group has an invalid member composition".to_owned()),
     }
 
+    let mut nodes = Vec::new();
+    for member in &members {
+        if !nodes.contains(&member.node) {
+            nodes.push(member.node);
+        }
+    }
     Ok(ValidatedReviewGroup {
+        nodes,
         node: members[0].node,
         start: members.iter().map(|member| member.start).min().unwrap_or(0),
         targets: members.into_iter().map(|member| member.target).collect(),
@@ -24634,6 +24697,7 @@ fn formatting_delta_json(current: &RunProperties, prior: &RunProperties) -> serd
         serde_json::to_value(prior.vertical_alignment).unwrap_or(serde_json::Value::Null),
         serde_json::to_value(current.vertical_alignment).unwrap_or(serde_json::Value::Null),
     );
+    character_format::append_review_changes(&mut changes, current, prior);
     serde_json::Value::Array(changes)
 }
 
@@ -28564,6 +28628,7 @@ fn review_format_delta(
         }),
         font,
         rtl: None,
+        character: None,
     }
 }
 
@@ -51300,3 +51365,5 @@ mod batch5_paragraph_tests {
         }
     }
 }
+
+mod character_format;
