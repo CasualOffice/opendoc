@@ -39,3 +39,12 @@ test('Suggesting records character formatting and viewing withholds authoring',a
   await page.locator('#undoBtn').click(); await setReviewMode(page,'viewing'); await page.keyboard.press(`${MOD}+Shift+P`); await page.locator('#cmdInput').fill('font'); const row=page.locator('#cmdList .cmd-item[data-command-id="format.character.dialog"]'); await expect(row).toBeDisabled(); await expect(row).toHaveAttribute('title', /\S/);
   expect(consoleErrors).toEqual([]);
 });
+
+test('a Font field command focuses its actual control and Escape restores the editor',async({page,consoleErrors}) => {
+  await gotoEditor(page); await selectStart(page);
+  await runPaletteCommand(page,'format.character.spacing','font');
+  await expect(page.locator('#font-characterSpacingTwips')).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(page.locator('#fontAdvancedDialog')).toBeHidden();
+  await runPaletteCommand(page,'format.character.border','font'); await expect(page.locator('#font-border')).toBeFocused();
+  await page.keyboard.press('Escape'); expect(consoleErrors).toEqual([]);
+});

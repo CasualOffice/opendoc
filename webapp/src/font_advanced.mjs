@@ -31,8 +31,8 @@ export function createFontAdvanced(io) {
   const el = id => document.getElementById(id), form = el('fontAdvancedForm');
   const inputs = [...form.querySelectorAll('[data-character]')], ligatures = [...form.querySelectorAll('[data-ligature]')];
   const dirty = new Set();
-  let originalBorder = null, inheritLigatures = false;
-  const modal = io.registerModal(el('fontAdvancedDialog'), {initialFocus: () => el('fontAdvancedTab').getAttribute('aria-selected') === 'true' ? el('fontAdvancedTab') : el('fontTab'), fallbackFocus: io.fallbackFocus});
+  let originalBorder = null, inheritLigatures = false, initialControl = null;
+  const modal = io.registerModal(el('fontAdvancedDialog'), {initialFocus: () => initialControl ? el(initialControl) : el('fontAdvancedTab').getAttribute('aria-selected') === 'true' ? el('fontAdvancedTab') : el('fontTab'), fallbackFocus: io.fallbackFocus});
   function tab(advanced) {
     for (const [id,selected] of [['fontTab',!advanced],['fontAdvancedTab',advanced]]) { el(id).setAttribute('aria-selected',String(selected)); el(id).classList.toggle('is-active',selected); el(id).tabIndex = selected ? 0 : -1; }
     el('fontEffectsPanel').hidden = advanced; el('fontMetricsPanel').hidden = !advanced;
@@ -46,9 +46,9 @@ export function createFontAdvanced(io) {
   for (const id of ['font-border','font-borderColor','font-borderWidth']) el(id).addEventListener('change',() => { dirty.add('border'); dirty.add(id); el('font-border').setCustomValidity(''); reflectBorder(); });
   function reflectBorder() { const style = el('font-border').value; for (const id of ['font-borderColor','font-borderWidth']) el(id).disabled = !style || style === 'none' || style === '__mixed'; el('font-borderImportedNote').hidden = style !== 'imported'; }
   el('font-ligature-reset').addEventListener('click',() => { inheritLigatures = true; dirty.add('ligatures'); for (const input of ligatures) { input.checked = false; input.indeterminate = false; } });
-  function open(advanced = false) {
+  function open(advanced = false, control = null) {
     if (!io.getSelection()) return;
-    dirty.clear();
+    dirty.clear(); initialControl = control;
     const state = JSON.parse(io.getDoc().selectionCharacterFormat(...io.getEndpoints()));
     const values = {...state.values, ...getPending()};
     for (const input of inputs) {
@@ -101,7 +101,7 @@ export function createFontAdvanced(io) {
       id:`format.character.${key}`,label:t(key === 'outline' ? 'ui.outline.label':`fontAdvanced.${key}`),group:'Format',kw:`font character ${key}`,enabled:available,disabledReason:t(canEdit() ? 'paragraph.caretRequired':'viewingBanner.viewingDocumentReadOnly'),
       run:() => { const state = JSON.parse(io.getDoc().selectionCharacterFormat(...io.getEndpoints())); return apply({[key]:!(getPending()[key] ?? state.values[key] ?? false)}); },
     }));
-    return [...toggle,...[['dialog','fontAdvanced.command',false],['advanced','fontAdvanced.advanced',true],['border','fontAdvanced.border',false],['emphasis','fontAdvanced.emphasis',false],['spacing','fontAdvanced.spacing',true],['scale','fontAdvanced.scale',true],['position','fontAdvanced.position',true],['kerning','fontAdvanced.kerning',true],['ligatures','fontAdvanced.ligatures',true]].map(([id,key,advanced]) => ({id:`format.character.${id}`,label:t(key),group:'Format',kw:'font character formatting advanced',enabled:available,disabledReason:t(canEdit() ? 'paragraph.caretRequired':'viewingBanner.viewingDocumentReadOnly'),run:() => open(advanced)}))];
+    return [...toggle,...[['dialog','fontAdvanced.command',false],['advanced','fontAdvanced.advanced',true],['border','fontAdvanced.border',false],['emphasis','fontAdvanced.emphasis',false],['spacing','fontAdvanced.spacing',true],['scale','fontAdvanced.scale',true],['position','fontAdvanced.position',true],['kerning','fontAdvanced.kerning',true],['ligatures','fontAdvanced.ligatures',true]].map(([id,key,advanced]) => ({id:`format.character.${id}`,label:t(key),group:'Format',kw:'font character formatting advanced',enabled:available,disabledReason:t(canEdit() ? 'paragraph.caretRequired':'viewingBanner.viewingDocumentReadOnly'),run:() => open(advanced, ({border:'font-border',emphasis:'font-emphasis',spacing:'font-characterSpacingTwips',scale:'font-characterScalePercent',position:'font-positionHalfPoints',kerning:'font-kerningHalfPoints',ligatures:'font-ligature-standard'})[id] ?? null)}))];
   }
   function reflect() {
     const button = el('fontAdvancedBtn');

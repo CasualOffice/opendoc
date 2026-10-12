@@ -114,3 +114,8 @@ the code ceiling remains below even the earlier, smaller engine's measured
 12,376,042-byte optimization regression. This is a recorded growth decision,
 not a disabled check or a change to the main.js ratchet. Rust tests, lint,
 docs, wasm check and benchmarks are green in CI; final browser checks remain.
+
+The single-axis reachability roster records the Font launcher as the owner of
+`format.character.*`, with a real control the guard verifies. Individual field
+commands focus their corresponding input in the correct tab; the generic Font
+and Advanced commands focus their tabs. The batch spec verifies that route.
