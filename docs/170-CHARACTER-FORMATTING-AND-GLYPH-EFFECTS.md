@@ -97,3 +97,20 @@ new controls. Both selects now carry `dialog-select`, and the Font launcher
 names `format.character.dialog` in the shared ribbon roster. The wasm artifact
 crossed its existing size ceilings; CI reports the measured byte counts before
 any budget decision. Optimization flags and the non-stub floor remain unchanged.
+
+## Measured wasm budget decision
+
+CI run 38308321551 on commit 42a70e6b measured 25,869,487 bytes total and
+11,960,785 bytes of code. The merged collaboration baseline measured
+25,711,106 / 11,820,216 bytes: this batch adds 158,381 / 140,569 bytes
+(0.62% of the download). It adds the typed character transaction data, Word
+ligature vocabulary and shaping, and CPU/PDF glyph effects. The release `z`,
+hot-crate `3` overrides, Binaryen 117 and `-Oz` settings remain unchanged.
+
+The existing budget policy allows measured feature growth with bounded
+headroom. Set total/code ceilings to 26,000,000 / 12,100,000 bytes, leaving
+130,513 / 139,215 bytes of headroom. The three-megabyte non-stub floor remains;
+the code ceiling remains below even the earlier, smaller engine's measured
+12,376,042-byte optimization regression. This is a recorded growth decision,
+not a disabled check or a change to the main.js ratchet. Rust tests, lint,
+docs, wasm check and benchmarks are green in CI; final browser checks remain.
