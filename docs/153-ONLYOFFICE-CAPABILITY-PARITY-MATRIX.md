@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 194 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 197 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -142,8 +142,8 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | Parity | 198 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 67 | we ship part of it; the row says what is missing |
-| Gap | 80 | their standalone browser session ships it and we do not |
+| Partial | 68 | we ship part of it; the row says what is missing |
+| Gap | 79 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -189,7 +189,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Remove table of contents | `page.toc.remove` | `DE.Views.Links.textContentsRemove` | The field can be inserted and updated but not deleted as a unit. |
 | 3 | Table of contents settings (page numbers, alignment, links) | `page.toc.settings` | `DE.Views.TableOfContentsSettings.strShowPages` | Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us. |
 | 3 | Table of contents style gallery | `page.toc.styles` | `DE.Views.TableOfContentsSettings.textStyles` | Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape. |
-| 3 | Sharing and access rights | `review.access-rights` | `btnShare` | Theirs is a callback into the integration (sharingSettingsUrl, canRequestSharingSettings), not a capability of the editor. Ours would belong to the embedding host too, but nothing declares it. |
 | 3 | Replace text as you type (AutoCorrect table) | `review.autocorrect-replace-as-you-type` | `Common.Views.AutoCorrectDialog.textReplaceText` | — |
 | 3 | Display mode: simple markup (change bars only) | `review.display-mode-simple-markup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
 | 3 | Manage or clear the personal dictionary | `review.personal-dictionary-manage` | `asc_docs_api.asc_spellCheckClearDictionary` | Words can be added on both sides, but only theirs can be cleared; ours has no list and no removal. |
@@ -572,7 +571,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Accept the change at the caret | Ours, ungated | `review.acceptAtCaret` | `asc_docs_api.asc_AcceptChanges` behind `canReview` | — |
 | Accept and move to the next change | Ours, ungated | `review.acceptNext` | `btnAccept` behind `canReview` | — |
 | Accept or reject every change inside the selection | Theirs, gated | none (`review.acceptSelection`, `review.rejectSelection` undeclared) | `asc_docs_api.asc_AcceptChangesBySelection` behind `canReview` | Our engine exposes decideRevision, decideRevisionGroup and decideAllRevisions but nothing that takes a range, so a reviewer must step change by change. |
-| Sharing and access rights | Gap | none (`file.share`, `file.accessRights` undeclared) | `btnShare` | Theirs is a callback into the integration (sharingSettingsUrl, canRequestSharingSettings), not a capability of the editor. Ours would belong to the embedding host too, but nothing declares it. |
+| Sharing and access rights | Partial | `collab.share` — missing: Host-managed Share/join is implemented; invitation access settings backed by a host user directory remain open. | `btnShare` | Both editors delegate storage and authorization to the embedding host. Ours declares collab.share with a save grant; collaboration.spec.mjs verifies a real Share link, late join and remote selections against the local host. review.manageAccess handles roles of connected participants, but is not a host invitation/access-settings dialog. See docs/169; production host integration and translation review remain follow-up work. |
 | Accessibility checker | Neither | none (`tools.accessibilityCheck` undeclared) | none (searched `case-insensitive grep for accessibilitycheck, checkaccessibility and "accessibility checker" across web-apps and sdkjs returns nothing`) | Neither editor reports missing alt text, poor contrast or unstructured headings. Word and Docs both do. |
 | AutoCorrect options dialog | Partial | `tools.smartQuotes` — missing: every other AutoCorrect rule, and the dialog that holds them | `btnAutoCorrect` | Theirs covers hyperlinks, hyphens-to-dash, double-space-with-period, first letter of sentences, math AutoCorrect, recognised functions and a replace-as-you-type table. |
 | Replace text as you type (AutoCorrect table) | Gap | none (`tools.autoCorrect.replace` undeclared) | `Common.Views.AutoCorrectDialog.textReplaceText` | — |

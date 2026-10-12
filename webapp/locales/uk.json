@@ -2191,5 +2191,8 @@
   "collab.downloadRetained": "Download retained local documents",
   "collab.checkpointFailed": "The host could not save the latest collaboration checkpoint.",
   "collab.retainedDocuments": "Retained local documents",
-  "collab.downloadDocument": "Download document {number}"
+  "collab.downloadDocument": "Download document {number}",
+  "collab.recoveryNotNeeded": "Для цього документа немає спільного відновлення для повторної спроби.",
+  "collab.recoveryPending": "Відновлення спільного документа вже триває.",
+  "collab.noRetainedDocuments": "Немає збережених локальних документів для завантаження."
 }

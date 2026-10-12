@@ -44,6 +44,25 @@ import { createHostSession } from "../src/host_session.mjs";
 const EDITOR_ORIGIN = "https://editor.example";
 const OTHER_ORIGIN = "https://other.example";
 
+test("sharing and retained backups respect host grants while recovery remains reachable", async () => {
+  const ran = [];
+  const session = createHostSession({ capabilities: new Set(), registry: fakeRegistry(ran) });
+  for (const [id, requirement] of [["collab.share", "save"], ["collab.downloadRetained", "download"]]) {
+    const contract = commandContract(id);
+    assert.equal(contract?.requires, requirement);
+    assert.equal(grantsRequirement(contract.requires, new Set()), false);
+    assert.equal(grantsRequirement(contract.requires, new Set([requirement])), true);
+    assert.equal((await session.execute(id)).refusal?.code, "capability-withheld");
+    assert.deepEqual(ran, [], "withheld persistence and downloads never reach dispatch");
+    const allowed = createHostSession({ capabilities: new Set([requirement]), registry: fakeRegistry(ran) });
+    assert.equal((await allowed.execute(id)).ok, true);
+    assert.deepEqual(ran.splice(0), [id]);
+  }
+  assert.equal(commandContract("collab.recover")?.requires, null);
+  assert.equal((await session.execute("collab.recover")).ok, true);
+  assert.deepEqual(ran, ["collab.recover"]);
+});
+
 /** Every contract id, exact rows and one synthetic member per family, so a sweep
  *  covers the family resolution path as well as the literal one. */
 function everyContractId() {
