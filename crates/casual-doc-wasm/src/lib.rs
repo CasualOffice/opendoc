@@ -24697,6 +24697,7 @@ fn formatting_delta_json(current: &RunProperties, prior: &RunProperties) -> serd
         serde_json::to_value(prior.vertical_alignment).unwrap_or(serde_json::Value::Null),
         serde_json::to_value(current.vertical_alignment).unwrap_or(serde_json::Value::Null),
     );
+    character_format::append_review_changes(&mut changes, current, prior);
     serde_json::Value::Array(changes)
 }
 

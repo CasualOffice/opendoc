@@ -80,3 +80,14 @@ Rust cases as check annotations. This makes failures inspectable through the
 GitHub checks API even when the environment cannot download the separate
 Actions blob-storage logs. The full workspace still runs with all features and
 the frozen lockfile; no guard is disabled.
+
+The plan guard correctly rejected re-graded capabilities while RM-18 was still
+pending. Matrix re-grading and the batch's `done` marker will therefore land
+together after feature and UX CI passes. The new editing module is included in
+the exhaustive container audit. Web unit failures, like Rust failures, are now
+reported by case name in GitHub annotations without changing their exit status.
+
+Review cards include named advanced character deltas and show spacing, position,
+scale and kerning in user units. The effective-format query aggregates one
+paragraph at a time and serializes only character fields, so it does not clone
+JSON or nested revision snapshots for every run in a large selection.

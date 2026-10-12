@@ -38,6 +38,31 @@ fn parse_character(json: &str) -> Result<CharacterFormatDelta, String> {
     Ok(delta)
 }
 
+fn character_values(props: &RunProperties) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::json!({
+        "allCaps":props.all_caps,"smallCaps":props.small_caps,"doubleStrike":props.double_strike,
+        "outline":props.outline,"shadow":props.shadow,"emboss":props.emboss,"imprint":props.imprint,
+        "emphasis":props.emphasis,"border":props.border,"characterSpacingTwips":props.character_spacing_twips,
+        "characterScalePercent":props.character_scale_percent,"positionHalfPoints":props.position_half_points,
+        "kerningHalfPoints":props.kerning_half_points,"ligatures":props.ligatures,
+    }).as_object().expect("character projection is an object").clone()
+}
+
+pub(super) fn append_review_changes(
+    changes: &mut Vec<serde_json::Value>,
+    current: &RunProperties,
+    prior: &RunProperties,
+) {
+    let before = character_values(prior);
+    for (property, after) in character_values(current) {
+        if before[&property] != after {
+            changes.push(
+                serde_json::json!({"property":property,"before":before[&property],"after":after}),
+            );
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl WasmDocument {
     /// Apply an advanced character patch across paragraphs as one undo action.
@@ -73,58 +98,38 @@ impl WasmDocument {
         eo: u32,
     ) -> Result<String, JsValue> {
         let (start, end) = self.order_endpoints(sn, so, en, eo).map_err(to_js)?;
-        let mut properties = Vec::new();
+        let mut values: Option<serde_json::Map<String, serde_json::Value>> = None;
+        let mut mixed = std::collections::BTreeSet::new();
+        let mut visit = |props: &RunProperties| {
+            let next = character_values(props);
+            if let Some(first) = &values {
+                for (key, value) in &next {
+                    if first.get(key) != Some(value) {
+                        mixed.insert(key.clone());
+                    }
+                }
+            } else {
+                values = Some(next);
+            }
+        };
         if start == end {
             if let Some(props) =
                 effective_caret_run_properties(&self.document, start.node, start.offset)
             {
-                properties.push(props);
+                visit(&props);
             }
         } else {
             for (node, a, b) in self.selection_subranges(start, end) {
-                properties.extend(effective_run_properties_in_range(
-                    &self.document,
-                    node,
-                    a,
-                    b,
-                ));
+                // Aggregate each paragraph and release its resolved properties;
+                // never serialize revision snapshots or accumulate JSON per run.
+                for props in effective_run_properties_in_range(&self.document, node, a, b) {
+                    visit(&props);
+                }
             }
         }
-        let rows: Vec<serde_json::Value> = properties
-            .iter()
-            .map(|p| serde_json::to_value(p).expect("run properties serialize"))
-            .collect();
-        let mut values = serde_json::Map::new();
-        let mut mixed = Vec::new();
-        for key in [
-            "allCaps",
-            "smallCaps",
-            "doubleStrike",
-            "outline",
-            "shadow",
-            "emboss",
-            "imprint",
-            "emphasis",
-            "border",
-            "characterSpacingTwips",
-            "characterScalePercent",
-            "positionHalfPoints",
-            "kerningHalfPoints",
-            "ligatures",
-        ] {
-            let value = rows
-                .first()
-                .and_then(|r| r.get(key))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            if rows
-                .iter()
-                .all(|r| r.get(key).unwrap_or(&serde_json::Value::Null) == &value)
-            {
-                values.insert(key.into(), value);
-            } else {
-                mixed.push(key);
-            }
+        let mut values = values.unwrap_or_else(|| character_values(&RunProperties::default()));
+        for key in &mixed {
+            values.remove(key);
         }
         Ok(serde_json::json!({ "values": values, "mixed": mixed }).to_string())
     }
@@ -241,6 +246,37 @@ impl WasmDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn advanced_review_changes_name_the_properties_and_preserve_units() {
+        let prior = RunProperties::default();
+        let mut current = prior.clone();
+        parse_character(
+            r#"{"outline":true,"characterSpacingTwips":25,"ligatures":"standardDiscretional"}"#,
+        )
+        .unwrap()
+        .apply_to(&mut current);
+        let delta = formatting_delta_json(&current, &prior);
+        let changes = delta.as_array().unwrap();
+        assert_eq!(changes.len(), 3);
+        for (property, value) in [
+            ("outline", serde_json::json!(true)),
+            ("characterSpacingTwips", serde_json::json!(25)),
+            ("ligatures", serde_json::json!("standardDiscretional")),
+        ] {
+            assert_eq!(
+                changes
+                    .iter()
+                    .find(|change| change["property"] == property)
+                    .unwrap()["after"],
+                value
+            );
+        }
+        assert_eq!(
+            formatting_delta_json(&current, &current),
+            serde_json::json!([])
+        );
+    }
+
     #[test]
     fn bounded_character_parser_refuses_bad_units_tokens_and_fields() {
         for json in [

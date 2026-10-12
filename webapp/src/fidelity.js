@@ -21,8 +21,8 @@ const FIDELITY = [
   },
   {
     family: "Character / run formatting",
-    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript, all caps, small caps, double strike and run shading render and edit. Colored and typed underlines, emphasis marks, run borders, outline, shadow, emboss and engrave paint; the Font dialog authors effects, spacing, position, horizontal scale, kerning thresholds and all sixteen ligature combinations. Selected ranges, armed typing and tracked character changes use the transaction path. CPU color-effect buffers are bounded to visible glyph boxes: over one megapixel, original artwork is retained. PDF effects preserve real selectable text. Guards: native character, ink/shaping/PDF/convergence tests and batches-3.spec.mjs; the dialog shares the modal, laptop-fit and phone-sheet guards.",
-    modeled: "full", rendered: "full", editable: "full", roundtrips: "full",
+    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript, small-caps, and run-level shading (w:shd) render and edit. Colored underlines and typed underline styles (double/thick/dotted/dashed/dot-dash/wavy/words-only) render and can be authored. Rare effects (emphasis marks, outline/shadow/emboss, run border) are preserved for export but not painted.",
+    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {
     family: "Paragraph & named styles",

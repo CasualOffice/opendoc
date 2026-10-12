@@ -22,3 +22,14 @@ test('arming a character field preserves pending basic formatting and viewing re
   applyCharacterPatch(io,{allCaps:true});assert.deepEqual(pending,{bold:true,character:{shadow:true,allCaps:true}});assert.equal(calls,1);
   viewing=true;applyCharacterPatch(io,{outline:true});assert.equal(pending.character.outline,undefined);assert.equal(calls,1);
 });
+
+test('review cards name advanced properties and show model measures in user units', async () => {
+  const {readFileSync}=await import('node:fs');const {setCatalogue}=await import('../src/i18n.mjs');
+  setCatalogue('en',JSON.parse(readFileSync(new URL('../locales/en.json',import.meta.url),'utf8')));
+  const {reviewFormattingDescription,reviewFormattingValue}=await import('../src/review_labels.mjs');
+  assert.equal(reviewFormattingValue('characterSpacingTwips',25),'1.25 pt');
+  assert.equal(reviewFormattingValue('positionHalfPoints',-3),'-1.5 pt');
+  assert.equal(reviewFormattingValue('characterScalePercent',125),'125%');
+  assert.equal(reviewFormattingValue('ligatures','standardDiscretional'),'Standard, Discretionary');
+  assert.match(reviewFormattingDescription([{property:'outline',before:null,after:true}]),/^Outline:/);
+});
