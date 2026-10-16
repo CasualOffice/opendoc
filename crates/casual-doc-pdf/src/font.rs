@@ -16,12 +16,14 @@ use casual_doc_layout::text::FontId;
 use skrifa::FontRef;
 use skrifa::MetadataProvider;
 
+use crate::cff::with_identity_charset;
 // Own line (anti-conflict): the exact-text source the `ToUnicode` map overlays.
 use crate::cluster::ClusterText;
 use crate::subset::Face;
 use crate::subset::SfntError;
 use crate::subset::closure;
 use crate::subset::extract_face;
+use crate::subset::rebuild_face;
 use crate::subset::subset_truetype;
 use crate::writer::Ref;
 use crate::writer::Writer;
@@ -258,8 +260,17 @@ fn write_face(
         .embedding_permissions()
         .is_some_and(|flags| flags & FSTYPE_NO_SUBSETTING != 0);
     let subsettable = !face.is_cff() && !no_subsetting;
+    // A CID-keyed CFF program is addressed by CID through its charset, and the
+    // content stream's codes are glyph ids: make the two the same in the copy
+    // that is embedded (see `crate::cff`).
+    let identity_cff = match face.table(b"CFF ") {
+        Some(cff) => with_identity_charset(cff, face.glyph_count().map_err(fail)?).map_err(fail)?,
+        None => None,
+    };
     let program = if subsettable {
         subset_truetype(face, &kept).map_err(fail)?
+    } else if let Some(cff) = identity_cff {
+        rebuild_face(face, Some((*b"CFF ", cff))).map_err(fail)?
     } else if face.is_collection_member() || no_subsetting {
         extract_face(face).map_err(fail)?
     } else {

@@ -18,13 +18,8 @@ import {
   measurementUnits,
   parseMeasurement,
 } from "../pkg/casual_doc_wasm.js";
-import {
-  NAMED_WEB_FONT_FACES,
-  SCRIPT_FALLBACK_FONTS,
-  fallbackKeysFor,
-  fetchFontBytes,
-  packFontBytes,
-} from "./web_fonts.mjs";
+import { fetchFontBytes } from "./web_fonts.mjs";
+import { createFontProvisioning } from "./font_provisioning.mjs";
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
@@ -3074,8 +3069,13 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     backgroundMeasure?.stop();
     backgroundMeasure = null;
     leaveSharedDocument();
+    fontProvisioning.retire(doc); // before the free: a font still in flight for it must never land in a freed wrapper
     if (doc) doc.free();
     doc = next;
+    // Not ready until THIS engine's own upgrade lands: the flag the last document
+    // earned says nothing about this one. Removed rather than set "false", so the
+    // state is the one a first load starts in. A failed open never reaches here.
+    delete document.body.dataset.fontsReady;
     // A different document, so the remembered object answer belongs to a
     // document that no longer exists.
     objectPresence.forget();
@@ -3214,20 +3214,18 @@ async function openBytes(bytes, name, onOpened, onRendered) {
 
     // Then upgrade in the background: fetch, register, and re-render. Not
     // awaited, so the caller — and the user — are not held behind the network.
-    void provisionFonts(name).then(async (fontWarnings) => {
-      // A newer document may have been opened while these bytes were in flight;
-      // its own provisioning owns the screen, so this one must not repaint it.
-      if (currentName !== name || !doc) return;
+    // A newer document may have been opened while these bytes were in flight;
+    // its own provisioning owns the screen, so this one must not repaint it.
+    // Compared by engine IDENTITY, not by name: reopening the same file is a
+    // new engine under the same name (HF-292).
+    if (doc === next) void fontProvisioning.provisionOnOpen(name).then(async (fontLoss) => {
+      if (doc !== next) return;
       await renderAll();
+      if (doc !== next) return;
       buildOutline();
       buildAccessibilityTree();
       drawSelection();
-      if (fontWarnings.length > 0) {
-        setStatus(
-          `Opened ${name}; unavailable web fonts: ${[...new Set(fontWarnings)].join(", ")}`,
-          "error",
-        );
-      }
+      if (fontLoss) setStatus(fontLoss.text, fontLoss.kind);
       // The signal that the document is now painted with its real faces. Tests
       // wait on this so their geometry assertions are never racing an upgrade
       // repaint; nothing in the product blocks on it.
@@ -3289,91 +3287,27 @@ docTitleEl.addEventListener("blur", commitRename);
 // Provision the host-owned named families in one bounded batch/repagination,
 // then fetch only the script fallbacks this document's uncovered code points
 // require. Network failures do not block opening: the target-bundled
-// metric-compatible faces remain available.
-async function provisionFonts(name) {
-  if (!doc) return [];
-  const warnings = [];
-  statusChannel.progress(`Fetching web fonts for ${name}…`);
-
-  const named = await Promise.allSettled(
-    NAMED_WEB_FONT_FACES.map((face) => fetchFontBytes(face.url, fontCache)),
-  );
-  const namedBytes = named
-    .filter((result) => result.status === "fulfilled")
-    .map((result) => result.value);
-  if (namedBytes.length > 0) {
-    const packed = packFontBytes(namedBytes);
-    doc.registerFonts(packed.bytes, packed.lengths);
-  }
-  // The WASM shaper now holds the authoritative copy of these faces, so release
-  // the JS byte cache (~9 MB) rather than double-holding it for the tab's life.
-  // A subsequent document re-fetches + re-registers from the CDN as usual.
-  for (const face of NAMED_WEB_FONT_FACES) fontCache.delete(face.url);
-  for (const [index, result] of named.entries()) {
-    if (result.status === "rejected") {
-      const face = NAMED_WEB_FONT_FACES[index];
-      console.warn(`font ${face.family} (${face.url}) failed:`, result.reason);
-      warnings.push(face.family);
-    }
-  }
-
-  warnings.push(...(await provisionMissingFallbacks(name)));
-  return warnings;
-}
-
-/** The script fallback buckets already fetched + registered this session, so a
- *  later coverage check never re-fetches a font it already has. */
-const provisionedFallbackKeys = new Set();
-// Buckets whose fetch is in flight. Coverage is now checked after every edit, so
-// several checks can overlap — typing three emoji fires three — and without this
-// each would see an empty `provisionedFallbackKeys` and start its own ~2 MB
-// download of the same face. Membership is cleared on failure so a genuine
-// network error is still retried by the next edit.
-const inFlightFallbackKeys = new Set();
-
-/** Fetches and registers any script fallback fonts the document now needs but
- *  hasn't got yet (`doc.missingCoverage()` → buckets), skipping ones already
- *  provisioned. Used both on open and after an edit that introduces new glyphs
- *  (e.g. a checklist's `☐`/`☒` markers), so newly-added symbols render instead of
- *  tofu. Returns the keys that failed to load. */
-async function provisionMissingFallbacks(label) {
-  const warnings = [];
-  if (!doc) return warnings;
-  const missing = doc.missingCoverage();
-  const keys = fallbackKeysFor(missing).filter(
-    (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
-  );
-  if (keys.length === 0) return warnings;
-  statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
-  for (const key of keys) inFlightFallbackKeys.add(key);
-  for (const key of keys) {
-    const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
-    try {
-      const bytes = await fetchFontBytes(url, fontCache);
-      doc.registerFallbackFont(bytes, scripts); // registers + re-paginates
-      provisionedFallbackKeys.add(key);
-      // WASM holds the authoritative copy now; drop the JS cache entry so the
-      // fallback bytes are not double-held for the session (see registerFonts).
-      fontCache.delete(url);
-    } catch (err) {
-      console.warn(`font ${key} (${url}) failed:`, err);
-      setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
-      warnings.push(key);
-    } finally {
-      inFlightFallbackKeys.delete(key);
-    }
-  }
-  return warnings;
-}
+// metric-compatible faces remain available. What is registered is recorded PER
+// ENGINE, and a replaced engine is `retire`d before it is freed, so a later
+// document is never told it has a face only its predecessor was given (HF-292,
+// `font_provisioning.mjs` §4).
+const fontProvisioning = createFontProvisioning({
+  engine: () => doc,
+  fetchBytes: (url) => fetchFontBytes(url, fontCache),
+  releaseBytes: (url) => fontCache.delete(url),
+  progress: (text) => statusChannel.progress(text),
+  log: (message, cause) => console.warn(message, cause),
+});
 
 /** Ensures any glyphs a just-applied edit introduced (e.g. checklist checkbox
- *  markers) have a covering font, then re-renders if one was fetched. */
+ *  markers) have a covering font, then re-renders if one was fetched — unless
+ *  the document it was fetched for is no longer the one on screen. */
 async function ensureGlyphCoverage(label) {
-  const before = provisionedFallbackKeys.size;
-  await provisionMissingFallbacks(label);
-  if (provisionedFallbackKeys.size !== before) {
-    await renderAll();
-  }
+  const target = doc;
+  const { fetched, report } = await fontProvisioning.provisionForEdit(label);
+  if (!target || doc !== target) return;
+  if (report) setStatus(report.text, report.kind);
+  if (fetched) await renderAll();
 }
 
 // ---- Page virtualization -----------------------------------------------------

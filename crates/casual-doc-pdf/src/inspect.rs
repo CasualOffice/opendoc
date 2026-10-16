@@ -354,6 +354,35 @@ impl Pdf {
         out
     }
 
+    /// Every embedded font program, decoded, as `(BaseFont, bytes)` in
+    /// `/BaseFont` order: what a reader hands its font engine.
+    #[must_use]
+    pub fn embedded_font_programs(&self) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        for object in self.objects.values() {
+            let Some(descriptor) = object.dict() else {
+                continue;
+            };
+            if self.get(descriptor, "Type").and_then(Object::name) != Some("FontDescriptor") {
+                continue;
+            }
+            let name = self
+                .get(descriptor, "FontName")
+                .and_then(Object::name)
+                .unwrap_or_default()
+                .to_owned();
+            let program = self
+                .get(descriptor, "FontFile2")
+                .or_else(|| self.get(descriptor, "FontFile3"))
+                .and_then(|program| self.stream_data(program));
+            if let Some(program) = program {
+                out.push((name, program));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     fn walk_content(
         &self,
         stream: &[u8],

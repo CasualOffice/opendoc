@@ -87,6 +87,7 @@ GitHub
 HLD
 HTML
 HTTP
+Hangul
 HarfBuzz
 HiDPI
 Hocuspocus
@@ -129,6 +130,7 @@ MediaReference
 Merkle
 MiB
 Microsoft
+MuPDF
 Myers
 NUL
 NUMPAGES
@@ -172,6 +174,7 @@ PUA
 PaddleOCR
 Pageless
 Plass
+Poppler
 PowerPoint
 Pre
 Prev

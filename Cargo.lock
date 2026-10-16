@@ -265,6 +265,7 @@ dependencies = [
  "casual-doc-layout",
  "casual-doc-model",
  "casual-doc-ooxml",
+ "casual-doc-pdf",
  "casual-doc-render",
  "casual-doc-selection",
  "casual-doc-transaction",

@@ -65,6 +65,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+mod cff;
 mod cluster;
 mod content;
 mod font;
@@ -258,6 +259,12 @@ impl PdfFontSource for RegistryFontSource {
 /// pass's own registry, so the PDF carries the faces the layout actually
 /// measured with.
 ///
+/// The pass runs on a fresh [`ParleyShaper`], which knows only the bundled
+/// faces (and, natively, the operating system's). A host that registered faces
+/// on a live shaper — a browser that fetched Roboto and Noto CJK at runtime —
+/// must call [`export_document_with_shaper`] instead, or those faces are absent
+/// from the export.
+///
 /// # Errors
 ///
 /// Returns [`PdfError::TooManyPages`] for a document past the page ceiling and
@@ -267,8 +274,35 @@ pub fn export_document(
     media: &dyn PdfMediaSource,
     options: &PdfExportOptions,
 ) -> Result<PdfExport, PdfError> {
-    let shaper = ParleyShaper::new();
-    let laid_out = paginate_document(document, &shaper);
+    export_document_with_shaper(document, &ParleyShaper::new(), media, options)
+}
+
+/// [`export_document`] laid out with the caller's `shaper`, so every face the
+/// host registered on it — named families through `register_font`, coverage
+/// fallbacks through `register_fallback_font`, document-embedded faces — shapes
+/// the export exactly as it shapes the screen, and is embedded from the bytes
+/// the host supplied.
+///
+/// The shaper is only read from, apart from the bookkeeping shaping always
+/// does: a fallback face the pass resolves is interned into its registry and a
+/// code point no face covers is recorded as missing, both of which the live
+/// view's own next pass would do for the same document. Nothing is registered,
+/// so an export cannot change which faces a later layout chooses.
+///
+/// Cost: one pagination of the whole document, O(document), the same as
+/// [`export_document`]; the registry snapshot shares each face's bytes rather
+/// than copying them.
+///
+/// # Errors
+///
+/// As [`export_document`].
+pub fn export_document_with_shaper(
+    document: &Document,
+    shaper: &ParleyShaper,
+    media: &dyn PdfMediaSource,
+    options: &PdfExportOptions,
+) -> Result<PdfExport, PdfError> {
+    let laid_out = paginate_document(document, shaper);
     if laid_out.pages.len() > MAX_EXPORT_PAGES {
         return Err(PdfError::TooManyPages {
             pages: laid_out.pages.len(),
@@ -541,6 +575,9 @@ fn gap_detail(code: &str) -> String {
     match code {
         "pdf.image.unresolved" => {
             "a picture could not be embedded and is absent from the page".to_owned()
+        }
+        content::MISSING_GLYPHS => {
+            "no available face covers these characters, so the PDF draws the missing-glyph box (or nothing) where the document has text; register a face that covers them and export again".to_owned()
         }
         "pdf.shape.gradient" => {
             "a gradient fill had no representable geometry and was not painted".to_owned()

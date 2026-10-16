@@ -57,6 +57,9 @@ use crate::writer::channel;
 use crate::writer::name as pdf_name;
 use crate::writer::num;
 
+/// The finding code for glyphs drawn as `.notdef` because no face covered them.
+pub(crate) const MISSING_GLYPHS: &str = "pdf.font.missing_glyphs";
+
 /// Twips per PDF point.
 /// The `ExtGState` name for the multiply blend. Distinct from the `GS{n}` alpha
 /// names so both can live in one resource dictionary.
@@ -350,6 +353,14 @@ impl<'a> Transcriber<'a> {
     ) -> Result<(), FontError> {
         if run.glyphs.is_empty() {
             return Ok(());
+        }
+        // Glyph 0 is `.notdef`: the layout found no face covering the
+        // character, so the page shows a box (or nothing) where the document
+        // has text. Drawn as the screen draws it, and counted so the report
+        // says so instead of the export looking clean (`109` HF-293).
+        let notdef = run.glyphs.iter().filter(|glyph| glyph.id == 0).count();
+        if notdef > 0 {
+            *self.gaps.entry(MISSING_GLYPHS).or_insert(0) += notdef;
         }
         let resource = self.fonts.use_face(
             writer,

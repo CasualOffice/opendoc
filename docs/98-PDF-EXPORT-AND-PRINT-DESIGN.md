@@ -41,7 +41,8 @@ list can carry is listed here, including the ones that are not covered.
 | Text extraction (select / search / copy) | **Supported** | A `ToUnicode` CMap per face. Its baseline is the inversion of the face's `cmap`; over it, the **real source text** of each glyph is resolved from the display list's cluster offsets against the document (`GlyphRun::node` names the paragraph; `crates/casual-doc-pdf/src/cluster.rs`), so a **ligature** maps to every character it stands for — `<GID> <00660069>` for `fi`, not the presentation form `U+FB01` the `cmap` inversion produced — and a **substituted** glyph the `cmap` cannot reach maps to its characters instead of to nothing. A multi-character cluster always wins over the inversion; a single-character one only fills a gap, because there the inversion is already exact while the model text can legitimately differ from the shaped text (`w:caps`, `w:vanish`). Still on the inversion alone: a run with no source characters (list marker, tab-leader fill, inline math box, recomputed `PAGE` field), a cluster drawn by several glyphs (see below), and any export driven through `write_pdf` without a `PdfTextSource`. **The inversion-only path additionally requires the font source to serve the same face the shaper used**: glyph ids mean nothing except against the face they were shaped with, so a caller that shapes with system fonts and then exports through `BundledFontSource` gets a text layer of unrelated code points, silently and with `unmapped_glyphs` reading 0. The cluster path is immune — it takes its characters from the model, not from the face. This is why `display_lists_without_a_document_still_export_a_text_layer` names a bundled face outright instead of asking for "Calibri" and relying on substitution: on Windows, which HAS Calibri, the shaper used the system face while the export embedded the bundled one, and the test extracted "\u{2d8}\u{2fe}\u{24d}…" for "plain words" — green on macOS and Linux, red only there. Anything neither source names is counted and reported as `pdf.font.unmapped_glyphs`, over the glyphs the document actually **draws**. |
 | A cluster drawn by several glyphs (a decomposed `é`) | **Left to the per-glyph inversion, deliberately** | `ToUnicode` is keyed by glyph id, not by position, so giving the cluster's whole text to its first glyph would emit that text again for every later glyph of the cluster that is itself mapped. Left alone the cluster copies as base-plus-marks, which is canonically equivalent to it. `bfrange` is not used: the crate's own reader supports `bfchar` only, and a range cannot express one glyph standing for several characters. |
 | Font embedding and subsetting (TrueType `glyf`) | **Supported** | The glyph identity space is retained and unused outlines emptied; `cvt `/`fpgm`/`prep` are kept, composites closed transitively, and the PostScript name carries an `ABCDEF+` subset tag. A committed guard holds every embedded face for a one-page fixture under 40 KB. |
-| Font embedding (CFF/OpenType outlines, collection members) | **Partial** | Embedded **whole** as `FontFile3 /OpenType`, not subset, and reported as `pdf.font.not_subsetted`. A CFF charstring subsetter is not written. |
+| Font embedding (CFF/OpenType outlines, collection members) | **Partial** | Embedded **whole** as `FontFile3 /OpenType`, not subset, and reported as `pdf.font.not_subsetted`. A CFF charstring subsetter is not written, so a document using the browser's Noto Sans CJK KR carries the whole 16.4 MB face (13.7 MB after Flate) in every export. A **CID-keyed** program whose charset is not the identity (any `pyftsubset` output of a CJK face) has that charset rewritten to the identity in the embedded copy (`crates/casual-doc-pdf/src/cff.rs`), because a `CIDFontType0` has no `/CIDToGIDMap`: MuPDF resolves the code through the charset and Poppler uses it as a glyph id, and only an identity charset makes both draw the glyph the shaper chose (HF-293). Rewritten in place, in the charset's own format, which never needs more bytes; `CFF2` is not touched. |
+| A glyph no available face covers (`.notdef`) | **Supported, as a report** | Drawn as the screen draws it, and counted as `pdf.font.missing_glyphs` (degraded), so an export with a coverage gap is never reported clean (HF-293). |
 | A face whose licence forbids embedding (`OS/2.fsType`) | **Supported, as a refusal** | The export fails, naming the face. No substitution, no outlines, no rasterized text, no silent drop. A face flagged no-subsetting is embedded whole with a finding. |
 | Page geometry | **Supported** | `/MediaBox` from pagination; twips → points with the y axis flipped. No device scale is applied anywhere: a PDF is resolution-free. |
 | Rules, borders, table furniture, paragraph and run shading (`Rect`) | **Supported** | Vector `re` fills and strokes. |
@@ -109,13 +110,21 @@ OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds
 
 ### Remaining work, in the order to take it
 
-1. **Font parity on the registry path.** `export_document` paginates with a fresh shaper,
-   so a host's *live* font registry (the browser's network-fetched CJK faces) cannot
-   simply be handed over: those ids belong to a different registry and handing them over
-   would embed the wrong face rather than a fallback. Either let a caller seed the
-   export's pagination with an existing `FontRegistry`, or have the browser host drive
-   `write_pdf` with the display lists it already holds. Until then the registry path
-   embeds bundled and system-tier faces only.
+1. **Font parity with a host's live shaper — done (HF-293).** The export used to
+   paginate on a fresh shaper, which knows only the bundled faces (and, natively, the
+   system's), so the browser's runtime-registered Roboto and Noto CJK never reached the
+   file: Hangul was drawn as `.notdef`, Latin was set in Liberation Sans, and the report
+   was empty. `casual_doc_pdf::export_document_with_shaper` and
+   `PdfAdapter::export_with_shaper` take the caller's `ParleyShaper`; `export_document`
+   and the registry's `FormatExporter::export` still use a fresh one, because an
+   `ExportRequest` carries a document, not a font context (adding one would touch every
+   adapter for the sake of the only one that lays out). `casual-doc-wasm`'s `exportAs`
+   dispatches `application.pdf` to the shaper-taking entry with the session's own
+   shaper, so a document's PDF uses exactly the faces registered on that document, and
+   on no other. The export re-paginates the model on that shaper rather than reusing
+   the on-screen layout, as before: the screen's layout may be windowed, folded or in
+   reflow view, none of which a PDF should inherit. The native SDK has neither a font
+   registration seam nor a PDF export, so there is nothing to carry there yet.
 2. **Exact `ToUnicode` — done for model text, open for the rest.** `GlyphRun` carries a
    `node: Option<NodeId>` anchor (a fixed-size anchor, not a `String` per run) and the
    exporter resolves each glyph's cluster against that paragraph's own text, so ligature

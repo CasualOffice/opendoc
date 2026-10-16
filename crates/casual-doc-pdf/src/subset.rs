@@ -439,10 +439,25 @@ pub(crate) fn subset_truetype(face: &Face<'_>, kept: &BTreeSet<u16>) -> Result<V
 /// Rebuilds a face selected out of a collection into a standalone file, copying
 /// every table verbatim. Used for CFF faces, which this module does not subset.
 pub(crate) fn extract_face(face: &Face<'_>) -> Result<Vec<u8>, SfntError> {
+    rebuild_face(face, None)
+}
+
+/// [`extract_face`] with one table's bytes replaced, every checksum
+/// recomputed. The CID-keyed CFF charset rewrite (`crate::cff`) uses it.
+pub(crate) fn rebuild_face(
+    face: &Face<'_>,
+    replace: Option<([u8; 4], Vec<u8>)>,
+) -> Result<Vec<u8>, SfntError> {
+    let mut replace = replace;
     let mut tables: Vec<([u8; 4], Vec<u8>)> = face
         .tables
         .iter()
-        .map(|(tag, offset, length)| (*tag, face.bytes[*offset..*offset + *length].to_vec()))
+        .map(
+            |(tag, offset, length)| match replace.take_if(|(wanted, _)| wanted == tag) {
+                Some((_, bytes)) => (*tag, bytes),
+                None => (*tag, face.bytes[*offset..*offset + *length].to_vec()),
+            },
+        )
         .collect();
     tables.sort_by_key(|(tag, _)| *tag);
     if tables.is_empty() {

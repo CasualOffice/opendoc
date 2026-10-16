@@ -65,5 +65,11 @@ serde_json.workspace = true
 # under `cargo test`.
 wasm-bindgen = "0.2"
 
+[dev-dependencies]
+# The PDF export guards read the file back the way a reader does
+# (`pdf_fonts_tests.rs`, `109` HF-293). Already in the graph through
+# `casual-doc-io`.
+casual-doc-pdf.workspace = true
+
 [lints]
 workspace = true

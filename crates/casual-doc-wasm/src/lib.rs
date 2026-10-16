@@ -51,10 +51,10 @@ use casual_doc_io::PlainTextLimits;
 use casual_doc_io::formats;
 use casual_doc_io::{
     CompatibilityEntry as IoCompatibilityEntry, CompatibilityReport as IoCompatibilityReport,
-    DetectionRequest, DocumentResources, ExportMode, ExportRequest,
-    FeatureLocation as IoFeatureLocation, FormatId, FormatSelection,
-    ModelOutcome as IoModelOutcome, RetentionOutcome as IoRetentionOutcome, SourceEnvelope,
-    builtin_registry_with_limits,
+    DetectionRequest, DocumentResources, ExportArtifact, ExportMode, ExportRequest,
+    FeatureLocation as IoFeatureLocation, FormatId, FormatRegistry, FormatSelection,
+    ModelOutcome as IoModelOutcome, PdfAdapter, RetentionOutcome as IoRetentionOutcome,
+    SourceEnvelope, builtin_registry_with_limits,
 };
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
@@ -176,6 +176,11 @@ mod save_statistics_tests;
 #[cfg(test)]
 #[path = "track_changes_tests.rs"]
 mod track_changes_tests;
+
+// PDF export embeds the faces the host registered on THIS document (`docs/109` HF-293).
+#[cfg(test)]
+#[path = "pdf_fonts_tests.rs"]
+mod pdf_fonts_tests;
 
 // Forms protection per section (`docs/165` M6, `docs/109` FID-AT-06).
 #[cfg(test)]
@@ -1180,22 +1185,15 @@ impl WasmDocument {
             && !matches!(mode, ExportMode::ExactIfUnchanged)
             && self.revision != 0;
         let statistics = refresh.then(|| self.current_statistics());
-        let artifact = self
-            .with_current_statistics(statistics, |document, resources, source| {
-                registry.export(
-                    &format,
-                    ExportRequest {
-                        document,
-                        resources,
-                        source,
-                        source_unchanged: false,
-                        mode,
-                    },
-                )
-            })
-            .unwrap_or_else(|| {
-                registry.export(
-                    &format,
+        // A PDF is laid out, so it must be laid out with THIS session's shaper:
+        // the registry's adapter builds a fresh one that has never seen the faces
+        // the host registered (`registerFonts`, `registerFallbackFont`), and a
+        // browser export then drew every Hangul syllable as `.notdef` and set the
+        // Latin text in Liberation Sans instead of the registered Roboto (`109`
+        // HF-293). Same adapter, same report; only the font context differs.
+        let artifact = if format.as_str() == casual_doc_io::formats::PDF {
+            PdfAdapter::default()
+                .export_with_shaper(
                     ExportRequest {
                         document: &self.document,
                         resources: &self.resources,
@@ -1203,9 +1201,12 @@ impl WasmDocument {
                         source_unchanged: self.revision == 0,
                         mode,
                     },
+                    &self.shaper,
                 )
-            })
-            .map_err(|error| format!("export {format}: {error}"))?;
+                .map_err(|error| format!("export {format}: {error}"))?
+        } else {
+            self.export_through_registry(&registry, &format, mode, statistics)?
+        };
         let report_json = compatibility_report_json(&artifact.report)?;
 
         Ok(WasmExportArtifact {
@@ -1216,6 +1217,42 @@ impl WasmDocument {
             suggested_extension: artifact.suggested_extension,
             report_json,
         })
+    }
+
+    /// The registry dispatch of [`Self::export_as_inner`] for every format that
+    /// is encoded from the model rather than laid out.
+    fn export_through_registry(
+        &mut self,
+        registry: &FormatRegistry,
+        format: &FormatId,
+        mode: ExportMode,
+        statistics: Option<[Option<i64>; 6]>,
+    ) -> Result<ExportArtifact, String> {
+        self.with_current_statistics(statistics, |document, resources, source| {
+            registry.export(
+                format,
+                ExportRequest {
+                    document,
+                    resources,
+                    source,
+                    source_unchanged: false,
+                    mode,
+                },
+            )
+        })
+        .unwrap_or_else(|| {
+            registry.export(
+                format,
+                ExportRequest {
+                    document: &self.document,
+                    resources: &self.resources,
+                    source: self.format_state.source.as_ref(),
+                    source_unchanged: self.revision == 0,
+                    mode,
+                },
+            )
+        })
+        .map_err(|error| format!("export {format}: {error}"))
     }
 
     /// The number of laid-out pages.

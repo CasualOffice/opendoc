@@ -544,14 +544,21 @@ test("how much English the reference pages put on the site, measured and publish
   // restates it, the lock row's new sentence, and the theme part's record in the
   // `preserved` row. Re-measure on the merged tree, not by adding this to another
   // branch's figure.
+  //
+  // 2672 -> 2684 with `109` HF-293 in `98-PDF-EXPORT-AND-PRINT-DESIGN.md`.
+  // MEASURED from the regenerated page, read off this assertion's failure
+  // output: twelve, all in `pdf-export-and-print.html` — the CID-keyed CFF
+  // charset sentence and the new missing-glyph row of the support table, and the
+  // remaining-work item on font parity rewritten from an open plan to what
+  // shipped. Re-measure on the merged tree.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2672,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2672). That ` +
+    2684,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2684). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +
