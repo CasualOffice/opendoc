@@ -74,6 +74,15 @@
 // answer first. So the fetches run together and the registrations stay in the
 // document's own scalar order — the same order on every load of the same
 // document. Same bytes, same chain, one round trip instead of three.
+//
+// ## 4. A registration belongs to ONE engine instance (HF-292)
+//
+// Every open builds a new engine with an empty shaper, so "registered" and "in
+// flight" are recorded per engine, never per session or file name: a session-wide
+// record told a second Korean document it already had Korean, and it painted ▯.
+// Only the download is shared. The host `retire`s an engine before `free()`, and
+// after every await a pass refuses to register into, report on, or paint
+// progress for a retired engine.
 
 import {
   NAMED_WEB_FONT_FACES,
@@ -177,30 +186,61 @@ export function provisioningProgress(label, keys = []) {
  * request against a real engine.
  *
  * @param {object} io
- * @param {() => object|null} io.engine the open document, or null
+ * @param {() => object|null} io.engine the document on screen, or null
  * @param {(url: string) => Promise<Uint8Array>} io.fetchBytes verified font bytes
  * @param {(url: string) => void} io.releaseBytes drop a cached blob once WASM holds it
  * @param {(text: string) => void} io.progress background progress (never the reader's channel)
  * @param {(message: string, cause?: unknown) => void} io.log diagnostics for the console
  */
 export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progress, log }) {
-  /** Buckets fetched and registered this session, so a later coverage check
-   *  never re-fetches a face it already has. */
-  const provisioned = new Set();
-  /** Buckets whose fetch is in flight. Coverage is checked after every edit, so
-   *  several checks overlap — typing three emoji fires three — and without this
-   *  each would see an empty `provisioned` and start its own download of the
-   *  same face. Cleared on failure so a genuine network error is retried. */
-  const inFlight = new Set();
+  /** Per engine (§4): `provisioned` buckets are registered into it; `inFlight`
+   *  buckets are being fetched for it, so overlapping coverage checks (typing
+   *  three emoji fires three) do not each start a download. Cleared on failure
+   *  so a network error is retried. */
+  const states = new WeakMap();
+  /** Engines the host has replaced or is about to free (§4). */
+  const retired = new WeakSet();
+  /** Downloads in flight, by URL, shared by every engine. Removed when settled,
+   *  so a failed download is retried by the next request. */
+  const downloads = new Map();
+
+  function stateOf(doc) {
+    let state = states.get(doc);
+    if (!state) {
+      state = { provisioned: new Set(), inFlight: new Set() };
+      states.set(doc, state);
+    }
+    return state;
+  }
+
+  /** Still safe to call into: not replaced and not freed. */
+  const alive = (doc) => !retired.has(doc);
+  /** Alive AND the document on screen — the only case in which a pass may
+   *  paint progress. A live document behind a version preview is alive but not
+   *  shown. */
+  const showing = (doc) => alive(doc) && engine() === doc;
+  const progressFor = (doc, text) => {
+    if (showing(doc)) progress(text);
+  };
+
+  function download(url) {
+    let pending = downloads.get(url);
+    if (!pending) {
+      // Started synchronously, so a pass's requests are all on the wire before
+      // its first await.
+      pending = Promise.resolve(fetchBytes(url)).finally(() => downloads.delete(url));
+      downloads.set(url, pending);
+    }
+    return pending;
+  }
 
   /** The buckets this document needs. Derived from `missingCoverage()`, which is
    *  CUMULATIVE — `FontRegistry::note_missing` inserts into a set that is never
    *  cleared, and its doc comment says "so far". So it answers "what has ever
-   *  shaped to .notdef in this session", not "what is tofu now", and a registered
+   *  shaped to .notdef in this engine", not "what is tofu now", and a registered
    *  face does not remove its scalars from it. */
-  function neededKeys() {
-    const doc = engine();
-    return doc ? fallbackKeysFor(doc.missingCoverage()) : [];
+  function neededKeys(doc) {
+    return doc && alive(doc) ? fallbackKeysFor(doc.missingCoverage()) : [];
   }
 
   /** The buckets whose scalars will paint as ▯ as things stand: needed, minus
@@ -214,24 +254,28 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
    *  the Arabic, Bengali, Devanagari, Japanese… fonts" in red, having just
    *  registered all of them. In-flight is excluded for the same reason: a face
    *  that is still arriving has not been lost. */
-  function uncoveredKeys() {
-    return neededKeys().filter((key) => !provisioned.has(key) && !inFlight.has(key));
+  function uncoveredKeys(doc) {
+    const { provisioned, inFlight } = stateOf(doc);
+    return neededKeys(doc).filter((key) => !provisioned.has(key) && !inFlight.has(key));
   }
 
-  /** Fetches and registers the fallback buckets this document needs and has not
-   *  got, returning the keys whose fetch failed. Fetches run together;
-   *  registration stays in `keys` order so the fallback chain cannot depend on
-   *  which request answered first. */
-  async function provisionFallbacks(label, prefetched = new Map()) {
-    const doc = engine();
-    if (!doc) return [];
-    const keys = neededKeys().filter(key => prefetched.has(key) || (!provisioned.has(key) && !inFlight.has(key)));
+  /** Fetches and registers the fallback buckets `doc` needs and has not got,
+   *  returning the keys whose fetch failed. Fetches run together; registration
+   *  stays in `keys` order so the fallback chain cannot depend on which request
+   *  answered first. `doc` is passed, not re-read from `engine()` after an
+   *  await (§4). */
+  async function provisionFallbacks(doc, label, prefetched = new Map()) {
+    if (!doc || !alive(doc)) return [];
+    const { provisioned, inFlight } = stateOf(doc);
+    const keys = neededKeys(doc).filter(
+      (key) => prefetched.has(key) || (!provisioned.has(key) && !inFlight.has(key)),
+    );
     if (keys.length === 0) return [];
-    progress(provisioningProgress(label, keys));
+    progressFor(doc, provisioningProgress(label, keys));
     for (const key of keys) inFlight.add(key);
     try {
       const settled = await Promise.allSettled(
-        keys.map((key) => prefetched.get(key) ?? fetchBytes(SCRIPT_FALLBACK_FONTS[key].url)),
+        keys.map((key) => prefetched.get(key) ?? download(SCRIPT_FALLBACK_FONTS[key].url)),
       );
       const failed = [];
       for (const [index, result] of settled.entries()) {
@@ -244,12 +288,14 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
         }
         // Registers + re-paginates. WASM holds the authoritative copy after
         // this, so the JS blob is released rather than double-held for the
-        // tab's life.
-        doc.registerFallbackFont(result.value, scripts);
-        provisioned.add(key);
+        // tab's life. A retired engine gets nothing, but its blob is released.
+        if (alive(doc)) {
+          doc.registerFallbackFont(result.value, scripts);
+          provisioned.add(key);
+        }
         releaseBytes(url);
       }
-      return failed;
+      return alive(doc) ? failed : [];
     } finally {
       for (const key of keys) inFlight.delete(key);
     }
@@ -263,50 +309,64 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
      * Returns the loss report for the reader (or `null`). Every failure is
      * logged whatever the report says, so a face that failed is never invisible
      * to a developer or an embedding host even when it cost the reader nothing.
+     * A pass whose document was retired returns `null`.
      */
     async provisionOnOpen(label) {
       const doc = engine();
-      if (!doc) return null;
-      progress(provisioningProgress(label));
+      if (!doc || !alive(doc)) return null;
+      const { inFlight } = stateOf(doc);
+      progressFor(doc, provisioningProgress(label));
 
       // Start the large script faces with the named faces, rather than after
       // them. Registration still happens below in its original stable order.
       const prefetched = new Map();
-      for (const key of uncoveredKeys()) {
+      for (const key of uncoveredKeys(doc)) {
         inFlight.add(key);
-        const pending = fetchBytes(SCRIPT_FALLBACK_FONTS[key].url);
+        const pending = download(SCRIPT_FALLBACK_FONTS[key].url);
         // A fallback may fail before the named batch finishes; its failure is
         // consumed and reported by provisionFallbacks, never left unhandled.
         void pending.catch(() => {});
         prefetched.set(key, pending);
       }
 
-      const named = await Promise.allSettled(
-        NAMED_WEB_FONT_FACES.map((face) => fetchBytes(face.url)),
-      );
-      const blobs = named.filter((r) => r.status === "fulfilled").map((r) => r.value);
-      if (blobs.length > 0) {
-        const packed = packFontBytes(blobs);
-        doc.registerFonts(packed.bytes, packed.lengths);
-      }
-      // The WASM shaper holds the authoritative copy now, so release the JS
-      // byte cache (~9 MB) rather than double-holding it for the tab's life.
-      for (const face of NAMED_WEB_FONT_FACES) releaseBytes(face.url);
-      const failedNamedFamilies = [];
-      for (const [index, result] of named.entries()) {
-        if (result.status !== "rejected") continue;
-        const face = NAMED_WEB_FONT_FACES[index];
-        log(`font ${face.family} ${face.style} (${face.url}) failed`, result.reason);
-        failedNamedFamilies.push(face.family);
-      }
+      try {
+        const named = await Promise.allSettled(
+          NAMED_WEB_FONT_FACES.map((face) => download(face.url)),
+        );
+        const blobs = named.filter((r) => r.status === "fulfilled").map((r) => r.value);
+        if (blobs.length > 0 && alive(doc)) {
+          const packed = packFontBytes(blobs);
+          doc.registerFonts(packed.bytes, packed.lengths);
+        }
+        // The WASM shaper holds the authoritative copy now, so release the JS
+        // byte cache (~9 MB) rather than double-holding it for the tab's life.
+        for (const face of NAMED_WEB_FONT_FACES) releaseBytes(face.url);
+        const failedNamedFamilies = [];
+        for (const [index, result] of named.entries()) {
+          if (result.status !== "rejected") continue;
+          const face = NAMED_WEB_FONT_FACES[index];
+          log(`font ${face.family} ${face.style} (${face.url}) failed`, result.reason);
+          failedNamedFamilies.push(face.family);
+        }
 
-      const failedFallbackKeys = await provisionFallbacks(label, prefetched);
-      progress("");
-      return fontLossReport({
-        failedNamedFamilies,
-        failedFallbackKeys,
-        uncoveredKeys: uncoveredKeys(),
-      });
+        const failedFallbackKeys = await provisionFallbacks(doc, label, prefetched);
+        if (!alive(doc)) return null;
+        progressFor(doc, "");
+        return fontLossReport({
+          failedNamedFamilies,
+          failedFallbackKeys,
+          uncoveredKeys: uncoveredKeys(doc),
+        });
+      } finally {
+        // A retired pass skips `provisionFallbacks`' cleanup: clear its
+        // prefetches and release their blobs when they land.
+        for (const [key, pending] of prefetched) {
+          inFlight.delete(key);
+          if (!alive(doc)) {
+            pending.then(() => releaseBytes(SCRIPT_FALLBACK_FONTS[key].url), () => {});
+          }
+        }
+      }
     },
 
     /**
@@ -315,20 +375,32 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
      *
      * Returns `{ report, fetched }` — the loss report for the reader, and
      * whether anything new registered, which is what tells the caller to
-     * re-render.
+     * re-render. Both are about the document on screen when the pass started.
      */
     async provisionForEdit(label) {
+      const doc = engine();
+      if (!doc || !alive(doc)) return { fetched: false, report: null };
+      const { provisioned } = stateOf(doc);
       const before = provisioned.size;
-      const failedFallbackKeys = await provisionFallbacks(label);
+      const failedFallbackKeys = await provisionFallbacks(doc, label);
+      if (!alive(doc)) return { fetched: false, report: null };
       const fetched = provisioned.size !== before;
-      if (fetched || failedFallbackKeys.length > 0) progress("");
+      if (fetched || failedFallbackKeys.length > 0) progressFor(doc, "");
       return {
         fetched,
         report:
           failedFallbackKeys.length > 0
-            ? fontLossReport({ failedFallbackKeys, uncoveredKeys: uncoveredKeys() })
+            ? fontLossReport({ failedFallbackKeys, uncoveredKeys: uncoveredKeys(doc) })
             : null,
       };
+    },
+
+    /**
+     * The host is replacing `doc` and will free it. Call BEFORE `free()`; no
+     * pass touches it afterwards. Shared downloads are not cancelled. O(1).
+     */
+    retire(doc) {
+      if (doc) retired.add(doc);
     },
   };
 }

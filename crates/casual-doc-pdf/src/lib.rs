@@ -258,6 +258,9 @@ impl PdfFontSource for RegistryFontSource {
 /// pass's own registry, so the PDF carries the faces the layout actually
 /// measured with.
 ///
+/// The pass runs on a fresh [`ParleyShaper`]; a host that registered faces on
+/// its own shaper calls [`export_document_with_shaper`] instead.
+///
 /// # Errors
 ///
 /// Returns [`PdfError::TooManyPages`] for a document past the page ceiling and
@@ -267,8 +270,23 @@ pub fn export_document(
     media: &dyn PdfMediaSource,
     options: &PdfExportOptions,
 ) -> Result<PdfExport, PdfError> {
-    let shaper = ParleyShaper::new();
-    let laid_out = paginate_document(document, &shaper);
+    export_document_with_shaper(document, &ParleyShaper::new(), media, options)
+}
+
+/// [`export_document`] laid out with the caller's `shaper`, so the faces a
+/// host registered on it shape and embed in the PDF as they do on screen.
+/// Nothing is registered on the shaper. Cost: one pagination, O(document).
+///
+/// # Errors
+///
+/// As [`export_document`].
+pub fn export_document_with_shaper(
+    document: &Document,
+    shaper: &ParleyShaper,
+    media: &dyn PdfMediaSource,
+    options: &PdfExportOptions,
+) -> Result<PdfExport, PdfError> {
+    let laid_out = paginate_document(document, shaper);
     if laid_out.pages.len() > MAX_EXPORT_PAGES {
         return Err(PdfError::TooManyPages {
             pages: laid_out.pages.len(),

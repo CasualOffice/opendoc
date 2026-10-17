@@ -18,22 +18,19 @@
 //! the faces **that pass** resolved, so the file is self-consistent: the glyph
 //! ids in the content stream address the faces the same pass measured with.
 //!
-//! What it cannot yet do is reuse a *host's* live font registry. A browser
-//! viewer that fetched a CJK face at runtime has ids in its own registry, and
-//! those ids mean nothing to a fresh pagination pass, so handing them over
-//! would embed the wrong face rather than a fallback. A host in that position
-//! should drive `casual_doc_pdf::write_pdf` with the display lists and the
-//! font source it already holds. Closing the gap for the registry path needs
-//! the session's registry to seed the export's pagination, which is recorded
-//! as remaining work in `docs/98`.
+//! Through the registry ([`FormatExporter::export`]) that pass runs on a fresh
+//! shaper that knows only the bundled faces. A host that registered faces at
+//! runtime (the browser session) calls [`PdfAdapter::export_with_shaper`] with
+//! its own shaper, or the PDF lays out without them (`docs/109` HF-293).
 
 use std::sync::Arc;
 
+use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_pdf::PdfError;
 use casual_doc_pdf::PdfExportOptions;
 use casual_doc_pdf::PdfMediaSource;
 use casual_doc_pdf::PdfSeverity;
-use casual_doc_pdf::export_document;
+use casual_doc_pdf::export_document_with_shaper;
 
 use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
@@ -95,13 +92,32 @@ impl FormatExporter for PdfAdapter {
     }
 
     fn export(&self, request: ExportRequest<'_>) -> Result<ExportArtifact, AdapterError> {
+        self.export_with_shaper(request, &ParleyShaper::new())
+    }
+}
+
+impl PdfAdapter {
+    /// [`FormatExporter::export`] laid out with the caller's `shaper`, so the
+    /// faces a host registered on it are the faces the PDF measures and embeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`AdapterError`] when the writer refuses the document (past
+    /// the page ceiling, or a face that cannot be embedded).
+    pub fn export_with_shaper(
+        &self,
+        request: ExportRequest<'_>,
+        shaper: &ParleyShaper,
+    ) -> Result<ExportArtifact, AdapterError> {
         // `mode` selects how much of the SOURCE format is preserved. A PDF is
         // never the source, so every mode produces the same semantic export;
         // it is accepted rather than refused so a host that always asks for
         // `ExactIfUnchanged` still gets a PDF instead of an error.
         let media = ResourceMedia(request.resources);
-        let export = export_document(request.document, &media, &self.options)
-            .map_err(|error: PdfError| AdapterError::new(format!("PDF export failed: {error}")))?;
+        let export = export_document_with_shaper(request.document, shaper, &media, &self.options)
+            .map_err(|error: PdfError| {
+            AdapterError::new(format!("PDF export failed: {error}"))
+        })?;
 
         let mut report = CompatibilityReport::default();
         for finding in export.findings {

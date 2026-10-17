@@ -304,3 +304,57 @@ test("progress retires its own line when the pass is done", async () => {
     "a finished background pass must clear the line it took, or it reads as still working",
   );
 });
+
+// ---------------------------------------------------------------------------
+// One record per engine (`109` HF-292)
+// ---------------------------------------------------------------------------
+
+/** A provisioner whose on-screen engine can be swapped, as `openBytes` does. */
+function switchingHarness(fetcher) {
+  const screen = { doc: null };
+  const provisioning = createFontProvisioning({
+    engine: () => screen.doc,
+    fetchBytes: fetcher.fetchBytes,
+    releaseBytes: () => {},
+    progress: () => {},
+    log: () => {},
+  });
+  /** `openBytes`: retire, (free), adopt. */
+  const open = (engine) => {
+    provisioning.retire(screen.doc);
+    screen.doc = engine;
+    return engine;
+  };
+  return { provisioning, open };
+}
+
+const KR_URL = SCRIPT_FALLBACK_FONTS.kr.url;
+const krScripts = [...SCRIPT_FALLBACK_FONTS.kr.scripts];
+
+test("a new engine needing a face its predecessor had is given that face", async () => {
+  // THE REGRESSION: a session-wide record told B it already had A's Korean.
+  const h = switchingHarness(fakeFetcher());
+  const a = h.open(fakeEngine([0xd55c]));
+  await h.provisioning.provisionOnOpen("a.docx");
+  const b = h.open(fakeEngine([0xd55c]));
+  await h.provisioning.provisionOnOpen("a.docx"); // same name, new engine
+  assert.deepEqual(a.fallbacks.map((f) => f.scripts), [krScripts]);
+  assert.deepEqual(b.fallbacks.map((f) => f.scripts), [krScripts]);
+  assert.equal(b.namedBatches.length, 1);
+});
+
+test("a download that lands after its engine was retired registers only into the new one", async () => {
+  const fetcher = fakeFetcher({ hold: true });
+  const h = switchingHarness(fetcher);
+  const a = h.open(fakeEngine([0xd55c]));
+  const aDone = h.provisioning.provisionOnOpen("a.docx");
+  const b = h.open(fakeEngine([0xd55c]));
+  const bDone = h.provisioning.provisionOnOpen("b.docx");
+  fetcher.release();
+  assert.equal(await aDone, null, "a retired engine's pass reports nothing");
+  await bDone;
+  assert.equal(a.namedBatches.length + a.fallbacks.length, 0, "the retired engine was touched");
+  assert.equal(b.namedBatches.length, 1);
+  assert.deepEqual(b.fallbacks.map((f) => f.scripts), [krScripts]);
+  assert.equal(fetcher.started.filter((url) => url === KR_URL).length, 1, "the download is shared");
+});

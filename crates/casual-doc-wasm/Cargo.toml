@@ -65,5 +65,9 @@ serde_json.workspace = true
 # under `cargo test`.
 wasm-bindgen = "0.2"
 
+[dev-dependencies]
+# `pdf_fonts_tests.rs` inspects exported PDFs (`109` HF-293).
+casual-doc-pdf.workspace = true
+
 [lints]
 workspace = true
