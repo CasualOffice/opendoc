@@ -22,7 +22,7 @@ import {
   NAMED_WEB_FONT_FACES,
   SCRIPT_FALLBACK_FONTS,
   fallbackKeysFor,
-  fetchFontBytes,
+  fetchSharedFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
@@ -276,7 +276,7 @@ import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mj
 import { applyRegions } from "./chrome_regions.mjs";
 
 
-/** url → Uint8Array of already-fetched font bytes (persists across documents). */
+/** url → fetched or pending font bytes (persists across documents). */
 const fontCache = new Map();
 
 const statusEl = document.getElementById("status");
@@ -3074,8 +3074,11 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     backgroundMeasure?.stop();
     backgroundMeasure = null;
     leaveSharedDocument();
+    fontState.retired = true;
     if (doc) doc.free();
     doc = next;
+    fontState = { provisionedFallbackKeys: new Set(), inFlightFallbackKeys: new Set(), retired: false };
+    delete document.body.dataset.fontsReady;
     // A different document, so the remembered object answer belongs to a
     // document that no longer exists.
     objectPresence.forget();
@@ -3214,11 +3217,12 @@ async function openBytes(bytes, name, onOpened, onRendered) {
 
     // Then upgrade in the background: fetch, register, and re-render. Not
     // awaited, so the caller — and the user — are not held behind the network.
-    void provisionFonts(name).then(async (fontWarnings) => {
+    if (doc === next) void provisionFonts(name, next).then(async (fontWarnings) => {
       // A newer document may have been opened while these bytes were in flight;
       // its own provisioning owns the screen, so this one must not repaint it.
-      if (currentName !== name || !doc) return;
+      if (doc !== next) return;
       await renderAll();
+      if (doc !== next) return;
       buildOutline();
       buildAccessibilityTree();
       drawSelection();
@@ -3290,20 +3294,20 @@ docTitleEl.addEventListener("blur", commitRename);
 // then fetch only the script fallbacks this document's uncovered code points
 // require. Network failures do not block opening: the target-bundled
 // metric-compatible faces remain available.
-async function provisionFonts(name) {
-  if (!doc) return [];
+async function provisionFonts(name, target = doc, state = fontState) {
+  if (!target || state.retired) return [];
   const warnings = [];
   statusChannel.progress(`Fetching web fonts for ${name}…`);
 
   const named = await Promise.allSettled(
-    NAMED_WEB_FONT_FACES.map((face) => fetchFontBytes(face.url, fontCache)),
+    NAMED_WEB_FONT_FACES.map((face) => fetchSharedFontBytes(face.url, fontCache)),
   );
   const namedBytes = named
     .filter((result) => result.status === "fulfilled")
     .map((result) => result.value);
-  if (namedBytes.length > 0) {
+  if (namedBytes.length > 0 && !state.retired) {
     const packed = packFontBytes(namedBytes);
-    doc.registerFonts(packed.bytes, packed.lengths);
+    target.registerFonts(packed.bytes, packed.lengths);
   }
   // The WASM shaper now holds the authoritative copy of these faces, so release
   // the JS byte cache (~9 MB) rather than double-holding it for the tab's life.
@@ -3317,47 +3321,42 @@ async function provisionFonts(name) {
     }
   }
 
-  warnings.push(...(await provisionMissingFallbacks(name)));
+  warnings.push(...(await provisionMissingFallbacks(name, target, state)));
   return warnings;
 }
 
-/** The script fallback buckets already fetched + registered this session, so a
- *  later coverage check never re-fetches a font it already has. */
-const provisionedFallbackKeys = new Set();
-// Buckets whose fetch is in flight. Coverage is now checked after every edit, so
-// several checks can overlap — typing three emoji fires three — and without this
-// each would see an empty `provisionedFallbackKeys` and start its own ~2 MB
-// download of the same face. Membership is cleared on failure so a genuine
-// network error is still retried by the next edit.
-const inFlightFallbackKeys = new Set();
+let fontState = { provisionedFallbackKeys: new Set(), inFlightFallbackKeys: new Set(), retired: false };
 
 /** Fetches and registers any script fallback fonts the document now needs but
  *  hasn't got yet (`doc.missingCoverage()` → buckets), skipping ones already
  *  provisioned. Used both on open and after an edit that introduces new glyphs
  *  (e.g. a checklist's `☐`/`☒` markers), so newly-added symbols render instead of
  *  tofu. Returns the keys that failed to load. */
-async function provisionMissingFallbacks(label) {
+async function provisionMissingFallbacks(label, target = doc, state = fontState) {
   const warnings = [];
-  if (!doc) return warnings;
-  const missing = doc.missingCoverage();
+  if (!target || state.retired) return warnings;
+  const { provisionedFallbackKeys, inFlightFallbackKeys } = state;
+  const missing = target.missingCoverage();
   const keys = fallbackKeysFor(missing).filter(
     (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
   );
   if (keys.length === 0) return warnings;
-  statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
+  if (doc === target) statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
   for (const key of keys) inFlightFallbackKeys.add(key);
   for (const key of keys) {
     const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
     try {
-      const bytes = await fetchFontBytes(url, fontCache);
-      doc.registerFallbackFont(bytes, scripts); // registers + re-paginates
-      provisionedFallbackKeys.add(key);
+      const bytes = await fetchSharedFontBytes(url, fontCache);
+      if (!state.retired) {
+        target.registerFallbackFont(bytes, scripts); // registers + re-paginates
+        provisionedFallbackKeys.add(key);
+      }
       // WASM holds the authoritative copy now; drop the JS cache entry so the
       // fallback bytes are not double-held for the session (see registerFonts).
       fontCache.delete(url);
     } catch (err) {
       console.warn(`font ${key} (${url}) failed:`, err);
-      setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
+      if (doc === target) setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
       warnings.push(key);
     } finally {
       inFlightFallbackKeys.delete(key);
@@ -3368,10 +3367,11 @@ async function provisionMissingFallbacks(label) {
 
 /** Ensures any glyphs a just-applied edit introduced (e.g. checklist checkbox
  *  markers) have a covering font, then re-renders if one was fetched. */
-async function ensureGlyphCoverage(label) {
-  const before = provisionedFallbackKeys.size;
-  await provisionMissingFallbacks(label);
-  if (provisionedFallbackKeys.size !== before) {
+async function ensureGlyphCoverage(label, target = doc, state = fontState) {
+  if (versionPreviewHome) return;
+  const before = state.provisionedFallbackKeys.size;
+  await provisionMissingFallbacks(label, target, state);
+  if (doc === target && state.provisionedFallbackKeys.size !== before) {
     await renderAll();
   }
 }

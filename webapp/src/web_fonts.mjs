@@ -717,6 +717,15 @@ export async function fetchFontBytes(url, cache, fetchImpl = fetch) {
   throw lastError ?? new Error(`${url}: no candidate succeeded`);
 }
 
+export function fetchSharedFontBytes(url, cache) {
+  const bytes = cache.get(url) ?? fetchFontBytes(url, cache).catch((error) => {
+    cache.delete(url);
+    throw error;
+  });
+  cache.set(url, bytes);
+  return bytes;
+}
+
 /** Packs separate blobs for the bounded `registerFonts(bytes, lengths)` ABI. */
 export function packFontBytes(blobs) {
   const total = blobs.reduce((sum, bytes) => sum + bytes.length, 0);
