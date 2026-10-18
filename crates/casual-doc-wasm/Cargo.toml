@@ -65,5 +65,8 @@ serde_json.workspace = true
 # under `cargo test`.
 wasm-bindgen = "0.2"
 
+[dev-dependencies]
+casual-doc-pdf.workspace = true
+
 [lints]
 workspace = true

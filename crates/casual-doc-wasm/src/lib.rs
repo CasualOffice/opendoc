@@ -47,14 +47,13 @@ use casual_doc_export::write_document;
 #[cfg(test)]
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_io::PlainTextLimits;
-#[cfg(test)]
 use casual_doc_io::formats;
 use casual_doc_io::{
     CompatibilityEntry as IoCompatibilityEntry, CompatibilityReport as IoCompatibilityReport,
     DetectionRequest, DocumentResources, ExportMode, ExportRequest,
     FeatureLocation as IoFeatureLocation, FormatId, FormatSelection,
-    ModelOutcome as IoModelOutcome, RetentionOutcome as IoRetentionOutcome, SourceEnvelope,
-    builtin_registry_with_limits,
+    ModelOutcome as IoModelOutcome, PdfAdapter, RetentionOutcome as IoRetentionOutcome,
+    SourceEnvelope, builtin_registry_with_limits,
 };
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
@@ -176,6 +175,10 @@ mod save_statistics_tests;
 #[cfg(test)]
 #[path = "track_changes_tests.rs"]
 mod track_changes_tests;
+
+#[cfg(test)]
+#[path = "pdf_fonts_tests.rs"]
+mod pdf_fonts_tests;
 
 // Forms protection per section (`docs/165` M6, `docs/109` FID-AT-06).
 #[cfg(test)]
@@ -1169,7 +1172,6 @@ impl WasmDocument {
                 );
             }
         };
-        let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
         // An EDITED document's `docProps/app.xml` statistics are the counts it had
         // when it was opened; the io adapter leaves out each one still holding the
         // source's value (`109` FID-AT-04). The editor knows the current counts, so
@@ -1180,8 +1182,22 @@ impl WasmDocument {
             && !matches!(mode, ExportMode::ExactIfUnchanged)
             && self.revision != 0;
         let statistics = refresh.then(|| self.current_statistics());
-        let artifact = self
-            .with_current_statistics(statistics, |document, resources, source| {
+        let artifact = if format.as_str() == formats::PDF {
+            PdfAdapter::default()
+                .export_with_shaper(
+                    ExportRequest {
+                        document: &self.document,
+                        resources: &self.resources,
+                        source: self.format_state.source.as_ref(),
+                        source_unchanged: self.revision == 0,
+                        mode,
+                    },
+                    &self.shaper,
+                )
+                .map_err(|error| format!("export {format}: {error}"))?
+        } else {
+            let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
+            self.with_current_statistics(statistics, |document, resources, source| {
                 registry.export(
                     &format,
                     ExportRequest {
@@ -1205,7 +1221,8 @@ impl WasmDocument {
                     },
                 )
             })
-            .map_err(|error| format!("export {format}: {error}"))?;
+            .map_err(|error| format!("export {format}: {error}"))?
+        };
         let report_json = compatibility_report_json(&artifact.report)?;
 
         Ok(WasmExportArtifact {
