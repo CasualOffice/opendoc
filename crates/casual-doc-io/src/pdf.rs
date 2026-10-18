@@ -19,7 +19,7 @@
 //! ids in the content stream address the faces the same pass measured with.
 //!
 //! Through the registry ([`FormatExporter::export`]) that pass runs on a fresh
-//! shaper that knows only the bundled faces. A host that registered faces at
+//! shaper without the host's runtime registrations. A host that registered faces at
 //! runtime (the browser session) calls [`PdfAdapter::export_with_shaper`] with
 //! its own shaper, or the PDF lays out without them (`docs/109` HF-293).
 

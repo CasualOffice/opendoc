@@ -19,7 +19,6 @@ const CJK_POSTSCRIPT: &str = "NotoSansCJKsc-Regular";
 const TEXT: &str = "한글 PDF";
 const PDF: &str = casual_doc_io::formats::PDF;
 
-/// Opens `bytes` on the browser's shaper: bundled faces only.
 fn open_in_browser(bytes: &[u8]) -> WasmDocument {
     let mut doc = open_document(bytes).expect("open");
     doc.shaper = ParleyShaper::without_system_fonts();
@@ -27,7 +26,6 @@ fn open_in_browser(bytes: &[u8]) -> WasmDocument {
     doc
 }
 
-/// Whether the exported PDF embeds the registered face.
 fn pdf_embeds_registered_face(doc: &mut WasmDocument) -> bool {
     let bytes = doc
         .export_as_inner(PDF, "semantic")
@@ -37,7 +35,10 @@ fn pdf_embeds_registered_face(doc: &mut WasmDocument) -> bool {
         .expect("the export parses")
         .embedded_fonts()
         .iter()
-        .any(|font| font.base_font.ends_with(&format!("+{CJK_POSTSCRIPT}")))
+        .any(|font| {
+            font.base_font.ends_with(&format!("+{CJK_POSTSCRIPT}"))
+                && font.program_bytes.is_some_and(|bytes| bytes > 0)
+        })
 }
 
 #[test]

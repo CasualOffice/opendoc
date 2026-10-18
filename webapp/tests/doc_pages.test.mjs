@@ -550,8 +550,8 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2672,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2672). That ` +
+    2674,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2674). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

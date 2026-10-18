@@ -176,7 +176,6 @@ mod save_statistics_tests;
 #[path = "track_changes_tests.rs"]
 mod track_changes_tests;
 
-// PDF export uses the session's registered faces (`docs/109` HF-293).
 #[cfg(test)]
 #[path = "pdf_fonts_tests.rs"]
 mod pdf_fonts_tests;
@@ -1173,7 +1172,6 @@ impl WasmDocument {
                 );
             }
         };
-        let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
         // An EDITED document's `docProps/app.xml` statistics are the counts it had
         // when it was opened; the io adapter leaves out each one still holding the
         // source's value (`109` FID-AT-04). The editor knows the current counts, so
@@ -1184,9 +1182,6 @@ impl WasmDocument {
             && !matches!(mode, ExportMode::ExactIfUnchanged)
             && self.revision != 0;
         let statistics = refresh.then(|| self.current_statistics());
-        // A PDF is laid out, so it uses THIS session's shaper: the registry's
-        // adapter builds a fresh one without the faces the host registered, and
-        // Hangul exported as `.notdef` (`109` HF-293).
         let artifact = if format.as_str() == formats::PDF {
             PdfAdapter::default()
                 .export_with_shaper(
@@ -1201,6 +1196,7 @@ impl WasmDocument {
                 )
                 .map_err(|error| format!("export {format}: {error}"))?
         } else {
+            let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
             self.with_current_statistics(statistics, |document, resources, source| {
                 registry.export(
                     &format,

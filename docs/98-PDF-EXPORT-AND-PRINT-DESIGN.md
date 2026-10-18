@@ -13,7 +13,7 @@ resolved below.
 **Addresses:** `104` HF-030 (the output half), `105` RM-04 Phase 0. Still open after it:
 the print dialog (`105` OO-010), live-font parity, and the semantic features listed below.
 
-## Implementation status (2026-09-21)
+## Implementation status (2026-10-18)
 
 ### What exists
 
@@ -96,12 +96,13 @@ OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds
 - **Reachable now** from any Rust host. `casual_doc_io::register_pdf_exporter(&mut
   registry)` adds `application.pdf` to `FormatRegistry::export_formats()`, and
   `registry.export(...)` returns bytes, MIME type, suggested extension and a
-  compatibility report in the same shape DOCX and ODT return. Registration is opt-in
-  rather than part of `builtin_registry` so a host decides when PDF appears in its
-  save-as list.
+  compatibility report in the same shape DOCX and ODT return. The built-in registry
+  includes PDF; a host building its own registry can register the adapter explicitly.
 - **Reachable from the product.** The built-in registry includes the export-only PDF
   adapter, so `casual-doc-wasm` exposes `application.pdf` from
-  `availableExportFormats()` and dispatches it through `exportAs(...)`. The web File
+  `availableExportFormats()`. `exportAs(...)` sends PDF requests to
+  `PdfAdapter::export_with_shaper` with the session's shaper, preserving the host's
+  registered fonts during pagination and embedding. The web File
   surface offers **Export as PDF…** through the same `exportDocumentAs` path as the
   other formats. A browser regression downloads the file and checks the PDF 1.7 header,
   `Type0` text font, and `ToUnicode` map. Physical **Print** remains a separate 150-DPI
@@ -109,13 +110,14 @@ OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds
 
 ### Remaining work, in the order to take it
 
-1. **Font parity on the registry path.** `export_document` paginates with a fresh shaper,
-   so a host's *live* font registry (the browser's network-fetched CJK faces) cannot
-   simply be handed over: those ids belong to a different registry and handing them over
-   would embed the wrong face rather than a fallback. Either let a caller seed the
-   export's pagination with an existing `FontRegistry`, or have the browser host drive
-   `write_pdf` with the display lists it already holds. Until then the registry path
-   embeds bundled and system-tier faces only.
+1. **Font parity — fixed for browser sessions (HF-293); the generic registry remains
+   stateless.** `export_document_with_shaper` and `PdfAdapter::export_with_shaper` use
+   the caller's shaper for pagination and snapshot its registry afterwards. The browser
+   uses this path; its regression checks that a registered CJK face has a non-empty
+   font program in the PDF. `export_document` and `FormatRegistry::export` still create
+   a fresh shaper, resolving bundled faces and, on native builds with system fonts
+   enabled, installed faces. They do not inherit another session's registrations.
+   Cross-reader rendering of the CFF test fixture is not covered by this regression.
 2. **Exact `ToUnicode` — done for model text, open for the rest.** `GlyphRun` carries a
    `node: Option<NodeId>` anchor (a fixed-size anchor, not a `String` per run) and the
    exporter resolves each glyph's cluster against that paragraph's own text, so ligature
@@ -127,8 +129,7 @@ OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds
    and the shaped text diverge (`w:vanish` contributes model bytes but no glyphs, `w:caps`
    rewrites case — the same divergence that misplaces a caret in those paragraphs, so the
    fix belongs to the offset accounting, not here), and `write_pdf` called without a
-   `PdfTextSource`, which the browser viewer seam will need once it drives export itself
-   (item 1).
+   `PdfTextSource`.
 3. **Phase 1 semantics** (§6): the `StructureTree` bridge first, then XMP metadata,
    hyperlink annotations, destinations, the outline tree and page ranges.
 4. **CFF subsetting**, so OpenType faces stop being embedded whole.
