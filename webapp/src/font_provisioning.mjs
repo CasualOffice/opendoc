@@ -74,15 +74,6 @@
 // answer first. So the fetches run together and the registrations stay in the
 // document's own scalar order — the same order on every load of the same
 // document. Same bytes, same chain, one round trip instead of three.
-//
-// ## 4. A registration belongs to ONE engine instance (HF-292)
-//
-// Every open builds a new engine with an empty shaper, so "registered" and "in
-// flight" are recorded per engine, never per session or file name: a session-wide
-// record told a second Korean document it already had Korean, and it painted ▯.
-// Only the download is shared. The host `retire`s an engine before `free()`, and
-// after every await a pass refuses to register into, report on, or paint
-// progress for a retired engine.
 
 import {
   NAMED_WEB_FONT_FACES,
@@ -193,31 +184,19 @@ export function provisioningProgress(label, keys = []) {
  * @param {(message: string, cause?: unknown) => void} io.log diagnostics for the console
  */
 export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progress, log }) {
-  /** Per engine (§4): `provisioned` buckets are registered into it; `inFlight`
-   *  buckets are being fetched for it, so overlapping coverage checks (typing
-   *  three emoji fires three) do not each start a download. Cleared on failure
-   *  so a network error is retried. */
   const states = new WeakMap();
-  /** Engines the host has replaced or is about to free (§4). */
-  const retired = new WeakSet();
-  /** Downloads in flight, by URL, shared by every engine. Removed when settled,
-   *  so a failed download is retried by the next request. */
   const downloads = new Map();
 
   function stateOf(doc) {
     let state = states.get(doc);
     if (!state) {
-      state = { provisioned: new Set(), inFlight: new Set() };
+      state = { provisioned: new Set(), inFlight: new Set(), retired: false };
       states.set(doc, state);
     }
     return state;
   }
 
-  /** Still safe to call into: not replaced and not freed. */
-  const alive = (doc) => !retired.has(doc);
-  /** Alive AND the document on screen — the only case in which a pass may
-   *  paint progress. A live document behind a version preview is alive but not
-   *  shown. */
+  const alive = (doc) => !stateOf(doc).retired;
   const showing = (doc) => alive(doc) && engine() === doc;
   const progressFor = (doc, text) => {
     if (showing(doc)) progress(text);
@@ -226,8 +205,6 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
   function download(url) {
     let pending = downloads.get(url);
     if (!pending) {
-      // Started synchronously, so a pass's requests are all on the wire before
-      // its first await.
       pending = Promise.resolve(fetchBytes(url)).finally(() => downloads.delete(url));
       downloads.set(url, pending);
     }
@@ -262,8 +239,7 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
   /** Fetches and registers the fallback buckets `doc` needs and has not got,
    *  returning the keys whose fetch failed. Fetches run together; registration
    *  stays in `keys` order so the fallback chain cannot depend on which request
-   *  answered first. `doc` is passed, not re-read from `engine()` after an
-   *  await (§4). */
+   *  answered first. */
   async function provisionFallbacks(doc, label, prefetched = new Map()) {
     if (!doc || !alive(doc)) return [];
     const { provisioned, inFlight } = stateOf(doc);
@@ -288,7 +264,7 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
         }
         // Registers + re-paginates. WASM holds the authoritative copy after
         // this, so the JS blob is released rather than double-held for the
-        // tab's life. A retired engine gets nothing, but its blob is released.
+        // tab's life.
         if (alive(doc)) {
           doc.registerFallbackFont(result.value, scripts);
           provisioned.add(key);
@@ -400,7 +376,7 @@ export function createFontProvisioning({ engine, fetchBytes, releaseBytes, progr
      * pass touches it afterwards. Shared downloads are not cancelled. O(1).
      */
     retire(doc) {
-      if (doc) retired.add(doc);
+      if (doc) stateOf(doc).retired = true;
     },
   };
 }

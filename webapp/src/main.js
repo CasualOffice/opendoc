@@ -3069,10 +3069,9 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     backgroundMeasure?.stop();
     backgroundMeasure = null;
     leaveSharedDocument();
-    fontProvisioning.retire(doc); // before free(): an in-flight font must not land in a freed wrapper
+    fontProvisioning.retire(doc);
     if (doc) doc.free();
     doc = next;
-    // Not ready until THIS engine's own upgrade lands (a failed open never gets here).
     delete document.body.dataset.fontsReady;
     // A different document, so the remembered object answer belongs to a
     // document that no longer exists.
@@ -3212,8 +3211,6 @@ async function openBytes(bytes, name, onOpened, onRendered) {
 
     // Then upgrade in the background: fetch, register, and re-render. Not
     // awaited, so the caller — and the user — are not held behind the network.
-    // A newer document may have been opened while these bytes were in flight;
-    // compared by engine identity, since a same-name reopen is a new engine (HF-292).
     if (doc === next) void fontProvisioning.provisionOnOpen(name).then(async (fontLoss) => {
       if (doc !== next) return;
       await renderAll();
@@ -3283,8 +3280,7 @@ docTitleEl.addEventListener("blur", commitRename);
 // Provision the host-owned named families in one bounded batch/repagination,
 // then fetch only the script fallbacks this document's uncovered code points
 // require. Network failures do not block opening: the target-bundled
-// metric-compatible faces remain available. Registrations are recorded per
-// engine (HF-292, `font_provisioning.mjs` §4).
+// metric-compatible faces remain available.
 const fontProvisioning = createFontProvisioning({
   engine: () => doc,
   fetchBytes: (url) => fetchFontBytes(url, fontCache),
@@ -3294,8 +3290,7 @@ const fontProvisioning = createFontProvisioning({
 });
 
 /** Ensures any glyphs a just-applied edit introduced (e.g. checklist checkbox
- *  markers) have a covering font, then re-renders if one was fetched — unless
- *  the document it was fetched for is no longer the one on screen. */
+ *  markers) have a covering font, then re-renders if one was fetched. */
 async function ensureGlyphCoverage(label) {
   const target = doc;
   const { fetched, report } = await fontProvisioning.provisionForEdit(label);

@@ -305,11 +305,6 @@ test("progress retires its own line when the pass is done", async () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// One record per engine (`109` HF-292)
-// ---------------------------------------------------------------------------
-
-/** A provisioner whose on-screen engine can be swapped, as `openBytes` does. */
 function switchingHarness(fetcher) {
   const screen = { doc: null };
   const provisioning = createFontProvisioning({
@@ -319,7 +314,6 @@ function switchingHarness(fetcher) {
     progress: () => {},
     log: () => {},
   });
-  /** `openBytes`: retire, (free), adopt. */
   const open = (engine) => {
     provisioning.retire(screen.doc);
     screen.doc = engine;
@@ -332,12 +326,11 @@ const KR_URL = SCRIPT_FALLBACK_FONTS.kr.url;
 const krScripts = [...SCRIPT_FALLBACK_FONTS.kr.scripts];
 
 test("a new engine needing a face its predecessor had is given that face", async () => {
-  // THE REGRESSION: a session-wide record told B it already had A's Korean.
   const h = switchingHarness(fakeFetcher());
   const a = h.open(fakeEngine([0xd55c]));
   await h.provisioning.provisionOnOpen("a.docx");
   const b = h.open(fakeEngine([0xd55c]));
-  await h.provisioning.provisionOnOpen("a.docx"); // same name, new engine
+  await h.provisioning.provisionOnOpen("a.docx");
   assert.deepEqual(a.fallbacks.map((f) => f.scripts), [krScripts]);
   assert.deepEqual(b.fallbacks.map((f) => f.scripts), [krScripts]);
   assert.equal(b.namedBatches.length, 1);
