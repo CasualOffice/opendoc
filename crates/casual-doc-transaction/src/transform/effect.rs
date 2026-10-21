@@ -247,6 +247,27 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             return Err(MALFORMED_CHANGE);
         }
 
+        // An inline that occupies positions — a hard break is one — moves every offset
+        // after it exactly as text would, by the SAME length rule `apply` uses
+        // (`casual_doc_edit::inline_text_len`; `docs/109` HF-296).
+        (Operation::InsertInlineObject { at, node }, _)
+            if casual_doc_edit::inline_text_len(node) > 0 =>
+        {
+            Effect::Text(TextEffect::Insert {
+                node: at.node,
+                at: at.offset,
+                len: casual_doc_edit::inline_text_len(node),
+            })
+        }
+        (Operation::RemoveInlineObject { .. }, Operation::InsertInlineObject { at, node })
+            if casual_doc_edit::inline_text_len(node) > 0 =>
+        {
+            Effect::Text(TextEffect::Delete {
+                node: at.node,
+                start: at.offset,
+                end: at.offset.saturating_add(casual_doc_edit::inline_text_len(node)),
+            })
+        }
         // Inline membership changed at a byte offset. These inlines project ZERO bytes —
         // a drawing, a note reference and a bookmark marker are all zero-width in the
         // paragraph's text (`casual_doc_edit`'s own length rule) — so no offset moves and

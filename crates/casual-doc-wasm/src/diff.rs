@@ -560,12 +560,13 @@ fn inline_plain_len(inline: &InlineNode) -> u32 {
 /// primitives and the caret use.
 ///
 /// The two spaces are not the same, which `DiffAnchor`'s own documentation used
-/// to claim: a tab contributes one byte to projected text and none to the anchor
-/// space, while a note reference, an equation and a labelled embedded object
-/// contribute to the anchor space and nothing to projected text. Applying a
-/// diff offset directly would therefore place a revision correctly in a
-/// paragraph of plain runs and silently misplace it in a paragraph with a tab —
-/// which is most tabular-looking documents.
+/// to claim: a note reference, an equation, a non-breaking or soft hyphen and a
+/// labelled embedded object contribute to the anchor space and nothing to
+/// projected text. Applying a diff offset directly would therefore place a
+/// revision correctly in a paragraph of plain runs and silently misplace it in
+/// a paragraph holding one of those. (A tab used to be on this list, charged
+/// zero anchor bytes; that was the defect `docs/109` HF-297 fixed, and a tab is
+/// now one position in both spaces.)
 ///
 /// Returns `None` when the offset falls *inside* an inline whose two lengths
 /// disagree, because there is no honest answer there; the caller reports the
@@ -1656,13 +1657,15 @@ mod tests {
         })
     }
 
-    /// A diff offset is NOT a review offset, and the difference is a tab.
+    /// A diff offset is NOT a review offset wherever the two lengths differ.
     ///
-    /// `DiffAnchor` claimed the two spaces were the same; they agree for runs and
-    /// symbols and disagree for everything whose projected text and anchor length
-    /// differ. A tab is one byte of projected text and zero anchor bytes, so
-    /// applying a diff offset directly would mark the wrong characters in any
-    /// paragraph with a tab in it - which is most of the ones that look tabular.
+    /// `DiffAnchor` claimed the two spaces were the same; they agree for runs,
+    /// symbols, tabs and breaks and disagree for everything whose projected text
+    /// and anchor length differ. This used to be shown with a tab, which the anchor
+    /// space charged zero; that was itself the defect `docs/109` HF-297 fixed (a
+    /// suggestion after a tab landed one position early), so a tab now maps
+    /// straight through and a non-breaking hyphen — painted, but no byte of plain
+    /// text — carries the translation instead.
     #[test]
     fn a_diff_offset_is_translated_into_the_review_offset_space() {
         let run = |id: u128, text: &str| {
@@ -1672,27 +1675,43 @@ mod tests {
                 text: text.to_owned(),
             })
         };
+        let tab = InlineNode::Tab(casual_doc_model::v1::Tab {
+            id: casual_doc_model::NodeId::new(2).expect("a non-zero id"),
+        });
+        let notes = NoteAnchorLengths::default();
+        let tabbed = vec![run(1, "ab"), tab, run(3, "cd")];
+        assert_eq!(
+            crate::inlines_anchor_len(&notes, &tabbed),
+            5,
+            "a tab is one position in the anchor space, as in plain text"
+        );
+        for offset in 0..=5 {
+            assert_eq!(
+                plain_offset_to_anchor_offset(&notes, &tabbed, offset),
+                Some(offset),
+                "a tab maps straight through"
+            );
+        }
         let inlines = vec![
             run(1, "ab"),
-            InlineNode::Tab(casual_doc_model::v1::Tab {
-                id: casual_doc_model::NodeId::new(2).expect("a non-zero id"),
+            InlineNode::NoBreakHyphen(casual_doc_model::v1::NoBreakHyphen {
+                id: casual_doc_model::NodeId::new(4).expect("a non-zero id"),
             }),
             run(3, "cd"),
         ];
-        let notes = NoteAnchorLengths::default();
         let mut plain = String::new();
         append_node_plain_text(&inlines, ReviewProjection::FinalWithMarkup, &mut plain);
         assert_eq!(
-            plain, "ab\tcd",
-            "the precondition: the tab is a byte of plain text"
+            plain, "abcd",
+            "the precondition: the hyphen is no byte of plain text"
         );
         assert_eq!(
             crate::inlines_anchor_len(&notes, &inlines),
-            4,
-            "and none of the anchor space, so the two spaces really do differ here"
+            7,
+            "and three of the anchor space, so the two spaces really do differ here"
         );
 
-        for (diff_offset, review_offset) in [(0, 0), (2, 2), (3, 2), (5, 4)] {
+        for (diff_offset, review_offset) in [(0, 0), (2, 2), (3, 6), (4, 7)] {
             assert_eq!(
                 plain_offset_to_anchor_offset(&notes, &inlines, diff_offset),
                 Some(review_offset),
