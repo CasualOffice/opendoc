@@ -1,6 +1,6 @@
 # 107 — Collaboration: OT over Transactions, with Snapshot/Replay Versioning
 
-**Status:** Proposed — design for discussion, not yet accepted.
+**Status:** Accepted — the owner decision of 2026-09-15 below; implemented by docs 150 and 169.
 **Opened:** 2026-09-15.
 **Owner decision taken (2026-09-15):** operational transformation, carried by transactions,
 with snapshot-plus-replay providing versioning. This resolves the long-open

@@ -431,7 +431,7 @@ benchmark, and only for a lever that does not tax runtime.
 
 ## ADR-033 — Collaboration is operational transformation over the closed op set, with snapshot/replay versioning
 
-**Status:** Proposed (owner decision taken 2026-09-15). Designed in
+**Status:** Accepted (owner decision taken 2026-09-15). Designed in
 `107-COLLABORATION-OT-SNAPSHOT-REPLAY-DESIGN.md`; the product, restore, checkpoint,
 and diff contracts are refined by docs 139–140. The provider/embed architecture
 and phase/evidence checklist are docs 143–144. No real-time collaboration support
