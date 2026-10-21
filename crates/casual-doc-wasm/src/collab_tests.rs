@@ -524,3 +524,135 @@ fn shared_picture_document_keeps_its_binary_image() {
     assert_eq!(opened.resources, doc.resources);
     assert_eq!(opened.page_count(), doc.page_count());
 }
+
+/// The refusal a fixture row names, with representative payloads.
+fn refusal_named(code: &str) -> Refusal {
+    match code {
+        "ODC-7001" => Refusal::CannotMerge,
+        "ODC-7002" => Refusal::ProtocolVersion {
+            server: PROTOCOL_VERSION,
+            client: PROTOCOL_VERSION + 1,
+        },
+        "ODC-7003" => Refusal::NotAuthorised,
+        "ODC-7004" => Refusal::ReadOnlyAccess,
+        "ODC-7005" => Refusal::NotSaving,
+        "ODC-7006" => Refusal::TooFarBehind {
+            oldest: Revision::new(5),
+            current: Revision::new(9),
+        },
+        "ODC-7007" => Refusal::Malformed,
+        "ODC-7008" => Refusal::IdCollision,
+        "ODC-7009" => Refusal::StaleBase {
+            current: Revision::new(3),
+        },
+        "ODC-7010" => Refusal::RoomFull { limit: 128 },
+        "ODC-7011" => Refusal::AccessChangeRefused,
+        other => panic!("the fixture names {other}, which is not a collaboration refusal"),
+    }
+}
+
+/// **Every collaboration refusal does to the reader's work exactly what the chrome tells them.**
+///
+/// RC-13 was a sentence — `ODC-7006`, "unsent changes were lost — reload to continue" — that
+/// announced a loss the engine does not cause: `docs/169` keeps the optimistic document and the
+/// log and asks for recovery, and a reader who believed the sentence and reloaded would have
+/// thrown away the work it said was already gone. The chrome now builds every refusal's
+/// sentence from what the outcome says (`session_access.mjs`'s `refusalConsequence`), and
+/// `webapp/tests/collab_refusal_outcomes.json` records, per code and per way it can arrive, the
+/// outcome and the three facts the sentences rest on: the local edit is still in this copy
+/// (`kept`), the room has not ordered it — it is still an unordered commit in this replica's
+/// log, so nobody else has it (`pending`) — and whether the session stopped.
+///
+/// This drives every row through the real facade, from a replica holding one flushed local
+/// edit, and fails on any field that differs — so the fixture is the engine's behaviour rather
+/// than a description of it, and `collab_refusal_messages.test.mjs` can hold the sentences to
+/// it. Both directions are held: every row is driven, and every `ODC-7xxx` code has a row.
+#[test]
+fn every_collaboration_refusal_does_what_the_fixture_says() {
+    use casual_doc_edit::{Operation, Pos};
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../webapp/tests/collab_refusal_outcomes.json"
+    ))
+    .expect("the fixture is JSON");
+    let scenarios = fixture["scenarios"].as_array().expect("a scenario list");
+    let mut covered = std::collections::BTreeSet::new();
+    for scenario in scenarios {
+        let code = scenario["code"].as_str().expect("a code");
+        let arrives = scenario["arrives"].as_str().expect("a way of arriving");
+        covered.insert(code.to_owned());
+        let mut doc = document();
+        doc.collab_receive_frame_inner(&welcome(0, Capabilities::owner()))
+            .expect("join");
+        let node = match &doc.document.body()[0] {
+            casual_doc_model::v1::BlockNode::Paragraph(p) => p.id,
+            _ => panic!("paragraph"),
+        };
+        doc.apply(Operation::InsertText {
+            at: Pos::new(node, 2),
+            text: "LOCAL".to_owned(),
+        })
+        .expect("edit");
+        let sent = doc.collab_next_chunk().expect("a pending chunk");
+        let ClientMessage::Submit(submission) =
+            casual_doc_transaction::codec::decode_frame(&sent).expect("submission")
+        else {
+            panic!("submit");
+        };
+        let frame = match arrives {
+            "refused" => encode_frame(&ServerMessage::Refused {
+                seq: Some(submission.seq),
+                reason: refusal_named(code),
+            }),
+            "stopped" => encode_frame(&ServerMessage::Stopped {
+                reason: refusal_named(code),
+            }),
+            "unreadable" => b"not a frame at all".to_vec(),
+            other => panic!("unknown arrival {other}"),
+        };
+        let observed = match doc.collab_receive_frame_inner(&frame) {
+            Ok(json) => {
+                let outcome: serde_json::Value = serde_json::from_str(&json).expect("outcome");
+                assert_eq!(
+                    outcome["code"].as_str(),
+                    Some(code),
+                    "{code} by {arrives}: the outcome must name its own code"
+                );
+                serde_json::json!({
+                    "kind": outcome["kind"],
+                    "terminal": outcome["terminal"],
+                    "retryable": outcome["retryable"],
+                })
+            }
+            Err(error) => {
+                assert_eq!(
+                    casual_doc_edit::refusal::split(&error).1,
+                    Some(code),
+                    "{code} by {arrives}: a thrown refusal must carry its own code"
+                );
+                serde_json::json!({ "kind": "error" })
+            }
+        };
+        let state: serde_json::Value = serde_json::from_str(&doc.collab_state()).expect("state");
+        let after = serde_json::json!({
+            "kept": text(&doc).contains("LOCAL"),
+            "pending": doc.log.unordered_commits() > 0,
+            "stopped": state.get("stopped").is_some_and(|stopped| !stopped.is_null()),
+        });
+        assert_eq!(
+            observed, scenario["outcome"],
+            "{code} by {arrives}: the outcome differs from the fixture, so the sentence the \
+             reader is shown for it no longer describes what happened"
+        );
+        assert_eq!(
+            after, scenario["after"],
+            "{code} by {arrives}: what became of the reader's edit differs from the fixture"
+        );
+    }
+    for code in (1..=11).map(|n| format!("ODC-70{n:02}")) {
+        assert!(
+            covered.contains(&code),
+            "{code} has no row in collab_refusal_outcomes.json, so nothing holds its sentence to \
+             what it does"
+        );
+    }
+}

@@ -563,14 +563,19 @@ test("how much English the reference pages put on the site, measured and publish
   // product name, unrouted for the reason the header's identical wordmark is (the
   // header partial's ceiling of 1 is that string), and it is counted thirteen times
   // here only because every reference page inlines the footer.
+  //
+  // 2685 -> 2686 with the `ODC-7006` register row (`109` HF-298): the row now
+  // says the work is kept, and its new bold run is one more text node on
+  // `reference/error-code-registry.html` (141 -> 142). MEASURED from this
+  // assertion's own failure output on the regenerated pages.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2685,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2685). That ` +
+    2686,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2686). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

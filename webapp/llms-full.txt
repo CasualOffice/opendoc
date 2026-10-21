@@ -2847,12 +2847,12 @@ something it must never send again. See `152` §5.6.
 | `ODC-5001` | `render_failed` | error | A renderer failed without invalidating document state. |
 | `ODC-6001` | `import_failed` | error | Format import failed after input passed initial sniffing. |
 | `ODC-6002` | `export_failed` | error | Format export failed; existing session state remains valid. |
-| `ODC-7001` | `collaboration_conflict` | error | A remote operation cannot be safely applied or rebased. *That one action did not take; redo it.* |
+| `ODC-7001` | `collaboration_conflict` | error | A remote operation cannot be safely applied or rebased. The replica's own pending work is kept and the session asks the host for a snapshot to replay it onto (`recoveryRequired`, `docs/169`). |
 | `ODC-7002` | `collaboration_protocol_version` | fatal | The two ends do not speak the same protocol version. Terminal, and **never retried** — a client that retries a version mismatch loops for ever. |
 | `ODC-7003` | `collaboration_not_authorised` | fatal | The session is not authorised. Deliberately undetailed: detail is useful to an operator in a log and useful to an attacker in a response. |
 | `ODC-7004` | `collaboration_read_only` | error | This participant may read but not write. Enforced at the operation, not by hiding a control. |
 | `ODC-7005` | `collaboration_not_saving` | error | The ordered session cannot persist work. *Copy it out.* Distinct from `ODC-7001` because the two ask the user for opposite things. |
-| `ODC-7006` | `collaboration_too_far_behind` | error | The participant is behind the retained history and cannot be caught up by replay. Work it had not had acknowledged is lost, and saying so is the point of the code. |
+| `ODC-7006` | `collaboration_too_far_behind` | error | The participant is behind the retained history and cannot be caught up by replay. Its unacknowledged work is **kept**: the outcome is `recoveryRequired`, the optimistic document and log stay intact, and the host's snapshot is replayed under them (`docs/169`). The reader is told their work is kept, never that it was lost (RC-13). |
 | `ODC-7007` | `collaboration_malformed` | error | The message could not be read. The sender must **not** send the same bytes again. |
 | `ODC-7008` | `collaboration_id_collision` | error | An arriving operation introduces an identity this replica already holds, or one minted outside the sender's own identity space. Refused rather than applied, because applying it overwrites a node somebody else minted. |
 | `ODC-7009` | `collaboration_stale_base` | error | The submission was written against an ordered position the document has moved past. Nothing is lost: the client rebases it and resubmits with the same sequence number. |

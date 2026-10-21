@@ -417,6 +417,16 @@ export function collabTransport(options) {
     }
   }
 
+  /** The code the engine's session stopped with, or `null` while it runs. */
+  function engineStopped() {
+    try {
+      const stopped = JSON.parse(session.collabState)?.stopped;
+      return typeof stopped === "string" && stopped !== "" ? stopped : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** One write, with custody kept on failure. `false` means the socket is going
    *  away; `onclose` follows and does the retrying, so this never schedules. */
   function sendNow(bytes) {
@@ -474,10 +484,28 @@ export function collabTransport(options) {
       text = session.collabReceiveFrame(bytes);
     } catch (error) {
       // The engine's own sentence, kept verbatim — it names the frame's problem,
-      // which nothing here could.
+      // which nothing here could — and its own `ODC-7xxx` code, which `to_js`
+      // sets on the thrown error. Dropping the code here is what left every
+      // thrown refusal unexplainable: the chrome got a sentence it could not
+      // translate and no code to route.
       onOutcome(
-        Object.freeze({ kind: "error", code: null, message: String(error?.message ?? error) }),
+        Object.freeze({
+          kind: "error",
+          code: typeof error?.code === "string" ? error.code : null,
+          message: String(error?.message ?? error),
+        }),
       );
+      // A TERMINAL refusal the relay sent as a `Refused` — `NotAuthorised` on a
+      // submission, `NotSaving` — is thrown rather than returned, because the
+      // engine records the stop and then refuses the message. The engine's
+      // session is over at that point, so this transport must be too: carrying
+      // on reported "connected" over a session that would never send again, and
+      // the reader was told their changes were reaching everyone. Read from the
+      // engine's own state rather than inferred from the code, so there is one
+      // answer to "has this session stopped". Not while recovery holds the
+      // session paused: recovery stops it deliberately and resyncs.
+      const stopped = engineStopped();
+      if (stopped !== null && !recoveryPaused) halt(stopped, false);
       return;
     }
     let outcome;
