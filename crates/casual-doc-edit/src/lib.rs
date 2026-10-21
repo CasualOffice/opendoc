@@ -6404,7 +6404,7 @@ pub fn inline_text_len(inline: &InlineNode) -> u32 {
         // A hard break (`w:br`, line, page or column) is ONE position, as it is
         // one character in Word. At zero, the caret before a break and the caret
         // after it were the same offset, so text typed after Shift+Enter was
-        // inserted before the break (`docs/109` TA-01).
+        // inserted before the break (`docs/109` HF-296).
         InlineNode::Break(_) => 1,
         // Placed objects. A drawing occupies a box, not bytes; an embedded object
         // is a deliberate known understatement — layout paints a preview-less

@@ -249,7 +249,7 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
 
         // An inline that occupies positions — a hard break is one — moves every offset
         // after it exactly as text would, by the SAME length rule `apply` uses
-        // (`casual_doc_edit::inline_text_len`; `docs/109` TA-01).
+        // (`casual_doc_edit::inline_text_len`; `docs/109` HF-296).
         (Operation::InsertInlineObject { at, node }, _)
             if casual_doc_edit::inline_text_len(node) > 0 =>
         {

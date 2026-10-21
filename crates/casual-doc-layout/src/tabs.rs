@@ -226,7 +226,7 @@ impl FlowItem<'_> {
             // Word: the caret before it and the caret after it are different
             // places. While it was zero bytes the end of the line before a break
             // and the start of the line after it were the same offset, so typing
-            // after Shift+Enter landed BEFORE the break (`docs/109` TA-01).
+            // after Shift+Enter landed BEFORE the break (`docs/109` HF-296).
             FlowItem::Break(_) => 1,
             FlowItem::Run(run) => run.text.len() as u32,
             // A field contributes the cached result it SHOWS, which is what

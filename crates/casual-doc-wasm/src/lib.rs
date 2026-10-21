@@ -25642,8 +25642,8 @@ impl NoteAnchorLengths {
 }
 
 /// Number of UTF-8 bytes an inline contributes to the layout anchor stream.
-/// This mirrors `tabs::split_blocks`: ordinary/positional tabs affect geometry
-/// but are zero-width in the current model-offset space, while synthetic display
+/// This mirrors `tabs::split_blocks`: an ordinary tab and a hard break are one
+/// position each, a positional tab is geometry only, and synthetic display
 /// values contribute the bytes the shaper assigns them.
 ///
 /// **This is the only answer to "how long is this inline" on the wasm side.**
@@ -25664,15 +25664,14 @@ impl NoteAnchorLengths {
 ///
 /// | kind | here | `node_plain_text` | `model_bytes` |
 /// | --- | --- | --- | --- |
-/// | `Tab` | 0 | 1 | 1 |
 /// | `Math` | painted label | 0 | 0, or the label when unshaped |
 /// | `NoteReference` | the ordinal | 0 | 0 |
 /// | `EmbeddedObject` without a preview | the label | 0 | the label |
 /// | `NoBreakHyphen` / `SoftHyphen` | the glyph | 0 | 0 |
 ///
-/// So a review splice in a paragraph holding a tab or an equation is measured in a
-/// space the host's offsets do not come from. That predates the deletion of the
-/// review copy — both copies charged `Tab` zero — and it is **not** fixed here: the
+/// So a review splice in a paragraph holding an equation is measured in a space
+/// the host's offsets do not come from. (`Tab` was in this table, charged zero
+/// here; that one is fixed, HF-297.) The rest is **not** fixed here: the
 /// fix is for this crate to stop having a length function at all and call
 /// `casual-doc-edit`'s, which needs that function made `pub` in another lane's
 /// crate. Reported as a row rather than guessed at, because changing this
@@ -25686,10 +25685,15 @@ impl NoteAnchorLengths {
 fn inline_anchor_len(notes: &NoteAnchorLengths, inline: &InlineNode) -> u32 {
     match inline {
         InlineNode::Run(run) => run.text.len() as u32,
-        // Tabs affect geometry, not the model-offset space.
-        InlineNode::Tab(_) | InlineNode::PositionalTab(_) | InlineNode::HorizontalRule(_) => 0,
+        // A `w:tab` is one position, as `casual_doc_edit::inline_text_len`,
+        // `node_plain_text` and `FlowItem::model_bytes` all count it. It was zero
+        // here, so every Suggesting-mode splice and comment marker after a tab
+        // landed one position early per tab (`docs/109` HF-297). A positional
+        // tab and a rule are geometry, not positions, in every space.
+        InlineNode::Tab(_) => 1,
+        InlineNode::PositionalTab(_) | InlineNode::HorizontalRule(_) => 0,
         // A hard break is one position, as `casual_doc_edit::inline_text_len`
-        // counts it (`docs/109` TA-01).
+        // counts it (`docs/109` HF-296).
         InlineNode::Break(_) => 1,
         InlineNode::Symbol(symbol) => {
             char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
@@ -29905,7 +29909,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // many positions it occupies. A drawing occupies none, so the caret stays
         // at its insertion point (the host re-selects the new object as its own
         // chrome); a hard break occupies one, so the caret is on the far side of
-        // it and the next keystroke lands after the break (`docs/109` TA-01).
+        // it and the next keystroke lands after the break (`docs/109` HF-296).
         Operation::InsertInlineObject { at, node } => Pos::new(
             at.node,
             at.offset
@@ -44536,8 +44540,8 @@ mod tests {
     }
 
     /// The whole row — text, tab, and page number — is one clickable link whose
-    /// anchor range covers `Tables` + the tab (zero bytes in the layout anchor
-    /// space) + the page number.
+    /// anchor range covers `Tables` + the tab (one position, HF-297) + the page
+    /// number.
     fn assert_toc_row_is_clickable(handle: &WasmDocument, source_id: NodeId, target_id: NodeId) {
         let paragraph =
             find_paragraph(handle.document.body(), source_id).expect("source paragraph");
@@ -44545,8 +44549,9 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(
             links[0].range,
-            ModelRange::new(ModelPos::new(source_id, 0), ModelPos::new(source_id, 7)),
-            "tabs position paint but consume no byte in the layout anchor space"
+            ModelRange::new(ModelPos::new(source_id, 0), ModelPos::new(source_id, 8)),
+            "a tab is one position in every space (`docs/109` HF-297), so the link covers \
+             the page number to its last digit"
         );
         let rects = LayoutSnapshot::new(handle.layout.resident()).selection_rects(links[0].range);
         let (page, rect) = rects.first().copied().expect("linked TOC row geometry");
@@ -47842,7 +47847,7 @@ mod tests {
         d.document.validate().expect("valid after undo");
     }
 
-    /// **The guarantee behind Shift+Enter** (`docs/109` TA-01): the caret after a
+    /// **The guarantee behind Shift+Enter** (`docs/109` HF-296): the caret after a
     /// line break is AFTER it, so the next keystroke lands on the new line, in the
     /// model and in the saved file — and Backspace there removes the break.
     ///
@@ -47887,6 +47892,80 @@ mod tests {
             "the break is gone"
         );
         d.document.validate().expect("valid");
+    }
+
+    /// **A tab is one position on the review paths too** (`docs/109` HF-297, the
+    /// family of HF-296). Typing and the caret already counted a `w:tab` as one
+    /// position, but `inline_anchor_len` — the length rule every Suggesting-mode
+    /// splice and comment marker uses — charged it ZERO, so after a tab every
+    /// suggestion and comment landed one position early per tab before it:
+    /// suggesting "X" between the tab and "b" of `a<TAB>b` produced `a<TAB>bX`.
+    /// Mutation: charge `InlineNode::Tab` zero again in `inline_anchor_len` and
+    /// this goes red on the saved order.
+    #[test]
+    fn a_suggestion_and_a_comment_after_a_tab_land_where_the_caret_is() {
+        let mut d = open_document(b"a\tb").expect("open");
+        let (node, text) = body_paragraphs(&d)[0].clone();
+        assert_eq!(text, "a\tb", "the text importer keeps the tab as a tab");
+        let order = |d: &WasmDocument| -> Vec<String> {
+            fn walk(inlines: &[InlineNode], out: &mut Vec<String>) {
+                for inline in inlines {
+                    match inline {
+                        InlineNode::Run(run) => out.push(run.text.clone()),
+                        InlineNode::Tab(_) => out.push("TAB".to_owned()),
+                        InlineNode::Revision(revision) => {
+                            out.push("INS[".to_owned());
+                            walk(&revision.inlines, out);
+                            out.push("]".to_owned());
+                        }
+                        InlineNode::CommentRangeStart(_) => out.push("C(".to_owned()),
+                        InlineNode::CommentRangeEnd(_) => out.push(")C".to_owned()),
+                        _ => {}
+                    }
+                }
+            }
+            let mut out = Vec::new();
+            walk(
+                &find_paragraph(d.document.body(), node)
+                    .expect("paragraph")
+                    .inlines,
+                &mut out,
+            );
+            out
+        };
+        // Offset 2 is between the tab and "b" in the space the caret lives in.
+        d.suggest_insert(
+            &node.to_string(),
+            2,
+            "X",
+            Some("Tester".to_owned()),
+            None,
+            None,
+        )
+        .expect("a suggestion after the tab");
+        assert_eq!(
+            order(&d),
+            vec!["a", "TAB", "INS[", "X", "]", "b"],
+            "the suggestion sits between the tab and b"
+        );
+        d.undo().expect("undo the suggestion");
+        // A comment over "b" (offsets 2..3) wraps "b", not the end of the line.
+        d.add_comment_inner(
+            &node.to_string(),
+            2,
+            &node.to_string(),
+            3,
+            "note",
+            Some("Tester".to_owned()),
+            None,
+            None,
+        )
+        .expect("a comment over b");
+        let saved = order(&d);
+        let open = saved.iter().position(|s| s == "C(").expect("range start");
+        let close = saved.iter().position(|s| s == ")C").expect("range end");
+        assert_eq!(saved[open + 1..close], ["b".to_owned()], "{saved:?}");
+        assert_eq!(saved[open - 1], "TAB", "{saved:?}");
     }
 
     /// A column break is not a page break: it is authored as `BreakKind::Column`,

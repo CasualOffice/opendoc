@@ -42,7 +42,7 @@ async function freshParagraph(page) {
 /** The text of every run and break in the saved body, in document order:
  *  `"one"`, `"<br>"`, `"two"`. Read from the SAVED file, because the defect this
  *  guards was invisible on screen-reader text: "one", Shift+Enter, "two" saved
- *  `<w:t>onetwo</w:t><w:br/>` (`docs/109` TA-01). */
+ *  `<w:t>onetwo</w:t><w:br/>` (`docs/109` HF-296). */
 async function savedInlineOrder(page) {
   const download = page.waitForEvent("download");
   await page.keyboard.press(`${MOD}+s`);
