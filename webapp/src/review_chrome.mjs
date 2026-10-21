@@ -61,15 +61,31 @@ export function autoGrowTextarea(textarea, { min = 34, max = 180 } = {}) {
   return resize;
 }
 
-/** Shared "modern comment" composer key handling: Enter submits, Shift+Enter
- *  inserts a newline, Escape cancels. Kept identical across the top-level comment
- *  box and every reply composer so the interaction never differs by surface (Q5).
- *  Always stops propagation so a keystroke in the composer never reaches the
- *  canvas editor or the card's expand/collapse handler. */
+/** Whether a keydown in a comment composer submits it.
+ *
+ *  Enter on its own, as in Google Docs' and ONLYOFFICE's comment boxes, AND
+ *  Ctrl+Enter / Cmd+Enter, which is Word's "Post comment" and what a reader who
+ *  learned comments in Word presses (RC-16). The modifier form used to be
+ *  excluded outright, so Word's gesture did nothing at all. Shift+Enter stays a
+ *  newline — the one modifier all three reserve for it — and Alt+Enter is left
+ *  alone because macOS uses Option for character input. The Enter that commits
+ *  an IME composition commits the composition, never the comment.
+ *
+ *  Pure, so the key table is assertable without a browser. */
+export function composerSubmits(event) {
+  return event?.key === "Enter" && !event.isComposing && !event.shiftKey && !event.altKey;
+}
+
+/** Shared "modern comment" composer key handling: Enter or Ctrl/Cmd+Enter
+ *  submits, Shift+Enter inserts a newline, Escape cancels. Kept identical across
+ *  the top-level comment box, every reply composer and the comment editor so the
+ *  interaction never differs by surface (Q5). Always stops propagation so a
+ *  keystroke in the composer never reaches the canvas editor or the card's
+ *  expand/collapse handler. */
 export function attachComposerKeys(textarea, { onSubmit, onCancel }) {
   textarea.addEventListener("keydown", (event) => {
     event.stopPropagation();
-    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (composerSubmits(event)) {
       event.preventDefault();
       onSubmit?.();
     } else if (event.key === "Escape") {

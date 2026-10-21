@@ -5,6 +5,7 @@ import { createRecovery } from "./collab_recovery.mjs";
 import { createShare, shareLink, sharedDocument } from "./share_flow.mjs";
 import { createShareChrome } from "./share_chrome.mjs";
 import { createRecoveryDownloader } from "./recovery_chrome.mjs";
+import { refusalAnnouncement } from "./session_access.mjs";
 
 /** Host-managed sharing, checkpoints, recovery and ephemeral presence scheduling. */
 export function createCollaborationShell({ root, getDocument, getTransport, setTransport,
@@ -31,13 +32,34 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
       onFrame: (bytes) => remotePresence.frame(bytes),
       onOutcome: (o) => {
         recovery.receive(o);
+        // A refusal is EXPLAINED, with what it did to the reader's work read off
+        // the outcome (RC-13). Before this, nothing showed a refused submission at
+        // all: a read-only participant's change stayed on their copy, unshared,
+        // under a status line that still said it was reaching everyone. A thrown
+        // refusal that stopped the session is left to `onState`, where the
+        // transport's stop arrives with the same code.
+        if (o.kind === "refused" || (o.kind === "error" && !engineStopped())) {
+          const said = refusalAnnouncement(o, t, { stopped: false });
+          if (said) status(said, "warn");
+        }
         if (["welcome", "resumed", "ack", "applied"].includes(o.kind)) publishCheckpoint();
         if (["awareness", "departed", "welcome", "resumed"].includes(o.kind)) { paintOverlay(); remotePresence.changed(); }
         const said = receiveAccess(o); if (said) status(said);
         if (o.documentChanged) arrival(o);
       },
-      onState: (state) => { remotePresence.state(state); status(t(state.key), state.name === "connected" ? "" : "warn"); },
+      onState: (state) => {
+        remotePresence.state(state);
+        // A stop that carries a collaboration code says why, and that the work
+        // stays here; the generic sentence is for a stop with nothing to explain.
+        const said = state.name === "stopped"
+          ? refusalAnnouncement({ kind: "stopped", code: state.code, terminal: true }, t)
+          : "";
+        status(said || t(state.key), state.name === "connected" ? "" : "warn");
+      },
     }));
+  }
+  function engineStopped() {
+    try { return Boolean(JSON.parse(getDocument().collabState).stopped); } catch { return false; }
   }
   const recovery = createRecovery({ document: getDocument, transport: getTransport,
     provider: () => globalThis.OPENDOC_COLLABORATION, room: () => hostConfig().room, status, t,

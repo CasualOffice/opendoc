@@ -142,7 +142,9 @@ test("a reply can be edited and individually deleted (REVIEW-GAP-011)", async ({
 
   // Edit the reply's text in place.
   await replyItem.getByRole("button", { name: "Edit" }).click();
-  const replyEdit = card.locator(".review-margin-reply-edit");
+  // The reply editor is the comment editor shared with the root (RC-11) once
+  // `main.js` adopts `review_comment_card.mjs`; the old single-line input until then.
+  const replyEdit = card.locator('[data-testid="review-comment-edit"], .review-margin-reply-edit');
   await replyEdit.fill("Edited reply text");
   await card.getByRole("button", { name: "Save" }).click();
   await expect(card.locator(".review-margin-reply")).toContainText("Edited reply text");

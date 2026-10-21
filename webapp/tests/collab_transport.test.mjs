@@ -123,12 +123,16 @@ function engine({ pending = [], revision = 0, outcome = { kind: "ack", revision:
     outcome,
     throwOnReceive: null,
     throwOnJoin: null,
+    throwCode: null,
+    stopsWith: null,
+    stopped: null,
     get collabState() {
       return JSON.stringify({
         joined: facade.joins.length > 0,
         revision: facade.revision,
         unacknowledged: facade.pending.length > 0,
         desynced: false,
+        ...(facade.stopped ? { stopped: facade.stopped } : {}),
         capabilities: [],
       });
     },
@@ -138,7 +142,12 @@ function engine({ pending = [], revision = 0, outcome = { kind: "ack", revision:
       return new Uint8Array([0x4a, at & 0xff]);
     },
     collabReceiveFrame(bytes) {
-      if (facade.throwOnReceive) throw new Error(facade.throwOnReceive);
+      if (facade.throwOnReceive) {
+        // As `to_js` throws a refusal: the sentence, plus its code as a property.
+        // `stopsWith` is the engine recording a terminal stop before refusing.
+        if (facade.stopsWith) facade.stopped = facade.stopsWith;
+        throw Object.assign(new Error(facade.throwOnReceive), facade.throwCode ? { code: facade.throwCode } : {});
+      }
       facade.received.push(bytes);
       return JSON.stringify(facade.outcome);
     },
@@ -467,6 +476,30 @@ test("an unreadable frame is reported to the host and the session survives", () 
   assert.equal(outcomes.at(-1).kind, "error");
   assert.match(outcomes.at(-1).message, /could not be read/);
   assert.equal(pipe.state().name, "connected");
+});
+
+/** **A terminal refusal the engine THREW stops the transport, with its code.**
+ *
+ *  `NotAuthorised` or `NotSaving` arriving as a `Refused` is recorded by the
+ *  engine as a stop and then thrown. The transport used to report the throw and
+ *  stay "connected" over a session that would never send again — telling the
+ *  reader their changes were reaching everyone (RC-13's class). And it dropped
+ *  the thrown code, so nothing could explain the refusal at all. */
+test("a thrown terminal refusal stops the transport and keeps its code", () => {
+  const session = engine({});
+  session.throwOnReceive = "refused: The shared session has stopped.";
+  session.throwCode = "ODC-7003";
+  session.stopsWith = "ODC-7003";
+  const { pipe, wire, time, outcomes } = transport({ session });
+  pipe.start();
+  wire.last().accept();
+  wire.last().deliver(new Uint8Array([0, 1, 2]).buffer);
+
+  assert.equal(outcomes.at(-1).kind, "error");
+  assert.equal(outcomes.at(-1).code, "ODC-7003", "the engine's code reaches the host");
+  assert.equal(pipe.state().name, "stopped", "a stopped session is not a connected one");
+  assert.equal(pipe.state().code, "ODC-7003");
+  assert.equal(time.pending(), 0, "and a refusal of authority is not retried");
 });
 
 /** **A deliberate leave writes a `Leave`; a dropped socket does not.**

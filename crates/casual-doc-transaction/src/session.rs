@@ -556,8 +556,11 @@ impl ClientSession {
                 self.awaiting = Some(current);
             }
             (_, Refusal::TooFarBehind { .. }) => {
-                // The work this client had not had acknowledged is gone, and saying so is
-                // the whole point of the refusal. The caller takes a fresh snapshot.
+                // This session can no longer order the work it had not had acknowledged,
+                // so it is latched desynced. The work itself is not discarded here: the
+                // caller keeps the document and log, takes a fresh snapshot and replays
+                // what it safely can onto it (`docs/169`, `casual-doc-wasm`'s
+                // `collabRecover`).
                 self.desynced = true;
             }
             _ => {}
@@ -1176,9 +1179,10 @@ pub struct ServerSession {
 /// How many ordered entries a relay retains before a disconnected client can no longer be
 /// caught up by replay.
 ///
-/// **This number is the definition of "bounded offline".** A client away for longer loses
-/// the work it had not had acknowledged, and the whole point of
-/// [`Refusal::TooFarBehind`] is that the loss is announced rather than silent.
+/// **This number is the definition of "bounded offline".** A client away for longer cannot
+/// be caught up by replay, and [`Refusal::TooFarBehind`] says so rather than letting it drift:
+/// its unacknowledged work is kept by the client and replayed onto a fresh snapshot where that
+/// is safe, or retained as a backup where it is not (`docs/169`).
 pub const DEFAULT_RETAINED_REVISIONS: usize = 400;
 
 impl Default for ServerSession {

@@ -182,6 +182,135 @@ export const COLLABORATION_REFUSAL_KEYS = Object.freeze({
   "ODC-7011": "session.noAccessChange",
 });
 
+// ---- WHAT A REFUSAL DID, SAID FROM WHAT IT DID ------------------------------
+//
+// RC-13 (`109`). The `ODC-7006` sentence used to read "unsent changes were lost —
+// reload to continue". The engine does the opposite: `TooFarBehind` comes back
+// `recoveryRequired`, the optimistic document and the log stay exactly as they
+// were (`docs/169` §"Refusal recovery and preserved work"), and the host is asked
+// for a snapshot to replay them onto. A reader who believed the sentence and
+// reloaded would have thrown away the work it said was already gone. Three more
+// sentences in the same table carried an outcome too — "try it again" for a
+// conflict that in fact pauses the session for recovery, "copy your work out
+// before closing … right now" for a stop that is final, "it was ignored" for a
+// refusal of THIS editor's message — and every one of them was written from the
+// register's prose rather than from the code path.
+//
+// THE PATTERN, NAMED: separate the CAUSE from the CONSEQUENCE, and derive the
+// consequence from the result rather than from the code. The same code arrives by
+// more than one route (`ODC-7007` is a refused submission, a stop, or a frame this
+// build could not decode) and each route does something different to the reader's
+// work, so a sentence keyed by the code alone cannot be true on all of them. So:
+//
+//   * `collab.<code>` says only WHY, and makes no claim about the reader's work;
+//   * [`refusalConsequence`] reads WHAT HAPPENED off the outcome the engine
+//     returned (its `kind`, `terminal`, `retryable`) and the session state after
+//     it, and picks one of the [`COLLAB_CONSEQUENCE_KEYS`];
+//   * [`CONSEQUENCE_CLAIMS`] writes down what each consequence sentence asserts.
+//
+// `webapp/tests/collab_refusal_outcomes.json` records what every code really does
+// on every route, and the Rust test `every_collaboration_refusal_does_what_the_
+// fixture_says` drives each row through the real facade, so the fixture is the
+// engine's behaviour. `collab_refusal_messages.test.mjs` then holds every
+// consequence's claims to that fixture, and every cause sentence to making none.
+
+/** Refusals about the SESSION's rights rather than the document. Their sentence is
+ *  the cause alone: a refused access change touched nobody's document, so a clause
+ *  about the reader's edits would be a claim about something that did not happen. */
+const ABOUT_ACCESS_ONLY = new Set(["ODC-7011"]);
+
+/** What became of the reader's work → the clause that says so. */
+export const COLLAB_CONSEQUENCE_KEYS = Object.freeze({
+  recovering: "collab.outcome.recovering",
+  recoveryUnavailable: "collab.outcome.recoveryUnavailable",
+  stopped: "collab.outcome.stopped",
+  notShared: "collab.outcome.notShared",
+  notApplied: "collab.outcome.notApplied",
+});
+
+/** What each consequence clause asserts, in the fixture's own vocabulary:
+ *  `kept` — the reader's edit is still in this copy; `pending` — the room has not
+ *  ordered it, so nobody else has it; `stopped` — the session has ended.
+ *
+ *  A clause may assert only what is listed here, and a consequence may be chosen
+ *  only for an outcome whose real facts include all of these.
+ *  `collab_refusal_messages.test.mjs` holds both halves. */
+export const CONSEQUENCE_CLAIMS = Object.freeze({
+  // "Your changes are kept on this device while the latest shared copy is loaded."
+  recovering: Object.freeze({ kept: true, pending: true }),
+  // "Your changes are kept on this device, but … save a copy of your work."
+  recoveryUnavailable: Object.freeze({ kept: true, pending: true }),
+  // "This copy is no longer shared. Your changes stay on this device …"
+  stopped: Object.freeze({ kept: true, stopped: true }),
+  // "That change stays on this device and was not shared …"
+  notShared: Object.freeze({ kept: true, pending: true, stopped: false }),
+  // "It was not applied, so this copy may no longer match …" — and the session
+  // carries on, which is what distinguishes it from `stopped`.
+  notApplied: Object.freeze({ stopped: false }),
+});
+
+/**
+ * What a collaboration refusal did to the reader's work, read off the outcome
+ * rather than assumed from the code.
+ *
+ * Returns a key of [`COLLAB_CONSEQUENCE_KEYS`]; `"silent"` for a retryable refusal
+ * the engine resubmits by itself (a `StaleBase` under contention is routine, and
+ * announcing every rebase would teach the reader to ignore the status line);
+ * `"cause"` for a refusal about access, whose sentence is its cause alone; and
+ * `null` for anything that is not a routed collaboration refusal.
+ *
+ * `context.stopped` is whether the engine's session reports itself stopped after
+ * the outcome (`collabState.stopped`), which is the only way to tell a terminal
+ * refusal the engine THREW — `NotAuthorised` arriving as a `Refused` — from a
+ * frame it merely could not read. `context.canRecover` is whether the host can
+ * supply a snapshot (`snapshotFor`), without which recovery cannot run by itself.
+ *
+ * Complexity: O(1).
+ *
+ * @param {{kind?: string, code?: string|null, terminal?: boolean, retryable?: boolean}|null} outcome
+ * @param {{stopped?: boolean, canRecover?: boolean}} [context]
+ * @returns {string|null}
+ */
+export function refusalConsequence(outcome, context = {}) {
+  const code = outcome?.code;
+  if (typeof code !== "string" || !Object.hasOwn(COLLABORATION_REFUSAL_KEYS, code)) return null;
+  if (ABOUT_ACCESS_ONLY.has(code)) return "cause";
+  const kind = outcome.kind;
+  if (kind === "recoveryRequired") {
+    return context.canRecover === false ? "recoveryUnavailable" : "recovering";
+  }
+  if (kind === "error") return context.stopped === true ? "stopped" : "notApplied";
+  if (kind === "stopped" || outcome.terminal === true) return "stopped";
+  if (kind === "refused") return outcome.retryable === true ? "silent" : "notShared";
+  return null;
+}
+
+/**
+ * The sentence a reader is shown for a collaboration refusal, or `""` when there
+ * is nothing to say (no routed code, or a refusal the engine is already retrying).
+ *
+ * Cause, then consequence, through one catalogue template (`collab.refusal`), so a
+ * language that punctuates two clauses differently says so in its own catalogue
+ * rather than inheriting an English full stop.
+ *
+ * Complexity: O(1).
+ *
+ * @param {object|null} outcome the engine's outcome, as `collabReceiveFrame` returned it
+ * @param {(key: string, values?: object) => string} translate
+ * @param {{stopped?: boolean, canRecover?: boolean}} [context] see [`refusalConsequence`]
+ * @returns {string}
+ */
+export function refusalAnnouncement(outcome, translate, context = {}) {
+  const consequence = refusalConsequence(outcome, context);
+  if (consequence === null || consequence === "silent") return "";
+  const cause = translate(COLLABORATION_REFUSAL_KEYS[outcome.code]);
+  if (consequence === "cause") return cause;
+  return translate("collab.refusal", {
+    cause,
+    consequence: translate(COLLAB_CONSEQUENCE_KEYS[consequence]),
+  });
+}
+
 /** The code a grant this side could not read reports.
  *
  *  Not an engine code: nothing in the engine produces it, because the engine is
