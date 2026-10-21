@@ -190,6 +190,7 @@ Reflow
 Roadmap
 Roboto
 RunProperties
+RustSec
 Rustdoc
 SAB
 SBOM
@@ -452,6 +453,7 @@ libreoffice
 lifecycle
 liveness
 lockfile
+lockfiles
 lookups
 loopback
 lossy
