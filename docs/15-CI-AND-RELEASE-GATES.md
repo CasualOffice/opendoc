@@ -80,6 +80,13 @@ action and Cargo updates reviewable.
 
 Rust dependencies use the committed `Cargo.lock`, even for this library
 workspace, so CI and security review operate on a reproducible graph.
+The workspace and fuzz lockfiles both pin patched `zip` 9.0.5 after the
+October 2026 extraction advisories. The runtime reads package entries through
+its bounded package reader and does not invoke `zip` extraction APIs; both
+lockfiles still pass separate RustSec checks without advisory exclusions.
+The four browser smoke shards have a 45-minute job limit. Shard 1 of PR #838
+passed 377 of its 387 tests before the former 30-minute limit cancelled it;
+the longer limit lets the remaining tests finish while keeping a hard bound.
 Repository policy also verifies every committed fixture against the SHA-256
 record in `fixtures/manifest.json`.
 

@@ -296,7 +296,10 @@ fn observe(bytes: &[u8]) -> Option<Import> {
 /// and a relationship id or a part name is not a value an author chose.
 fn document_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut parts = BTreeMap::new();
     for name in names {
         if !name.ends_with(".xml") || name == "[Content_Types].xml" {
@@ -319,7 +322,10 @@ fn document_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
 fn repackage(bytes: &[u8], replacements: &BTreeMap<String, Vec<u8>>) -> Vec<u8> {
     use std::io::Write;
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);

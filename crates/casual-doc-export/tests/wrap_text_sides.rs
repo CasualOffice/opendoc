@@ -158,7 +158,10 @@ fn write_back(imported: &Imported) -> Vec<u8> {
 /// asserting things about an empty body.
 fn binary_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut parts = BTreeMap::new();
     for name in names {
         if !name.starts_with("word/media/") {
@@ -190,7 +193,10 @@ fn binary_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
 fn side_wraps(bytes: &[u8]) -> Vec<(String, Option<String>)> {
     let mut found = Vec::new();
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let mut names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     names.sort();
     for name in names {
         if !name.ends_with(".xml") {
@@ -534,7 +540,10 @@ fn a_wrap_with_no_side_channels_acquires_no_wrap_text() {
     let mut offenders = Vec::new();
     let mut archive =
         zip::ZipArchive::new(Cursor::new(written.clone())).expect("the written package is a zip");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     for name in names {
         if !name.ends_with(".xml") {
             continue;

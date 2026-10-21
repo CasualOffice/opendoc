@@ -1299,7 +1299,7 @@ mod tests {
                     let mut text = Vec::new();
                     file.read_to_end(&mut text).unwrap();
                     (
-                        file.name().to_owned(),
+                        file.name().unwrap().into_owned(),
                         String::from_utf8_lossy(&text).into_owned(),
                     )
                 })

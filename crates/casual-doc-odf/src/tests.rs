@@ -68,7 +68,8 @@ fn package(entries: &[Entry]) -> Vec<u8> {
     for entry in entries {
         let mut options = FullFileOptions::default().compression_method(entry.compression);
         if entry.local_extra {
-            options.add_extra_data(0xcafe, b"odf", false).unwrap();
+            // A private test field: zip 9 reserves 0xcafe for Java JAR data.
+            options.add_extra_field(0xcaff, b"odf", false).unwrap();
         }
         writer.start_file(entry.name, options).unwrap();
         writer.write_all(&entry.bytes).unwrap();

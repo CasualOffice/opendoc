@@ -204,7 +204,7 @@ fn cancellation_and_corrupt_part_reads_return_no_partial_bytes() {
     let mut corrupt = bytes;
     let data_start = {
         let mut archive = ZipArchive::new(Cursor::new(corrupt.as_slice())).unwrap();
-        usize::try_from(archive.by_index_raw(0).unwrap().data_start()).unwrap()
+        usize::try_from(archive.by_index_raw(0).unwrap().data_start().unwrap()).unwrap()
     };
     corrupt[data_start] ^= 0xff;
     let mut admitted = BoundedPackage::open(&corrupt, PackageLimits::default()).unwrap();
