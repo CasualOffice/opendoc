@@ -191,8 +191,14 @@ export function reviewCommentIsReplyTo(comment, parent) {
  *
  *  `activeItemId` and `deleteConfirmId` are passed in rather than read from
  *  module state: they are the two pieces of UI state that change a card's
- *  height without changing its content. */
-export function reviewCardSignature(item, comments, { activeItemId, deleteConfirmId } = {}) {
+ *  height without changing its content. `editingId` is the third: the comment
+ *  whose text is open in the in-place editor (`review_comment_card.mjs`).
+ *
+ *  `item.quote` is the card's quote of its anchored text (RC-12). It is part of
+ *  the signature because deleting the commented text changes neither the
+ *  comment nor its anchor's node, and a cached card would otherwise go on
+ *  quoting the text as if it were still there. */
+export function reviewCardSignature(item, comments, { activeItemId, deleteConfirmId, editingId } = {}) {
   if (item.type === "composer") return "composer";
   const d = item.data;
   const itemId = `${item.type}:${d.id}`;
@@ -211,5 +217,8 @@ export function reviewCardSignature(item, comments, { activeItemId, deleteConfir
     Array.isArray(d.formattingDelta) ? d.formattingDelta : 0,
     d.anchor ? `${d.anchor.node}:${d.anchor.start}:${d.anchor.end}` : "",
     replies,
+    item.quote ? `${item.quote.deleted ? "-" : "+"}${item.quote.text}` : "",
+    editingId != null && editingId !== "" && (editingId === d.id || comments.some(
+      (c) => c.id === editingId && reviewCommentIsReplyTo(c, d))) ? `edit:${editingId}` : "",
   ]);
 }

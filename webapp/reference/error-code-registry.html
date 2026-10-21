@@ -313,7 +313,7 @@
         <td><code>ODC-7001</code></td>
         <td><code>collaboration_conflict</code></td>
         <td>error</td>
-        <td>A remote operation cannot be safely applied or rebased. <em>That one action did not take; redo it.</em></td>
+        <td>A remote operation cannot be safely applied or rebased. The replica's own pending work is kept and the session asks the host for a snapshot to replay it onto (<code>recoveryRequired</code>, <code>docs/169</code>).</td>
         </tr>
         <tr>
         <td><code>ODC-7002</code></td>
@@ -343,7 +343,7 @@
         <td><code>ODC-7006</code></td>
         <td><code>collaboration_too_far_behind</code></td>
         <td>error</td>
-        <td>The participant is behind the retained history and cannot be caught up by replay. Work it had not had acknowledged is lost, and saying so is the point of the code.</td>
+        <td>The participant is behind the retained history and cannot be caught up by replay. Its unacknowledged work is <strong>kept</strong>: the outcome is <code>recoveryRequired</code>, the optimistic document and log stay intact, and the host's snapshot is replayed under them (<code>docs/169</code>). The reader is told their work is kept, never that it was lost (RC-13).</td>
         </tr>
         <tr>
         <td><code>ODC-7007</code></td>

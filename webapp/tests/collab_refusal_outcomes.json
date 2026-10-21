@@ -1,0 +1,20 @@
+{
+  "@@about": "What every ODC-7xxx collaboration refusal really does to a replica holding one unacknowledged local edit. The Rust test every_collaboration_refusal_does_what_the_fixture_says (crates/casual-doc-wasm/src/collab_tests.rs) drives each row through the real WasmDocument facade and fails if any field differs; collab_refusal_messages.test.mjs fails if the sentence the chrome shows for a row claims anything these facts do not support. Edit a row only together with the engine change that makes it true.",
+  "scenarios": [
+    { "code": "ODC-7001", "arrives": "refused", "outcome": { "kind": "recoveryRequired", "terminal": false, "retryable": true }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7002", "arrives": "stopped", "outcome": { "kind": "stopped", "terminal": true, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7002", "arrives": "refused", "outcome": { "kind": "error" }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7003", "arrives": "stopped", "outcome": { "kind": "stopped", "terminal": true, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7003", "arrives": "refused", "outcome": { "kind": "error" }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7004", "arrives": "refused", "outcome": { "kind": "refused", "terminal": false, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": false } },
+    { "code": "ODC-7005", "arrives": "refused", "outcome": { "kind": "error" }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7006", "arrives": "refused", "outcome": { "kind": "recoveryRequired", "terminal": false, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7007", "arrives": "refused", "outcome": { "kind": "refused", "terminal": false, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": false } },
+    { "code": "ODC-7007", "arrives": "stopped", "outcome": { "kind": "stopped", "terminal": true, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7007", "arrives": "unreadable", "outcome": { "kind": "error" }, "after": { "kept": true, "pending": true, "stopped": false } },
+    { "code": "ODC-7008", "arrives": "refused", "outcome": { "kind": "refused", "terminal": false, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": false } },
+    { "code": "ODC-7009", "arrives": "refused", "outcome": { "kind": "refused", "terminal": false, "retryable": true }, "after": { "kept": true, "pending": true, "stopped": false } },
+    { "code": "ODC-7010", "arrives": "stopped", "outcome": { "kind": "stopped", "terminal": true, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": true } },
+    { "code": "ODC-7011", "arrives": "refused", "outcome": { "kind": "refused", "terminal": false, "retryable": false }, "after": { "kept": true, "pending": true, "stopped": false } }
+  ]
+}
