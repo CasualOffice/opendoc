@@ -275,6 +275,7 @@ import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs
 import { BRAND } from "./brand.mjs";
 import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
+import { installViewportFocusGuard } from "./viewport_focus.mjs";
 
 
 /** url → fetched or pending font bytes (persists across documents). */
@@ -6394,12 +6395,11 @@ function pageFromClientPoint(clientX, clientY) {
   return best;
 }
 pagesEl.addEventListener("pointerdown", (e) => {
-  // Ambiguous page-gap clicks must not jump into the nearest table or other
-  // fragment. Only a hit inside a concrete page may place the caret; drag
-  // continuation still uses nearest-page resolution once a gesture exists.
+  // Only a hit inside a page places the caret: a gap click must not jump into the nearest fragment.
   const page = pageFromEvent(e);
   if (page) onPointerDown(page, e);
 });
+installViewportFocusGuard({ viewport: viewportEl, pages: pagesEl, lastSheet: () => pages[pages.length - 1]?.wrap, focus: focusEditorSurface, caretToEnd: (extend) => doc && navToPosition(doc.lastPosition(), extend) });
 // Focus is the moment the load-time insertion point stops being implicit: the
 // surface can now receive typing (`#pages` is tabindex="0"), so the blinking
 // caret is finally honest. This covers keyboard entry (Tab) as much as clicks,
