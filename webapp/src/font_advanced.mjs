@@ -1,5 +1,5 @@
 // RM-18: character authoring owns its UI; the engine owns properties and history.
-import { t } from './i18n.mjs';
+import { has, t } from './i18n.mjs';
 import { borderArguments } from './paragraph_advanced.mjs';
 export const LIGATURE_MODES = Object.freeze(['none','standard','contextual','standardContextual','historical','standardHistorical','contextualHistorical','standardContextualHistorical','discretional','standardDiscretional','contextualDiscretional','standardContextualDiscretional','historicalDiscretional','standardHistoricalDiscretional','contextualHistoricalDiscretional','all']);
 const UNITS = Object.freeze({characterSpacingTwips:20, characterScalePercent:1, positionHalfPoints:2, kerningHalfPoints:2});
@@ -105,8 +105,13 @@ export function createFontAdvanced(io) {
   }
   function reflect() {
     const button = el('fontAdvancedBtn');
+    // Keep the markup's English name when a catalogue cannot load. The title
+    // changes while disabled, so reading its current value later is not safe.
+    if (button.dataset.enabledTitle === undefined) button.dataset.enabledTitle = button.title;
     button.disabled = !io.getSelection() || !canEdit();
-    button.title = button.disabled ? t(canEdit() ? 'paragraph.caretRequired':'viewingBanner.viewingDocumentReadOnly') : t('fontAdvanced.command');
+    if (!button.disabled) button.title = has('fontAdvanced.command') ? t('fontAdvanced.command') : button.dataset.enabledTitle;
+    else if (canEdit()) button.title = t('paragraph.caretRequired');
+    else button.title = has('viewingBanner.viewingDocumentReadOnly') ? t('viewingBanner.viewingDocumentReadOnly') : 'Viewing — the document is read-only.';
   }
   io.onButton(el('fontAdvancedBtn'),() => open());
   reflect();

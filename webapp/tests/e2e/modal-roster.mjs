@@ -90,7 +90,9 @@ export const MODALS = [
   {
     id: "fontAdvancedDialog",
     name: "Font settings",
-    opener: "#fontAdvancedBtn",
+    // The toolbar preserves the editor selection by preventing pointer focus.
+    // The modal restores the actual prior focus, which is the editor surface.
+    restore: EDITOR_SURFACE,
     focus: "#fontTab",
     async open(page) {
       await gotoEditor(page); await clickIntoFirstPage(page);
