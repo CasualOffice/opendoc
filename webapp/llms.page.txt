@@ -4,26 +4,57 @@
      list under "Site pages" is generated from each page's own <title> and meta
      description by webapp/tools/build-seo.mjs, so a page is described once and a
      new page cannot be forgotten. Edit this file, then run
-     ./tools/build-seo.mjs (build.sh does it, and --check fails on drift). -->
+     ./tools/build-seo.mjs (build.sh does it, and --check fails on drift).
 
-> OpenDoc is an open-source Rust document runtime for deterministic, loss-aware
-> DOCX import, editing, layout, rendering, and export across native,
-> WebAssembly, and headless hosts.
+     Every capability sentence below was checked against the code when written
+     (2026-10-22); a partial feature is described as partial. Re-check before
+     strengthening one: README.md, docs/169 (collaboration), docs/162
+     (deployment) and crates/casual-doc-io/src/docx.rs (the format registry) are
+     the sources. -->
 
-OpenDoc is developed by CasualOffice and licensed under Apache-2.0. The engine,
-not the browser DOM, owns document state and layout. Host applications own
-storage, network, authentication, fonts, telemetry, and product UI policy. No
-server, React dependency, or collaboration provider is required.
+> OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs for documents and
+> document collaboration: an embeddable, local-first editor for Word documents,
+> and the deterministic Rust engine underneath it, running natively, headless,
+> or in the browser as WebAssembly.
 
-OpenDoc is pre-release. It handles real DOCX documents and powers a live
-client-side browser editor, but it is not yet a stable public SDK or a
-pixel-perfect replacement for Microsoft Word. Consult the support matrix and
-execution tracker before relying on a specific fidelity claim.
+OpenDoc is developed by CasualOffice and licensed under Apache-2.0, with no
+commercial edition and no licence-gated customisation. The engine, not the
+browser DOM, owns document state and layout. Nothing has to run behind the
+editor: it opens, edits and saves a document entirely in the browser tab. Host
+applications own storage, network, authentication, fonts and product UI policy.
+No server, React dependency or collaboration provider is required.
 
-The current priority is DOCX fidelity. Future goals include a stable SDK
-release, ODT/plain-text and other document-format support, and native PDF export
-from the runtime's deterministic layout/display-list pipeline. These are roadmap
-directions, not currently supported features.
+OpenDoc is pre-release. There is no stable public SDK, no tagged release, and
+no published npm package or crate yet. It is not a pixel-perfect replacement for
+Microsoft Word; per-construct fidelity is graded on the fidelity page below,
+and those grades are hand-checked rather than CI-enforced.
+
+## What it does today
+
+- Formats in the browser editor. Open and save: DOCX, ODT, plain text, and a
+  normalized JSON snapshot. Open only: RTF (import; there is no RTF writer).
+  Export only: PDF with real, selectable text (no tagged PDF, PDF/A or
+  clickable links yet), HTML, Markdown, and DOTX. Macro-enabled .docm files are
+  refused at open.
+- Loss reporting: an import says what it mapped, what it kept verbatim and what
+  it lost, and an unedited DOCX can be written back byte-identical.
+- Review: comments with replies and resolve; tracked changes with Editing,
+  Suggesting and Viewing modes and accept/reject; version history kept locally
+  in the browser; Compare shown as an on-page redline.
+- Real-time collaboration, experimental: operational-transformation co-editing
+  through an optional relay (`opendoc-relay`) that orders and forwards changes
+  and never holds the document. Rooms carry a role (viewer, commenter,
+  suggester, editor, owner). Remote carets and selections are shown, labelled by
+  participant number. Share needs a host-supplied storage provider; the public
+  demo has none, so it cannot co-edit or share. The relay has no built-in TLS,
+  authentication or rate limiting, and its container image is built locally,
+  not published.
+- Embedding: a framework-free `<opendoc-editor>` custom element and an iframe
+  mount, a capability contract the host decides, an in-page and a cross-origin
+  postMessage command surface, and white-labelling from one configuration file.
+  The package is buildable from the repository; it is not on npm.
+- Phone layout and touch selection in mobile browsers, tested in emulation; not
+  yet verified on real devices.
 
 ## Site pages
 
@@ -34,11 +65,9 @@ directions, not currently supported features.
 - Live sample: https://opendoc.casualoffice.org/editor.html?demo=1
 - Browser editor: https://opendoc.casualoffice.org/editor.html
 - Source repository: https://github.com/CasualOffice/opendoc
-- Architecture: https://opendoc.casualoffice.org/reference/architecture.html
-- SDK API direction: https://opendoc.casualoffice.org/reference/sdk-api-spec.html
-- Support matrix: https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md
-- Roadmap: https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md
-- Execution tracker: https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md
+- Full text of the published reference documents: https://opendoc.casualoffice.org/llms-full.txt
+- Backlog (the single work queue): https://github.com/CasualOffice/opendoc/blob/main/docs/109-BACKLOG.md
+- Security contact: https://opendoc.casualoffice.org/.well-known/security.txt
 - License: https://github.com/CasualOffice/opendoc/blob/main/LICENSE
 
 The browser editor is a WebAssembly application, not a document: it is reachable
@@ -49,10 +78,12 @@ renders to a crawler is application chrome rather than readable prose.
 
 - OOXML package admission with explicit path, size, expansion, and resource bounds.
 - Normalized editable document model with styles, sections, tables, drawings,
-  links, fields, notes, headers/footers, comments, revisions, bookmarks, and
-  content controls.
-- Semantic DOCX writer plus byte-identical reconstruction for unedited packages.
+  charts, links, fields, notes, headers/footers, comments, revisions,
+  bookmarks, and content controls.
+- Semantic DOCX writer plus byte-identical reconstruction for unedited packages;
+  ODT import and export; RTF import.
 - Rust text shaping, pagination, display-list composition, CPU raster rendering,
-  hit testing, model-anchored selection, command-based editing, and undo/redo.
+  real-text PDF export from the same display list, hit testing, model-anchored
+  selection, command-based editing, and undo/redo.
 - Rust-native, wasm32, and headless execution targets with host-populated font
   and resource seams.

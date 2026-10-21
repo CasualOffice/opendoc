@@ -20,13 +20,81 @@
     <title data-i18n="ui.opendocEditorLocalDocument">OpenDoc Editor — local document editing in WebAssembly</title>
     <meta
       name="description"
-      content="Open and edit DOCX, ODT, normalized JSON, and plain-text files locally in your browser with the OpenDoc Rust and WebAssembly document engine."
+      content="Open and edit DOCX, ODT, RTF, JSON and plain-text files in your browser. The OpenDoc Rust engine runs locally in WebAssembly, so no server is needed."
     />
     <!-- @generated brand-icons -->
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <!-- @end brand-icons -->
     <link rel="canonical" href="https://opendoc.casualoffice.org/editor.html" />
+    <!-- Link previews and the address-bar colour. This is the URL people share
+         most, and it had none of it: a pasted editor link previewed as a bare
+         title. The same card, size and alt contract as the site pages
+         (webapp/tests/seo.test.mjs reads this head too). theme-color follows the
+         editor chrome token --bg in each scheme (src/style.css). The page stays
+         OUT of sitemap.xml (build-seo.mjs EXCLUDED, argued there) and stays
+         indexable: excluding it from the sitemap is not noindex. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef1f7" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#141619" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="OpenDoc Editor — open and edit Word documents in your browser" />
+    <meta property="og:description" content="Open and edit DOCX, ODT, RTF, JSON and plain-text files in your browser. The OpenDoc Rust engine runs locally in WebAssembly, so no server is needed." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/editor.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/social/editor.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenDoc: Open and edit Word documents in your browser. The engine runs on your device in WebAssembly, so opening or editing a file needs no server." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="OpenDoc Editor — open and edit Word documents in your browser" />
+    <meta name="twitter:description" content="Open and edit DOCX, ODT, RTF, JSON and plain-text files in your browser. The OpenDoc Rust engine runs locally in WebAssembly, so no server is needed." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/social/editor.png" />
+    <meta name="twitter:image:alt" content="OpenDoc: Open and edit Word documents in your browser. The engine runs on your device in WebAssembly, so opening or editing a file needs no server." />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://opendoc.casualoffice.org/editor.html#webpage",
+            "url": "https://opendoc.casualoffice.org/editor.html",
+            "name": "OpenDoc Editor — local document editing in WebAssembly",
+            "description": "Open and edit DOCX, ODT, RTF, JSON and plain-text files in your browser. The OpenDoc Rust engine runs locally in WebAssembly, so no server is needed.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "mainEntity": {
+              "@id": "https://opendoc.casualoffice.org/#editor"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://opendoc.casualoffice.org/#editor",
+            "name": "OpenDoc Editor",
+            "url": "https://opendoc.casualoffice.org/editor.html",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Any modern browser",
+            "browserRequirements": "JavaScript and WebAssembly",
+            "description": "A client-side DOCX editor powered by the OpenDoc Rust and WebAssembly runtime.",
+            "image": "https://opendoc.casualoffice.org/social/editor.png",
+            "license": "https://www.apache.org/licenses/LICENSE-2.0",
+            "author": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          }
+        ]
+      }
+    </script>
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
     <link rel="stylesheet" href="./src/style.css" />

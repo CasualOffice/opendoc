@@ -165,7 +165,7 @@ fn part(bytes: &[u8], suffix: &str) -> Vec<u8> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
     let name = archive
         .file_names()
-        .map(str::to_owned)
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
         .find(|name| name.ends_with(suffix))
         .unwrap_or_else(|| panic!("the package has a part ending {suffix}"));
     let mut body = Vec::new();

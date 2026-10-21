@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title data-i18n="site.index.opendocBuildDocumentsEngine">OpenDoc — build documents on an engine you control</title>
+    <title data-i18n="site.index.opendocOnlyofficeDocsAlternative">OpenDoc — embeddable, open-source ONLYOFFICE Docs alternative</title>
     <meta
       name="description"
-      content="OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework."
+      content="OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs: an embeddable, local-first Word editor on a Rust and WebAssembly engine, with experimental co-editing."
     />
     <meta
       name="keywords"
@@ -17,34 +17,34 @@
     <meta name="theme-color" content="#fbfaf8" />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/" />
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenDoc" />
-    <meta property="og:title" content="OpenDoc — the document engine, not the dependency" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="OpenDoc — an open alternative to ONLYOFFICE Docs" />
     <meta
       property="og:description"
-      content="A deterministic Word-document runtime in Rust: import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — no required server, DOM, or UI framework."
+      content="Apache-2.0, embeddable and local-first: a Word editor and Rust document engine that opens, edits and saves .docx in the browser with no server, plus experimental real-time co-editing."
     />
     <meta property="og:url" content="https://opendoc.casualoffice.org/" />
-    <meta
-      property="og:image"
-      content="https://opendoc.casualoffice.org/assets/editor.jpg"
-    />
-    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/social/opendoc.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenDoc: An open alternative to ONLYOFFICE Docs. Word documents edited in the browser on a Rust engine, with experimental real-time co-editing." />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="OpenDoc — the document engine, not the dependency" />
+    <meta name="twitter:title" content="OpenDoc — an open alternative to ONLYOFFICE Docs" />
     <meta
       name="twitter:description"
-      content="An open-source, deterministic, loss-aware DOCX runtime for developers — Rust core, WebAssembly editor, no required server."
+      content="An Apache-2.0, embeddable, local-first Word editor on a Rust and WebAssembly engine — an open alternative to ONLYOFFICE Docs."
     />
-    <meta
-      name="twitter:image"
-      content="https://opendoc.casualoffice.org/assets/editor.jpg"
-    />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/social/opendoc.png" />
+    <meta name="twitter:image:alt" content="OpenDoc: An open alternative to ONLYOFFICE Docs. Word documents edited in the browser on a Rust engine, with experimental real-time co-editing." />
 
     <link rel="stylesheet" href="./src/marketing.css" />
     <script type="application/ld+json">
@@ -81,8 +81,8 @@
             "@type": "WebPage",
             "@id": "https://opendoc.casualoffice.org/#webpage",
             "url": "https://opendoc.casualoffice.org/",
-            "name": "OpenDoc — build documents on an engine you control",
-            "description": "OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework.",
+            "name": "OpenDoc — embeddable, open-source ONLYOFFICE Docs alternative",
+            "description": "OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs: an embeddable, local-first Word editor on a Rust and WebAssembly engine, with experimental co-editing.",
             "inLanguage": "en",
             "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
             "about": { "@id": "https://opendoc.casualoffice.org/#software" },
@@ -93,10 +93,13 @@
             "@id": "https://opendoc.casualoffice.org/#editor",
             "name": "OpenDoc Editor",
             "url": "https://opendoc.casualoffice.org/editor.html",
-            "applicationCategory": "DeveloperApplication",
+            "applicationCategory": "BusinessApplication",
             "operatingSystem": "Any modern browser",
             "browserRequirements": "JavaScript and WebAssembly",
             "description": "A client-side DOCX editor powered by the OpenDoc Rust and WebAssembly runtime.",
+            "image": "https://opendoc.casualoffice.org/social/editor.png",
+            "license": "https://www.apache.org/licenses/LICENSE-2.0",
+            "author": { "@id": "https://opendoc.casualoffice.org/#organization" },
             "isAccessibleForFree": true,
             "offers": {
               "@type": "Offer",
@@ -114,14 +117,18 @@
     <main class="home">
       <!-- Hero -->
       <section class="home-hero">
+        <div class="home-hero-glow" aria-hidden="true"></div>
         <div class="wrap">
-          <div class="home-hero-copy">
-            <p class="home-eyebrow"><span class="home-dot" aria-hidden="true"></span> Open-source DOCX infrastructure</p>
+          <div class="home-hero-copy" data-reveal>
+            <p class="home-eyebrow">
+              <span class="home-dot" aria-hidden="true"></span>
+              <span data-i18n="site.index.heroEyebrow">Apache-2.0&nbsp;· Embeddable&nbsp;· Local-first</span>
+            </p>
             <h1 data-i18n="site.index.buildDocumentsEngine">Build documents on an engine <em class="home-serif" data-i18n="site.index.youControl">you control.</em></h1>
-            <p class="home-lede" data-i18n="site.index.opendocDeterministicLossAware">
-              OpenDoc is a deterministic, loss-aware document engine written in Rust. Import,
-              edit, lay out, render, and write <code>.docx</code> across browser, desktop, and
-              headless environments — with one authoritative model.
+            <p class="home-lede" data-i18n="site.index.heroLede">
+              OpenDoc is an open-source Word-document editor and engine you put inside your own
+              product. It opens, edits, lays out and saves DOCX in the browser with no server,
+              and adds real-time collaboration when your host connects a relay.
             </p>
             <div class="home-cta-row">
               <a class="btn btn--accent" href="./editor.html?demo=1" data-i18n="site.index.tryLiveEditor">
@@ -130,9 +137,9 @@
               <a class="btn btn--outline" href="#developers" data-i18n="site.index.seeHowWorks">See how it works</a>
             </div>
             <ul class="home-checks" aria-label="Project facts" data-i18n-label="site.index.projectFacts">
-              <li><span class="home-check" aria-hidden="true">✓</span> Apache-2.0</li>
-              <li><span class="home-check" aria-hidden="true">✓</span> Rust → WebAssembly</li>
-              <li><span class="home-check" aria-hidden="true">✓</span> No required server</li>
+              <li><span class="home-check" aria-hidden="true">✓</span><span data-i18n="site.index.factLicence">Apache-2.0, no licence gate</span></li>
+              <li><span class="home-check" aria-hidden="true">✓</span><span data-i18n="site.index.factNoServer">No server needed to open or edit</span></li>
+              <li><span class="home-check" aria-hidden="true">✓</span><span data-i18n="site.index.factCollab">Real-time co-editing over OT</span></li>
             </ul>
           </div>
 
@@ -140,8 +147,15 @@
                page load would spend ~100 MB of a marketing tab's memory before anyone
                asked for it (tests/e2e/memory-budget.spec.mjs). The poster is drawn in
                the real editor's chrome so it reads as the product, and it says it is a
-               preview rather than claiming to be the live application. -->
-          <div class="home-embed" id="homeEmbed" aria-label="OpenDoc editor preview" data-i18n-label="site.index.opendocEditorPreview">
+               preview rather than claiming to be the live application.
+
+               It animates: a sentence is typed, a second participant's caret and
+               selection arrive (labelled the way the editor labels them — by
+               participant number, docs/169 §Presence), a comment is pinned and the
+               page paginates. Every animated part has its FINAL state as its base
+               style, and the motion only runs under `.js-motion` (src/site_motion.mjs),
+               so a reader with scripts off or reduced motion sees the finished page. -->
+          <div class="home-embed" id="homeEmbed" data-motion aria-label="OpenDoc editor preview" data-i18n-label="site.index.opendocEditorPreview">
             <div class="home-embed-chrome">
               <span class="home-embed-dots" aria-hidden="true"><span></span><span></span><span></span></span>
               <span class="home-embed-url"><span data-i18n="site.index.editorHtmlDemo1">editor.html?demo=1</span></span>
@@ -156,7 +170,8 @@
                     <div class="od-doc-title" data-i18n="site.index.quarterlyEngineeringReportDocx">Quarterly engineering report.docx</div>
                     <div class="od-menus"><span data-i18n="site.index.file">File</span><span data-i18n="site.index.edit">Edit</span><span data-i18n="site.index.view">View</span><span data-i18n="site.index.insert">Insert</span><span data-i18n="site.index.format">Format</span><span data-i18n="site.index.table">Table</span><span data-i18n="site.index.review">Review</span><span data-i18n="site.index.tools">Tools</span><span data-i18n="site.index.help">Help</span></div>
                   </div>
-                  <span class="od-state"><i>●</i> Saved locally</span>
+                  <span class="od-presence"><span class="od-avatar od-avatar--you" data-i18n="site.index.avatarYou">You</span><span class="od-avatar od-avatar--peer">P2</span></span>
+                  <span class="od-state"><i>●</i> <span data-i18n="site.index.savedLocally">Saved locally</span></span>
                 </div>
                 <div class="od-tabs">
                   <span class="is-active" data-i18n="site.index.home">Home</span><span data-i18n="site.index.insert">Insert</span><span data-i18n="site.index.layout">Layout</span><span data-i18n="site.index.references">References</span><span data-i18n="site.index.table">Table</span><span data-i18n="site.index.view">View</span><span data-i18n="site.index.review">Review</span>
@@ -165,23 +180,37 @@
                   <div class="od-group"><div class="od-stack"><b>↶</b><b>↷</b></div><span data-i18n="site.index.undo">Undo</span></div>
                   <div class="od-group"><div class="od-font"><div class="od-row"><span class="od-field od-family" data-i18n="site.index.instrumentSans">Instrument Sans</span><span class="od-field od-size">11</span></div><div class="od-row"><b>B</b><b><i>I</i></b><b><u>U</u></b><b><s>S</s></b></div></div><span data-i18n="site.index.font">Font</span></div>
                   <div class="od-group"><div class="od-font"><div class="od-row"><b>≡</b><b>≣</b><b>☰</b></div><div class="od-row"><b>⇤</b><b>⇥</b><b>¶</b></div></div><span data-i18n="site.index.paragraph">Paragraph</span></div>
-                  <div class="od-group od-hide-narrow"><div class="od-styles"><span class="od-style"><em data-i18n="site.index.aa">Aa</em>Normal</span><span class="od-style"><em data-i18n="site.index.aa">Aa</em>Heading 1</span><span class="od-style"><em data-i18n="site.index.aa">Aa</em>Title</span></div><span data-i18n="site.index.styles">Styles</span></div>
+                  <div class="od-group od-hide-narrow"><div class="od-styles"><span class="od-style"><em data-i18n="site.index.aa">Aa</em><span data-i18n="site.index.styleNormal">Normal</span></span><span class="od-style"><em data-i18n="site.index.aa">Aa</em><span data-i18n="site.index.styleHeading1">Heading 1</span></span><span class="od-style"><em data-i18n="site.index.aa">Aa</em><span data-i18n="site.index.styleTitle">Title</span></span></div><span data-i18n="site.index.styles">Styles</span></div>
                 </div>
                 <div class="od-work">
                   <div class="od-rail"><b class="is-active">▤</b><b>☷</b><b>✎</b></div>
                   <div class="od-stage">
-                    <div class="od-page">
-                      <div class="od-meta" data-i18n="site.index.engineWorkingGroup">Engine working group</div>
-                      <div class="od-h" data-i18n="site.index.quarterlyEngineeringReport">Quarterly engineering report</div>
-                      <p data-i18n="site.index.pageStaticPreviewRun">
-                        This page is a static preview. Run the live editor and the same
-                        paragraph becomes editable: the caret, selection, and glyph positions
-                        are drawn from the engine's own geometry, not the browser's.<span class="home-caret"></span>
-                      </p>
-                      <div class="od-table">
-                        <div class="od-tr od-th"><span data-i18n="site.index.constructFamily">Construct family</span><span data-i18n="site.index.rendered">Rendered</span><span data-i18n="site.index.editable">Editable</span></div>
-                        <div class="od-tr"><span data-i18n="site.index.paragraphsAmpText">Paragraphs &amp; text</span><span data-i18n="site.index.full">Full</span><span data-i18n="site.index.full">Full</span></div>
-                        <div class="od-tr"><span data-i18n="site.index.tables">Tables</span><span data-i18n="site.index.partial">Partial</span><span data-i18n="site.index.full">Full</span></div>
+                    <div class="od-scroll">
+                      <div class="od-page">
+                        <div class="od-meta" data-i18n="site.index.engineWorkingGroup">Engine working group</div>
+                        <div class="od-h" data-i18n="site.index.quarterlyEngineeringReport">Quarterly engineering report</div>
+                        <p data-i18n="site.index.pageStaticPreviewRun">
+                          This page is a static preview. Run the live editor and the same
+                          paragraph becomes editable: the caret, selection, and glyph positions
+                          are drawn from the engine's own geometry, not the browser's.
+                        </p>
+                        <p class="od-typed"><span class="od-type" data-i18n="site.index.typedLine">One layout pass draws every caret.</span><span class="home-caret"></span></p>
+                        <div class="od-table">
+                          <div class="od-tr od-th"><span data-i18n="site.index.constructFamily">Construct family</span><span data-i18n="site.index.rendered">Rendered</span><span data-i18n="site.index.editable">Editable</span></div>
+                          <div class="od-tr"><span data-i18n="site.index.paragraphsAmpText">Paragraphs &amp; text</span><span data-i18n="site.index.full">Full</span><span data-i18n="site.index.full">Full</span></div>
+                          <div class="od-tr"><span data-i18n="site.index.tables">Tables</span><span class="od-peer-sel"><span data-i18n="site.index.partial">Partial</span><span class="od-peer-caret"><span class="od-peer-flag" data-i18n="site.index.participant2">Participant 2</span></span></span><span data-i18n="site.index.full">Full</span></div>
+                        </div>
+                        <div class="od-comment">
+                          <span class="od-comment-pin"></span>
+                          <div class="od-comment-card">
+                            <b data-i18n="site.index.participant2">Participant 2</b>
+                            <span data-i18n="site.index.commentText">Link the fidelity grades here?</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="od-page od-page--next">
+                        <div class="od-h od-h--small" data-i18n="site.index.nextPageHeading">Layout and pagination</div>
+                        <div class="od-lines"><i></i><i></i><i></i></div>
                       </div>
                     </div>
                   </div>
@@ -189,7 +218,7 @@
               </div>
               <div class="home-embed-scrim" aria-hidden="true"></div>
               <button type="button" class="home-embed-run" aria-pressed="false">
-                <span class="tri" aria-hidden="true">▶</span> Run the live editor
+                <span class="tri" aria-hidden="true">▶</span> <span data-i18n="site.index.runLiveEditor">Run the live editor</span>
               </button>
             </div>
           </div>
@@ -197,20 +226,56 @@
       </section>
 
       <!-- Rail -->
-      <section class="home-rail" aria-label="Where the engine runs" data-i18n-label="site.index.whereEngineRuns">
-        <div class="wrap home-rail-grid">
-          <div><b data-i18n="site.index.rustCore">Rust core</b><span data-i18n="site.index.oneDocumentModel">One document model</span></div>
-          <div><b data-i18n="site.index.webassembly">WebAssembly</b><span data-i18n="site.index.runsBrowser">Runs in the browser</span></div>
-          <div><b data-i18n="site.index.native">Native</b><span data-i18n="site.index.macosWindowsCi">macOS and Windows in CI</span></div>
-          <div><b data-i18n="site.index.headless">Headless</b><span data-i18n="site.index.automationRendering">Automation and rendering</span></div>
-          <div><b data-i18n="site.index.lossAware">Loss-aware</b><span data-i18n="site.index.preservedReported">Preserved or reported</span></div>
+      <!-- What the engine draws TODAY, one chip per fidelity.js family that
+           renders, with its grade — site_claims.test.mjs re-derives every chip from
+           src/fidelity.js, so the strip cannot quietly list a family graded "none". -->
+      <section class="home-rail" aria-labelledby="railTitle">
+        <div class="wrap home-rail-head">
+          <h2 class="home-rail-title" id="railTitle" data-i18n="site.index.railTitle">What the engine draws today</h2>
+          <span class="home-rail-key"><i class="is-full" aria-hidden="true"></i><span data-i18n="site.index.railFull">full</span><i class="is-partial" aria-hidden="true"></i><span data-i18n="site.index.railPartial">partial</span><a href="./fidelity.html" data-i18n="site.index.railAll">Every grade <span class="site-arrow" aria-hidden="true">→</span></a></span>
+        </div>
+        <div class="home-marquee" data-motion>
+          <ul class="home-marquee-track">
+            <li class="is-full" data-render-family="Paragraphs &amp; text" data-i18n="site.index.paragraphsAmpText">Paragraphs &amp; text</li>
+            <li class="is-full" data-render-family="Headers &amp; footers" data-i18n="site.index.chipHeadersFooters">Headers &amp; footers</li>
+            <li class="is-partial" data-render-family="Tables" data-i18n="site.index.tables">Tables</li>
+            <li class="is-full" data-render-family="Lists &amp; numbering" data-i18n="site.index.chipLists">Lists &amp; numbering</li>
+            <li class="is-partial" data-render-family="Tracked changes" data-i18n="site.index.trackedChanges">Tracked changes</li>
+            <li class="is-partial" data-render-family="Comments" data-i18n="site.index.chipComments">Comments</li>
+            <li class="is-partial" data-render-family="Footnotes &amp; endnotes" data-i18n="site.index.chipNotes">Footnotes &amp; endnotes</li>
+            <li class="is-partial" data-render-family="Sections, columns &amp; page setup" data-i18n="site.index.chipSections">Sections, columns &amp; page setup</li>
+            <li class="is-partial" data-render-family="Math (OMML)" data-i18n="site.index.chipMath">Math (OMML)</li>
+            <li class="is-partial" data-render-family="Charts" data-i18n="site.index.chipCharts">Charts</li>
+            <li class="is-full" data-render-family="Bookmarks &amp; hyperlinks" data-i18n="site.index.chipLinks">Bookmarks &amp; hyperlinks</li>
+            <li class="is-full" data-render-family="Fonts, fallback &amp; color glyphs" data-i18n="site.index.chipFonts">Fonts, fallback &amp; color glyphs</li>
+            <li class="is-partial" data-render-family="Bidi, RTL &amp; CJK grid" data-i18n="site.index.chipBidi">Bidi, RTL &amp; CJK grid</li>
+            <li class="is-full" data-render-family="Drop caps" data-i18n="site.index.chipDropCaps">Drop caps</li>
+          </ul>
+          <!-- The loop's second copy. Hidden from assistive technology so the list is
+               read once, and it holds nothing focusable. -->
+          <ul class="home-marquee-track home-marquee-track--copy" aria-hidden="true">
+            <li class="is-full" data-i18n="site.index.paragraphsAmpText">Paragraphs &amp; text</li>
+            <li class="is-full" data-i18n="site.index.chipHeadersFooters">Headers &amp; footers</li>
+            <li class="is-partial" data-i18n="site.index.tables">Tables</li>
+            <li class="is-full" data-i18n="site.index.chipLists">Lists &amp; numbering</li>
+            <li class="is-partial" data-i18n="site.index.trackedChanges">Tracked changes</li>
+            <li class="is-partial" data-i18n="site.index.chipComments">Comments</li>
+            <li class="is-partial" data-i18n="site.index.chipNotes">Footnotes &amp; endnotes</li>
+            <li class="is-partial" data-i18n="site.index.chipSections">Sections, columns &amp; page setup</li>
+            <li class="is-partial" data-i18n="site.index.chipMath">Math (OMML)</li>
+            <li class="is-partial" data-i18n="site.index.chipCharts">Charts</li>
+            <li class="is-full" data-i18n="site.index.chipLinks">Bookmarks &amp; hyperlinks</li>
+            <li class="is-full" data-i18n="site.index.chipFonts">Fonts, fallback &amp; color glyphs</li>
+            <li class="is-partial" data-i18n="site.index.chipBidi">Bidi, RTL &amp; CJK grid</li>
+            <li class="is-full" data-i18n="site.index.chipDropCaps">Drop caps</li>
+          </ul>
         </div>
       </section>
 
       <!-- Why -->
       <section class="home-section home-section--alt" id="why">
         <div class="wrap">
-          <div class="home-head">
+          <div class="home-head" data-reveal>
             <span class="home-kicker" data-i18n="site.index.whyOpendoc">Why OpenDoc</span>
             <div>
               <h2 data-i18n="site.index.documentRuntimeNotWeb">A document runtime, not a web-editor wrapper.</h2>
@@ -220,9 +285,20 @@
               </p>
             </div>
           </div>
-          <div class="home-cards">
-            <article class="home-card">
-              <div class="home-card-num">01</div>
+          <div class="home-cards" data-reveal-group>
+            <article class="home-card" data-reveal>
+              <div class="home-card-art" aria-hidden="true">
+                <svg viewBox="0 0 160 72" class="art-tree">
+                  <rect x="6" y="26" width="30" height="20" rx="4" class="art-node art-node--ink" />
+                  <path d="M36 36 H58 M58 14 V58 M58 14 H74 M58 36 H74 M58 58 H74" class="art-wire" />
+                  <rect x="74" y="6" width="44" height="16" rx="4" class="art-node" />
+                  <rect x="74" y="28" width="44" height="16" rx="4" class="art-node art-node--accent" />
+                  <rect x="74" y="50" width="44" height="16" rx="4" class="art-node" />
+                  <path d="M118 36 H132 M132 30 V42 M132 30 H140 M132 42 H140" class="art-wire" />
+                  <circle cx="146" cy="30" r="4" class="art-dot" />
+                  <circle cx="146" cy="42" r="4" class="art-dot art-dot--accent" />
+                </svg>
+              </div>
               <h3 data-i18n="site.index.ownDocumentModel">Own the document model</h3>
               <p data-i18n="site.index.docxParsesIntoTyped">DOCX parses into a typed, editable model instead of being flattened into browser markup.</p>
               <ul>
@@ -231,8 +307,25 @@
                 <li data-i18n="site.index.unsupportedDataRetainedReported">Unsupported data retained or reported</li>
               </ul>
             </article>
-            <article class="home-card">
-              <div class="home-card-num">02</div>
+            <article class="home-card" data-reveal>
+              <div class="home-card-art" aria-hidden="true">
+                <svg viewBox="0 0 160 72" class="art-layout">
+                  <rect x="8" y="4" width="62" height="64" rx="3" class="art-page" />
+                  <rect x="16" y="13" width="30" height="5" rx="2" class="art-ink" />
+                  <rect x="16" y="24" width="46" height="3" rx="1.5" class="art-line" />
+                  <rect x="16" y="31" width="40" height="3" rx="1.5" class="art-line" />
+                  <rect x="16" y="38" width="44" height="3" rx="1.5" class="art-line" />
+                  <rect x="16" y="45" width="22" height="3" rx="1.5" class="art-line art-line--accent" />
+                  <rect x="39" y="43" width="1.6" height="7" class="art-caret" />
+                  <rect x="88" y="4" width="62" height="64" rx="3" class="art-page" />
+                  <rect x="96" y="13" width="20" height="16" rx="2" class="art-fill" />
+                  <rect x="120" y="13" width="22" height="3" rx="1.5" class="art-line" />
+                  <rect x="120" y="20" width="18" height="3" rx="1.5" class="art-line" />
+                  <rect x="96" y="35" width="46" height="3" rx="1.5" class="art-line" />
+                  <rect x="96" y="42" width="40" height="3" rx="1.5" class="art-line" />
+                  <path d="M72 36 h12" class="art-wire art-wire--dash" />
+                </svg>
+              </div>
               <h3 data-i18n="site.index.deterministicLayout">Deterministic layout</h3>
               <p data-i18n="site.index.oneRustPipelineShapes">One Rust pipeline shapes, paginates, hit-tests, and renders across every host.</p>
               <ul>
@@ -241,8 +334,20 @@
                 <li data-i18n="site.index.backendNeutralDisplayList">Backend-neutral display list</li>
               </ul>
             </article>
-            <article class="home-card">
-              <div class="home-card-num">03</div>
+            <article class="home-card" data-reveal>
+              <div class="home-card-art" aria-hidden="true">
+                <svg viewBox="0 0 160 72" class="art-host">
+                  <rect x="6" y="4" width="148" height="64" rx="7" class="art-frame" />
+                  <rect x="6" y="4" width="148" height="12" rx="7" class="art-frame-bar" />
+                  <rect x="14" y="24" width="26" height="4" rx="2" class="art-line" />
+                  <rect x="14" y="33" width="20" height="4" rx="2" class="art-line" />
+                  <rect x="14" y="42" width="24" height="4" rx="2" class="art-line" />
+                  <rect x="50" y="22" width="96" height="40" rx="4" class="art-embed" />
+                  <rect x="62" y="30" width="42" height="4" rx="2" class="art-ink" />
+                  <rect x="62" y="39" width="70" height="3" rx="1.5" class="art-line" />
+                  <rect x="62" y="46" width="60" height="3" rx="1.5" class="art-line" />
+                </svg>
+              </div>
               <h3 data-i18n="site.index.bringYourOwnProduct">Bring your own product</h3>
               <p data-i18n="site.index.everyEditRoutesThrough">Every edit routes through a closed command set with undo. Everything around it is yours.</p>
               <ul>
@@ -255,10 +360,56 @@
         </div>
       </section>
 
+      <!-- Collaboration. Every sentence here is the state docs/169 records: OT over
+           the engine's transactions (ADR-033), presence labelled by participant
+           number, Share through an optional host, recovery that keeps a backup, and
+           a convergence fuzz with three real clients. "Experimental" is docs/169's
+           own word for it, and it stays until that document changes it. -->
+      <section class="home-section" id="collaboration">
+        <div class="wrap home-split">
+          <div class="home-split-copy" data-reveal>
+            <span class="home-kicker" data-i18n="site.index.collabKicker">Collaboration</span>
+            <h2 data-i18n="site.index.collabTitle">Write together, on the same transactions.</h2>
+            <p class="home-split-lede" data-i18n="site.index.collabLede">
+              Co-editing is operational transformation over the engine's own transactions, so a
+              remote edit runs through the same commands, checks and undo as a local one. The
+              relay is optional and yours to host; one person editing alone needs none of it.
+            </p>
+            <ul class="home-ticks">
+              <li data-i18n="site.index.collabCarets">Remote carets and selections, drawn from engine geometry</li>
+              <li data-i18n="site.index.collabShare">Share links through your host, as invitations rather than grants</li>
+              <li data-i18n="site.index.collabRecovery">A refused edit never silently replaces your work: recovery keeps a copy</li>
+              <li data-i18n="site.index.collabFuzz">Convergence fuzzed with three real clients through the production relay</li>
+            </ul>
+            <p class="home-note"><span class="home-pill" data-i18n="site.index.experimental">Experimental</span> <span data-i18n="site.index.collabNote">Host authentication and storage are integration work, and labels name participants by number.</span></p>
+          </div>
+
+          <div class="home-collab" data-motion data-reveal role="img" aria-label="Two editors send their edits to a relay, which orders them; both end with the same sentence." data-i18n-label="site.index.collabFigure">
+            <div class="cb-client cb-client--a">
+              <div class="cb-head"><span class="cb-avatar cb-avatar--you" data-i18n="site.index.avatarYou">You</span><span class="cb-name" data-i18n="site.index.collabYourTab">Your tab</span></div>
+              <p class="cb-doc"><span data-i18n="site.index.cbStart">A</span> <span class="cb-ins cb-ins--a" data-i18n="site.index.cbInsA">fast,</span> <span class="cb-ins cb-ins--b cb-arrive" data-i18n="site.index.cbInsB">local-first</span> <span data-i18n="site.index.cbEnd">editor.</span><span class="cb-caret cb-caret--a"></span></p>
+            </div>
+            <div class="cb-relay">
+              <span class="cb-op cb-op--a" data-i18n="site.index.cbOpInsert">insert</span>
+              <span class="cb-op cb-op--b" data-i18n="site.index.cbOpInsert">insert</span>
+              <div class="cb-hub">
+                <b data-i18n="site.index.cbRelay">Relay</b>
+                <span data-i18n="site.index.cbOrdered">orders operations</span>
+              </div>
+              <span class="cb-check" data-i18n="site.index.cbConverged">Same document on both sides</span>
+            </div>
+            <div class="cb-client cb-client--b">
+              <div class="cb-head"><span class="cb-avatar cb-avatar--peer">P2</span><span class="cb-name" data-i18n="site.index.participant2">Participant 2</span></div>
+              <p class="cb-doc"><span data-i18n="site.index.cbStart">A</span> <span class="cb-ins cb-ins--a cb-arrive" data-i18n="site.index.cbInsA">fast,</span> <span class="cb-ins cb-ins--b" data-i18n="site.index.cbInsB">local-first</span> <span data-i18n="site.index.cbEnd">editor.</span><span class="cb-caret cb-caret--b"></span></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Architecture -->
       <section class="home-arch" id="architecture">
         <div class="wrap">
-          <div class="home-head home-head--dark">
+          <div class="home-head home-head--dark" data-reveal>
             <span class="home-kicker" data-i18n="site.index.architecture">Architecture</span>
             <div>
               <h2 data-i18n="site.index.oneEngineClearBoundaries">One engine. Clear boundaries.</h2>
@@ -268,23 +419,35 @@
               </p>
             </div>
           </div>
-          <div class="home-pipeline" role="img" aria-label="DOCX flows into the typed model, through layout, to pixels. OpenDoc owns document state, transactions, selection, layout and serialization; the host owns files, fonts, network, authentication, telemetry and product UI." data-i18n-label="site.index.docxFlowsIntoTyped">
+          <div class="home-pipeline" data-motion data-reveal role="img" aria-label="DOCX flows into the typed model, through layout, to pixels. OpenDoc owns document state, transactions, selection, layout and serialization; the host owns files, fonts, network, authentication, telemetry and product UI." data-i18n-label="site.index.docxFlowsIntoTyped">
             <div class="home-pipeline-top">
               <b data-i18n="site.index.opendocCore">OpenDoc core</b>
               <div class="home-hosts"><span data-i18n="site.index.webassembly">WebAssembly</span><span data-i18n="site.index.native">Native</span><span data-i18n="site.index.headless">Headless</span></div>
             </div>
             <div class="home-flow">
-              <div class="home-node"><strong data-i18n="site.index.docx">DOCX</strong><span data-i18n="site.index.packageOoxml">package + OOXML</span></div>
-              <div class="home-arrow" aria-hidden="true">→</div>
-              <div class="home-node"><strong data-i18n="site.index.model">Model</strong><span data-i18n="site.index.typedDocumentState">typed document state</span></div>
-              <div class="home-arrow" aria-hidden="true">→</div>
-              <div class="home-node"><strong data-i18n="site.index.layout">Layout</strong><span data-i18n="site.index.paginateHitTest">paginate + hit-test</span></div>
-              <div class="home-arrow" aria-hidden="true">→</div>
-              <div class="home-node home-node--accent"><strong data-i18n="site.index.pixels">Pixels</strong><span data-i18n="site.index.displayList">display list</span></div>
+              <div class="home-node" style="--i: 0">
+                <svg class="home-node-art" viewBox="0 0 40 40" aria-hidden="true"><path d="M10 4h14l8 8v24H10z" class="na-sheet" /><path d="M24 4v8h8" class="na-fold" /><path d="M14 20h14M14 25h14M14 30h9" class="na-line" /></svg>
+                <strong data-i18n="site.index.docx">DOCX</strong><span data-i18n="site.index.packageOoxml">package + OOXML</span>
+              </div>
+              <div class="home-wire" aria-hidden="true"><i></i></div>
+              <div class="home-node" style="--i: 1">
+                <svg class="home-node-art" viewBox="0 0 40 40" aria-hidden="true"><rect x="15" y="4" width="10" height="8" rx="2" class="na-sheet" /><path d="M20 12v6M10 18h20M10 18v6M30 18v6M20 18v6" class="na-line" /><rect x="5" y="24" width="10" height="8" rx="2" class="na-sheet" /><rect x="15" y="24" width="10" height="8" rx="2" class="na-sheet" /><rect x="25" y="24" width="10" height="8" rx="2" class="na-sheet" /></svg>
+                <strong data-i18n="site.index.model">Model</strong><span data-i18n="site.index.typedDocumentState">typed document state</span>
+              </div>
+              <div class="home-wire" aria-hidden="true"><i></i></div>
+              <div class="home-node" style="--i: 2">
+                <svg class="home-node-art" viewBox="0 0 40 40" aria-hidden="true"><rect x="6" y="4" width="20" height="26" rx="2" class="na-sheet" /><rect x="14" y="10" width="20" height="26" rx="2" class="na-sheet na-sheet--front" /><path d="M18 17h12M18 22h12M18 27h7" class="na-line" /></svg>
+                <strong data-i18n="site.index.layout">Layout</strong><span data-i18n="site.index.paginateHitTest">paginate + hit-test</span>
+              </div>
+              <div class="home-wire" aria-hidden="true"><i></i></div>
+              <div class="home-node home-node--accent" style="--i: 3">
+                <svg class="home-node-art" viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="7" width="30" height="22" rx="3" class="na-sheet" /><path d="M9 25l7-8 5 5 4-4 6 7" class="na-line" /><circle cx="27" cy="13" r="2.5" class="na-dot" /><path d="M14 34h12" class="na-line" /></svg>
+                <strong data-i18n="site.index.pixels">Pixels</strong><span data-i18n="site.index.displayList">display list</span>
+              </div>
             </div>
             <div class="home-boundary">
-              <div><b data-i18n="site.index.opendocOwns">OpenDoc owns</b>Document state · transactions · selection · layout · serialization</div>
-              <div><b data-i18n="site.index.yourHostOwns">Your host owns</b>Files · fonts · network · auth · telemetry · product UI</div>
+              <div><b data-i18n="site.index.opendocOwns">OpenDoc owns</b><span data-i18n="site.index.opendocOwnsList">Document state&nbsp;· transactions&nbsp;· selection&nbsp;· layout&nbsp;· serialization</span></div>
+              <div><b data-i18n="site.index.yourHostOwns">Your host owns</b><span data-i18n="site.index.hostOwnsList">Files&nbsp;· fonts&nbsp;· network&nbsp;· auth&nbsp;· telemetry&nbsp;· product UI</span></div>
             </div>
           </div>
           <a class="home-arch-link" href="./reference/architecture.html" data-i18n="site.index.readArchitecture">
@@ -293,11 +456,58 @@
         </div>
       </section>
 
+      <!-- Embedding. The snippet is the element's real vocabulary: site_claims.test.mjs
+           checks every attribute against `MOUNT_ATTRIBUTES` in src/embed_element.mjs,
+           the mode against `ROLES` and every chip against `CAPABILITIES`. -->
+      <section class="home-section home-section--alt" id="embed">
+        <div class="wrap home-split home-split--flip">
+          <div class="home-split-copy" data-reveal>
+            <span class="home-kicker" data-i18n="site.index.embedKicker">Embeddable</span>
+            <h2 data-i18n="site.index.embedTitle">Drop it into your product. Keep the product.</h2>
+            <p class="home-split-lede" data-i18n="site.index.embedLede">
+              A framework-free custom element, with roles and a capability contract resolved
+              before the frame's first navigation, so an embed cannot be talked out of the mode
+              it was given. Brand colours and chrome regions are yours to set.
+            </p>
+            <div class="home-split-links">
+              <a class="btn btn--ink" href="./embedding.html" data-i18n="site.index.embedEditor">Embed the editor</a>
+              <a class="btn btn--outline" href="./playground.html" data-i18n="site.index.openPlayground">Open the playground</a>
+            </div>
+          </div>
+
+          <div class="home-host" data-motion data-reveal role="img" aria-label="A host application frames the editor; the host decides its mode and which capabilities it has." data-i18n-label="site.index.embedFigure">
+            <div class="hh-bar"><span class="hh-dots"><i></i><i></i><i></i></span><span class="hh-app" data-i18n="site.index.hostAppName">your-product.app</span></div>
+            <div class="hh-body">
+              <div class="hh-side">
+                <span class="hh-nav is-active" data-i18n="site.index.hostNavContracts">Contracts</span>
+                <span class="hh-nav" data-i18n="site.index.hostNavReviews">Reviews</span>
+                <span class="hh-nav" data-i18n="site.index.hostNavTeam">Team</span>
+              </div>
+              <div class="hh-main">
+                <pre class="hh-tag"><code><span class="hh-t">&lt;opendoc-editor</span> <span class="hh-a">mode</span>=<span class="hh-v">"commentor"</span> <span class="hh-a">can</span>=<span class="hh-v">"-download"</span><span class="hh-t">&gt;</span></code></pre>
+                <div class="hh-editor">
+                  <div class="hh-page">
+                    <i class="hh-l hh-l--h"></i><i class="hh-l"></i><i class="hh-l hh-l--mid"></i><i class="hh-l hh-l--short"></i><i class="hh-l hh-l--gap"></i><i class="hh-l"></i><i class="hh-l hh-l--mid"></i>
+                    <span class="hh-pin"></span>
+                  </div>
+                </div>
+                <ul class="hh-caps">
+                  <li class="is-on" data-capability="comment"><span class="hh-cap-dot" aria-hidden="true"></span>comment</li>
+                  <li class="is-on" data-capability="print"><span class="hh-cap-dot" aria-hidden="true"></span>print</li>
+                  <li class="is-off" data-capability="edit"><span class="hh-cap-dot" aria-hidden="true"></span>edit</li>
+                  <li class="is-off hh-cap--drop" data-capability="download"><span class="hh-cap-dot" aria-hidden="true"></span>download</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Fidelity. Every number here has a committed source, and the guard in
            webapp/tests/site_claims.test.mjs fails if one drifts from it. -->
       <section class="home-section" id="fidelity">
         <div class="wrap">
-          <div class="home-head">
+          <div class="home-head" data-reveal>
             <span class="home-kicker" data-i18n="site.index.evidenceNotPromises">Evidence, not promises</span>
             <div>
               <h2 data-i18n="site.index.fidelityYouCanCheck">Fidelity you can check.</h2>
@@ -307,8 +517,8 @@
               </p>
             </div>
           </div>
-          <div class="home-proof">
-            <div class="home-proof-card">
+          <div class="home-proof" data-reveal-group>
+            <div class="home-proof-card" data-reveal>
               <div class="home-proof-top">
                 <span class="home-tag" data-i18n="site.index.pageCountParity">Page-count parity</span>
                 <span class="home-proof-when" data-i18n="site.index.measured20260727">Measured 2026-07-27</span>
@@ -332,17 +542,27 @@
                   <span role="cell" data-i18n="site.index.trackedChanges">Tracked changes</span><span role="cell" class="is-partial" data-i18n="site.index.partial">Partial</span><span role="cell" class="is-partial" data-i18n="site.index.partial">Partial</span>
                 </div>
                 <div class="home-matrix-row" role="row" data-family="Vertical &amp; rotated text">
-                  <span role="cell" data-i18n="site.index.verticalAmpRotatedText">Vertical &amp; rotated text</span><span role="cell" class="is-none">None</span><span role="cell" class="is-none">None</span>
+                  <span role="cell" data-i18n="site.index.verticalAmpRotatedText">Vertical &amp; rotated text</span><span role="cell" class="is-none" data-i18n="site.index.none">None</span><span role="cell" class="is-none" data-i18n="site.index.none">None</span>
                 </div>
               </div>
               <a class="home-proof-link" href="./fidelity.html" data-i18n="site.index.all">
                 All <span data-claim="families">27</span> construct families <span class="site-arrow" aria-hidden="true">→</span>
               </a>
             </div>
-            <div class="home-proof-card home-proof-card--dark">
+            <div class="home-proof-card home-proof-card--dark" data-motion data-reveal>
               <div class="home-proof-top">
                 <span class="home-tag home-tag--dark" data-i18n="site.index.designPrinciple">Design principle</span>
                 <span class="home-proof-when" data-i18n="site.index.lossAware">Loss-aware</span>
+              </div>
+              <!-- Round trip, drawn: a package goes in, the model keeps what it
+                   understands, carries the rest through and names anything it cannot. -->
+              <div class="home-roundtrip" aria-hidden="true">
+                <span class="rt-file" data-i18n="site.index.rtIn">.docx in</span>
+                <span class="rt-arc"><i></i></span>
+                <span class="rt-core" data-i18n="site.index.rtModel">model</span>
+                <span class="rt-arc"><i></i></span>
+                <span class="rt-file rt-file--out" data-i18n="site.index.rtOut">.docx out</span>
+                <span class="rt-report" data-i18n="site.index.rtReport">+ report of anything not kept</span>
               </div>
               <blockquote class="home-quote" data-i18n="site.index.preservedReportedNeverSilently">
                 “Preserved or reported — never silently dropped.”
@@ -360,10 +580,10 @@
                   <span class="is-full" style="--n: 7"></span><span class="is-partial" style="--n: 16"></span><span class="is-preserved" style="--n: 1"></span><span class="is-none" style="--n: 3"></span>
                 </div>
                 <ul class="home-dist-legend">
-                  <li><i class="is-full" aria-hidden="true"></i><b data-claim="rendered-full">7</b> fully</li>
-                  <li><i class="is-partial" aria-hidden="true"></i><b data-claim="rendered-partial">16</b> partially</li>
-                  <li><i class="is-preserved" aria-hidden="true"></i><b data-claim="rendered-preserved">1</b> kept, not drawn</li>
-                  <li><i class="is-none" aria-hidden="true"></i><b data-claim="rendered-none">3</b> not yet</li>
+                  <li><i class="is-full" aria-hidden="true"></i><b data-claim="rendered-full">7</b> <span data-i18n="site.index.fully">fully</span></li>
+                  <li><i class="is-partial" aria-hidden="true"></i><b data-claim="rendered-partial">16</b> <span data-i18n="site.index.partially">partially</span></li>
+                  <li><i class="is-preserved" aria-hidden="true"></i><b data-claim="rendered-preserved">1</b> <span data-i18n="site.index.keptNotDrawn">kept, not drawn</span></li>
+                  <li><i class="is-none" aria-hidden="true"></i><b data-claim="rendered-none">3</b> <span data-i18n="site.index.notYetLower">not yet</span></li>
                 </ul>
               </div>
             </div>
@@ -374,7 +594,7 @@
       <!-- Developers -->
       <section class="home-section home-section--alt" id="developers">
         <div class="wrap home-dev">
-          <div class="home-dev-copy">
+          <div class="home-dev-copy" data-reveal>
             <span class="home-kicker" data-i18n="site.index.developerFirst">Developer first</span>
             <h2 data-i18n="site.index.cloneRunInspectEngine">Clone it. Run it. Inspect the engine.</h2>
             <p data-i18n="site.index.noAccountNoHosted">No account, no hosted backend. Every pull request runs the same gates you can run locally.</p>
@@ -385,9 +605,9 @@
               <li><b data-i18n="site.index.openRealDocx">Open a real DOCX</b><span data-i18n="site.index.browserEditorEmbedRuntime">In the browser editor, or embed the runtime.</span></li>
             </ol>
           </div>
-          <div class="home-terminal">
+          <div class="home-terminal" data-reveal>
             <div class="home-terminal-head">
-              <span>quickstart</span>
+              <span class="home-terminal-title"><span class="home-terminal-dots" aria-hidden="true"><i></i><i></i><i></i></span>quickstart</span>
               <div class="home-terminal-tabs" role="tablist" aria-label="Quickstart examples" data-i18n-label="site.index.quickstartExamples">
                 <button type="button" role="tab" id="qsTabShell" aria-controls="qsShell" aria-selected="true">shell</button>
                 <button type="button" role="tab" id="qsTabEmbed" aria-controls="qsEmbed" aria-selected="false" tabindex="-1">embed</button>
@@ -417,43 +637,46 @@ doc.insertText(at.node, at.offset, <span class="str">"Hello from OpenDoc"</span>
         </div>
       </section>
 
-      <!-- Roadmap. Phases name real tracker documents so a reader can check them. -->
+      <!-- Roadmap. Phases name real tracker documents so a reader can check them.
+           Collaboration moved from Planned when #828 landed presence, Share, safe
+           recovery and the convergence fuzz; it reads Experimental because that is
+           what docs/169 calls it. -->
       <section class="home-section" id="roadmap">
         <div class="wrap">
-          <div class="home-head">
+          <div class="home-head" data-reveal>
             <span class="home-kicker" data-i18n="site.index.delivery">Delivery</span>
             <div>
               <h2 data-i18n="site.index.whereWhereGoing">Where it is, and where it is going.</h2>
               <p data-i18n="site.index.shippedActivePlannedKept">Shipped, active, and planned are kept separate, so a pre-release reads as a status rather than a promise.</p>
             </div>
           </div>
-          <div class="home-roadmap">
-            <div class="home-phase is-done">
+          <div class="home-roadmap" data-reveal-group>
+            <div class="home-phase is-done" data-reveal>
               <span class="home-state" data-i18n="site.index.shipped">Shipped</span>
               <h3 data-i18n="site.index.lossAwareDocx">Loss-aware DOCX</h3>
               <p data-i18n="site.index.semanticImportExportByte">Semantic import and export, and byte-identical save of unedited packages.</p>
             </div>
-            <div class="home-phase is-done">
+            <div class="home-phase is-done" data-reveal>
               <span class="home-state" data-i18n="site.index.shipped">Shipped</span>
               <h3 data-i18n="site.index.deterministicLayout">Deterministic layout</h3>
               <p data-i18n="site.index.paragraphsTablesSectionsColumns">Paragraphs, tables, sections and columns, floats with text wrap, and math.</p>
             </div>
-            <div class="home-phase is-now">
+            <div class="home-phase is-now" data-reveal>
               <span class="home-state" data-i18n="site.index.progress">In progress</span>
               <h3 data-i18n="site.index.editingWordParity">Editing to Word parity</h3>
               <p data-i18n="site.index.commentsTrackedChangesEvery">Comments, tracked changes, and every editing surface held to the Word and Docs standard.</p>
             </div>
-            <div class="home-phase">
-              <span class="home-state" data-i18n="site.index.planned">Planned</span>
+            <div class="home-phase is-exp" data-reveal>
+              <span class="home-state" data-i18n="site.index.experimental">Experimental</span>
               <h3 data-i18n="site.index.realTimeCollaboration">Real-time collaboration</h3>
-              <p data-i18n="site.index.operationalTransformationOverSame">Operational transformation over the same transactions, with snapshot and replay versioning.</p>
+              <p data-i18n="site.index.collabRoadmap">Shipped behind an optional relay: presence, Share links, safe recovery and a convergence fuzz. Host integration and named participants are still to come.</p>
             </div>
           </div>
           <!-- Each gap names its source: a fidelity.js family graded "none", or a
                docs/105 row that is still open. site_claims.test.mjs checks both. -->
           <p class="home-gaps">
             <b data-i18n="site.index.notYet">Not yet:</b>
-            <span data-gap-family="Hyphenation">hyphenation</span> ·
+            <span data-gap-family="Hyphenation" data-i18n="site.index.hyphenation">hyphenation</span> ·
             <span data-gap-family="Vertical &amp; rotated text" data-i18n="site.index.verticalRotatedText">vertical and rotated text</span> ·
             <span data-gap-row="FID-L-07" data-i18n="site.index.floatingTables">floating tables</span>.
             <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md" data-i18n="site.index.fullRoadmap">Full roadmap <span class="site-arrow" aria-hidden="true">→</span></a>
@@ -464,7 +687,10 @@ doc.insertText(at.node, at.offset, <span class="str">"Hello from OpenDoc"</span>
       <!-- CTA -->
       <section class="home-cta">
         <div class="wrap">
-          <div class="home-cta-box">
+          <div class="home-cta-box" data-reveal>
+            <div class="home-cta-art" aria-hidden="true">
+              <span class="cta-sheet cta-sheet--1"></span><span class="cta-sheet cta-sheet--2"></span><span class="cta-sheet cta-sheet--3"></span>
+            </div>
             <div>
               <h2 data-i18n="site.index.openDocumentInspectEngine">Open a document. Inspect the engine.</h2>
               <p data-i18n="site.index.noAccountRequiredDemo">No account required for the demo. No opaque hosted backend.</p>

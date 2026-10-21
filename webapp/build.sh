@@ -224,5 +224,12 @@ node "$here/tools/build-doc-pages.mjs" --check
 node "$here/tools/build-seo.mjs"
 node "$here/tools/build-seo.mjs" --check
 
+# The link-preview cards (`social/*.png`) and the manifest icons (`icon-*.png`).
+# CHECK ONLY: rasterizing needs Playwright's Chromium, which the Pages deploy does
+# not install, so the PNGs are committed and `--check` verifies — without a browser —
+# that each one was rendered from the committed template, words, font and mark
+# and has not been replaced since. Regenerate with `--render` (see that file).
+node "$here/tools/build-social-cards.mjs" --check
+
 echo "Built webapp/pkg, staged the demo/site assets, and generated the static pages."
 echo "Run ./serve.py (no-cache), then open http://localhost:8099/."

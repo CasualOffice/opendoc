@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- GitHub Pages serves this file for ANY missing path, at any depth
+         (`/a/b/c` included), so every relative URL on the page — the inlined
+         header and footer partials use `./` — is resolved from the site root. -->
+    <base href="/" />
+    <title data-i18n="site.notFound.title">Page not found — OpenDoc</title>
+    <meta name="description" content="This page does not exist. Every OpenDoc destination — the editor, the playground, the embedding guide, the docs and the fidelity report — is one step from here." />
+    <!-- A miss is not content: never index it, and keep it out of the sitemap
+         (build-seo.mjs drops every page that declares noindex about itself). -->
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+    <script src="./src/analytics.js"></script>
+    <link rel="stylesheet" href="./src/marketing.css" />
+  </head>
+  <body>
+    <!-- @include site-header -->
+
+    <main class="nf">
+      <section class="nf-hero">
+        <div data-reveal>
+          <span class="home-kicker" data-i18n="site.notFound.kicker">Error 404</span>
+          <h1 data-i18n="site.notFound.heading">This page is not in the document.</h1>
+          <p data-i18n="site.notFound.lede">
+            The address may be mistyped, or the page may have moved. Everything OpenDoc
+            publishes is one step from here.
+          </p>
+          <div class="nf-actions">
+            <a class="btn btn--accent" href="./" data-i18n="site.notFound.home">Back to the overview <span class="site-arrow" aria-hidden="true">→</span></a>
+            <a class="btn btn--outline" href="./editor.html?demo=1" data-i18n="site.index.tryLiveEditor">Try the live editor <span class="site-arrow" aria-hidden="true">→</span></a>
+          </div>
+        </div>
+        <div class="nf-art" data-motion aria-hidden="true">
+          <div class="nf-sheet nf-sheet--back"><i class="nf-line--h"></i><i></i><i></i><i class="nf-line--short"></i></div>
+          <div class="nf-sheet nf-sheet--front">
+            <i class="nf-line--h"></i><i></i><i class="nf-line--short"></i>
+            <span class="nf-gap" data-i18n="site.notFound.missing">missing paragraph</span>
+            <i></i><i></i><i class="nf-line--short"></i>
+          </div>
+        </div>
+      </section>
+
+      <h2 class="nf-dest-title" data-i18n="site.notFound.destinations">Where you might have been going</h2>
+      <ul class="nf-dest" data-reveal-group>
+        <li data-reveal><a href="./"><b data-i18n="site.header.overview">Overview</b><span data-i18n="site.notFound.overviewWhat">What OpenDoc is, and what it does today.</span><code>/</code></a></li>
+        <li data-reveal><a href="./editor.html"><b data-i18n="site.header.editor">Editor</b><span data-i18n="site.notFound.editorWhat">Open or start a document in your browser. Nothing is uploaded.</span><code>/editor.html</code></a></li>
+        <li data-reveal><a href="./playground.html"><b data-i18n="site.header.playground">Playground</b><span data-i18n="site.notFound.playgroundWhat">Configure an embed and watch the running editor change.</span><code>/playground.html</code></a></li>
+        <li data-reveal><a href="./embedding.html"><b data-i18n="site.header.embedding">Embedding</b><span data-i18n="site.notFound.embeddingWhat">Put the editor inside your own product.</span><code>/embedding.html</code></a></li>
+        <li data-reveal><a href="./docs.html"><b data-i18n="site.header.docs">Docs</b><span data-i18n="site.notFound.docsWhat">Import, dispositions and determinism.</span><code>/docs.html</code></a></li>
+        <li data-reveal><a href="./fidelity.html"><b data-i18n="site.header.fidelity">Fidelity</b><span data-i18n="site.notFound.fidelityWhat">Every construct family, graded at the level the code reaches.</span><code>/fidelity.html</code></a></li>
+        <li data-reveal><a href="./reference/index.html"><b data-i18n="site.footer.reference">Reference</b><span data-i18n="site.notFound.referenceWhat">The design documents, published as pages.</span><code>/reference/</code></a></li>
+        <li data-reveal><a href="https://github.com/CasualOffice/opendoc"><b data-i18n="site.notFound.source">Source code</b><span data-i18n="site.notFound.sourceWhat">The repository, under the Apache-2.0 licence.</span><code>github.com</code></a></li>
+      </ul>
+    </main>
+
+    <!-- @include site-footer -->
+  </body>
+</html>

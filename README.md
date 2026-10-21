@@ -82,7 +82,7 @@ for Casual Docs and an SDK others can embed.
 | Format | Open | Save / export |
 | --- | :---: | :---: |
 | Word (`.docx`) | yes | yes — byte-identical when unedited |
-| Word template (`.dotx`) | opens as a document | yes |
+| Word template (`.dotx`) | — | yes |
 | OpenDocument Text (`.odt`) | yes | yes |
 | Rich Text (`.rtf`) | yes | — |
 | PDF | — | yes — real, selectable text with embedded, subsetted fonts |
@@ -279,7 +279,7 @@ Docs](docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md); the order work is done in is
 | Browser editor (`webapp/`) | Built and tested end to end, pre-release |
 | Review, versions, compare | Built |
 | Embedding: element, API, `postMessage` contract | Built; package not yet published |
-| Real-time collaboration | Engine and relay built; product surface (sharing, presence) not yet |
+| Real-time collaboration | Experimental: OT engine, relay, presence, Share and safe recovery built; relay TLS, authentication and a published image not yet |
 | Stable public SDK and published crates | Planned |
 | Desktop shell, GPU backend | Not started |
 

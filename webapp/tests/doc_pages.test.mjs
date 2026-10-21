@@ -40,7 +40,9 @@ const {
   PROVENANCE,
   PUBLISHED,
   WITHHELD,
+  DESCRIPTION_MAX,
   artifacts,
+  describe,
   blocks,
   inline,
   openingIsProse,
@@ -244,7 +246,12 @@ test("every Markdown document the site links is published or withheld with a rea
   // The mirror of the rule in `seo.test.mjs` and `no_unrouted_strings.test.mjs`: a
   // deliberate omission that nothing checks is indistinguishable from a mistake, so
   // each one argues its case and the list stays short enough to read.
-  assert.ok(WITHHELD.length <= 8, `${WITHHELD.length} withheld documents is not a short list`);
+  //
+  // 8 -> 9 for docs/109 (`109` HF-292): llms.txt now links the live queue on
+  // GitHub where it used to link the docs/14 archive, and a linked document must be
+  // accounted for here. It is the fourth tracker in the list, withheld for the same
+  // owner instruction as the other three, not a new kind of omission.
+  assert.ok(WITHHELD.length <= 9, `${WITHHELD.length} withheld documents is not a short list`);
   for (const entry of WITHHELD) {
     assert.ok(
       entry.reason.length > 120,
@@ -284,7 +291,11 @@ test("the withheld list holds the decisions this work actually took", () => {
   }
 
   // The trackers, on the owner's instruction.
-  for (const tracker of ["docs/14-EXECUTION-TRACKER.md", "docs/105-AUDIT-2026-09-TRACKER.md"]) {
+  for (const tracker of [
+    "docs/14-EXECUTION-TRACKER.md",
+    "docs/105-AUDIT-2026-09-TRACKER.md",
+    "docs/109-BACKLOG.md",
+  ]) {
     assert.ok(withheld.has(tracker), `${tracker} is a tracker and must not be published`);
   }
 
@@ -544,14 +555,22 @@ test("how much English the reference pages put on the site, measured and publish
   // restates it, the lock row's new sentence, and the theme part's record in the
   // `preserved` row. Re-measure on the merged tree, not by adding this to another
   // branch's figure.
+  //
+  // 2672 -> 2685 with the site revamp (`109` HF-293). MEASURED from the
+  // regenerated pages, read off this assertion's own failure output: thirteen, one
+  // per reference page, and every one is the same string — the "Open" of the
+  // OpenDoc wordmark the footer partial now carries beside its tagline. It is the
+  // product name, unrouted for the reason the header's identical wordmark is (the
+  // header partial's ceiling of 1 is that string), and it is counted thirteen times
+  // here only because every reference page inlines the footer.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2672,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2672). That ` +
+    2685,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2685). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +
@@ -747,6 +766,30 @@ test("the summary is the document's prose, never its filing information", () => 
     () => section(doc, "Third", "test.md"),
     /does not have/,
     "naming a section that is not there must fail loudly, not fall back silently",
+  );
+});
+
+test("every published document carries a curated description, and the page heads use it", () => {
+  // `109` HF-292. The derived opening is the LEDE; the head (meta description,
+  // social card, JSON-LD) is the curated line, because a document's first
+  // paragraph is written for a reader who has the rest of it. Without this rule
+  // docs/84's search result was its problem statement about code since replaced.
+  for (const entry of PUBLISHED) {
+    assert.equal(typeof entry.description, "string", `${entry.source} has no curated description`);
+    const page = BUILT.find((built) => built.file === `${OUT_DIR}/${entry.slug}.html`);
+    assert.ok(
+      page.committed.includes(`<meta name="description" content="${entry.description}" />`),
+      `${page.file}'s meta description is not its curated one`,
+    );
+    assert.ok(entry.description.length <= DESCRIPTION_MAX, `${entry.source}'s description is too long`);
+  }
+  // And it is REQUIRED: a new document without one is refused at generation,
+  // naming the document, rather than published with a derived sentence.
+  const [first] = PUBLISHED;
+  assert.throws(() => describe({ ...first, description: undefined }), /has no curated description/);
+  assert.throws(
+    () => describe({ ...first, description: `${"A long description that goes on. ".repeat(6)}` }),
+    /the site requires 70-160/,
   );
 });
 

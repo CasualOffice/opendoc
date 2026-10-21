@@ -1,0 +1,51 @@
+[
+  {
+    "file": "social/opendoc.png",
+    "width": 1200,
+    "height": 630,
+    "source": "190d2da2020eb6d83b70c191e5a0e5e6934d9e6153137c6a8b15840d1ba6470d",
+    "sha256": "d74ee8b6d2445bc149ef5f436528c08f4b7ad0d399c7e4d373f85a7b1dd6f6c5"
+  },
+  {
+    "file": "social/editor.png",
+    "width": 1200,
+    "height": 630,
+    "source": "f683ac3af3514bf9b6426a8a415a69a4021aef61ebedc17fca16dd8da0e949f4",
+    "sha256": "fd6308b088d2c42d91a7fad2ef549c5c4868359e4528837b0b49b5f3087bc0a4"
+  },
+  {
+    "file": "social/embedding.png",
+    "width": 1200,
+    "height": 630,
+    "source": "8da52fee4c0baf279ecf177afb03fe0d2c69a222a6c0d4a3247bfb27a4870518",
+    "sha256": "f4ec3a2a6877c8fe334b67a480a678df009728fb868129569cfc85033f2fcd6d"
+  },
+  {
+    "file": "social/fidelity.png",
+    "width": 1200,
+    "height": 630,
+    "source": "5f8695a5a808e994522a5ef2b8834980babcd39676e4fd8632d5bc101b88f763",
+    "sha256": "6add1ebd32a831d8343fc966b122578276095e21ca7bbe9c7d8935e62d3c1b31"
+  },
+  {
+    "file": "social/reference.png",
+    "width": 1200,
+    "height": 630,
+    "source": "05bd330b7ee3642db1850ac967ac1d23fd2a85372d029a96bd93f9e1413064e1",
+    "sha256": "d2e7926ccbb138a5904656ab37341d5d6d2d3b3ad0ab7c8d424c45ebc068e299"
+  },
+  {
+    "file": "icon-192.png",
+    "width": 192,
+    "height": 192,
+    "source": "4058aa03a88bb0a6639aad9520ecbbd1dca550374026aeee30a80d3ffe750bc4",
+    "sha256": "8c372e57b1fe3d8f933b1387c962d8b902352b302e2ed3c6d882d6c7a3b900a3"
+  },
+  {
+    "file": "icon-512.png",
+    "width": 512,
+    "height": 512,
+    "source": "6d26ca98738b449df08e471aeba648da1358569364f121be83441d7755323710",
+    "sha256": "562d797c279f6c25b91c30802647635dac8fb00edfe6dfd722bb4b75639eebad"
+  }
+]

@@ -3,34 +3,41 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title data-i18n="site.docs.documentationOpendoc">Documentation — OpenDoc</title>
+    <title data-i18n="site.docs.documentationEmbedImportArchitecture">Documentation: embed, import and architecture — OpenDoc</title>
     <meta
       name="description"
-      content="Documentation for OpenDoc, the open-source Rust DOCX engine and embeddable WebAssembly editor: embedding, import, dispositions, architecture, and the reference docs."
+      content="How to embed the OpenDoc editor, import DOCX, read import dispositions and understand the engine's architecture, plus the full reference document set."
     />
     <meta name="author" content="CasualOffice" />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
     <meta name="theme-color" content="#fbfaf8" />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/docs.html" />
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:title" content="OpenDoc documentation" />
     <meta
       property="og:description"
       content="Embedding, import, dispositions, and architecture for the OpenDoc Rust DOCX engine and WebAssembly editor."
     />
     <meta property="og:url" content="https://opendoc.casualoffice.org/docs.html" />
-    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/social/reference.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenDoc: Architecture, SDK and design documents. Generated from the repository's own Markdown, so a page and its source cannot disagree." />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="OpenDoc documentation" />
     <meta name="twitter:description" content="Embedding, import, dispositions, and architecture for OpenDoc." />
-    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/social/reference.png" />
+    <meta name="twitter:image:alt" content="OpenDoc: Architecture, SDK and design documents. Generated from the repository's own Markdown, so a page and its source cannot disagree." />
 
     <link rel="stylesheet" href="./src/marketing.css" />
     <script type="application/ld+json">
@@ -41,9 +48,9 @@
             "@type": "TechArticle",
             "@id": "https://opendoc.casualoffice.org/docs.html#webpage",
             "url": "https://opendoc.casualoffice.org/docs.html",
-            "name": "Documentation — OpenDoc",
+            "name": "Documentation: embed, import and architecture — OpenDoc",
             "headline": "Import a document",
-            "description": "Documentation for OpenDoc, the open-source Rust DOCX engine and embeddable WebAssembly editor: embedding, import, dispositions, architecture, and the reference docs.",
+            "description": "How to embed the OpenDoc editor, import DOCX, read import dispositions and understand the engine's architecture, plus the full reference document set.",
             "inLanguage": "en",
             "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
             "about": { "@id": "https://opendoc.casualoffice.org/#software" },
@@ -160,6 +167,15 @@
           silently discarded.
         </p>
 
+        <!-- What the lede says, drawn: admission, then a model AND a report. -->
+        <div class="flow-fig flow-fig--wide" data-motion role="img" aria-label="A package is admitted under explicit limits, then becomes a normalized model plus a compatibility report." data-i18n-label="site.docs.importFigure">
+          <span class="flow-node"><b data-i18n="site.docs.figPackage">.docx package</b><small data-i18n="site.docs.figPackageNote">bytes from your host</small></span>
+          <span class="flow-wire" aria-hidden="true"><i></i></span>
+          <span class="flow-node"><b data-i18n="site.docs.figLimits">Admission limits</b><small data-i18n="site.docs.figLimitsNote">entries, paths, size, expansion</small></span>
+          <span class="flow-wire" aria-hidden="true"><i></i></span>
+          <span class="flow-node flow-node--accent"><b data-i18n="site.docs.figModel">Normalized model</b><small data-i18n="site.docs.figModelNote">plus a compatibility report</small></span>
+        </div>
+
         <div class="doc-langtabs" role="list" aria-label="Available targets" data-i18n-label="site.docs.availableTargets">
           <span class="tab is-active" role="listitem" data-i18n="site.docs.rust">Rust</span>
           <span class="tab" role="listitem" data-i18n="site.docs.webassembly">WebAssembly</span>
@@ -256,12 +272,37 @@
 
     <footer class="site-footer">
       <div class="site-footer-inner">
-        <span class="site-footer-copy" data-i18n="site.footer.copyright">© 2026 CasualOffice — developed by the CasualOffice Team</span>
-        <span class="site-footer-copy" data-i18n="site.footer.licence">Apache-2.0 · contributions welcome under the same licence</span>
-        <span class="site-footer-spacer" aria-hidden="true"></span>
-        <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
-        <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
-        <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
+        <div class="site-footer-brand">
+          <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          </a>
+          <p class="site-footer-tagline" data-i18n="site.footer.tagline">An Apache-2.0 document editor and engine you can embed, run locally and edit together.</p>
+        </div>
+        <nav class="site-footer-cols" aria-label="Footer" data-i18n-label="site.footer.navigation">
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.product">Product</p>
+            <a href="./editor.html" data-i18n="site.header.editor">Editor</a>
+            <a href="./playground.html" data-i18n="site.header.playground">Playground</a>
+            <a href="./embedding.html" data-i18n="site.header.embedding">Embedding</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.learn">Learn</p>
+            <a href="./docs.html" data-i18n="site.header.docs">Docs</a>
+            <a href="./fidelity.html" data-i18n="site.header.fidelity">Fidelity</a>
+            <a href="./reference/index.html" data-i18n="site.footer.reference">Reference</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.project">Project</p>
+            <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+            <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
+            <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
+          </div>
+        </nav>
+        <div class="site-footer-base">
+          <span class="site-footer-copy" data-i18n="site.footer.copyright">© 2026 CasualOffice — developed by the CasualOffice Team</span>
+          <span class="site-footer-copy" data-i18n="site.footer.licence">Apache-2.0 · contributions welcome under the same licence</span>
+        </div>
       </div>
     </footer>
     <script>
@@ -295,5 +336,6 @@
       })();
     </script>
     <script type="module" src="./src/site_locale.mjs"></script>
+    <script type="module" src="./src/site_motion.mjs"></script>
   </body>
 </html>

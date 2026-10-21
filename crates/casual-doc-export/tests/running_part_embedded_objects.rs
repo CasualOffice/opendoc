@@ -286,10 +286,11 @@ fn written_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         let mut file = archive.by_index(index).unwrap();
         let mut content = Vec::new();
         file.read_to_end(&mut content).unwrap();
+        let name = file.name().unwrap().into_owned();
         assert!(
-            parts.insert(file.name().to_owned(), content).is_none(),
+            parts.insert(name.clone(), content).is_none(),
             "a part was written twice: {}",
-            file.name()
+            name
         );
     }
     parts

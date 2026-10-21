@@ -32,9 +32,19 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const { EXCLUDED, describePage, origin, renderLlms, renderSitemap, sitePages, tags } =
-  await import("../tools/build-seo.mjs");
+const {
+  EXCLUDED,
+  describePage,
+  origin,
+  renderLlms,
+  renderLlmsFull,
+  renderSitemap,
+  selectPages,
+  sitePages,
+  tags,
+} = await import("../tools/build-seo.mjs");
 const { scanMarkup } = await import("../tools/string_sites.mjs");
+const { DESCRIPTION_MAX } = await import("../tools/build-doc-pages.mjs");
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (name) => readFileSync(join(WEBAPP, name), "utf8");
@@ -102,14 +112,15 @@ test("every indexable page says what it is, where it lives, and in what language
   }
 });
 
-test("titles and descriptions are distinct, and long enough to be a search result", () => {
-  // MEASURED: titles 23-50 characters, descriptions 165-316. The bounds are
-  // generous either side of that — this is here to catch an empty, duplicated or
-  // placeholder value, not to police wording.
-  //
-  // `fidelity.html`'s 316 characters deliberately exceed the ~160 a search snippet
-  // shows: the tail is the caveat that the oracle geometry gate is manual and
-  // currently inert. Truncated in a snippet is better than absent from the page.
+test("titles and descriptions are distinct, and fit a search result", () => {
+  // The LOWER bounds catch an empty, duplicated or placeholder value. The UPPER
+  // bound on the description is the one that changed (`109` HF-292): it was 340,
+  // set generously above the measured 165-316, and so it guarded nothing — eight
+  // of the eighteen pages published descriptions a search result cuts off, the
+  // fidelity page at 316 with its caveat in the half nobody sees. A caveat that is
+  // truncated away is not a caveat, so the rule is now that the description FITS,
+  // and the caveat is written inside the bound. 160 is `DESCRIPTION_MAX`, the same
+  // number `build-doc-pages.mjs` enforces where reference descriptions are written.
   const titles = new Map();
   const descriptions = new Map();
   for (const page of BUILT) {
@@ -118,9 +129,20 @@ test("titles and descriptions are distinct, and long enough to be a search resul
       `${page.file}'s title is ${page.title.length} characters: ${JSON.stringify(page.title)}`,
     );
     assert.ok(
-      page.description.length >= 70 && page.description.length <= 340,
-      `${page.file}'s description is ${page.description.length} characters`,
+      page.description.length >= 70 && page.description.length <= DESCRIPTION_MAX,
+      `${page.file}'s description is ${page.description.length} characters; a search result ` +
+        `shows about ${DESCRIPTION_MAX}, so the rest is cut off: ${JSON.stringify(page.description)}`,
     );
+    // The card copies of it may run a little longer — a preview shows two or three
+    // lines — but not unboundedly.
+    for (const tag of tags(page.source, "meta")) {
+      if (tag.property === "og:description" || tag.name === "twitter:description") {
+        assert.ok(
+          tag.content.length <= 200,
+          `${page.file}'s ${tag.property ?? tag.name} is ${tag.content.length} characters`,
+        );
+      }
+    }
     // "OpenDoc" alone is not a description of anything.
     assert.ok(
       page.description.split(/\s+/).length >= 12,
@@ -316,6 +338,11 @@ test("the crawler manifests are what the generator produces", () => {
     renderLlms(PAGES, read("llms.page.txt")),
     "llms.txt is not what webapp/tools/build-seo.mjs produces — run it and commit",
   );
+  assert.equal(
+    read("llms-full.txt"),
+    renderLlmsFull(read("llms.page.txt")),
+    "llms-full.txt is not what webapp/tools/build-seo.mjs produces — run it and commit",
+  );
 });
 
 test("every indexable page is in the sitemap and llms.txt, and nothing else is", () => {
@@ -461,6 +488,15 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   // and `description`, and a four-step breadcrumb. The arithmetic would again
   // have been wrong in the usual direction — six plus three is nine, and the
   // breadcrumb is the other four.
+  //
+  // 225 -> 246 with the social cards and the description pass (`109` HF-292).
+  // MEASURED by running this test (a guess of 284 was wrong, as the first guess
+  // here always is). `twitter:image:alt` joined the list, because it is a sentence
+  // a screen reader announces exactly as `og:image:alt` is: eighteen pages each
+  // gained one, and three root pages (docs, embedding, playground) gained the
+  // `og:image:alt` they never had — 18 + 3 = 21. Every one of the
+  // new strings is a copy of one of the five cards' alt text, which is written
+  // once, in `tools/build-social-cards.mjs`.
   const READABLE_META = [
     "description",
     "og:title",
@@ -468,6 +504,7 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
     "og:image:alt",
     "twitter:title",
     "twitter:description",
+    "twitter:image:alt",
   ];
   let strings = 0;
   for (const page of BUILT) {
@@ -483,10 +520,195 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   }
   assert.equal(
     strings,
-    225,
+    246,
     `the site publishes ${strings} human-readable metadata strings outside the i18n ` +
-      `seam (was 225). That is not a failure — it is the number, and it moved. Update ` +
+      `seam (was 246). That is not a failure — it is the number, and it moved. Update ` +
       `it deliberately, and note that localising these needs per-language pages with ` +
       `hreflang, which does not exist yet.`,
+  );
+});
+
+// ---- The link-preview cards (`109` HF-292) ---------------------------------
+
+const { CARDS, CARD_HEIGHT, CARD_WIDTH, ICONS, pngSize, problems: cardProblems } = await import(
+  "../tools/build-social-cards.mjs"
+);
+
+/** The pages a link preview can be made from: every indexable page, plus the
+ *  editor — kept out of the sitemap, but the URL people actually paste. */
+const SHAREABLE = [...BUILT, { file: "editor.html", source: read("editor.html") }];
+
+const metaValue = (source, key) =>
+  tags(source, "meta").find((tag) => tag.property === key || tag.name === key)?.content;
+
+test("every shareable page advertises a generated card, with its true size and its alt", () => {
+  const byUrl = new Map(CARDS.map((card) => [`${ORIGIN}/${card.file}`, card]));
+  for (const page of SHAREABLE) {
+    const image = metaValue(page.source, "og:image");
+    const card = byUrl.get(image);
+    assert.ok(
+      card,
+      `${page.file}'s og:image is ${image}, which is not one of the generated 1200x630 cards ` +
+        `(tools/build-social-cards.mjs). A screenshot is cropped differently by every consumer.`,
+    );
+    // The size a page announces is read back from the PNG's own header, so a
+    // page cannot claim 1200x630 for an image that is not.
+    const size = pngSize(readFileSync(join(WEBAPP, card.file)));
+    assert.deepEqual(size, { width: CARD_WIDTH, height: CARD_HEIGHT }, `${card.file} is not 1200x630`);
+    assert.equal(metaValue(page.source, "og:image:width"), String(size.width), `${page.file}: og:image:width`);
+    assert.equal(metaValue(page.source, "og:image:height"), String(size.height), `${page.file}: og:image:height`);
+    assert.equal(metaValue(page.source, "og:image:type"), "image/png", `${page.file}: og:image:type`);
+    assert.equal(metaValue(page.source, "og:locale"), "en_US", `${page.file}: og:locale`);
+    assert.equal(metaValue(page.source, "twitter:image"), image, `${page.file}: twitter:image is another image`);
+    // The alt is the card's own words, written once in the generator.
+    assert.equal(metaValue(page.source, "og:image:alt"), card.alt, `${page.file}: og:image:alt is not the card's`);
+    assert.equal(
+      metaValue(page.source, "twitter:image:alt"),
+      card.alt,
+      `${page.file}: twitter:image:alt is not the card's`,
+    );
+    for (const key of ["og:title", "og:description", "og:url", "twitter:card", "twitter:title"]) {
+      assert.ok(metaValue(page.source, key), `${page.file} has no ${key}`);
+    }
+  }
+});
+
+test("the committed cards and icons are what their committed sources render", () => {
+  // The same check `build.sh` runs, in the unit lane so a stale card fails without
+  // a wasm build.
+  assert.deepEqual(cardProblems(), [], "run `node tools/build-social-cards.mjs --render` and commit");
+});
+
+test("a card says nothing a page does not, and carries no number", () => {
+  // A picture is a claim no reviewer reads closely, so no figure may be smuggled
+  // into one: a number on a card has no `data-claim` and no derivation.
+  for (const card of CARDS) {
+    const words = [card.kicker, ...card.title, ...card.subtitle].join(" ");
+    assert.doesNotMatch(words, /\d/, `${card.file} carries a number: ${words}`);
+  }
+});
+
+// ---- The editor's own head ------------------------------------------------
+
+test("the editor's head is shareable, indexable, and stays out of the sitemap", () => {
+  const editor = describePage("editor.html", read("editor.html"));
+  const source = read("editor.html");
+  assert.equal(editor.canonical, `${ORIGIN}/editor.html`);
+  assert.doesNotMatch(editor.robots, /noindex/, "the editor must not be noindexed — that is the owner's call");
+  assert.ok(!read("sitemap.xml").includes(`${ORIGIN}/editor.html<`), "editor.html is in the sitemap");
+  assert.ok(editor.description.length >= 70 && editor.description.length <= DESCRIPTION_MAX);
+  const themes = tags(source, "meta").filter((tag) => tag.name === "theme-color");
+  assert.deepEqual(
+    themes.map((tag) => tag.media).sort(),
+    ["(prefers-color-scheme: dark)", "(prefers-color-scheme: light)"],
+    "the editor needs a theme-color for each colour scheme",
+  );
+  // Its structured data: valid, nothing refused, its page node agreeing with its
+  // head, and the application node IDENTICAL to the one the home page defines —
+  // one @id described two ways is two claims about one thing.
+  const graph = nodes(source);
+  const page = graph.find((node) => node["@id"] === `${ORIGIN}/editor.html#webpage`);
+  assert.equal(page?.name, editor.title, "editor schema name is not its <title>");
+  assert.equal(page?.description, editor.description, "editor schema description is not its meta description");
+  const app = graph.find((node) => node["@id"] === `${ORIGIN}/#editor`);
+  const home = nodes(read("index.html")).find((node) => node["@id"] === `${ORIGIN}/#editor`);
+  assert.deepEqual(app, home, "editor.html and index.html describe the editor differently");
+  const defined = new Set(SHAREABLE.flatMap((built) => nodes(built.source).map((node) => node["@id"])));
+  for (const id of references(graph)) assert.ok(defined.has(id), `editor.html points at ${id}, defined nowhere`);
+  for (const field of ["aggregateRating", "review", "ratingValue", "reviewCount", "datePublished", "dateModified"]) {
+    assert.ok(!keysOf(graph).has(field), `editor.html publishes ${field}`);
+  }
+});
+
+// ---- Pages that are not in the manifests ------------------------------------
+
+test("a noindex page needs no canonical, and never reaches the manifests", () => {
+  // The 404 page is the case: served at every missing URL, it has no URL of its
+  // own, so it has no canonical — and the generator used to REQUIRE one before it
+  // filtered noindex pages out, so the page's mere existence broke the build.
+  const notFound = describePage(
+    "404.html",
+    '<title>Page not found — OpenDoc</title><meta name="robots" content="noindex" />',
+  );
+  const indexable = describePage("x.html", "<title>A page with no canonical at all</title>");
+  assert.deepEqual(selectPages([notFound]), [], "a noindex page must be dropped, not validated");
+  assert.throws(() => selectPages([indexable]), /has no canonical/, "an indexable page must still need one");
+  // And the real one, whenever it lands.
+  if (existsSync(join(WEBAPP, "404.page.html"))) {
+    assert.match(read("404.page.html"), /<meta name="robots" content="noindex/, "404.page.html must be noindex");
+    assert.ok(!PAGES.some((page) => page.file === "404.html"), "404.html reached the sitemap");
+  }
+});
+
+// ---- The web app manifest ----------------------------------------------------
+
+test("the web app manifest is valid, every icon is real, and every page links it", () => {
+  const manifest = JSON.parse(read("site.webmanifest"));
+  for (const key of ["name", "short_name", "start_url", "scope", "display", "icons", "theme_color"]) {
+    assert.ok(manifest[key], `site.webmanifest has no ${key}`);
+  }
+  assert.ok(existsSync(join(WEBAPP, manifest.start_url)), `start_url ${manifest.start_url} does not exist`);
+  const sizes = [];
+  for (const icon of manifest.icons) {
+    const path = join(WEBAPP, icon.src);
+    assert.ok(existsSync(path), `manifest icon ${icon.src} does not exist`);
+    if (icon.type === "image/png") {
+      const { width, height } = pngSize(readFileSync(path));
+      assert.equal(icon.sizes, `${width}x${height}`, `${icon.src} is ${width}x${height}, not ${icon.sizes}`);
+      sizes.push(width);
+    }
+  }
+  // The two sizes a browser asks for before it will offer an install or a
+  // home-screen tile; both generated from the mark by the card generator.
+  for (const { size } of ICONS) assert.ok(sizes.includes(size), `no ${size}px icon in the manifest`);
+  for (const page of SHAREABLE) {
+    const link = tags(page.source, "link").find((tag) => tag.rel === "manifest");
+    const depth = page.file.split("/").length - 1;
+    assert.equal(
+      link?.href,
+      `${depth ? "../".repeat(depth) : "./"}site.webmanifest`,
+      `${page.file} does not link the web app manifest`,
+    );
+  }
+});
+
+// ---- security.txt (RFC 9116) --------------------------------------------------
+
+test("security.txt names the policy's own reporting channel, and has not expired", () => {
+  const text = read(".well-known/security.txt");
+  const field = (name) => text.match(new RegExp(`^${name}: (.+)$`, "m"))?.[1];
+  // RFC 9116 §2.5: Contact and Expires are REQUIRED.
+  const contact = field("Contact");
+  const policy = readFileSync(join(WEBAPP, "..", "SECURITY.md"), "utf8");
+  assert.ok(contact && policy.includes(`(${contact})`), `Contact ${contact} is not the link SECURITY.md gives`);
+  const expires = Date.parse(field("Expires"));
+  assert.ok(Number.isFinite(expires), "Expires is not an RFC 3339 date");
+  const DAY = 86_400_000;
+  // RED 30 DAYS BEFORE IT LAPSES, so renewing it is a scheduled commit and never a
+  // reporter finding a stale file. RFC 9116 recommends under a year ahead.
+  assert.ok(
+    expires - Date.now() > 30 * DAY,
+    `security.txt expires ${field("Expires")} — renew it (move Expires up to a year ahead) and commit`,
+  );
+  assert.ok(expires - Date.now() < 366 * DAY, "Expires is more than a year ahead (RFC 9116 §2.5.5)");
+  assert.equal(field("Canonical"), `${ORIGIN}/.well-known/security.txt`);
+  assert.ok(PAGES.some((page) => page.canonical === field("Policy")), `Policy ${field("Policy")} is not a site page`);
+});
+
+test("the deploy publishes .well-known, and nothing else hidden", async () => {
+  // `actions/upload-pages-artifact` tars with `--exclude=.[^/]*` unless told
+  // otherwise, which silently drops `.well-known/` — the file would be committed
+  // and 404. The flag that fixes that also publishes every other dot-entry, so the
+  // tracked ones are pinned: the build-output `.gitignore` and `.well-known/`.
+  const workflow = readFileSync(join(WEBAPP, "..", ".github", "workflows", "pages.yml"), "utf8");
+  assert.match(workflow, /upload-pages-artifact@[\s\S]*?include-hidden-files: true/, "pages.yml drops .well-known");
+  const { execFileSync } = await import("node:child_process");
+  const tracked = execFileSync("git", ["ls-files", "--", "."], { cwd: WEBAPP, encoding: "utf8" })
+    .split("\n")
+    .filter((path) => path.split("/").some((part) => part.startsWith(".")));
+  assert.deepEqual(
+    [...new Set(tracked.map((path) => path.split("/").find((part) => part.startsWith("."))))].sort(),
+    [".gitignore", ".well-known"],
+    "a new hidden file under webapp/ would now be published by the Pages deploy",
   );
 });

@@ -144,7 +144,10 @@ mod semantic_tests {
     /// and it keeps these tests about the metadata they are actually checking.
     fn binary_parts(source: &[u8]) -> BTreeMap<String, Vec<u8>> {
         let mut archive = zip::ZipArchive::new(Cursor::new(source.to_vec())).unwrap();
-        let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+        let names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.expect("a valid ZIP entry name").into_owned())
+            .collect();
         let mut parts = BTreeMap::new();
         for name in names {
             if !name.starts_with("word/media/") && !name.ends_with(".odttf") {
