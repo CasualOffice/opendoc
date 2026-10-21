@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title data-i18n="site.index.opendocBuildDocumentsEngine">OpenDoc — build documents on an engine you control</title>
+    <title data-i18n="site.index.opendocOnlyofficeDocsAlternative">OpenDoc — embeddable, open-source ONLYOFFICE Docs alternative</title>
     <meta
       name="description"
-      content="OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework."
+      content="OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs: an embeddable, local-first Word editor on a Rust and WebAssembly engine, with experimental co-editing."
     />
     <meta
       name="keywords"
@@ -17,34 +17,34 @@
     <meta name="theme-color" content="#fbfaf8" />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/" />
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenDoc" />
-    <meta property="og:title" content="OpenDoc — the document engine, not the dependency" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="OpenDoc — an open alternative to ONLYOFFICE Docs" />
     <meta
       property="og:description"
-      content="A deterministic Word-document runtime in Rust: import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — no required server, DOM, or UI framework."
+      content="Apache-2.0, embeddable and local-first: a Word editor and Rust document engine that opens, edits and saves .docx in the browser with no server, plus experimental real-time co-editing."
     />
     <meta property="og:url" content="https://opendoc.casualoffice.org/" />
-    <meta
-      property="og:image"
-      content="https://opendoc.casualoffice.org/assets/editor.jpg"
-    />
-    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/social/opendoc.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenDoc: An open alternative to ONLYOFFICE Docs. Word documents edited in the browser on a Rust engine, with experimental real-time co-editing." />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="OpenDoc — the document engine, not the dependency" />
+    <meta name="twitter:title" content="OpenDoc — an open alternative to ONLYOFFICE Docs" />
     <meta
       name="twitter:description"
-      content="An open-source, deterministic, loss-aware DOCX runtime for developers — Rust core, WebAssembly editor, no required server."
+      content="An Apache-2.0, embeddable, local-first Word editor on a Rust and WebAssembly engine — an open alternative to ONLYOFFICE Docs."
     />
-    <meta
-      name="twitter:image"
-      content="https://opendoc.casualoffice.org/assets/editor.jpg"
-    />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/social/opendoc.png" />
+    <meta name="twitter:image:alt" content="OpenDoc: An open alternative to ONLYOFFICE Docs. Word documents edited in the browser on a Rust engine, with experimental real-time co-editing." />
 
     <link rel="stylesheet" href="./src/marketing.css" />
     <script type="application/ld+json">
@@ -81,8 +81,8 @@
             "@type": "WebPage",
             "@id": "https://opendoc.casualoffice.org/#webpage",
             "url": "https://opendoc.casualoffice.org/",
-            "name": "OpenDoc — build documents on an engine you control",
-            "description": "OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework.",
+            "name": "OpenDoc — embeddable, open-source ONLYOFFICE Docs alternative",
+            "description": "OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs: an embeddable, local-first Word editor on a Rust and WebAssembly engine, with experimental co-editing.",
             "inLanguage": "en",
             "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
             "about": { "@id": "https://opendoc.casualoffice.org/#software" },
@@ -93,10 +93,13 @@
             "@id": "https://opendoc.casualoffice.org/#editor",
             "name": "OpenDoc Editor",
             "url": "https://opendoc.casualoffice.org/editor.html",
-            "applicationCategory": "DeveloperApplication",
+            "applicationCategory": "BusinessApplication",
             "operatingSystem": "Any modern browser",
             "browserRequirements": "JavaScript and WebAssembly",
             "description": "A client-side DOCX editor powered by the OpenDoc Rust and WebAssembly runtime.",
+            "image": "https://opendoc.casualoffice.org/social/editor.png",
+            "license": "https://www.apache.org/licenses/LICENSE-2.0",
+            "author": { "@id": "https://opendoc.casualoffice.org/#organization" },
             "isAccessibleForFree": true,
             "offers": {
               "@type": "Offer",

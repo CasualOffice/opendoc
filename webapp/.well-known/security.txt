@@ -1,0 +1,9 @@
+# Security contact for OpenDoc (RFC 9116). The reporting channel is the one the
+# security policy (SECURITY.md) names. webapp/tests/seo.test.mjs asserts that the
+# Contact below is that policy's link, and fails 30 days before Expires lapses, so
+# the date is renewed by a commit rather than found stale by a reporter.
+Contact: https://github.com/CasualOffice/opendoc/security/advisories/new
+Expires: 2027-10-01T00:00:00.000Z
+Policy: https://opendoc.casualoffice.org/reference/security.html
+Canonical: https://opendoc.casualoffice.org/.well-known/security.txt
+Preferred-Languages: en

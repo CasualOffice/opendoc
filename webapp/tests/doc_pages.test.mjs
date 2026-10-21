@@ -40,7 +40,9 @@ const {
   PROVENANCE,
   PUBLISHED,
   WITHHELD,
+  DESCRIPTION_MAX,
   artifacts,
+  describe,
   blocks,
   inline,
   openingIsProse,
@@ -244,7 +246,12 @@ test("every Markdown document the site links is published or withheld with a rea
   // The mirror of the rule in `seo.test.mjs` and `no_unrouted_strings.test.mjs`: a
   // deliberate omission that nothing checks is indistinguishable from a mistake, so
   // each one argues its case and the list stays short enough to read.
-  assert.ok(WITHHELD.length <= 8, `${WITHHELD.length} withheld documents is not a short list`);
+  //
+  // 8 -> 9 for docs/109 (`109` HF-292): llms.txt now links the live queue on
+  // GitHub where it used to link the docs/14 archive, and a linked document must be
+  // accounted for here. It is the fourth tracker in the list, withheld for the same
+  // owner instruction as the other three, not a new kind of omission.
+  assert.ok(WITHHELD.length <= 9, `${WITHHELD.length} withheld documents is not a short list`);
   for (const entry of WITHHELD) {
     assert.ok(
       entry.reason.length > 120,
@@ -284,7 +291,11 @@ test("the withheld list holds the decisions this work actually took", () => {
   }
 
   // The trackers, on the owner's instruction.
-  for (const tracker of ["docs/14-EXECUTION-TRACKER.md", "docs/105-AUDIT-2026-09-TRACKER.md"]) {
+  for (const tracker of [
+    "docs/14-EXECUTION-TRACKER.md",
+    "docs/105-AUDIT-2026-09-TRACKER.md",
+    "docs/109-BACKLOG.md",
+  ]) {
     assert.ok(withheld.has(tracker), `${tracker} is a tracker and must not be published`);
   }
 
@@ -747,6 +758,30 @@ test("the summary is the document's prose, never its filing information", () => 
     () => section(doc, "Third", "test.md"),
     /does not have/,
     "naming a section that is not there must fail loudly, not fall back silently",
+  );
+});
+
+test("every published document carries a curated description, and the page heads use it", () => {
+  // `109` HF-292. The derived opening is the LEDE; the head (meta description,
+  // social card, JSON-LD) is the curated line, because a document's first
+  // paragraph is written for a reader who has the rest of it. Without this rule
+  // docs/84's search result was its problem statement about code since replaced.
+  for (const entry of PUBLISHED) {
+    assert.equal(typeof entry.description, "string", `${entry.source} has no curated description`);
+    const page = BUILT.find((built) => built.file === `${OUT_DIR}/${entry.slug}.html`);
+    assert.ok(
+      page.committed.includes(`<meta name="description" content="${entry.description}" />`),
+      `${page.file}'s meta description is not its curated one`,
+    );
+    assert.ok(entry.description.length <= DESCRIPTION_MAX, `${entry.source}'s description is too long`);
+  }
+  // And it is REQUIRED: a new document without one is refused at generation,
+  // naming the document, rather than published with a derived sentence.
+  const [first] = PUBLISHED;
+  assert.throws(() => describe({ ...first, description: undefined }), /has no curated description/);
+  assert.throws(
+    () => describe({ ...first, description: `${"A long description that goes on. ".repeat(6)}` }),
+    /the site requires 70-160/,
   );
 });
 

@@ -80,10 +80,18 @@ jobs:
       - name: Version the site's assets with this commit
         run: ./webapp/stamp-assets.py webapp "${GITHUB_SHA::12}"
 
+      # `include-hidden-files` is what puts `webapp/.well-known/security.txt` on
+      # the site. Without it this action's tar runs with `--exclude=.[^/]*` and
+      # drops every dot-directory, so RFC 9116's required location would 404 while
+      # the file sat committed. The only other dot-entry under webapp/ is its
+      # `.gitignore` (build-output rules, nothing private);
+      # `tests/seo.test.mjs` asserts this flag is set and that nothing else hidden
+      # is there to be published by it.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: webapp
+          include-hidden-files: true
 
   deploy:
     needs: build

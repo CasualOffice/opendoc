@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- The source of every social card the site advertises (og:image / twitter:image).
+       NOT served as an image: link previews do not accept SVG. It is filled and
+       rasterized to 1200x630 PNG by webapp/tools/build-social-cards.mjs, which
+       records this file's hash beside each PNG so `--check` fails the build when the
+       source changes and the cards were not regenerated. The {{…}} slots are filled
+       from the CARDS list in that generator; nothing else here varies per card.
+
+       Colours are the site's dark-band tokens (src/marketing.css: --dark, --dark-ink,
+       --dark-muted, --dark-line) and the mark's own three fills; the type is the
+       site's self-hosted Instrument Sans, embedded at render time. -->
+  <rect width="1200" height="630" fill="#101215"/>
+  <rect x="0" y="0" width="1200" height="6" fill="#3355c4"/>
+
+  <!-- The mark (webapp/opendoc-mark.svg), inlined so the card needs no fetch. -->
+  <svg x="80" y="64" width="76" height="76" viewBox="100 108 1056 1056">
+    <defs>
+      <rect id="odm-back" width="431" height="570" rx="54" transform="matrix(1 0.47 0 1 586 128)"/>
+      <rect id="odm-mid" width="430" height="570" rx="54" transform="matrix(1 0.47 0 1 476 246)"/>
+      <rect id="odm-front" width="512" height="590" rx="54" transform="matrix(1 0.47 0 1 238 312)"/>
+      <mask id="odm-cut-back" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254">
+        <rect width="1254" height="1254" fill="#fff"/>
+        <use href="#odm-mid" fill="#000" stroke="#000" stroke-width="60"/>
+        <use href="#odm-front" fill="#000" stroke="#000" stroke-width="60"/>
+      </mask>
+      <mask id="odm-cut-mid" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254">
+        <rect width="1254" height="1254" fill="#fff"/>
+        <use href="#odm-front" fill="#000" stroke="#000" stroke-width="60"/>
+      </mask>
+    </defs>
+    <use href="#odm-back" fill="#31436f" mask="url(#odm-cut-back)"/>
+    <use href="#odm-mid" fill="#5199fc" mask="url(#odm-cut-mid)"/>
+    <use href="#odm-front" fill="#266bfc"/>
+  </svg>
+  <text x="176" y="117" font-family="Instrument Sans" font-size="40" font-weight="600" fill="#f2f1ed">OpenDoc</text>
+
+  <text data-slot="kicker" x="80" y="236" font-family="Instrument Sans" font-size="22" font-weight="600" letter-spacing="2.4" fill="#8fa6ee">{{KICKER}}</text>
+  <text data-slot="title" x="80" y="316" font-family="Instrument Sans" font-size="64" font-weight="600" letter-spacing="-1.2" fill="#f2f1ed">{{TITLE}}</text>
+  <text data-slot="subtitle" x="80" y="{{SUBTITLE_Y}}" font-family="Instrument Sans" font-size="28" font-weight="400" fill="#a8adb6">{{SUBTITLE}}</text>
+
+  <rect x="80" y="532" width="1040" height="1" fill="#2e333b"/>
+  <text x="80" y="578" font-family="Instrument Sans" font-size="24" font-weight="500" fill="#a8adb6">opendoc.casualoffice.org</text>
+  <text x="1120" y="578" text-anchor="end" font-family="Instrument Sans" font-size="24" font-weight="500" fill="#a8adb6">Apache-2.0</text>
+</svg>

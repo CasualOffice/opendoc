@@ -42,6 +42,8 @@ import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } fro
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CARDS, CARD_HEIGHT, CARD_WIDTH } from "./build-social-cards.mjs";
+
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = join(WEBAPP, "..");
 
@@ -64,28 +66,51 @@ const BLOB = `${GITHUB}/blob/main`;
  *
  *  `group` is the rail heading a page files under; `nav` is its rail label, kept
  *  short because a 60-character `<h1>` is not a sidebar entry. Both are structure,
- *  not claims. */
+ *  not claims.
+ *
+ *  `description` is the ONE authored string per page, and it is REQUIRED. It is
+ *  the page’s meta description, social-card text and JSON-LD description — the
+ *  line a search result and an assistant quote — and nothing else: the visible
+ *  lede stays the document’s own derived opening (`summarise`), so the article
+ *  body is still entirely the document. It used to be the derived opening too,
+ *  and measured on the published set that put sentences like "The web editor has
+ *  a table-only right-click menu assembled from a private array" (docs/84’s
+ *  problem statement, describing code since replaced) and "The broad interfaces
+ *  below … are not all implemented" (docs/05, a sentence that only means anything
+ *  with the page under it) into search results. A document’s first paragraph is
+ *  written for a reader who has the rest of the document; a description is read
+ *  by somebody who has nothing else, and the two are different jobs. Bounded at
+ *  generation to the site’s snippet limit (`DESCRIPTION_MAX`), so an over-long
+ *  one fails here naming the document. */
 export const PUBLISHED = [
   {
     source: "docs/02-ARCHITECTURE.md",
+    description:
+      "OpenDoc's target architecture: a headless Rust document engine with host adapters, where the DOM, canvas and app state are projections of its model.",
     slug: "architecture",
     group: "Architecture",
     nav: "Target architecture",
   },
   {
     source: "docs/28-DOCX-PACKAGE-READER.md",
+    description:
+      "How OpenDoc reads a DOCX package: a security-bounded ZIP profile, required parts, path rules, size and expansion limits, and on-demand part reads.",
     slug: "docx-package-reader",
     group: "Architecture",
     nav: "DOCX package reader",
   },
   {
     source: "docs/35-DISPOSITION-TAXONOMY.md",
+    description:
+      "How OpenDoc reports what happened to each imported construct, on two axes: how much the model captured, and whether the rest was retained verbatim or lost.",
     slug: "disposition-taxonomy",
     group: "Architecture",
     nav: "Import dispositions",
   },
   {
     source: "docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md",
+    description:
+      "The design and implementation status of OpenDoc's PDF export and print path: real-text PDF written from the same display list the editor paints.",
     slug: "pdf-export-and-print",
     group: "Architecture",
     nav: "PDF export and print",
@@ -95,24 +120,32 @@ export const PUBLISHED = [
     // deploying this needs and the embedding guide links to it — a deployment
     // guide reachable only as raw Markdown on github.com is a guide nobody reads.
     source: "docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md",
+    description:
+      "Deploying OpenDoc: the static editor needs no server; the optional collaboration relay has a Dockerfile, a compose profile and a durable journal.",
     slug: "deployment-containers-and-configuration",
     group: "Architecture",
     nav: "Deployment and containers",
   },
   {
     source: "docs/05-SDK-API-SPEC.md",
+    description:
+      "The OpenDoc SDK API: the target v1 facade for sessions, commands, snapshots and events, with the Phase 0 subset implemented today marked as such.",
     slug: "sdk-api-spec",
     group: "SDK",
     nav: "SDK API specification",
   },
   {
     source: "docs/20-ERROR-CODE-REGISTRY.md",
+    description:
+      "OpenDoc's stable error codes, with their severity, context policy and evolution rules. A code's meaning never changes and a code is never recycled.",
     slug: "error-code-registry",
     group: "SDK",
     nav: "Error code registry",
   },
   {
     source: "docs/126-EMBEDDABILITY-AND-SDK-THREE-PHASE-PLAN.md",
+    description:
+      "OpenDoc's plan for embeddability and the SDK in three phases: one artifact with a capability contract, a host contract, then white-labelling and release.",
     slug: "embeddability-plan",
     group: "SDK",
     nav: "Embeddability, in three phases",
@@ -123,24 +156,32 @@ export const PUBLISHED = [
   },
   {
     source: "docs/84-CONTEXT-MENU-AND-COMMAND-REGISTRY-DESIGN.md",
+    description:
+      "The design of OpenDoc's shared command descriptors: one source for the context menu and command palette, with keyboard access and stated disabled reasons.",
     slug: "command-registry",
     group: "Editor",
     nav: "Command registry",
   },
   {
     source: "docs/17-GLOSSARY.md",
+    description:
+      "Definitions of the terms used across the OpenDoc runtime, SDK, tests and documentation: product, model, editing, layout, compatibility and quality.",
     slug: "glossary",
     group: "Project",
     nav: "Glossary",
   },
   {
     source: "CONTRIBUTING.md",
+    description:
+      "How to contribute to OpenDoc: the development contract, pull request requirements, quality bar, local checks, commit style and Apache-2.0 licensing.",
     slug: "contributing",
     group: "Project",
     nav: "Contributing",
   },
   {
     source: "SECURITY.md",
+    description:
+      "How to report a vulnerability in OpenDoc privately, which versions receive security fixes, and the security boundaries the document engine enforces.",
     slug: "security",
     group: "Project",
     nav: "Security policy",
@@ -253,6 +294,16 @@ export const WITHHELD = [
       "project, and it is not what publishing the docs was asked to achieve. The " +
       "fidelity page already publishes the honest per-construct state, which is the " +
       "part of this material a reader needs.",
+  },
+  {
+    source: "docs/109-BACKLOG.md",
+    reason:
+      "The single work queue, withheld as a page on the owner's instruction together " +
+      "with docs/14, 104 and 105, for the same reason: a ranked list of our own open " +
+      "rows is not site content. It is LINKED, on GitHub, from llms.txt, because that " +
+      "file previously sent a model to docs/14 — an archive closed to new rows — as " +
+      "the execution tracker, and pointing at the live queue's source of record is the " +
+      "honest replacement. A link to the source of record is not publication of the queue.",
   },
   {
     source: "docs/105-AUDIT-2026-09-TRACKER.md",
@@ -779,6 +830,13 @@ export function describe(entry) {
         `an assistant to quote. Add one to the document, or withhold the document.`,
     );
   }
+  if (typeof entry.description !== "string" || !entry.description.trim()) {
+    throw new Error(
+      `${entry.source} has no curated description. Every published document needs one: ` +
+        `it is the page's search result and social card, and a document's opening ` +
+        `paragraph is written for a reader who has the rest of the page.`,
+    );
+  }
   const page = {
     ...entry,
     sourcePath: entry.source,
@@ -814,6 +872,7 @@ function checkHeadFields(page) {
   for (const [field, value] of [
     ["heading", page.heading],
     ["summary", page.summary],
+    ["description", page.description],
   ]) {
     const offender = value.match(/[&<>"]/);
     if (offender) {
@@ -832,6 +891,23 @@ function checkHeadFields(page) {
   }
   if (page.summary.split(/\s+/).length < 12) {
     refuse("its derived summary is not a sentence (fewer than twelve words)");
+  }
+  checkDescription(page.description, refuse);
+}
+
+/** The longest meta description the site publishes — about what a search
+ *  result shows before it truncates. `tests/seo.test.mjs` holds every page to
+ *  the same bound; this is the same number, enforced where the text is written. */
+export const DESCRIPTION_MAX = 160;
+
+function checkDescription(description, refuse) {
+  if (description.length < 70 || description.length > DESCRIPTION_MAX) {
+    refuse(
+      `its description is ${description.length} characters; the site requires 70-${DESCRIPTION_MAX}`,
+    );
+  }
+  if (description.split(/\s+/).length < 12) {
+    refuse("its description is not a sentence (fewer than twelve words)");
   }
 }
 
@@ -875,6 +951,10 @@ function railHtml(current) {
   return html.join("\n");
 }
 
+/** The social card every reference page advertises, from the card generator's
+ *  own list, so the alt text and size are written in exactly one place. */
+const REFERENCE_CARD = CARDS.find((card) => card.file === "social/reference.png");
+
 function head({ title, description, canonical, headline, breadcrumb }) {
   const site = origin();
   const graph = {
@@ -916,22 +996,28 @@ function head({ title, description, canonical, headline, breadcrumb }) {
     '    <meta name="theme-color" content="#fbfaf8" />',
     '    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />',
     '    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />',
+    '    <link rel="manifest" href="../site.webmanifest" />',
     `    <link rel="canonical" href="${canonical}" />`,
     '    <link rel="stylesheet" href="../src/fonts.css" />',
     '    <script src="../src/analytics.js"></script>',
     "",
     '    <meta property="og:type" content="article" />',
     '    <meta property="og:site_name" content="OpenDoc" />',
+    '    <meta property="og:locale" content="en_US" />',
     `    <meta property="og:title" content="${escapeAttribute(headline)}" />`,
     `    <meta property="og:description" content="${escapeAttribute(description)}" />`,
     `    <meta property="og:url" content="${canonical}" />`,
-    `    <meta property="og:image" content="${site}/assets/editor.jpg" />`,
-    '    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />',
+    `    <meta property="og:image" content="${site}/${REFERENCE_CARD.file}" />`,
+    '    <meta property="og:image:type" content="image/png" />',
+    `    <meta property="og:image:width" content="${CARD_WIDTH}" />`,
+    `    <meta property="og:image:height" content="${CARD_HEIGHT}" />`,
+    `    <meta property="og:image:alt" content="${escapeAttribute(REFERENCE_CARD.alt)}" />`,
     "",
     '    <meta name="twitter:card" content="summary_large_image" />',
     `    <meta name="twitter:title" content="${escapeAttribute(headline)}" />`,
     `    <meta name="twitter:description" content="${escapeAttribute(description)}" />`,
-    `    <meta name="twitter:image" content="${site}/assets/editor.jpg" />`,
+    `    <meta name="twitter:image" content="${site}/${REFERENCE_CARD.file}" />`,
+    `    <meta name="twitter:image:alt" content="${escapeAttribute(REFERENCE_CARD.alt)}" />`,
     "",
     '    <link rel="stylesheet" href="../src/marketing.css" />',
     '    <script type="application/ld+json">',
@@ -1019,7 +1105,7 @@ export function renderPage(page) {
   return pageDocument({
     head: head({
       title: `${page.heading} — OpenDoc`,
-      description: page.summary,
+      description: page.description,
       canonical,
       headline: page.heading,
       breadcrumb: [
@@ -1066,6 +1152,14 @@ export function renderHub() {
     "site, generated from the repository's own Markdown so a page and its source can " +
     "never disagree. Documents deliberately not published here are named, with the " +
     "reason, in webapp/tools/build-doc-pages.mjs.";
+  // The lede above is for the reader on the page; this is the search result, held
+  // to the same snippet bound as every published document's.
+  const description =
+    "Every OpenDoc architecture, design and specification document published on this " +
+    "site, generated from the repository's own Markdown.";
+  checkDescription(description, (message) => {
+    throw new Error(`the reference hub: ${message}`);
+  });
   const main = [
     '<main class="doc-reader is-reference is-index">',
     '  <article class="doc-article">',
@@ -1081,7 +1175,7 @@ export function renderHub() {
   return pageDocument({
     head: head({
       title: `${heading} — OpenDoc`,
-      description: summary,
+      description,
       canonical,
       headline: heading,
       breadcrumb: [

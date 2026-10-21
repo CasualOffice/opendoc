@@ -4,60 +4,89 @@
      list under "Site pages" is generated from each page's own <title> and meta
      description by webapp/tools/build-seo.mjs, so a page is described once and a
      new page cannot be forgotten. Edit this file, then run
-     ./tools/build-seo.mjs (build.sh does it, and --check fails on drift). -->
+     ./tools/build-seo.mjs (build.sh does it, and --check fails on drift).
 
-> OpenDoc is an open-source Rust document runtime for deterministic, loss-aware
-> DOCX import, editing, layout, rendering, and export across native,
-> WebAssembly, and headless hosts.
+     Every capability sentence below was checked against the code when written
+     (2026-10-22); a partial feature is described as partial. Re-check before
+     strengthening one: README.md, docs/169 (collaboration), docs/162
+     (deployment) and crates/casual-doc-io/src/docx.rs (the format registry) are
+     the sources. -->
 
-OpenDoc is developed by CasualOffice and licensed under Apache-2.0. The engine,
-not the browser DOM, owns document state and layout. Host applications own
-storage, network, authentication, fonts, telemetry, and product UI policy. No
-server, React dependency, or collaboration provider is required.
+> OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs for documents and
+> document collaboration: an embeddable, local-first editor for Word documents,
+> and the deterministic Rust engine underneath it, running natively, headless,
+> or in the browser as WebAssembly.
 
-OpenDoc is pre-release. It handles real DOCX documents and powers a live
-client-side browser editor, but it is not yet a stable public SDK or a
-pixel-perfect replacement for Microsoft Word. Consult the support matrix and
-execution tracker before relying on a specific fidelity claim.
+OpenDoc is developed by CasualOffice and licensed under Apache-2.0, with no
+commercial edition and no licence-gated customisation. The engine, not the
+browser DOM, owns document state and layout. Nothing has to run behind the
+editor: it opens, edits and saves a document entirely in the browser tab. Host
+applications own storage, network, authentication, fonts and product UI policy.
+No server, React dependency or collaboration provider is required.
 
-The current priority is DOCX fidelity. Future goals include a stable SDK
-release, ODT/plain-text and other document-format support, and native PDF export
-from the runtime's deterministic layout/display-list pipeline. These are roadmap
-directions, not currently supported features.
+OpenDoc is pre-release. There is no stable public SDK, no tagged release, and
+no published npm package or crate yet. It is not a pixel-perfect replacement for
+Microsoft Word; per-construct fidelity is graded on the fidelity page below,
+and those grades are hand-checked rather than CI-enforced.
+
+## What it does today
+
+- Formats in the browser editor. Open and save: DOCX, ODT, plain text, and a
+  normalized JSON snapshot. Open only: RTF (import; there is no RTF writer).
+  Export only: PDF with real, selectable text (no tagged PDF, PDF/A or
+  clickable links yet), HTML, Markdown, and DOTX. Macro-enabled .docm files are
+  refused at open.
+- Loss reporting: an import says what it mapped, what it kept verbatim and what
+  it lost, and an unedited DOCX can be written back byte-identical.
+- Review: comments with replies and resolve; tracked changes with Editing,
+  Suggesting and Viewing modes and accept/reject; version history kept locally
+  in the browser; Compare shown as an on-page redline.
+- Real-time collaboration, experimental: operational-transformation co-editing
+  through an optional relay (`opendoc-relay`) that orders and forwards changes
+  and never holds the document. Rooms carry a role (viewer, commenter,
+  suggester, editor, owner). Remote carets and selections are shown, labelled by
+  participant number. Share needs a host-supplied storage provider; the public
+  demo has none, so it cannot co-edit or share. The relay has no built-in TLS,
+  authentication or rate limiting, and its container image is built locally,
+  not published.
+- Embedding: a framework-free `<opendoc-editor>` custom element and an iframe
+  mount, a capability contract the host decides, an in-page and a cross-origin
+  postMessage command surface, and white-labelling from one configuration file.
+  The package is buildable from the repository; it is not on npm.
+- Phone layout and touch selection in mobile browsers, tested in emulation; not
+  yet verified on real devices.
 
 ## Site pages
 
 <!-- Generated from each page's own <title> and meta description by
      webapp/tools/build-seo.mjs. Edit the page, not this list. -->
-- [OpenDoc — build documents on an engine you control](https://opendoc.casualoffice.org/): OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework.
-- [Documentation — OpenDoc](https://opendoc.casualoffice.org/docs.html): Documentation for OpenDoc, the open-source Rust DOCX engine and embeddable WebAssembly editor: embedding, import, dispositions, architecture, and the reference docs.
-- [Embed the editor — OpenDoc](https://opendoc.casualoffice.org/embedding.html): Embed the OpenDoc editor in your own page: an installable package, the <opendoc-editor> custom element, and a capability contract resolved before the frame's first navigation. Every example on this page is extracted from code that runs in CI.
-- [DOCX fidelity support matrix — OpenDoc](https://opendoc.casualoffice.org/fidelity.html): OpenDoc fidelity, measured against a LibreOffice oracle rather than a feature list: page-count parity, round-trip disposition, and honest per-construct support. The oracle geometry gate is manual (workflow_dispatch) and currently inert — no reference is committed — so these grades are hand-checked, not CI-enforced.
-- [Embed configuration playground — OpenDoc](https://opendoc.casualoffice.org/playground.html): Change a role, withhold a capability, take away a chrome region or supply a brand colour, and watch an embedded OpenDoc editor change with it — then copy the configuration that reproduces exactly what is on screen.
-- [Target Architecture — OpenDoc](https://opendoc.casualoffice.org/reference/architecture.html): The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections.
-- [Context Menu and Shared Command Descriptors — OpenDoc](https://opendoc.casualoffice.org/reference/command-registry.html): The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu.
-- [Contributing — OpenDoc](https://opendoc.casualoffice.org/reference/contributing.html): This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability.
-- [Deployment: container images, compose, and configuration — OpenDoc](https://opendoc.casualoffice.org/reference/deployment-containers-and-configuration.html): The editor is a static, local-first web app that needs no server to function, and the collaboration relay is optional and holds no document.
-- [Import Disposition Taxonomy — OpenDoc](https://opendoc.casualoffice.org/reference/disposition-taxonomy.html): A single value per entry cannot express the outcome the fidelity architecture exists to serve: a construct can be partially mapped into the model and have its unconsumed remainder either retained in the preservation ledger or lost.
-- [DOCX Package Reader — OpenDoc](https://opendoc.casualoffice.org/reference/docx-package-reader.html): Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads.
-- [Embeddability and the SDK, in three phases — OpenDoc](https://opendoc.casualoffice.org/reference/embeddability-plan.html): Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed.
-- [Error Code Registry — OpenDoc](https://opendoc.casualoffice.org/reference/error-code-registry.html): Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not.
-- [Project Glossary — OpenDoc](https://opendoc.casualoffice.org/reference/glossary.html): This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently.
-- [Reference documentation — OpenDoc](https://opendoc.casualoffice.org/reference/index.html): Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs.
-- [PDF Export and Print Design — OpenDoc](https://opendoc.casualoffice.org/reference/pdf-export-and-print.html): Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered.
-- [SDK API Specification — OpenDoc](https://opendoc.casualoffice.org/reference/sdk-api-spec.html): The broad interfaces below describe the intended v1 facade and are not all implemented.
-- [Security Policy — OpenDoc](https://opendoc.casualoffice.org/reference/security.html): Do not open a public issue for a suspected vulnerability, malicious fixture, or confidential document. The project will acknowledge a complete report, assess severity, coordinate a fix and advisory, and credit the reporter when requested.
+- [OpenDoc — embeddable, open-source ONLYOFFICE Docs alternative](https://opendoc.casualoffice.org/): OpenDoc is an Apache-2.0 alternative to ONLYOFFICE Docs: an embeddable, local-first Word editor on a Rust and WebAssembly engine, with experimental co-editing.
+- [Documentation: embed, import and architecture — OpenDoc](https://opendoc.casualoffice.org/docs.html): How to embed the OpenDoc editor, import DOCX, read import dispositions and understand the engine's architecture, plus the full reference document set.
+- [Embed the editor — OpenDoc](https://opendoc.casualoffice.org/embedding.html): Embed the OpenDoc editor in your own page: the <opendoc-editor> custom element and a capability contract resolved before the frame's first navigation.
+- [DOCX fidelity support matrix — OpenDoc](https://opendoc.casualoffice.org/fidelity.html): OpenDoc's DOCX fidelity, graded per construct against a LibreOffice oracle. Grades are hand-checked: the oracle geometry gate is manual and currently inert.
+- [Embed configuration playground — OpenDoc](https://opendoc.casualoffice.org/playground.html): Change a role, withhold a capability, hide a chrome region or set a brand colour, and watch an embedded OpenDoc editor change, then copy the configuration.
+- [Target Architecture — OpenDoc](https://opendoc.casualoffice.org/reference/architecture.html): OpenDoc's target architecture: a headless Rust document engine with host adapters, where the DOM, canvas and app state are projections of its model.
+- [Context Menu and Shared Command Descriptors — OpenDoc](https://opendoc.casualoffice.org/reference/command-registry.html): The design of OpenDoc's shared command descriptors: one source for the context menu and command palette, with keyboard access and stated disabled reasons.
+- [Contributing — OpenDoc](https://opendoc.casualoffice.org/reference/contributing.html): How to contribute to OpenDoc: the development contract, pull request requirements, quality bar, local checks, commit style and Apache-2.0 licensing.
+- [Deployment: container images, compose, and configuration — OpenDoc](https://opendoc.casualoffice.org/reference/deployment-containers-and-configuration.html): Deploying OpenDoc: the static editor needs no server; the optional collaboration relay has a Dockerfile, a compose profile and a durable journal.
+- [Import Disposition Taxonomy — OpenDoc](https://opendoc.casualoffice.org/reference/disposition-taxonomy.html): How OpenDoc reports what happened to each imported construct, on two axes: how much the model captured, and whether the rest was retained verbatim or lost.
+- [DOCX Package Reader — OpenDoc](https://opendoc.casualoffice.org/reference/docx-package-reader.html): How OpenDoc reads a DOCX package: a security-bounded ZIP profile, required parts, path rules, size and expansion limits, and on-demand part reads.
+- [Embeddability and the SDK, in three phases — OpenDoc](https://opendoc.casualoffice.org/reference/embeddability-plan.html): OpenDoc's plan for embeddability and the SDK in three phases: one artifact with a capability contract, a host contract, then white-labelling and release.
+- [Error Code Registry — OpenDoc](https://opendoc.casualoffice.org/reference/error-code-registry.html): OpenDoc's stable error codes, with their severity, context policy and evolution rules. A code's meaning never changes and a code is never recycled.
+- [Project Glossary — OpenDoc](https://opendoc.casualoffice.org/reference/glossary.html): Definitions of the terms used across the OpenDoc runtime, SDK, tests and documentation: product, model, editing, layout, compatibility and quality.
+- [Reference documentation — OpenDoc](https://opendoc.casualoffice.org/reference/index.html): Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown.
+- [PDF Export and Print Design — OpenDoc](https://opendoc.casualoffice.org/reference/pdf-export-and-print.html): The design and implementation status of OpenDoc's PDF export and print path: real-text PDF written from the same display list the editor paints.
+- [SDK API Specification — OpenDoc](https://opendoc.casualoffice.org/reference/sdk-api-spec.html): The OpenDoc SDK API: the target v1 facade for sessions, commands, snapshots and events, with the Phase 0 subset implemented today marked as such.
+- [Security Policy — OpenDoc](https://opendoc.casualoffice.org/reference/security.html): How to report a vulnerability in OpenDoc privately, which versions receive security fixes, and the security boundaries the document engine enforces.
 
 ## Other primary links
 
 - Live sample: https://opendoc.casualoffice.org/editor.html?demo=1
 - Browser editor: https://opendoc.casualoffice.org/editor.html
 - Source repository: https://github.com/CasualOffice/opendoc
-- Architecture: https://opendoc.casualoffice.org/reference/architecture.html
-- SDK API direction: https://opendoc.casualoffice.org/reference/sdk-api-spec.html
-- Support matrix: https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md
-- Roadmap: https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md
-- Execution tracker: https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md
+- Full text of the published reference documents: https://opendoc.casualoffice.org/llms-full.txt
+- Backlog (the single work queue): https://github.com/CasualOffice/opendoc/blob/main/docs/109-BACKLOG.md
+- Security contact: https://opendoc.casualoffice.org/.well-known/security.txt
 - License: https://github.com/CasualOffice/opendoc/blob/main/LICENSE
 
 The browser editor is a WebAssembly application, not a document: it is reachable
@@ -68,10 +97,12 @@ renders to a crawler is application chrome rather than readable prose.
 
 - OOXML package admission with explicit path, size, expansion, and resource bounds.
 - Normalized editable document model with styles, sections, tables, drawings,
-  links, fields, notes, headers/footers, comments, revisions, bookmarks, and
-  content controls.
-- Semantic DOCX writer plus byte-identical reconstruction for unedited packages.
+  charts, links, fields, notes, headers/footers, comments, revisions,
+  bookmarks, and content controls.
+- Semantic DOCX writer plus byte-identical reconstruction for unedited packages;
+  ODT import and export; RTF import.
 - Rust text shaping, pagination, display-list composition, CPU raster rendering,
-  hit testing, model-anchored selection, command-based editing, and undo/redo.
+  real-text PDF export from the same display list, hit testing, model-anchored
+  selection, command-based editing, and undo/redo.
 - Rust-native, wasm32, and headless execution targets with host-populated font
   and resource seams.
