@@ -216,6 +216,7 @@ TOC
 TXT
 Tauri
 Tesseract
+Toolchain
 TrueType
 Twip
 UAX
@@ -510,6 +511,7 @@ passthrough
 pdf
 perf
 pilcrow
+png
 pointercancel
 pointerdown
 pointermove
