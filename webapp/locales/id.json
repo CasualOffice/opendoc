@@ -2201,5 +2201,16 @@
   "fontAdvanced.spacing": "Spasi (pt)",
   "fontAdvanced.standard": "Standar",
   "fontAdvanced.underDot": "Titik di bawah",
-  "fontAdvanced.command": "Fon…"
+  "fontAdvanced.command": "Fon…",
+  "object.bar.image": "Tindakan gambar",
+  "object.bar.textbox": "Tindakan kotak teks",
+  "object.bar.shape": "Tindakan bentuk",
+  "object.bar.group": "Tindakan grup",
+  "object.bar.chart": "Tindakan bagan",
+  "object.bar.object": "Tindakan objek",
+  "object.bar.altText": "Edit teks alternatif",
+  "object.bar.properties": "Buka properti objek",
+  "object.bar.crop": "Pangkas gambar",
+  "object.bar.cropApply": "Terapkan pangkasan (Enter)",
+  "object.bar.delete": "Hapus objek"
 }

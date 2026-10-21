@@ -2201,5 +2201,16 @@
   "fontAdvanced.spacing": "間距 (pt)",
   "fontAdvanced.standard": "標準",
   "fontAdvanced.underDot": "下方點",
-  "fontAdvanced.command": "字型…"
+  "fontAdvanced.command": "字型…",
+  "object.bar.image": "圖片動作",
+  "object.bar.textbox": "文字方塊動作",
+  "object.bar.shape": "圖形動作",
+  "object.bar.group": "群組動作",
+  "object.bar.chart": "圖表動作",
+  "object.bar.object": "物件動作",
+  "object.bar.altText": "編輯替代文字",
+  "object.bar.properties": "開啟物件內容",
+  "object.bar.crop": "裁剪圖片",
+  "object.bar.cropApply": "套用裁剪 (Enter)",
+  "object.bar.delete": "刪除物件"
 }

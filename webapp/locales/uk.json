@@ -2225,5 +2225,16 @@
   "fontAdvanced.spacing": "Інтервал (пт)",
   "fontAdvanced.standard": "Стандартні",
   "fontAdvanced.underDot": "Крапка знизу",
-  "fontAdvanced.command": "Шрифт…"
+  "fontAdvanced.command": "Шрифт…",
+  "object.bar.image": "Дії із зображенням",
+  "object.bar.textbox": "Дії з текстовим полем",
+  "object.bar.shape": "Дії з фігурою",
+  "object.bar.group": "Дії з групою",
+  "object.bar.chart": "Дії з діаграмою",
+  "object.bar.object": "Дії з об’єктом",
+  "object.bar.altText": "Змінити замісний текст",
+  "object.bar.properties": "Відкрити властивості об’єкта",
+  "object.bar.crop": "Обрізати зображення",
+  "object.bar.cropApply": "Застосувати обрізання (Enter)",
+  "object.bar.delete": "Видалити об’єкт"
 }

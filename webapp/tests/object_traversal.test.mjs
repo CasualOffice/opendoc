@@ -65,7 +65,8 @@ test("the announcement says which set is being walked", () => {
     "Text box 1 of 1",
   );
   // An unknown kind is still announced, not skipped.
-  assert.equal(traversalAnnouncement("chart", 0, 2, false), "Object 1 of 2");
+  assert.equal(traversalAnnouncement("chart", 0, 2, false), "Chart 1 of 2");
+  assert.equal(traversalAnnouncement("ink", 0, 2, false), "Object 1 of 2");
 });
 
 test("every kind the engine reports has a name", () => {

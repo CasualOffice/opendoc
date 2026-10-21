@@ -2209,5 +2209,16 @@
   "fontAdvanced.spacing": "Aralık (nk)",
   "fontAdvanced.standard": "Standart",
   "fontAdvanced.underDot": "Altta nokta",
-  "fontAdvanced.command": "Yazı tipi…"
+  "fontAdvanced.command": "Yazı tipi…",
+  "object.bar.image": "Resim eylemleri",
+  "object.bar.textbox": "Metin kutusu eylemleri",
+  "object.bar.shape": "Şekil eylemleri",
+  "object.bar.group": "Grup eylemleri",
+  "object.bar.chart": "Grafik eylemleri",
+  "object.bar.object": "Nesne eylemleri",
+  "object.bar.altText": "Alternatif metni düzenle",
+  "object.bar.properties": "Nesne özelliklerini aç",
+  "object.bar.crop": "Resmi kırp",
+  "object.bar.cropApply": "Kırpmayı uygula (Enter)",
+  "object.bar.delete": "Nesneyi sil"
 }

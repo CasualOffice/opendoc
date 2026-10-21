@@ -2217,5 +2217,16 @@
   "fontAdvanced.spacing": "Espaçamento (pt)",
   "fontAdvanced.standard": "Padrão",
   "fontAdvanced.underDot": "Ponto abaixo",
-  "fontAdvanced.command": "Fonte…"
+  "fontAdvanced.command": "Fonte…",
+  "object.bar.image": "Ações da imagem",
+  "object.bar.textbox": "Ações da caixa de texto",
+  "object.bar.shape": "Ações da forma",
+  "object.bar.group": "Ações do grupo",
+  "object.bar.chart": "Ações do gráfico",
+  "object.bar.object": "Ações do objeto",
+  "object.bar.altText": "Editar texto alternativo",
+  "object.bar.properties": "Abrir propriedades do objeto",
+  "object.bar.crop": "Cortar imagem",
+  "object.bar.cropApply": "Aplicar corte (Enter)",
+  "object.bar.delete": "Excluir objeto"
 }

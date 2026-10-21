@@ -2201,5 +2201,16 @@
   "fontAdvanced.spacing": "Giãn cách (pt)",
   "fontAdvanced.standard": "Tiêu chuẩn",
   "fontAdvanced.underDot": "Chấm bên dưới",
-  "fontAdvanced.command": "Phông chữ…"
+  "fontAdvanced.command": "Phông chữ…",
+  "object.bar.image": "Thao tác với hình ảnh",
+  "object.bar.textbox": "Thao tác với hộp văn bản",
+  "object.bar.shape": "Thao tác với hình",
+  "object.bar.group": "Thao tác với nhóm",
+  "object.bar.chart": "Thao tác với biểu đồ",
+  "object.bar.object": "Thao tác với đối tượng",
+  "object.bar.altText": "Sửa văn bản thay thế",
+  "object.bar.properties": "Mở thuộc tính đối tượng",
+  "object.bar.crop": "Cắt xén hình ảnh",
+  "object.bar.cropApply": "Áp dụng cắt xén (Enter)",
+  "object.bar.delete": "Xóa đối tượng"
 }

@@ -2241,5 +2241,16 @@
   "fontAdvanced.spacing": "التباعد (نقطة)",
   "fontAdvanced.standard": "قياسية",
   "fontAdvanced.underDot": "نقطة أسفل",
-  "fontAdvanced.command": "الخط…"
+  "fontAdvanced.command": "الخط…",
+  "object.bar.image": "إجراءات الصورة",
+  "object.bar.textbox": "إجراءات مربع النص",
+  "object.bar.shape": "إجراءات الشكل",
+  "object.bar.group": "إجراءات المجموعة",
+  "object.bar.chart": "إجراءات المخطط",
+  "object.bar.object": "إجراءات الكائن",
+  "object.bar.altText": "تحرير النص البديل",
+  "object.bar.properties": "فتح خصائص الكائن",
+  "object.bar.crop": "اقتصاص الصورة",
+  "object.bar.cropApply": "تطبيق الاقتصاص (Enter)",
+  "object.bar.delete": "حذف الكائن"
 }

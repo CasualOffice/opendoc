@@ -2201,5 +2201,16 @@
   "fontAdvanced.spacing": "간격 (pt)",
   "fontAdvanced.standard": "표준",
   "fontAdvanced.underDot": "아래 점",
-  "fontAdvanced.command": "글꼴…"
+  "fontAdvanced.command": "글꼴…",
+  "object.bar.image": "이미지 작업",
+  "object.bar.textbox": "텍스트 상자 작업",
+  "object.bar.shape": "도형 작업",
+  "object.bar.group": "그룹 작업",
+  "object.bar.chart": "차트 작업",
+  "object.bar.object": "개체 작업",
+  "object.bar.altText": "대체 텍스트 편집",
+  "object.bar.properties": "개체 속성 열기",
+  "object.bar.crop": "이미지 자르기",
+  "object.bar.cropApply": "자르기 적용 (Enter)",
+  "object.bar.delete": "개체 삭제"
 }

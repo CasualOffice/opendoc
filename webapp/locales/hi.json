@@ -2209,5 +2209,16 @@
   "fontAdvanced.spacing": "अंतर (pt)",
   "fontAdvanced.standard": "मानक",
   "fontAdvanced.underDot": "नीचे बिंदु",
-  "fontAdvanced.command": "फ़ॉन्ट…"
+  "fontAdvanced.command": "फ़ॉन्ट…",
+  "object.bar.image": "छवि क्रियाएँ",
+  "object.bar.textbox": "टेक्स्ट बॉक्स क्रियाएँ",
+  "object.bar.shape": "आकृति क्रियाएँ",
+  "object.bar.group": "समूह क्रियाएँ",
+  "object.bar.chart": "चार्ट क्रियाएँ",
+  "object.bar.object": "ऑब्जेक्ट क्रियाएँ",
+  "object.bar.altText": "वैकल्पिक टेक्स्ट संपादित करें",
+  "object.bar.properties": "ऑब्जेक्ट गुण खोलें",
+  "object.bar.crop": "छवि क्रॉप करें",
+  "object.bar.cropApply": "क्रॉप लागू करें (Enter)",
+  "object.bar.delete": "ऑब्जेक्ट हटाएँ"
 }

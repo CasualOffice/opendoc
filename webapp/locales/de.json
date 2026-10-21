@@ -2209,5 +2209,16 @@
   "fontAdvanced.spacing": "Abstand (pt)",
   "fontAdvanced.standard": "Standard",
   "fontAdvanced.underDot": "Punkt darunter",
-  "fontAdvanced.command": "Schriftart…"
+  "fontAdvanced.command": "Schriftart…",
+  "object.bar.image": "Bildaktionen",
+  "object.bar.textbox": "Textfeldaktionen",
+  "object.bar.shape": "Formaktionen",
+  "object.bar.group": "Gruppenaktionen",
+  "object.bar.chart": "Diagrammaktionen",
+  "object.bar.object": "Objektaktionen",
+  "object.bar.altText": "Alternativtext bearbeiten",
+  "object.bar.properties": "Objekteigenschaften öffnen",
+  "object.bar.crop": "Bild zuschneiden",
+  "object.bar.cropApply": "Zuschnitt übernehmen (Eingabetaste)",
+  "object.bar.delete": "Objekt löschen"
 }

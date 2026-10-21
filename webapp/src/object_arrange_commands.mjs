@@ -27,6 +27,7 @@
 // here asks the document a second question, and nothing here runs on a
 // pointermove path.
 import {
+  combineEditResults,
   positionAvailability,
   positionPayload,
   readGroupability,
@@ -126,8 +127,13 @@ export function createObjectArrangeCommands(io) {
       return;
     }
     void io.runEdit(() => {
-      if (availability.floatFirst) io.doc().setObjectAnchorKind(state.root, "floating");
-      return io.doc().setObjectPosition(state.root, JSON.stringify(positionPayload(preset)));
+      const payload = JSON.stringify(positionPayload(preset));
+      if (!availability.floatFirst) return io.doc().setObjectPosition(state.root, payload);
+      // Two engine actions for one gesture: the host must repaint BOTH
+      // results' pages, or the float's reflow never reaches the screen
+      // (`docs/109` OL-04).
+      const floated = io.doc().setObjectAnchorKind(state.root, "floating");
+      return combineEditResults(floated, io.doc().setObjectPosition(state.root, payload));
     }, { gate: true });
   }
 

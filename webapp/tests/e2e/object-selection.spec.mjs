@@ -58,9 +58,10 @@ test("an inline image exposes only handles its flow anchor can honor", async ({
     "8",
   ]);
   await expect(page.locator(".object-context-bar")).toBeVisible();
-  // The chip says what a drag does: an in-line picture now MOVES in the text
-  // when dragged (`docs/109` UX-OB-02), so it is no longer handles-only.
-  await expect(page.locator(".object-context-bar")).toContainText("Drag to move · handles to resize");
+  // The bar is a named toolbar about THIS object (`docs/172`). The drag hint it
+  // used to carry is the status line's job (asserted below), as in Docs, whose
+  // image toolbar carries none.
+  await expect(page.locator(".object-context-bar")).toHaveAttribute("aria-label", "Image actions");
   await expect(page.locator(".object-context-bar")).not.toContainText(/coming soon|later editing slice/i);
 
   expect(consoleErrors).toEqual([]);

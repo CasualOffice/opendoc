@@ -205,8 +205,8 @@ test("Edit data is reachable from the chip, the right-click menu, the palette an
   await expect(dialog(page)).toBeVisible();
   await done(page).click();
 
-  const box = await stableBox(chip);
-  const target = { x: box.x + 40, y: box.y + box.height + 60 };
+  const box = await stableBox(page.locator(".overlay .object-outline").first());
+  const target = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await page.mouse.click(target.x, target.y, { button: "right" });
   await page.getByRole("menuitem", { name: /^Edit data/ }).click();
   await expect(dialog(page)).toBeVisible();

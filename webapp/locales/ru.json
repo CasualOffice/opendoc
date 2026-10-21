@@ -2225,5 +2225,16 @@
   "fontAdvanced.spacing": "Интервал (пт)",
   "fontAdvanced.standard": "Стандартные",
   "fontAdvanced.underDot": "Точка снизу",
-  "fontAdvanced.command": "Шрифт…"
+  "fontAdvanced.command": "Шрифт…",
+  "object.bar.image": "Действия с изображением",
+  "object.bar.textbox": "Действия с надписью",
+  "object.bar.shape": "Действия с фигурой",
+  "object.bar.group": "Действия с группой",
+  "object.bar.chart": "Действия с диаграммой",
+  "object.bar.object": "Действия с объектом",
+  "object.bar.altText": "Изменить замещающий текст",
+  "object.bar.properties": "Открыть свойства объекта",
+  "object.bar.crop": "Обрезать изображение",
+  "object.bar.cropApply": "Применить обрезку (Enter)",
+  "object.bar.delete": "Удалить объект"
 }

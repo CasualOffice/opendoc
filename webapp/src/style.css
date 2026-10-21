@@ -8129,6 +8129,35 @@ body.is-format-painting .page-wrap * {
   left: calc(-1 * var(--grip-grow));
 }
 
+/* The SIDE grips also grow along their edge and a few pixels into the object
+   (`docs/109` OL-05). Growing outward only left a side grip 9px long, so a
+   press 5px above the East grip's centre — well inside what reads as "on the
+   grip" — fell to the object body and MOVED the picture instead of resizing
+   it. ONLYOFFICE answers the same question with a ~10px radius around each
+   grip; on a large object this gives every side grip a 25px-long band and
+   6px of inward reach. The two amounts are MEASURED per object by
+   `sideGripReach` (`object_guides.mjs`) and arrive as `--grip-along` and
+   `--grip-inward`: a fixed band on the demo's 16px picture covered the East
+   grip's centre and the picture's middle. Unset (a crop grip, a turned
+   object) they are 0, which is the outward-only rule above. The corner grips
+   are painted ABOVE the side grips (`z-index`) so a corner always wins at its
+   own centre. */
+.overlay .object-handle:is([data-handle="1"], [data-handle="5"])::after {
+  left: calc(-1 * var(--grip-along, 0px));
+  right: calc(-1 * var(--grip-along, 0px));
+}
+.overlay .object-handle:is([data-handle="3"], [data-handle="7"])::after {
+  top: calc(-1 * var(--grip-along, 0px));
+  bottom: calc(-1 * var(--grip-along, 0px));
+}
+.overlay .object-handle[data-handle="1"]::after { bottom: calc(-1 * var(--grip-inward, 0px)); }
+.overlay .object-handle[data-handle="3"]::after { left: calc(-1 * var(--grip-inward, 0px)); }
+.overlay .object-handle[data-handle="5"]::after { top: calc(-1 * var(--grip-inward, 0px)); }
+.overlay .object-handle[data-handle="7"]::after { right: calc(-1 * var(--grip-inward, 0px)); }
+.overlay .object-handle:is([data-handle="0"], [data-handle="2"], [data-handle="4"], [data-handle="6"]) {
+  z-index: 1;
+}
+
 /* Directional resize cursors, keyed by handle index (NW,N,NE,E,SE,S,SW,W). */
 .overlay .object-handle[data-handle="0"],
 .overlay .object-handle[data-handle="4"] { cursor: nwse-resize; }
@@ -8343,15 +8372,17 @@ body.is-format-painting .page-wrap * {
   color: var(--accent-ink);
 }
 
-/* Placeholder object context bar (docs/85 §4.1): names the selected object and
- * the actions the later slices will make real. */
+/* The object toolbar (`object_bar.mjs`, `docs/172`): a WAI-ARIA toolbar placed
+ * by the shared anchored-popover mechanism (`object_anchor.mjs`) — below the
+ * object as Docs places its image toolbar, flipped above when there is no room,
+ * centred, clear of the grips, hidden when the object is out of view. */
 .object-context-bar {
   position: fixed;
   z-index: var(--z-selection-toolbar);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
+  gap: 4px;
+  padding: 4px;
   border-radius: var(--radius-popover);
   background: var(--surface);
   color: var(--ink);
@@ -8359,26 +8390,24 @@ body.is-format-painting .page-wrap * {
   box-shadow: var(--shadow-popover);
   font-size: var(--fs-small);
   pointer-events: auto;
-}
-.object-context-bar[hidden] { display: none; }
-/* Never wider than the window; the bar's own row wraps before anything inside
-   it is squeezed. */
-.object-context-bar {
+  /* Never wider than the window; the bar's own row wraps before anything inside
+     it is squeezed. */
   max-width: calc(100vw - 16px);
   flex-wrap: wrap;
 }
-/* The drag hint is the first thing to go when the window is narrow: it repeats
-   an affordance the handles already show, and the controls do not. */
+.object-context-bar[hidden] { display: none; }
+/* A pointer gesture is in flight on the pages (a drag, a resize, a rotation):
+   the bar steps out of the way and comes back, re-placed, when it ends. Not
+   `hidden`, which is the bar's own show/hide decision and must survive. */
+.object-context-bar.is-suspended {
+  visibility: hidden;
+  pointer-events: none;
+}
 @media (max-width: 720px) {
-  .object-context-bar small { display: none; }
-  /* On a phone the bar may be three rows: the object is small, the page around
-     it is mostly empty, and a control clipped off the right-hand edge is one
-     the user cannot reach at all. Height is the cheaper cost. */
-  /* Selected through the bar so this outranks the desktop rule below it: a
-     media query adds no specificity, and the later rule would otherwise win. */
+  /* On a phone the bar may be two rows: a control clipped off the right-hand
+     edge is one the user cannot reach at all. Height is the cheaper cost.
+     Selected through the bar so this outranks the desktop rule below it. */
   .object-context-bar .object-wrap-menu {
-    /* Its own row, wrapping inside itself: `flex: 0 0 auto` is what keeps it
-       from being squeezed on a desktop, and is exactly what clips it here. */
     flex: 1 1 100%;
     flex-wrap: wrap;
     min-width: 0;
@@ -8387,52 +8416,72 @@ body.is-format-painting .page-wrap * {
     flex-wrap: wrap;
   }
 }
-/* Icon-only chip buttons keep a 28px target (WCAG 2.5.8 asks 24). */
-.object-bar-btn { white-space: nowrap; }
-.object-bar-icon {
-  padding: 3px 6px;
-  min-width: 28px;
-  justify-content: center;
+.object-context-bar small {
+  color: var(--muted);
+  padding: 0 6px;
 }
-.object-context-bar strong { text-transform: capitalize; }
-.object-context-bar small { color: var(--muted); }
-/* Seven chips now that "In line" is a mode. The ROW must not wrap and must not
-   be squeezed: the bar is placed ABOVE the object and falls back to overlapping
-   it when there is no room, so every extra line of bar is a line of the object
-   the user cannot reach. The BAR wraps instead, which only happens on a phone.
-   */
+/* The wrap row: seven icon buttons, in Word's and Docs' order. The ROW must not
+   wrap or be squeezed on a desktop; the BAR wraps instead, only on a phone. */
 .object-wrap-menu {
   display: flex;
   flex: 0 0 auto;
   flex-wrap: nowrap;
-  gap: 3px;
+  gap: 2px;
 }
-.object-wrap-btn { white-space: nowrap; }
-.object-wrap-btn:disabled {
-  cursor: not-allowed;
-  color: var(--faint);
-  border-color: var(--line);
-}
-.object-wrap-btn {
-  border: 1px solid var(--line);
+/* Every bar control is a 28px square icon target (WCAG 2.5.8 asks 24; the
+   coarse-pointer block below lifts it to 44). Borderless, as a toolbar's
+   buttons are; the pressed wrap mode and hover carry the accent. */
+.object-wrap-btn,
+.object-context-bar .object-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  /* 24px is the WCAG 2.5.8 target minimum. These chips were 21 tall before "In
-     line" joined them as a seventh; a row that is the primary way to change how
-     an image sits has to be tappable. */
-  min-height: 24px;
-  padding: 3px 8px;
   background: transparent;
   color: var(--ink);
   font: inherit;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
 }
-.object-wrap-btn:hover { background: var(--accent-soft); border-color: var(--accent-text); }
+.object-wrap-btn .ms,
+.object-context-bar .object-bar-btn .ms { font-size: 18px; }
+.object-wrap-btn:hover,
+.object-context-bar .object-bar-btn:hover { background: var(--accent-soft); }
+.object-wrap-btn:focus-visible,
+.object-context-bar .object-bar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .object-wrap-btn[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent-text);
   color: var(--accent-strong);
-  font-weight: 650;
+}
+/* Disabled WITH a reason, and still focusable so the reason can be read. */
+.object-wrap-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  color: var(--faint);
+  background: transparent;
+}
+/* Fill and Outline are built with a text label for the menus that share them;
+   on the bar they are icons like every other control, with the colour they
+   apply as the underline bar. Their name stays on the tooltip and the
+   accessible name. */
+.object-context-bar .object-bar-color > span:not(.ms):not(.color-apply-bar) {
+  display: none;
+}
+.object-context-bar .object-bar-color {
+  flex-direction: column;
+  gap: 0;
+}
+.object-context-bar .object-bar-color .color-apply-bar {
+  margin: 0;
 }
 
 .object-bar-divider {
@@ -10856,6 +10905,14 @@ body.phone-mode .grid-cells .gc {
   .review-filter,
   .review-card-action,
   .object-bar-btn {
+    min-height: 44px;
+  }
+
+  /* The object toolbar's icon controls, the wrap row included: it was left at
+     24px and is the primary way to change how a picture sits (`docs/172`). */
+  .object-wrap-btn,
+  .object-context-bar .object-bar-btn {
+    min-width: 44px;
     min-height: 44px;
   }
 

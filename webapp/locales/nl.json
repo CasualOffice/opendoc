@@ -2209,5 +2209,16 @@
   "fontAdvanced.spacing": "Afstand (pt)",
   "fontAdvanced.standard": "Standaard",
   "fontAdvanced.underDot": "Punt eronder",
-  "fontAdvanced.command": "Lettertype…"
+  "fontAdvanced.command": "Lettertype…",
+  "object.bar.image": "Afbeeldingsacties",
+  "object.bar.textbox": "Tekstvakacties",
+  "object.bar.shape": "Vormacties",
+  "object.bar.group": "Groepsacties",
+  "object.bar.chart": "Grafiekacties",
+  "object.bar.object": "Objectacties",
+  "object.bar.altText": "Alternatieve tekst bewerken",
+  "object.bar.properties": "Objecteigenschappen openen",
+  "object.bar.crop": "Afbeelding bijsnijden",
+  "object.bar.cropApply": "Bijsnijden toepassen (Enter)",
+  "object.bar.delete": "Object verwijderen"
 }

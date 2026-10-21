@@ -2225,5 +2225,16 @@
   "fontAdvanced.spacing": "Odstęp (pt)",
   "fontAdvanced.standard": "Standardowe",
   "fontAdvanced.underDot": "Kropka pod spodem",
-  "fontAdvanced.command": "Czcionka…"
+  "fontAdvanced.command": "Czcionka…",
+  "object.bar.image": "Akcje obrazu",
+  "object.bar.textbox": "Akcje pola tekstowego",
+  "object.bar.shape": "Akcje kształtu",
+  "object.bar.group": "Akcje grupy",
+  "object.bar.chart": "Akcje wykresu",
+  "object.bar.object": "Akcje obiektu",
+  "object.bar.altText": "Edytuj tekst alternatywny",
+  "object.bar.properties": "Otwórz właściwości obiektu",
+  "object.bar.crop": "Przytnij obraz",
+  "object.bar.cropApply": "Zastosuj przycięcie (Enter)",
+  "object.bar.delete": "Usuń obiekt"
 }
