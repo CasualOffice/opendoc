@@ -112,7 +112,8 @@
     <link rel="modulepreload" href="./src/main.js" />
     <link rel="modulepreload" href="./pkg/casual_doc_wasm.js" />
     <link rel="preload" as="fetch" type="application/wasm" crossorigin href="./pkg/casual_doc_wasm_bg.wasm" />
-  </head>
+      <link rel="stylesheet" href="./src/font_advanced.css" />
+</head>
   <body>
     <a data-i18n="ui.skipDocument" class="skip-link" href="#pages">Skip to the document</a>
     <header class="bar">
@@ -597,6 +598,7 @@
                        Formatting, for the obvious reason: it is the undo of
                        everything else on this row. -->
                   <button data-i18n-title="panelHome.clearDirectFormatting.title" data-i18n-label="panelHome.clearDirectFormatting.label" id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
+                  <button id="fontAdvancedBtn" class="fmt" type="button" data-i18n-title="fontAdvanced.command" data-i18n-label="fontAdvanced.command" title="Font…" aria-label="Font…" aria-haspopup="dialog" aria-controls="fontAdvancedDialog" disabled><span class="ms" aria-hidden="true">open_in_full</span></button>
                 </div>
                 <div class="fmt-row-line">
                   <button data-i18n-title="panelHome.boldB.title" data-i18n-label="panelHome.bold.label" id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
@@ -2059,6 +2061,145 @@
       </button>
     </div>
 
+
+    <div id="fontAdvancedDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="fontAdvancedTitle" aria-describedby="fontAdvancedDescription">
+      <section class="dialog-card font-advanced-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+          <span class="dialog-heading-icon ms" aria-hidden="true">text_format</span>
+          <div>
+          <h2 id="fontAdvancedTitle" data-i18n="fontFamily.font">Font</h2>
+          </div>
+          </div>
+          <button id="fontAdvancedClose" type="button" class="dialog-close" data-i18n-label="splitCellDialog.close.title" aria-label="Close">
+          <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+      <form id="fontAdvancedForm" class="font-advanced-form" novalidate>
+          <div class="dialog-body">
+          <p class="dialog-field-note" id="fontAdvancedDescription" data-i18n="fontAdvanced.description">Change selected text or arm the next typing. Unchanged fields are preserved.</p>
+      <div class="link-mode font-advanced-tabs" role="tablist" aria-labelledby="fontAdvancedTitle">
+          <button id="fontTab" class="link-mode-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="fontEffectsPanel" data-i18n="fontFamily.font">Font</button>
+          <button id="fontAdvancedTab" class="link-mode-tab" type="button" tabindex="-1" role="tab" aria-selected="false" aria-controls="fontMetricsPanel" data-i18n="fontAdvanced.advanced">Advanced</button>
+          </div>
+      <div id="fontEffectsPanel" role="tabpanel" aria-labelledby="fontTab">
+          <div class="font-advanced-checks">
+<label class="dialog-check">
+          <input id="font-allCaps" data-character="allCaps" type="checkbox" />
+          <span data-i18n="fontAdvanced.allCaps">All caps</span>
+          </label>
+<label class="dialog-check">
+          <input id="font-smallCaps" data-character="smallCaps" type="checkbox" />
+          <span data-i18n="fontAdvanced.smallCaps">Small caps</span>
+          </label>
+<label class="dialog-check">
+          <input id="font-doubleStrike" data-character="doubleStrike" type="checkbox" />
+          <span data-i18n="fontAdvanced.doubleStrike">Double strikethrough</span>
+          </label>
+<label class="dialog-check">
+          <input id="font-outline" data-character="outline" type="checkbox" />
+          <span data-i18n="ui.outline.label">Outline</span>
+          </label>
+<label class="dialog-check">
+          <input id="font-shadow" data-character="shadow" type="checkbox" />
+          <span data-i18n="fontAdvanced.shadow">Shadow</span>
+          </label>
+<label class="dialog-check">
+          <input id="font-emboss" data-character="emboss" type="checkbox" />
+          <span data-i18n="fontAdvanced.emboss">Emboss</span>
+          </label>
+<label class="dialog-check">
+          <input id="font-imprint" data-character="imprint" type="checkbox" />
+          <span data-i18n="fontAdvanced.imprint">Engrave</span>
+          </label>
+</div>
+          <div class="dialog-field-grid font-advanced-borders">
+          <label class="dialog-field">
+          <span data-i18n="fontAdvanced.emphasis">Emphasis marks</span>
+          <select id="font-emphasis" class="dialog-select" data-character="emphasis">
+          <option value="__mixed" data-i18n="indentSpecial.mixed" disabled hidden>Mixed</option><option value="" data-i18n="fontAdvanced.inherit">Inherit from style</option>
+          <option value="none" data-i18n="lineNumbersMenu.none">None</option>
+          <option value="dot" data-i18n="fontAdvanced.dot">Dot</option>
+          <option value="comma" data-i18n="fontAdvanced.comma">Comma</option>
+          <option value="circle" data-i18n="fontAdvanced.circle">Circle</option>
+          <option value="under_dot" data-i18n="fontAdvanced.underDot">Dot below</option>
+          </select>
+          </label>
+<label class="dialog-field">
+          <span data-i18n="fontAdvanced.border">Character border</span>
+          <select id="font-border" class="dialog-select">
+          <option value="__mixed" data-i18n="indentSpecial.mixed" disabled hidden>Mixed</option><option value="" data-i18n="fontAdvanced.inherit">Inherit from style</option>
+          <option value="none" data-i18n="lineNumbersMenu.none">None</option>
+          <option value="imported" data-i18n="paragraphAdvanced.importedStyle">Imported style</option>
+          <option value="single" data-i18n="paragraphAdvanced.bordersingle">Single</option>
+          <option value="double" data-i18n="paragraphAdvanced.borderdouble">Double</option>
+          <option value="dotted" data-i18n="paragraphAdvanced.borderdotted">Dotted</option>
+          <option value="dashed" data-i18n="paragraphAdvanced.borderdashed">Dashed</option>
+          </select>
+          </label>
+          <label class="dialog-field">
+          <span data-i18n="paragraphPropertiesPanel.borderColor.label">Border color</span>
+          <input id="font-borderColor" type="color" value="#000000" />
+          </label>
+          <label class="dialog-field">
+          <span data-i18n="paragraphAdvanced.borderWidth">Border width (pt)</span>
+          <input id="font-borderWidth" type="number" min="0.25" max="12" step="0.125" value="1" />
+          </label>
+          </div>
+          <p id="font-borderImportedNote" class="dialog-field-note" data-i18n="paragraphAdvanced.importedNote" hidden>This imported border style is preserved and shown as a single line. Choose a supported style to author a border.</p>
+          </div>
+<div id="fontMetricsPanel" role="tabpanel" aria-labelledby="fontAdvancedTab" hidden>
+          <div class="dialog-field-grid">
+<label class="dialog-field">
+          <span data-i18n="fontAdvanced.spacing">Spacing (pt)</span>
+          <input id="font-characterSpacingTwips" data-character="characterSpacingTwips" type="number" min="-1584" max="1584" step="0.05" />
+          </label>
+<label class="dialog-field">
+          <span data-i18n="fontAdvanced.scale">Scale (%)</span>
+          <input id="font-characterScalePercent" data-character="characterScalePercent" type="number" min="1" max="600" step="1" />
+          </label>
+<label class="dialog-field">
+          <span data-i18n="fontAdvanced.position">Position (pt)</span>
+          <input id="font-positionHalfPoints" data-character="positionHalfPoints" type="number" min="-15840" max="15840" step="0.5" />
+          </label>
+<label class="dialog-field">
+          <span data-i18n="fontAdvanced.kerning">Kerning threshold (pt)</span>
+          <input id="font-kerningHalfPoints" data-character="kerningHalfPoints" type="number" min="0" max="32767" step="0.5" />
+          </label>
+</div>
+          <fieldset class="font-advanced-group">
+          <legend class="settings-label" data-i18n="fontAdvanced.ligatures">Ligatures</legend>
+          <div class="font-advanced-checks">
+          <label class="dialog-check">
+          <input id="font-ligature-standard" data-ligature="1" type="checkbox" />
+          <span data-i18n="fontAdvanced.standard">Standard</span>
+          </label>
+          <label class="dialog-check">
+          <input id="font-ligature-contextual" data-ligature="2" type="checkbox" />
+          <span data-i18n="fontAdvanced.contextual">Contextual</span>
+          </label>
+          <label class="dialog-check">
+          <input id="font-ligature-historical" data-ligature="4" type="checkbox" />
+          <span data-i18n="fontAdvanced.historical">Historical</span>
+          </label>
+          <label class="dialog-check">
+          <input id="font-ligature-discretional" data-ligature="8" type="checkbox" />
+          <span data-i18n="fontAdvanced.discretional">Discretionary</span>
+          </label>
+          </div>
+          <button id="font-ligature-reset" class="dialog-button" type="button" data-i18n="fontAdvanced.inherit">Inherit from style</button>
+          </fieldset>
+          </div>
+          </div>
+          <footer class="dialog-foot">
+          <div class="dialog-actions">
+          <button id="fontAdvancedCancel" type="button" class="dialog-button" data-i18n="altTextDialog.cancel">Cancel</button>
+          <button id="fontAdvancedApply" type="submit" class="dialog-button dialog-button-primary" data-i18n="altTextDialog.apply">Apply</button>
+          </div>
+          </footer>
+          </form>
+          </section>
+          </div>
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">

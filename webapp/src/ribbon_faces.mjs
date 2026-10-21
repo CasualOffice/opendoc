@@ -91,6 +91,7 @@ export const HOME_FACES = Object.freeze([
   face("#cutBtn", "edit.cut"),
   face("#copyBtn", "edit.copy"),
   face("#fontFamily", "format.family"),
+  face("#fontAdvancedBtn", "format.character.dialog"),
   face("#fontSize", "format.size"),
   face("#shrinkFont", "format.shrink"),
   face("#growFont", "format.grow"),

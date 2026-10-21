@@ -1904,6 +1904,7 @@ fn delta_without(delta: &FormatDelta, overwritten_by: Option<&FormatDelta>) -> F
         size_half_points,
         vertical_alignment,
         font,
+        character,
     } = delta.clone();
     let Some(other) = overwritten_by else {
         // A clear writes every field, so nothing of the earlier delta survives it.
@@ -1922,6 +1923,9 @@ fn delta_without(delta: &FormatDelta, overwritten_by: Option<&FormatDelta>) -> F
         size_half_points: size_half_points.filter(|_| other.size_half_points.is_none()),
         vertical_alignment: vertical_alignment.filter(|_| other.vertical_alignment.is_none()),
         font: font.filter(|_| other.font.is_none()),
+        character: character.and_then(|patch| {
+            patch.without(other.character.as_deref().unwrap_or(&Default::default()))
+        }),
     }
 }
 

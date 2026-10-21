@@ -46,6 +46,7 @@ mod tests {
             SourceFile::new("lib.rs", include_str!("lib.rs")),
             SourceFile::new("containers.rs", include_str!("containers.rs")),
             SourceFile::new("clone.rs", include_str!("clone.rs")),
+            SourceFile::new("character.rs", include_str!("character.rs")),
             SourceFile::new("references.rs", include_str!("references.rs")),
             SourceFile::new("breaks.rs", include_str!("breaks.rs")),
             SourceFile::new("refusal.rs", include_str!("refusal.rs")),

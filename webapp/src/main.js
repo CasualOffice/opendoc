@@ -261,6 +261,7 @@ import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs
 import { createReflowChrome } from "./reflow_chrome.mjs";
 import { createFoldChrome } from "./fold_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
+import { createFontAdvanced, typeArmedCharacter } from "./font_advanced.mjs";
 import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
@@ -7656,6 +7657,7 @@ const tabStopsDialog = createTabStopsDialog({
 const styleAdvanced = createStyleAdvanced({ getDoc: () => doc, hasCaret: () => !!selection, currentStyle: currentParagraphStyleName, runToolbarEdit, onButton, openPanel: (focus) => toggleParagraphProperties(true, focus), refresh: populateStyles });
 const listAdvanced = createListAdvanced({ getDoc: () => doc, getNode: () => selection?.focus.node, runNodeEdit, onButton, openPanel: (focus) => toggleParagraphProperties(true, focus), ensureGlyphCoverage });
 const paragraphAdvanced = createParagraphAdvanced({ getDoc: () => doc, getSelection: () => selection, getEndpoints: selEndpoints, runToolbarEdit, onButton });
+const fontAdvanced = createFontAdvanced({ getDoc: () => doc, getSelection: () => selection, getEndpoints: selEndpoints, getPendingFormat: () => pendingFormat, setPendingFormat: (value) => { pendingFormat = value; }, getReviewMode: () => reviewMode, hasRange, blockMutationInViewing, runToolbarEdit, updateToolbar, registerModal, onButton, fallbackFocus: () => pagesEl });
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
@@ -8815,7 +8817,7 @@ function formatToggleButtons(key) {
 
 /** Reflects the selection in the toolbar: active states + which controls are
  *  enabled (run controls need a text range; paragraph controls need a caret). */
-function updateToolbar() {
+function updateToolbar() { fontAdvanced.reflect();
   shareChrome.reflect();
   const hasSel = !!selection;
   const range = hasRange();
@@ -11968,7 +11970,7 @@ function editorCommands(context = { surface: "palette" }) {
     });
   }
   if (doc) {
-    cmds.push(...paragraphAdvanced.commands(), ...listAdvanced.commands(), ...styleAdvanced.commands());
+    cmds.push(...fontAdvanced.commands(), ...paragraphAdvanced.commands(), ...listAdvanced.commands(), ...styleAdvanced.commands());
     cmds.push(...quickStyleCommands({ styles: () => doc.listStyles(), hasCaret: () => !!selection, apply: (name) => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }) }));
     for (const name of doc.listStyles()) {
       cmds.push({
@@ -14667,7 +14669,7 @@ document.addEventListener("keydown", async (e) => {
       const pf = pendingFormat; // armed format persists across consecutive typing
       if (
         reviewMode === "suggesting" &&
-        (pf.underlineStyle != null || pf.underlineColor != null)
+        !pf.character && (pf.underlineStyle != null || pf.underlineColor != null)
       ) {
         setStatus(
           "Underline style and color are not tracked yet; switch to Editing to type with them",
@@ -14676,7 +14678,7 @@ document.addEventListener("keydown", async (e) => {
         return;
       }
       await runEdit(
-        () => reviewMode === "suggesting"
+        () => pf.character ? typeArmedCharacter(doc, focus, typed, pf, session, reviewMode) : reviewMode === "suggesting"
           ? doc.suggestStyledInsert(
             focus.node,
             focus.offset,

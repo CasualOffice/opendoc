@@ -453,6 +453,7 @@ export const APP_MENU_SECTIONS = {
   format: [
     sub(
       "menuGroup.font",
+      "format.character.dialog",
       "format.bold",
       "format.italic",
       "format.underline",

@@ -79,7 +79,9 @@ use casual_doc_model::v1::{ObjectLocks, ObjectName};
 // crate root's scope, where the module's own items are not in scope, and every
 // intra-doc link in it fails `RUSTDOCFLAGS="-D warnings" cargo doc`. The module's
 // documentation lives in its file, as `//!`.
+pub mod character;
 pub mod references;
+pub use character::CharacterFormatDelta;
 
 // The one total structural deep copy in the tree (`docs/129` §2): clone a block
 // subtree, re-minting every node id, preserving every inline variant, and
@@ -226,6 +228,9 @@ pub struct FormatDelta {
     pub vertical_alignment: Option<VerticalAlignment>,
     /// Set the font family (`w:rFonts`, ascii + hAnsi slots).
     pub font: Option<String>,
+    /// Additive advanced character patch, omitted for existing wire payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<Box<CharacterFormatDelta>>,
 }
 
 impl FormatDelta {
@@ -234,6 +239,9 @@ impl FormatDelta {
     /// exposed so a freshly built run (e.g. an external structured paste) can carry
     /// clipboard formatting without duplicating the property mapping.
     pub fn apply_to(&self, props: &mut RunProperties) {
+        if let Some(character) = &self.character {
+            character.apply_to(props);
+        }
         if let Some(rtl) = self.rtl {
             props.rtl = Some(rtl);
         }

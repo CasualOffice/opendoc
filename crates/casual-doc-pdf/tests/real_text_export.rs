@@ -999,3 +999,58 @@ fn encode_png(width: u32, height: u32) -> Vec<u8> {
         .expect("encode png");
     bytes
 }
+
+#[test]
+fn character_effects_keep_one_extractable_text_copy_and_emit_real_ink_passes() {
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{BlockNode, Definitions, InlineNode, Paragraph, Run, RunProperties};
+    let node = |id| NodeId::from_parts(id, 1).unwrap();
+    for (outline, shadow, emboss, imprint) in [
+        (true, false, false, false),
+        (false, true, false, false),
+        (false, false, true, false),
+        (false, false, false, true),
+    ] {
+        let document = Document::new(
+            node(1),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: node(2),
+                properties: Default::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: node(3),
+                    text: "Effect text".into(),
+                    properties: RunProperties {
+                        outline: Some(outline),
+                        shadow: Some(shadow),
+                        emboss: Some(emboss),
+                        imprint: Some(imprint),
+                        ..Default::default()
+                    }
+                    .into(),
+                })],
+            })],
+            Definitions::default(),
+        )
+        .unwrap();
+        let export =
+            export_document(&document, &NoMediaSource, &PdfExportOptions::default()).unwrap();
+        let pdf = inspect::parse(&export.bytes).unwrap();
+        let page = &pdf.pages()[0];
+        let contents = pdf.page_contents(page);
+        assert_eq!(
+            contents.plain_text().matches("Effect text").count(),
+            1,
+            "effects must not duplicate extracted text"
+        );
+        let stream_bytes = pdf.stream_data(pdf.get(page, "Contents").unwrap()).unwrap();
+        let stream = String::from_utf8_lossy(&stream_bytes);
+        if outline {
+            assert!(stream.contains("1 Tr"), "outline must use hollow text ink");
+        } else {
+            assert!(
+                stream.contains(" cm\n"),
+                "shadow and relief must draw offset vector ink"
+            );
+        }
+    }
+}

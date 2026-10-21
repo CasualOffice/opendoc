@@ -3033,7 +3033,13 @@ fn hash_decoration<H: std::hash::Hasher>(decoration: &crate::text::Decoration, h
         double_strike,
         emphasis,
         border,
+        effects,
+        kerning_half_points,
+        ligatures,
     } = decoration;
+    effects.hash(hasher);
+    kerning_half_points.hash(hasher);
+    ligatures.hash(hasher);
     underline.hash(hasher);
     (*underline_style as u8).hash(hasher);
     underline_color.hash(hasher);
@@ -7638,6 +7644,14 @@ fn small_caps_spans(text: &str) -> Vec<(&str, bool)> {
 /// rather than a line in this function.
 fn run_decoration(properties: &RunProperties, palette: Option<&ResolvedPalette>) -> Decoration {
     Decoration {
+        effects: crate::text::GlyphEffects {
+            outline: properties.outline.unwrap_or(false),
+            shadow: properties.shadow.unwrap_or(false),
+            emboss: properties.emboss.unwrap_or(false),
+            imprint: properties.imprint.unwrap_or(false),
+        },
+        kerning_half_points: properties.kerning_half_points,
+        ligatures: properties.ligatures,
         underline: properties.underline.unwrap_or(false),
         strikethrough: properties.strike.unwrap_or(false),
         double_strike: properties.double_strike.unwrap_or(false),

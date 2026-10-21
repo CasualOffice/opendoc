@@ -64,6 +64,9 @@ struct RunBrush {
     /// Baseline shift in twips (positive = raised); subtracted from the run's
     /// glyph-run origin so super/subscript and `w:position` offsets survive shaping.
     baseline_shift: i32,
+    effects: crate::text::GlyphEffects,
+    kerning_half_points: Option<u32>,
+    ligatures: Option<casual_doc_model::v1::Ligatures>,
 }
 
 /// The default `parley`-backed line shaper.
@@ -1101,7 +1104,33 @@ impl ParleyShaper {
                 percent,
             )));
         }
+        let features: Vec<String> = spans
+            .iter()
+            .map(|(_, _, run)| {
+                let mut settings = Vec::new();
+                if let Some(threshold) = run.decoration.kerning_half_points {
+                    settings.push(format!(
+                        "'kern' {}",
+                        u8::from(i64::from(run.size.raw()) >= i64::from(threshold) * 10)
+                    ));
+                }
+                if let Some(groups) = run.decoration.ligatures {
+                    for (tag, mask) in [("liga", 1), ("clig", 2), ("hlig", 4), ("dlig", 8)] {
+                        settings.push(format!("'{tag}' {}", u8::from(groups.bits() & mask != 0)));
+                    }
+                }
+                settings.join(",")
+            })
+            .collect();
         for (i, (start, end, run)) in spans.iter().enumerate() {
+            if !features[i].is_empty() {
+                builder.push(
+                    StyleProperty::FontFeatures(parley::style::FontFeatures::from(
+                        features[i].as_str(),
+                    )),
+                    *start..*end,
+                );
+            }
             let scale = run.character_scale_percent.clamp(1, 600);
             let shaped_size = (run.size.raw() as f32 * f32::from(scale) / 100.0).max(1.0);
             builder.push(StyleProperty::FontSize(shaped_size), *start..*end);
@@ -1125,6 +1154,9 @@ impl ParleyShaper {
                     underline_style: run.decoration.underline_style,
                     emphasis: run.decoration.emphasis,
                     border: run.decoration.border,
+                    effects: run.decoration.effects,
+                    kerning_half_points: run.decoration.kerning_half_points,
+                    ligatures: run.decoration.ligatures,
                     baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
@@ -1535,6 +1567,9 @@ impl ParleyShaper {
                         underline_style: style.brush.underline_style,
                         emphasis: style.brush.emphasis,
                         border: style.brush.border,
+                        effects: style.brush.effects,
+                        kerning_half_points: style.brush.kerning_half_points,
+                        ligatures: style.brush.ligatures,
                     },
                     highlight,
                     shading,
@@ -1799,6 +1834,55 @@ mod tests {
         compact_fallback_glyph_widow(&mut layout, Twip(3_122), false);
 
         assert_eq!(layout.lines.len(), 2);
+    }
+
+    #[test]
+    fn explicit_ligatures_and_kerning_change_shaping_without_rewriting_source() {
+        use casual_doc_model::v1::Ligatures;
+        let shaper = ParleyShaper::new();
+        let shape = |text: &'static str, ligatures, kerning, scale| {
+            let mut styled = run(text);
+            styled.decoration.ligatures = ligatures;
+            styled.decoration.kerning_half_points = kerning;
+            styled.character_scale_percent = scale;
+            shaper.shape_paragraph(&[styled], constraints(500), para_range())
+        };
+        let off = shape("office ffi", Some(Ligatures::None), None, 100);
+        let on = shape("office ffi", Some(Ligatures::Standard), None, 100);
+        let count = |layout: &LineLayout| {
+            layout
+                .lines
+                .iter()
+                .flat_map(|l| &l.runs)
+                .map(|r| r.glyphs.len())
+                .sum::<usize>()
+        };
+        assert!(
+            count(&on) < count(&off),
+            "standard ligatures must reach OpenType shaping"
+        );
+        let width = |layout: &LineLayout| {
+            layout
+                .lines
+                .iter()
+                .flat_map(|l| &l.runs)
+                .flat_map(|r| &r.glyphs)
+                .map(|g| g.advance.raw())
+                .sum::<i32>()
+        };
+        let kern = shape("AVAV", None, Some(0), 100);
+        let no_kern = shape("AVAV", None, Some(65534), 100);
+        assert!(
+            width(&kern) < width(&no_kern),
+            "the threshold must enable font kerning"
+        );
+        let below = shape("AVAV", None, Some(65534), 200);
+        let above = shape("AVAV", None, Some(0), 200);
+        assert!(
+            width(&above) < width(&below),
+            "horizontal scale must not change threshold units"
+        );
+        assert_eq!(on.lines[0].range.end.offset, "office ffi".len() as u32);
     }
 
     #[test]

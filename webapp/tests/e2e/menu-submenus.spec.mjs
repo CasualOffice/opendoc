@@ -105,7 +105,7 @@ test("a command inside a submenu runs the command", async ({ page, consoleErrors
 
   await page.locator('.app-menu-button[data-menu="format"]').click();
   await page.locator("#appMenuPopover .app-menu-item-parent").first().hover();
-  const row = page.locator("#appMenuPopover .app-menu-item-flyout:not([hidden]) .app-menu-item").first();
+  const row = page.locator('#appMenuPopover .app-menu-item-flyout:not([hidden]) .app-menu-item[data-command="format.bold"]');
   await row.click();
 
   // The document changed, and the menu got out of the way — the two halves of

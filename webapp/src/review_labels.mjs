@@ -6,6 +6,8 @@
 // strings a localisation seam will need next (`105` UX-009/CQ-005), and exactly
 // the ones that should be provable without booting a browser.
 
+import { t } from './i18n.mjs';
+
 /** The human display name for an author, matching the sidebar's existing
  *  convention: name, else initials, else "You" (an unattributed local edit). */
 export function reviewAuthorDisplay(item) {
@@ -100,6 +102,13 @@ export function reviewFormattingValue(property, value) {
     return { start: "Left", end: "Right", center: "Centered", justify: "Justified" }[value] ?? String(value);
   }
   if (typeof value === "boolean") return value ? "on" : "off";
+  if (["characterSpacingTwips","positionHalfPoints","kerningHalfPoints"].includes(property) && Number.isFinite(Number(value))) return `${Number(value) / (property === "characterSpacingTwips" ? 20 : 2)} pt`;
+  if (property === "characterScalePercent") return `${value}%`;
+  if (property === "emphasis") return t(value === "none" ? "lineNumbersMenu.none" : `fontAdvanced.${value === "under_dot" ? "underDot" : value}`);
+  if (property === "ligatures") {
+    if (value === "none") return t("lineNumbersMenu.none");
+    return ["standard","contextual","historical","discretional"].filter(group => value === "all" || String(value).toLowerCase().includes(group)).map(group => t(`fontAdvanced.${group}`)).join(", ");
+  }
   if (property === "sizeHalfPoints" && Number.isFinite(Number(value))) {
     return `${Number(value) / 2} pt`;
   }
@@ -140,9 +149,10 @@ export function reviewFormattingDescription(changes) {
     tabs: "Tab stops",
     bidi: "Right-to-left",
   };
+  const characterLabels = {allCaps:'allCaps',smallCaps:'smallCaps',doubleStrike:'doubleStrike',shadow:'shadow',emboss:'emboss',imprint:'imprint',emphasis:'emphasis',border:'border',characterSpacingTwips:'spacing',characterScalePercent:'scale',positionHalfPoints:'position',kerningHalfPoints:'kerning',ligatures:'ligatures'};
   return (changes ?? []).map((change) => {
     const property = String(change?.property || "");
-    const label = labels[property] || property || "Formatting";
+    const label = property === "outline" ? t("ui.outline.label") : characterLabels[property] ? t(`fontAdvanced.${characterLabels[property]}`) : labels[property] || property || "Formatting";
     return `${label}: ${reviewFormattingValue(property, change?.before)} → ${reviewFormattingValue(property, change?.after)}`;
   }).join("\n");
 }
