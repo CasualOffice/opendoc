@@ -122,26 +122,34 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  plural family to ONE entry — six Arabic forms of one sentence are one
  *  answered string, not six — so the figure the gate compares is uniform across
  *  all eighteen, and a floor derived by any other arithmetic is a floor measuring
- *  something the gate does not. */
+ *  something the gate does not.
+ *
+ *  1,675 -> 1,681 is the site footer's new columns (`109` HF-293): its tagline,
+ *  the Product / Learn / Project headings, the Reference link and the footer
+ *  navigation's accessible name. The header and footer are the one part of the
+ *  site every catalogue translates, so the six landed translated into all
+ *  eighteen languages in the commit that routed them rather than leaving English
+ *  column headings under a German header. MEASURED with this test's own counter
+ *  on the regenerated catalogues, not incremented by six. */
 const COVERAGE = new Map([
-  ["ar", 1675],
-  ["de", 1675],
-  ["es", 1675],
-  ["fr", 1675],
-  ["hi", 1675],
-  ["id", 1675],
-  ["it", 1675],
-  ["ja", 1675],
-  ["ko", 1675],
-  ["nl", 1675],
-  ["pl", 1675],
-  ["pt-BR", 1675],
-  ["ru", 1675],
-  ["tr", 1675],
-  ["uk", 1675],
-  ["vi", 1675],
-  ["zh-Hans", 1675],
-  ["zh-Hant", 1675],
+  ["ar", 1681],
+  ["de", 1681],
+  ["es", 1681],
+  ["fr", 1681],
+  ["hi", 1681],
+  ["id", 1681],
+  ["it", 1681],
+  ["ja", 1681],
+  ["ko", 1681],
+  ["nl", 1681],
+  ["pl", 1681],
+  ["pt-BR", 1681],
+  ["ru", 1681],
+  ["tr", 1681],
+  ["uk", 1681],
+  ["vi", 1681],
+  ["zh-Hans", 1681],
+  ["zh-Hant", 1681],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;

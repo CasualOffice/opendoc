@@ -555,14 +555,22 @@ test("how much English the reference pages put on the site, measured and publish
   // restates it, the lock row's new sentence, and the theme part's record in the
   // `preserved` row. Re-measure on the merged tree, not by adding this to another
   // branch's figure.
+  //
+  // 2672 -> 2685 with the site revamp (`109` HF-293). MEASURED from the
+  // regenerated pages, read off this assertion's own failure output: thirteen, one
+  // per reference page, and every one is the same string — the "Open" of the
+  // OpenDoc wordmark the footer partial now carries beside its tagline. It is the
+  // product name, unrouted for the reason the header's identical wordmark is (the
+  // header partial's ceiling of 1 is that string), and it is counted thirteen times
+  // here only because every reference page inlines the footer.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2672,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2672). That ` +
+    2685,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2685). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

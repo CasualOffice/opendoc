@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- GitHub Pages serves this file for ANY missing path, at any depth
+         (`/a/b/c` included), so every relative URL on the page — the inlined
+         header and footer partials use `./` — is resolved from the site root. -->
+    <base href="/" />
+    <title data-i18n="site.notFound.title">Page not found — OpenDoc</title>
+    <meta name="description" content="This page does not exist. Every OpenDoc destination — the editor, the playground, the embedding guide, the docs and the fidelity report — is one step from here." />
+    <!-- A miss is not content: never index it, and keep it out of the sitemap
+         (build-seo.mjs drops every page that declares noindex about itself). -->
+    <meta name="robots" content="noindex" />
+    <!-- build-seo.mjs requires a canonical of every template before it applies
+         the noindex filter, so this one names itself rather than any other page. -->
+    <link rel="canonical" href="https://opendoc.casualoffice.org/404.html" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+    <script src="./src/analytics.js"></script>
+    <link rel="stylesheet" href="./src/marketing.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+          <a href="./" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+          <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+          <a href="./playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
+          <a href="./embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+          <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <!-- The language control. The markup carries only the automatic entry —
+               the one option with words in it, so the one that goes through the seam
+               like every other label here. The nineteen languages are appended by
+               `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+               noun that must never be translated and so does not belong in a
+               catalogue at all. The control stays `hidden` until that script has
+               run: a picker offering one choice is a dead control (docs/99 §10), and
+               a site whose scripts did not run is English with nothing to choose. -->
+          <label class="site-lang" hidden>
+            <span class="site-lang-icon ms" aria-hidden="true">language</span>
+            <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+              <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+            </select>
+          </label>
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+          <a class="header-cta" href="./editor.html" data-i18n="site.header.openEditor">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="nf">
+      <section class="nf-hero">
+        <div data-reveal>
+          <span class="home-kicker" data-i18n="site.notFound.kicker">Error 404</span>
+          <h1 data-i18n="site.notFound.heading">This page is not in the document.</h1>
+          <p data-i18n="site.notFound.lede">
+            The address may be mistyped, or the page may have moved. Everything OpenDoc
+            publishes is one step from here.
+          </p>
+          <div class="nf-actions">
+            <a class="btn btn--accent" href="./" data-i18n="site.notFound.home">Back to the overview <span class="site-arrow" aria-hidden="true">→</span></a>
+            <a class="btn btn--outline" href="./editor.html?demo=1" data-i18n="site.index.tryLiveEditor">Try the live editor <span class="site-arrow" aria-hidden="true">→</span></a>
+          </div>
+        </div>
+        <div class="nf-art" data-motion aria-hidden="true">
+          <div class="nf-sheet nf-sheet--back"><i class="nf-line--h"></i><i></i><i></i><i class="nf-line--short"></i></div>
+          <div class="nf-sheet nf-sheet--front">
+            <i class="nf-line--h"></i><i></i><i class="nf-line--short"></i>
+            <span class="nf-gap" data-i18n="site.notFound.missing">missing paragraph</span>
+            <i></i><i></i><i class="nf-line--short"></i>
+          </div>
+        </div>
+      </section>
+
+      <h2 class="nf-dest-title" data-i18n="site.notFound.destinations">Where you might have been going</h2>
+      <ul class="nf-dest" data-reveal-group>
+        <li data-reveal><a href="./"><b data-i18n="site.header.overview">Overview</b><span data-i18n="site.notFound.overviewWhat">What OpenDoc is, and what it does today.</span><code>/</code></a></li>
+        <li data-reveal><a href="./editor.html"><b data-i18n="site.header.editor">Editor</b><span data-i18n="site.notFound.editorWhat">Open or start a document in your browser. Nothing is uploaded.</span><code>/editor.html</code></a></li>
+        <li data-reveal><a href="./playground.html"><b data-i18n="site.header.playground">Playground</b><span data-i18n="site.notFound.playgroundWhat">Configure an embed and watch the running editor change.</span><code>/playground.html</code></a></li>
+        <li data-reveal><a href="./embedding.html"><b data-i18n="site.header.embedding">Embedding</b><span data-i18n="site.notFound.embeddingWhat">Put the editor inside your own product.</span><code>/embedding.html</code></a></li>
+        <li data-reveal><a href="./docs.html"><b data-i18n="site.header.docs">Docs</b><span data-i18n="site.notFound.docsWhat">Import, dispositions and determinism.</span><code>/docs.html</code></a></li>
+        <li data-reveal><a href="./fidelity.html"><b data-i18n="site.header.fidelity">Fidelity</b><span data-i18n="site.notFound.fidelityWhat">Every construct family, graded at the level the code reaches.</span><code>/fidelity.html</code></a></li>
+        <li data-reveal><a href="./reference/index.html"><b data-i18n="site.footer.reference">Reference</b><span data-i18n="site.notFound.referenceWhat">The design documents, published as pages.</span><code>/reference/</code></a></li>
+        <li data-reveal><a href="https://github.com/CasualOffice/opendoc"><b data-i18n="site.notFound.source">Source code</b><span data-i18n="site.notFound.sourceWhat">The repository, under the Apache-2.0 licence.</span><code>github.com</code></a></li>
+      </ul>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <div class="site-footer-brand">
+          <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          </a>
+          <p class="site-footer-tagline" data-i18n="site.footer.tagline">An Apache-2.0 document editor and engine you can embed, run locally and edit together.</p>
+        </div>
+        <nav class="site-footer-cols" aria-label="Footer" data-i18n-label="site.footer.navigation">
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.product">Product</p>
+            <a href="./editor.html" data-i18n="site.header.editor">Editor</a>
+            <a href="./playground.html" data-i18n="site.header.playground">Playground</a>
+            <a href="./embedding.html" data-i18n="site.header.embedding">Embedding</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.learn">Learn</p>
+            <a href="./docs.html" data-i18n="site.header.docs">Docs</a>
+            <a href="./fidelity.html" data-i18n="site.header.fidelity">Fidelity</a>
+            <a href="./reference/index.html" data-i18n="site.footer.reference">Reference</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.project">Project</p>
+            <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+            <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
+            <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
+          </div>
+        </nav>
+        <div class="site-footer-base">
+          <span class="site-footer-copy" data-i18n="site.footer.copyright">© 2026 CasualOffice — developed by the CasualOffice Team</span>
+          <span class="site-footer-copy" data-i18n="site.footer.licence">Apache-2.0 · contributions welcome under the same licence</span>
+        </div>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "./pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+    <script type="module" src="./src/site_locale.mjs"></script>
+    <script type="module" src="./src/site_motion.mjs"></script>
+  </body>
+</html>

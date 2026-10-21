@@ -190,8 +190,93 @@ test("the hero embed stays a static poster until a visitor asks for the editor",
   // Booting the WASM editor on page load spends ~100 MB of a marketing tab
   // (tests/e2e/memory-budget.spec.mjs). The design prototype put a live iframe
   // straight into the hero; this keeps it from coming back through a redesign.
-  const hero = page.slice(page.indexOf('id="homeEmbed"'), page.indexOf("<!-- Rail -->"));
-  assert.ok(hero.length > 0, "the hero embed must exist");
+  const start = page.indexOf('id="homeEmbed"');
+  const end = page.indexOf("<!-- Rail -->");
+  // Both markers, explicitly: with the end marker gone `slice` would run to -1 and
+  // quietly test most of the page instead of the hero.
+  assert.ok(start > 0 && end > start, "the hero embed and the <!-- Rail --> marker after it must exist");
+  const hero = page.slice(start, end);
   assert.ok(!/<iframe/i.test(hero), "the hero must not ship an <iframe>; home-embed.js mounts one on click");
   assert.match(hero, /class="home-embed-run"/, "the poster needs its Run control");
+});
+
+test("the 'draws today' strip lists only families that render, at the grade they render", () => {
+  // The strip under the hero (`109` HF-293) is a list of capabilities, which is the
+  // shape a marketing page overstates in. Every chip names its fidelity.js family
+  // and carries that family's render grade as its class, so a chip for a family
+  // graded "none" — or a "full" dot on a partial one — cannot ship.
+  const byName = new Map(FIDELITY.map((family) => [family.family, family]));
+  const decode = (text) => text.replaceAll("&amp;", "&");
+  const chips = [...page.matchAll(/<li class="is-([a-z]+)" data-render-family="([^"]+)"/g)];
+  assert.ok(chips.length >= 8, `the strip should carry its chips, found ${chips.length}`);
+  for (const [, grade, rawName] of chips) {
+    const family = byName.get(decode(rawName));
+    assert.ok(family, `"${decode(rawName)}" is not a family in fidelity.js`);
+    assert.notEqual(family.rendered, "none", `"${family.family}" does not render but is on the strip`);
+    assert.equal(grade, family.rendered, `"${family.family}" renders ${family.rendered}, the chip says ${grade}`);
+  }
+  // The decorative loop copy (aria-hidden) must be the same list, or the strip
+  // shows a sighted reader something the accessible list does not say.
+  const copy = page.match(/<ul class="home-marquee-track home-marquee-track--copy"[^>]*>([\s\S]*?)<\/ul>/);
+  const main = page.match(/<ul class="home-marquee-track">([\s\S]*?)<\/ul>/);
+  assert.ok(copy && main, "the strip and its loop copy must both exist");
+  const keys = (html) => [...html.matchAll(/class="is-([a-z]+)"[^>]*data-i18n="([^"]+)"/g)].map((m) => m.slice(1).join(" "));
+  assert.deepEqual(keys(copy[1]), keys(main[1]), "the loop copy drifted from the list it repeats");
+});
+
+test("the embedding figure speaks the element's real vocabulary", async () => {
+  // The figure shows a host writing `<opendoc-editor mode=… can=…>` and a row of
+  // capability chips. A developer copies what a landing page shows, so every
+  // attribute must be one the element reads, the mode a real role, and every chip
+  // a real capability.
+  const { CAPABILITIES, ROLES } = await import("../src/capabilities.mjs");
+  const element = read("../src/embed_element.mjs");
+  const mount = element.match(/const MOUNT_ATTRIBUTES = Object\.freeze\(\[([\s\S]*?)\]\)/);
+  assert.ok(mount, "MOUNT_ATTRIBUTES must still be declared in embed_element.mjs");
+  const attributes = [...mount[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+
+  const tag = page.match(/<pre class="hh-tag"><code>([\s\S]*?)<\/code><\/pre>/);
+  assert.ok(tag, "the home page's embedding figure must show the element");
+  const code = tag[1].replace(/<[^>]+>/g, "").replaceAll("&lt;", "<").replaceAll("&gt;", ">");
+  assert.match(code, /^<opendoc-editor\b/);
+  const used = [...code.matchAll(/\s([a-z-]+)="([^"]*)"/g)];
+  assert.ok(used.length >= 2, "the figure should show at least two attributes");
+  for (const [, name, value] of used) {
+    assert.ok(attributes.includes(name), `${name}="" is not an attribute <opendoc-editor> reads`);
+    if (name === "mode") assert.ok(ROLES.includes(value), `mode="${value}" is not a role`);
+    if (name === "can") {
+      for (const item of value.split(/[\s,]+/).filter(Boolean)) {
+        assert.ok(CAPABILITIES.includes(item.replace(/^[-+]/, "")), `can="${value}" names no capability`);
+      }
+    }
+  }
+  for (const source of [page, read("../embedding.page.html")]) {
+    const chips = [...source.matchAll(/data-capability="([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(chips.length > 0, "the capability chips must be marked up with data-capability");
+    for (const chip of chips) assert.ok(CAPABILITIES.includes(chip), `"${chip}" is not a capability`);
+  }
+});
+
+test("collaboration is described as docs/169 describes it, not as planned and not as finished", () => {
+  // The page said "Real-time collaboration — Planned" after #828 had shipped
+  // presence, Share, safe recovery and the convergence fuzz: understating is also
+  // false (SKILL §9.6). docs/169 calls it experimental, so the roadmap does too —
+  // and the day that document drops the word, this asks for the page to follow.
+  const doc = read("../../docs/169-SHARING-PRESENCE-AND-SNAPSHOT-RECOVERY.md");
+  const status = doc.match(/^Status: (.*)$/m);
+  assert.ok(status, "docs/169 must still carry a Status line");
+  const phase = page.match(
+    /<span class="home-state"[^>]*>([^<]*)<\/span>\s*<h3[^>]*>Real-time collaboration<\/h3>/,
+  );
+  assert.ok(phase, "the roadmap must carry a real-time collaboration phase");
+  assert.notEqual(phase[1].trim(), "Planned", "collaboration shipped in #828; it is not planned");
+  if (/experimental/i.test(status[1])) {
+    assert.equal(phase[1].trim(), "Experimental", "docs/169 says experimental; so must the roadmap");
+  }
+  // Presence is labelled by participant NUMBER (docs/169 §Presence), so the
+  // illustrations must not show a display name the product cannot draw.
+  assert.match(doc, /Labels\s+currently show participant numbers/);
+  const flags = [...page.matchAll(/class="od-peer-flag"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.ok(flags.length > 0, "the hero must show the second participant's flag");
+  for (const flag of flags) assert.match(flag, /^Participant \d+$/, "a presence flag names a participant number");
 });

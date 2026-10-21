@@ -113,6 +113,9 @@ const CEILINGS = new Map([
   // scanner artefact on the `<meta name="description">` whose value spans lines.
   // None of those can legitimately come down, which is what makes 88 a floor
   // rather than a debt.
+  // The not-found page (`109` HF-293): routed from the first commit, so it
+  // arrives at zero and stays there.
+  ["404.page.html", 0],
   ["docs.page.html", 0],
   // The region-description column went first, with the five new regions
   // (193 -> 174, 65 -> 46), and the rest of both generated regions followed
@@ -131,7 +134,13 @@ const CEILINGS = new Map([
   // beside them, and both are translated in all eighteen catalogues in the same
   // commit that routed them, so nothing about this ceiling moved. A zero that
   // stays zero while the file grows is the ceiling working.
-  ["_partials/site-footer.html", 0],
+  //
+  // 0 -> 1 with the site revamp (`109` HF-293): the footer now carries the
+  // OpenDoc wordmark beside its tagline, and the wordmark's "Open" is the product
+  // name — the same single unrouted string the header's ceiling of 1 is, for the
+  // same reason. Every other string the new footer adds (the column headings, the
+  // tagline, the Reference link, the nav's accessible name) carries a key.
+  ["_partials/site-footer.html", 1],
   ["_partials/site-header.html", 1],
   // ---- The editor's scripts -------------------------------------------------
   ["src/a11y_mirror.mjs", 1],
@@ -284,6 +293,7 @@ const CEILINGS = new Map([
  *  The set that used to live here was the opposite list — the files with NO seam,
  *  whose numbers were measurements rather than ceilings. */
 const SITE_SOURCES = [
+  "404.page.html",
   "docs.page.html",
   "embedding.page.html",
   "fidelity.page.html",
@@ -482,7 +492,13 @@ test("how much the code exemptions suppress is measured, per file", () => {
   const SUPPRESSED = {
     "docs.page.html": 2,
     "embedding.page.html": 4,
-    "index.page.html": 2,
+    // 2 -> 6 with the site revamp (`109` HF-293): the embedding figure shows the
+    // element's real attributes, `<opendoc-editor mode="commentor"
+    // can="-download">`, as a `<pre><code>` block — markup a host types, not prose
+    // to translate, and held to the element's own vocabulary by
+    // `site_claims.test.mjs`. Four sites: the tag name, the two quoted values and
+    // the closing `>`.
+    "index.page.html": 6,
     "playground.page.html": 2,
   };
   const measured = {};

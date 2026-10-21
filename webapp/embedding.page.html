@@ -144,6 +144,33 @@
           not ship yet is <a href="#not-yet" data-i18n="site.embedding.bottomPage">at the bottom of this page</a>, in as
           many words.
         </p>
+        <!-- The contract, drawn: the host frames the editor and decides its mode and
+             capabilities. The snippet is the element's real vocabulary, held to
+             `MOUNT_ATTRIBUTES`, `ROLES` and `CAPABILITIES` by site_claims.test.mjs. -->
+        <div class="home-host doc-figure" data-motion role="img" aria-label="A host application frames the editor; the host decides its mode and which capabilities it has." data-i18n-label="site.index.embedFigure">
+          <div class="hh-bar"><span class="hh-dots"><i></i><i></i><i></i></span><span class="hh-app" data-i18n="site.index.hostAppName">your-product.app</span></div>
+          <div class="hh-body">
+            <div class="hh-side">
+              <span class="hh-nav is-active" data-i18n="site.index.hostNavContracts">Contracts</span>
+              <span class="hh-nav" data-i18n="site.index.hostNavReviews">Reviews</span>
+              <span class="hh-nav" data-i18n="site.index.hostNavTeam">Team</span>
+            </div>
+            <div class="hh-main">
+              <div class="hh-editor">
+                <div class="hh-page">
+                  <i class="hh-l hh-l--h"></i><i class="hh-l"></i><i class="hh-l hh-l--mid"></i><i class="hh-l hh-l--short"></i>
+                  <span class="hh-pin"></span>
+                </div>
+              </div>
+              <ul class="hh-caps">
+                <li class="is-on" data-capability="comment"><span class="hh-cap-dot" aria-hidden="true"></span>comment</li>
+                <li class="is-on" data-capability="print"><span class="hh-cap-dot" aria-hidden="true"></span>print</li>
+                <li class="is-off" data-capability="edit"><span class="hh-cap-dot" aria-hidden="true"></span>edit</li>
+                <li class="is-off hh-cap--drop" data-capability="download"><span class="hh-cap-dot" aria-hidden="true"></span>download</li>
+              </ul>
+            </div>
+          </div>
+        </div>
         <div class="doc-callout">
           <p class="doc-callout-label" data-i18n="site.embedding.tryFirst">Try it first</p>
           <p data-i18n="site.embedding.the">

@@ -25,6 +25,9 @@ const NOT_IN_NAV = new Map([
   // embed.html is the iframe body an embedding host loads. It is not a page a
   // reader visits; the playground and the embedding docs drive it.
   ["embed.html", "the embedded frame, loaded by a host and by the playground"],
+  // 404.html is what GitHub Pages serves for a missing path. Nobody navigates TO
+  // it, and it declares noindex; it links every destination instead.
+  ["404.html", "served for a missing path, never navigated to"],
 ]);
 
 async function read(relativePath) {

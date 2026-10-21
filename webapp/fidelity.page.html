@@ -99,22 +99,32 @@
           is blessed, and no pixel-diff gate exists yet. Treat these as dated evidence,
           not a live build signal.
         </p>
+        <!-- The claim the whole page grades, drawn: a package goes in, the model keeps
+             what it understands, and what it cannot is carried through or reported. -->
+        <div class="flow-fig fid-intro-art" data-motion role="img" aria-label="A DOCX package is read into the typed model and written back out; anything the model cannot represent is carried through or named in a compatibility report." data-i18n-label="site.fidelity.roundTripFigure">
+          <span class="flow-node"><b data-i18n="site.fidelity.figIn">.docx in</b><small data-i18n="site.fidelity.figInNote">package + OOXML</small></span>
+          <span class="flow-wire" aria-hidden="true"><i></i></span>
+          <span class="flow-node flow-node--accent"><b data-i18n="site.fidelity.figModel">Typed model</b><small data-i18n="site.fidelity.figModelNote">graded per construct</small></span>
+          <span class="flow-wire" aria-hidden="true"><i></i></span>
+          <span class="flow-node"><b data-i18n="site.fidelity.figOut">.docx out</b><small data-i18n="site.fidelity.figOutNote">byte-identical if unedited</small></span>
+          <span class="flow-report"><span class="flow-report-dot" aria-hidden="true"></span><span data-i18n="site.fidelity.figReport">Anything not modelled is preserved or reported</span></span>
+        </div>
       </section>
 
-      <section class="fid-stats" aria-label="Headline metrics" data-i18n-label="site.fidelity.headlineMetrics">
-        <div class="fid-stat">
+      <section class="fid-stats" data-reveal-group aria-label="Headline metrics" data-i18n-label="site.fidelity.headlineMetrics">
+        <div class="fid-stat" data-reveal>
           <div class="fid-stat-num">4/5</div>
           <div class="fid-stat-label" data-i18n="site.fidelity.exactPageCountParity">Exact page-count parity (docs/60, 2026-07-27)</div>
         </div>
-        <div class="fid-stat">
+        <div class="fid-stat" data-reveal>
           <div class="fid-stat-num">+2</div>
           <div class="fid-stat-label" data-i18n="site.fidelity.worstCasePageDelta">Worst-case page delta (Chinese SDS)</div>
         </div>
-        <div class="fid-stat">
+        <div class="fid-stat" data-reveal>
           <div class="fid-stat-num">27</div>
           <div class="fid-stat-label" data-i18n="site.fidelity.constructFamiliesGradedBelow">Construct families graded below</div>
         </div>
-        <div class="fid-stat">
+        <div class="fid-stat" data-reveal>
           <div class="fid-stat-num">0</div>
           <div class="fid-stat-label" data-i18n="site.fidelity.pixelDiffPageCount">Pixel-diff or page-count gates in CI</div>
         </div>
