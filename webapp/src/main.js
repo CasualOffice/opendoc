@@ -1624,7 +1624,6 @@ function commentEditorFor(comment, kind) {
   requestAnimationFrame(() => { if (editor.root.isConnected && document.activeElement !== editor.field) editor.focus(); });
   return editor.root;
 }
-
 function renderReviewMarginItems() {
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {

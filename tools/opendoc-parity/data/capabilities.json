@@ -3198,8 +3198,8 @@
       "title": "Edit a comment or a reply",
       "ours": {
         "anchor": {
-          "file": "webapp/src/main.js",
-          "literal": "Edit reply text"
+          "file": "webapp/src/review_comment_card.mjs",
+          "literal": "review-comment-edit-open"
         }
       },
       "theirs": {

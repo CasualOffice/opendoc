@@ -5,7 +5,7 @@
 //   RC-11  the thread's ROOT comment can be edited, not only its replies;
 //   RC-12  once the commented text is deleted the card still shows what it was
 //          about, marked deleted, as ONLYOFFICE keeps its quote.
-import { clickIntoFirstPage, expect, expectEditorFocused, moveCaretToDocStart, test } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, MOD, moveCaretToDocStart, test } from "./fixtures.mjs";
 
 const markers = (page) => page.locator(".review-comment-marker");
 const card = (page) => page.locator(".review-margin-comment").first();
@@ -50,7 +50,7 @@ test("the root comment of a thread can be edited (RC-11)", async ({ page, consol
   await expect(field).toBeFocused();
   await expect(field).toHaveValue("Teh first wrod");
   await field.fill("The first word");
-  await page.keyboard.press("Control+Enter");
+  await page.keyboard.press(`${MOD}+Enter`);
   await expect(field).toHaveCount(0);
   await expect(card(page).locator(".review-margin-body")).toHaveText("The first word");
   await expectEditorFocused(page);
