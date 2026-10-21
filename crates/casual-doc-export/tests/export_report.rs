@@ -45,7 +45,10 @@ fn zip_named(parts: &[(&str, &[u8])]) -> Vec<u8> {
 /// Every part of a package, keyed by name.
 fn parts_of(package: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut archive = ZipArchive::new(Cursor::new(package.to_vec())).unwrap();
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut parts = BTreeMap::new();
     for name in names {
         let mut bytes = Vec::new();

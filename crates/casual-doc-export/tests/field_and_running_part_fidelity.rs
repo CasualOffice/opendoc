@@ -87,7 +87,7 @@ fn written_document_xml(bytes: &[u8]) -> String {
 fn part_names(bytes: &[u8]) -> BTreeSet<String> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     (0..zip.len())
-        .map(|index| zip.by_index(index).unwrap().name().to_owned())
+        .map(|index| zip.by_index(index).unwrap().name().unwrap().into_owned())
         .collect()
 }
 

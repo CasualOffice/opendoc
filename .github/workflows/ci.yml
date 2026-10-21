@@ -211,7 +211,9 @@ jobs:
   browser-smoke:
     name: browser-smoke (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Shard 1 reached test 377/387 before the old 30-minute cap cancelled it.
+    # Keep enough headroom for runner variance without masking test failures.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

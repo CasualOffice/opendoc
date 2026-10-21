@@ -253,7 +253,10 @@ fn write_back(imported: &Imported) -> Vec<u8> {
 fn themed_edges(bytes: &[u8]) -> Vec<ThemedEdge> {
     let mut found = Vec::new();
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let mut names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     // document.xml before styles.xml, which is the order `expected` is written in.
     names.sort();
     names.sort_by_key(|name| !name.ends_with("document.xml"));
@@ -475,7 +478,10 @@ fn a_second_save_is_a_fixed_point() {
 fn the_theme_attributes_are_w_qualified_as_written() {
     let written = write_back(&import(&package()));
     let mut archive = zip::ZipArchive::new(Cursor::new(written)).expect("a zip package");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut keys: BTreeSet<String> = BTreeSet::new();
     for name in names {
         if !name.ends_with("document.xml") && !name.ends_with("styles.xml") {

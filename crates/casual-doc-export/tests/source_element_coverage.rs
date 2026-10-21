@@ -336,7 +336,10 @@ fn compare(bytes: &[u8]) -> Comparison {
 /// a relationship is document structure, not only plumbing.
 fn xml_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut parts = BTreeMap::new();
     for name in names {
         if !(name.ends_with(".xml") || name.ends_with(".rels")) {
@@ -357,7 +360,10 @@ fn xml_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
 /// was given (a reference whose bytes are missing is dropped, FID-R-06).
 fn binary_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("a valid ZIP entry name").into_owned())
+        .collect();
     let mut parts = BTreeMap::new();
     for name in names {
         if !name.starts_with("word/media/") && !name.ends_with(".odttf") {

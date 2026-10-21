@@ -1922,7 +1922,14 @@ fn an_edited_imported_chart_is_regenerated_and_supersedes_its_source_bytes() {
     // One entry per name in the ZIP, and one Override per part in the manifest.
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&written)).expect("a ZIP");
     let mut names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).expect("an entry").name().to_owned())
+        .map(|i| {
+            archive
+                .by_index(i)
+                .expect("an entry")
+                .name()
+                .unwrap()
+                .into_owned()
+        })
         .collect();
     let total = names.len();
     names.sort();

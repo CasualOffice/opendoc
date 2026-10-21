@@ -547,7 +547,7 @@ fn unzip(bytes: &[u8]) -> Package {
             let mut file = archive.by_index(index).expect("an entry");
             let mut contents = Vec::new();
             file.read_to_end(&mut contents).expect("a readable entry");
-            (file.name().to_owned(), contents)
+            (file.name().unwrap().into_owned(), contents)
         })
         .collect()
 }
