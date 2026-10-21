@@ -217,3 +217,59 @@ test("a committed face arrives from our own origin, verifies, and registers", as
   await expect(page.locator("#status")).not.toContainText(/could not load/i);
   expect(consoleErrors).toEqual([]);
 });
+
+test("reopening the same filename registers its fallback on the new document", async ({ page, consoleErrors }) => {
+  let requests = 0;
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await page.route("**/NotoSansSymbols2-Regular.ttf", async (route) => {
+    if (++requests === 2) await held;
+    await route.continue();
+  });
+  await gotoEditor(page);
+  const file = { name: "symbols.txt", mimeType: "text/plain", buffer: Buffer.from("☐") };
+  const canvas = page.locator(".page-wrap canvas").first();
+
+  await page.locator("#file").setInputFiles(file);
+  await expect.poll(() => requests).toBe(1);
+  await expect(page.locator("body")).toHaveAttribute("data-fonts-ready", "true");
+  const firstPaint = await canvas.evaluate((element) => element.toDataURL());
+
+  await page.locator("#file").setInputFiles(file);
+  await expect.poll(() => requests).toBe(2);
+  await expect(page.locator("body")).not.toHaveAttribute("data-fonts-ready", "true");
+  expect(await canvas.evaluate((element) => element.toDataURL())).not.toBe(firstPaint);
+  release();
+  await expect(page.locator("body")).toHaveAttribute("data-fonts-ready", "true");
+  expect(await canvas.evaluate((element) => element.toDataURL())).toBe(firstPaint);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a pending fallback survives replacement without touching the freed document", async ({ page, consoleErrors }) => {
+  page.on("console", (message) => { if (message.type() === "warning") consoleErrors.push(message.text()); });
+  let requests = 0;
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await page.route("**/NotoSansSymbols2-Regular.ttf", async (route) => {
+    requests++;
+    await held;
+    await route.continue();
+  });
+  await gotoEditor(page);
+  const file = (text) => ({ name: "symbols.txt", mimeType: "text/plain", buffer: Buffer.from(text) });
+
+  await page.locator("#file").setInputFiles(file("First ☐"));
+  await expect.poll(() => requests).toBe(1);
+  await page.locator("#file").setInputFiles(file("Second ☐"));
+  await expect(page.locator("#a11yDocument")).toContainText("Second ☐");
+  await expect(page.locator("body")).not.toHaveAttribute("data-fonts-ready", "true");
+  const canvas = page.locator(".page-wrap canvas").first();
+  const before = await canvas.evaluate((element) => element.toDataURL());
+  release();
+
+  await expect(page.locator("body")).toHaveAttribute("data-fonts-ready", "true");
+  expect(await canvas.evaluate((element) => element.toDataURL())).not.toBe(before);
+  await expect(page.locator("#a11yDocument")).toContainText("Second ☐");
+  expect(requests).toBe(1);
+  expect(consoleErrors).toEqual([]);
+});
