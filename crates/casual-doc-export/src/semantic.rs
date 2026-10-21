@@ -7358,12 +7358,13 @@ fn write_drawing(
         inline.push_attribute((name, "0"));
     }
     w.write_event(Event::Start(inline)).map_err(pkg)?;
-    if let Some(extent) = extent {
-        let mut el = start("wp:extent");
-        el.push_attribute(("cx", extent.width_emu.to_string().as_str()));
-        el.push_attribute(("cy", extent.height_emu.to_string().as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
-    }
+    // `CT_Inline` REQUIRES `wp:extent` (`docs/109` OL-02). A model with no
+    // declared size writes 0 x 0, which is the same document: layout places no
+    // picture for a missing OR a zero extent (`image_item`).
+    let mut el = start("wp:extent");
+    el.push_attribute(("cx", cx.to_string().as_str()));
+    el.push_attribute(("cy", cy.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
     let mut doc_pr = start("wp:docPr");
     label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
@@ -7617,12 +7618,7 @@ fn write_anchored_drawing(
     el.push_attribute(("distL", dist_l.as_str()));
     el.push_attribute(("distR", dist_r.as_str()));
     el.push_attribute(("simplePos", "0"));
-    // `relativeHeight` is written only when the model carries one, so an anchor
-    // that omitted it round-trips as `None` (a write -> reopen fixed point); Word
-    // and the importer both treat an absent value as the default (bottom) z.
-    if let Some(relative_height) = drawing.relative_height {
-        el.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
-    }
+    push_relative_height(&mut el, drawing.relative_height);
     el.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
     el.push_attribute(("locked", "0"));
     el.push_attribute(("layoutInCell", "1"));
@@ -7713,9 +7709,7 @@ fn write_group(
     el.push_attribute(("distL", dist_l.as_str()));
     el.push_attribute(("distR", dist_r.as_str()));
     el.push_attribute(("simplePos", "0"));
-    if let Some(relative_height) = group.relative_height {
-        el.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
-    }
+    push_relative_height(&mut el, group.relative_height);
     el.push_attribute((
         "behindDoc",
         if anchor.is_some_and(|a| a.behind_doc) {
@@ -8686,19 +8680,70 @@ fn write_text_child(
     Ok(())
 }
 
+/// Pushes `wp:anchor@relativeHeight`, which `CT_Anchor` REQUIRES (`docs/109`
+/// OL-02).
+///
+/// This was written only when the model carried a value, so an object floated
+/// in the editor — which carries none — saved as a package Word rejects. The
+/// model's `None` means "no authored z-order", and every reader of it already
+/// resolves that to the bottom of the stack: layout's anchor collection reads
+/// `relative_height.unwrap_or(0)`. Writing `0` is therefore the same document,
+/// stated in the form the schema demands. (The editor also gives a newly
+/// floated object a real key above every other float, so this fallback is for
+/// models from other producers, not for the common path.)
+///
+/// O(1).
+fn push_relative_height(el: &mut BytesStart<'_>, relative_height: Option<u32>) {
+    el.push_attribute((
+        "relativeHeight",
+        relative_height.unwrap_or(0).to_string().as_str(),
+    ));
+}
+
+/// The contour a NEW tight or through wrap is written with: the object's own
+/// bounds, in the 21,600 x 21,600 space Word writes wrap polygons in
+/// (`DrawingAnchor::wrap_polygon`). Closed by repeating the start point, as
+/// Word's own default contour is.
+///
+/// `CT_WrapTight` and `CT_WrapThrough` both REQUIRE a `wp:wrapPolygon`, so a
+/// float switched to Tight in the editor — which has no authored contour —
+/// cannot be written without one (`docs/109` OL-02). The bounds are what layout
+/// already wraps to when the model has no polygon, so the written contour says
+/// what the editor showed.
+const BOUNDS_WRAP_POLYGON: [PointEmu; 5] = [
+    PointEmu { x_emu: 0, y_emu: 0 },
+    PointEmu {
+        x_emu: 0,
+        y_emu: 21_600,
+    },
+    PointEmu {
+        x_emu: 21_600,
+        y_emu: 21_600,
+    },
+    PointEmu {
+        x_emu: 21_600,
+        y_emu: 0,
+    },
+    PointEmu { x_emu: 0, y_emu: 0 },
+];
+
 /// Emits the wrap element for an anchor.
 ///
 /// `wrapNone` and `wrapTopAndBottom` are empty elements with no attributes. The
-/// three side wraps carry `@wrapText` **only when the model holds one**: `side`
-/// is `None` for a source that did not author the attribute, and writing Word's
-/// `bothSides` default there would put markup in the package that the opened
-/// file did not contain. An absent attribute is not the same document as an
-/// explicit default — layout reads the same side either way (through
-/// `DrawingAnchor::wrap_side`), but the saved bytes would stop being the bytes
-/// that were opened, which is a fidelity loss shaped like fidelity.
+/// three side wraps ALWAYS carry `@wrapText`, because `CT_WrapSquare`,
+/// `CT_WrapTight` and `CT_WrapThrough` all require it (`docs/109` OL-02). An
+/// authored side is written back exactly as read; a model with no side —
+/// a source that omitted the required attribute, or an object floated in the
+/// editor — is written with `bothSides`, which is the side layout already reads
+/// for it (`DrawingAnchor::wrap_side`). Omitting it to keep the bytes of a
+/// schema-invalid source was a fidelity argument that produced invalid
+/// packages from every editor-made float; the schema wins.
 ///
-/// This used to hard-code `wrapText="bothSides"` on all three, which both
-/// invented the attribute and destroyed an authored `left`/`right`/`largest`.
+/// A tight or through wrap always carries its `wp:wrapPolygon`: the authored
+/// contour when there is one, otherwise [`BOUNDS_WRAP_POLYGON`].
+///
+/// This once hard-coded `wrapText="bothSides"` on all three, destroying an
+/// authored `left`/`right`/`largest`; that must not come back either.
 fn write_wrap(
     w: &mut Writer<Cursor<Vec<u8>>>,
     wrap: WrapMode,
@@ -8717,20 +8762,22 @@ fn write_wrap(
                 _ => "wp:wrapThrough",
             };
             let mut el = start(tag);
-            if let Some(side) = side {
-                el.push_attribute(("wrapText", wrap_side_str(side)));
-            }
-            // A tight/through wrap can carry a `wp:wrapPolygon` contour; emit it
-            // (in schema order, inside the wrap element) when the anchor has one.
-            match polygon {
-                Some(points) if matches!(wrap, WrapMode::Tight | WrapMode::Through) => {
-                    w.write_event(Event::Start(el)).map_err(pkg)?;
-                    write_wrap_polygon(w, points)?;
-                    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
-                }
-                _ => {
-                    w.write_event(Event::Empty(el)).map_err(pkg)?;
-                }
+            el.push_attribute((
+                "wrapText",
+                wrap_side_str(side.unwrap_or(WrapSide::BothSides)),
+            ));
+            if matches!(wrap, WrapMode::Tight | WrapMode::Through) {
+                // In schema order, inside the wrap element. A contour of fewer
+                // than three points cannot satisfy `lineTo` minOccurs=2, so it
+                // is replaced by the bounds rather than written invalid.
+                let points = polygon
+                    .filter(|points| points.len() >= 3)
+                    .unwrap_or(&BOUNDS_WRAP_POLYGON);
+                w.write_event(Event::Start(el)).map_err(pkg)?;
+                write_wrap_polygon(w, points)?;
+                w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+            } else {
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
             }
         }
         WrapMode::TopAndBottom => {
@@ -9017,9 +9064,7 @@ fn write_text_box(
         frame.push_attribute(("distL", dist_l.as_str()));
         frame.push_attribute(("distR", dist_r.as_str()));
         frame.push_attribute(("simplePos", "0"));
-        if let Some(relative_height) = text_box.relative_height {
-            frame.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
-        }
+        push_relative_height(&mut frame, text_box.relative_height);
         frame.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
         frame.push_attribute(("locked", "0"));
         frame.push_attribute(("layoutInCell", "1"));
@@ -9052,9 +9097,17 @@ fn write_text_box(
             frame.push_attribute((name, "0"));
         }
         w.write_event(Event::Start(frame)).map_err(pkg)?;
-        if let Some(extent) = text_box.extent {
-            write_text_box_extent(w, extent)?;
-        }
+        // `CT_Inline` REQUIRES `wp:extent` (`docs/109` OL-02). A box with no
+        // authored size writes 0 x 0, which layout reads exactly as it reads
+        // the absence: a zero dimension is "resolve from the flow and the
+        // content" (`textbox_item` filters `> 0`), the same answer as `None`.
+        write_text_box_extent(
+            w,
+            text_box.extent.unwrap_or(Extent {
+                width_emu: 0,
+                height_emu: 0,
+            }),
+        )?;
         "wp:inline"
     };
 

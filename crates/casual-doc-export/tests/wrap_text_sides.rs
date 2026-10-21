@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `w:wrap@wrapText` — which side(s) of a float the text may flow down — is read,
-//! modelled, written back, a fixed point across a save, and **absent when the
-//! source was absent**.
+//! modelled, written back, and a fixed point across a save. An ABSENT side is
+//! written as the schema's required `bothSides` (`docs/109` OL-02).
 //!
 //! # Why this file exists
 //!
@@ -450,13 +450,27 @@ fn wrap_text_survives_the_save_or_is_reported() {
     );
 }
 
-/// The save is a **fixed point**: each float's side comes back identical, in place,
-/// and the absent one comes back absent.
+/// The source's side wraps as the writer must emit them: every authored side
+/// unchanged, and the one ABSENT side written as `bothSides`.
+fn expected_written_side_wraps() -> Vec<(String, Option<String>)> {
+    side_wraps(WRAP_TEXT_SIDES_DOCX)
+        .into_iter()
+        .map(|(element, value)| {
+            (
+                element,
+                Some(value.unwrap_or_else(|| "bothSides".to_owned())),
+            )
+        })
+        .collect()
+}
+
+/// Every AUTHORED side comes back identical, in place; the absent one comes back
+/// as the schema's required attribute; and the second save is a fixed point.
 ///
 /// This is the assertion `wrap_text_survives_the_save_or_is_reported` cannot make.
 /// That one asks whether the attribute survived *somewhere*; a writer that emitted
 /// `wrapText="bothSides"` on all five would satisfy it while having destroyed three
-/// authored sides and invented a fourth.
+/// authored sides.
 #[test]
 fn the_wrap_side_is_a_fixed_point_across_a_save() {
     let imported = import(WRAP_TEXT_SIDES_DOCX);
@@ -464,16 +478,21 @@ fn the_wrap_side_is_a_fixed_point_across_a_save() {
 
     assert_eq!(
         side_wraps(&written),
-        side_wraps(WRAP_TEXT_SIDES_DOCX),
+        expected_written_side_wraps(),
         "the written package's side wraps must match the source's element for \
-         element and attribute for attribute"
+         element, every authored side kept, the absent one written as `bothSides`"
     );
 
     let reopened = import(&written);
+    let expected_model: Vec<(WrapMode, Option<WrapSide>)> = EXPECTED_MODEL
+        .iter()
+        .map(|(wrap, side)| (*wrap, Some(side.unwrap_or(WrapSide::BothSides))))
+        .collect();
     assert_eq!(
         &anchored_floats(&reopened.document)[..EXPECTED_MODEL.len()],
-        EXPECTED_MODEL,
-        "and reopening it must give back the same five picture states"
+        expected_model.as_slice(),
+        "and reopening it must give back the same five picture states, the absent \
+         side now stated"
     );
     assert_eq!(
         anchored_non_pictures(&reopened.document),
@@ -481,23 +500,24 @@ fn the_wrap_side_is_a_fixed_point_across_a_save() {
         "and the same text-box and group states, which travel through the writer's \
          other two anchor paths"
     );
+    assert_eq!(
+        side_wraps(&write_back(&reopened)),
+        side_wraps(&written),
+        "and a second save changes nothing: the repair happens once"
+    );
 }
 
-/// An absent `@wrapText` stays absent. The hard-coded `bothSides` cannot come back.
+/// An absent `@wrapText` is written as `bothSides` (`docs/109` OL-02).
 ///
-/// This is the test that refuses a fidelity loss shaped like fidelity. Layout reads
-/// the same side either way — `wrap_side()` resolves `None` to `BothSides` — so
-/// writing the default would look harmless and would even make a naive "did the
-/// attribute survive" check *greener*. What it does is change the document: a
-/// package whose author wrote no attribute comes back with one, and the saved file
-/// stops being the file that was opened. `SKILL` §12 puts round-trip fidelity above
-/// convenience, and the writer that shipped before this change wrote `bothSides`
-/// unconditionally.
-///
-/// Stated as a count over the whole package rather than over one element, so
-/// re-introducing the hard-code on `wrapTight`/`wrapThrough` alone is caught too.
+/// This reverses an earlier rule that kept the absence to keep the opened bytes.
+/// `CT_WrapSquare`, `CT_WrapTight` and `CT_WrapThrough` all REQUIRE the
+/// attribute, so keeping the absence kept a schema violation, and every object
+/// floated in the editor has no side, so the rule turned every editor-made float
+/// into an invalid package. `bothSides` is the side layout already reads for the
+/// absence (`DrawingAnchor::wrap_side`), so the document does not change; only
+/// its markup becomes valid. `drawing_frame_schema.rs` is the class-level guard.
 #[test]
-fn absent_wrap_text_is_not_written_back() {
+fn absent_wrap_text_is_written_as_the_schema_default() {
     let imported = import(WRAP_TEXT_SIDES_DOCX);
     let written = write_back(&imported);
 
@@ -510,18 +530,15 @@ fn absent_wrap_text_is_not_written_back() {
         "the fixture must contain exactly one side wrap with no `@wrapText`, or \
          this test is vacuous"
     );
-
     let written_absences = side_wraps(&written)
         .iter()
         .filter(|(_, value)| value.is_none())
         .count();
     assert_eq!(
         written_absences,
-        source_absences,
-        "a side wrap whose source carried no `@wrapText` must be written with no \
-         `@wrapText`. Writing Word's `bothSides` default there invents markup the \
-         author never wrote; it is the exact defect this change removed, and it \
-         cannot be allowed back.\nwritten side wraps: {:?}",
+        0,
+        "every side wrap must be written WITH `@wrapText`, which the schema \
+         requires.\nwritten side wraps: {:?}",
         side_wraps(&written)
     );
 }

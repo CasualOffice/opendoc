@@ -1340,8 +1340,9 @@ impl WasmDocument {
         let source = find_paragraph_any(&self.document, paragraph)
             .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
+        let z = if floating { self.next_float_z() } else { 0 };
         let changed = with_top_level(&mut inlines, object, &mut |inline| {
-            convert_anchor_kind(inline, floating)
+            convert_anchor_kind(inline, floating, z)
         })
         .ok_or_else(|| NOT_AN_OBJECT.to_owned())??;
         if !changed {
@@ -2333,6 +2334,27 @@ impl WasmDocument {
         .map(Some)
     }
 
+    /// The stacking key that puts a new float above every float already in the
+    /// document: one more than the highest `@relativeHeight` on any surface.
+    ///
+    /// For an object made floating or inserted floating. Without it the new
+    /// float carried no key at all, so it was written without the attribute
+    /// `CT_Anchor` requires and painted at the BOTTOM of the stack — under an
+    /// existing picture it was just dragged onto (`docs/109` OL-02).
+    ///
+    /// **O(document), ONE walk.**
+    pub(crate) fn next_float_z(&self) -> u32 {
+        let mut floats: Vec<Float> = Vec::new();
+        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            collect_floats(&paragraph.inlines, paragraph.id, &mut floats);
+        });
+        floats
+            .iter()
+            .map(|float| float.z)
+            .max()
+            .map_or(1, |z| z.saturating_add(1))
+    }
+
     /// Restacks a top-level floating object within its own `@behindDoc` band by
     /// rewriting `wp:anchor@relativeHeight`.
     ///
@@ -2700,8 +2722,11 @@ fn anchor_at_page(mut anchor: DrawingAnchor, left_emu: i64, top_emu: i64) -> Dra
 }
 
 /// Converts one top-level object between inline and floating, reporting whether
-/// it changed.
-fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, String> {
+/// it changed. A newly floated object takes the stacking key `z`, which the
+/// caller computes as one above every existing float, so it lands on top the way
+/// Word puts a just-floated picture on top — and so its `wp:anchor` carries the
+/// `@relativeHeight` the schema requires (`docs/109` OL-02).
+fn convert_anchor_kind(inline: &mut InlineNode, floating: bool, z: u32) -> Result<bool, String> {
     match inline {
         InlineNode::Drawing(drawing) if floating => {
             let extent = drawing.extent.ok_or_else(|| PICTURE_NO_SIZE.to_owned())?;
@@ -2712,7 +2737,7 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
                 extent,
                 anchor: default_float_anchor(),
                 descr: drawing.descr,
-                relative_height: None,
+                relative_height: Some(z),
                 crop: drawing.crop,
                 opacity: drawing.opacity,
                 hyperlink: drawing.hyperlink,
@@ -2746,9 +2771,7 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
                 return Ok(false);
             }
             text_box.anchor = floating.then(default_float_anchor);
-            if !floating {
-                text_box.relative_height = None;
-            }
+            text_box.relative_height = floating.then_some(z);
             Ok(true)
         }
         InlineNode::Group(group) => {
@@ -2757,9 +2780,7 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
                 return Ok(false);
             }
             group.anchor = floating.then(default_float_anchor);
-            if !floating {
-                group.relative_height = None;
-            }
+            group.relative_height = floating.then_some(z);
             Ok(true)
         }
         InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) => Ok(false),
@@ -3358,6 +3379,44 @@ mod tests {
             serde_json::from_str(&document.object_position(&object)).expect("JSON");
         assert_eq!(read["floating"], serde_json::json!(true));
         assert_eq!(read["wrap"], "square");
+    }
+
+    /// A newly floated object lands ON TOP: its stacking key is above every
+    /// other float's, so it is written with the `@relativeHeight` the schema
+    /// requires and paints over the floats already there (`docs/109` OL-02).
+    #[test]
+    fn a_newly_floated_object_gets_a_key_above_every_other_float() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let (_, object, other) = two_boxes(&mut document);
+        let z_of = |document: &WasmDocument, node: &str| {
+            let id: NodeId = node.parse().expect("an id");
+            let paragraph = document.paragraph_of_object(id).expect("placed");
+            let source = find_paragraph_any(&document.document, paragraph).expect("a paragraph");
+            top_level_z(&source.inlines, id)
+        };
+
+        document
+            .set_object_anchor_kind_inner(&object, "inline")
+            .expect("make it inline");
+        assert_eq!(
+            z_of(&document, &object),
+            None,
+            "an inline object has no key"
+        );
+        let highest = document.next_float_z() - 1;
+
+        document
+            .set_object_anchor_kind_inner(&object, "floating")
+            .expect("float it");
+        let z = z_of(&document, &object).expect("a floated object carries a key");
+        assert!(
+            z > highest,
+            "the new float ({z}) sits above every other ({highest})"
+        );
+        assert!(
+            z > z_of(&document, &other).unwrap_or(0),
+            "including the other box in its paragraph"
+        );
     }
 
     /// The guarantee grouping has to make: nothing moves. The children come out
