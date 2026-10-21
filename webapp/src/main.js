@@ -14158,8 +14158,8 @@ document.addEventListener("beforeinput", async (e) => {
     return;
   }
   if (type === "insertLineBreak" || type === "insertParagraph") {
-    e.preventDefault();
-    await pasteText("\n", "typing");
+    e.preventDefault(); // An IME / on-screen-keyboard soft break IS Shift+Enter, not a new paragraph (TA-01).
+    await (type === "insertLineBreak" ? insertLineBreakAtSelection() : pasteText("\n", "typing"));
   }
 });
 

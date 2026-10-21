@@ -25686,11 +25686,11 @@ impl NoteAnchorLengths {
 fn inline_anchor_len(notes: &NoteAnchorLengths, inline: &InlineNode) -> u32 {
     match inline {
         InlineNode::Run(run) => run.text.len() as u32,
-        // Tabs and breaks affect geometry, not the model-offset space.
-        InlineNode::Tab(_)
-        | InlineNode::PositionalTab(_)
-        | InlineNode::Break(_)
-        | InlineNode::HorizontalRule(_) => 0,
+        // Tabs affect geometry, not the model-offset space.
+        InlineNode::Tab(_) | InlineNode::PositionalTab(_) | InlineNode::HorizontalRule(_) => 0,
+        // A hard break is one position, as `casual_doc_edit::inline_text_len`
+        // counts it (`docs/109` TA-01).
+        InlineNode::Break(_) => 1,
         InlineNode::Symbol(symbol) => {
             char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
         }
@@ -29901,9 +29901,16 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // host re-selects after the delete); its inverse re-inserts into `owner`.
         Operation::DeleteObject { object } => Pos::new(*object, 0),
         Operation::InsertObjectNode { owner, .. } => Pos::new(*owner, 0),
-        // A freshly inserted inline object: the caret sits at its insertion point
-        // (the host re-selects the new object as its own chrome).
-        Operation::InsertInlineObject { at, .. } => Pos::new(at.node, at.offset),
+        // A freshly inserted inline object: the caret sits AFTER it, by however
+        // many positions it occupies. A drawing occupies none, so the caret stays
+        // at its insertion point (the host re-selects the new object as its own
+        // chrome); a hard break occupies one, so the caret is on the far side of
+        // it and the next keystroke lands after the break (`docs/109` TA-01).
+        Operation::InsertInlineObject { at, node } => Pos::new(
+            at.node,
+            at.offset
+                .saturating_add(casual_doc_edit::inline_text_len(node)),
+        ),
         // Removing an inline object (only ever an inverse/undo of an insert): its
         // own id is a neutral placeholder; the frontend re-parks the caret.
         Operation::RemoveInlineObject { object } => Pos::new(*object, 0),
@@ -47833,6 +47840,53 @@ mod tests {
             "undoing Shift+Enter removes the break"
         );
         d.document.validate().expect("valid after undo");
+    }
+
+    /// **The guarantee behind Shift+Enter** (`docs/109` TA-01): the caret after a
+    /// line break is AFTER it, so the next keystroke lands on the new line, in the
+    /// model and in the saved file — and Backspace there removes the break.
+    ///
+    /// A break used to be zero positions wide, so "before the break" and "after
+    /// the break" were the same offset and typed text joined the run BEFORE it:
+    /// "one", Shift+Enter, "two" saved as `onetwo` followed by the `w:br`.
+    /// Mutation: charge `InlineNode::Break` zero again in
+    /// `casual_doc_edit::inline_text_len` and this goes red on the caret offset.
+    #[test]
+    fn text_typed_after_a_line_break_lands_after_it() {
+        let mut d = plain_text_document(1);
+        let (first, _) = body_paragraphs(&d)[0].clone();
+        let node = first.to_string();
+        let len = d.paragraph_text(first).len() as u32;
+        d.delete_selection(&node, 0, &node, len).expect("clear");
+        d.insert_text(&node, 0, "one".to_owned()).expect("type one");
+        let caret = d.insert_line_break(&node, 3).expect("a line break inserts");
+        assert_eq!(caret.offset(), 4, "the caret rests after the break");
+        d.insert_text(&node, caret.offset(), "two".to_owned())
+            .expect("type two");
+        let order: Vec<String> = find_paragraph(d.document.body(), first)
+            .expect("paragraph")
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Run(run) => Some(run.text.clone()),
+                InlineNode::Break(_) => Some("BREAK".to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, vec!["one", "BREAK", "two"], "saved order");
+        assert_eq!(d.paragraph_text(first), "one\ntwo");
+        // Backspace at the start of the second line removes the break only.
+        d.delete_backward(&node, 4).expect("backspace the break");
+        assert_eq!(d.paragraph_text(first), "onetwo");
+        assert!(
+            !find_paragraph(d.document.body(), first)
+                .expect("paragraph")
+                .inlines
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Break(_))),
+            "the break is gone"
+        );
+        d.document.validate().expect("valid");
     }
 
     /// A column break is not a page break: it is authored as `BreakKind::Column`,

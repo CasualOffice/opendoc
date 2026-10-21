@@ -222,6 +222,12 @@ impl FlowItem<'_> {
         match self {
             // The non-run items that ARE model text.
             FlowItem::Tab => 1,
+            // A hard break (`w:br`) is ONE position, as it is one character in
+            // Word: the caret before it and the caret after it are different
+            // places. While it was zero bytes the end of the line before a break
+            // and the start of the line after it were the same offset, so typing
+            // after Shift+Enter landed BEFORE the break (`docs/109` TA-01).
+            FlowItem::Break(_) => 1,
             FlowItem::Run(run) => run.text.len() as u32,
             // A field contributes the cached result it SHOWS, which is what
             // `node_plain_text` reports and what an edit is applied against.
@@ -232,11 +238,10 @@ impl FlowItem<'_> {
             // reported, so painting one cannot move a caret offset. See the
             // variant's own note.
             FlowItem::Chart { model_len, .. } => *model_len,
-            // `w:ptab`, hard breaks, drawings, notes, text boxes, rules and the
-            // float markers contribute no bytes — matching `node_plain_text`
-            // and `casual-doc-edit`'s `inline_text_len`, which skip them all.
+            // `w:ptab`, drawings, notes, text boxes, rules and the float
+            // markers contribute no bytes — matching `node_plain_text` and
+            // `casual-doc-edit`'s `inline_text_len`, which skip them all.
             FlowItem::PositionalTab { .. }
-            | FlowItem::Break(_)
             | FlowItem::Image { .. }
             | FlowItem::Math { .. }
             | FlowItem::NoteReference(_)
@@ -507,6 +512,9 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                     end_offset: byte,
                     trailing: Some(*kind),
                 });
+                // The break owns one position (`model_bytes`): the next line
+                // starts after it, not where this one ended.
+                byte += item.model_bytes();
                 start_offset = byte;
             }
             // Inline images, fields, text boxes, and float barriers are handled by their own

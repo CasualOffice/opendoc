@@ -6365,7 +6365,8 @@ struct RunSeg {
 /// disagreement cannot ship green.
 ///
 /// **O(inlines in this subtree)**, O(1) for a leaf; no document walk.
-fn inline_text_len(inline: &InlineNode) -> u32 {
+#[must_use]
+pub fn inline_text_len(inline: &InlineNode) -> u32 {
     match inline {
         InlineNode::Run(run) => run.text.len() as u32,
         InlineNode::Tab(_) => 1,
@@ -6396,10 +6397,15 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
         // the answer for THIS paragraph; the box's own paragraphs are measured
         // when they are themselves the subject.
         InlineNode::TextBox(_) | InlineNode::Group(_) => 0,
-        // Tabs that are not `w:tab`, and breaks, affect geometry rather than the
-        // model-offset space, which is why `PositionalTab` is zero where `Tab` is
-        // one: a `w:ptab` is an absolute position, not a character.
-        InlineNode::PositionalTab(_) | InlineNode::Break(_) => 0,
+        // A tab that is not `w:tab` affects geometry rather than the model-offset
+        // space, which is why `PositionalTab` is zero where `Tab` is one: a
+        // `w:ptab` is an absolute position, not a character.
+        InlineNode::PositionalTab(_) => 0,
+        // A hard break (`w:br`, line, page or column) is ONE position, as it is
+        // one character in Word. At zero, the caret before a break and the caret
+        // after it were the same offset, so text typed after Shift+Enter was
+        // inserted before the break (`docs/109` TA-01).
+        InlineNode::Break(_) => 1,
         // Placed objects. A drawing occupies a box, not bytes; an embedded object
         // is a deliberate known understatement — layout paints a preview-less
         // chart's `[chart]` label as real text, and charging those bytes here
