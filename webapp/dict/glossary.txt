@@ -136,6 +136,7 @@ Namespace
 NodeId
 Noto
 OCR
+ODC
 ODF
 ODT
 OFFCRYPTO
@@ -209,6 +210,7 @@ SharePoint
 SharedArrayBuffer
 Skia
 SmartArt
+Strikethrough
 TBL
 TCP
 TLS
@@ -230,6 +232,7 @@ UTF
 UXOBJ
 Unicode
 UnlimitedOCR
+Unlinking
 Untrusted
 VBA
 VLM
@@ -443,6 +446,7 @@ intra
 invariants
 invertible
 invocable
+ish
 journalled
 kashida
 keepLines
@@ -471,6 +475,7 @@ microsoft
 microtask
 midrange
 min
+minified
 mis
 mjs
 mousedown
@@ -616,6 +621,7 @@ svg
 swappable
 tabindex
 tarball
+tblLook
 tblpPr
 teardown
 textbox
