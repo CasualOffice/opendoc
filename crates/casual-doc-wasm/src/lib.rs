@@ -837,6 +837,10 @@ enum HistoryKind {
     TableStructure,
     ObjectResize,
     ObjectMove,
+    /// Word's Rotate, by the grip, the menu or the field (`docs/109` OL-06).
+    ObjectRotate,
+    /// Word's Flip Horizontal / Flip Vertical.
+    ObjectFlip,
     /// A Ctrl-drag that dropped a copy of an in-line object (`inline_move`).
     ObjectCopy,
     ObjectCrop,
@@ -878,6 +882,8 @@ impl HistoryKind {
             Self::TableStructure => "Table structure",
             Self::ObjectResize => "Object resize",
             Self::ObjectMove => "Object move",
+            Self::ObjectRotate => "Rotate object",
+            Self::ObjectFlip => "Flip object",
             Self::ObjectCopy => "Copy object",
             Self::ObjectCrop => "Crop",
             Self::ObjectAltText => "Alt text",
@@ -3229,7 +3235,7 @@ impl WasmDocument {
             hyperlink: None,
             id: box_id,
             anchor: Some(new_object_anchor()),
-            relative_height: None,
+            relative_height: Some(self.next_float_z()),
             extent: Some(extent),
             // Word's default text box is white with a thin outline; an unfilled,
             // unoutlined box would be invisible on the page until it had text.
@@ -3363,7 +3369,7 @@ impl WasmDocument {
             hyperlink: None,
             id: group_id,
             anchor: Some(new_object_anchor()),
-            relative_height: None,
+            relative_height: Some(self.next_float_z()),
             extent,
             transform: GroupTransform {
                 offset: PointEmu { x_emu: 0, y_emu: 0 },

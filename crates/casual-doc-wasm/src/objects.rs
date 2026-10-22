@@ -2510,6 +2510,12 @@ impl WasmDocument {
         let source = find_paragraph_any(&self.document, paragraph)
             .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
+        // The undo entry names what the reader did: "Undo Rotate object", not
+        // "Undo Object move" (`docs/109` OL-06).
+        let kind = match edit {
+            TransformEdit::Rotation(_) => HistoryKind::ObjectRotate,
+            TransformEdit::Flip { .. } => HistoryKind::ObjectFlip,
+        };
         if !edit_transform_in_inlines(&mut inlines, object, edit) {
             return Err(NO_ROTATION.to_owned());
         }
@@ -2519,7 +2525,7 @@ impl WasmDocument {
                 inlines,
             }],
             Pos::new(object, 0),
-            HistoryKind::ObjectMove,
+            kind,
         )
     }
 }
@@ -3837,6 +3843,29 @@ mod tests {
             inner,
             "one ungroup peeled exactly one layer"
         );
+    }
+
+    /// The undo entry names the gesture: a rotation is "Rotate object" and a
+    /// flip "Flip object", never "Object move" (`docs/109` OL-06).
+    #[test]
+    fn a_rotation_and_a_flip_are_named_for_what_they_did() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "ellipse")
+            .expect("insert a shape");
+        let shape = only_group(&document)
+            .expect("a group of one")
+            .id
+            .to_string();
+        document
+            .set_object_rotation_inner(&shape, Some(30.0))
+            .expect("rotate it");
+        assert_eq!(document.undo_label(), "Rotate object");
+        document
+            .set_object_flip(&shape, true, false)
+            .expect("flip it");
+        assert_eq!(document.undo_label(), "Flip object");
     }
 
     /// A shape has no top-level inline of its own, and a top-level text box
