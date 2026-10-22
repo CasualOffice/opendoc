@@ -85,6 +85,7 @@ GUID
 GiB
 GitHub
 HLD
+HMAC
 HTML
 HTTP
 HarfBuzz
@@ -160,6 +161,7 @@ OnlyOffice
 OpenDoc
 OpenDocument
 OpenType
+PASETO
 PDF
 PDFR
 PDFs
@@ -255,6 +257,7 @@ WebCrypto
 WebGPU
 WebKit
 WebSocket
+Webapp
 WordArt
 WordprocessingML
 XML
@@ -357,6 +360,7 @@ del
 deployable
 deployer
 deps
+deserialize
 desync
 desynchronized
 dev
@@ -437,6 +441,7 @@ iOS
 idempotency
 idempotent
 iframe
+img
 impl
 incl
 includepicture
@@ -573,6 +578,7 @@ repo
 reportable
 representable
 resizable
+restamped
 restorable
 resumable
 retryable
