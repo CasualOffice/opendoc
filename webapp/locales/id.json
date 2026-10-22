@@ -2212,7 +2212,7 @@
   "object.bar.properties": "Buka properti objek",
   "object.bar.crop": "Pangkas gambar",
   "object.bar.cropApply": "Terapkan pangkasan (Enter)",
-  "object.bar.delete": "Hapus objek"
+  "object.bar.delete": "Hapus objek",
   "collab.outcome.recovering": "Perubahan Anda disimpan di perangkat ini selama salinan bersama terbaru dimuat",
   "collab.outcome.recoveryUnavailable": "Perubahan Anda disimpan di perangkat ini, tetapi host ini tidak dapat menyediakan salinan bersama terbaru — simpan salinan pekerjaan Anda",
   "collab.outcome.stopped": "Salinan ini tidak lagi dibagikan, dan perubahan Anda tetap di perangkat ini — simpan salinannya sebelum menutupnya",

@@ -2220,7 +2220,7 @@
   "object.bar.properties": "Objecteigenschappen openen",
   "object.bar.crop": "Afbeelding bijsnijden",
   "object.bar.cropApply": "Bijsnijden toepassen (Enter)",
-  "object.bar.delete": "Object verwijderen"
+  "object.bar.delete": "Object verwijderen",
   "collab.outcome.recovering": "Uw wijzigingen blijven op dit apparaat bewaard terwijl de nieuwste gedeelde kopie wordt geladen",
   "collab.outcome.recoveryUnavailable": "Uw wijzigingen blijven op dit apparaat bewaard, maar deze host kan de nieuwste gedeelde kopie niet leveren — sla een kopie van uw werk op",
   "collab.outcome.stopped": "Deze kopie wordt niet meer gedeeld en uw wijzigingen blijven op dit apparaat — sla een kopie op voordat u deze sluit",

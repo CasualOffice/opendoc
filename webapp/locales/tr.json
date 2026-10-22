@@ -2220,7 +2220,7 @@
   "object.bar.properties": "Nesne özelliklerini aç",
   "object.bar.crop": "Resmi kırp",
   "object.bar.cropApply": "Kırpmayı uygula (Enter)",
-  "object.bar.delete": "Nesneyi sil"
+  "object.bar.delete": "Nesneyi sil",
   "collab.outcome.recovering": "En son paylaşılan kopya yüklenirken değişiklikleriniz bu cihazda korunuyor",
   "collab.outcome.recoveryUnavailable": "Değişiklikleriniz bu cihazda korunuyor ancak bu sunucu en son paylaşılan kopyayı sağlayamıyor — çalışmanızın bir kopyasını kaydedin",
   "collab.outcome.stopped": "Bu kopya artık paylaşılmıyor ve değişiklikleriniz bu cihazda kalıyor — kapatmadan önce bir kopyasını kaydedin",
