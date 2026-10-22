@@ -4344,3 +4344,54 @@ Undo moves on to the next older one. Alone in a document the inverse is the reco
 exactly as before. A local typing run continues its own undo step across arrivals, so one
 Undo still takes the word back. Rejected: a global undo stack (undoes other people), and
 undoing with the plain inverse (deletes the wrong text once anybody typed before the step).
+
+## ADR-070 — Identity is attested by the host and attached at the order; a participant never states who wrote an operation
+
+**Status:** Proposed 2026-10-23, awaiting owner review. **Row:** `docs/109` HF-360.
+**Design:** `docs/175`. **Findings:** `docs/174` RC-05, RC-06, RC-07, RC-09, RC-10.
+
+**Context.** A shared session joins with the Settings name, or with the literal `"You"`
+(`collab_shell.mjs:32`). The browser never presents a grant (`collab.rs:742`). The verifier
+returns capabilities and cannot say whom a grant is for (`server/src/access.rs:108`).
+Unnamed authors are stored as `w:author="You"`. Carets are numbered, and there is no list of
+who is here. ONLYOFFICE, Google Docs and Word all show real, account-backed names.
+
+**Decision.**
+
+1. A host supplies one `HostIdentity` (`id`, `name`, `initials`, `color`, `avatar`, and an
+   opt-in `persist`) through the element, the in-process mount or a once-only
+   `session.identify` message. It is a fourth axis beside capabilities, regions and
+   preferences: when it is supplied, the visitor cannot override it. It is never put in a URL.
+2. Display claims travel **inside the host-signed grant**. The verifier returns
+   `Verified { capabilities, subject, profile }`, and the relay refuses a join whose
+   identity is not the grant's subject. Open rooms may carry a claimed profile, which is
+   marked unverified and has its avatar dropped.
+3. Every participant receives who is present (`Welcome`/`Resumed` lists, then
+   `ParticipantJoined`/`ParticipantLeft`). `PROTOCOL_VERSION` goes 6 → 7.
+4. **Authorship is attached by the relay** (`Arrival.author`) and **conformed on apply** by a
+   deterministic `authorship::conform` that every replica runs. Introduced comments and marks
+   take the stamp, and existing ones keep their author. Nothing is refused, so convergence
+   holds, and a forged author never reaches another screen or a saved file.
+5. The DOCX keeps Word's shape: `w:author` and `w:initials`, and `people.xml` `w15:person`.
+   `w15:presenceInfo` is written **only** with the host's `persist`. The anonymous author stays
+   `"You"` (owner decision 2026-10-23; a known difference from Word's "Author"). Duplicate
+   display names get a display-only suffix ("Name (2)"); the stored `w:author` is never altered.
+6. @mention is a bounded, query-driven host directory (`search`, then `notify` after the
+   comment is ordered). The editor never enumerates people. With no host, `@` is plain text.
+7. Shared version history comes from host `listVersions`, `saveVersion` and `versionBytes`,
+   with the author attested by the host and not stated by the client. Standalone history stays
+   local-first (ADR-038).
+8. Avatars are never fetched without the host's per-mount consent, and then only `https:`
+   with `no-referrer`.
+
+**Rejected.**
+
+- A relay that checks the author field: `UpdateReviewState` replaces the comments map, so
+  the relay cannot see what is new.
+- A replica that refuses a forged author: it is left one ordered revision short.
+- The identity as a preference: the visitor can overwrite it.
+- ONLYOFFICE-style `onRequestUsers`, which hands the client the whole directory.
+- Writing the wire id into every saved file.
+- Localising the anonymous author.
+
+**Decided by the owner 2026-10-23:** `docs/175` §12 Q1, Q2, Q3 and Q5. **Open:** Q4 (measure Word's mention shape) and Q6 (grant encoding).
