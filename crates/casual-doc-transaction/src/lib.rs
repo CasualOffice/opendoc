@@ -58,9 +58,9 @@
 //! [`session`] is the only module here that calls [`transform`], and nothing calls
 //! [`session`] unless a host has joined a room.
 //!
-//! Still absent: the byte codec (the operation set has no `serde` and the op-set lane will
-//! move its shapes), the node-addressed mapping steps (`107` P-4), and the relay binary,
-//! presence and collaborative undo (`107` 6.6, doc 152 §9).
+//! [`selective`] is collaborative undo: the inverse of this replica's own step rebased over
+//! everybody's later edits (`107` §5.4, ADR-069). The byte codec is [`codec`] and presence
+//! is [`presence`]; the relay binary lives outside `crates/` (ADR-058).
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -80,6 +80,7 @@ pub mod intent;
 pub mod presence;
 pub mod protocol;
 pub mod recovery;
+pub mod selective;
 pub mod session;
 pub mod transform;
 pub mod v0;
@@ -170,6 +171,14 @@ pub enum Origin {
         /// The undo group this commit reverted.
         group: GroupId,
     },
+    /// Somebody else's edit, ordered by a relay and applied here.
+    ///
+    /// **Never an undo target, and invisible to every history read.** Undo in a shared
+    /// document is *selective*: it reverts this replica's own steps and nobody else's, which
+    /// is what Google Docs and ONLYOFFICE both do. Before this variant existed a remote
+    /// commit was recorded as an `Edit`, so the newest group was usually someone else's
+    /// keystroke and ⌘Z deleted their text — and, through the relay, deleted it for them.
+    Remote,
 }
 
 /// How a transaction joins the undo grouping.
@@ -229,10 +238,25 @@ impl Position {
 
 /// One deterministic position-mapping step, in the live op set's byte space.
 ///
-/// Only the four **positional** shapes emit a step. Every other operation addresses a
-/// `NodeId` and moves no offset, so it emits none — which is exactly the coverage the
-/// Phase-0 map had. `107` §3.2's node-addressed steps (`NodeInserted`, `NodeRemoved`,
-/// `NodeReplaced`, `PropertiesChanged`) are P-4 and are not built here.
+/// # Which operations emit which step — `107` P-4
+///
+/// The classification is one exhaustive `match` over [`Operation`] in `push_mapping_step`,
+/// with no wildcard arm, so a new operation is a compile error there rather than a caret
+/// that silently stays where it was:
+///
+/// | Step | Emitted by |
+/// | --- | --- |
+/// | `Insert` | `InsertText`, `InsertField` (the field's shown text), `InsertInlineObject` of an inline that occupies positions (a hard break) |
+/// | `Delete` | `DeleteText`, `RemoveField`, `RemoveInlineObject` of such an inline |
+/// | `Split` / `Join` | `SplitParagraph` / `JoinParagraphs` |
+/// | `Rewritten` | `SetInlines`, `UpdateReviewState` (every paragraph it rewrites) |
+/// | `Removed` | every operation that destroys a paragraph or a container holding one: `DeleteBlocks`, `DeleteTable`, `DeleteRow`, `DeleteColumn`, `RemoveFieldRange`, `DeleteObject`, `RemoveInlineObject`, `ReplaceTable`, `RemoveHeaderFooterBody`, and a `SetInlines` that drops a nested story |
+/// | none | everything else, because it moves no byte offset and destroys no paragraph: formatting, zero-width inline markers (objects, notes, bookmarks), node insertions, properties and every document-scope write |
+///
+/// `107` §3.2 also proposed `NodeInserted` and `PropertiesChanged`. Neither is built, and
+/// deliberately: a position names its paragraph rather than a sibling index, so an insertion
+/// moves no position, and neither does a property change. The write-write race
+/// `PropertiesChanged` was for is the transform's `footprint`, not the map's.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MappingStep {
     /// Text insertion into one paragraph.
@@ -271,6 +295,51 @@ pub enum MappingStep {
         /// Former byte end of the first paragraph.
         at: u32,
     },
+    /// A paragraph's inline content was replaced wholesale; it is now `len` bytes long.
+    ///
+    /// The operation carries no record of *where* inside the paragraph the text changed, so
+    /// a position cannot be carried across it with its intention intact. It is **clamped** to
+    /// the new length instead, which keeps it valid. That is a stated degradation, not an
+    /// oversight: a rewrite is an undo or review vehicle, never the typing path (`107` §4 B4).
+    Rewritten {
+        /// The paragraph that was rewritten.
+        node: NodeId,
+        /// Its projected byte length afterwards.
+        len: u32,
+    },
+    /// A node the change destroyed. A position inside it has nowhere to be any more;
+    /// [`PositionMap::map_tracked`] says so and carries the site.
+    Removed {
+        /// The destroyed node.
+        node: NodeId,
+        /// Where the removed band began, when the removal was from a block list.
+        site: Option<RemovalSite>,
+    },
+}
+
+/// Where a removal from a block list began: the container (`None` for the document body)
+/// and the index of the first removed block.
+///
+/// The block now at that index — or the last one before it — is where a caret that sat in
+/// the removed content belongs, which is what Word and Google Docs do with a caret whose
+/// paragraph somebody else deleted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RemovalSite {
+    /// The block container, or `None` for the body.
+    pub container: Option<NodeId>,
+    /// The index of the first removed block.
+    pub index: u32,
+}
+
+/// A position carried through a [`PositionMap`], and whether its paragraph survived.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Mapped {
+    /// The position after every step. Not a live position when `removed` is set.
+    pub position: Position,
+    /// Whether a step destroyed the paragraph the position was in.
+    pub removed: bool,
+    /// Where the removal happened, when `removed` is set and it was from a block list.
+    pub site: Option<RemovalSite>,
 }
 
 /// Ordered mapping steps produced by a committed transaction.
@@ -295,7 +364,26 @@ impl PositionMap {
     ///
     /// O(steps), which is O(operations in the transaction) — never O(document).
     #[must_use]
-    pub fn map(&self, mut position: Position) -> Position {
+    pub fn map(&self, position: Position) -> Position {
+        self.map_tracked(position).position
+    }
+
+    /// Maps a position through every step and says whether its paragraph was destroyed.
+    ///
+    /// The **local caret** reads this (`107` P-4): a remote edit arriving while the reader
+    /// types must carry their caret with the text it sat in, or the next keystroke lands at
+    /// a stale offset — which is how the later of two typists in one paragraph came out
+    /// reversed on both screens. It is ProseMirror's `Mapping.mapResult`, with `removed`
+    /// playing its `deleted` flag.
+    ///
+    /// # Complexity
+    ///
+    /// O(steps): the operations in the change being mapped across, **never** the document
+    /// and never the log. One arriving keystroke is one step.
+    #[must_use]
+    pub fn map_tracked(&self, mut position: Position) -> Mapped {
+        let mut removed = false;
+        let mut site = None;
         for step in &self.steps {
             match *step {
                 MappingStep::Insert { node, at, bytes } if position.node == node => {
@@ -330,10 +418,24 @@ impl PositionMap {
                     position.node = first;
                     position.offset = position.offset.saturating_add(at);
                 }
+                MappingStep::Rewritten { node, len } if position.node == node => {
+                    position.offset = position.offset.min(len);
+                }
+                MappingStep::Removed {
+                    node,
+                    site: removed_at,
+                } if position.node == node => {
+                    removed = true;
+                    site = site.or(removed_at);
+                }
                 _ => {}
             }
         }
-        position
+        Mapped {
+            position,
+            removed,
+            site,
+        }
     }
 }
 
@@ -637,6 +739,10 @@ pub struct RevisionLog {
     settled: bool,
     next_group: u64,
     max_groups: usize,
+    /// Own groups no undo read offers any more: half-evicted ones, and ones whose every
+    /// effect somebody else already removed. See [`RevisionLog::retire`]. Bounded by the
+    /// groups the log holds, because eviction prunes it.
+    retired: Vec<GroupId>,
 }
 
 /// Undo steps retained before the oldest is dropped whole.
@@ -697,6 +803,7 @@ impl RevisionLog {
             settled: false,
             next_group: 0,
             max_groups: max_groups.max(1),
+            retired: Vec::new(),
         }
     }
 
@@ -902,7 +1009,7 @@ impl RevisionLog {
         }
         inverse_operations.reverse();
 
-        let group = self.group_for(transaction.coalesce);
+        let group = self.group_for(transaction.coalesce, transaction.origin);
         let commit = Commit {
             id: transaction.id,
             base_revision: transaction.base_revision,
@@ -933,10 +1040,39 @@ impl RevisionLog {
     /// The promotion is to `Coalesce::New`'s behaviour in every respect, including keeping the
     /// new group's first inverse — a group whose first commit recorded none could not be
     /// rolled back at all, so promoting is strictly the safer of the two.
-    fn group_for(&mut self, coalesce: Coalesce) -> GroupId {
+    ///
+    /// # Remote commits, and why a gesture continues across them
+    ///
+    /// A [`Origin::Remote`] commit never joins or opens one of this replica's groups. Remote
+    /// commits coalesce among themselves (one group per uninterrupted run of arrivals, so
+    /// somebody else's typing does not evict this reader's undo history group by group), and
+    /// a local `Continue` joins the newest **own** group even when arrivals landed after it.
+    /// That keeps "one Undo takes the word back" true while somebody types elsewhere, at the
+    /// price that an own group can be interleaved with remote commits — which is exactly
+    /// what [`RevisionLog::selective_inverse`] is written to undo.
+    fn group_for(&mut self, coalesce: Coalesce, origin: Origin) -> GroupId {
+        if origin == Origin::Remote {
+            return match self.commits.back() {
+                Some(last)
+                    if last.origin == Origin::Remote
+                        && self.commits_in_group(last.group) < MAX_COMMITS_PER_GROUP =>
+                {
+                    last.group
+                }
+                _ => self.allocate_group(),
+            };
+        }
         match coalesce {
             Coalesce::Continue | Coalesce::ContinueKeepingFirstInverse => {
-                if let Some(last) = self.commits.back().map(|commit| commit.group)
+                // The newest commit that is not somebody else's. O(the run of arrivals since),
+                // which the group bound caps.
+                if let Some(last) = self
+                    .commits
+                    .iter()
+                    .rev()
+                    .find(|commit| commit.origin != Origin::Remote)
+                    .map(|commit| commit.group)
+                    && !self.retired.contains(&last)
                     && self.commits_in_group(last) < MAX_COMMITS_PER_GROUP
                 {
                     return last;
@@ -1031,7 +1167,7 @@ impl RevisionLog {
         let oldest = front.group;
         self.drop_front_group(oldest);
         while let Some(front) = self.commits.front() {
-            if matches!(front.origin, Origin::Edit) {
+            if matches!(front.origin, Origin::Edit | Origin::Remote) {
                 break;
             }
             let dangling = front.group;
@@ -1040,6 +1176,13 @@ impl RevisionLog {
         true
     }
 
+    /// Drops the front run of `group`'s commits.
+    ///
+    /// Only the front run, because the log is a chain and only its front may go. An own group
+    /// interleaved with arrivals can therefore lose its oldest commits and keep its newest, and
+    /// half a step must not be offered as a whole one: such a group is **retired** — never
+    /// undone — rather than undone partially. A group whose last commit has gone is dropped
+    /// from the retired set too, so that set is bounded by the groups the log still holds.
     fn drop_front_group(&mut self, group: GroupId) {
         while self
             .commits
@@ -1048,11 +1191,40 @@ impl RevisionLog {
         {
             self.commits.pop_front();
         }
+        if self.commits.iter().any(|commit| commit.group == group) {
+            if !self.retired.contains(&group) {
+                self.retired.push(group);
+            }
+        } else {
+            self.retired.retain(|retired| *retired != group);
+        }
     }
 
-    /// How many undo groups the log retains.
+    /// How many groups the log retains, **everybody's** — the quantity B7's ceiling is
+    /// derived from, so arrivals count here even though no history read ever sees them.
     fn group_count(&self) -> usize {
-        self.groups_newest_first().count()
+        let mut seen: Option<GroupId> = None;
+        self.commits
+            .iter()
+            .rev()
+            .filter(|commit| {
+                let fresh = seen != Some(commit.group);
+                seen = Some(commit.group);
+                fresh
+            })
+            .count()
+    }
+
+    /// Takes `group` out of every undo read, for good.
+    ///
+    /// For a step whose every effect somebody else has already removed — undoing it would
+    /// change nothing, and refusing for ever would leave the reader unable to undo anything
+    /// older. Word-processor precedent: Google Docs simply moves on to the next older step.
+    /// O(retired groups), which the group bound caps.
+    pub fn retire(&mut self, group: GroupId) {
+        if !self.retired.contains(&group) {
+            self.retired.push(group);
+        }
     }
 
     /// The group Undo would revert, if any.
@@ -1065,12 +1237,15 @@ impl RevisionLog {
         for (group, origin) in self.groups_newest_first_with_id() {
             match origin {
                 Origin::Undo { .. } => cancelled += 1,
+                Origin::Edit | Origin::Redo { .. } if self.retired.contains(&group) => {}
                 Origin::Edit | Origin::Redo { .. } => {
                     if cancelled == 0 {
                         return Some(group);
                     }
                     cancelled -= 1;
                 }
+                // Filtered out by the walk; named so a fifth origin is a compile error here.
+                Origin::Remote => {}
             }
         }
         None
@@ -1094,6 +1269,9 @@ impl RevisionLog {
                     cancelled -= 1;
                 }
                 Origin::Edit => return None,
+                // Somebody else's edit does not clear this reader's redo: it is not a step
+                // they took. Filtered out by the walk; named for exhaustiveness.
+                Origin::Remote => {}
             }
         }
         None
@@ -1107,9 +1285,10 @@ impl RevisionLog {
     pub fn undo_depth(&self) -> usize {
         let mut cancelled = 0_usize;
         let mut depth = 0_usize;
-        for origin in self.groups_newest_first() {
+        for (group, origin) in self.groups_newest_first_with_id() {
             match origin {
                 Origin::Undo { .. } => cancelled += 1,
+                Origin::Edit | Origin::Redo { .. } if self.retired.contains(&group) => {}
                 Origin::Edit | Origin::Redo { .. } => {
                     if cancelled == 0 {
                         depth += 1;
@@ -1117,6 +1296,7 @@ impl RevisionLog {
                         cancelled -= 1;
                     }
                 }
+                Origin::Remote => {}
             }
         }
         depth
@@ -1138,22 +1318,33 @@ impl RevisionLog {
                     }
                 }
                 Origin::Edit => break,
+                Origin::Remote => {}
             }
         }
         depth
     }
 
-    /// Each group and its origin, newest group first — the one walk the four history reads
-    /// share, so the "a group is a run of commits" rule has exactly one implementation.
+    /// Each of **this replica's** groups and its origin, newest group first — the one walk
+    /// the four history reads share, so the "a group is a run of commits" rule has exactly
+    /// one implementation.
+    ///
+    /// Remote commits are skipped before groups are delimited, which is what lets an own
+    /// typing run interleaved with arrivals still read as one step: with them removed, an own
+    /// group is contiguous again, because a local `Continue` only ever joins the newest own
+    /// group.
     fn groups_newest_first_with_id(&self) -> impl Iterator<Item = (GroupId, Origin)> + '_ {
         let mut seen: Option<GroupId> = None;
-        self.commits.iter().rev().filter_map(move |commit| {
-            if seen == Some(commit.group) {
-                return None;
-            }
-            seen = Some(commit.group);
-            Some((commit.group, commit.origin))
-        })
+        self.commits
+            .iter()
+            .rev()
+            .filter(|commit| commit.origin != Origin::Remote)
+            .filter_map(move |commit| {
+                if seen == Some(commit.group) {
+                    return None;
+                }
+                seen = Some(commit.group);
+                Some((commit.group, commit.origin))
+            })
     }
 
     /// Each group's origin, newest group first.
@@ -1189,31 +1380,38 @@ impl RevisionLog {
     }
 }
 
-/// Records the mapping step an operation implies, if it is one of the four positional
-/// shapes. Every other operation addresses a node and moves no offset.
+/// Records the mapping steps an operation implies — `107` P-4's classification, as code.
 ///
-/// O(1). The offsets are already on the operation or on its inverse — nothing is recomputed
-/// from the document, which is what keeps this off the keystroke budget.
+/// **Exhaustive over [`Operation`], with no wildcard arm**, so an operation added to the set
+/// does not compile until somebody decides what it does to a caret. The table on
+/// [`MappingStep`] is the same decision in prose.
+///
+/// O(1) for every positional shape — the offsets are already on the operation or on its
+/// inverse, nothing is recomputed from the document, which keeps this off the keystroke
+/// budget. O(the payload) for a rewrite or a removal, which is bounded by what the operation
+/// itself carried and never by the document.
 fn push_mapping_step(map: &mut PositionMap, operation: &Operation, inverse: &Operation) {
-    match (operation, inverse) {
+    match operation {
         // The inserted length is read off the INVERSE, not off `text`: the edit crate strips
         // XML-forbidden characters at the choke point, so the bytes that landed can be fewer
         // than the bytes offered.
-        (Operation::InsertText { at, .. }, Operation::DeleteText { range }) => {
-            map.steps.push(MappingStep::Insert {
-                node: at.node,
-                at: at.offset,
-                bytes: range.end.offset.saturating_sub(range.start.offset),
-            });
+        Operation::InsertText { at, .. } => {
+            if let Operation::DeleteText { range } = inverse {
+                map.steps.push(MappingStep::Insert {
+                    node: at.node,
+                    at: at.offset,
+                    bytes: range.end.offset.saturating_sub(range.start.offset),
+                });
+            }
         }
-        (Operation::DeleteText { range }, _) => {
+        Operation::DeleteText { range } => {
             map.steps.push(MappingStep::Delete {
                 node: range.start.node,
                 start: range.start.offset,
                 end: range.end.offset,
             });
         }
-        (Operation::SplitParagraph { at, new_id, .. }, _) => {
+        Operation::SplitParagraph { at, new_id, .. } => {
             map.steps.push(MappingStep::Split {
                 original: at.node,
                 new_node: *new_id,
@@ -1221,15 +1419,172 @@ fn push_mapping_step(map: &mut PositionMap, operation: &Operation, inverse: &Ope
             });
         }
         // The join boundary is the former end of `first`, which the inverse split carries.
-        (Operation::JoinParagraphs { first, second, .. }, Operation::SplitParagraph { at, .. }) => {
-            map.steps.push(MappingStep::Join {
-                first: *first,
-                second: *second,
-                at: at.offset,
-            });
+        Operation::JoinParagraphs { first, second, .. } => {
+            if let Operation::SplitParagraph { at, .. } = inverse {
+                map.steps.push(MappingStep::Join {
+                    first: *first,
+                    second: *second,
+                    at: at.offset,
+                });
+            }
         }
-        _ => {}
+        // A field occupies the width of the text it shows — the same rule `apply` and the
+        // transform read (`casual_doc_edit::field_text_len`). Before P-4 neither of these
+        // emitted a step, so a caret after a field somebody inserted earlier in the
+        // paragraph was left that many bytes short.
+        Operation::InsertField { at, field } => {
+            let bytes = casual_doc_edit::field_text_len(field);
+            if bytes > 0 {
+                map.steps.push(MappingStep::Insert {
+                    node: at.node,
+                    at: at.offset,
+                    bytes,
+                });
+            }
+        }
+        Operation::RemoveField { .. } => {
+            if let Operation::InsertField { at, field } = inverse {
+                let bytes = casual_doc_edit::field_text_len(field);
+                if bytes > 0 {
+                    map.steps.push(MappingStep::Delete {
+                        node: at.node,
+                        start: at.offset,
+                        end: at.offset.saturating_add(bytes),
+                    });
+                }
+            }
+            push_removed(map, operation, inverse);
+        }
+        Operation::SetInlines { node, inlines } => {
+            map.steps.push(MappingStep::Rewritten {
+                node: *node,
+                len: casual_doc_edit::inlines_text_len(inlines),
+            });
+            push_removed(map, operation, inverse);
+        }
+        Operation::UpdateReviewState { paragraphs, .. } => {
+            for paragraph in paragraphs {
+                map.steps.push(MappingStep::Rewritten {
+                    node: paragraph.node,
+                    len: casual_doc_edit::inlines_text_len(&paragraph.inlines),
+                });
+            }
+        }
+        // A positioned inline moves later offsets by its own width — zero for a drawing, one
+        // for a hard break — read from the SAME length rule `apply` and the transform use, so
+        // the map follows whatever that rule says rather than restating it.
+        Operation::InsertInlineObject { at, node } => {
+            let bytes = casual_doc_edit::inlines_text_len(std::slice::from_ref(node));
+            if bytes > 0 {
+                map.steps.push(MappingStep::Insert {
+                    node: at.node,
+                    at: at.offset,
+                    bytes,
+                });
+            }
+        }
+        Operation::RemoveInlineObject { .. } => {
+            if let Operation::InsertInlineObject { at, node } = inverse {
+                let bytes = casual_doc_edit::inlines_text_len(std::slice::from_ref(node));
+                if bytes > 0 {
+                    map.steps.push(MappingStep::Delete {
+                        node: at.node,
+                        start: at.offset,
+                        end: at.offset.saturating_add(bytes),
+                    });
+                }
+            }
+            push_removed(map, operation, inverse);
+        }
+        // Destroys paragraphs, or containers that hold them.
+        Operation::DeleteBlocks { .. }
+        | Operation::DeleteTable { .. }
+        | Operation::DeleteRow { .. }
+        | Operation::DeleteColumn { .. }
+        | Operation::RemoveFieldRange { .. }
+        | Operation::DeleteObject { .. }
+        | Operation::ReplaceTable { .. } => push_removed(map, operation, inverse),
+        // A header or footer body is a registry entry, not a block list, so the transform's
+        // removal reading names its key rather than its paragraphs. The inverse recreates it,
+        // and the paragraphs it carries are the ones a caret could have been in.
+        Operation::RemoveHeaderFooterBody { .. } => {
+            if let Operation::CreateHeaderFooterBody { blocks, .. } = inverse {
+                let mut nodes = Vec::new();
+                for block in blocks {
+                    transform::collect_block_ids(block, &mut nodes);
+                }
+                map.steps.extend(
+                    nodes
+                        .into_iter()
+                        .map(|node| MappingStep::Removed { node, site: None }),
+                );
+            }
+        }
+        // No byte offset moves and no paragraph is destroyed: formatting splits runs but
+        // keeps the projected text; a drawing, a note reference and a bookmark marker are
+        // zero-width; an insertion names new nodes, so no existing position moves; and the
+        // rest are properties or document-scope registry writes.
+        Operation::FormatText { .. }
+        | Operation::ClearFormatting { .. }
+        | Operation::SetHyperlink { .. }
+        | Operation::InsertNote { .. }
+        | Operation::RemoveNote { .. }
+        | Operation::CreateBookmark { .. }
+        | Operation::DeleteBookmark { .. }
+        | Operation::RenameBookmark { .. }
+        | Operation::InsertRow { .. }
+        | Operation::InsertColumn { .. }
+        | Operation::InsertTable { .. }
+        | Operation::InsertBlocks { .. }
+        | Operation::InsertObjectNode { .. }
+        | Operation::InsertFieldRange { .. }
+        | Operation::SetParagraphProperties { .. }
+        | Operation::SetExtent { .. }
+        | Operation::SetGroupGeometry { .. }
+        | Operation::SetAnchor { .. }
+        | Operation::SetImageCrop { .. }
+        | Operation::SetObjectDescr { .. }
+        | Operation::SetTableCellProperties { .. }
+        | Operation::SetTableProperties { .. }
+        | Operation::SetShapeFill { .. }
+        | Operation::SetShapeStroke { .. }
+        | Operation::SetTextBoxBody { .. }
+        | Operation::SetObjectLocks { .. }
+        | Operation::SetCoreProperties { .. }
+        | Operation::SetSectionGeometry { .. }
+        | Operation::SpliceSectionBoundary { .. }
+        | Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. }
+        | Operation::SetChartDefinition { .. }
+        | Operation::SetDocumentProtection { .. }
+        | Operation::CreateHeaderFooterBody { .. }
+        | Operation::SetSectionRunningRef { .. }
+        | Operation::SetSectionTitlePage { .. }
+        | Operation::SetSectionWatermark { .. }
+        | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageNumbering { .. }
+        | Operation::SetSectionVerticalAlignment { .. }
+        | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetDocumentBackground { .. }
+        | Operation::SetMirroredMargins { .. }
+        | Operation::SetDefaultTabStop { .. }
+        | Operation::RestoreDefaultTabStop { .. }
+        | Operation::SetTrackRevisions { .. }
+        | Operation::SetSectionFormProtection { .. } => {}
     }
+}
+
+/// Emits a [`MappingStep::Removed`] for every node `operation` destroyed, read the way the
+/// transform reads it, so the map and the transform agree about what died.
+fn push_removed(map: &mut PositionMap, operation: &Operation, inverse: &Operation) {
+    let (nodes, site) = transform::removal_for_map(transform::Change::new(operation, inverse));
+    map.steps.extend(
+        nodes
+            .into_iter()
+            .map(|node| MappingStep::Removed { node, site }),
+    );
 }
 
 /// Transaction validation or application failure.
@@ -1326,6 +1681,7 @@ mod tests {
             SourceFile::new("presence.rs", include_str!("presence.rs")),
             SourceFile::new("protocol.rs", include_str!("protocol.rs")),
             SourceFile::new("recovery.rs", include_str!("recovery.rs")),
+            SourceFile::new("selective.rs", include_str!("selective.rs")),
             SourceFile::new("session.rs", include_str!("session.rs")),
             SourceFile::new("transform.rs", include_str!("transform.rs")),
             SourceFile::new(

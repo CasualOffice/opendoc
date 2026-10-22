@@ -2494,7 +2494,7 @@ const regionCycle = createRegionCycle({ root: document, focusEditor: () => focus
 /** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
 let collab = null;
 const { presence: remotePresence, recovery, share, chrome: shareChrome,
-  start: startCollaboration, commands: collabFeatureCommands, loadStartup: loadSharedStartup, beforeReplace: leaveSharedDocument } = createCollaborationShell({
+  start: startCollaboration, commands: collabFeatureCommands, loadStartup: loadSharedStartup, beforeReplace: leaveSharedDocument, restoreRefusal: sharedRestoreRefusal } = createCollaborationShell({
   root: document, getDocument: () => doc, getTransport: () => collab, setTransport: (pipe) => { collab = pipe; },
   getSelection: () => selection, getSettings: () => settings, getName: () => currentName, hostConfig,
   paintOverlay: () => paintOverlayLayer(), receiveAccess: (outcome) => accessChrome.received(outcome),
@@ -8311,8 +8311,8 @@ function adoptEditPosition(node, offset) {
   return at;
 }
 
-/** Repaints what a remote arrival changed. The engine already applied it through
- *  `ClientSession::receive`; this only paints. The caret is NOT mapped (`107` P-4). */
+/** Repaints what a remote arrival changed; the engine applied it, and the shell already
+ *  carried `selection` across it synchronously (`collabMapSelection`, `107` P-4). */
 async function paintArrival({ dirty = [], pageCount, viewRevision }) {
   noteDocumentEdited(viewRevision);
   if (pageCount !== pages.length) await renderAll();
@@ -15683,7 +15683,7 @@ const versionHistory = createVersionHistory({
     // Same flag as a recovered draft, because it is the same fact.
     restoredFromDraft = true;
     setDocumentState("edited");
-  },
+  }, restoreRefusal: sharedRestoreRefusal, // ADR-068: a shared room refuses, never forks
   snapshot: () => (doc ? takeDraftSnapshot() : null),
   documentInfo: () => ({
     name: currentName,

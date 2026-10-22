@@ -2,6 +2,7 @@ import { newRoster } from "../pkg/casual_doc_wasm.js";
 import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { createPresence } from "./collab_presence.mjs";
 import { createRecovery } from "./collab_recovery.mjs";
+import { createSyncIndicator } from "./collab_sync.mjs";
 import { createShare, shareLink, sharedDocument } from "./share_flow.mjs";
 import { createShareChrome } from "./share_chrome.mjs";
 import { createRecoveryDownloader } from "./recovery_chrome.mjs";
@@ -13,6 +14,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
   repaintRecovered, edited, setSelection, status, t }) {
   const remotePresence = createPresence({ newRoster, document: getDocument,
     transport: getTransport, selection: getSelection, paint: paintOverlay, t });
+  const sync = createSyncIndicator({ transport: getTransport, document: getDocument, status, t });
 
   function currentSharedLink() {
     const params = new URLSearchParams(window.location.search);
@@ -26,7 +28,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
       const revision = Number(new URLSearchParams(window.location.search).get("revision") || 0);
       getDocument().collabPrepare(revision);
     }
-    setTransport(openRoom(getDocument(), room, globalThis.WebSocket, {
+    setTransport(withSync(openRoom(getDocument(), room, globalThis.WebSocket, {
       identity: getSettings().authorName.trim() || "You",
       resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
       onFrame: (bytes) => remotePresence.frame(bytes),
@@ -45,18 +47,47 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
         if (["welcome", "resumed", "ack", "applied"].includes(o.kind)) publishCheckpoint();
         if (["awareness", "departed", "welcome", "resumed"].includes(o.kind)) { paintOverlay(); remotePresence.changed(); }
         const said = receiveAccess(o); if (said) status(said);
-        if (o.documentChanged) arrival(o);
+        if (o.documentChanged) { followArrival(); arrival(o); }
+        sync.update();
       },
       onState: (state) => {
         remotePresence.state(state);
-        // A stop that carries a collaboration code says why, and that the work
-        // stays here; the generic sentence is for a stop with nothing to explain.
+        // The chip and the generic connection sentences follow first (`collab_sync.mjs`);
+        // then a stop that carries a collaboration code says why, and that the work stays
+        // here — written last, so the specific sentence is the one left in the status line.
+        sync.update();
         const said = state.name === "stopped"
           ? refusalAnnouncement({ kind: "stopped", code: state.code, terminal: true }, t)
           : "";
-        status(said || t(state.key), state.name === "connected" ? "" : "warn");
+        if (said) status(said, "warn");
       },
-    }));
+    })));
+    sync.update();
+  }
+  /** The pipe, with its `flush` — which every local edit calls — also refreshing the sync
+   *  indicator, so "sending" appears on the keystroke rather than on the next frame. */
+  function withSync(pipe) {
+    return pipe && Object.freeze({ ...pipe, flush() { pipe.flush(); sync.update(); } });
+  }
+  /** Carries the reader's selection across what just merged (`107` P-4), synchronously —
+   *  before the arrival paints and before the next keystroke reads the selection, which is
+   *  the window in which a stale caret put the later typist's word in backwards. The engine
+   *  holds the composed map of everything merged since the last call, so a frame carrying
+   *  several arrivals is one call. O(steps merged), never O(document). */
+  function followArrival() {
+    const doc = getDocument(), range = getSelection();
+    if (!doc || typeof doc.collabMapSelection !== "function") return;
+    // Taken even with no selection, so a later call never maps a fresh click through
+    // arrivals that landed before it.
+    const first = () => { const p = doc.firstPosition(); const at = { node: p.node, offset: p.offset }; p.free?.(); return at; };
+    const anchor = range?.anchor ?? first(), focus = range?.focus ?? anchor;
+    let mapped;
+    try { mapped = JSON.parse(doc.collabMapSelection(anchor.node, anchor.offset, focus.node, focus.offset)); } catch { return; }
+    if (!range || (!mapped.moved && !mapped.removed)) return;
+    // An end whose paragraph somebody deleted, somewhere the engine could not re-seat it:
+    // the start of the document, which the editor's own placement check accepts.
+    const fallback = mapped.removed ? first() : null;
+    setSelection({ anchor: fallback ?? mapped.anchor, focus: fallback ?? mapped.focus });
   }
   function engineStopped() {
     try { return Boolean(JSON.parse(getDocument().collabState).stopped); } catch { return false; }
@@ -125,7 +156,14 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
   }
   function beforeReplace() {
     if (!getDocument()) return;
+    const wasShared = Boolean(getTransport());
     getTransport()?.stop(); setTransport(null);
+    sync.stop();
+    // Leaving a room is said out loud. A document replaced while shared used to drop the
+    // room without a word, which is how a version restore forked a shared document
+    // silently (`docs/109` HF-312): the reader's copy went one way, everybody else's
+    // stayed, and nothing said they were no longer together.
+    if (wasShared) status(t("collab.leftShared"), "warn");
     remotePresence.open(false); recovery.reset();
     if (checkpointTimer !== null) clearTimeout(checkpointTimer);
     checkpointTimer = null;
@@ -133,5 +171,10 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
     for (const key of ["room", "document", "revision"]) url.searchParams.delete(key);
     window.history.replaceState(null, "", url);
   }
-  return { presence: remotePresence, recovery, share, chrome: shareChrome, start: startCollaboration, commands, loadStartup, beforeReplace };
+  return { presence: remotePresence, recovery, share, chrome: shareChrome, start: startCollaboration, commands, loadStartup, beforeReplace,
+    /** Why Restore must not run now, or "". A restore replaces this tab's document
+     *  wholesale, so in a shared room it would fork it — this reader's copy goes back and
+     *  everybody else's stays — and leave the room without a word (ADR-068, `docs/109`
+     *  HF-312). Refused with the reason until a restore can travel as one transaction. */
+    restoreRefusal: () => (getTransport() ? t("versionHistory.restore.sharedRefused") : "") };
 }

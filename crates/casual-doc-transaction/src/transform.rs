@@ -2026,6 +2026,40 @@ fn contend(subject: Operation, against: &Operation, side: Side) -> Rebase {
     Rebase::Satisfied
 }
 
+/// Every node id inside `block`, itself included — the walk transform's removal reading
+/// uses, shared so the position map enumerates a removed story the same way. O(the block).
+pub(crate) fn collect_block_ids(block: &BlockNode, out: &mut Vec<NodeId>) {
+    effect::collect_block(block, out);
+}
+
+/// What `change` destroyed, as the position map needs it (`107` P-4): every node it
+/// removed, and — for a removal from a block list — the container and index the removed
+/// band started at, which is where a caret that sat inside it belongs afterwards.
+///
+/// The same two readings transform makes (`removed_by` and `effect_of`), so the map and
+/// the transform cannot disagree about what an operation destroyed. A removal that is not a
+/// block band (a row, a column, an object, a rewritten subtree) reports no site: the caller
+/// knows the caret's node is gone and has to place it by other means.
+///
+/// O(nodes the change removed) — bounded by the operation's own payload, never by the
+/// document.
+pub(crate) fn removal_for_map(change: Change<'_>) -> (Vec<NodeId>, Option<crate::RemovalSite>) {
+    let removed = removed_by(change);
+    let site = match effect_of(change) {
+        Ok(Effect::Band(Band {
+            container: Container::Blocks(container),
+            at,
+            inserting: false,
+            ..
+        })) => Some(crate::RemovalSite {
+            container,
+            index: at,
+        }),
+        _ => None,
+    };
+    (removed.nodes, site)
+}
+
 #[cfg(test)]
 #[path = "transform_tests.rs"]
 mod tests;

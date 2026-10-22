@@ -6470,6 +6470,20 @@ pub fn field_text_len(field: &Field) -> u32 {
     }
 }
 
+/// The bytes an inline list contributes to its paragraph's projected text.
+///
+/// Public for the same reason [`field_text_len`] is: the position map in
+/// `casual-doc-transaction` must know how long a paragraph is after an
+/// [`Operation::SetInlines`] or an [`Operation::UpdateReviewState`] rewrote it, so
+/// a caret beyond the new end can be brought back inside it (`107` P-4). One rule,
+/// read by both, rather than a second copy that could drift from `apply`'s.
+///
+/// **O(inlines in the list)**; no document walk.
+#[must_use]
+pub fn inlines_text_len(inlines: &[InlineNode]) -> u32 {
+    nested_len(inlines)
+}
+
 /// The paragraph's total shaped-text byte length.
 fn paragraph_text_len(para: &Paragraph) -> u32 {
     para.inlines.iter().map(inline_text_len).sum()

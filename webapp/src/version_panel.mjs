@@ -271,6 +271,10 @@ export function createVersionHistory({
   // Called before a preview takes the canvas, so another read-only view on it
   // (Review ▸ Compare's) can let go first: one borrowed canvas at a time.
   beforePreview = async () => {},
+  // Why Restore cannot run right now, or "" when it can. The host's answer, because only
+  // it knows whether the document is in a shared room — where a restore would replace the
+  // reader's copy alone and fork the document (ADR-068, `docs/109` HF-312).
+  restoreRefusal = () => "",
   storeOptions = {},
 }) {
   const panel = document.getElementById("versionPanel");
@@ -709,7 +713,15 @@ export function createVersionHistory({
     if (bannerBack) bannerBack.hidden = !previewing;
     // The head previewed with its changes is the document already in place, so
     // there is nothing to restore.
-    if (bannerRestore) bannerRestore.hidden = !previewing || previewVersionId === headVersionId;
+    if (bannerRestore) {
+      bannerRestore.hidden = !previewing || previewVersionId === headVersionId;
+      // Disabled WITH the reason while the document is shared (ADR-068), never hidden:
+      // a control that vanishes in a shared session reads as a bug.
+      const refusal = restoreRefusal();
+      bannerRestore.disabled = Boolean(refusal);
+      if (refusal) bannerRestore.title = refusal;
+      else bannerRestore.removeAttribute("title");
+    }
     if (bannerShowChanges) {
       bannerShowChanges.checked = showDiff;
       bannerShowChanges.disabled = typeof redline !== "function";
@@ -867,8 +879,8 @@ export function createVersionHistory({
         id: "version.restore",
         group: "restore",
         label: t("versionPanel.restoreThisVersion"),
-        enabled: !isHead,
-        disabledReason: t("versionHistory.headNotRestorable"),
+        enabled: !isHead && !restoreRefusal(),
+        disabledReason: isHead ? t("versionHistory.headNotRestorable") : restoreRefusal(),
         run: () => void queue(() => restore(id)),
       },
       {
@@ -1206,6 +1218,12 @@ export function createVersionHistory({
     const ready = await ensureStore();
     const row = rows.find((candidate) => candidate.versionId === versionId);
     if (!ready || !row) return;
+    // Refused before anything is captured or confirmed: in a shared room a restore would
+    // replace this reader's copy alone and silently fork the document (ADR-068). The
+    // shortcut and the palette reach here too, so the refusal is at the action, not only
+    // on the controls.
+    const refusal = restoreRefusal();
+    if (refusal) return void publish(refusal, "warn");
     if (!(await confirmRestore(row))) return;
     // BACK TO THE LIVE DOCUMENT BEFORE TAKING THE SNAPSHOT, and this ordering is
     // load-bearing rather than tidy.

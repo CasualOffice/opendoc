@@ -185,8 +185,27 @@ impl Error for SessionError {}
 /// What merging one arrival did.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reception {
-    /// Maps positions from the pre-arrival optimistic view to the rebased view.
+    /// Maps positions from the pre-arrival optimistic view to the rebased view, through the
+    /// whole rollback, the ordered apply and the replay. What remote carets are carried
+    /// through (`169` §Presence).
     pub position_map: crate::PositionMap,
+    /// Maps **this replica's own caret** from the view the reader was looking at to the one
+    /// they are looking at now — `107` P-4, the piece whose absence reversed concurrent typing.
+    ///
+    /// Not the same map as `position_map`, and the difference is the whole point. A rollback
+    /// deletes the reader's own unacknowledged text and the replay puts it back, so a caret
+    /// carried through that path collapses onto the start of its own word and comes back on
+    /// the wrong side of it — a deletion forgets what it deleted. This map is instead the
+    /// arrival **as it applies to the reader's view**: the image the driver already computes
+    /// by rebasing the arrival over every unordered commit. By TP1 that image, applied to the
+    /// reader's view, *is* the new view, so mapping through it loses nothing. It is the
+    /// pattern ProseMirror's collab module uses when it maps a selection through the
+    /// remote steps rebased over the unconfirmed ones.
+    ///
+    /// On the uncontended path the two maps are the same, because there is nothing to roll
+    /// back. Cost on the contended path: one probe of the image (apply, keep the inverses,
+    /// apply them back) — O(the arrival), never O(document).
+    pub local_map: crate::PositionMap,
     /// Where the arrival landed in the order.
     pub revision: Revision,
     /// How many of this replica's own unordered commits were rolled back and replayed.
@@ -225,9 +244,37 @@ pub struct ClientSession {
     awaiting: Option<Revision>,
     desynced: bool,
     stopped: Option<Refusal>,
+    /// Every [`Reception::local_map`] since the host last took it, composed in order.
+    ///
+    /// Held here rather than by the host because one frame can carry several arrivals (a
+    /// `Welcome`'s or a `Resumed`'s missed history) and because a host that skipped one read
+    /// must still map its caret through *everything* since the last one — a map that was
+    /// dropped is a caret that is silently stale, which is the defect this exists to end.
+    caret_map: crate::PositionMap,
 }
 
 impl ClientSession {
+    /// Takes the composed caret map of everything merged since the last call, leaving it
+    /// empty — see [`Reception::local_map`]. The host maps the reader's selection through it
+    /// once per frame that changed the document.
+    ///
+    /// O(1); the map holds O(the operations merged) steps.
+    pub fn take_caret_map(&mut self) -> crate::PositionMap {
+        std::mem::take(&mut self.caret_map)
+    }
+
+    /// How many of this replica's commits are not yet in any chunk handed to the transport —
+    /// typed, and not yet sent.
+    ///
+    /// The first of the three states a reader's change passes through (unsent, sent and
+    /// unacknowledged, acknowledged), which is what a sync indicator must show rather than
+    /// the socket's state: an open socket says nothing about whether the last keystroke has
+    /// reached anyone. O(the commits above the flush mark), which is bounded by the log.
+    #[must_use]
+    pub fn unsent(&self, log: &RevisionLog) -> usize {
+        let floor = self.flushed.max(log.horizon());
+        log.commits().filter(|c| c.revision() > floor).count()
+    }
     /// Establishes a session from a [`ServerMessage::Welcome`].
     ///
     /// The protocol version is compared for **equality before anything else**, and a
@@ -284,6 +331,7 @@ impl ClientSession {
             awaiting: None,
             desynced: false,
             stopped: None,
+            caret_map: crate::PositionMap::default(),
         })
     }
 
@@ -304,6 +352,9 @@ impl ClientSession {
         self.awaiting = None;
         self.desynced = false;
         self.stopped = None;
+        // The view the reader's caret was in has been replaced wholesale; nothing maps from
+        // it, and the host re-seats the caret itself.
+        self.caret_map = crate::PositionMap::default();
         Ok(())
     }
 
@@ -629,6 +680,7 @@ impl ClientSession {
                 replayed: 0,
                 tombstones: Vec::new(),
                 position_map: crate::PositionMap::default(),
+                local_map: crate::PositionMap::default(),
             };
             for operation in &arrival.operations {
                 let step = Arrival {
@@ -641,6 +693,9 @@ impl ClientSession {
                         combined.replayed += received.replayed;
                         combined.tombstones.extend(received.tombstones);
                         combined.position_map.append(&received.position_map);
+                        // Each step's local map starts from the view the previous one left,
+                        // so appending them in order composes the whole chunk.
+                        combined.local_map.append(&received.local_map);
                     }
                     Err(error) => {
                         *self = saved.0;
@@ -681,12 +736,17 @@ impl ClientSession {
             )?;
             log.settle(revision);
             self.revision = self.revision.max(arrival.revision);
+            let map = log
+                .commits()
+                .last()
+                .map(|c| c.position_map().clone())
+                .unwrap_or_default();
+            self.caret_map.append(&map);
             return Ok(Reception {
-                position_map: log
-                    .commits()
-                    .last()
-                    .map(|c| c.position_map().clone())
-                    .unwrap_or_default(),
+                // Nothing was rolled back, so the reader's view and the pre-arrival view are
+                // one view and the two maps are one map.
+                local_map: map.clone(),
+                position_map: map,
                 revision: arrival.revision,
                 replayed: 0,
                 tombstones: Vec::new(),
@@ -703,7 +763,10 @@ impl ClientSession {
         let restore_document = document.clone();
         let restore_log = log.clone();
         match self.rebase(arrival, document, ids, log, carried) {
-            Ok(reception) => Ok(reception),
+            Ok(reception) => {
+                self.caret_map.append(&reception.local_map);
+                Ok(reception)
+            }
             Err(error) => {
                 *document = restore_document;
                 *log = restore_log;
@@ -760,6 +823,33 @@ impl ClientSession {
             )
             .map_err(SessionError::CannotMerge)?;
         }
+
+        // The reader's caret map (`107` P-4). `image` is now the arrival as it applies to the
+        // view the reader is looking at — rebased over every unordered commit — and the
+        // document is still exactly that view, so a probe here reads the inverses the map
+        // needs and leaves the document as it found it. By TP1 that image applied to this
+        // view IS the view the replay is about to produce, which is why mapping through it
+        // loses nothing where mapping through the rollback loses the reader's own word.
+        //
+        // A probe that cannot apply (an image piece the reader's view refuses, which the
+        // replay below would then refuse too) falls back to the full path map: never a worse
+        // answer than none, and the facade validates whatever it is handed.
+        let local_map = probe(
+            document,
+            ids,
+            image
+                .iter()
+                .map(|(operation, _)| operation.clone())
+                .collect(),
+        )
+        .ok()
+        .map(|changes| {
+            let mut map = crate::PositionMap::default();
+            for (operation, inverse) in &changes {
+                crate::push_mapping_step(&mut map, operation, inverse);
+            }
+            map
+        });
 
         // Phase 1: roll back newest-first. Rolling commit `i` back arrives at commit `i`'s
         // own base, which is exactly where `images[i]`'s inverse has to be taken, so the
@@ -902,6 +992,7 @@ impl ClientSession {
         self.flushed = reanchor(self.flushed);
         self.revision = self.revision.max(arrival.revision);
         Ok(Reception {
+            local_map: local_map.unwrap_or_else(|| position_map.clone()),
             position_map,
             revision: arrival.revision,
             replayed,
@@ -945,7 +1036,11 @@ fn apply_remote(
         mints,
         operations,
     )
-    .with_intents(intents);
+    .with_intents(intents)
+    // The line that makes "a user's Undo can never reach it" true. Without it the commit
+    // was an `Edit`, the newest group was usually somebody else's keystroke, and ⌘Z
+    // deleted their text — for them as well, once the undo travelled.
+    .with_origin(crate::Origin::Remote);
     log.apply(document, transaction)
         .map(Commit::revision)
         .map_err(SessionError::Refused)
@@ -1711,3 +1806,7 @@ impl ServerSession {
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "coediting_tests.rs"]
+mod coediting_tests;

@@ -125,7 +125,38 @@ envelope — `RevisionId`, `TransactionId`, `Commit`, `base_revision`, `Position
 | P-1 | Move the operation enum out of `casual-doc-transaction`; make it depend on `casual-doc-edit` (or extract both from a shared `casual-doc-ops`) | One `Operation` type in the workspace; no duplicate vocabulary | **Done for the live path** (`147`). The envelope is re-founded on `v1::Document` + `casual_doc_edit::Operation`. The v0 enum survives as `casual_doc_transaction::v0`, reachable only from the Phase-0 SDK facade, because deleting it means rewriting that facade's public API against v1 (`126`). |
 | P-2 | Route every `casual-doc-wasm` mutation through `Transaction` + `Commit`, so every edit allocates a `RevisionId` and emits a `PositionMap` | `casual_doc_transaction` reference count in the WASM facade > 0; ADR-005 provably honoured | **Done** (`147` §3.2, §5). Held by an exhaustive source guard, not by convention. |
 | P-3 | Replace the flat `Vec<HistoryEntry>` undo stack with the commit log (§5.1); undo becomes "apply the inverse as a new commit" | Undo/redo behaviour unchanged under the existing browser suite; history survives a reload | **Done, except durability** (`147` §3.4). The log is in memory; surviving a reload is 6.1. |
-| P-4 | Emit `MappingStep`s for the structural operations that currently produce none | Every operation either emits mapping steps or is classified Tier 3 (§3.1) with that recorded in its doc comment | **Open.** `147` emits steps for the four positional shapes the v0 map already covered and no more; §3.2's node-addressed steps and the per-operation tier classification are both still to write. |
+| P-4 | Emit `MappingStep`s for the structural operations that currently produce none | Every operation either emits mapping steps or is classified Tier 3 (§3.1) with that recorded in its doc comment | **Done 2026-10-22** (`109` HF-310, ADR-069). The classification is one exhaustive `match` with no wildcard in `push_mapping_step`, so a new operation is a compile error; the table is on `MappingStep`. Added: `InsertField`/`RemoveField` and positioned inlines (a hard break) now move offsets — before, a caret after a field somebody inserted was left short; `Rewritten` clamps a caret in a paragraph `SetInlines`/`UpdateReviewState` rewrote (a stated degradation: a rewrite records no *where*); `Removed` marks every destroyed paragraph, with the removal site for a body band so the caret re-seats there. `NodeInserted` and `PropertiesChanged` were deliberately not built: a position names its paragraph, so neither moves one. **And the step that was never on this list:** the map is now *read* for the reader's own caret (§2.2). |
+
+### 2.2 The local caret, and why the rollback map was the wrong one to read
+
+Mapping steps existed for the four positional shapes from the start, and the reader's own
+caret still did not move when somebody else typed: `paintArrival` repainted and left the
+selection at its old offset. Two people typing in one paragraph produced the **later
+typist's word reversed on both screens** (`UVWXYZ` → `ZYXWVU`), because each arrival moved
+their text one byte right and left their caret where it was, so every next keystroke went
+in before the previous one. A remote insertion earlier in the paragraph made the next
+keystrokes land that many bytes early (`ppBrawwvo`).
+
+The fix is ProseMirror's `mapResult` pattern, with one decision that matters:
+
+- `Reception::local_map` is the arrival **as it applies to the reader's view** — the image
+  the rebase driver already computes by rebasing the arrival over every unordered commit.
+  By TP1 that image applied to the reader's view is the new view, so mapping through it is
+  exact. The obvious alternative, the rollback-and-replay path map (`position_map`, which
+  remote carets use), is lossy for this purpose: a rollback deletes the reader's own pending
+  text, and a deletion forgets what it deleted, so the caret collapses onto the start of its
+  own word and comes back on the wrong side. Measured: with that map the words still
+  scramble (`…WXYZUV`).
+- The session composes every local map since the host last read it
+  (`ClientSession::take_caret_map`), so a frame carrying several arrivals is one read, and a
+  skipped read cannot leave the caret stale.
+- The browser maps the selection **synchronously** in the frame handler
+  (`collab_shell.mjs` → `collabMapSelection`), before the arrival paints and before the next
+  keystroke can read it. A collapsed caret maps `Before`: text somebody inserts exactly at
+  your caret appears after it, which keeps two typists at one spot from interleaving.
+
+Cost: O(steps merged) per frame, one step per arriving keystroke; on the contended path one
+probe of the arrival's image (two O(edit) applications). Never O(document) (B1, B2).
 
 P-1 through P-3 are worth doing **even if OT were cancelled**: they close ADR-005, they give
 undo a durable basis, and they are the prerequisite for version history (`105` OO-004) and
@@ -472,6 +503,39 @@ and compare. Both derive from the log; neither is a separate subsystem.
 Compare and combine being consequences of the transform rather than separate features is the
 strongest practical argument for the owner's choice over the ordered-log model.
 
+> **"Restore a version" in a shared room — not yet a commit (2026-10-22, ADR-068).** The
+> row above says a restore is recorded as a new commit. In a shared room it is not yet: a
+> restore would have to re-mint every restored node in the restorer's id space, express
+> differences the op set cannot carry (binary resources travel only in the snapshot
+> package), and be verified to reproduce the version exactly. Until that exists a restore
+> in a room is **refused with the reason** rather than applied to one replica, which is
+> how it used to fork the document silently. `109` HF-312.
+
+### 5.4 Undo in a shared document is selective (ADR-069)
+
+Undo is a read of the log (§5.1), and in a shared log the newest group was usually
+somebody else's: remote commits were recorded as `Origin::Edit`, so ⌘Z deleted a
+collaborator's keystrokes and the undo travelled to them. Now:
+
+- Remote commits are `Origin::Remote`; every history read skips them; they coalesce among
+  themselves so somebody else's typing does not evict the reader's undo history.
+- The reader's step is reverted by its inverse **rebased over everything committed after
+  it** (`casual_doc_transaction::selective`): back over the step's own already-undone
+  inverses, forward over every later commit, then over what this undo has emitted — each
+  leg an exact `(operation, inverse)` pair, the last observed by applying and applying back
+  (the rebase driver's probe). That is the selective-undo construction of the OT
+  literature, TP1-only because everything is already in the settled order.
+- A transform with no answer, or one that would drop part of the undo, **refuses** the
+  undo with the reason and changes nothing; a guessed undo in a shared document rewrites
+  somebody else's text. A step somebody else already removed is retired, and Undo moves on.
+- A local typing run continues its own group across arrivals, so one Undo still takes the
+  word back while somebody types elsewhere.
+- Alone in a document nothing changed: with no remote commit after the step, the inverse
+  is the recorded one and no document is touched.
+
+Cost: `O(k · (k + m))` transforms for `k` operations in the step and `m` after it, bounded
+by B7 and O(1) in document size; paid on an Undo press in a shared document only.
+
 ---
 
 ## 6. What this does not change
@@ -494,13 +558,13 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 
 | Step | Work | Independently worth it? |
 | --- | --- | --- |
-| **6.0** | §2.1 P-1…P-4: unify the op set, route mutation through transactions, commit-log undo, mapping steps for structural ops. Plus the B1 prerequisite fix (`HF-111`) | **Yes** — closes ADR-005 and the `HF-111` perf defect. **P-1…P-3 landed 2026-09-29** (`147`, ADR-043); P-4 and the v0-stack retirement remain |
+| **6.0** | §2.1 P-1…P-4: unify the op set, route mutation through transactions, commit-log undo, mapping steps for structural ops. Plus the B1 prerequisite fix (`HF-111`) | **Yes** — closes ADR-005 and the `HF-111` perf defect. **P-1…P-3 landed 2026-09-29** (`147`, ADR-043); P-4 landed 2026-10-22 (§2.1, §2.2, ADR-069); the v0-stack retirement remains |
 | **6.1** | Durable log + snapshot + compaction; crash recovery and autosave | **Yes** — closes `HF-011`, the oldest P1 data-safety row |
 | **6.2** | Version history: list, restore, per-author colouring | **Yes** — closes OO-004 |
 | **6.3** | T1 transform + tie-break + TP1 property tests + the §4 benchmarks. **No network yet** | Yes — offline compare/combine becomes possible. **Transform and TP1 landed 2026-09-30** (`150`, ADR-045); the §4 benchmarks remain |
 | **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set. **The rebase and the `Tombstoned` outcome landed with 6.3**; what remains is the *reporting* — routing a tombstone into the disposition taxonomy (`35`), which has no caller until 6.6 |
 | **6.5** | Compare and combine documents | **Yes** — closes OO-007 |
-| **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction`. **The clause that used to end that sentence — "and all with no transport" — is no longer true, and neither is the list that followed it.** The byte codec is ADR-057 (`ODC1`), the relay binary and its durability ADR-058, presence `152` §2b, the host-signed grant ADR-060, and the §4.4 prerequisite closed 2026-10-01. The transport is **ADR-063**: the relay speaks RFC 6455 as a framing adaptor over its own `std` thread-per-connection loop, and the browser's end is `casual-doc-wasm/src/collab.rs` (the session) plus `webapp/src/collab_transport.mjs` (the socket). `two_clients_through_one_relay_converge_on_one_document` is the guard that two people can edit one document. **What remains is per-user cursors** (blocked on P-4, §2.1) **and reaching the transport from the editor chrome** — `webapp/src/main.js` has no call site yet, which is `SKILL` §9.4 one more time and is named in `109` RM-16 rather than implied |
+| **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction`. **The clause that used to end that sentence — "and all with no transport" — is no longer true, and neither is the list that followed it.** The byte codec is ADR-057 (`ODC1`), the relay binary and its durability ADR-058, presence `152` §2b, the host-signed grant ADR-060, and the §4.4 prerequisite closed 2026-10-01. The transport is **ADR-063**: the relay speaks RFC 6455 as a framing adaptor over its own `std` thread-per-connection loop, and the browser's end is `casual-doc-wasm/src/collab.rs` (the session) plus `webapp/src/collab_transport.mjs` (the socket). `two_clients_through_one_relay_converge_on_one_document` is the guard that two people can edit one document. **Superseded 2026-10-22:** the chrome reaches the transport (`169`, ADR-067), remote cursors are painted, and the reader's own caret follows remote edits (§2.2, ADR-069); Undo is selective (§5.4). What remains is participant identity on the wire (names, not numbers) and shared version history, both outside the 2026-10-22 lane |
 | **6.7** | Roles and permission enforcement, against the Phase 4 permissions object. **Built 2026-10-01/02.** The document's own `w:documentProtection` is enforced at the operation by projection equality (ADR-052); `Operation::SetDocumentProtection` makes it changeable rather than write-once-from-a-file (ADR-059); and the **session's** access level is a host-signed grant — host signs, boundary verifies, engine enforces (ADR-060), which closes `152` §10 Q4 and Q5. **Still open:** no signature profile is chosen (`143` §16 Q5, a supply-chain decision), `review` has no exact enforcement point so a reviewer is granted `editor()` — wider than the role — and `review` has no exact enforcement point. **The chrome's four refusal-code routings and the self-disabling Review ▸ Restrict Editing were paid by `webapp/src/session_access.mjs` (OO-026);** that module now routes the whole `ODC-7xxx` family, both chrome-only codes and the document's own protection refusals | Closes OO-018 |
 
 Note 6.0–6.5 deliver four tracker rows and **no** networking. If collaboration were cancelled

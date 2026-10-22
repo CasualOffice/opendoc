@@ -55,13 +55,14 @@
 //! convention that breaks, and dropping a line that is a comment in its entirety cannot hide
 //! any code.
 //!
-//! # What is deliberately still owed
+//! # The reader's caret
 //!
-//! **The local caret is not mapped across an arrival** (`107` P-4). A remote insertion before
-//! this reader's caret moves their text and leaves the caret where it was, by offset. The host
-//! is told the document changed and re-rasters; it is not told where its caret went, because
-//! this engine does not yet know. Saying so is the point — the alternative is a caret that is
-//! silently wrong, which is worse than one the host can see is unmapped.
+//! **Carried across every arrival** (`107` P-4, §2.2, ADR-069). The session composes, per
+//! merged arrival, a map from the view the reader was looking at to the one they are looking
+//! at now, and `collabMapSelection` carries the host's selection through it. The host calls
+//! it synchronously in its frame handler, before it paints and before the next keystroke.
+//! Until it did, a remote insertion before the caret left it at its old offset, and two
+//! people typing in one paragraph produced the later typist's word reversed.
 //!
 //! # Complexity
 //!
@@ -189,6 +190,14 @@ struct State {
     /// Whether any of this replica's work is still unacknowledged. **Stays true while
     /// `desynced` is latched**, so the loss is nameable rather than quietly forgotten.
     unacknowledged: bool,
+    /// Chunks handed to the transport and not yet acknowledged by the relay.
+    in_flight: usize,
+    /// This replica's commits not yet in any chunk: typed, and not yet sent.
+    ///
+    /// With `in_flight`, the two numbers a sync indicator needs (`109` HF-313): "your changes
+    /// are reaching everyone" is true only when both are zero. An open socket says nothing
+    /// about whether the last keystroke has been ordered.
+    unsent: usize,
     /// Whether this replica has diverged from the order. One way; never cleared.
     desynced: bool,
     /// The `ODC-7xxx` code the session stopped with, if it has.
@@ -421,6 +430,11 @@ impl WasmDocument {
                 .session
                 .as_ref()
                 .is_some_and(ClientSession::has_unacknowledged),
+            in_flight: self.session.as_ref().map_or(0, ClientSession::outstanding),
+            unsent: self
+                .session
+                .as_ref()
+                .map_or(0, |session| session.unsent(&self.log)),
             desynced: self
                 .session
                 .as_ref()
@@ -433,6 +447,191 @@ impl WasmDocument {
             capabilities: self.participant_capabilities(),
         };
         serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_owned())
+    }
+
+    /// Carries the reader's selection across everything merged since the last call, and
+    /// returns it as `{anchor: {node, offset}, focus: {node, offset}, moved}` JSON — `107` P-4.
+    ///
+    /// The host calls this **synchronously, once per frame that changed the document**,
+    /// before it paints and before the next keystroke can read the selection. Without it a
+    /// remote insertion earlier in the reader's paragraph left their caret at the old offset,
+    /// so two people typing in one paragraph produced the later typist's word reversed on
+    /// both screens, and a reader whose paragraph somebody typed into typed into the wrong
+    /// place.
+    ///
+    /// # The boundary rule — where a caret goes when somebody types exactly at it
+    ///
+    /// A collapsed caret maps with `Affinity::Before`: text another person inserts at the
+    /// reader's caret appears *after* the caret, and the reader's next keystroke goes before
+    /// it. That keeps each typist's word in one piece when both type at one spot — with
+    /// `After` the two words interleave a character at a time. A range maps its earlier end
+    /// `After` and its later end `Before`, so text inserted at either edge stays outside the
+    /// selection, which is what Word and Google Docs do with a remote insertion at the edge of
+    /// your selection.
+    ///
+    /// A selection end whose paragraph was destroyed moves to the start of the block that now
+    /// stands where the removed band began, when that was the body; otherwise it is returned
+    /// unmapped with `removed: true` and the host places it (its own fallback validates every
+    /// adopted position).
+    ///
+    /// # Complexity
+    ///
+    /// O(steps merged since the last call) — one step per arriving keystroke — and **never
+    /// O(document)**; plus O(1) to place a caret whose paragraph was removed from the body.
+    ///
+    /// # Errors
+    ///
+    /// An end that is not a position this build can read.
+    #[wasm_bindgen(js_name = collabMapSelection)]
+    pub fn collab_map_selection(
+        &mut self,
+        anchor_node: &str,
+        anchor_offset: u32,
+        focus_node: &str,
+        focus_offset: u32,
+    ) -> Result<String, JsValue> {
+        self.collab_map_selection_inner(anchor_node, anchor_offset, focus_node, focus_offset)
+            .map_err(to_js)
+    }
+}
+
+/// One mapped selection end, as the host reads it.
+#[derive(Debug, serde::Serialize)]
+struct MappedEnd {
+    node: String,
+    offset: u32,
+}
+
+/// What [`WasmDocument::collab_map_selection`] returns.
+#[derive(Debug, serde::Serialize)]
+struct MappedSelection {
+    anchor: MappedEnd,
+    focus: MappedEnd,
+    /// Whether either end moved.
+    moved: bool,
+    /// Whether an end's paragraph was destroyed and could not be re-seated here.
+    removed: bool,
+}
+
+impl WasmDocument {
+    /// The operations Undo or Redo applies for `group`: the **selective** inverse, rebased
+    /// over everybody's later edits (`casual_doc_transaction::selective`), so a shared
+    /// document's Undo reverts this reader's step and nothing of their collaborators'.
+    ///
+    /// Alone in a document this is the recorded inverse, unchanged and at the same cost; the
+    /// selective path runs only when somebody else's commit follows the step. An empty answer
+    /// means somebody already removed everything the step did — the caller retires it.
+    ///
+    /// The document is borrowed as the scratch surface the carry needs and handed back as it
+    /// was: nothing here mutates it, which is why this can sit in the session facade without
+    /// being a second mutation path.
+    ///
+    /// # Errors
+    ///
+    /// `history.undo-conflict` with the reader's sentence when the step cannot be carried
+    /// over a later edit — refused rather than guessed, because a guessed undo in a shared
+    /// document deletes or rewrites somebody else's text.
+    ///
+    /// # Complexity
+    ///
+    /// `O(k · (k + m))` transforms for `k` operations in the step and `m` after it, bounded by
+    /// the log's bound and O(1) in document size; paid on an Undo press, never a keystroke.
+    pub(crate) fn selective_history_step(
+        &mut self,
+        group: casual_doc_transaction::GroupId,
+    ) -> Result<Vec<casual_doc_edit::Operation>, String> {
+        self.log
+            .selective_inverse(group, &mut self.document, &mut self.edit_ids)
+            .map_err(|error| marked("history.undo-conflict", error.reason()))
+    }
+
+    /// See [`WasmDocument::collab_map_selection`].
+    fn collab_map_selection_inner(
+        &mut self,
+        anchor_node: &str,
+        anchor_offset: u32,
+        focus_node: &str,
+        focus_offset: u32,
+    ) -> Result<String, String> {
+        use casual_doc_transaction::{Affinity, Position};
+        let anchor = crate::parse_pos(anchor_node, anchor_offset)
+            .map(|at| Pos::new(at.node, at.offset))
+            .ok_or_else(|| "The selection's anchor is not a position.".to_owned())?;
+        let focus = crate::parse_pos(focus_node, focus_offset)
+            .map(|at| Pos::new(at.node, at.offset))
+            .ok_or_else(|| "The selection's focus is not a position.".to_owned())?;
+        let map = self
+            .session
+            .as_mut()
+            .map(ClientSession::take_caret_map)
+            .unwrap_or_default();
+        let (anchor_affinity, focus_affinity) = if anchor == focus || anchor.node != focus.node {
+            (Affinity::Before, Affinity::Before)
+        } else if anchor.offset < focus.offset {
+            (Affinity::After, Affinity::Before)
+        } else {
+            (Affinity::Before, Affinity::After)
+        };
+        let mut removed = false;
+        let mut end = |pos: Pos, affinity| {
+            let mapped = map.map_tracked(Position::new(pos.node, pos.offset, affinity));
+            let mut at = Pos::new(mapped.position.node, mapped.position.offset);
+            if mapped.removed {
+                match mapped.site.and_then(|site| self.body_position_at(site)) {
+                    Some(seated) => at = seated,
+                    None => removed = true,
+                }
+            }
+            at
+        };
+        let mapped_anchor = end(anchor, anchor_affinity);
+        let mapped_focus = end(focus, focus_affinity);
+        let moved = mapped_anchor != anchor || mapped_focus != focus;
+        let out = MappedSelection {
+            anchor: MappedEnd {
+                node: mapped_anchor.node.to_string(),
+                offset: mapped_anchor.offset,
+            },
+            focus: MappedEnd {
+                node: mapped_focus.node.to_string(),
+                offset: mapped_focus.offset,
+            },
+            moved,
+            removed,
+        };
+        serde_json::to_string(&out).map_err(|error| error.to_string())
+    }
+
+    /// The first caret position in the body block that now stands where a removed band
+    /// began — or in the last block, when the band ran to the end.
+    ///
+    /// Body-level only, which is the O(1) case; a removal inside a cell or a text box returns
+    /// `None` and the host's own fallback places the caret. O(the nesting of that one block).
+    fn body_position_at(&self, site: casual_doc_transaction::RemovalSite) -> Option<Pos> {
+        if site.container.is_some() {
+            return None;
+        }
+        let body = self.document.body();
+        let index = usize::try_from(site.index)
+            .ok()?
+            .min(body.len().checked_sub(1)?);
+        first_paragraph_in(&body[index]).map(|node| Pos::new(node, 0))
+    }
+}
+
+/// The first paragraph inside a block, in document order. O(the nesting of the block).
+fn first_paragraph_in(block: &casual_doc_model::v1::BlockNode) -> Option<casual_doc_model::NodeId> {
+    use casual_doc_model::v1::BlockNode;
+    match block {
+        BlockNode::Paragraph(paragraph) => Some(paragraph.id),
+        BlockNode::Table(table) => table
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.blocks.iter())
+            .find_map(first_paragraph_in),
+        BlockNode::Sdt(sdt) => sdt.blocks.iter().find_map(first_paragraph_in),
+        BlockNode::AltChunk(_) => None,
     }
 }
 
@@ -907,8 +1106,8 @@ impl WasmDocument {
     /// Through the **incremental** path, with the damage the arrival's operations describe, so a
     /// remote keystroke costs what a local one costs rather than `O(document)` (`107` §4 B1).
     /// The caret handed to `finish_edit_with` is the document's own anchor and is deliberately
-    /// ignored: a remote arrival does not move this reader's caret, and this engine cannot yet
-    /// say where it went (`107` P-4, the module header).
+    /// ignored: where the reader's caret went is `collabMapSelection`'s answer, read by the host
+    /// from the composed caret map (the module header).
     fn collab_relayout(&mut self) -> (Vec<u32>, u32) {
         let operations: Vec<_> = self
             .log
