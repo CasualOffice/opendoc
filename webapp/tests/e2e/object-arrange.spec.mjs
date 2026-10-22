@@ -241,10 +241,11 @@ test("Bring to front repaints the page: the shape you named is now on top", asyn
   // group child; restacking the subject reorders it among its one sibling and
   // repaints nothing at all. The command has to be sent to the ROOT.
   //
-  // Note which shape starts on top: `insertShape` puts the new drawing at the
-  // caret's offset, which is ahead of the previous one in the paragraph, so the
-  // shape drawn SECOND paints first. That is the engine's order, not an
-  // assumption — the first assertion below is what pins it.
+  // Which shape starts on top is the ENGINE's stacking rule, pinned below
+  // rather than assumed: a newly drawn shape gets a stacking key one above
+  // every other float (`docs/109` HF-302/HF-306, as in Word), so the shape
+  // drawn SECOND paints over the first. This test used to pin the opposite —
+  // the old paragraph-order accident — and went red when stacking was fixed.
   await page.setViewportSize({ width: 1280, height: 900 });
   await gotoEditor(page);
   await clickIntoFirstPage(page);
@@ -260,10 +261,12 @@ test("Bring to front repaints the page: the shape you named is now on top", asyn
   const overlapY = box.y + box.height * 0.33;
   expect(
     await paintedAt(page, overlapX, overlapY),
-    "the red shape starts on top",
-  ).toBe("#ff0000");
+    "precondition: the shape drawn second starts on top of the red one",
+  ).not.toBe("#ff0000");
 
-  // The shape drawn second is selected; bring it forward of the red one.
+  // Select the RED shape where nothing covers it, and bring it to the front.
+  await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.3);
+  await page.waitForTimeout(300);
   await page.locator('.object-bar-btn[data-object-menu="objectArrangeMenu"]').click();
   await expect(page.locator("#objectArrangeMenu [data-z-order]")).toHaveCount(4);
   await page.locator('#objectArrangeMenu [data-z-order="front"]').click();
@@ -272,8 +275,8 @@ test("Bring to front repaints the page: the shape you named is now on top", asyn
   await expect(page.locator("#status")).not.toHaveClass(/error/);
   expect(
     await paintedAt(page, overlapX, overlapY),
-    "after Bring to front the page must PAINT the other shape over the red one",
-  ).not.toBe("#ff0000");
+    "after Bring to front the page must PAINT the shape you named over the other",
+  ).toBe("#ff0000");
 
   expect(consoleErrors).toEqual([]);
 });
