@@ -4373,8 +4373,9 @@ who is here. ONLYOFFICE, Google Docs and Word all show real, account-backed name
    take the stamp, and existing ones keep their author. Nothing is refused, so convergence
    holds, and a forged author never reaches another screen or a saved file.
 5. The DOCX keeps Word's shape: `w:author` and `w:initials`, and `people.xml` `w15:person`.
-   `w15:presenceInfo` is written **only** with the host's `persist`. The anonymous author is
-   `"Author"`, never `"You"`.
+   `w15:presenceInfo` is written **only** with the host's `persist`. The anonymous author stays
+   `"You"` (owner decision 2026-10-23; a known difference from Word's "Author"). Duplicate
+   display names get a display-only suffix ("Name (2)"); the stored `w:author` is never altered.
 6. @mention is a bounded, query-driven host directory (`search`, then `notify` after the
    comment is ordered). The editor never enumerates people. With no host, `@` is plain text.
 7. Shared version history comes from host `listVersions`, `saveVersion` and `versionBytes`,
@@ -4393,4 +4394,4 @@ who is here. ONLYOFFICE, Google Docs and Word all show real, account-backed name
 - Writing the wire id into every saved file.
 - Localising the anonymous author.
 
-**Open:** `docs/175` §12 Q1–Q6.
+**Decided by the owner 2026-10-23:** `docs/175` §12 Q1, Q2, Q3 and Q5. **Open:** Q4 (measure Word's mention shape) and Q6 (grant encoding).

@@ -477,7 +477,7 @@ people picker queries the organisation directory and sends e-mail. Authorship is
 `w:author` display names, with `people.xml` `presenceInfo` (`providerId="AD"`) carrying the
 account id, which is the shape §6.2 adopts. Offline Word uses the locally typed user name,
 which is self-asserted, like our standalone mode. Word's Document Inspector anonymises
-authors to "Author", which is the value §10.1 adopts.
+authors to "Author"; the owner kept "You" instead (§10.1).
 
 ---
 
@@ -486,21 +486,22 @@ authors to "Author", which is the value §10.1 adopts.
 | Situation | Caret label | People list | Comment and mark author | Version author |
 | --- | --- | --- | --- | --- |
 | Standalone, Settings name set | — | — | the Settings name (self-asserted, as in Word) | the Settings name |
-| Standalone, no name | — | — | **"Author"** (§10.1) | none |
-| Room, open access, no profile claimed | **"Participant N"**, as today | numbered entries | unstamped (`Arrival.author` is `None`, so `conform` leaves it): the Settings name, else "Author", which is self-asserted | the Settings name, else none |
+| Standalone, no name | — | — | **"You"** (§10.1, owner decision) | none |
+| Room, open access, no profile claimed | **"Participant N"**, as today | numbered entries | unstamped (`Arrival.author` is `None`, so `conform` leaves it): the Settings name, else "You", which is self-asserted | the Settings name, else none |
 | Room, open access, profile claimed | the claimed name, marked unverified | the claimed names, marked unverified | the claimed name, stamped by the relay | the claimed name |
 | Room, granted | the attested name | the attested names | the attested name | attested by the host (§11) |
 
 **"Participant N" stays** as the honest label for the case where nobody said who anyone is.
 It is not a defect in that case, and it must not be dressed up as a name.
 
-### 10.1 One behaviour change, which is a defect fix
+### 10.1 The anonymous author stays "You" (owner decision, 2026-10-23)
 
-Writing the literal `"You"` as `w:author` (F5) stops. With no name, the stored author is
-`"Author"`, Word's own anonymised value, and the reader is prompted once, non-modally, to set
-a name in Settings. In the reader's own view a card whose author is their active
-identity still reads "You" (§5.4). §12 Q1 asks the owner whether to localise the
-stored value. The recommendation is no: a document's data is not in the reader's language.
+The draft proposed storing Word's anonymised value, "Author", instead of the literal
+`"You"` as `w:author`. **The owner decided to keep "You"** (§12 Q1). So an unnamed author is
+still stored as "You", and Word will show a person named "You". That is a known difference
+from Word, recorded here so nobody "fixes" it back without the owner. What does change is
+that a *named* or host-attested author is never replaced by "You": the "You" rendering rule
+(§5.4) applies only when there is no name at all.
 
 ---
 
@@ -530,27 +531,23 @@ async versionBytes({ room, id })                     // → { bytes, revision }
 
 ---
 
-## 12. Open questions for the owner
+## 12. Owner decisions (2026-10-23), and what is still open
 
-1. **Is "Author" the anonymous value, and is it unlocalised?** The recommendation is yes to
-   both (§10.1). The alternative is an empty `w:author`, which is schema-valid and which Word
-   renders as blank.
-2. **Do open rooms show claimed names?** The recommendation is yes, marked unverified
-   (§4.2). The alternative keeps numbered labels in open rooms, which is safer and
-   poorer. It is the owner's call, because open rooms are what `examples/share-host.mjs`
-   runs.
-3. **Duplicate display names in one file** (§6.2): report to the host (recommended), or have
-   the editor suffix the second one ("Ada Lovelace (2)"). Suffixing alters a person's name
-   in a legal document.
+1. **Anonymous author: keep "You".** The owner chose the current behaviour over Word's
+   "Author" (§10.1). A known difference from Word.
+2. **Open rooms show claimed names, marked unverified** (§4.2), as recommended. Avatars are
+   never shown for a claimed identity, and the relay assigns its colour.
+3. **Duplicate display names get a suffix.** The editor shows the second person as
+   "Ada Lovelace (2)" in carets, the people list and review labels. **The suffix is
+   display-only:** the stored `w:author` keeps the name exactly as given, because altering a
+   person's name inside a legal document is not the editor's to do. Identity is still kept
+   apart internally by id. The host is also told, so it can fix the clash at the source.
 4. **The DOCX shape of a mention** (§7.3) must be measured from a Word-authored file before
-   the model is extended. This is a task, not a preference. It is listed here so nobody
-   freezes the shape from memory.
-5. **Restamping pasted tracked changes** in a room (§5.2) differs from Word until `152` §10
-   Q2's subtree walk exists. Accept the difference for now, or block paste-with-marks in
-   rooms?
-6. **The grant encoding** stays `143` §16 Q5's open question. This contract adds claims to
-   the grant (subject, profile) without choosing JWT or PASETO. The reference host will sign
-   with whatever Q5 picks.
+   the model is extended. This is a build task, not a preference.
+5. **Pasted tracked changes in a room take the paster's name, for now** (§5.2), as
+   recommended. A known difference from Word until `152` §10 Q2's subtree walk exists.
+6. **Still open: the grant encoding** (`143` §16 Q5). This contract adds claims to the grant
+   (subject, profile) without choosing JWT or PASETO.
 
 ---
 
@@ -569,7 +566,7 @@ async versionBytes({ room, id })                     // → { bytes, revision }
 4. **Webapp.** The identity axis in `capabilities.mjs`, `embed_element.mjs`,
    `host_contract.mjs` and `host_options.mjs` (the `149` rows `user.id`, `user.image` and
    `mentionShare` move from Gap). `participantDisplay` (§14). Settings disabled with a reason.
-   The "You" rendering rule. "Author" in place of "You" in storage. The directory picker. The
+   The "You" rendering rule. The directory picker. The
    people list.
 5. **Versions.** The three provider methods, the two groups in the panel, and the reference
    host (`examples/share-host.mjs`) implementing all of it, with HMAC-signed grants clearly
