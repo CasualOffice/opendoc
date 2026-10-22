@@ -2212,7 +2212,7 @@
   "object.bar.properties": "Mở thuộc tính đối tượng",
   "object.bar.crop": "Cắt xén hình ảnh",
   "object.bar.cropApply": "Áp dụng cắt xén (Enter)",
-  "object.bar.delete": "Xóa đối tượng"
+  "object.bar.delete": "Xóa đối tượng",
   "collab.outcome.recovering": "Các thay đổi của bạn được giữ trên thiết bị này trong khi bản sao chia sẻ mới nhất được tải",
   "collab.outcome.recoveryUnavailable": "Các thay đổi của bạn được giữ trên thiết bị này, nhưng máy chủ này không thể cung cấp bản sao chia sẻ mới nhất — hãy lưu một bản sao công việc của bạn",
   "collab.outcome.stopped": "Bản sao này không còn được chia sẻ, và các thay đổi của bạn vẫn ở trên thiết bị này — hãy lưu một bản sao trước khi đóng",

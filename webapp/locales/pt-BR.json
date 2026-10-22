@@ -2228,7 +2228,7 @@
   "object.bar.properties": "Abrir propriedades do objeto",
   "object.bar.crop": "Cortar imagem",
   "object.bar.cropApply": "Aplicar corte (Enter)",
-  "object.bar.delete": "Excluir objeto"
+  "object.bar.delete": "Excluir objeto",
   "collab.outcome.recovering": "Suas alterações são mantidas neste dispositivo enquanto a cópia compartilhada mais recente é carregada",
   "collab.outcome.recoveryUnavailable": "Suas alterações são mantidas neste dispositivo, mas este host não consegue fornecer a cópia compartilhada mais recente — salve uma cópia do seu trabalho",
   "collab.outcome.stopped": "Esta cópia não está mais compartilhada e suas alterações permanecem neste dispositivo — salve uma cópia antes de fechá-la",

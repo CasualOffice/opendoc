@@ -2220,7 +2220,7 @@
   "object.bar.properties": "Objekteigenschaften öffnen",
   "object.bar.crop": "Bild zuschneiden",
   "object.bar.cropApply": "Zuschnitt übernehmen (Eingabetaste)",
-  "object.bar.delete": "Objekt löschen"
+  "object.bar.delete": "Objekt löschen",
   "collab.outcome.recovering": "Ihre Änderungen bleiben auf diesem Gerät erhalten, während die neueste freigegebene Kopie geladen wird",
   "collab.outcome.recoveryUnavailable": "Ihre Änderungen bleiben auf diesem Gerät erhalten, aber dieser Host kann die neueste freigegebene Kopie nicht bereitstellen – speichern Sie eine Kopie Ihrer Arbeit",
   "collab.outcome.stopped": "Diese Kopie ist nicht mehr freigegeben, und Ihre Änderungen bleiben auf diesem Gerät – speichern Sie eine Kopie, bevor Sie sie schließen",

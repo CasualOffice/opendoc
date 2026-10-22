@@ -2212,7 +2212,7 @@
   "object.bar.properties": "開啟物件內容",
   "object.bar.crop": "裁剪圖片",
   "object.bar.cropApply": "套用裁剪 (Enter)",
-  "object.bar.delete": "刪除物件"
+  "object.bar.delete": "刪除物件",
   "collab.outcome.recovering": "載入最新共用副本期間，您的修改會保留在此裝置上",
   "collab.outcome.recoveryUnavailable": "您的修改保留在此裝置上，但此主機無法提供最新的共用副本——請儲存一份您的工作副本",
   "collab.outcome.stopped": "此副本已不再共用，您的修改保留在此裝置上——關閉前請儲存一份副本",

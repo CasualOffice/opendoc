@@ -2228,7 +2228,7 @@
   "object.bar.properties": "Ouvrir les propriétés de l’objet",
   "object.bar.crop": "Rogner l’image",
   "object.bar.cropApply": "Appliquer le rognage (Entrée)",
-  "object.bar.delete": "Supprimer l’objet"
+  "object.bar.delete": "Supprimer l’objet",
   "collab.outcome.recovering": "Vos modifications sont conservées sur cet appareil pendant le chargement de la dernière copie partagée",
   "collab.outcome.recoveryUnavailable": "Vos modifications sont conservées sur cet appareil, mais cet hôte ne peut pas fournir la dernière copie partagée — enregistrez une copie de votre travail",
   "collab.outcome.stopped": "Cette copie n'est plus partagée et vos modifications restent sur cet appareil — enregistrez-en une copie avant de la fermer",
