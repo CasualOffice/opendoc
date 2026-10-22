@@ -678,7 +678,7 @@ fn a_picture_in_a_table_cell_is_picked_up_and_edited_like_one_in_the_body() {
     d.set_object_descr(&node, Some("A logo in a table".to_owned()))
         .expect("given alt text");
     assert_eq!(d.object_descr(&node).as_deref(), Some("A logo in a table"));
-    d.set_object_anchor_kind(&node, "floating")
+    d.set_object_anchor_kind(&node, "floating", None)
         .expect("given a text wrap");
     assert!(
         d.object_boxes()

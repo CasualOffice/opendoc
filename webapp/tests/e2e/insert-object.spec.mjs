@@ -96,7 +96,7 @@ test("Insert ▸ Shapes offers every preset and inserts the chosen one, selected
   // within reach without hunting for the thing you just made.
   await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "shape");
   const bar = page.locator(".object-context-bar");
-  await expect(bar.locator("strong")).toHaveText("Shape");
+  await expect(bar).toHaveAttribute("aria-label", "Shape actions");
   await expect(bar.getByRole("button", { name: "Shape fill" })).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
@@ -137,7 +137,7 @@ test("an inserted group-child shape routes root commands and subject formatting"
   // on the resize grips rather than on every `.object-handle`.
   await expect(page.locator(".overlay .object-rotate-handle")).toHaveCount(1);
   const bar = page.locator(".object-context-bar");
-  await expect(bar).toContainText("handles to resize");
+  await expect(bar).toHaveAttribute("aria-label", "Shape actions");
   await expect(bar.getByRole("button", { name: "Shape fill" })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Shape outline" })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Edit alt text" })).toHaveCount(0);

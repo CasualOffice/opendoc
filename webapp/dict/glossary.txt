@@ -134,6 +134,7 @@ NUL
 NUMPAGES
 Namespace
 NodeId
+NodeIds
 Noto
 OCR
 ODC
@@ -230,6 +231,7 @@ URLs
 USENIX
 UTF
 UXOBJ
+Ungroup
 Unicode
 UnlimitedOCR
 Unlinking

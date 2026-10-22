@@ -19,6 +19,8 @@ export const OBJECT_LABELS = {
   textbox: "Text box",
   shape: "Shape",
   group: "Group",
+  // A selected chart read "Object" on its own bar (`docs/172` §1).
+  chart: "Chart",
 };
 
 /**

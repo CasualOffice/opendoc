@@ -1288,6 +1288,19 @@ export const EN_STRINGS = Object.freeze({
   // the old picture may not describe the new one.
   "object.changePicture": "Change picture",
   "object.changePicture.menu": "Change picture…",
+  // The object toolbar (`object_bar.mjs`, `docs/172`): its accessible name per
+  // kind, and the actions that were hard-coded English.
+  "object.bar.image": "Image actions",
+  "object.bar.textbox": "Text box actions",
+  "object.bar.shape": "Shape actions",
+  "object.bar.group": "Group actions",
+  "object.bar.chart": "Chart actions",
+  "object.bar.object": "Object actions",
+  "object.bar.altText": "Edit alt text",
+  "object.bar.properties": "Open object properties",
+  "object.bar.crop": "Crop image",
+  "object.bar.cropApply": "Apply crop (Enter)",
+  "object.bar.delete": "Delete object",
   "object.changePicture.unsupported": "That file can’t be used as a picture. Choose a PNG, JPEG, GIF, BMP, TIFF or WebP image.",
   "object.changePicture.unreadable": "Could not read that image",
   "object.changePicture.done": "Picture changed — its size, position, wrap and border were kept",

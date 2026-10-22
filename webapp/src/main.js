@@ -109,7 +109,7 @@ import { arrangeSurfaceRows, createObjectArrangeCommands } from "./object_arrang
 import { createObjectBar } from "./object_bar.mjs";
 import { renderShapeMenu } from "./shape_format_menu.mjs";
 import { createObjectInspector } from "./object_inspector.mjs";
-import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
+import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, runWrapPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
 import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
 import { SHAPE_PRESETS, shapeNameKey } from "./shape_catalogue.mjs";
 import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
@@ -5184,16 +5184,9 @@ function setObjectWrap(mode) {
   // An empty plan means the object is already in that mode: a chip that
   // re-asserts the current choice must not fill the undo stack.
   if (plan.length === 0) return;
-  runEdit(() => {
-    let result = null;
-    for (const step of plan) {
-      result =
-        step.op === "anchorKind"
-          ? doc.setObjectAnchorKind(state.root, step.kind)
-          : doc.setObjectWrap(state.root, step.mode);
-    }
-    return result;
-  }, { gate: true });
+  // ONE engine action (`docs/109` OL-04): as two calls only the second
+  // result's pages were repainted and the text did not reflow.
+  runEdit(() => runWrapPlan(doc, state.root, plan), { gate: true });
 }
 
 /** Deletes the selected object as one undoable action (docs/85 §4). Mirrors the
@@ -12361,6 +12354,7 @@ async function insertImageAtCaret(bytes, widthPx, heightPx, mime) {
     widthEmu = MAX_IMAGE_WIDTH_EMU;
   }
   const { node, offset } = selection.focus;
+  const before = placedObjectIds(doc);
   let res;
   try {
     res = doc.insertImage(node, offset, bytes, widthEmu, heightEmu, mime);
@@ -12371,6 +12365,11 @@ async function insertImageAtCaret(bytes, widthPx, heightPx, mime) {
     return;
   }
   await applyEditResult(res);
+  // Word, Docs and ONLYOFFICE all leave an inserted picture SELECTED, with its
+  // handles and its toolbar, the same rule a shape and a chart already follow
+  // (`docs/109` OL-03).
+  const picture = newestObject(doc, before, "image");
+  if (picture) selectObject(picture.node, picture.kind, null, picture.anchored, picture);
   setStatus("Picture inserted");
   focusEditorSurface();
 }

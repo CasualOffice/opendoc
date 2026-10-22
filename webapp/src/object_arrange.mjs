@@ -41,15 +41,20 @@
 /** The wrap row, in the order Docs and Word both lead with. `value` is this
  *  host's wrap vocabulary (`objectWrap`/`setObjectWrap`, which folds
  *  `behindDoc` into two pseudo-modes) plus `inline`, which is not a wrap mode at
- *  all but a different KIND of anchor — the whole point of the control. */
+ *  all but a different KIND of anchor — the whole point of the control.
+ *
+ *  `icon` is the glyph the object bar shows. The row is icon-only there, as
+ *  Docs' image toolbar is, because seven text chips made the bar 1,220px wide
+ *  over a 16px picture (`docs/172` §2). The name rides on the tooltip and the
+ *  accessible name; the menus keep the words. */
 export const WRAP_CHOICES = Object.freeze([
-  { value: "inline", key: "object.wrap.inline", inline: true },
-  { value: "square", key: "object.wrap.square" },
-  { value: "tight", key: "object.wrap.tight" },
-  { value: "through", key: "object.wrap.through" },
-  { value: "topAndBottom", key: "object.wrap.topAndBottom" },
-  { value: "behind", key: "object.wrap.behind" },
-  { value: "front", key: "object.wrap.front" },
+  { value: "inline", key: "object.wrap.inline", icon: "image_inset", inline: true },
+  { value: "square", key: "object.wrap.square", icon: "format_image_left" },
+  { value: "tight", key: "object.wrap.tight", icon: "wrap_text" },
+  { value: "through", key: "object.wrap.through", icon: "texture" },
+  { value: "topAndBottom", key: "object.wrap.topAndBottom", icon: "horizontal_split" },
+  { value: "behind", key: "object.wrap.behind", icon: "flip_to_back" },
+  { value: "front", key: "object.wrap.front", icon: "flip_to_front" },
 ]);
 
 /** Word's Position gallery, as alignment pairs against the margin. `wrap` is
@@ -170,6 +175,60 @@ export function wrapPlan(value, read, wrapToken) {
   if (!read.floating) plan.push({ op: "anchorKind", kind: "floating" });
   plan.push({ op: "wrap", mode: value });
   return plan;
+}
+
+/**
+ * Runs a `wrapPlan` as ONE engine action and returns its `EditResult`, or
+ * `null` for an empty plan.
+ *
+ * In-line to a wrapping mode is a single `setObjectAnchorKind(root,
+ * "floating", mode)`: the engine floats the object INTO the chosen wrap in one
+ * action (`docs/109` OL-04). Running the plan as two calls left two undo
+ * steps for one gesture, and — the visible defect — the host repaints only
+ * the pages the LAST result names, while the reflow belonged to the first: the
+ * text did not move until the picture was dragged.
+ *
+ * O(1) engine calls: exactly one.
+ */
+export function runWrapPlan(doc, root, plan) {
+  if (plan.length === 0) return null;
+  const [first, second] = plan;
+  if (first.op === "anchorKind") {
+    return doc.setObjectAnchorKind(root, first.kind, first.kind === "floating" ? second?.mode : undefined);
+  }
+  return doc.setObjectWrap(root, first.mode);
+}
+
+/**
+ * One `EditResult`-shaped value for two engine actions run as one gesture: the
+ * union of their dirty pages, and everything else from the LATER one. Both
+ * inputs are freed.
+ *
+ * The host repaints the pages a result names, so handing it only the second
+ * of two results repaints only the second action's damage — the defect class
+ * behind `docs/109` OL-04. Where a gesture still needs two engine calls (the
+ * Position gallery on an in-line object floats it, then places it), this is
+ * what keeps the first call's reflow on screen.
+ *
+ * O(dirty pages).
+ */
+export function combineEditResults(earlier, later) {
+  const read = (result) => ({
+    node: result.node,
+    offset: result.offset,
+    dirtyPages: [...(result.dirtyPages ?? [])],
+    pageCount: result.pageCount,
+    revision: result.revision,
+  });
+  const a = read(earlier);
+  const b = read(later);
+  earlier.free?.();
+  later.free?.();
+  return {
+    ...b,
+    dirtyPages: [...new Set([...a.dirtyPages, ...b.dirtyPages])].sort((x, y) => x - y),
+    free() {},
+  };
 }
 
 /**

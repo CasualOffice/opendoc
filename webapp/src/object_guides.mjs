@@ -68,6 +68,67 @@ export function clearGuides(state) {
   state.horizontal?.remove();
 }
 
+/** The four side grips (N, E, S, W) by handle kind. */
+const SIDE_GRIPS = new Set([1, 3, 5, 7]);
+
+/** The most a side grip's target grows along its edge and into the object, in
+ *  px (`docs/109` OL-05). With the grip's own 9px that is a 25px band, and the
+ *  6px of inward reach is what a press "on the edge" a few pixels inside it
+ *  needs — ONLYOFFICE measures ~10px around each grip. */
+export const SIDE_GRIP_ALONG = 8;
+export const SIDE_GRIP_INWARD = 6;
+
+/**
+ * How far each SIDE grip's target may grow along its edge and into an upright
+ * object, sized to the object so no target reaches another grip or the body's
+ * middle (`docs/109` OL-05).
+ *
+ * The CSS growth used to be outward only, which left a side grip a 9px square:
+ * a press 5px off its centre fell to the object body and MOVED the picture.
+ * Growing it by a fixed amount instead would break the small object the demo
+ * opens with — on a 16px picture a fixed band from the South grip covers the
+ * East grip's centre and the picture's middle, so dragging East resized the
+ * wrong axis and dragging the picture resized it. So the growth is measured:
+ * along the edge it stops 10px short of the neighbouring corner's centre, and
+ * inward it stops short of half-way to the object's centre, leaving the inner
+ * half of the object to the move gesture. On a large object both reach their
+ * caps; on a 16px one both are 0, exactly the old behaviour.
+ *
+ * Only for an UPRIGHT object: the grip elements are not rotated, so on a turned
+ * object "along the edge" is not a CSS axis. A turned object keeps the outward
+ * growth alone.
+ *
+ * O(handles), a fixed 8.
+ *
+ * @returns {{along: Record<number, number>, inward: Record<number, number>} | null}
+ */
+export function sideGripReach(handles, pageOf) {
+  const at = {};
+  for (let i = 0; i + 3 < handles.length; i += 4) {
+    const [pageNumber, cx, cy, kind] = Array.prototype.slice.call(handles, i, i + 4);
+    const target = pageOf(pageNumber);
+    if (!target) continue;
+    at[kind] = [cx * target.scale.sx, cy * target.scale.sy];
+  }
+  if (![0, 1, 2, 3, 4, 5, 6, 7].every((kind) => at[kind])) return null;
+  const dist = (a, b) => Math.hypot(at[a][0] - at[b][0], at[a][1] - at[b][1]);
+  const clamp = (value, max) => Math.max(0, Math.min(max, Math.floor(value)));
+  // [side, a neighbouring corner, the opposite side]
+  const sides = [
+    [1, 0, 5],
+    [3, 2, 7],
+    [5, 4, 1],
+    [7, 6, 3],
+  ];
+  const along = {};
+  const inward = {};
+  for (const [side, corner, opposite] of sides) {
+    along[side] = clamp(dist(side, corner) - 4.5 - 10, SIDE_GRIP_ALONG);
+    inward[side] = clamp(dist(side, opposite) / 4 - 4.5, SIDE_GRIP_INWARD);
+  }
+  return { along, inward };
+}
+
 /**
  * Paints an object's resize grips from the engine's own handle geometry.
  *
@@ -83,6 +144,7 @@ export function clearGuides(state) {
  */
 export function paintResizeHandles(pageOf, handles, onGripDown, options = {}) {
   const rotation = Number(options.rotationDegrees) || 0;
+  const reach = rotation ? null : sideGripReach(handles, pageOf);
   for (let i = 0; i + 3 < handles.length; i += 4) {
     const [pageNumber, cx, cy, kind] = Array.prototype.slice.call(handles, i, i + 4);
     const target = pageOf(pageNumber);
@@ -106,6 +168,10 @@ export function paintResizeHandles(pageOf, handles, onGripDown, options = {}) {
     // over the rule, so a turned object gets the truthful cursor and an upright
     // one keeps exactly the CSS the cursor contract already pins.
     if (rotation) el.style.cursor = resizeCursorForHandle(kind, rotation);
+    if (reach && SIDE_GRIPS.has(kind)) {
+      el.style.setProperty("--grip-along", `${reach.along[kind]}px`);
+      el.style.setProperty("--grip-inward", `${reach.inward[kind]}px`);
+    }
     el.addEventListener("pointerdown", (event) => onGripDown(event, pageNumber, kind));
     target.overlay.appendChild(el);
   }

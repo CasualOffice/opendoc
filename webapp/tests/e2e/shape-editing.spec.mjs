@@ -90,7 +90,7 @@ test("a shape is selectable and named a Shape, not an Image", async ({ page, con
   // It used to read "Image" — and got an Image's Crop button with it.
   const bar = page.locator(".object-context-bar");
   await expect(bar).toBeVisible();
-  await expect(bar.locator("strong")).toHaveText("Shape");
+  await expect(bar).toHaveAttribute("aria-label", "Shape actions");
   await expect(bar.getByRole("button", { name: "Crop image" })).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);

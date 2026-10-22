@@ -524,6 +524,32 @@ fn parse_wrap(token: &str) -> Option<WrapMode> {
     })
 }
 
+/// Applies one token of the HOST's wrap vocabulary to `anchor`: the four
+/// `wp:wrap*` side/stack modes, plus `behind` and `front`, which are
+/// `wrapNone` with `@behindDoc` set or cleared — the same table
+/// `setObjectWrap` uses, so a conversion and a later wrap change land on the
+/// same anchor for the same word.
+///
+/// O(1).
+fn apply_host_wrap(anchor: &mut DrawingAnchor, token: &str) -> Result<(), String> {
+    match token {
+        "behind" => {
+            anchor.wrap = WrapMode::None;
+            anchor.behind_doc = true;
+        }
+        "front" => {
+            anchor.wrap = WrapMode::None;
+            anchor.behind_doc = false;
+        }
+        other => {
+            anchor.wrap = parse_wrap(other)
+                .filter(|wrap| *wrap != WrapMode::None)
+                .ok_or_else(|| format!("unknown wrap mode: {other}"))?;
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // The position payload
 // ---------------------------------------------------------------------------
@@ -1304,10 +1330,19 @@ impl WasmDocument {
     /// no-op that still reports success, so a host can bind it to a radio group
     /// without tracking state.
     ///
+    /// `wrap`, when given with `"floating"`, is the wrap the conversion lands
+    /// in — the host's wrap vocabulary (`square`, `tight`, `through`,
+    /// `topAndBottom`, `behind`, `front`) — in the SAME action. Choosing
+    /// "Tight" on an in-line picture is one gesture, so it is one undo step and
+    /// one damage set; as two calls (float, then wrap) the host repainted only
+    /// the second call's pages, and the text did not reflow until the picture
+    /// was dragged (`docs/109` OL-04). It applies to a conversion only: an
+    /// object that already floats takes `setObjectWrap`.
+    ///
     /// # Errors
     ///
-    /// When `node` is not a top-level object, or `kind` is not one of the two
-    /// tokens.
+    /// When `node` is not a top-level object, `kind` is not one of the two
+    /// tokens, or `wrap` is not a wrap token.
     ///
     /// **O(document), ONE walk.**
     #[wasm_bindgen(js_name = setObjectAnchorKind)]
@@ -1315,22 +1350,40 @@ impl WasmDocument {
         &mut self,
         node: &str,
         kind: &str,
+        wrap: Option<String>,
     ) -> Result<EditResult, JsValue> {
-        self.set_object_anchor_kind_inner(node, kind).map_err(to_js)
+        self.set_object_anchor_kind_with(node, kind, wrap.as_deref())
+            .map_err(to_js)
     }
 
-    /// [`set_object_anchor_kind`](Self::set_object_anchor_kind) with a plain
-    /// error, so the behaviour is reachable from a native test.
+    /// [`set_object_anchor_kind`](Self::set_object_anchor_kind) with no wrap
+    /// and a plain error, so the behaviour is reachable from a native test.
+    #[cfg(test)]
     fn set_object_anchor_kind_inner(
         &mut self,
         node: &str,
         kind: &str,
+    ) -> Result<EditResult, String> {
+        self.set_object_anchor_kind_with(node, kind, None)
+    }
+
+    /// [`set_object_anchor_kind`](Self::set_object_anchor_kind) with a plain
+    /// error.
+    fn set_object_anchor_kind_with(
+        &mut self,
+        node: &str,
+        kind: &str,
+        wrap: Option<&str>,
     ) -> Result<EditResult, String> {
         let floating = match kind {
             "inline" => false,
             "floating" => true,
             other => return Err(format!("unknown anchor kind {other:?}")),
         };
+        let mut float_anchor = default_float_anchor();
+        if let Some(wrap) = wrap {
+            apply_host_wrap(&mut float_anchor, wrap)?;
+        }
         let object = node
             .parse::<NodeId>()
             .map_err(|_| "invalid node id".to_owned())?;
@@ -1340,8 +1393,9 @@ impl WasmDocument {
         let source = find_paragraph_any(&self.document, paragraph)
             .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
+        let z = if floating { self.next_float_z() } else { 0 };
         let changed = with_top_level(&mut inlines, object, &mut |inline| {
-            convert_anchor_kind(inline, floating)
+            convert_anchor_kind(inline, floating, z, &float_anchor)
         })
         .ok_or_else(|| NOT_AN_OBJECT.to_owned())??;
         if !changed {
@@ -2333,6 +2387,27 @@ impl WasmDocument {
         .map(Some)
     }
 
+    /// The stacking key that puts a new float above every float already in the
+    /// document: one more than the highest `@relativeHeight` on any surface.
+    ///
+    /// For an object made floating or inserted floating. Without it the new
+    /// float carried no key at all, so it was written without the attribute
+    /// `CT_Anchor` requires and painted at the BOTTOM of the stack — under an
+    /// existing picture it was just dragged onto (`docs/109` OL-02).
+    ///
+    /// **O(document), ONE walk.**
+    pub(crate) fn next_float_z(&self) -> u32 {
+        let mut floats: Vec<Float> = Vec::new();
+        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            collect_floats(&paragraph.inlines, paragraph.id, &mut floats);
+        });
+        floats
+            .iter()
+            .map(|float| float.z)
+            .max()
+            .map_or(1, |z| z.saturating_add(1))
+    }
+
     /// Restacks a top-level floating object within its own `@behindDoc` band by
     /// rewriting `wp:anchor@relativeHeight`.
     ///
@@ -2435,6 +2510,12 @@ impl WasmDocument {
         let source = find_paragraph_any(&self.document, paragraph)
             .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
+        // The undo entry names what the reader did: "Undo Rotate object", not
+        // "Undo Object move" (`docs/109` OL-06).
+        let kind = match edit {
+            TransformEdit::Rotation(_) => HistoryKind::ObjectRotate,
+            TransformEdit::Flip { .. } => HistoryKind::ObjectFlip,
+        };
         if !edit_transform_in_inlines(&mut inlines, object, edit) {
             return Err(NO_ROTATION.to_owned());
         }
@@ -2444,7 +2525,7 @@ impl WasmDocument {
                 inlines,
             }],
             Pos::new(object, 0),
-            HistoryKind::ObjectMove,
+            kind,
         )
     }
 }
@@ -2700,8 +2781,16 @@ fn anchor_at_page(mut anchor: DrawingAnchor, left_emu: i64, top_emu: i64) -> Dra
 }
 
 /// Converts one top-level object between inline and floating, reporting whether
-/// it changed.
-fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, String> {
+/// it changed. A newly floated object takes the stacking key `z`, which the
+/// caller computes as one above every existing float, so it lands on top the way
+/// Word puts a just-floated picture on top — and so its `wp:anchor` carries the
+/// `@relativeHeight` the schema requires (`docs/109` OL-02).
+fn convert_anchor_kind(
+    inline: &mut InlineNode,
+    floating: bool,
+    z: u32,
+    float_anchor: &DrawingAnchor,
+) -> Result<bool, String> {
     match inline {
         InlineNode::Drawing(drawing) if floating => {
             let extent = drawing.extent.ok_or_else(|| PICTURE_NO_SIZE.to_owned())?;
@@ -2710,9 +2799,9 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
                 id: drawing.id,
                 media: drawing.media,
                 extent,
-                anchor: default_float_anchor(),
+                anchor: float_anchor.clone(),
                 descr: drawing.descr,
-                relative_height: None,
+                relative_height: Some(z),
                 crop: drawing.crop,
                 opacity: drawing.opacity,
                 hyperlink: drawing.hyperlink,
@@ -2745,10 +2834,8 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
             if had == floating {
                 return Ok(false);
             }
-            text_box.anchor = floating.then(default_float_anchor);
-            if !floating {
-                text_box.relative_height = None;
-            }
+            text_box.anchor = floating.then(|| float_anchor.clone());
+            text_box.relative_height = floating.then_some(z);
             Ok(true)
         }
         InlineNode::Group(group) => {
@@ -2756,10 +2843,8 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
             if had == floating {
                 return Ok(false);
             }
-            group.anchor = floating.then(default_float_anchor);
-            if !floating {
-                group.relative_height = None;
-            }
+            group.anchor = floating.then(|| float_anchor.clone());
+            group.relative_height = floating.then_some(z);
             Ok(true)
         }
         InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) => Ok(false),
@@ -3360,6 +3445,101 @@ mod tests {
         assert_eq!(read["wrap"], "square");
     }
 
+    /// Choosing a wrap on an in-line object is ONE action: it lands floating in
+    /// the chosen wrap, one Undo takes it back to in-line, and the edit's own
+    /// damage names the page — which is what makes the host repaint it
+    /// (`docs/109` OL-04: as two calls the first call's pages were never
+    /// repainted and the text did not reflow until the picture was dragged).
+    #[test]
+    fn floating_into_a_chosen_wrap_is_one_action_that_reports_its_page() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let (_, object, _) = two_boxes(&mut document);
+        document
+            .set_object_anchor_kind_inner(&object, "inline")
+            .expect("make it inline");
+        let label_before = document.undo_label();
+
+        let result = document
+            .set_object_anchor_kind_with(&object, "floating", Some("tight"))
+            .expect("float it into Tight");
+        assert!(
+            !result.dirty_pages().is_empty(),
+            "the one action reports the page it changed, so the host repaints it"
+        );
+        let read: serde_json::Value =
+            serde_json::from_str(&document.object_position(&object)).expect("JSON");
+        assert_eq!(read["floating"], serde_json::json!(true));
+        assert_eq!(
+            read["wrap"], "tight",
+            "the chosen wrap, not the conversion default"
+        );
+
+        document.undo().expect("one undo");
+        let read: serde_json::Value =
+            serde_json::from_str(&document.object_position(&object)).expect("JSON");
+        assert_eq!(
+            read["floating"],
+            serde_json::json!(false),
+            "ONE undo restores in-line"
+        );
+        assert_eq!(
+            document.undo_label(),
+            label_before,
+            "and leaves the history where it was"
+        );
+
+        for token in ["behind", "front", "square", "through", "topAndBottom"] {
+            document
+                .set_object_anchor_kind_with(&object, "floating", Some(token))
+                .unwrap_or_else(|error| panic!("{token}: {error}"));
+            document.undo().expect("undo");
+        }
+        assert!(
+            document
+                .set_object_anchor_kind_with(&object, "floating", Some("none"))
+                .is_err(),
+            "`none` is not a host wrap token: behind/front say which side of the text"
+        );
+    }
+
+    /// A newly floated object lands ON TOP: its stacking key is above every
+    /// other float's, so it is written with the `@relativeHeight` the schema
+    /// requires and paints over the floats already there (`docs/109` OL-02).
+    #[test]
+    fn a_newly_floated_object_gets_a_key_above_every_other_float() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let (_, object, other) = two_boxes(&mut document);
+        let z_of = |document: &WasmDocument, node: &str| {
+            let id: NodeId = node.parse().expect("an id");
+            let paragraph = document.paragraph_of_object(id).expect("placed");
+            let source = find_paragraph_any(&document.document, paragraph).expect("a paragraph");
+            top_level_z(&source.inlines, id)
+        };
+
+        document
+            .set_object_anchor_kind_inner(&object, "inline")
+            .expect("make it inline");
+        assert_eq!(
+            z_of(&document, &object),
+            None,
+            "an inline object has no key"
+        );
+        let highest = document.next_float_z() - 1;
+
+        document
+            .set_object_anchor_kind_inner(&object, "floating")
+            .expect("float it");
+        let z = z_of(&document, &object).expect("a floated object carries a key");
+        assert!(
+            z > highest,
+            "the new float ({z}) sits above every other ({highest})"
+        );
+        assert!(
+            z > z_of(&document, &other).unwrap_or(0),
+            "including the other box in its paragraph"
+        );
+    }
+
     /// The guarantee grouping has to make: nothing moves. The children come out
     /// of the group at the page positions they went in at.
     #[test]
@@ -3663,6 +3843,29 @@ mod tests {
             inner,
             "one ungroup peeled exactly one layer"
         );
+    }
+
+    /// The undo entry names the gesture: a rotation is "Rotate object" and a
+    /// flip "Flip object", never "Object move" (`docs/109` OL-06).
+    #[test]
+    fn a_rotation_and_a_flip_are_named_for_what_they_did() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "ellipse")
+            .expect("insert a shape");
+        let shape = only_group(&document)
+            .expect("a group of one")
+            .id
+            .to_string();
+        document
+            .set_object_rotation_inner(&shape, Some(30.0))
+            .expect("rotate it");
+        assert_eq!(document.undo_label(), "Rotate object");
+        document
+            .set_object_flip(&shape, true, false)
+            .expect("flip it");
+        assert_eq!(document.undo_label(), "Flip object");
     }
 
     /// A shape has no top-level inline of its own, and a top-level text box
