@@ -3961,6 +3961,9 @@ pub fn append_node_plain_text(
         match inline {
             InlineNode::Run(run) => out.push_str(&run.text),
             InlineNode::Tab(_) => out.push('\t'),
+            // One position, as `casual-doc-edit`'s `inline_text_len` counts it
+            // (`docs/109` HF-296): a line break is a character a reader sees.
+            InlineNode::Break(_) => out.push('\n'),
             InlineNode::Symbol(symbol) => {
                 if let Some(ch) = char::from_u32(symbol.char) {
                     out.push(ch);
@@ -6810,8 +6813,8 @@ fn shape_fielded_paragraph(
     let mut cursor_y = Twip::ZERO;
     let last = blocks.len().saturating_sub(1);
     // The running caret byte offset across hard-break blocks (each a line). A hard
-    // break is zero-width for offset purposes, so a block starts where the previous
-    // one ended.
+    // break is ONE position (`FlowItem::model_bytes`), so a block after a break
+    // starts one past where the previous one ended (`docs/109` HF-296).
     let mut base = range.start.offset;
     for (bi, (block_items, trailing)) in blocks.iter().enumerate() {
         let first_line_indent = if bi == 0 {
@@ -6820,7 +6823,7 @@ fn shape_fielded_paragraph(
             Twip::ZERO
         };
         let mut line = layout_fielded_line(&ctx, block_items, first_line_indent, base);
-        base = line.range.end.offset;
+        base = line.range.end.offset + u32::from(trailing.is_some());
         for run in &mut line.runs {
             run.origin.y = run.origin.y + cursor_y;
         }

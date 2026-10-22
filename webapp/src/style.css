@@ -6492,6 +6492,44 @@ body.is-format-painting .page-wrap * {
 /* REVIEW-GAP-011: per-reply edit/delete controls; REVIEW-GAP-012: related-comment list. */
 .review-margin-reply-actions { display: flex; gap: 6px; margin-top: 2px; }
 .review-margin-reply-edit { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 11px; color: var(--ink); background: var(--surface, transparent); }
+/* RC-12: the quote of the commented text, kept — and marked — once the text is
+   deleted. RC-11: the in-place editor shared by a thread's root and its replies. */
+.review-margin-quote {
+  margin: 0 0 6px 34px;
+  padding: 1px 0 1px 8px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  display: grid;
+  gap: 2px;
+}
+.review-margin-quote-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.review-margin-card.expanded .review-margin-quote-text { -webkit-line-clamp: 4; }
+.review-margin-quote.deleted .review-margin-quote-text { text-decoration: line-through; }
+.review-margin-quote-state { font-size: var(--fs-micro); font-style: italic; }
+.review-comment-editor { display: grid; gap: 6px; }
+.review-comment-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  resize: none;
+  overflow: hidden;
+}
+.review-comment-editor textarea:focus { outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft); }
 .review-margin-revision-comments { display: grid; gap: 6px; margin: 9px -2px 2px 34px; padding-left: 10px; border-left: 2px solid var(--line); }
 .review-margin-revision-comments > small { color: var(--muted); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.04em; }
 .review-margin-revision-comment { display: grid; gap: 3px; }

@@ -26,7 +26,8 @@ export const EN_STRINGS = Object.freeze({
   "collab.shareHostRequired": "Your host must configure document sharing.",
   "collab.shareDocumentChanged": "The document changed while creating the room. Share again to include your latest edits.",
   "collab.shareInvalid": "The host returned an invalid share link.",
-  "collab.recoveryNeeded": "Local edits are preserved. Reload an authoritative snapshot to resume collaboration.",
+  "collab.recoveryNeeded": "Your changes are kept on this device while the latest shared copy is loaded.",
+  "collab.recoveryFailed": "The latest shared copy could not be loaded. Your changes are still kept on this device — retry from Review.",
   "collab.recoveryNotNeeded": "This document has no shared recovery to retry.",
   "collab.recoveryPending": "Shared document recovery is already in progress.",
   "collab.noRetainedDocuments": "There are no retained local documents to download.",
@@ -305,6 +306,22 @@ export const EN_STRINGS = Object.freeze({
   // the margin button's own label, which describes the action rather than the
   // precondition and leaves a reader who cannot click it none the wiser.
   "review.comment.needsRange": "Select the text you want to comment on",
+  // The comment card's own controls (`review_comment_card.mjs`): editing the
+  // thread's ROOT comment as well as its replies (RC-11), and the quote of the
+  // commented text that stays — marked deleted — after the text itself is gone
+  // (RC-12). Built when the card is drawn, never at boot (SKILL §11).
+  "reviewCard.edit": "Edit",
+  "reviewCard.editComment": "Edit comment",
+  "reviewCard.editReply": "Edit reply",
+  "reviewCard.commentText": "Comment text",
+  "reviewCard.replyText": "Reply text",
+  "reviewCard.save": "Save",
+  "reviewCard.saveComment": "Save comment",
+  "reviewCard.saveReply": "Save reply",
+  "reviewCard.cancel": "Cancel",
+  "reviewCard.quoteDeleted": "Text deleted",
+  "reviewCard.commentUpdated": "Comment updated",
+  "reviewCard.replyUpdated": "Reply updated",
   "toolbar.undo": "Undo",
   "toolbar.redo": "Redo",
   // The engine names the action a step will undo ("Typing", "Table structure").
@@ -1514,18 +1531,37 @@ export const EN_STRINGS = Object.freeze({
   "document.protectedFormatting": "This document is protected: its formatting can only be changed by applying one of its styles",
   "document.protectedStyleLocked": "This document is protected and that style is locked, so it cannot be applied",
   // The `ODC-7xxx` collaboration family (`docs/20`), every row of it. Each says
-  // what the reader should DO, because that is the difference between the codes:
-  // one invites a retry, one asks them to copy their work out, one is terminal.
-  "collab.conflict": "That one change could not be merged with everyone else's — try it again",
-  "collab.protocolVersion": "This editor and the document's server speak different versions — reload the page",
-  "collab.notAuthorised": "This session is not authorised to open this document",
-  "collab.readOnly": "You are reading this shared document and cannot change it",
-  "collab.notSaving": "This shared session cannot save right now — copy your work out before closing",
-  "collab.tooFarBehind": "This session fell too far behind to catch up, and unsent changes were lost — reload to continue",
-  "collab.malformed": "A message from the server could not be read, so it was ignored",
-  "collab.idCollision": "A change from someone else named something this copy already has, so it was not applied",
-  "collab.staleBase": "The document moved on while that change was in flight — it is being sent again",
-  "collab.roomFull": "This document already has as many people editing as it allows — try again shortly",
+  // only WHY — never what became of the reader's work, because one code arrives
+  // by more than one route and each route does something different to it. The
+  // consequence is a separate clause, chosen from the outcome the engine actually
+  // returned (`session_access.mjs`'s `refusalConsequence`), so it cannot claim a
+  // loss that did not happen. RC-13: the `ODC-7006` sentence used to say "unsent
+  // changes were lost — reload to continue" while the engine kept every one of
+  // them, and reloading was the one thing that would have lost them.
+  // `collab_refusal_messages.test.mjs` fails a cause sentence that starts
+  // claiming an outcome again.
+  "collab.conflict": "A change from someone else could not be combined with yours",
+  "collab.protocolVersion": "This editor and the document's server use different versions",
+  "collab.notAuthorised": "This session is not authorised for this shared document",
+  "collab.readOnly": "You can read this shared document but not change it",
+  "collab.notSaving": "The shared session can no longer store changes",
+  "collab.tooFarBehind": "This copy fell too far behind the shared document to catch up by itself",
+  "collab.malformed": "A message between this editor and the shared session could not be read",
+  "collab.idCollision": "A change named something this document already has",
+  "collab.staleBase": "The document moved on while that change was on its way",
+  "collab.roomFull": "This document already has as many people in it as it allows",
+  // The CONSEQUENCE clauses. Each asserts exactly the facts `CONSEQUENCE_CLAIMS`
+  // lists for it, and `collab_refusal_outcomes.json` — driven through the real
+  // engine by `every_collaboration_refusal_does_what_the_fixture_says` — is what
+  // makes those facts true for every route that selects it.
+  "collab.outcome.recovering": "Your changes are kept on this device while the latest shared copy is loaded",
+  "collab.outcome.recoveryUnavailable": "Your changes are kept on this device, but this host cannot supply the latest shared copy — save a copy of your work",
+  "collab.outcome.stopped": "This copy is no longer shared, and your changes stay on this device — save a copy before you close it",
+  "collab.outcome.notShared": "That change stays on this device and was not shared, so this copy no longer matches everyone else's",
+  "collab.outcome.notApplied": "It was not applied, so this copy may no longer match everyone else's",
+  // Cause, then consequence. A template rather than concatenation, so a language
+  // that joins two clauses differently says so in its own catalogue.
+  "collab.refusal": "{cause}. {consequence}.",
   // The three connection states `collab_transport.mjs` reports, which are a
   // different question from the refusals above: a refusal explains one message,
   // and these describe where the reader's typing is going right now. Each names

@@ -137,6 +137,39 @@ are throttled to a scheduled 500 ms update, carry the exact room revision and mu
 validated by the host. Hosts without `snapshotFor` keep the local document intact and
 require their own recovery integration.
 
+### What the reader is told
+
+Every `ODC-7xxx` refusal is explained, and the explanation is built from what the
+engine did rather than from the code (RC-13). A cause sentence (`collab.<code>`) says
+only why; a consequence clause is chosen from the outcome's `kind`, `terminal` and
+`retryable` and from `collabState.stopped` (`session_access.mjs`'s
+`refusalConsequence`):
+
+| Outcome | Clause | What it asserts |
+|---|---|---|
+| `recoveryRequired`, host has `snapshotFor` | `collab.outcome.recovering` | the edit is kept here and not yet ordered |
+| `recoveryRequired`, no `snapshotFor` | `collab.outcome.recoveryUnavailable` | the same, and nothing is loading |
+| `stopped`, or a thrown refusal that stopped the session | `collab.outcome.stopped` | the edit is kept here; the session has ended |
+| `refused`, not retryable | `collab.outcome.notShared` | the edit is kept here, unordered; the session continues |
+| thrown, session still running | `collab.outcome.notApplied` | the session continues |
+| `refused`, retryable (`StaleBase`) | none | resubmitted automatically |
+| `ODC-7011` | cause only | an access change touched no document |
+
+`webapp/tests/collab_refusal_outcomes.json` records every code on every route it can
+arrive by, and `every_collaboration_refusal_does_what_the_fixture_says` drives each
+row through the real facade, so the table above is held to the engine. The earlier
+`ODC-7006` sentence ("unsent changes were lost — reload to continue") claimed the
+opposite of what this section specifies, and reloading was the one action that would
+have lost the work. A terminal refusal the relay sends as a `Refused` (`NotAuthorised`,
+`NotSaving`) is thrown by the engine after it records the stop; the transport now
+reads `collabState.stopped` and stops too, instead of reporting "connected".
+
+Known limit, for the engine lane: an arriving chunk refused locally with
+`IdCollision` (or any other thrown merge error that is not `CannotMerge`) leaves the
+document untouched but the replica one ordered revision short, and nothing asks for
+recovery. The reader is told "this copy may no longer match"; converting those to
+`recoveryRequired` as `CannotMerge` already is would close it.
+
 ## Convergence verification
 
 `randomized_relay_convergence` runs three real WebSocket clients through the production

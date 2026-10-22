@@ -178,6 +178,7 @@ import {
 } from "./review_layout.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, createReviewBanners, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
+import { commentEditButton, commentEditor, commentQuoteElement, createCommentEditState, createCommentQuotes } from "./review_comment_card.mjs";
 import { makeMenuHeading, makeSwatchCell, makeSwatchGrid, makeUnderlineStyleOption, renderColorMenu as renderColorMenuChrome } from "./picker_chrome.mjs";
 import {
   formatReviewDate,
@@ -275,6 +276,7 @@ import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs
 import { BRAND } from "./brand.mjs";
 import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
+import { installViewportFocusGuard } from "./viewport_focus.mjs";
 
 
 /** url → fetched or pending font bytes (persists across documents). */
@@ -1345,6 +1347,8 @@ let reviewLayout = [];
 // (REVIEW-GAP-019 caret-driven expansion, for comments AND revisions).
 let reviewAnchorIndex = [];
 const reviewCardCache = new Map();
+// RC-12 / RC-11: the quoted anchor text per comment, and the comment being edited, outlive a card rebuild.
+const commentQuotes = createCommentQuotes(), commentEdit = createCommentEditState();
 let reviewWindowFrame = 0;
 // Pixels above and below the viewport to keep mounted, so a scroll reveals an
 // already-present card instead of a blank gap before the next frame mounts it.
@@ -1607,6 +1611,20 @@ function scheduleReviewMarginRender() {
   });
 }
 
+/** The in-place editor for `comment` when it is the one being edited (RC-11), else `null`. */
+function commentEditorFor(comment, kind) {
+  const draft = commentEdit.draftFor(comment.id);
+  if (draft === null) return null;
+  const done = () => { commentEdit.end(); scheduleReviewMarginRender(); focusEditorSurface(); };
+  const editor = commentEditor({ text: draft, kind, t, onInput: (text) => commentEdit.update(comment.id, text), onCancel: done,
+    onSave: async (text) => {
+      await runEdit(() => doc.updateComment(comment.id, text), { keepView: true });
+      announceReview(t(kind === "reply" ? "reviewCard.replyUpdated" : "reviewCard.commentUpdated"));
+      done();
+    } });
+  requestAnimationFrame(() => { if (editor.root.isConnected && document.activeElement !== editor.field) editor.focus(); });
+  return editor.root;
+}
 function renderReviewMarginItems() {
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
@@ -1634,7 +1652,7 @@ function renderReviewMarginItems() {
       if (reviewFilter === "resolved" ? !resolved : resolved) continue;
     }
     const rect = reviewRangeClientRect(comment.anchor.node, Number(comment.anchor.start) || 0, comment.anchor.node, Number(comment.anchor.end) || 0);
-    if (rect) items.push({ type: "comment", data: comment, rect });
+    if (rect) items.push({ type: "comment", data: comment, rect, quote: commentQuotes.read(doc, comment) });
   }
   const revisionItems = [];
   const groupedRevisions = new Map();
@@ -1842,6 +1860,7 @@ function renderReviewMarginItems() {
     const sig = reviewCardSignature(item, comments, {
       activeItemId: activeReviewItemId,
       deleteConfirmId: reviewDeleteConfirmId,
+      editingId: commentEdit.id(),
     });
     let entry = reviewCardCache.get(itemId);
     if (entry && entry.sig === sig && item.type !== "composer" && !expanded) {
@@ -1863,7 +1882,7 @@ function renderReviewMarginItems() {
       textarea.dataset.testid = "review-comment-composer";
       const actions = document.createElement("div");
       actions.className = "review-composer-actions";
-      const cancel = reviewCardButton("Cancel", () => closeReviewPopover());
+      const cancel = reviewCardButton("Cancel", () => { closeReviewPopover(); focusEditorSurface(); });
       cancel.dataset.testid = "review-comment-cancel";
       const submit = reviewCardButton("Comment", async () => {
         const text = textarea.value.trim();
@@ -1875,13 +1894,14 @@ function renderReviewMarginItems() {
         reviewSidebarPreference = true;
         announceReview("Comment added");
         drawSelection();
+        focusEditorSurface();
       }, false, "Add comment");
       submit.dataset.testid = "review-comment-submit";
       // Enter submits, Shift+Enter is a newline, Esc cancels — the modern
       // Docs/Word comment interaction, identical to the reply composer (Q5).
       attachComposerKeys(textarea, {
         onSubmit: () => submit.click(),
-        onCancel: () => closeReviewPopover(),
+        onCancel: () => cancel.click(),
       });
       autoGrowTextarea(textarea);
       actions.append(cancel, submit);
@@ -1950,7 +1970,12 @@ function renderReviewMarginItems() {
             }
           }
           drawSelection();
+          focusEditorSurface();
         }),
+        ...(item.data.resolved ? [] : [commentEditButton(t, () => {
+          commentEdit.begin(item.data.id, item.data.text);
+          scheduleReviewMarginRender();
+        })]),
         reviewIconButton("more_vert", "More options", () => {
           reviewDeleteConfirmId = reviewDeleteConfirmId === item.data.id ? null : item.data.id;
           scheduleReviewMarginRender();
@@ -1992,6 +2017,8 @@ function renderReviewMarginItems() {
     } else {
       body.textContent = String(item.data.text || "");
     }
+    const quote = item.type === "comment" ? commentQuoteElement(item.quote, t) : null;
+    const bodyOrEditor = item.type === "comment" && expanded ? commentEditorFor(item.data, "comment") ?? body : body;
     const actions = document.createElement("div");
     actions.className = "review-margin-card-actions";
     if (item.type === "comment") {
@@ -2005,6 +2032,7 @@ function renderReviewMarginItems() {
             activeReviewItemId = null;
             await runEdit(() => doc.deleteComment(item.data.id), { keepView: true });
             drawSelection();
+            focusEditorSurface();
           }, true),
           reviewCardButton("Cancel", () => {
             reviewDeleteConfirmId = null;
@@ -2080,7 +2108,7 @@ function renderReviewMarginItems() {
         focus();
       }
     });
-    card.append(header, body);
+    card.append(header, ...(quote ? [quote] : []), bodyOrEditor);
     if (item.type === "revision" && item.data.kind === "move") {
       const path = document.createElement("div");
       path.className = "review-move-path";
@@ -2152,54 +2180,24 @@ function renderReviewMarginItems() {
           replyHead.append(replyAuthor, replyDate);
           const replyBody = document.createElement("p");
           replyBody.textContent = String(reply.text || "");
-          replyItem.append(replyHead, replyBody);
+          replyItem.append(replyHead, (expanded && commentEditorFor(reply, "reply")) || replyBody);
           // REVIEW-GAP-011: edit or delete this specific reply (not just the
           // whole thread). Only on an expanded, unresolved parent card, so the
           // controls stay out of the collapsed/resolved presentation.
           if (expanded && !item.data.resolved) {
             const replyActionRow = document.createElement("div");
             replyActionRow.className = "review-margin-reply-actions";
-            const editReply = reviewCardButton("Edit", () => {
-              const input = document.createElement("input");
-              input.type = "text";
-              input.className = "review-margin-reply-edit";
-              input.setAttribute("aria-label", "Edit reply text");
-              input.maxLength = 4096;
-              input.value = String(reply.text || "");
-              const save = reviewCardButton("Save", async () => {
-                const text = input.value.trim();
-                if (!text) return;
-                await runEdit(() => doc.updateComment(reply.id, text), { keepView: true });
-                announceReview("Reply updated");
-                drawSelection();
-              }, false, "Save reply");
-              const cancelEdit = reviewCardButton("Cancel", () => {
-                scheduleReviewMarginRender();
-              });
-              const editActions = document.createElement("div");
-              editActions.className = "review-composer-actions";
-              editActions.append(cancelEdit, save);
-              input.addEventListener("click", (event) => event.stopPropagation());
-              input.addEventListener("keydown", (event) => {
-                event.stopPropagation();
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  save.click();
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelEdit.click();
-                }
-              });
-              replyBody.replaceWith(input);
-              replyActionRow.replaceWith(editActions);
-              input.focus({ preventScroll: true });
-            });
+            const editReply = reviewCardButton(t("reviewCard.edit"), () => {
+              commentEdit.begin(reply.id, reply.text);
+              scheduleReviewMarginRender();
+            }, false, t("reviewCard.editReply"));
             const deleteReply = reviewCardButton(
               "Delete",
               async () => {
                 await runEdit(() => doc.deleteReply(reply.id));
                 announceReview("Reply deleted");
                 drawSelection();
+                focusEditorSurface();
               },
               true,
               "Delete reply",
@@ -2240,10 +2238,11 @@ function renderReviewMarginItems() {
           await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date), { keepView: true });
           announceReview("Reply added");
           drawSelection();
+          focusEditorSurface();
         }, false, "Send reply");
         const cancel = reviewCardButton("Cancel", () => {
           clear();
-          textarea.blur();
+          focusEditorSurface();
         });
         replyActions.append(cancel, submit);
         const syncActions = () => {
@@ -3128,6 +3127,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // A new document invalidates every retained card and its cached geometry.
     reviewLayout = [];
     reviewCardCache.clear();
+    commentEdit.end(); commentQuotes.clear(); commentQuotes.prime(doc, readReviewData(doc).comments);
     // The mode this document opens in, through the ONE owner of mode state — which
     // sets `reviewMode`, both banners, the pressed states, the tracking flag and the
     // composed chrome, so none can drift. It used to be called only for a non-editing
@@ -6387,12 +6387,11 @@ function pageFromClientPoint(clientX, clientY) {
   return best;
 }
 pagesEl.addEventListener("pointerdown", (e) => {
-  // Ambiguous page-gap clicks must not jump into the nearest table or other
-  // fragment. Only a hit inside a concrete page may place the caret; drag
-  // continuation still uses nearest-page resolution once a gesture exists.
+  // Only a hit inside a page places the caret: a gap click must not jump into the nearest fragment.
   const page = pageFromEvent(e);
   if (page) onPointerDown(page, e);
 });
+installViewportFocusGuard({ viewport: viewportEl, pages: pagesEl, lastSheet: () => pages[pages.length - 1]?.wrap, focus: focusEditorSurface, caretToEnd: (extend) => doc && navToPosition(doc.lastPosition(), extend) });
 // Focus is the moment the load-time insertion point stops being implicit: the
 // surface can now receive typing (`#pages` is tabindex="0"), so the blinking
 // caret is finally honest. This covers keyboard entry (Tab) as much as clicks,
@@ -11725,7 +11724,7 @@ function editorCommands(context = { surface: "palette" }) {
           { id: "view.pages", label: t("pagesPanel.pages"), group: "View", kw: "pages panel thumbnails navigator go to page jump browse", enabled: !reflowView.withheldReason(), disabledReason: reflowView.withheldReason(), run: () => pagesPanelView.toggle() },
         ]
       : []),
-    { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
+    { id: "view.showChanges", label: t("panelReview.showChanges.label"), group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.reflow", label: t(reflowView.isOn() ? "reflow.commandOn" : "reflow.commandOff"), group: "View", kw: "reflow pageless continuous column mobile phone reader web layout wrap width", enabled: !readOnlyReason, disabledReason: t("reflow.unavailable"), run: () => reflowView.toggle() },
     ...reflowView.commands(),
     // Fold at the caret, Collapse/Expand All and the level rungs, generated from
@@ -14157,8 +14156,8 @@ document.addEventListener("beforeinput", async (e) => {
     return;
   }
   if (type === "insertLineBreak" || type === "insertParagraph") {
-    e.preventDefault();
-    await pasteText("\n", "typing");
+    e.preventDefault(); // An IME / on-screen-keyboard soft break IS Shift+Enter, not a new paragraph (HF-296, `docs/174` TA-01).
+    await (type === "insertLineBreak" ? insertLineBreakAtSelection() : pasteText("\n", "typing"));
   }
 });
 
@@ -15645,6 +15644,7 @@ async function showVersionPreview(previewDoc, { markup = false, reason = t("vers
   tableRange.clear();
   reviewLayout = [];
   reviewCardCache.clear();
+  commentEdit.end(); commentQuotes.clear(); commentQuotes.prime(doc, readReviewData(doc).comments);
   if (previewDoc) {
     const start = doc.firstPosition();
     selection = {

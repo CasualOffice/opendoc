@@ -575,6 +575,7 @@ representable
 resizable
 restorable
 resumable
+retryable
 reviewable
 revisioned
 roadmap
