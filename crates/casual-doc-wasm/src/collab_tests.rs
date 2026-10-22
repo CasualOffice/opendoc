@@ -511,6 +511,182 @@ fn snapshot_packages_preserve_resources_for_share_checkpoint_and_recovery_backup
     assert!(crate::open_document(invalid.as_bytes()).is_err());
 }
 
+/// Two facades and an in-process relay, driven frame by frame through the codec — the
+/// browser's path with the socket taken out.
+struct Pair {
+    server: casual_doc_transaction::session::ServerSession,
+    docs: [crate::WasmDocument; 2],
+    node: casual_doc_model::NodeId,
+}
+
+impl Pair {
+    fn new(text: &str) -> Self {
+        use casual_doc_transaction::protocol::{Identity, Join, Resume, ResumeKey};
+        let mut server = casual_doc_transaction::session::ServerSession::default();
+        let mut docs = [
+            crate::open_document(text.as_bytes()).expect("opens"),
+            crate::open_document(text.as_bytes()).expect("opens"),
+        ];
+        for (index, doc) in docs.iter_mut().enumerate() {
+            let (welcome, _) = server.join(
+                &ClientMessage::Join(Join {
+                    protocol: PROTOCOL_VERSION,
+                    identity: Identity::new(format!("p{index}")).expect("identity"),
+                    grant: None,
+                    resume: Some(Resume {
+                        key: ResumeKey::new(format!("k{index}")).expect("key"),
+                        revision: Revision::new(0),
+                    }),
+                }),
+                Capabilities::owner(),
+            );
+            doc.collab_receive_frame_inner(&encode_frame(&welcome))
+                .expect("welcome");
+        }
+        let node = match &docs[0].document.body()[0] {
+            casual_doc_model::v1::BlockNode::Paragraph(p) => p.id,
+            _ => panic!("paragraph"),
+        };
+        Self { server, docs, node }
+    }
+
+    /// Sends everything `from` has, acknowledges it, and delivers it to the other.
+    fn exchange(&mut self, from: usize) {
+        use casual_doc_transaction::protocol::{Arrival, Outcome};
+        while let Some(frame) = self.docs[from].collab_next_chunk() {
+            let ClientMessage::Submit(submission) =
+                casual_doc_transaction::codec::decode_frame(&frame).expect("submission")
+            else {
+                panic!("submit");
+            };
+            let Outcome::Ordered { revision } = self.server.commit(&submission) else {
+                panic!("ordered");
+            };
+            self.docs[from]
+                .collab_receive_frame_inner(&encode_frame(&ServerMessage::Ack {
+                    through: submission.seq,
+                    revision,
+                }))
+                .expect("ack");
+            self.docs[1 - from]
+                .collab_receive_frame_inner(&encode_frame(&ServerMessage::Apply(Arrival {
+                    revision,
+                    client: submission.client,
+                    operations: submission.operations,
+                })))
+                .expect("apply");
+        }
+    }
+
+    fn type_at(&mut self, who: usize, offset: u32, text: &str) {
+        self.docs[who]
+            .apply(casual_doc_edit::Operation::InsertText {
+                at: casual_doc_edit::Pos::new(self.node, offset),
+                text: text.to_owned(),
+            })
+            .expect("edit");
+    }
+}
+
+/// **The facade carries the reader's caret across a remote insertion before it** — the
+/// browser-side half of `107` P-4, through real frames. Driven red by returning the
+/// selection unmapped: the caret stays at 5 and the next keystroke lands inside "Bravo".
+#[test]
+fn the_reader_s_caret_follows_a_remote_insert_earlier_in_the_paragraph() {
+    let mut pair = Pair::new("Bravo paragraph two");
+    let node = pair.node.to_string();
+    // B's caret after "Bravo"; nothing has merged yet, so a first read maps nothing.
+    let idle: serde_json::Value = serde_json::from_str(
+        &pair.docs[1]
+            .collab_map_selection_inner(&node, 5, &node, 5)
+            .expect("maps"),
+    )
+    .expect("json");
+    assert_eq!(idle["moved"], false);
+    pair.type_at(0, 0, "pp");
+    pair.exchange(0);
+    let mapped: serde_json::Value = serde_json::from_str(
+        &pair.docs[1]
+            .collab_map_selection_inner(&node, 5, &node, 5)
+            .expect("maps"),
+    )
+    .expect("json");
+    assert_eq!(
+        mapped["focus"]["offset"], 7,
+        "the caret must move with the text"
+    );
+    assert_eq!(mapped["anchor"]["offset"], 7);
+    assert_eq!(mapped["moved"], true);
+    // A remote insertion exactly AT the caret stays after it, so two people typing at one
+    // spot keep their words whole.
+    pair.type_at(0, 7, "Q");
+    pair.exchange(0);
+    let tie: serde_json::Value = serde_json::from_str(
+        &pair.docs[1]
+            .collab_map_selection_inner(&node, 7, &node, 7)
+            .expect("maps"),
+    )
+    .expect("json");
+    assert_eq!(tie["focus"]["offset"], 7);
+}
+
+/// **Undo in a shared document reverts only the reader's own text, on both replicas** —
+/// the facade end of selective undo. Driven red by `undo_inner` taking the plain inverse,
+/// and by remote commits being recorded as edits: in both, B's text is what goes.
+#[test]
+fn undo_in_a_shared_document_reverts_only_the_reader_s_own_text() {
+    let mut pair = Pair::new("Charlie paragraph");
+    pair.type_at(0, 7, "111");
+    pair.exchange(0);
+    pair.type_at(1, 0, ">>");
+    pair.type_at(1, 22, "222");
+    pair.exchange(1);
+    assert_eq!(text(&pair.docs[0]), ">>Charlie111 paragraph222\n");
+    pair.docs[0].undo_inner().expect("A's own step is undoable");
+    pair.exchange(0);
+    assert_eq!(text(&pair.docs[0]), ">>Charlie paragraph222\n");
+    assert_eq!(text(&pair.docs[1]), ">>Charlie paragraph222\n");
+    assert_eq!(
+        pair.docs[0].undo_inner().err().as_deref(),
+        Some("nothing to undo"),
+        "B's typing is not A's to undo"
+    );
+}
+
+/// **The sync state counts what is typed-but-unsent and sent-but-unacknowledged** — what an
+/// honest "your changes are reaching everyone" is derived from.
+#[test]
+fn the_session_state_says_what_has_not_reached_the_relay() {
+    let mut pair = Pair::new("abc");
+    let state = |doc: &crate::WasmDocument| -> serde_json::Value {
+        serde_json::from_str(&doc.collab_state()).expect("json")
+    };
+    pair.type_at(0, 0, "x");
+    assert_eq!(state(&pair.docs[0])["unsent"], 1);
+    assert_eq!(state(&pair.docs[0])["inFlight"], 0);
+    let frame = pair.docs[0].collab_next_chunk().expect("a chunk");
+    assert_eq!(state(&pair.docs[0])["unsent"], 0);
+    assert_eq!(state(&pair.docs[0])["inFlight"], 1);
+    let ClientMessage::Submit(submission) =
+        casual_doc_transaction::codec::decode_frame(&frame).expect("submission")
+    else {
+        panic!("submit");
+    };
+    let casual_doc_transaction::protocol::Outcome::Ordered { revision } =
+        pair.server.commit(&submission)
+    else {
+        panic!("ordered");
+    };
+    pair.docs[0]
+        .collab_receive_frame_inner(&encode_frame(&ServerMessage::Ack {
+            through: submission.seq,
+            revision,
+        }))
+        .expect("ack");
+    assert_eq!(state(&pair.docs[0])["inFlight"], 0);
+    assert_eq!(state(&pair.docs[0])["unacknowledged"], false);
+}
+
 #[test]
 fn shared_picture_document_keeps_its_binary_image() {
     let doc = crate::open_document(include_bytes!(

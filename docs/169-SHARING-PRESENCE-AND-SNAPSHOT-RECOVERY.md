@@ -104,6 +104,44 @@ nor Undo. Identity comes from the relay, not from the opaque sender payload. Lab
 currently show participant numbers, not host display names. Presence is ephemeral and
 may briefly be behind concurrent document frames; it is never durable history.
 
+## The reader's own caret, Undo, and the sync indicator
+
+Added 2026-10-22 (ADR-069, `109` HF-310, HF-311, HF-313), after two real browsers through
+this host reproduced three defects:
+
+- **The reader's caret follows other people's edits.** Every frame that changed the
+  document is followed, synchronously, by `collabMapSelection`, which carries the selection
+  through the session's composed caret map (`107` §2.2). Before, two people typing in one
+  paragraph produced the later typist's word reversed on both screens, and a remote
+  insertion earlier in the paragraph sent the next keystrokes to the wrong place.
+- **Undo is selective.** Remote commits are never undo steps; the reader's own step is
+  undone by its inverse rebased over everything after it, or refused with the reason when
+  that cannot be done cleanly (`107` §5.4). Before, ⌘Z undid the other person's typing, for
+  them too.
+- **The sync chip reports acknowledgements, not the socket.** `collabState` now carries
+  `unsent` (typed, not yet handed to the transport) and `inFlight` (sent, not yet
+  acknowledged), and `collab_sync.mjs` shows *sending*, *waiting for the server to confirm*,
+  the acknowledged "your changes are reaching everyone", and — after 3 s without an
+  acknowledgement — *not confirmed for N s, kept on this device*. It is its own polite live
+  region beside the document-state chip, so it never overwrites a refusal in the status
+  line; the status line hears only about trouble starting and ending.
+
+## Version restore in a shared room
+
+Refused, with the reason, on every surface (ADR-068, `109` HF-312). A restore activates the
+version through the open path, which replaced this tab's document and dropped the room:
+the reader's copy went back, everybody else's stayed. Make a copy and Download of a version
+remain available. Leaving a room for any reason is now announced (`collab.leftShared`).
+
+The preferred design — a restore that is one transaction against the current state, so it
+travels in the settled order — needs three pieces this document's snapshot design does not
+supply: re-minting every restored node in the restorer's id space with its references
+intact; carrying what the op set cannot (binary resources live only in the snapshot
+package); and proving on a clone that the program reproduces the version exactly. A room
+re-seed through the snapshot recovery above was considered and rejected for now: the relay
+has no epoch, so it needs a protocol message and a version bump, and every participant's
+pending work would be judged against a document none of them wrote it on.
+
 ## Refusal recovery and preserved work
 
 Unsupported transforms and TooFarBehind produce `recoveryRequired`. The transport

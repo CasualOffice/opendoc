@@ -14799,12 +14799,25 @@ impl WasmDocument {
         // Read from the chain, not popped off a stack: the group Undo targets is
         // derived by walking the log backwards (doc 147 §3.4), and its inverse is
         // the concatenation of its commits' inverses, newest commit first.
-        let group = self
-            .log
-            .undo_target()
-            .ok_or_else(|| "nothing to undo".to_string())?;
+        //
+        // In a shared document the inverse is SELECTIVE (`selective_inverse`): it is
+        // rebased over everybody's later edits so it reverts this reader's step and
+        // nothing of anyone else's, and a step somebody already removed is retired so
+        // Undo moves on to the next older one. Alone, it is exactly the recorded
+        // inverse, as before.
+        let (group, operations) = loop {
+            let group = self
+                .log
+                .undo_target()
+                .ok_or_else(|| "nothing to undo".to_string())?;
+            let operations = self.selective_history_step(group)?;
+            if operations.is_empty() {
+                self.log.retire(group);
+                continue;
+            }
+            break (group, operations);
+        };
         let label = self.log.label_of(group).unwrap_or("Edit");
-        let operations = self.log.inverse_of(group);
         // Nothing is removed on failure because nothing was removed on entry:
         // `apply_group` appends only on success, so a refused undo leaves the
         // chain — and therefore the step, its label and the redo state — exactly
@@ -14833,7 +14846,10 @@ impl WasmDocument {
             .redo_target()
             .ok_or_else(|| "nothing to redo".to_string())?;
         let label = self.log.label_of(group).unwrap_or("Edit");
-        let operations = self.log.inverse_of(group);
+        let operations = self.selective_history_step(group)?;
+        if operations.is_empty() {
+            return Err("nothing to redo".to_string());
+        }
         let caret = self
             .apply_group(&operations, label, Coalesce::New, Origin::Redo { group })
             .map_err(|e| format!("redo failed: {e}"))?;

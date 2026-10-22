@@ -4254,3 +4254,93 @@ an executable development example, not mandatory product infrastructure.
 Rejected: stale-coordinate replay (silently misapplies work), clearing pending edits on
 reload (loses work), encoding grants in share links (confuses invitation with authority),
 and putting presence in document state (pollutes Undo and durable history).
+
+## ADR-068 — A version restore in a shared room is refused, with the reason, until it can travel as one transaction
+
+**Status:** Accepted 2026-10-22. **Row:** `docs/109` HF-312. **Design:** `docs/169`
+§Version restore in a shared room, `docs/107` §5.3.
+
+### The defect
+
+Restore activates the chosen version through the ordinary open path. In a shared room
+that path replaced this tab's document and dropped the room without a word: the reader's
+copy went back, everybody else's kept the newer text, and the two were no longer one
+document. Measured with two clients through the relay: A became the original three
+paragraphs, B kept `v2-edit` and `B-edit`, and A's status quietly stopped saying it was
+shared. Nothing was lost locally (the pre-restore state is kept as a version), but the
+document forked and nobody was told.
+
+### The decision
+
+While the document is in a room, **Restore is refused at the action and disabled on every
+surface with the reason** ("restoring would change your copy and not everyone else's —
+make a copy of this version or download it instead"). Make a copy and Download stay
+available, so the reader still has the version. Separately, leaving a room for any reason
+is now announced (`collab.leftShared`), which closes the silent half of the class rather
+than only the restore instance of it.
+
+### Why not the preferred answer yet
+
+The preferred answer is that a restore is a transaction against the current state, so it
+travels in the settled order and is OT-safe like any edit (`107` §5.3: "record the restore
+as a new commit"). Three things it needs do not exist, and each is a design rather than a
+patch:
+
+1. **Identity.** Every node the restore re-creates must be minted in the restorer's id
+   space (`152` §4.2); a receiver refuses an arrival that introduces an id outside its
+   sender's space (`ODC-7008`). A version's nodes carry the ids they had, so the restore
+   needs a deterministic re-minting of a whole document that keeps every internal
+   reference (comments, bookmarks, notes, numbering, field ranges) consistent.
+2. **Vocabulary.** The op set can replace the body (`DeleteBlocks` + `InsertBlocks`) and
+   rewrite most registries, but not everything a version can differ in, and binary
+   resources do not travel as operations at all — `169`'s snapshot package carries them.
+   A restore expressed with what exists would be silently lossy, which is the one outcome
+   §12 forbids.
+3. **Verification.** The program must be proven to produce the version exactly (apply on a
+   clone, compare models) before it is sent, or it is not a restore.
+
+### Alternatives rejected
+
+- **Restore as a re-seed of the room** — publish the version as a new host checkpoint and
+  have every participant run `169`'s snapshot recovery onto it. The relay orders
+  operations and has no notion of an epoch, so this needs a new protocol message (a room
+  reset, with a protocol-version bump), and every participant's unacknowledged work would
+  be judged against a document none of them wrote it on. Recorded as the route if the
+  transaction proves too costly, not chosen now.
+- **Restore locally and leave the room on purpose, with a message** — honest, but it turns
+  a history action into "fork the document", which no competitor does: Google Docs and
+  ONLYOFFICE restore for everybody.
+- **Allow it and let the next arrival repair it** — there is nothing to repair towards; the
+  restored replica and the room disagree about every paragraph.
+
+### What it costs
+
+A shared document cannot be restored in place until the transaction exists. The reader is
+told why, keeps both escape routes, and nothing forks. The follow-up is `docs/109` HF-314, the
+open half of it.
+
+## ADR-069 — In a shared document Undo is selective, and the reader's caret follows other people's edits
+
+**Status:** Accepted 2026-10-22. **Rows:** `docs/109` HF-310, HF-311. **Design:** `docs/107`
+§2.1 P-4 and §5.4, `casual_doc_transaction::selective`.
+
+**Caret.** Every arrival yields a map from the view the reader was looking at to the view
+they are looking at now, and the browser carries the selection through it synchronously,
+before the paint and before the next keystroke. On the contended path the map is the
+arrival rebased over the reader's unacknowledged commits (the image the rebase driver
+already computes), not the rollback-and-replay path: a rollback deletes the reader's own
+pending text, so a caret carried through it collapses onto the start of its own word and
+returns on the wrong side of it. A collapsed caret maps with `Affinity::Before` — text
+somebody inserts exactly at your caret appears after it — which is what keeps two people
+typing at one spot from interleaving. Rejected: mapping through the rollback/replay path
+(measured: still reverses words, `…WXYZUV`), and `After` at the caret (interleaves).
+
+**Undo.** A remote commit is `Origin::Remote` and is invisible to every history read, so
+Undo can never target somebody else's step. The inverse of the reader's own step is rebased
+over everything committed after it before it is applied (selective undo, as Google Docs
+and ONLYOFFICE's fast mode do); a step whose inverse cannot be carried cleanly is refused
+with the reason and changes nothing, and a step somebody else already removed is retired so
+Undo moves on to the next older one. Alone in a document the inverse is the recorded one,
+exactly as before. A local typing run continues its own undo step across arrivals, so one
+Undo still takes the word back. Rejected: a global undo stack (undoes other people), and
+undoing with the plain inverse (deletes the wrong text once anybody typed before the step).

@@ -1046,6 +1046,9 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.restore.cannotKeepCurrent":
     "The document on screen could not be kept as a version ({message}), so it was not replaced.",
   "versionHistory.restore.failed": "That version could not be restored: {message}",
+  // ADR-068: a restore in a shared room would change this reader's copy alone.
+  "versionHistory.restore.sharedRefused":
+    "This document is shared, so restoring a version would change your copy and not everyone else's. Make a copy of this version or download it instead",
   "versionHistory.restored":
     "Restored the version from {when}. The document you replaced is still in the timeline.",
 
@@ -1575,6 +1578,14 @@ export const EN_STRINGS = Object.freeze({
     "This document is not shared, so there is nothing to reconnect to",
   "collab.reconnecting": "Connection lost — reconnecting. Changes you make now are not shared yet",
   "collab.stopped": "Not connected to this shared document — your changes are staying on this device",
+  // The sync chip (`collab_sync.mjs`, `docs/109` HF-313): what has become of the
+  // reader's last change, driven by the relay's acknowledgements rather than by
+  // whether the socket is open. `collab.connected` above is the acknowledged state.
+  "collab.syncPending": "Shared — sending your changes…",
+  "collab.syncSent": "Shared — waiting for the server to confirm your changes",
+  "collab.syncStuck":
+    "Shared — your latest changes have not been confirmed for {seconds} s. They are kept on this device and will be sent when the server answers",
+  "collab.leftShared": "You left the shared document. Changes you make now stay in this copy",
   // Managing what OTHER people may do — the rights surface, which exists only in
   // a shared session (`session_rights.mjs`). The ROLE names are the vocabulary
   // `casual_doc_edit::access`'s presets already use, deliberately: a second set
