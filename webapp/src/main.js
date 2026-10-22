@@ -166,6 +166,7 @@ import { smallestContaining } from "./review_anchor.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollTargetFor } from "./scroll_into_view.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
+import { createFindSession } from "./find_session.mjs"; // TA-03/TA-04: the anchor typing refines from, and the all-match highlight
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
@@ -503,6 +504,17 @@ const findCase = document.getElementById("findCase");
 const findWholeWord = document.getElementById("findWholeWord");
 const findSelection = document.getElementById("findSelection");
 let findScope = null;
+const findSession = createFindSession({
+  getDoc: () => doc,
+  getSelection: () => selection,
+  isImplicit: () => caretIsImplicit(),
+  place: (flat, kind) => place(flat, kind),
+  revisionKey: () => `${documentEpoch}:${currentRevision}`,
+  active: () => !findPanel.hidden,
+  repaint: () => paintOverlayLayer(),
+  // The highlight only: the status line keeps what the last action said ("Replaced 4").
+  rescan: () => findSession.show(scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked)),
+});
 
 /** Shows the named ribbon tab's panel and marks its tab selected.
  *
@@ -4098,6 +4110,7 @@ function paintOverlayLayer() {
   paintReviewMarkers();
   paintChecklistMarkers();
   spellChecker.paint();
+  findSession.paint(); // every Find match, the current one distinct (TA-04)
   // A selected object owns the visible chrome (outline + handles) in place of the
   // text caret; in "editing" mode the ordinary text caret is shown instead.
   if (objectSelection && objectSelection.mode === "selected") {
@@ -13172,30 +13185,14 @@ function scanAllMatches(query, matchCase, wholeWord = false) {
   return matches;
 }
 
-function updateFindStatus() {
-  const query = findInput.value;
-  if (!query) {
-    setFindStatus("");
-    return;
-  }
-  const matches = scanAllMatches(query, findCase.checked, findWholeWord.checked);
-  if (!matches.length) {
-    setFindStatus("No match", true);
-    return;
-  }
-  if (matches.length === 1) {
-    setFindStatus("1 match");
-    return;
-  }
-  // An untouched load-time caret is not a place the user searched from, so it
-  // counts as "no position" here: a document whose first characters are the
-  // query still reports "N matches", not "1 of N".
-  const idx = selection && !caretIsImplicit()
-    ? matches.findIndex(
-        (m) => m.startNode === selection.anchor.node && m.startOffset === selection.anchor.offset,
-      )
-    : -1;
-  setFindStatus(idx >= 0 ? `${idx + 1} of ${matches.length}` : `${matches.length} matches`);
+/** Publishes the match list to the highlight and states "n of N". An untouched
+ *  load-time caret is not a place the user searched from, so a document whose
+ *  first characters are the query reports "N matches", not "1 of N". */
+function updateFindStatus(matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked)) {
+  const idx = findSession.show(matches);
+  if (!findInput.value) setFindStatus("");
+  else if (!matches.length) setFindStatus("No match", true);
+  else setFindStatus(matches.length === 1 ? "1 match" : idx >= 0 ? `${idx + 1} of ${matches.length}` : `${matches.length} matches`);
 }
 
 function selectedPlainText() {
@@ -13217,7 +13214,7 @@ function queryMatchesSelection() {
   return false;
 }
 
-function selectTextMatch(match) {
+function selectTextMatch(match, matches) {
   if (!match || match.found === false) {
     setFindStatus("No match", true);
     return false;
@@ -13226,6 +13223,7 @@ function selectTextMatch(match) {
     anchor: { node: match.startNode, offset: match.startOffset },
     focus: { node: match.endNode, offset: match.endOffset },
   };
+  updateFindStatus(matches); // before the repaint, so it paints this match as current
   drawSelection();
   // Deliberately does NOT call focusEditorSurface(): this runs on every
   // keystroke while live-searching (findInput's "input" listener), and
@@ -13233,32 +13231,19 @@ function selectTextMatch(match) {
   // to the document instead of the find box. Focus returns to the canvas
   // only when the panel actually closes (closeFind).
   scrollFindMatchIntoView();
-  updateFindStatus();
   return true;
 }
 
-function findFromSelection(forward) {
-  if (!doc || !findInput.value) {
-    setFindStatus("");
-    return false;
-  }
-  const matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked);
+/** One Find step. `incremental` (the query was typed) re-searches from the
+ *  session's anchor and never advances; otherwise Next/Previous step from the
+ *  current match, or from the caret (`find_session.mjs`, TA-03). */
+function findFromSelection(forward, incremental = false) {
+  const matches = doc && findInput.value ? scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked) : [];
   if (!matches.length) {
-    setFindStatus("No match", true);
+    updateFindStatus(matches);
     return false;
   }
-  // Same rule as `updateFindStatus`: the untouched load-time caret means "start
-  // from the top", so Find Next cannot skip a match sitting at the document
-  // start. Selecting the hit moves the caret off the seed, making it explicit.
-  const current = selection && !caretIsImplicit()
-    ? matches.findIndex(
-        (m) => m.startNode === selection.anchor.node && m.startOffset === selection.anchor.offset,
-      )
-    : -1;
-  const index = current >= 0
-    ? (current + (forward ? 1 : matches.length - 1)) % matches.length
-    : forward ? 0 : matches.length - 1;
-  return selectTextMatch(matches[index]);
+  return selectTextMatch(matches[findSession.pick(matches, forward, incremental)], matches);
 }
 
 async function replaceCurrentMatch() {
@@ -13322,13 +13307,15 @@ function openFind({ replace = false } = {}) {
 
 function closeFind() {
   findPanel.hidden = true;
+  findSession.clear();
   focusEditorSurface();
 }
 
 findInput.addEventListener("input", () => {
-  if (findInput.value) findFromSelection(true);
-  else setFindStatus("");
+  if (findInput.value) findFromSelection(true, true); // refine from the anchor, never advance (TA-03)
+  else updateFindStatus();
 });
+findInput.addEventListener("focus", () => findSession.anchorHere());
 findCase.addEventListener("change", () => updateFindStatus());
 findWholeWord.addEventListener("change", () => updateFindStatus());
 findSelection.addEventListener("change", () => {
@@ -13357,7 +13344,7 @@ replaceInput.addEventListener("keydown", (e) => {
     closeFind();
   }
 });
-findCase.addEventListener("change", () => findFromSelection(true));
+findCase.addEventListener("change", () => findFromSelection(true, true));
 // The find bar's five buttons, looked up where they are USED: one listener each,
 // and five names in the widest scope in the product for them.
 document.getElementById("findPrev").addEventListener("click", () => findFromSelection(false));

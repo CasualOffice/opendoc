@@ -549,6 +549,10 @@ const PURE_MODULES = [
   // The field vocabulary: the kind table plus the host-side result formatter.
   // No DOM and no engine, so "what does a date field cache" is a node question.
   "field_kinds.mjs",
+  // One Find session (TA-03, TA-04): the anchor typing refines from, the step
+  // rule and the all-match highlight. The engine, the selection and the overlay
+  // are injected, so "typing fox stays on 1 of 4" is a node question.
+  "find_session.mjs",
   // The whole target -> cursor mapping. Its DOM half is `pointer_hover.mjs`;
   // keeping them apart is what lets `pointer_cursor.test.mjs` drive the entire
   // hover cascade with plain objects, with no browser and no engine.
