@@ -14317,12 +14317,13 @@ document.addEventListener("keydown", async (e) => {
         nudgeSelectedObject(nudge);
         return;
       }
-      // Swallow text-producing keys; navigation/modifier combos fall through so
-      // the user can still move the caret off the object. Code points, not UTF-16
-      // units, so an emoji is swallowed here too rather than leaking through.
+      // A text key on an INLINE object (an inserted picture is selected, HF-303)
+      // drops the object and types at the caret after it — never a silent drop,
+      // and never Word's replace-the-picture. A floating object still keeps them.
       if ([...key].length === 1 && !mod) {
-        e.preventDefault();
-        return;
+        if (objectSelection.anchored) return void e.preventDefault();
+        objectSelection = null; // HF-315; code points, so an emoji counts as one key
+        drawSelection();
       }
     }
   }
