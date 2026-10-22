@@ -120,6 +120,11 @@
      opening a menu. Blue on white paper, in the paper layer for the same
      reason as its neighbours. */
   --paper-grammar: #1a73e8;
+  /* Find's all-match highlight (docs/174 TA-04): every match in yellow and the
+     current one in orange, the convention Word, Docs and ONLYOFFICE share. On
+     the paper layer for the same reason as the marks above. */
+  --paper-find-match: rgba(251, 188, 4, 0.38);
+  --paper-find-current: rgba(242, 125, 0, 0.55);
   /* THE REFLOW SURFACE (docs/151 §6.2, corrected). In reflow there
      is no page and therefore no desk: one background fills the writing surface
      edge to edge and the measure is simply where the text is. Google renames
@@ -7994,6 +7999,19 @@ body.is-format-painting .page-wrap * {
   position: absolute;
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   border-radius: 1px;
+}
+
+/* Every Find match, and the current one distinct (TA-04). Under the selection
+   highlight in paint order, and never a hit target. */
+.overlay .find-match {
+  position: absolute;
+  background: var(--paper-find-match);
+  border-radius: 1px;
+}
+
+.overlay .find-match-current {
+  background: var(--paper-find-current);
+  outline: 1px solid var(--paper-find-current);
 }
 
 /* The spelling squiggle (docs/114 §5.7). Drawn in the overlay, over the raster,
