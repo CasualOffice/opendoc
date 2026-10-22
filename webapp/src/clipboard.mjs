@@ -47,10 +47,12 @@ function styleAttr(run) {
 }
 
 /** Builds a visible HTML fragment from `ClipboardRun[]` (the shape
- * `doc.copyRichRuns` produces). Every paragraph becomes a `<p>`; run
+ * `doc.copyRichRuns` produces). With `outline` (`doc.copyBlockOutline` for the
+ * same range) headings, lists and tables keep their structure; without it every
+ * paragraph becomes a `<p>`. Run
  * formatting nests `<b>/<i>/<u>/<s>/<sup>/<sub>`, a `<span style>` carries
  * color/size/font/highlight, and a `href` wraps the run in `<a>`. */
-export function runsToHtml(runs) {
+export function runsToHtml(runs, outline = null) {
   const paragraphs = [[]];
   for (const run of runs) {
     if (run.paragraphBreak) {
@@ -59,12 +61,92 @@ export function runsToHtml(runs) {
       paragraphs.at(-1).push(run);
     }
   }
-  return paragraphs
-    .map((runsInParagraph) => {
-      const inner = runsInParagraph.map(runToHtml).join("");
-      return `<p>${inner || "<br>"}</p>`;
-    })
-    .join("");
+  const bodies = paragraphs.map((runsInParagraph) => runsInParagraph.map(runToHtml).join("") || "<br>");
+  // The outline is only trusted when it describes exactly these paragraphs; a
+  // mismatch (an older engine, a host that passed none) keeps the flat `<p>`s.
+  if (!Array.isArray(outline) || outline.length !== bodies.length) {
+    return bodies.map((body) => `<p>${body}</p>`).join("");
+  }
+  return structuredHtml(bodies, outline);
+}
+
+/** The deepest list nesting the HTML carries, matching the editor's nine levels. */
+const MAX_LIST_LEVEL = 8;
+
+/** Renders paragraph bodies with the block structure `doc.copyBlockOutline`
+ *  reports (`docs/174` TA-12): `<h1>`–`<h6>` for headings, nested `<ul>`/`<ol>`
+ *  for list items, and a `<table>` for consecutive paragraphs of one table —
+ *  what Word and Google Docs read back as a heading, a list and a table instead
+ *  of flat paragraphs.
+ *
+ *  O(paragraphs): one pass, with a stack of open lists.
+ *
+ *  @param {string[]} bodies  each paragraph's inner HTML
+ *  @param {Array<{heading?: number, list?: {ordered: boolean, level: number}, cell?: {table: string, row: number, col: number}}>} outline
+ */
+function structuredHtml(bodies, outline) {
+  let html = "";
+  /** Open list tags, outermost first: "ul" or "ol". */
+  const lists = [];
+  const closeListsTo = (depth) => {
+    while (lists.length > depth) html += `</li></${lists.pop()}>`;
+  };
+  for (let i = 0; i < bodies.length; i++) {
+    const entry = outline[i] ?? {};
+    if (entry.cell) {
+      closeListsTo(0);
+      // Every following paragraph of the same table, grouped into rows and cells.
+      const table = entry.cell.table;
+      const rows = new Map();
+      let j = i;
+      for (; j < bodies.length && outline[j]?.cell?.table === table; j++) {
+        const { row, col } = outline[j].cell;
+        if (!rows.has(row)) rows.set(row, new Map());
+        const cells = rows.get(row);
+        if (!cells.has(col)) cells.set(col, []);
+        cells.get(col).push(blockHtml(bodies[j], outline[j]));
+      }
+      html += "<table><tbody>";
+      for (const cells of rows.values()) {
+        html += "<tr>";
+        for (const content of cells.values()) html += `<td>${content.join("")}</td>`;
+        html += "</tr>";
+      }
+      html += "</tbody></table>";
+      i = j - 1;
+      continue;
+    }
+    if (entry.list) {
+      const tag = entry.list.ordered ? "ol" : "ul";
+      const depth = Math.min(MAX_LIST_LEVEL, Math.max(0, Number(entry.list.level) || 0)) + 1;
+      closeListsTo(depth);
+      if (lists.length === depth && lists[depth - 1] !== tag) closeListsTo(depth - 1);
+      if (lists.length === depth) html += "</li>";
+      // Deeper than the open lists: open one list per missing level, so a jump
+      // from level 0 to level 2 still nests (Word allows it).
+      while (lists.length < depth) {
+        lists.push(lists.length === depth - 1 ? tag : "ul");
+        html += `<${lists.at(-1)}>`;
+        if (lists.length < depth) html += "<li>";
+      }
+      html += `<li>${bodies[i]}`;
+      continue;
+    }
+    closeListsTo(0);
+    html += blockHtml(bodies[i], entry);
+  }
+  closeListsTo(0);
+  return html;
+}
+
+/** One non-list paragraph: a heading of its level (capped at `<h6>`), else `<p>`. */
+function blockHtml(body, entry) {
+  const level = Number(entry?.heading);
+  if (level >= 1) {
+    const tag = `h${Math.min(6, Math.floor(level))}`;
+    return `<${tag}>${body}</${tag}>`;
+  }
+  return `<p>${body}</p>`;
 }
 
 function runToHtml(run) {
