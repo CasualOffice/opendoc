@@ -38,7 +38,24 @@ versus CRDT. First blocker: the live editing path in `casual-doc-wasm` bypasses
 **Editing stays light:** per-keystroke work is O(1) in document size (seven budgets in
 `docs/107` §4).
 
-## 3. Gates — run every one, each as its own command
+## 3. Gates — CI runs all of them; locally run only what the change touches
+
+**Owner rule (2026-10-22): never run the full suite locally.** No `cargo test --workspace`,
+no whole `npm run test:e2e`, no full scans before a PR. The PR's CI is the full sweep.
+Locally: the scoped subset below, then push and open the PR at once, and fix forward from
+CI. Running full suites per branch cost hours, filled the disk twice and produced no PRs.
+
+Locally, scoped (each as its own command):
+
+- `cargo +1.96.0 fmt --all --check` (seconds, always).
+- For each touched crate: `cargo clippy -p <crate> --all-targets --all-features --locked -- -D warnings`
+  and `cargo test -p <crate> --all-features --locked`, with `CARGO_INCREMENTAL=0`.
+- `node webapp/tools/build-glossary.mjs` whenever docs/ or a string changed.
+- `npm run test:unit` (seconds: it carries the ratchets, locale coverage and tracker guards).
+- The e2e specs the change touches, plus `chrome-raw-keys.spec.mjs` for any chrome change.
+- `df -h /` before any build; under 8 GB free, stop and clear finished build caches.
+
+The full list CI runs, for reference only:
 
 ```sh
 cargo +1.96.0 fmt --all --check        # PINNED toolchain; plain `cargo fmt` differs from CI
@@ -134,7 +151,7 @@ export/io `crates/casual-doc-export/**`, `crates/casual-doc-io/**` · wasm
 - Every lane prompt says: commit on your branch; do not merge; do not open a PR; **add your
   row to `docs/109-BACKLOG.md` in the implementation commit** (resolve a conflict by
   rebasing; never impose a no-tracker-edits rule); follow the §4 mutation rule and the full
-  §3 gate list including `cargo doc` and the browser suite; "report, and I will raise it
+  §3 SCOPED local checks (CI runs the full sweep; never the full suite locally); "report, and I will raise it
   and relaunch you".
 
 ## 8. Design first, and name the pattern
@@ -207,8 +224,8 @@ implement in small increments → test → update docs and ADRs.
   committed root `sample.docx`; the copy compiles locally and fails CI's fresh checkout.
 - Chrome built at boot must not call `t()` until it is shown: the catalogue lands later,
   and `chrome-raw-keys.spec.mjs` reads `title`/`aria-label` on HIDDEN elements too. A
-  scoped e2e run missed this and turned `main` red (#815 → HF-281); before pushing UI, run
-  the whole browser suite, not just the specs named after the feature.
+  scoped e2e run missed this and turned `main` red (#815 → HF-281); for any chrome change
+  include `chrome-raw-keys.spec.mjs` in the scoped run, and let the PR's CI run the rest.
 - Run Playwright from `webapp/`. Specs never assert Mac glyphs; use the `shortcutHint`
   fixture.
 - A relative `git worktree add name` lands inside the repo. Use absolute paths.
