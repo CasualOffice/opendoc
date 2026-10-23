@@ -63,7 +63,11 @@ use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 // import does not conflict here.
 use casual_doc_layout::compose::{ComposeOptions, compose_page_with};
 use casual_doc_layout::display::Color as PaintColor;
-use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config, paginate_document};
+use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config};
+// Tests compare against the uncached whole layout; the facade itself always
+// lays out through the galley cache (`paginate_whole_cached`, HF-410).
+#[cfg(test)]
+use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
 use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
@@ -82,7 +86,6 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
 // Own line (anti-conflict): the per-viewer fold filter (ADR-049).
 use casual_doc_layout::document_layout::paginate_document_after_edit_folded;
-use casual_doc_layout::document_layout::paginate_document_folded;
 use casual_doc_layout::fold::FoldSet;
 use casual_doc_model::v1::BreakKind;
 // The start type a section break gives the section that follows it.
@@ -13394,17 +13397,19 @@ impl WasmDocument {
     /// — the DOCUMENT revision — does not (`docs/147` §3.3).
     fn relayout_for_fold(&mut self) {
         self.galley_cache = GalleyCache::new();
-        self.layout = BodyLayout::Whole(paginate_document_folded(
+        self.layout = BodyLayout::Whole(paginate_whole_cached(
             &self.document,
             &self.shaper,
+            &mut self.galley_cache,
             ReviewView::Editing,
             self.layout_view,
             &self.folds,
         ));
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_folded(
+            self.markup_layout = Some(paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -14574,10 +14579,14 @@ impl WasmDocument {
         if on && self.layout.is_windowed() {
             return Err(windowed_not_available("The show-changes preview"));
         }
+        // Through the cache, like every whole layout: the markup view has its
+        // own retained-galley slot, so the first keystroke after turning the
+        // preview on resumes instead of re-shaping the document (HF-410).
         self.markup_layout = on.then(|| {
-            paginate_document_folded(
+            paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -14699,17 +14708,19 @@ impl WasmDocument {
         // every page, so offering it as a resume baseline would splice pages laid
         // out to rules that no longer apply.
         self.galley_cache = GalleyCache::new();
-        self.layout = BodyLayout::Whole(paginate_document_folded(
+        self.layout = BodyLayout::Whole(paginate_whole_cached(
             &self.document,
             &self.shaper,
+            &mut self.galley_cache,
             ReviewView::Editing,
             self.layout_view,
             &self.folds,
         ));
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_folded(
+            self.markup_layout = Some(paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -14908,9 +14919,10 @@ impl WasmDocument {
             self.layout.remeasure(&self.document, &self.shaper);
             return;
         }
-        self.layout = BodyLayout::Whole(paginate_document_folded(
+        self.layout = BodyLayout::Whole(paginate_whole_cached(
             &self.document,
             &self.shaper,
+            &mut self.galley_cache,
             ReviewView::Editing,
             self.layout_view,
             &self.folds,
@@ -14918,9 +14930,10 @@ impl WasmDocument {
         // A new face re-shapes the markup view as much as the editing one, and
         // the markup view is what is on screen while it exists.
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_folded(
+            self.markup_layout = Some(paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -23193,6 +23206,52 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
 /// the two compared page for page. A test that had to build 262,145 paragraphs
 /// to reach the windowed path would be slow enough not to be run, and would
 /// have nothing affordable to compare the result against.
+/// Lays the whole body out **through the galley cache**, so the shaping this
+/// pass does is the shaping the next edit resumes from (`docs/180` E1, `109`
+/// HF-410).
+///
+/// Pattern: a warm cache. Every whole layout outside the edit path — the
+/// open, the font upgrade (`repaginate`), a fold, a view change, turning
+/// "show changes" on — used to call `paginate_document_folded`, which shapes
+/// every paragraph and keeps nothing. The first keystroke after any of them
+/// then found an empty cache and no retained galley, and shaped the whole
+/// document a second time: 3.1 s at 20,000 paragraphs, against 0.35 s for the
+/// keystroke after it. Built here with [`DirtySet::everything`] and no previous
+/// layout, the pass shapes every paragraph exactly once (the same work the
+/// uncached path did), stores each fragment, and hands its galley back to the
+/// cache, so the first edit takes the same `O(edit)` resume path as every
+/// later one.
+///
+/// The output is the layout `paginate_document_folded` produces for the same
+/// inputs: `paginate_document_after_edit_folded` with no previous layout runs
+/// the same plans and the same `finish_pagination`, and falls back to exactly
+/// that function for `w:numRestart="eachPage"` notes. The layout crate's
+/// `incremental_matches_the_fresh_path_*` battery holds the two equal.
+///
+/// Complexity: `O(document)`, once per whole layout — it IS the whole layout.
+/// The caller decides whether the cache must be emptied first (a new face or a
+/// new measure invalidates every entry); this function never does.
+fn paginate_whole_cached(
+    document: &Document,
+    shaper: &ParleyShaper,
+    cache: &mut GalleyCache,
+    review_view: ReviewView,
+    view: LayoutView,
+    folds: &FoldSet,
+) -> PaginatedLayout {
+    paginate_document_after_edit_folded(
+        document,
+        shaper,
+        cache,
+        &DirtySet::everything(),
+        review_view,
+        None,
+        view,
+        folds,
+    )
+    .layout
+}
+
 fn open_document_bounded(
     bytes: &[u8],
     selection: FormatSelection,
@@ -23258,6 +23317,25 @@ fn open_document_bounded(
     // measured on the owner's file, which does not fit a wasm32 address space.
     // Try the windowed path; a document a window cannot serve is refused with
     // the reason rather than attempted and aborted.
+    // `w15:collapsed` is the document's SAVED default (ADR-049's cross-session
+    // tier), so a file Word saved with a heading folded opens folded. Seeded
+    // here, once, from a cheap pass over the top-level blocks that reads one
+    // `Option<bool>` per paragraph and resolves no style cascade. Read BEFORE
+    // the layout, so a folded document is laid out once, folded, rather than
+    // once unfolded and again folded.
+    //
+    // A windowed body gets an empty set: its measure tier is built in chunks a
+    // host scrolls through, and invalidating that on a fold would re-measure the
+    // document (`109` FOLD-003). The facade refuses a toggle there with a reason.
+    let folds = if windowed {
+        FoldSet::new()
+    } else {
+        saved_folds(&document)
+    };
+    // The whole layout is built through the galley cache the document keeps,
+    // so the first edit resumes from this pass instead of shaping every
+    // paragraph again (`docs/180` §2.2 and E1, `109` HF-410).
+    let mut galley_cache = GalleyCache::new();
     let layout = if windowed {
         match WindowedBody::open(&document, &shaper) {
             Ok(body) => BodyLayout::Windowed(Box::new(body)),
@@ -23266,7 +23344,14 @@ fn open_document_bounded(
             }
         }
     } else {
-        BodyLayout::Whole(paginate_document(&document, &shaper))
+        BodyLayout::Whole(paginate_whole_cached(
+            &document,
+            &shaper,
+            &mut galley_cache,
+            ReviewView::Editing,
+            LayoutView::Paged,
+            &folds,
+        ))
     };
     let default_config = document_page_config(&document);
 
@@ -23281,34 +23366,6 @@ fn open_document_bounded(
     let mut edit_ids = IdGenerator::new(IdSpace::local(IdSpace::of_document(document.id())).get());
     edit_ids.reserve_through(document.highest_counter_in(IdSpace::new(edit_ids.namespace())));
     let revision_ids = RevisionIdAllocator::from_document(&document);
-
-    // `w15:collapsed` is the document's SAVED default (ADR-049's cross-session
-    // tier), so a file Word saved with a heading folded opens folded. Seeded
-    // here, once, from a cheap pass over the top-level blocks that reads one
-    // `Option<bool>` per paragraph and resolves no style cascade.
-    //
-    // A windowed body gets an empty set: its measure tier is built in chunks a
-    // host scrolls through, and invalidating that on a fold would re-measure the
-    // document (`109` FOLD-003). The facade refuses a toggle there with a reason.
-    let folds = if layout.is_windowed() {
-        FoldSet::new()
-    } else {
-        saved_folds(&document)
-    };
-    // Re-paginate only when the document really carries a folded heading, which
-    // is rare: the open above already paid for the unfolded layout, and paying
-    // twice for every document to spare one is the wrong trade.
-    let layout = if folds.is_empty() {
-        layout
-    } else {
-        BodyLayout::Whole(paginate_document_folded(
-            &document,
-            &shaper,
-            ReviewView::Editing,
-            LayoutView::Paged,
-            &folds,
-        ))
-    };
 
     let saved_styles = document
         .definitions()
@@ -23342,9 +23399,8 @@ fn open_document_bounded(
         host_ceiling: Capabilities::local(),
         revision_ids,
         revision: 0,
-        // Populated lazily on the first edit's incremental re-pagination; the open
-        // above uses the full path since there is nothing yet to reuse.
-        galley_cache: GalleyCache::new(),
+        // Warm: the open's layout pass filled it and handed it its galley.
+        galley_cache,
         // List definitions are created on demand by the first bullet/numbered toggle.
         saved_styles,
         bullet_list: None,
@@ -41798,6 +41854,82 @@ mod tests {
             small_pages <= 2 && small_dirty <= 2,
             "a keystroke disturbs the page it lands on, not {small_pages} pages \
              ({small_dirty} repainted)"
+        );
+    }
+
+    /// The blocks the FIRST keystroke after each whole layout re-derives, at
+    /// `paragraphs` paragraphs, plus what the open itself shaped. One entry per
+    /// whole-layout path the facade has: the open, the font upgrade, a view
+    /// change and back, and turning the markup preview on.
+    fn first_keystroke_after_each_whole_layout(
+        paragraphs: usize,
+    ) -> (usize, Vec<(&'static str, usize)>) {
+        let mut d = plain_text_document(paragraphs);
+        let opened_shaping = d.galley_cache.shaped_last_build();
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        let mut offset = 6u32;
+        let mut keystroke = |d: &mut WasmDocument| {
+            d.type_text(&node, offset, &node, offset, "x".to_owned(), 1)
+                .expect("typing into a plain-text document");
+            offset += 1;
+            d.galley_cache.rebuilt_last_build()
+        };
+        let mut work = vec![("open", keystroke(&mut d))];
+
+        let faces = [casual_doc_layout::fonts::ROBOTO_REGULAR];
+        let lengths: Vec<u32> = faces.iter().map(|face| face.len() as u32).collect();
+        let bytes: Vec<u8> = faces.into_iter().flatten().copied().collect();
+        d.register_fonts_inner(&bytes, &lengths)
+            .expect("register a host face");
+        work.push(("font upgrade", keystroke(&mut d)));
+
+        d.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("reflow view");
+        work.push(("reflow view", keystroke(&mut d)));
+        d.set_layout_view_inner(0, 0, 0).expect("paged view");
+        work.push(("paged view", keystroke(&mut d)));
+
+        d.set_show_changes_inner(true).expect("show changes");
+        work.push(("show changes", keystroke(&mut d)));
+        (opened_shaping, work)
+    }
+
+    /// **One shaping pass per full layout** (`docs/180` §2.2 and E1, `109`
+    /// HF-410). Every whole layout outside the edit path is built through the
+    /// galley cache, so the first keystroke after it resumes from that pass
+    /// instead of shaping the document a second time — measured at 3.1 s for
+    /// the first keystroke on a 20,000-paragraph document before this.
+    ///
+    /// Doubling test, not a timing: the open must shape every paragraph once
+    /// (`O(document)` once, so it doubles with the document), and the first
+    /// keystroke after the open and after every other whole layout must
+    /// re-derive the same number of blocks at `n` and at `2n` paragraphs.
+    #[test]
+    fn the_first_keystroke_after_a_whole_layout_resumes_instead_of_reshaping() {
+        let small_n = 300;
+        let (small_open, small) = first_keystroke_after_each_whole_layout(small_n);
+        let (large_open, large) = first_keystroke_after_each_whole_layout(small_n * 2);
+        for ((path, small_work), (_, large_work)) in small.iter().zip(&large) {
+            assert_eq!(
+                small_work,
+                large_work,
+                "the first keystroke after the {path} must not grow with the \
+                 document: {small_work} blocks re-derived at {small_n} paragraphs \
+                 and {large_work} at {}",
+                small_n * 2
+            );
+            assert!(
+                *small_work <= 2,
+                "the first keystroke after the {path} re-derived {small_work} \
+                 blocks; it touches one paragraph"
+            );
+        }
+        // The open shaped the document once: the work is done, and done once.
+        assert!(
+            small_open >= small_n && large_open >= small_n * 2,
+            "the open must shape every paragraph once: {small_open} at {small_n} \
+             and {large_open} at {}",
+            small_n * 2
         );
     }
 
