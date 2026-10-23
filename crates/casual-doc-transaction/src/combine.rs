@@ -270,6 +270,10 @@ pub fn combine(
             capabilities: Capabilities::owner(),
             // No room, so no membership. Empty is the fact rather than a placeholder.
             participants: Vec::new(),
+            participants_present: Vec::new(),
+            // An offline combine has no relay to attest anybody, so nothing is restamped: each
+            // branch keeps the authors it was written with.
+            me: None,
         },
         &mut log,
     )
@@ -323,6 +327,8 @@ pub fn combine(
             revision,
             client: theirs.client,
             operations,
+            // See `me` above: no attestation offline, so their authors stand as written.
+            author: None,
         };
         let reception = session
             .receive(&arrival, &mut document, &mut ids, &mut log)

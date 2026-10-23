@@ -54,6 +54,7 @@ mod tests {
             SourceFile::new("mint.rs", include_str!("mint.rs")),
             SourceFile::new("protection.rs", include_str!("protection.rs")),
             SourceFile::new("access.rs", include_str!("access.rs")),
+            SourceFile::new("authorship.rs", include_str!("authorship.rs")),
         ])
         // Two crate-local *axes of* the declaration rather than second copies of
         // it: the children come from `contained_inlines` and only the policy —

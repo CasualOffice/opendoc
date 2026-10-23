@@ -14,6 +14,9 @@ use casual_doc_transaction::protocol::{
     ClientId, ClientMessage, PROTOCOL_VERSION, Refusal, Revision, ServerMessage,
 };
 
+// Its own line, for the parallel-lane import rule.
+use casual_doc_transaction::protocol::{Participant, Profile};
+
 use super::{capability_names, snapshot_bytes};
 
 /// A one-paragraph document through the real open path, so the facade under test is the one the
@@ -41,6 +44,8 @@ fn text(document: &crate::WasmDocument) -> String {
 
 fn welcome(client: u64, capabilities: Capabilities) -> Vec<u8> {
     encode_frame(&ServerMessage::Welcome {
+        me: None,
+        participants_present: Vec::new(),
         base_revision: None,
         missed: Vec::new(),
         protocol: PROTOCOL_VERSION,
@@ -156,6 +161,7 @@ fn a_message_before_the_join_is_refused() {
         }),
         encode_frame(&ServerMessage::Apply(
             casual_doc_transaction::protocol::Arrival {
+                author: None,
                 revision: Revision::new(1),
                 client: ClientId::new(1),
                 operations: Vec::new(),
@@ -215,7 +221,7 @@ fn a_stop_before_the_join_still_names_its_reason() {
 fn the_opening_frame_carries_the_key_and_refuses_what_it_cannot_use() {
     let doc = document();
     let frame = doc
-        .collab_join_frame_inner("ada", "tab-key", 0.0)
+        .collab_join_frame_inner("ada", "tab-key", 0.0, None, None)
         .expect("a join frame");
     let message: ClientMessage =
         casual_doc_transaction::codec::decode_frame(&frame).expect("it decodes");
@@ -243,12 +249,64 @@ fn the_opening_frame_carries_the_key_and_refuses_what_it_cannot_use() {
         ("ada", "tab-key", f64::NAN),
     ] {
         let error = doc
-            .collab_join_frame_inner(identity, key, revision)
+            .collab_join_frame_inner(identity, key, revision, None, None)
             .expect_err("an unusable input must be refused rather than guessed at");
         assert!(
             error.starts_with("refused: "),
             "a refusal must be a sentence a reader can act on: {error:?}"
         );
+    }
+}
+
+/// The host's grant and the claimed profile travel on the join as given (`docs/175` §3.3), and
+/// a profile out of bounds is refused naming its field rather than trimmed.
+#[test]
+fn the_opening_frame_carries_the_hosts_grant_and_profile() {
+    let doc = document();
+    let frame = doc
+        .collab_join_frame_inner(
+            "u_ada",
+            "tab-key",
+            0.0,
+            Some("header.payload.signature"),
+            Some(r#"{"id":"u_ada","name":"Ada Lovelace","avatarUrl":"https://cdn.example/a.png"}"#),
+        )
+        .expect("a join frame");
+    let ClientMessage::Join(join) =
+        casual_doc_transaction::codec::decode_frame(&frame).expect("it decodes")
+    else {
+        panic!("a join");
+    };
+    assert_eq!(
+        join.grant.as_ref().map(|grant| grant.as_bytes().to_vec()),
+        Some(b"header.payload.signature".to_vec())
+    );
+    let profile = join.profile.expect("the claimed profile");
+    assert_eq!(profile.name, "Ada Lovelace");
+    assert_eq!(
+        profile.avatar_url.as_deref(),
+        Some("https://cdn.example/a.png")
+    );
+
+    for (bad, field) in [
+        (r#"{"id":"u_ada","name":""}"#, "name"),
+        (
+            r#"{"id":"u_ada","name":"Ada","avatarUrl":"http://x/a.png"}"#,
+            "avatar.url",
+        ),
+        (r#"{"id":"u_ada","name":"Ada","color":"blue"}"#, "color"),
+        (r#"{"name":"Ada"}"#, "id"),
+    ] {
+        let error = doc
+            .collab_join_frame_inner("u_ada", "tab-key", 0.0, None, Some(bad))
+            .expect_err("a profile out of bounds is refused");
+        assert!(error.contains("identity-invalid"), "{error}");
+        if field != "id" {
+            assert!(
+                error.contains(field),
+                "the refusal names `{field}`: {error}"
+            );
+        }
     }
 }
 
@@ -530,6 +588,7 @@ impl Pair {
         for (index, doc) in docs.iter_mut().enumerate() {
             let (welcome, _) = server.join(
                 &ClientMessage::Join(Join {
+                    profile: None,
                     protocol: PROTOCOL_VERSION,
                     identity: Identity::new(format!("p{index}")).expect("identity"),
                     grant: None,
@@ -570,6 +629,7 @@ impl Pair {
                 .expect("ack");
             self.docs[1 - from]
                 .collab_receive_frame_inner(&encode_frame(&ServerMessage::Apply(Arrival {
+                    author: None,
                     revision,
                     client: submission.client,
                     operations: submission.operations,
@@ -831,4 +891,121 @@ fn every_collaboration_refusal_does_what_the_fixture_says() {
              what it does"
         );
     }
+}
+
+/// The first paragraph's id, as the review calls take it.
+fn first_paragraph(d: &crate::WasmDocument) -> String {
+    d.document
+        .body()
+        .iter()
+        .find_map(|block| match block {
+            casual_doc_model::v1::BlockNode::Paragraph(paragraph) => Some(paragraph.id.to_string()),
+            _ => None,
+        })
+        .expect("a paragraph")
+}
+
+/// In a room, the relay's name for this participant wins over the Settings name: what this
+/// replica authors is already what every other replica conforms it to (`docs/175` §5.2).
+#[test]
+fn in_a_room_the_relays_name_is_the_author() {
+    let mut d = document();
+    d.set_active_author("You", None, None)
+        .expect("the anonymous author");
+    let mut me = Profile::new("u_ada", "Ada Lovelace");
+    me.initials = Some("AdL".to_owned());
+    d.collab_receive_frame_inner(&encode_frame(&ServerMessage::Welcome {
+        base_revision: None,
+        missed: Vec::new(),
+        protocol: PROTOCOL_VERSION,
+        client: ClientId::new(0),
+        revision: Revision::new(0),
+        capabilities: Capabilities::owner(),
+        participants: Vec::new(),
+        participants_present: Vec::new(),
+        me: Some(me),
+    }))
+    .expect("welcomed");
+    let node = first_paragraph(&d);
+    d.add_comment(
+        &node,
+        0,
+        &node,
+        6,
+        "Mine.",
+        Some("Somebody Else".to_owned()),
+        None,
+        None,
+    )
+    .expect("a comment");
+    let comment = d
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .map(|(_, comment)| comment)
+        .next()
+        .expect("the comment");
+    assert_eq!(comment.author.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(comment.initials.as_deref(), Some("AdL"));
+}
+
+/// The roster hands the chrome everyone present with what they look like — the input
+/// `participantDisplay` was built for (`docs/175` §14) — and drops a leaver.
+#[test]
+fn the_roster_lists_everyone_present_with_their_profile() {
+    let mut roster = crate::presence::new_roster();
+    let mut ada = Profile::new("u_ada", "Ada Lovelace");
+    ada.avatar_url = Some("https://cdn.example/a.png".to_owned());
+    roster
+        .receive_frame_inner(&encode_frame(&ServerMessage::Welcome {
+            base_revision: None,
+            missed: Vec::new(),
+            protocol: PROTOCOL_VERSION,
+            client: ClientId::new(1),
+            revision: Revision::new(0),
+            capabilities: Capabilities::owner(),
+            participants: Vec::new(),
+            participants_present: vec![
+                Participant {
+                    client: ClientId::new(0),
+                    profile: Some(ada),
+                    attested: true,
+                },
+                Participant {
+                    client: ClientId::new(1),
+                    profile: Some(Profile::new("u_bob", "Bob Stone")),
+                    attested: true,
+                },
+            ],
+            me: None,
+        }))
+        .expect("welcome");
+    roster
+        .receive_frame_inner(&encode_frame(&ServerMessage::ParticipantJoined(
+            Participant {
+                client: ClientId::new(2),
+                profile: Some(Profile::new("u_x", "Ada Lovelace")),
+                attested: false,
+            },
+        )))
+        .expect("joined");
+    let rows: serde_json::Value = serde_json::from_str(&roster.participants()).expect("json");
+    let rows = rows.as_array().expect("an array");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["profile"]["name"], "Ada Lovelace");
+    assert_eq!(rows[0]["profile"]["avatarUrl"], "https://cdn.example/a.png");
+    assert_eq!(rows[0]["attested"], true);
+    assert_eq!(rows[2]["attested"], false, "a claim stays a claim");
+    let me: serde_json::Value = serde_json::from_str(&roster.me()).expect("json");
+    assert_eq!(me["client"], 1);
+    assert_eq!(me["profile"]["name"], "Bob Stone");
+
+    roster
+        .receive_frame_inner(&encode_frame(&ServerMessage::ParticipantLeft {
+            client: ClientId::new(0),
+        }))
+        .expect("left");
+    let rows: serde_json::Value = serde_json::from_str(&roster.participants()).expect("json");
+    assert_eq!(rows.as_array().map(Vec::len), Some(2));
 }

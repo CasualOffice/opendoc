@@ -75,6 +75,7 @@ fn a_chunk_round_trips_with_its_mints_and_its_declarations() {
 fn an_arrival_and_an_ordered_log_record_round_trip() {
     let submission = golden_submission();
     let arrival = Arrival {
+        author: None,
         revision: Revision::new(9),
         client: ClientId::new(3),
         operations: submission.operations.clone(),
@@ -84,6 +85,7 @@ fn an_arrival_and_an_ordered_log_record_round_trip() {
         arrival
     );
     let ordered = Ordered {
+        author: None,
         revision: Revision::new(9),
         client: ClientId::new(3),
         operations: submission.operations,

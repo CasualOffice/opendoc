@@ -113,6 +113,7 @@ impl Peer {
     fn join(document: &Document, server: &mut ServerSession, who: &str) -> Self {
         let (message, _) = server.join(
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new(who).expect("an identity"),
                 grant: None,
@@ -284,6 +285,7 @@ impl Room {
                     for (index, other) in self.peers.iter_mut().enumerate() {
                         if index != who {
                             other.inbox.push_back(Arrival {
+                                author: None,
                                 revision,
                                 client: submission.client,
                                 operations: submission.operations.clone(),

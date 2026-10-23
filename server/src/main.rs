@@ -6,6 +6,7 @@
 //! opendoc-relay create <journal>     create a room's durable log, and stop
 //! opendoc-relay inspect <journal>    replay it and report what it holds, and stop
 //! opendoc-relay serve <journal> <addr> [viewer|commenter|suggester|editor|owner]
+//! opendoc-relay serve <journal> <addr> granted <ed25519-public-key> <audience>
 //! ```
 //!
 //! # `serve` speaks WebSocket and nothing else
@@ -24,11 +25,18 @@
 //! broadcast room; `commenter` is a review link; `owner` is what an unauthenticated relay used to
 //! be, now said out loud.
 //!
-//! **This binary verifies no grants**, so it cannot tell two participants apart. A deployment
-//! that needs per-participant access implements
-//! [`GrantVerifier`](opendoc_relay::GrantVerifier) and passes
-//! [`Access::Granted`]; `143` §16 Q5 is why no signature profile
-//! is built in.
+//! A room opened with a role **cannot tell two participants apart**: names there are claims,
+//! shown marked unverified (`docs/175` §4.2).
+//!
+//! # `granted`: per-participant access and attested names
+//!
+//! `serve … granted <key> <audience>` requires every join to present a JWT the host signed with
+//! EdDSA (Ed25519), verified against `<key>` — the host's **public** key, 32 bytes in unpadded
+//! base64url, so this process can verify grants and never mint one — for `<audience>`, the
+//! room's own name. The grant's `role` claim decides what the participant may do, its `sub` must
+//! be the identity the join presents, and its `name` is what everybody else sees
+//! ([`opendoc_relay::JwtVerifier`], owner decision `docs/175` §12 Q6). A deployment with its own
+//! token format implements [`GrantVerifier`](opendoc_relay::GrantVerifier) instead.
 //!
 //! `create` is separate from `serve` on purpose: `152` records that **the host creates the
 //! room, not the first client**, and a binary that created one on first connection would be a
@@ -42,14 +50,15 @@
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
-use casual_doc_edit::access::Capabilities;
 use casual_doc_transaction::protocol::Revision;
 use opendoc_relay::{Access, Notice, Recovered, Relay, Room, accept_loop};
+use opendoc_relay::{JwtVerifier, role_capabilities};
 
 fn main() -> std::process::ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let usage = "usage: opendoc-relay create <journal> | inspect <journal> | \
-                 serve <journal> <addr> <viewer|commenter|suggester|editor|owner>";
+                 serve <journal> <addr> <viewer|commenter|suggester|editor|owner> | \
+                 serve <journal> <addr> granted <ed25519-public-key-base64url> <audience>";
     let result = match arguments
         .iter()
         .map(String::as_str)
@@ -58,6 +67,13 @@ fn main() -> std::process::ExitCode {
     {
         ["create", journal] => create(journal),
         ["inspect", journal] => inspect(journal),
+        ["serve", journal, address, "granted", key, audience] => match granted(key, audience) {
+            Some(access) => serve(journal, address, access),
+            None => {
+                eprintln!("opendoc-relay: the public key is not 32 bytes of unpadded base64url");
+                return std::process::ExitCode::from(2);
+            }
+        },
         ["serve", journal, address, role] => match open_room_role(role) {
             Some(access) => serve(journal, address, access),
             None => {
@@ -112,15 +128,18 @@ fn report(recovered: &Recovered) {
 /// between understood roles, and a host that needs an unusual set has
 /// [`Access`] and the library.
 fn open_room_role(role: &str) -> Option<Access> {
-    let capabilities = match role {
-        "viewer" => Capabilities::viewer(),
-        "commenter" => Capabilities::commenter(),
-        "suggester" => Capabilities::suggester(),
-        "editor" => Capabilities::editor(),
-        "owner" => Capabilities::owner(),
-        _ => return None,
-    };
-    Some(Access::Open(capabilities))
+    role_capabilities(role).map(Access::Open)
+}
+
+/// A room requiring a host-signed JWT, verified against the host's public key.
+fn granted(key: &str, audience: &str) -> Option<Access> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(key)
+        .ok()?;
+    let key: [u8; 32] = bytes.try_into().ok()?;
+    let verifier = JwtVerifier::new(&key, audience).ok()?;
+    Some(Access::Granted(Box::new(verifier)))
 }
 
 fn serve(journal: &str, address: &str, access: Access) -> Result<(), Box<dyn core::error::Error>> {

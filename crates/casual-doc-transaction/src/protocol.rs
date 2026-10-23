@@ -97,7 +97,15 @@ use crate::wire::WireOperation;
 /// disagreement version 2 existed for. A loud refusal is not a protocol break.
 /// - **6** — fresh Welcome carries its snapshot base and required missed history.
 ///   An older peer could decode but skip that history, silently opening a stale replica.
-pub const PROTOCOL_VERSION: u32 = 6;
+/// - **7** — identity (`docs/175`, ADR-070). [`ServerMessage::ParticipantJoined`] and
+///   [`ServerMessage::ParticipantLeft`] are **new enum variants**, the same hard break versions
+///   3, 4 and 5 were. The added optional fields riding it ([`Join::profile`],
+///   [`Arrival::author`], `participants_present` and `me`) would not have earned a bump alone,
+///   but one of them changes what a peer *does*: a version-6 replica would apply an arrival
+///   without conforming its authorship to [`Arrival::author`], so the same ordered chunk would
+///   leave its comments under a different name on an old screen than on a new one. That is a
+///   silent disagreement about a derived value, which is what the equality check is for.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
 ///
@@ -308,6 +316,213 @@ impl Identity {
     }
 }
 
+/// The most bytes a [`Profile`] may take, encoded (`docs/175` §4.4).
+///
+/// A name of at most 255 bytes, initials, a colour and an avatar URL of at most 1,024 bytes fit
+/// with room to spare. A profile is fanned out to every participant on every join, so the bound
+/// is what keeps a room's `Welcome` below 256 KiB at [`MAX_PARTICIPANTS`](crate::presence::MAX_PARTICIPANTS).
+pub const MAX_PROFILE_BYTES: usize = 2 * 1024;
+/// The longest [`Profile::id`], in bytes.
+pub const MAX_PROFILE_ID_BYTES: usize = 128;
+/// The longest [`Profile::name`], in bytes — the `w:author` bound the model already enforces.
+pub const MAX_PROFILE_NAME_BYTES: usize = 255;
+/// The most extended grapheme clusters [`Profile::initials`] may hold.
+pub const MAX_PROFILE_INITIALS: usize = 8;
+/// The longest [`Profile::avatar_url`], in bytes.
+pub const MAX_AVATAR_URL_BYTES: usize = 1024;
+
+/// What a participant looks like to everyone else: the wire subset of the host identity
+/// (`docs/175` §3, §4.1).
+///
+/// # Who may say it
+///
+/// In a room that requires a grant, **only the grant**: the relay takes the profile out of the
+/// token it verified and ignores whatever the client sent. In an open room the client may
+/// *claim* one, and the relay fans it out marked unverified, with the colour and the avatar
+/// dropped ([`Profile::claimed`]), so a claimant cannot borrow somebody else's colour or aim a
+/// tracking pixel at every other participant.
+///
+/// # What it never carries
+///
+/// The host's `persist` pair (`people.xml`'s provider and user id). That is file data and
+/// stays in the participant's own editor; nobody on the wire needs it (`docs/175` §8.2).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Profile {
+    /// The host's opaque, pseudonymous id for the person: never shown, never an e-mail address.
+    pub id: String,
+    /// The display name, exactly as the host gave it.
+    pub name: String,
+    /// Initials for a comment and an avatar chip. Absent means "derive from the name".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initials: Option<String>,
+    /// `#rrggbb`. Honoured only when attested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// `https:` or a small `data:image/…` URL. Never fetched without the mount's consent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+}
+
+/// Which [`Profile`] field broke its bound — named, because a bound is a refusal and not a
+/// truncation, and the host fixes the field it is told about (`identity-invalid`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProfileField {
+    /// [`Profile::id`].
+    Id,
+    /// [`Profile::name`].
+    Name,
+    /// [`Profile::initials`].
+    Initials,
+    /// [`Profile::color`].
+    Color,
+    /// [`Profile::avatar_url`].
+    AvatarUrl,
+    /// The whole profile, over [`MAX_PROFILE_BYTES`].
+    Size,
+}
+
+impl ProfileField {
+    /// The field's name as the host contract spells it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Name => "name",
+            Self::Initials => "initials",
+            Self::Color => "color",
+            Self::AvatarUrl => "avatar.url",
+            Self::Size => "identity",
+        }
+    }
+}
+
+impl Profile {
+    /// A profile with only the two required fields.
+    #[must_use]
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            initials: None,
+            color: None,
+            avatar_url: None,
+        }
+    }
+
+    /// Checks every bound in `docs/175` §3 and §4.4.
+    ///
+    /// # Errors
+    ///
+    /// The first field out of bounds. O(the profile's bytes).
+    pub fn check(&self) -> Result<(), ProfileField> {
+        if self.id.is_empty() || self.id.len() > MAX_PROFILE_ID_BYTES {
+            return Err(ProfileField::Id);
+        }
+        if self.name.trim().is_empty() || self.name.len() > MAX_PROFILE_NAME_BYTES {
+            return Err(ProfileField::Name);
+        }
+        if let Some(initials) = &self.initials {
+            let count =
+                unicode_segmentation::UnicodeSegmentation::graphemes(initials.as_str(), true)
+                    .count();
+            if initials.trim().is_empty() || count > MAX_PROFILE_INITIALS {
+                return Err(ProfileField::Initials);
+            }
+        }
+        if let Some(color) = &self.color {
+            let hex = color.strip_prefix('#').unwrap_or("");
+            if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(ProfileField::Color);
+            }
+        }
+        if let Some(url) = &self.avatar_url
+            && !avatar_url_allowed(url)
+        {
+            return Err(ProfileField::AvatarUrl);
+        }
+        // The fields are each bounded above; the sum is checked too, so a future field cannot
+        // quietly lift the whole past what a `Welcome` was sized for.
+        let encoded = self.id.len()
+            + self.name.len()
+            + self.initials.as_ref().map_or(0, String::len)
+            + self.color.as_ref().map_or(0, String::len)
+            + self.avatar_url.as_ref().map_or(0, String::len);
+        if encoded > MAX_PROFILE_BYTES {
+            return Err(ProfileField::Size);
+        }
+        Ok(())
+    }
+
+    /// This profile as an open room may fan it out: the name kept, the colour and the avatar
+    /// dropped (`docs/175` §4.2). The relay's palette colours a claimant, and a claimed avatar
+    /// is a tracking pixel aimed at every other participant, whatever the mount consented to.
+    #[must_use]
+    pub fn claimed(mut self) -> Self {
+        self.color = None;
+        self.avatar_url = None;
+        self
+    }
+
+    /// This profile as the author stamp an arrival carries and a journal keeps: everything but
+    /// the avatar URL, which stays in the relay's memory only (`docs/175` §4.5).
+    #[must_use]
+    pub fn stamp(&self) -> Self {
+        Self {
+            avatar_url: None,
+            ..self.clone()
+        }
+    }
+
+    /// The initials to write on a comment: the given ones, else derived from the name exactly
+    /// as the editor's own active author derives them, so an honest replica and a conforming
+    /// one agree byte for byte.
+    #[must_use]
+    pub fn initials_or_derived(&self) -> String {
+        self.initials
+            .as_deref()
+            .map(str::trim)
+            .filter(|initials| !initials.is_empty())
+            .map_or_else(
+                || casual_doc_edit::authorship::derive_initials(&self.name),
+                str::to_owned,
+            )
+    }
+}
+
+/// `https:` of at most [`MAX_AVATAR_URL_BYTES`], with no credentials in it; or a
+/// `data:image/{png,jpeg,webp}` URL of at most the same length, which fetches nothing.
+fn avatar_url_allowed(url: &str) -> bool {
+    if url.len() > MAX_AVATAR_URL_BYTES || url.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if let Some(rest) = url.strip_prefix("https://") {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        return !authority.is_empty() && !authority.contains('@');
+    }
+    ["data:image/png", "data:image/jpeg", "data:image/webp"]
+        .iter()
+        .any(|prefix| {
+            url.strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with(';') || rest.starts_with(','))
+        })
+}
+
+/// One participant present in a room, as everybody in it is told (`docs/175` §4.3).
+///
+/// **Who is present is not policy**, so unlike [`Member`] this goes to everyone.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Participant {
+    /// The relay's participant number.
+    pub client: ClientId,
+    /// What they look like, when anybody said. `None` is a participant nobody named, who is
+    /// shown as "Participant N" — the honest label, not a defect (`docs/175` §10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<Profile>,
+    /// Whether the host vouched for the profile through a verified grant. `false` is a claim,
+    /// shown marked unverified.
+    pub attested: bool,
+}
+
 /// What a submission was written against.
 ///
 /// **A sender does not need to know the receiver's position.** The first chunk after a join
@@ -355,6 +570,13 @@ pub struct Join {
     /// rather than inferred from a missing key.
     #[serde(default)]
     pub grant: Option<GrantToken>,
+    /// What this participant **claims** to look like (`docs/175` §4.2).
+    ///
+    /// Read only in a room open to anyone, where it is fanned out marked unverified with its
+    /// colour and avatar dropped. In a room that requires a grant it is **ignored**: the profile
+    /// everyone sees is the one inside the grant the host signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<Profile>,
     /// The key this client will be recognised by, and the position it has reached.
     ///
     /// **Presented on every join, including the first**, and that is not a precaution: a key is
@@ -460,6 +682,16 @@ pub struct Arrival {
     pub client: ClientId,
     /// The operations, in application order.
     pub operations: Vec<WireOperation>,
+    /// Who the order says wrote it — **attached by the relay**, from the profile it verified
+    /// (or, in an open room, the one the participant claimed), never stated by the sender
+    /// (`docs/175` §5.2). [`Submission`] has no such field, so claiming another author is
+    /// unexpressible, which is the `Awareness` argument applied to edits.
+    ///
+    /// Every replica conforms the comments and tracked changes the arrival introduces to this
+    /// stamp (`casual_doc_edit::authorship::conform`). `None` is an arrival nobody named, which
+    /// is conformed to nothing and keeps what it carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<Profile>,
 }
 
 /// Server to client.
@@ -500,6 +732,16 @@ pub enum ServerMessage {
         /// empty list and the relay, which owns the sockets, fills it.
         #[serde(default)]
         participants: Vec<Member>,
+        /// Everybody present in the room, this participant included, with what they look like
+        /// — for **everyone**, because who is here is not policy (`docs/175` §4.3). Filled by
+        /// the relay, which owns the connections, for the reason `participants` is.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        participants_present: Vec<Participant>,
+        /// The profile the relay will attach to this participant's own arrivals. The client
+        /// authors its optimistic comments and changes under exactly this, so its state equals
+        /// what everybody else computes and nothing rolls back (`docs/175` §5.2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        me: Option<Profile>,
     },
     /// A recognised reconnect, sent **instead of** [`ServerMessage::Welcome`].
     ///
@@ -527,6 +769,13 @@ pub enum ServerMessage {
         /// [`ServerMessage::Welcome`]'s — re-derived now, not restored.
         #[serde(default)]
         participants: Vec<Member>,
+        /// See [`ServerMessage::Welcome`]'s field of the same name.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        participants_present: Vec<Participant>,
+        /// See [`ServerMessage::Welcome`]'s field of the same name — re-derived from the grant
+        /// presented on this reconnect.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        me: Option<Profile>,
     },
     /// Cumulative acknowledgement: every seq up to and including `through` is ordered.
     ///
@@ -584,6 +833,20 @@ pub enum ServerMessage {
     /// caret, because the reader believes somebody is there — ONLYOFFICE calls
     /// `Remove_ForeignCursor` on exactly this transition.
     Departed {
+        /// Who left.
+        client: ClientId,
+    },
+    /// Somebody joined the room, with what they look like — sent to everybody already in it.
+    ///
+    /// Snapshot then deltas: the full list arrives on [`ServerMessage::Welcome`], then one of
+    /// these per arrival, so a join costs one bounded frame per participant rather than the
+    /// whole list again (`docs/175` §4.3).
+    ParticipantJoined(Participant),
+    /// Somebody left the room, however the connection ended.
+    ///
+    /// Separate from [`ServerMessage::Departed`], which forgets a *caret* and is sent only for a
+    /// participant who had one: somebody who never moved their caret still left.
+    ParticipantLeft {
         /// Who left.
         client: ClientId,
     },

@@ -119,6 +119,7 @@ fn with_access(
                 None,
                 &mut writer,
                 &ClientMessage::Join(Join {
+                    profile: None,
                     protocol: PROTOCOL_VERSION,
                     identity: Identity::new(format!("who-{which}")).expect("an identity"),
                     grant: None,
@@ -180,7 +181,26 @@ fn review_chunk(client: ClientId, seq: u64, base: Base) -> Submission {
 }
 
 /// Every `ServerMessage` a participant received, decoded.
+/// Everything `client` has been sent, **except** who-is-here membership frames.
+///
+/// Since ADR-070 every join and leave is announced to everybody else (`ParticipantJoined`,
+/// `ParticipantLeft`), so a fixture that seats three participants has already written two of
+/// them to its first. The guards that use this are about edits, presence and access; the
+/// membership frames have guards of their own, which read [`received_all`].
 fn received(relay: &mut Relay<Sink>, client: ClientId) -> Vec<ServerMessage> {
+    received_all(relay, client)
+        .into_iter()
+        .filter(|message| {
+            !matches!(
+                message,
+                ServerMessage::ParticipantJoined(_) | ServerMessage::ParticipantLeft { .. }
+            )
+        })
+        .collect()
+}
+
+/// Every frame `client` has been sent, membership included.
+fn received_all(relay: &mut Relay<Sink>, client: ClientId) -> Vec<ServerMessage> {
     let sink = relay
         .participants_mut()
         .take(client)
@@ -442,13 +462,32 @@ struct OneToken {
 }
 
 impl crate::GrantVerifier for OneToken {
-    fn verify(&self, token: &GrantToken) -> Result<Capabilities, crate::GrantRefusal> {
-        if token.as_bytes() == self.expected.as_slice() {
-            Ok(self.grants)
-        } else {
-            Err(crate::GrantRefusal::Invalid)
+    /// Honours `expected#subject`: the secret part must match, and the part after `#` is whom
+    /// the grant is for — a verifier must say that since ADR-070, or the relay cannot refuse a
+    /// grant presented under somebody else's identity.
+    fn verify(&self, token: &GrantToken) -> Result<crate::Verified, crate::GrantRefusal> {
+        let bytes = token.as_bytes();
+        let split = bytes
+            .iter()
+            .position(|byte| *byte == b'#')
+            .ok_or(crate::GrantRefusal::Invalid)?;
+        if &bytes[..split] != self.expected.as_slice() {
+            return Err(crate::GrantRefusal::Invalid);
         }
+        let subject = core::str::from_utf8(&bytes[split + 1..])
+            .ok()
+            .and_then(Identity::new)
+            .ok_or(crate::GrantRefusal::Invalid)?;
+        Ok(crate::Verified::new(self.grants, subject))
     }
+}
+
+/// `token`, issued to `who` in [`OneToken`]'s encoding.
+fn issued(token: &GrantToken, who: &str) -> GrantToken {
+    let mut bytes = token.as_bytes().to_vec();
+    bytes.push(b'#');
+    bytes.extend_from_slice(who.as_bytes());
+    GrantToken::new(bytes).expect("a token")
 }
 
 /// Joins `relay` presenting `grant`, returning the answer and the assigned id.
@@ -463,6 +502,7 @@ fn join_with(
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new(who).expect("an identity"),
                 grant,
@@ -765,7 +805,7 @@ fn a_room_that_requires_a_grant_admits_nobody_without_one() {
 
     // The real token is admitted, with exactly the capabilities the verifier returned — and NOT
     // more. A guard that only checked the refusals would pass on a relay that refuses everyone.
-    let (answer, joined) = join_with(&mut relay, "ada", Some(token));
+    let (answer, joined) = join_with(&mut relay, "ada", Some(issued(&token, "ada")));
     let ServerMessage::Welcome { capabilities, .. } = answer else {
         panic!("the real token must be admitted, got {answer:?}");
     };
@@ -834,6 +874,7 @@ fn a_departed_participants_number_is_never_handed_to_anybody_else() {
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("grace").expect("an identity"),
                 grant: None,
@@ -900,6 +941,7 @@ fn a_narrowed_grant_on_rejoin_beats_the_one_the_journal_remembers() {
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("ada").expect("an identity"),
                 grant: None,
@@ -943,6 +985,7 @@ fn a_narrowed_grant_on_rejoin_beats_the_one_the_journal_remembers() {
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("ada").expect("an identity"),
                 grant: None,
@@ -1019,6 +1062,7 @@ fn a_room_refuses_the_participant_past_its_ceiling_by_name() {
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("one-too-many").expect("an identity"),
                 grant: None,
@@ -1087,8 +1131,8 @@ fn a_room_refuses_the_participant_past_its_ceiling_by_name() {
         })),
     );
     for which in 0..MAX_PARTICIPANTS {
-        let (answer, joined) =
-            join_with(&mut granted, &format!("held-{which}"), Some(token.clone()));
+        let who = format!("held-{which}");
+        let (answer, joined) = join_with(&mut granted, &who, Some(issued(&token, &who)));
         assert!(
             joined.is_some(),
             "the granted room must fill up too, or the ordering below is untested: {answer:?}"
@@ -1105,7 +1149,11 @@ fn a_room_refuses_the_participant_past_its_ceiling_by_name() {
     assert!(joined.is_none());
     // The same room, a real grant: now the ceiling is the answer, which is what makes the
     // ordering above an ordering rather than a room that refuses every join.
-    let (answer, joined) = join_with(&mut granted, "with-a-grant", Some(token));
+    let (answer, joined) = join_with(
+        &mut granted,
+        "with-a-grant",
+        Some(issued(&token, "with-a-grant")),
+    );
     assert_eq!(
         answer,
         ServerMessage::Stopped {
@@ -1305,12 +1353,19 @@ struct PerToken {
 }
 
 impl crate::GrantVerifier for PerToken {
-    fn verify(&self, token: &GrantToken) -> Result<Capabilities, crate::GrantRefusal> {
-        self.grants
+    /// The token's bytes are its subject as well as its key ([`token_for`]).
+    fn verify(&self, token: &GrantToken) -> Result<crate::Verified, crate::GrantRefusal> {
+        let grants = self
+            .grants
             .iter()
             .find(|(bytes, _)| bytes.as_slice() == token.as_bytes())
             .map(|(_, grants)| *grants)
-            .ok_or(crate::GrantRefusal::Invalid)
+            .ok_or(crate::GrantRefusal::Invalid)?;
+        let subject = core::str::from_utf8(token.as_bytes())
+            .ok()
+            .and_then(Identity::new)
+            .ok_or(crate::GrantRefusal::Invalid)?;
+        Ok(crate::Verified::new(grants, subject))
     }
 }
 
@@ -1677,6 +1732,7 @@ fn a_resuming_participant_is_not_in_its_own_membership_list() {
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("grace").expect("an identity"),
                 grant: Some(token_for("grace")),
@@ -1697,6 +1753,7 @@ fn a_resuming_participant_is_not_in_its_own_membership_list() {
             None,
             &mut writer,
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("grace").expect("an identity"),
                 grant: Some(token_for("grace")),
