@@ -43,7 +43,7 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | ✅ | Shape/picture rotation | `a:xfrm@rot` | common | M | `rotation` → `crates/casual-doc-render/src/lib.rs`#`fn object_transform` |
 | ✅ | Line dash + arrowheads *(partial)* | `a:prstDash`,`a:headEnd/tailEnd` | common | M | `DashStyle` → `crates/casual-doc-render/src/lib.rs`#`fn dash_pattern` |
 | ✅ | Doc-default footnote/endnote props | `w:settings/w:footnotePr` | common | M | `footnote_props` → `crates/casual-doc-layout/src/note_numbering.rs`#`fn resolve_props` |
-| ✅ | Paragraph-mark revision | `pPr/rPr/w:ins\|w:del` | common | M | `mark_revision` → `crates/casual-doc-wasm/src/lib.rs`#`fn decide_paragraph_revision` |
+| ✅ | Paragraph-mark revision | `pPr/rPr/w:ins\|w:del` | common | M | `mark_revision` → `crates/casual-doc-review/src/lower.rs`#`fn decide_paragraph_revision` |
 | ✅ | Shading theme fill *(partial)* | `w:shd@themeFill/…` | common | M | `theme_fill` → `crates/casual-doc-layout/src/flow.rs`#`fn shading_rgba` |
 | ✅ | Math n-ary / matrix / eqArr | `m:nary`,`m:m`,`m:eqArr` | common | M | `MathExpression::Nary` → `crates/casual-doc-layout/src/flow.rs`#`fn layout_math_expression` |
 
