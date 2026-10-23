@@ -56,19 +56,28 @@ Sizes are `wc -l` at the commit that last touched the row.
 | Module | Factory | Domain | Lines |
 |---|---|---|---|
 | `editor_caret_nav.mjs` | `createCaretNav` | Caret navigation: the vertical goal column and `navCaret` | 90 |
+| `editor_clipboard.mjs` | `createClipboard` | Cut, paste (plain, rich, tracked, HTML), Paste as text, Paste options | 525 |
 | `editor_dialogs.mjs` | `createDialogs` | Shortcuts reference, About, bookmarks, Insert field / picture, captions and cross-references, Symbol / Emoji | 470 |
 | `editor_dirty.mjs` | `createDirtyTracking` | Unsaved-work tracking: saved and current revisions, the dirty answer | 134 |
 | `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
 | `editor_edit_pipeline.mjs` | `createEditPipeline` | The edit choke point: `runEdit`, `applyEditResult`, typing sessions, mode gates | 202 |
 | `editor_file_open.mjs` | `createFileOpen` | Boot, demo presets, a blank document, `openBytes`, and the header rename | 420 |
+| `editor_file_pick.mjs` | `createFilePick` | Opening a picked or dropped file: size ceiling and handleFile | 67 |
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
+| `editor_keyboard.mjs` | `createKeyboard` | The editor keydown dispatch | 538 |
 | `editor_link_dialog.mjs` | `createLinkDialog` | Insert / edit link dialog | 218 |
 | `editor_palette.mjs` | `createPalette` | Command palette and `editorCommands()`, the registry of editor actions | 652 |
 | `editor_palette_ui.mjs` | `createPaletteUi` | The palette's surface: filtered list, row selection, run by row or id, its keyboard | 222 |
+| `editor_review_decisions.mjs` | `createReviewDecisions` | Review decisions: inline accept/reject card, Next/Previous over comments and changes, decisions at the caret | 539 |
+| `editor_save.mjs` | `createSave` | Save and export | 53 |
+| `editor_selection_commands.mjs` | `createSelectionCommands` | Caret to a position, Page Up / Page Down, Select all | 97 |
+| `editor_selection_toolbar.mjs` | `createSelectionToolbar` | The floating selection toolbar | 73 |
 | `editor_settings.mjs` | `createSettings` | Settings dialog: theme, accent, reviewer identity, autosave and proofing switches; localisation start | 205 |
+| `editor_text_input.mjs` | `createTextInput` | Soft keyboards and dictation; AutoCorrect as you type | 110 |
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
+| `editor_zoom.mjs` | `createZoom` | Zoom: editable %, Fit width / Fit page, Ctrl+scroll (setZoom stays in main.js) | 120 |
 
-`main.js`: 16,030 lines when the split began, 12,795 now. The domain modules hold 3,719.
+`main.js`: 16,030 lines when the split began, 10,867 now. The domain modules hold 5,841.
 
 ## 4. What is left for HF-109
 

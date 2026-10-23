@@ -25,7 +25,7 @@ import {
   fetchSharedFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
+import { embedMarker, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
 import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
@@ -42,7 +42,6 @@ import {
   ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
-import { handleCropKey, objectNudge } from "./object_keys.mjs";
 import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
 import { createKeyboardObjectMove, createObjectTextDrag } from "./object_text_move.mjs";
 import { edgeScrollStep } from "./edge_scroll.mjs";
@@ -59,8 +58,7 @@ import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, 
 import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
-import { downloadBytes } from "./save_formats.mjs";
-import { createCompatibilityFindings, findingTotals } from "./compat_findings.mjs";
+import { createCompatibilityFindings } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
@@ -78,10 +76,9 @@ import {
   scrollToDoc,
 } from "./page_scroll.mjs";
 import {
-  downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
-import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, wordDeletionDirection } from "./keyboard.mjs";
+import { formatShortcut, keyboardPlatform } from "./keyboard.mjs";
 import { chordTitle, shortcutForCommand } from "./keymap.mjs";
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import {
@@ -122,7 +119,7 @@ import { bindRadioGroup } from "./radio_group.mjs";
 import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./popover_manager.mjs";
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
-import { createViewZoom, fitPageIndex, fitZoomFactor, nextZoomStep, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
+import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
@@ -137,11 +134,10 @@ import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
-import { createAutoCorrect } from "./autocorrect.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { orderedSelectionEnds, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
+import { orderedSelectionEnds, sameModelPosition } from "./caret_navigation.mjs";
 import {
   reviewCardSignature,
   reviewCommentIsReplyTo,
@@ -155,7 +151,6 @@ import { makeMenuHeading, makeSwatchCell, makeSwatchGrid, makeUnderlineStyleOpti
 import {
   formatReviewDate,
   reviewAuthorColor,
-  reviewAuthorDisplay,
   reviewAuthorKey,
   reviewCardAriaLabel,
   reviewChangeTypeLabel,
@@ -165,7 +160,6 @@ import {
 } from "./review_labels.mjs";
 import {
   recaseRichRuns,
-  smartQuoteForTyped,
 } from "./text_rules.mjs";
 import {
   EMU_PER_TWIP,
@@ -194,7 +188,6 @@ import {
   renderExportPane,
   renderFilePageInfo,
 } from "./command_menu.mjs";
-import { reviewCurrentTargetIndex } from "./review_target.mjs";
 import {
   fileCategoryRowFor,
   showSettingsPane,
@@ -215,7 +208,6 @@ import {
   templateThumbnail,
 } from "./blank_document.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
-import { externalPasteLossMessage, pasteLossMessage, structureFamilies } from "./paste_loss.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
@@ -224,7 +216,7 @@ import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs
 import { createReflowChrome } from "./reflow_chrome.mjs";
 import { createFoldChrome } from "./fold_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
-import { createFontAdvanced, typeArmedCharacter } from "./font_advanced.mjs";
+import { createFontAdvanced } from "./font_advanced.mjs";
 import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
@@ -237,7 +229,6 @@ import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs
 import { BRAND } from "./brand.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
-import { cellContentsSelection } from "./table_tab.mjs";
 import { createFind } from "./editor_find.mjs";
 import { createDrafts } from "./editor_drafts.mjs";
 import { createVersions } from "./editor_versions.mjs";
@@ -250,12 +241,22 @@ import { createFileOpen } from "./editor_file_open.mjs";
 import { createDirtyTracking } from "./editor_dirty.mjs";
 import { createEditPipeline } from "./editor_edit_pipeline.mjs";
 import { createCaretNav } from "./editor_caret_nav.mjs";
+import { createReviewDecisions } from "./editor_review_decisions.mjs";
+import { createSelectionToolbar } from "./editor_selection_toolbar.mjs";
+import { createSave } from "./editor_save.mjs";
+import { createSelectionCommands } from "./editor_selection_commands.mjs";
+import { createClipboard } from "./editor_clipboard.mjs";
+import { createZoom } from "./editor_zoom.mjs";
+import { createTextInput } from "./editor_text_input.mjs";
+import { createKeyboard } from "./editor_keyboard.mjs";
+import { createFilePick } from "./editor_file_pick.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
  *  module sees the value at call time exactly as the code did before it moved. */
 const ed = {
   get AUTOSAVE_ALLOWED_HERE() { return AUTOSAVE_ALLOWED_HERE; },
+  get BASE_DPI() { return BASE_DPI; },
   get EDITOR_KEYBOARD_PLATFORM() { return EDITOR_KEYBOARD_PLATFORM; },
   get HOST_CAPS() { return HOST_CAPS; },
   get HOST_CHROME() { return HOST_CHROME; },
@@ -263,17 +264,22 @@ const ed = {
   get LAYOUT_SURFACE() { return LAYOUT_SURFACE; },
   get NO_TABLE_STYLE() { return NO_TABLE_STYLE; },
   get REFERENCE_SURFACE() { return REFERENCE_SURFACE; },
+  get REVIEW_TEXTLESS_KINDS() { return REVIEW_TEXTLESS_KINDS; },
   get SESSION() { return SESSION; },
   get SETTINGS_SURFACE() { return SETTINGS_SURFACE; },
   get TYPING_PAUSE_MS() { return TYPING_PAUSE_MS; },
   get UNDERLINE_STYLE_LABELS() { return UNDERLINE_STYLE_LABELS; },
+  get ZOOM_MAX() { return ZOOM_MAX; },
+  get ZOOM_MIN() { return ZOOM_MIN; },
   get accessChrome() { return accessChrome; },
   get activatingRestore() { return activatingRestore; }, set activatingRestore(v) { activatingRestore = v; },
+  get activeLink() { return activeLink; },
   get activeReviewCommentId() { return activeReviewCommentId; }, set activeReviewCommentId(v) { activeReviewCommentId = v; },
   get activeReviewItemId() { return activeReviewItemId; }, set activeReviewItemId(v) { activeReviewItemId = v; },
   get adjustIndentCommand() { return adjustIndentCommand; },
   get adoptDraftDocument() { return adoptDraftDocument; },
   get anchorAt() { return anchorAt; },
+  get announceReview() { return announceReview; },
   get applyActiveAuthorToDocument() { return applyActiveAuthorToDocument; },
   get applyChangeCase() { return applyChangeCase; },
   get applyEditResult() { return applyEditResult; },
@@ -295,12 +301,14 @@ const ed = {
   get buildOutline() { return buildOutline; },
   get bulletGalleryMenu() { return bulletGalleryMenu; },
   get cancelCrop() { return cancelCrop; },
+  get cancelObjectMove() { return cancelObjectMove; },
   get caretIsImplicit() { return caretIsImplicit; },
   get clearAllDrafts() { return clearAllDrafts; },
   get clearFindParagraphCache() { return clearFindParagraphCache; },
   get clearFormattingBtn() { return clearFormattingBtn; },
   get clearObjectStatus() { return clearObjectStatus; },
   get clientPointEvent() { return clientPointEvent; },
+  get climbOutOfGroup() { return climbOutOfGroup; },
   get closeAppMenu() { return closeAppMenu; },
   get closeFilePage() { return closeFilePage; },
   get cmdInput() { return cmdInput; },
@@ -310,15 +318,18 @@ const ed = {
   get collabFeatureCommands() { return collabFeatureCommands; },
   get commentEdit() { return commentEdit; },
   get commentQuotes() { return commentQuotes; },
+  get commitComposedText() { return commitComposedText; },
   get compactToolbarUi() { return compactToolbarUi; },
   get comparePanel() { return comparePanel; },
   get compatFindings() { return compatFindings; },
+  get composingText() { return composingText; }, set composingText(v) { composingText = v; },
   get computeFitZoom() { return computeFitZoom; },
   get confirmDiscardIfEdited() { return confirmDiscardIfEdited; },
   get confirmModal() { return confirmModal; },
   get contextAt() { return contextAt; },
   get copySelection() { return copySelection; },
   get createStyleFromSelection() { return createStyleFromSelection; },
+  get cropKeyIo() { return cropKeyIo; },
   get currentName() { return currentName; }, set currentName(v) { currentName = v; },
   get currentParagraphStyleName() { return currentParagraphStyleName; },
   get currentRevision() { return currentRevision; }, set currentRevision(v) { currentRevision = v; },
@@ -326,8 +337,10 @@ const ed = {
   get cut() { return cut; },
   get cycleReviewMode() { return cycleReviewMode; },
   get decideAllReviewChanges() { return decideAllReviewChanges; },
+  get decideContextRevision() { return decideContextRevision; },
   get decideReviewAndAdvance() { return decideReviewAndAdvance; },
   get decideReviewAtCaret() { return decideReviewAtCaret; },
+  get deleteSelectedObject() { return deleteSelectedObject; },
   get discardOwnDraft() { return discardOwnDraft; },
   get doc() { return doc; }, set doc(v) { doc = v; },
   get docTitleEl() { return docTitleEl; },
@@ -346,9 +359,12 @@ const ed = {
   get editSelectionLink() { return editSelectionLink; },
   get editorCommands() { return editorCommands; },
   get editorSurfaceHasFocus() { return editorSurfaceHasFocus; },
+  get editorTextInputEl() { return editorTextInputEl; },
+  get editorTextInputEvent() { return editorTextInputEvent; },
   get ensureGlyphCoverage() { return ensureGlyphCoverage; },
   get enterObjectEditMode() { return enterObjectEditMode; },
   get eventTargetsEditor() { return eventTargetsEditor; },
+  get exitRunningEdit() { return exitRunningEdit; },
   get exportDocumentAs() { return exportDocumentAs; },
   get fileEl() { return fileEl; },
   get focusEditorSurface() { return focusEditorSurface; },
@@ -361,8 +377,10 @@ const ed = {
   get formattingMarks() { return formattingMarks; },
   get grammarCheckToggle() { return grammarCheckToggle; },
   get handOverDraftBeforeOpen() { return handOverDraftBeforeOpen; },
+  get handleFile() { return handleFile; },
   get hasRange() { return hasRange; },
   get headerFooterSettings() { return headerFooterSettings; },
+  get hideImePreedit() { return hideImePreedit; },
   get hideLinkChip() { return hideLinkChip; },
   get hidePasteOptions() { return hidePasteOptions; },
   get highlightPopover() { return highlightPopover; },
@@ -371,29 +389,39 @@ const ed = {
   get insertChartWithData() { return insertChartWithData; },
   get insertCommandEnabled() { return insertCommandEnabled; },
   get insertFieldAtCaret() { return insertFieldAtCaret; },
+  get insertImageFromBlob() { return insertImageFromBlob; },
   get insertImageFromFile() { return insertImageFromFile; },
   get insertLineBreakAtSelection() { return insertLineBreakAtSelection; },
   get insertNote() { return insertNote; },
   get insertTableBtn() { return insertTableBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
+  get keyboardObjectMove() { return keyboardObjectMove; },
   get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
   get leaveSharedDocument() { return leaveSharedDocument; },
   get listAdvanced() { return listAdvanced; },
   get loadSharedStartup() { return loadSharedStartup; },
+  get markDocumentSaved() { return markDocumentSaved; },
   get measurement() { return measurement; },
+  get navByViewport() { return navByViewport; },
+  get navCaret() { return navCaret; },
   get navToPosition() { return navToPosition; },
   get navigateReview() { return navigateReview; },
   get newBlankDocument() { return newBlankDocument; },
   get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
+  get nudgeSelectedObject() { return nudgeSelectedObject; },
   get numberGalleryMenu() { return numberGalleryMenu; },
   get objectCapabilities() { return objectCapabilities; },
   get objectContextMenuHost() { return objectContextMenuHost; },
   get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
+  get objectMoveDrag() { return objectMoveDrag; },
   get objectPresence() { return objectPresence; },
+  get objectResize() { return objectResize; },
+  get objectRotate() { return objectRotate; },
   get objectSelection() { return objectSelection; }, set objectSelection(v) { objectSelection = v; },
+  get objectTextDrag() { return objectTextDrag; },
   get openBookmarkManager() { return openBookmarkManager; },
   get openBtn() { return openBtn; },
   get openBytes() { return openBytes; },
@@ -410,6 +438,7 @@ const ed = {
   get pagesEl() { return pagesEl; },
   get pagesPanelView() { return pagesPanelView; },
   get paintOverlayLayer() { return paintOverlayLayer; },
+  get paintPagesInView() { return paintPagesInView; },
   get paragraphAdvanced() { return paragraphAdvanced; },
   get paste() { return paste; },
   get pasteAsText() { return pasteAsText; },
@@ -422,14 +451,17 @@ const ed = {
   get pointerHover() { return pointerHover; },
   get populateStyles() { return populateStyles; },
   get populateTableStyles() { return populateTableStyles; },
+  get positionEditorTextInput() { return positionEditorTextInput; },
   get proofing() { return proofing; },
   get propertiesUi() { return propertiesUi; },
   get provisionFonts() { return provisionFonts; },
   get queueDraftWork() { return queueDraftWork; },
   get railOutline() { return railOutline; },
   get railPages() { return railPages; },
+  get railReview() { return railReview; },
   get readOnlyReason() { return readOnlyReason; }, set readOnlyReason(v) { readOnlyReason = v; },
   get readReviewData() { return readReviewData; },
+  get reanchorPageOverlays() { return reanchorPageOverlays; },
   get redlineOf() { return redlineOf; },
   get referenceCommands() { return referenceCommands; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
@@ -442,31 +474,49 @@ const ed = {
   get repaintPage() { return repaintPage; },
   get resetDirtyTracking() { return resetDirtyTracking; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
+  get reviewAcceptAll() { return reviewAcceptAll; },
+  get reviewBtn() { return reviewBtn; },
   get reviewCardCache() { return reviewCardCache; },
+  get reviewClose() { return reviewClose; },
   get reviewCommentActions() { return reviewCommentActions; },
   get reviewComposerState() { return reviewComposerState; }, set reviewComposerState(v) { reviewComposerState = v; },
+  get reviewContextAt() { return reviewContextAt; },
   get reviewDeleteConfirmId() { return reviewDeleteConfirmId; }, set reviewDeleteConfirmId(v) { reviewDeleteConfirmId = v; },
+  get reviewFilter() { return reviewFilter; }, set reviewFilter(v) { reviewFilter = v; },
+  get reviewFilters() { return reviewFilters; },
+  get reviewInlineCard() { return reviewInlineCard; }, set reviewInlineCard(v) { reviewInlineCard = v; },
   get reviewLayout() { return reviewLayout; }, set reviewLayout(v) { reviewLayout = v; },
   get reviewMode() { return reviewMode; },
+  get reviewModeButtons() { return reviewModeButtons; },
+  get reviewNext() { return reviewNext; },
+  get reviewPrevious() { return reviewPrevious; },
+  get reviewRangeClientRect() { return reviewRangeClientRect; },
+  get reviewRejectAll() { return reviewRejectAll; },
   get reviewSidebar() { return reviewSidebar; },
   get reviewSidebarPreference() { return reviewSidebarPreference; }, set reviewSidebarPreference(v) { reviewSidebarPreference = v; },
   get reviewTracking() { return reviewTracking; },
+  get revisionRange() { return revisionRange; },
   get revisionUnreadable() { return revisionUnreadable; }, set revisionUnreadable(v) { revisionUnreadable = v; },
   get ribbonSurfaceEnabled() { return ribbonSurfaceEnabled; },
   get ribbonSurfaceReason() { return ribbonSurfaceReason; },
   get ribbonViewCollapsed() { return ribbonViewCollapsed; },
+  get rulerView() { return rulerView; },
   get runEdit() { return runEdit; },
   get runNodeEdit() { return runNodeEdit; },
   get runToolbarEdit() { return runToolbarEdit; },
+  get runningEditBand() { return runningEditBand; },
   get saveBtn() { return saveBtn; },
   get saveDocument() { return saveDocument; },
   get saveFormatEl() { return saveFormatEl; },
   get saveSettings() { return saveSettings; },
+  get scaleOf() { return scaleOf; },
   get scheduleChromeRefresh() { return scheduleChromeRefresh; },
   get scheduleReviewMarginRender() { return scheduleReviewMarginRender; },
   get scrollCaretIntoView() { return scrollCaretIntoView; },
   get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
+  get scrollReviewSelectionIntoView() { return scrollReviewSelectionIntoView; },
   get searchTrigger() { return searchTrigger; },
+  get selComment() { return selComment; },
   get selEndpoints() { return selEndpoints; },
   get selectAll() { return selectAll; },
   get selectObject() { return selectObject; },
@@ -487,6 +537,7 @@ const ed = {
   get sharedRestoreRefusal() { return sharedRestoreRefusal; },
   get showChange() { return showChange; },
   get showDraftRecovery() { return showDraftRecovery; },
+  get showImePreedit() { return showImePreedit; },
   get showingChanges() { return showingChanges; }, set showingChanges(v) { showingChanges = v; },
   get spacingMenuControl() { return spacingMenuControl; },
   get spellCheckToggle() { return spellCheckToggle; },
@@ -499,7 +550,11 @@ const ed = {
   get stepZoom() { return stepZoom; },
   get styleAdvanced() { return styleAdvanced; },
   get subBtn() { return subBtn; },
+  get suggestAcrossParagraphs() { return suggestAcrossParagraphs; },
+  get suggestingBannerEdit() { return suggestingBannerEdit; },
   get superBtn() { return superBtn; },
+  get syncActiveReviewCommentToCaret() { return syncActiveReviewCommentToCaret; },
+  get syncSelectionToCellRange() { return syncSelectionToCellRange; },
   get tabStopsDialog() { return tabStopsDialog; },
   get tableRange() { return tableRange; },
   get tableToolCommands() { return tableToolCommands; },
@@ -508,23 +563,31 @@ const ed = {
   get tocCommands() { return tocCommands; },
   get toggleAbout() { return toggleAbout; },
   get toggleChecklistCommand() { return toggleChecklistCommand; },
+  get toggleFormCheckboxAt() { return toggleFormCheckboxAt; },
   get toggleFormat() { return toggleFormat; },
   get toggleOutline() { return toggleOutline; },
   get toggleParagraphProperties() { return toggleParagraphProperties; },
   get toggleReview() { return toggleReview; },
   get toggleShortcutsReference() { return toggleShortcutsReference; },
   get toggleShowChanges() { return toggleShowChanges; },
+  get touchSelection() { return touchSelection; },
   get traverseObjects() { return traverseObjects; },
   get typingSession() { return typingSession; }, set typingSession(v) { typingSession = v; },
   get typingSessionActive() { return typingSessionActive; }, set typingSessionActive(v) { typingSessionActive = v; },
+  get typingSessionForKey() { return typingSessionForKey; },
+  get updateImePreedit() { return updateImePreedit; },
   get updateObjectContextBar() { return updateObjectContextBar; },
   get updateObjectSelectionState() { return updateObjectSelectionState; },
+  get updatePageWindow() { return updatePageWindow; },
   get updateStats() { return updateStats; },
   get updateStyleFromSelection() { return updateStyleFromSelection; },
   get updateToolbar() { return updateToolbar; },
   get versionHistory() { return versionHistory; },
   get versionPreviewHome() { return versionPreviewHome; }, set versionPreviewHome(v) { versionPreviewHome = v; },
   get verticalGoal() { return verticalGoal; },
+  get viewZoom() { return viewZoom; },
+  get viewingBannerEdit() { return viewingBannerEdit; },
+  get viewportEl() { return viewportEl; },
   get zoomEl() { return zoomEl; },
   get zoomFactor() { return zoomFactor; },
   get zoomMenu() { return zoomMenu; },
@@ -10389,7 +10452,11 @@ function closeReviewPopover() {
   scheduleReviewMarginRender();
 }
 
-// --- Inline accept/reject card (Q2) ------------------------------------------
+const {
+  closeReviewInlineCard, decideAllReviewChanges, decideReviewAndAdvance, decideReviewAtCaret,
+  focusReviewRevision, navigateReview, openReviewComposer, reviewMoveEndButton,
+  scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview,
+} = createReviewDecisions(ed);
 // Hovering (or clicking) a tracked-change marker on the canvas surfaces a
 // compact card — author, one-line change summary, ✔ Accept / ✗ Reject — the
 // Google-Docs suggestion affordance. A pinned card (opened by click) stays until
@@ -10397,527 +10464,6 @@ function closeReviewPopover() {
 // shortly after it leaves both the marker and the card. Accept/Reject reuse the
 // same grouped/move-aware decision path as the sidebar and context menu.
 let reviewInlineCard = null;
-let reviewInlineCardRevisionId = null;
-let reviewInlineCardPinned = false;
-let reviewInlineHideTimer = 0;
-
-/** One-line summary of a tracked change for the inline card and screen-reader
- *  announcements. */
-function reviewRevisionSummary(revision) {
-  const text = String(revision?.text || "");
-  const quoted = text ? `“${text}”` : "";
-  switch (revision?.kind) {
-    case "deletion": return `Deleted ${quoted}`.trim();
-    case "insertion": return `Added ${quoted}`.trim();
-    case "formatting": return `Formatting change ${quoted}`.trim();
-    case "paragraph_format": return "Formatted paragraph";
-    case "paragraph_mark_insertion": return "Added a paragraph break";
-    case "paragraph_mark_deletion": return "Deleted a paragraph break";
-    case "move_from": case "move_to": case "move": return `Moved ${quoted}`.trim();
-    case "replacement": return `Replaced ${quoted}`.trim();
-    default: return `Changed ${quoted}`.trim();
-  }
-}
-
-function closeReviewInlineCard() {
-  clearTimeout(reviewInlineHideTimer);
-  reviewInlineHideTimer = 0;
-  reviewInlineCard?.remove();
-  reviewInlineCard = null;
-  reviewInlineCardRevisionId = null;
-  reviewInlineCardPinned = false;
-}
-
-/** Hide a hover-opened card after a short grace period, so moving the pointer
- *  from the marker onto the card itself does not dismiss it. A pinned (clicked)
- *  card ignores this. */
-function scheduleReviewInlineCardHide() {
-  if (reviewInlineCardPinned) return;
-  clearTimeout(reviewInlineHideTimer);
-  reviewInlineHideTimer = window.setTimeout(() => {
-    if (!reviewInlineCardPinned) closeReviewInlineCard();
-  }, 220);
-}
-
-function showReviewInlineCard(revision, anchorEl, pinned) {
-  if (!revision || !anchorEl) return;
-  const revisionId = String(revision.id ?? "");
-  clearTimeout(reviewInlineHideTimer);
-  reviewInlineHideTimer = 0;
-  // Re-hovering / re-clicking the marker already showing keeps the one card;
-  // a click on an already-open hover card just pins it.
-  if (reviewInlineCard && reviewInlineCardRevisionId === revisionId) {
-    if (pinned) reviewInlineCardPinned = true;
-    return;
-  }
-  closeReviewInlineCard();
-  reviewInlineCardRevisionId = revisionId;
-  reviewInlineCardPinned = !!pinned;
-
-  const card = document.createElement("div");
-  card.className = "review-inline-card";
-  card.setAttribute("role", "dialog");
-  card.setAttribute("aria-label", "Tracked change");
-  card.tabIndex = -1;
-
-  const head = document.createElement("div");
-  head.className = "review-inline-head";
-  const dot = document.createElement("span");
-  dot.className = "review-inline-dot";
-  dot.style.background = reviewAuthorColor(reviewAuthorKey(revision));
-  const who = document.createElement("div");
-  who.className = "review-inline-who";
-  const author = document.createElement("strong");
-  author.textContent = reviewAuthorDisplay(revision);
-  const meta = document.createElement("small");
-  meta.textContent = [reviewChangeTypeLabel(revision.kind), formatReviewDate(revision.date)]
-    .filter(Boolean).join(" · ");
-  who.append(author, meta);
-  head.append(dot, who);
-
-  const body = document.createElement("p");
-  body.className = "review-inline-body";
-  body.textContent = reviewRevisionSummary(revision);
-  card.append(head, body);
-
-  // Accept/Reject are edits; hide them in read-only Viewing mode, leaving the
-  // card as a summary the reader can still see.
-  if (reviewMode !== "viewing") {
-    const bar = document.createElement("div");
-    bar.className = "review-inline-bar";
-    const makeBtn = (icon, label, danger, handler) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      if (danger) button.className = "danger";
-      const glyph = document.createElement("span");
-      glyph.className = "ms";
-      glyph.setAttribute("aria-hidden", "true");
-      glyph.textContent = icon;
-      button.append(glyph, document.createTextNode(label));
-      button.setAttribute("aria-label", `${label} this ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
-      button.title = button.getAttribute("aria-label");
-      button.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        await handler();
-      });
-      return button;
-    };
-    const decide = async (accept) => {
-      await decideContextRevision(revision, accept);
-      announceReview(`${accept ? "Accepted" : "Rejected"} ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
-      closeReviewInlineCard();
-      focusEditorSurface();
-    };
-    bar.append(
-      makeBtn("check", "Accept", false, () => decide(true)),
-      makeBtn("close", "Reject", true, () => decide(false)),
-    );
-    card.appendChild(bar);
-  }
-
-  // The card is interactive: entering it cancels the hover-hide timer, leaving
-  // it reschedules the hide (unless pinned).
-  card.addEventListener("mouseenter", () => clearTimeout(reviewInlineHideTimer));
-  card.addEventListener("mouseleave", () => scheduleReviewInlineCardHide());
-
-  document.body.appendChild(card);
-  reviewInlineCard = card;
-
-  // Position just below the marker, clamped to the viewport.
-  const markerRect = anchorEl.getBoundingClientRect();
-  const left = Math.max(12, Math.min(window.innerWidth - card.offsetWidth - 12, markerRect.left));
-  const below = markerRect.bottom + 6;
-  const top = below + card.offsetHeight + 12 > window.innerHeight
-    ? Math.max(12, markerRect.top - card.offsetHeight - 6)
-    : below;
-  card.style.left = `${left}px`;
-  card.style.top = `${top}px`;
-
-  // A pinned card takes focus so it is keyboard-dismissable and its buttons are
-  // immediately reachable by Tab; a hover card must not steal the caret.
-  if (pinned) card.focus({ preventScroll: true });
-}
-
-// --- Unified Next/Previous over comments AND changes (Q4) --------------------
-// Word's Review "Previous / Next" walks every comment and tracked change in one
-// document-ordered loop. `reviewNavTargets` builds that merged list (honoring
-// the active Open/Resolved/All filter the same way the sidebar does) and orders
-// it by on-screen position — the same page/top/left ordering the comment column
-// uses — so Next/Previous visit exactly what the reader sees, in reading order.
-
-/** Whether rect `a` sits strictly after `ref` in document (reading) order. */
-function reviewRectIsAfter(a, ref) {
-  if (!a || !ref) return false;
-  if (a.pageNumber !== ref.pageNumber) return a.pageNumber > ref.pageNumber;
-  if (Math.abs(a.top - ref.top) > 2) return a.top > ref.top;
-  return a.left > ref.left + 2;
-}
-
-/** The current selection's leading/trailing on-screen positions, so navigation
- *  can skip the item the caret is already on regardless of selection direction. */
-function reviewSelectionRects() {
-  if (!selection) return null;
-  const a = selection.anchor;
-  const f = selection.focus;
-  const ra = reviewRangeClientRect(a.node, a.offset, a.node, a.offset);
-  const rf = reviewRangeClientRect(f.node, f.offset, f.node, f.offset);
-  if (!ra && !rf) return null;
-  if (!ra) return { start: rf, end: rf };
-  if (!rf) return { start: ra, end: ra };
-  return reviewRectIsAfter(rf, ra) ? { start: ra, end: rf } : { start: rf, end: ra };
-}
-
-/** The merged, document-ordered list of navigable review items — root comments
- *  (per filter) plus tracked changes — each with its model range and on-screen
- *  rect. Replies are represented by their root; changes are individual (their
- *  grouped sidebar card is still surfaced via the caret→card anchor index). */
-function reviewNavTargets() {
-  if (!doc) return [];
-  const { comments, revisions } = readReviewData(doc);
-  const targets = [];
-  for (const comment of comments ?? []) {
-    if (!comment.anchor?.node || comment.parentParaId) continue;
-    if (reviewFilter !== "all") {
-      const resolved = !!comment.resolved;
-      if (reviewFilter === "resolved" ? !resolved : resolved) continue;
-    }
-    const startOffset = Number(comment.anchor.start) || 0;
-    const endOffset = Number(comment.anchor.end) || startOffset;
-    const rect = reviewRangeClientRect(comment.anchor.node, startOffset, comment.anchor.node, endOffset);
-    if (rect) {
-      targets.push({
-        type: "comment",
-        data: comment,
-        range: { startNode: comment.anchor.node, startOffset, endNode: comment.anchor.node, endOffset },
-        rect,
-      });
-    }
-  }
-  // Tracked changes are not comment-"resolved": show them under Open and All,
-  // hide them only under the comment-only Resolved filter (mirrors the sidebar).
-  if (reviewFilter !== "resolved") {
-    for (const revision of revisions ?? []) {
-      // A zero-length revision is normally nothing to visit. Formatting changes
-      // and paragraph-level revisions are the exceptions: a paragraph mark has no
-      // text of its own, and skipping it made Next/Previous step straight past
-      // every paragraph break a reviewer suggested (docs/108).
-      if (!String(revision.text || "").length && !REVIEW_TEXTLESS_KINDS.has(revision.kind)) continue;
-      const range = revisionRange(revision);
-      if (!range) continue;
-      const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);
-      if (rect) targets.push({ type: "revision", data: revision, range, rect });
-    }
-  }
-  targets.sort((a, b) =>
-    a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top || a.rect.left - b.rect.left);
-  return targets;
-}
-
-/** Moves the caret/selection to a navigation target, scrolls it into view, and
- *  surfaces its sidebar card (via the caret→card anchor index, which handles the
- *  grouped/move cards correctly). Announces its position + kind for AT. */
-function focusReviewTarget(target, index, total) {
-  reviewSidebarPreference = true;
-  const { range } = target;
-  selection = {
-    anchor: { node: range.startNode, offset: range.startOffset },
-    focus: { node: range.endNode, offset: range.endOffset },
-  };
-  // Resolve the active item FIRST (from the exact selected range), so the markers
-  // paint with the correct item active and the scroll targets that item's own
-  // marker — not the first highlight or a boundary-sharing neighbour.
-  syncActiveReviewCommentToCaret(selection.focus);
-  drawSelection();
-  focusEditorSurface();
-  scrollReviewSelectionIntoView();
-  const who = reviewAuthorDisplay(target.data) || "You";
-  const label = target.type === "comment"
-    ? `Comment by ${who}`
-    : `${reviewChangeTypeLabel(target.data.kind)} by ${who}`;
-  announceReview(`${index + 1} of ${total}: ${label}`);
-}
-
-/** The index of the target the caret is currently on: an exact match to a just-
- *  navigated selection, else the item whose range contains the caret. `-1` when
- *  the caret is not on any item (a fresh navigation from arbitrary text). This
- *  is what lets Next/Previous step by list position, so two items that share a
- *  boundary (a change starting exactly where a comment ends) still advance. */
-
-/** Next (`+1`) / Previous (`-1`) across the unified comment+change list, wrapping
- *  at the ends. When the caret already sits on an item, it steps by list index
- *  (robust to boundary-adjacent items); otherwise it lands on the nearest item
- *  after/before the caret in reading order. */
-function navigateReview(direction) {
-  if (!doc) return;
-  const targets = reviewNavTargets();
-  if (!targets.length) {
-    // The Review surface deliberately keeps Next/Previous enabled whatever the
-    // document holds, on the stated grounds that "the commands themselves
-    // report why nothing happened" (see REVIEW_SURFACE). This one did not: with
-    // no comments and no tracked changes it returned in silence, so Review ▸
-    // Next was a control that did nothing on a clean document — the same dead
-    // control Tools ▸ Settings was, by a different route.
-    setStatus("This document has no comments or tracked changes", "", { timeout: 3000 });
-    return;
-  }
-  const current = reviewCurrentTargetIndex(targets, selection);
-  let index;
-  if (current >= 0) {
-    index = (current + (direction > 0 ? 1 : -1) + targets.length) % targets.length;
-  } else {
-    const caret = reviewSelectionRects();
-    if (!caret) {
-      index = direction > 0 ? 0 : targets.length - 1;
-    } else if (direction > 0) {
-      // First item at or after the caret, so a caret sitting exactly on an
-      // item's start (e.g. document start === a comment's leading edge) lands on
-      // that item rather than skipping it. "At or after" == not strictly before.
-      const found = targets.findIndex((t) => !reviewRectIsAfter(caret.end, t.rect));
-      index = found === -1 ? 0 : found;
-    } else {
-      let found = -1;
-      for (let i = 0; i < targets.length; i++) {
-        if (reviewRectIsAfter(caret.start, targets[i].rect)) found = i;
-      }
-      index = found === -1 ? targets.length - 1 : found;
-    }
-  }
-  focusReviewTarget(targets[index], index, targets.length);
-}
-
-// --- Single-change decisions at the caret + Accept/Reject ▸ Next (Q3) --------
-
-/** The tracked change under the caret (its focus, else its anchor), or null. */
-function reviewRevisionAtCaret() {
-  return reviewContextAt(selection?.focus).revision
-    || reviewContextAt(selection?.anchor).revision;
-}
-
-/** Accepts (or rejects) the tracked change at the caret, using the same
- *  grouped/move-aware decision path as the sidebar and context menu. Returns
- *  whether a change was found and decided. */
-async function decideReviewAtCaret(accept) {
-  const revision = reviewRevisionAtCaret();
-  if (!revision) {
-    setStatus("Place the caret inside a tracked change to accept or reject it", "error");
-    return false;
-  }
-  await decideContextRevision(revision, accept);
-  announceReview(`${accept ? "Accepted" : "Rejected"} ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
-  drawSelection();
-  focusEditorSurface();
-  return true;
-}
-
-/** Word's core review loop: accept/reject the change at the caret, then advance
- *  the caret to the next change/comment. Advances even when the caret was not on
- *  a change, so the shortcut always makes progress through the document. */
-async function decideReviewAndAdvance(accept) {
-  const decided = await decideReviewAtCaret(accept);
-  navigateReview(1);
-  return decided;
-}
-
-/**
- * Moves the caret/selection to one end of a tracked move — its source
- * (`move_from`) or destination (`move_to`) anchor — and scrolls that location
- * to the centre of the viewport. This is the keyboard-accessible "go to the
- * original / new location" navigation a move review card exposes for both ends
- * of the move (REVIEW-GAP-016), so a reviewer can jump to precisely where the
- * text came from and where it went.
- */
-function navigateToReviewAnchor(anchor) {
-  if (!doc || !anchor?.node) return;
-  reviewSidebarPreference = true;
-  const start = Number(anchor.start) || 0;
-  const rawEnd = Number(anchor.end);
-  const end = Number.isFinite(rawEnd) ? rawEnd : start;
-  selection = {
-    anchor: { node: anchor.node, offset: start },
-    focus: { node: anchor.node, offset: end },
-  };
-  drawSelection();
-  focusEditorSurface();
-  scrollReviewSelectionIntoView();
-}
-
-/**
- * A keyboard-accessible navigation control for one end of a tracked move.
- * The visible secondary line is the precise page the end sits on (from the
- * same range geometry the sidebar uses to place cards), falling back to a
- * generic location label when geometry is unavailable (e.g. an off-screen or
- * not-yet-laid-out anchor). Activating it jumps the caret to that end.
- */
-function reviewMoveEndButton(endLabel, anchor, fallbackLocation, action) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "review-move-end";
-  const start = Number(anchor?.start) || 0;
-  const rawEnd = Number(anchor?.end);
-  const end = Number.isFinite(rawEnd) ? rawEnd : start;
-  const rect = anchor?.node
-    ? reviewRangeClientRect(anchor.node, start, anchor.node, end)
-    : null;
-  const locationText = rect ? `Page ${rect.pageNumber}` : fallbackLocation;
-  const label = document.createElement("b");
-  label.textContent = endLabel;
-  const location = document.createElement("span");
-  location.textContent = locationText;
-  button.append(label, location);
-  const description = rect ? `${action} (page ${rect.pageNumber})` : action;
-  button.title = description;
-  button.setAttribute("aria-label", description);
-  button.disabled = !anchor?.node;
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    navigateToReviewAnchor(anchor);
-  });
-  return button;
-}
-
-function focusReviewRevision(revision, expand = true) {
-  if (!doc || !revision?.text) return;
-  reviewSidebarPreference = true;
-  if (expand) activeReviewItemId = `revision:${revision.id}`;
-  // Clicking a card scrolls the canvas to that change's anchor (card→canvas
-  // sync, REVIEW-GAP-019). For a tracked move, the destination is the sensible
-  // default landing spot; its per-end buttons still jump to source/destination.
-  if (revision.kind === "move" && revision.destinationAnchor?.node) {
-    const dest = revision.destinationAnchor;
-    selection = {
-      anchor: { node: dest.node, offset: Number(dest.start) || 0 },
-      focus: { node: dest.node, offset: Number(dest.end) || Number(dest.start) || 0 },
-    };
-    drawSelection();
-    focusEditorSurface();
-    scrollReviewSelectionIntoView();
-    scheduleReviewMarginRender();
-    return;
-  }
-  const range = revisionRange(revision);
-  if (range) {
-    selection = {
-      anchor: { node: range.startNode, offset: range.startOffset },
-      focus: { node: range.endNode, offset: range.endOffset },
-    };
-    drawSelection();
-    focusEditorSurface();
-    scrollReviewSelectionIntoView();
-    scheduleReviewMarginRender();
-    return;
-  }
-  const first = selection?.focus || doc.firstPosition();
-  const match = doc.findText(String(revision.text), first.node, first.offset, true, false);
-  if (first.free) first.free();
-  if (!match.found) { match.free(); return; }
-  selection = {
-    anchor: { node: match.startNode, offset: match.startOffset },
-    focus: { node: match.endNode, offset: match.endOffset },
-  };
-  drawSelection();
-  focusEditorSurface();
-  scrollReviewSelectionIntoView();
-  scheduleReviewMarginRender();
-  match.free();
-}
-
-function toggleReview(open) {
-  const show = open ?? reviewSidebar.hidden;
-  reviewSidebarPreference = show;
-  if (!show) {
-    activeReviewItemId = null;
-    activeReviewCommentId = null;
-    reviewComposerState = null;
-  }
-  reanchorPageOverlays();
-  // Focus management (REVIEW-GAP-023): closing the sidebar returns focus to the
-  // rail toggle that owns it, so keyboard/AT users are not stranded.
-  if (!show) railReview?.focus?.({ preventScroll: true });
-}
-reviewBtn.addEventListener("click", () => toggleReview());
-railReview.addEventListener("click", () => toggleReview());
-reviewClose.addEventListener("click", () => toggleReview(false));
-/** Accept or reject every tracked change, for whichever surface asked.
- *
- *  The Review menu and the Review ribbon used to reach this by clicking the
- *  sidebar's own button — and `updateReviewControls` DISABLES that button when
- *  the document holds no changes. A disabled button dispatches no click, so the
- *  menu row and the ribbon button did nothing at all, and said nothing either:
- *  the same dead control Tools ▸ Settings was, reached by a different route.
- *  Surfaces call this instead, and it answers for itself. Viewing mode is still
- *  refused by `runEdit`, which reports that in its own words. */
-async function decideAllReviewChanges(accept) {
-  if (!doc) return;
-  // One reading of "does this document carry a change", not two: this had its own
-  // copy of `documentHasTrackedChanges`'s parse-and-count (SKILL §8).
-  if (!documentHasTrackedChanges()) {
-    setStatus("This document has no tracked changes", "", { timeout: 3000 });
-    return;
-  }
-  await runEdit(() => doc.decideAllRevisions(accept));
-  announceReview(accept ? "All changes accepted" : "All changes rejected");
-  scheduleReviewMarginRender();
-}
-reviewAcceptAll.addEventListener("click", () => void decideAllReviewChanges(true));
-reviewRejectAll.addEventListener("click", () => void decideAllReviewChanges(false));
-reviewPrevious.addEventListener("click", () => navigateReview(-1));
-reviewNext.addEventListener("click", () => navigateReview(1));
-// The visible mode control (`#reviewModeControl`) is a three-button segmented
-// group; each button carries `data-review-mode` and is wired below.
-suggestingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
-if (viewingBannerEdit) viewingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
-function openReviewComposer(parent = null) {
-  if (!doc || (!parent && (!hasRange() || !selection))) return;
-  reviewSidebarPreference = true;
-  if (parent) {
-    activeReviewItemId = `comment:${parent}`;
-    reviewComposerState = null;
-    scheduleReviewMarginRender();
-    return;
-  }
-  // A comment can span paragraphs (Word/Docs). Order the endpoints in document
-  // order: same node compares offsets directly; otherwise `selectionEdge`
-  // returns the earlier/later endpoint so the start marker lands in the start
-  // paragraph and the end marker in the end paragraph.
-  const { anchor, focus } = selection;
-  let start;
-  let end;
-  if (anchor.node === focus.node) {
-    const forward = anchor.offset <= focus.offset;
-    start = forward ? { ...anchor } : { ...focus };
-    end = forward ? { ...focus } : { ...anchor };
-  } else {
-    const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
-    const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
-    start = { node: s.node, offset: s.offset };
-    end = { node: e.node, offset: e.offset };
-    s.free();
-    e.free();
-  }
-  reviewComposerState = { range: { start, end } };
-  activeReviewItemId = null;
-  scheduleReviewMarginRender();
-}
-// Comment authoring/reply uses the in-sidebar composer (`openReviewComposer` →
-// `reviewComposerState`, rendered by `renderReviewMarginItems`); the legacy
-// hidden side-panel composer was removed (docs/81 REVIEW-GAP-018/026).
-selComment.addEventListener("mousedown", (event) => event.preventDefault());
-selComment.addEventListener("click", () => openReviewComposer());
-for (const filter of reviewFilters) {
-  filter.addEventListener("click", () => {
-    reviewFilter = filter.dataset.reviewFilter;
-    for (const button of reviewFilters) {
-      button.setAttribute("aria-pressed", String(button === filter));
-    }
-    const label = { open: "Open comments", resolved: "Resolved comments", all: "All comments" }[reviewFilter] || reviewFilter;
-    announceReview(`Filter: ${label}`);
-    scheduleReviewMarginRender();
-  });
-}
-for (const mode of reviewModeButtons) {
-  mode.addEventListener("click", () => setReviewMode(mode.dataset.reviewMode));
-}
-
 const { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger } = createPalette(ed);
 // ---- One navigation axis: the compact menu bar and the ribbon's File page ---
 // The editor used to show TWO navigation systems at once — this menu bar and the
@@ -11102,69 +10648,7 @@ function applyHighlight(name) {
   );
 }
 
-// ---- Floating selection toolbar (appears above a text selection) ------------
-const selToolbar = document.getElementById("selToolbar");
-
-/** Shows the floating toolbar centred just above the current range selection (or
- *  below it when there's no room), or hides it when the selection is collapsed. */
-function positionSelToolbar() {
-  if (activeLink || !selection || !hasRange()) {
-    selToolbar.hidden = true;
-    return;
-  }
-  const rects = pagesEl.querySelectorAll(".overlay .highlight");
-  if (!rects.length) {
-    selToolbar.hidden = true;
-    return;
-  }
-  let top = Infinity;
-  let bottom = -Infinity;
-  let left = Infinity;
-  let right = -Infinity;
-  for (const el of rects) {
-    const b = el.getBoundingClientRect();
-    top = Math.min(top, b.top);
-    bottom = Math.max(bottom, b.bottom);
-    left = Math.min(left, b.left);
-    right = Math.max(right, b.right);
-  }
-  selToolbar.hidden = false; // must be visible to measure
-  const tw = selToolbar.offsetWidth;
-  const th = selToolbar.offsetHeight;
-  const viewport = viewportEl.getBoundingClientRect();
-  const topBound = Math.max(8, viewport.top + 8);
-  const bottomBound = Math.min(window.innerHeight - 8, viewport.bottom - 8);
-  let x = (left + right) / 2 - tw / 2;
-  // …plus whatever the touch handles need. They hang above the selection's top
-  // and below its bottom, and this bar is a FIXED element over the page: eight
-  // pixels of gap put it through the middle of the start handle's dot and took
-  // every touch aimed at it (`touch_selection.mjs`'s `clearance`).
-  const gap = 8 + touchSelection.clearance();
-  let y = top - th - gap;
-  if (y < topBound) y = bottom + gap; // no room above → drop below the selection
-  if (y + th > bottomBound) {
-    // A selection at the viewport bottom may have no full-height slot below it;
-    // keep the bar visible and out of the browser chrome rather than allowing a
-    // fixed-position toolbar to disappear below the window.
-    y = Math.min(y, bottomBound - th);
-  }
-  y = Math.max(topBound, y);
-  x = Math.max(8, Math.min(x, window.innerWidth - tw - 8));
-  selToolbar.style.left = `${Math.round(x)}px`;
-  selToolbar.style.top = `${Math.round(y)}px`;
-}
-
-for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
-  onButton(b, () => toggleFormat(b.dataset.fmt));
-}
-// Text-color and highlight now use the ribbon's swatch-picker popovers, wired up
-// above (registerPopover on #selTextColorBtn / #selHighlightBtn). Keep clicks
-// inside the bar from collapsing the selection; hide on viewport scroll.
-selToolbar.addEventListener("mousedown", (e) => {
-  if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") e.preventDefault();
-});
-viewportEl.addEventListener("scroll", () => (selToolbar.hidden = true), { passive: true });
-/** Apply a font family to the range or arm it at the caret. */
+const { positionSelToolbar } = createSelectionToolbar(ed);
 function applyFontFamily(family) {
   if (!family) return;
   armOrApplyRun({ font: family }, () =>
@@ -11178,1351 +10662,16 @@ function applyFontFamily(family) {
  *  downloads it. Saving back to the source format preserves unchanged bytes where
  *  safe; a different target uses the semantic writer. Shared by the Save button,
  *  the ⌘S shortcut, and the File ▸ Export-as menu entries. */
-function exportDocumentAs(targetFormat, intent = "export") {
-  if (!doc || !targetFormat) return;
-  try {
-    let artifact;
-    if (targetFormat === currentSourceFormat) {
-      try {
-        artifact = doc.exportAs(targetFormat, "exact_if_unchanged");
-      } catch {
-        artifact = doc.exportAs(targetFormat, "preserve_when_safe");
-      }
-    } else {
-      artifact = doc.exportAs(targetFormat, "semantic");
-    }
-    const bytes = artifact.bytes;
-    const mimeType = artifact.mimeType;
-    const extension = artifact.suggestedExtension;
-    const report = artifact.reportJson;
-    const findings = findingTotals(report).headline; // the chip's count: Word's bookkeeping excluded (FID-FW-01)
-    artifact.free();
-    const saved = downloadBytes(bytes, mimeType, downloadNameForFormat(currentName, extension), document);
-    hostSession?.noteWrite(intent, { format: targetFormat, name: saved, bytes: bytes.length });
-    markDocumentSaved();
-    compatFindings.show(report, "export");
-    setStatus(
-      findings === 0
-        ? `Saved ${saved}`
-        : `Saved ${saved} with ${findings.toLocaleString()} compatibility finding${findings === 1 ? "" : "s"}`,
-    );
-  } catch (err) {
-    console.error(err);
-    setStatus(`Save failed: ${err?.message ?? err}`, "error");
-  }
-}
-
-/** Saves using the format chosen in the Save-format selector (default: source). */
-function saveDocument() {
-  exportDocumentAs(saveFormatEl && saveFormatEl.value ? saveFormatEl.value : currentSourceFormat, "save");
-}
-saveBtn?.addEventListener("click", saveDocument);
-
-/** Moves the caret to an engine Caret result (document bounds). Shift extends. */
-function navToPosition(caret, extend) {
-  breakTypingSession();
-  pendingFormat = null; // caret moved → disarm typing format
-  const to = { node: caret.node, offset: caret.offset };
-  verticalGoal.clear();
-  if (typeof caret.free === "function") caret.free();
-  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
-  drawSelection();
-  focusEditorSurface();
-  scrollCaretIntoView();
-}
-
-/** Page Up/Down moves the model caret by one visible editor viewport. Browser
- * geometry chooses only the page-local probe; `hitTest` returns the model anchor
- * that remains the source of truth. */
-function navByViewport(dir, extend) {
-  if (!selection) return;
-  breakTypingSession();
-  pendingFormat = null;
-  const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
-  if (flat.length < 5) return;
-
-  const [pageNumber, x, y, w] = flat;
-  const caretPage = pages[pageNumber - 1];
-  if (!caretPage) return;
-  const { rect: pageRect, sx, sy } = scaleOf(caretPage);
-  const viewportRect = viewportEl.getBoundingClientRect();
-  const distance = Math.max(48, viewportRect.height - 48);
-  const column = verticalGoal.columnFor(dir, selection.focus, () => x) ?? x;
-  const targetX = pageRect.left + column * sx + Math.max(1, (w * sx) / 2);
-  const targetY = pageRect.top + y * sy + (dir === "pageUp" ? -distance : distance);
-  const page = pageFromClientPoint(targetX, targetY);
-  if (!page) return;
-  const to = anchorAt(page, clientPointEvent(targetX, targetY));
-  if (!to) return;
-  verticalGoal.keep(column, to);
-
-  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
-  drawSelection();
-  focusEditorSurface();
-  scrollCaretIntoView();
-}
-
-/** Selects the active cell first, then the whole document on a repeated ⌘A. */
-function selectAll() {
-  if (!doc) return;
-  breakTypingSession();
-
-  if (selection && doc.inTable(selection.focus.node)) {
-    const range = doc.cellTextRange(selection.focus.node);
-    try {
-      if (!range.found) {
-        setStatus(
-          "Select All is unavailable because this cell crosses another editing surface",
-          "error",
-        );
-        return;
-      }
-      const start = { node: range.startNode, offset: range.startOffset };
-      const end = { node: range.endNode, offset: range.endOffset };
-      if (!selectionMatchesRange(selection, start, end)) {
-        tableRange.clear();
-        selection = { anchor: start, focus: end };
-        drawSelection();
-        focusEditorSurface();
-        setStatus("Cell contents selected — choose Select All again to select the document");
-        return;
-      }
-    } finally {
-      range.free();
-    }
-  }
-
-  const a = doc.firstPosition();
-  const b = doc.lastPosition();
-  tableRange.clear();
-  selection = {
-    anchor: { node: a.node, offset: a.offset },
-    focus: { node: b.node, offset: b.offset },
-  };
-  a.free();
-  b.free();
-  drawSelection();
-  focusEditorSurface();
-  setStatus("Document selected");
-}
-
-function editorClipboardEvent(event) {
-  return doc && selection && !isInteractiveChromeTarget(event.target) && eventTargetsEditor(event);
-}
-
-function editorTextInputEvent(event) {
-  return doc && selection && !isInteractiveChromeTarget(event.target) && eventTargetsEditor(event);
-}
-
-/** Cut (⌘X): copy the selection to the clipboard, then delete it. */
-async function cut(event = null) {
-  if (!hasRange()) return;
-  // Cut is a mutation (copy + delete); in read-only Viewing mode it is blocked
-  // before touching the clipboard so it never partially executes as a copy.
-  if (blockMutationInViewing()) return;
-  const copied = await copySelection(event);
-  if (!copied) return;
-  const { anchor, focus } = selection;
-  if (reviewMode === "suggesting" && anchor.node !== focus.node) {
-    setStatus("Cross-paragraph cuts cannot be tracked yet; switch to Editing to cut", "error");
-    return;
-  }
-  await runEdit(() => reviewMode === "suggesting" && anchor.node === focus.node
-    ? doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), undefined, new Date().toISOString())
-    : doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
-}
-
-async function pasteText(text, actionKind = "paste") {
-  if (!doc || !selection) return;
-  if (!text) return;
-  const { anchor, focus } = selection;
-  const sameParagraph = anchor.node === focus.node && !text.includes("\n");
-  if (reviewMode === "suggesting" && sameParagraph) {
-    const start = Math.min(anchor.offset, focus.offset);
-    const end = Math.max(anchor.offset, focus.offset);
-    await runEdit(() => end > start
-      ? doc.suggestReplace(anchor.node, start, end, text, undefined, new Date().toISOString())
-      : doc.suggestInsert(anchor.node, start, text, undefined, new Date().toISOString()));
-    return;
-  }
-  if (reviewMode === "suggesting") {
-    setStatus("Multi-paragraph paste cannot be tracked yet; switch to Editing to paste it", "error");
-    return;
-  }
-  await runEdit(() => doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
-}
-
-async function commitComposedText(text) {
-  if (!text) return;
-  pendingFormat = null;
-  await pasteText(text, "typing");
-}
-
-/**
- * Suggesting-mode rich paste at a collapsed caret, single paragraph only
- * (REVIEW-GAP-008): inserts each clipboard run as its own tracked
- * `suggestStyledInsert`, chained under one gesture (`typingSessionForKey`)
- * so the whole paste is one review card and one Undo step — the same
- * paragraph-snapshot coalescing real adjacent keystrokes already use (docs
- * 82 §3; see `suggest_insert`'s `continuing_group` in casual-doc-wasm).
- * This is what lets a rich paste keep its bold/italic/color/etc. per run
- * instead of flattening to one plain-text tracked insertion.
- *
- * Returns whether it handled the paste. It does not: multi-paragraph
- * content (`paragraphBreak` runs — REVIEW-GAP-009's structural-tracking
- * backlog), or a paste that also needs to replace an existing selection (no
- * tracked multi-run *replacement* group exists yet — the model's
- * `RevisionGroupKind::Replacement` requires exactly one deletion plus one
- * insertion). Both remain the existing flattened-plain-text fallback in
- * `pasteRichRunsJson`. A run's `href` (hyperlink) is not carried into the
- * tracked insertion either — the same as the existing flattened fallback,
- * so this is not a regression, just an unchanged, explicit limitation.
- */
-async function pasteTrackedRichRuns(runs) {
-  if (!doc || !selection || hasRange()) return false;
-  if (!Array.isArray(runs) || runs.some((run) => run.paragraphBreak)) return false;
-  const insertable = runs.filter((run) => !run.paragraphBreak && run.text);
-  if (!insertable.length) return false;
-
-  breakTypingSession();
-  const session = typingSessionForKey();
-  let node = selection.focus.node;
-  let offset = selection.focus.offset;
-  for (const run of insertable) {
-    const applied = await runEdit(
-      () => doc.suggestStyledInsert(
-        node,
-        offset,
-        run.text,
-        run.bold,
-        run.italic,
-        run.underline,
-        run.strike,
-        run.sizeHalfPoints,
-        run.color,
-        run.highlight,
-        run.vertAlign,
-        run.font,
-        undefined,
-        new Date().toISOString(),
-        session,
-      ),
-      { typing: true },
-    );
-    // A refused run has already reported itself; continuing would paste the
-    // remainder at an offset the document never reached.
-    if (!applied) break;
-    // Never synthesize the next insertion point. The engine's offsets are UTF-8
-    // bytes and `run.text.length` is UTF-16 code units, so `offset += length`
-    // drifted on every curly quote, em dash or accent — the rest of the paste
-    // then landed inside an earlier run, or was refused outright. The caret in
-    // the EditResult `applyEditResult` just installed is the engine's own answer
-    // for where that run ended, so read it back instead (docs/104 T-09).
-    node = selection.focus.node;
-    offset = selection.focus.offset;
-  }
-  // Close the gesture explicitly so a later, unrelated keystroke cannot
-  // merge into this paste's group (mirrors the pause-based boundary real
-  // typing uses; nothing else calls `typingSessionForKey` between here and
-  // the next real key).
-  breakTypingSession();
-  return true;
-}
-
-/** Replaces the selection with a rich-run clipboard fragment, as one
- * undoable action (`doc.pasteRichRuns` — the paste counterpart of
- * `copyRichRuns`). `runsJson` must be a JSON array in the shape
- * `copyRichRuns` produces. */
-async function pasteRichRunsJson(runsJson) {
-  if (!doc || !selection) return;
-  // Retain the rich fragment so the paste-options chip can re-apply it as
-  // "Merge formatting" (emphasis kept, font/size/color dropped). Consumed and
-  // cleared by `offerPasteOptions`.
-  lastRichPasteJson = runsJson;
-  if (reviewMode === "suggesting") {
-    let runs = null;
-    try {
-      runs = JSON.parse(runsJson);
-    } catch { /* malformed payload; runs stays null */ }
-    if (await pasteTrackedRichRuns(runs)) return;
-    // Falls back to a flattened, single-format tracked replace/insert for
-    // the cases `pasteTrackedRichRuns` intentionally does not cover yet
-    // (see its doc comment): an existing selection to replace, or
-    // multi-paragraph content.
-    const text = Array.isArray(runs)
-      ? runs.map((run) => run.paragraphBreak ? "\n" : String(run.text ?? "")).join("")
-      : "";
-    if (text) {
-      await pasteText(text, "paste");
-      return;
-    }
-    // No plain-text fallback could be derived (malformed clipboard payload, or
-    // an entirely non-text rich fragment) — `doc.pasteRichRuns` has no tracked
-    // representation, so this must fail closed rather than silently apply
-    // untracked (REVIEW-GAP-004).
-    blockUntrackedInSuggesting();
-    return;
-  }
-  const { anchor, focus } = selection;
-  await runEdit(() =>
-    doc.pasteRichRuns(anchor.node, anchor.offset, focus.node, focus.offset, runsJson),
-  );
-}
-
-/** Tries to paste `html` as a rich fragment: the internal round-trip marker
- * if present (an OpenDoc-to-OpenDoc copy, lossless), else a best-effort
- * sanitized parse of the DOM (an external app's paste — Word, Docs, a
- * browser selection). Returns whether anything was pasted, so the caller can
- * fall back to plain text when `html` carries no usable content. */
-async function pasteHtml(html) {
-  if (!html) return false;
-  const internal = extractMarker(html);
-  if (internal) {
-    let parsed = null;
-    try {
-      parsed = JSON.parse(internal);
-    } catch { /* not JSON — treat as no usable internal payload below */ }
-    // A structured fragment (`{ blocks, runs }`) reconstructs tables/lists in
-    // Editing mode; Suggesting mode has no tracked representation for structural
-    // paste (GAP-009), so it uses the flat runs. If the engine declines the
-    // structured paste (a range selection, or a caret inside a table cell), fall
-    // back to the flat runs too.
-    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.blocks)) {
-      const fragment = JSON.stringify({ blocks: parsed.blocks });
-      const insert = (a, f) => doc.pasteStructured(a.node, a.offset, f.node, f.offset, fragment);
-      if (reviewMode !== "suggesting" && (await runStructuredPaste(insert))) {
-        return true;
-      }
-      await pasteRichRunsJson(JSON.stringify(parsed.runs ?? []));
-      return true;
-    }
-    await pasteRichRunsJson(internal);
-    return true;
-  }
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  // A table, list or heading pastes as REAL structure (one undo step) only at a body caret outside Suggesting
-  // (GAP-009); what the flat fallback flattens, and any picture (never fetched), is SAID (TA-11).
-  const structured = htmlToStructured(parsed.body);
-  const said = (flattened) => {
-    const lost = externalPasteLossMessage({ flattened, pictures: Boolean(parsed.body.querySelector("img")) });
-    if (lost) setStatus(lost, "error");
-    return true;
-  };
-  if (reviewMode !== "suggesting" && structured) {
-    const fragment = JSON.stringify(structured);
-    const insert = (a, f) => doc.pasteExternalStructured(a.node, a.offset, f.node, f.offset, fragment);
-    if (await runStructuredPaste(insert)) return said([]);
-  }
-  const runs = htmlToRuns(parsed.body);
-  if (!runs.length) return false;
-  await pasteRichRunsJson(JSON.stringify(runs));
-  return said(structureFamilies(structured));
-}
-
-/** Editing-mode paste of whole-block structure (tables and list paragraphs) at
- * the caret, as one undoable action. `insert(anchor, focus)` names the engine
- * call: `pasteStructured` for an internal OpenDoc copy, `pasteExternalStructured`
- * for foreign HTML parsed by `htmlToStructured`. Returns true when applied; false
- * when the engine declines (a range selection, or a caret that is not a top-level
- * body paragraph), so the caller falls back to the flat rich-run paste. Calls the
- * engine directly (not through `runEdit`, which swallows the decline) so the
- * fallback can see it. ONE helper rather than the two that used to sit here: they
- * differed only in which engine method they named, and two copies of a paste path
- * is where the loss report below gets wired into one and forgotten in the other. */
-async function runStructuredPaste(insert) {
-  if (!doc || !selection) return false;
-  const { anchor, focus } = selection;
-  breakTypingSession();
-  let res;
-  try {
-    res = insert(anchor, focus);
-  } catch {
-    return false;
-  }
-  // Five families of reference cannot be duplicated inside one document, and are
-  // REPORTED because `AGENTS.md` forbids silent data loss. READ before
-  // `applyEditResult`, which calls `res.free()` — reading a freed wasm object
-  // throws "null pointer passed to rust" and failed all four structured-paste
-  // specs on the first draft. SAID after, so the paint's own status line cannot
-  // overwrite it, and as `"error"`: the paste succeeded, but "your comment anchor
-  // did not come across" is must-notice, and only that kind reaches the toast and
-  // the assertive region (`status_policy.mjs`).
-  const loss = pasteLossMessage(res.pasteLoss);
-  await applyEditResult(res);
-  if (loss) setStatus(loss, "error");
-  return true;
-}
-
-/** Paste (⌘V): insert clipboard content at the caret, replacing any
- *  selection. Rich HTML (internal or external) wins when present; plain text
- *  with newline-as-paragraph-split remains the fallback. */
-async function paste(event = null) {
-  if (!doc || !selection) return;
-  // Read-only Viewing mode blocks paste up front (it still calls
-  // preventDefault below) so no clipboard read or insertion is attempted.
-  if (reviewMode === "viewing") {
-    if (event?.clipboardData) event.preventDefault();
-    blockMutationInViewing();
-    return;
-  }
-  if (event?.clipboardData) {
-    event.preventDefault();
-    // A pasted image (a clipboard file item of an image type) is inserted as a
-    // picture, matching Word/Docs — before the text/HTML fallback.
-    const imageItem = [...(event.clipboardData.items ?? [])].find(
-      (it) => it.kind === "file" && it.type.startsWith("image/"),
-    );
-    if (imageItem) {
-      const file = imageItem.getAsFile();
-      if (file) await insertImageFromBlob(file);
-      return;
-    }
-    const html = event.clipboardData.getData("text/html");
-    const plain = event.clipboardData.getData("text/plain");
-    if (await pasteHtml(html)) {
-      offerPasteOptions(plain);
-      return;
-    }
-    await pasteText(plain);
-    return;
-  }
-  try {
-    let plain = "";
-    try { plain = await navigator.clipboard.readText(); } catch { /* html-only or image-only clipboard */ }
-    if (navigator.clipboard.read) {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        if (!item.types.includes("text/html")) continue;
-        const html = await (await item.getType("text/html")).text();
-        if (await pasteHtml(html)) {
-          offerPasteOptions(plain);
-          return;
-        }
-      }
-      // Then an image. ⌘V is intercepted as a keydown, so this async path — not
-      // the native ClipboardEvent one — is what a screenshot paste actually
-      // reaches, and it had no image branch at all: ⌘V over a copied image did
-      // nothing and said nothing (docs/104 HF-059). HTML is tried first because
-      // a fragment copied from a web page carries BOTH an image and its markup,
-      // and Word and Docs paste the markup in that case; a screenshot carries
-      // only the bitmap. The insertable-format decision stays where it already
-      // lives, in `insertImageFromBlob`, so both paste paths refuse alike.
-      for (const item of items) {
-        const imageType = item.types.find((type) => type.startsWith("image/"));
-        if (!imageType) continue;
-        await insertImageFromBlob(await item.getType(imageType));
-        return;
-      }
-    }
-    if (plain) {
-      await pasteText(plain);
-      return;
-    }
-    // Nothing on the clipboard this editor can place. Saying so is the point:
-    // a command that looks live and quietly does nothing is indistinguishable
-    // from a broken editor.
-    setStatus("There is nothing on the clipboard to paste here", "error");
-  } catch (err) {
-    console.warn("paste failed:", err);
-    setStatus("Clipboard paste was blocked by the browser", "error");
-  }
-}
-
-/** Paste as plain text (⌘/Ctrl+Shift+V): drops all formatting, keeping only the
- *  clipboard's text through the existing `pasteText` path. */
-async function pasteAsText() {
-  if (!doc || !selection) return;
-  if (reviewMode === "viewing") {
-    blockMutationInViewing();
-    return;
-  }
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
-      await pasteText(text);
-      return;
-    }
-    // ⌘⇧V over an image-only clipboard has nothing to keep the text of. Say so
-    // rather than returning silently (docs/104 HF-059). The status kind is
-    // "error" — the two clipboard failures here used to pass "err", which is not
-    // a class the stylesheet defines, so they were reported in the plain style.
-    setStatus("There is no text on the clipboard to paste", "error");
-  } catch (err) {
-    console.warn("paste text failed:", err);
-    setStatus("Clipboard paste was blocked by the browser", "error");
-  }
-}
-
-// ---- Paste options affordance (Q3) ------------------------------------------
-// After a rich paste, a small chip near the caret lets the user switch that
-// paste to text-only (undo the rich insertion, re-paste as plain text).
-const pasteOptionsEl = document.getElementById("pasteOptions");
-const pasteOptionsMergeBtn = document.getElementById("pasteOptionsMerge");
-let pasteOptionsPlain = null;
-let pasteOptionsRuns = null;
-// The document revision the chip's own paste produced. Both chip actions work by
-// undoing that paste and redoing it differently, so they are only safe while the
-// paste is still the change an undo would remove. Captured when the chip is
-// offered; `pasteOptionsStillOnTop` is the fail-closed check.
-let pasteOptionsRevision = null;
-// The rich-run JSON of the most recent paste, captured by `pasteRichRunsJson`
-// and drained by `offerPasteOptions` for the "Merge formatting" option.
-let lastRichPasteJson = null;
-
-/** Whether the chip is currently offered. Read from `applyEditResult`, which is
- *  defined earlier in the file but only ever runs from an event or `boot()`,
- *  by which time this section has evaluated. */
-function pasteOptionsShowing() {
-  return !pasteOptionsEl.hidden;
-}
-
-function hidePasteOptions() {
-  pasteOptionsEl.hidden = true;
-  pasteOptionsPlain = null;
-  pasteOptionsRuns = null;
-  pasteOptionsRevision = null;
-}
-
-/** True while the chip's paste is still the change an undo would remove. An
- *  unreadable revision counts as "moved on": the chip may not gamble with the
- *  user's previous edit on a number it could not read. */
-function pasteOptionsStillOnTop() {
-  return (
-    pasteOptionsRevision !== null && !revisionUnreadable && currentRevision === pasteOptionsRevision
-  );
-}
-/** Shows the chip only when the plain text differs from what a rich paste
- *  produced would matter — i.e. there is text to fall back to. "Merge
- *  formatting" additionally needs the rich-run payload the paste applied, so
- *  its button is only shown when that payload is available. */
-function offerPasteOptions(plain) {
-  const runsJson = lastRichPasteJson;
-  lastRichPasteJson = null;
-  if (!plain) return hidePasteOptions();
-  pasteOptionsPlain = plain;
-  pasteOptionsRuns = runsJson;
-  pasteOptionsRevision = revisionUnreadable ? null : currentRevision;
-  pasteOptionsMergeBtn.hidden = !runsJson;
-  pasteOptionsEl.hidden = false;
-  requestAnimationFrame(positionPasteOptions);
-}
-function positionPasteOptions() {
-  if (pasteOptionsEl.hidden) return;
-  const caret = pagesEl.querySelector(".overlay .caret");
-  const w = pasteOptionsEl.offsetWidth;
-  const h = pasteOptionsEl.offsetHeight;
-  const vp = viewportEl.getBoundingClientRect();
-  let x;
-  let y;
-  if (caret) {
-    const r = caret.getBoundingClientRect();
-    x = r.left;
-    y = r.bottom + 6;
-  } else {
-    x = vp.left + 16;
-    y = vp.bottom - h - 16;
-  }
-  x = Math.max(vp.left + 8, Math.min(x, vp.right - w - 8));
-  y = Math.max(vp.top + 8, Math.min(y, vp.bottom - h - 8));
-  pasteOptionsEl.style.left = `${Math.round(x)}px`;
-  pasteOptionsEl.style.top = `${Math.round(y)}px`;
-}
-async function switchPasteToTextOnly() {
-  const text = pasteOptionsPlain;
-  const onTop = pasteOptionsStillOnTop();
-  hidePasteOptions();
-  if (!text || !doc) return;
-  if (!onTop) return refusePasteOptions();
-  if (doc.canUndo) await runEdit(() => doc.undo());
-  await pasteText(text);
-  focusEditorSurface();
-}
-/** Says no rather than undoing whatever is on top of the stack instead. */
-function refusePasteOptions() {
-  setStatus("The paste is no longer the most recent change; paste options can't be applied", "error");
-  focusEditorSurface();
-}
-
-/** "Merge formatting": undo the rich paste and re-insert it with each run's
- *  properties reduced to the emphasis flags only (bold/italic/underline/
- *  strike/vertAlign). Dropping font, size, color, and highlight lets the text
- *  inherit the destination paragraph's formatting — the Word/Docs behavior. */
-async function switchPasteToMergeFormatting() {
-  const runsJson = pasteOptionsRuns;
-  const onTop = pasteOptionsStillOnTop();
-  hidePasteOptions();
-  if (!runsJson || !doc) return;
-  if (!onTop) return refusePasteOptions();
-  let runs = null;
-  try {
-    runs = JSON.parse(runsJson);
-  } catch {
-    /* malformed retained payload; nothing to merge */
-  }
-  if (!Array.isArray(runs)) return;
-  const merged = runs.map((run) =>
-    run.paragraphBreak
-      ? { paragraphBreak: true }
-      : {
-          text: run.text,
-          bold: run.bold,
-          italic: run.italic,
-          underline: run.underline,
-          strike: run.strike,
-          vertAlign: run.vertAlign,
-        },
-  );
-  if (doc.canUndo) await runEdit(() => doc.undo());
-  await pasteRichRunsJson(JSON.stringify(merged));
-  focusEditorSurface();
-}
-onButton(document.getElementById("pasteOptionsTextOnly"), () => void switchPasteToTextOnly());
-onButton(pasteOptionsMergeBtn, () => void switchPasteToMergeFormatting());
-onButton(document.getElementById("pasteOptionsClose"), hidePasteOptions);
-pasteOptionsEl.addEventListener("mousedown", (e) => {
-  if (e.target.tagName !== "BUTTON") e.preventDefault();
-});
-viewportEl.addEventListener("scroll", hidePasteOptions, { passive: true });
-document.addEventListener("pointerdown", (e) => {
-  if (!pasteOptionsEl.hidden && !pasteOptionsEl.contains(e.target)) hidePasteOptions();
-});
-document.addEventListener("keydown", (e) => {
-  if (pasteOptionsEl.hidden) return;
-  if (e.key === "Escape") return hidePasteOptions();
-  const editingKey = [...e.key].length === 1
-    || ["Backspace", "Delete", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key);
-  if (editingKey && !e.metaKey && !e.ctrlKey && !e.altKey) hidePasteOptions();
-}, true);
-
-document.addEventListener("copy", (e) => {
-  if (editorClipboardEvent(e) && hasRange()) copySelection(e);
-});
-document.addEventListener("cut", (e) => {
-  if (editorClipboardEvent(e) && hasRange()) cut(e);
-});
-document.addEventListener("paste", (e) => {
-  if (editorClipboardEvent(e)) paste(e);
-});
-// `#pages` stays in the tab order (it is the skip-link target and the document's
-// landmark), but it cannot accept text. Hand focus to the proxy when it lands
-// there, so reaching the document by keyboard gives a real text-input surface.
-pagesEl.addEventListener("focus", () => {
-  if (modalIsOpen()) return;
-  if (!editorTextInputEl) return;
-  if (document.activeElement === editorTextInputEl) return;
-  editorTextInputEl.focus({ preventScroll: true });
-  positionEditorTextInput();
-});
-
-// ---- Soft-keyboard / dictation text entry (docs/105 UX-001) ----------------
-// The keydown path below handles hardware keyboards, and it is still the only
-// thing that inserts a character there. It cannot carry touch input: Android
-// and iOS soft keyboards deliver printable characters as `keyCode 229` /
-// `key: "Unidentified"`, and swipe-typing, dictation and autocorrect emit no
-// usable keydown at all. `beforeinput` is the event those surfaces do fire.
-//
-// Deliberately narrow, so this does NOT become a second, divergent apply path —
-// the defect class HF-007 recorded when four copy-pasted edit paths drifted:
-//   * insertion reuses `pasteText(..., "typing")`, the exact primitive
-//     `commitComposedText` already uses, so review mode, selection replacement
-//     and history coalescing behave identically to an IME commit;
-//   * DELETION is intentionally left to keydown. Backspace and Delete are real
-//     named keys that soft keyboards do report, so there is no gap to close and
-//     every reason not to open a second delete path.
-// If you are here to add `deleteContentBackward`, first prove keydown misses it.
-document.addEventListener("beforeinput", async (e) => {
-  if (!editorTextInputEvent(e)) return;
-  // A composition in flight owns its own text; `compositionend` commits it.
-  if (composingText) return;
-  const type = e.inputType;
-  if (type === "insertText" || type === "insertFromPaste" || type === "insertReplacementText") {
-    const data = e.data ?? "";
-    if (!data) return;
-    e.preventDefault();
-    pendingFormat = null;
-    await pasteText(data, "typing");
-    return;
-  }
-  if (type === "insertLineBreak" || type === "insertParagraph") {
-    e.preventDefault(); // An IME / on-screen-keyboard soft break IS Shift+Enter, not a new paragraph (HF-296, `docs/174` TA-01).
-    await (type === "insertLineBreak" ? insertLineBreakAtSelection() : pasteText("\n", "typing"));
-  }
-});
-
-// The proxy must never accumulate text: the engine is the source of truth, and
-// a textarea holding a stale value would resend it on the next composition.
-if (editorTextInputEl) {
-  editorTextInputEl.addEventListener("input", () => {
-    if (composingText) return; // clearing mid-composition cancels the IME
-    editorTextInputEl.value = "";
-  });
-}
-
-document.addEventListener("compositionstart", (e) => {
-  if (!editorTextInputEvent(e)) return;
-  breakTypingSession();
-  composingText = true;
-  pendingFormat = null;
-  if (selection) showImePreedit(selection.focus.node, selection.focus.offset, e.data || "");
-});
-document.addEventListener("compositionupdate", (e) => {
-  if (!composingText) return;
-  updateImePreedit(e.data || "");
-});
-document.addEventListener("compositionend", async (e) => {
-  hideImePreedit();
-  if (!editorTextInputEvent(e)) {
-    composingText = false;
-    return;
-  }
-  e.preventDefault();
-  composingText = false;
-  // `preventDefault` on compositionend does not reliably stop the browser from
-  // leaving the composed text in the textarea, so clear it explicitly.
-  if (editorTextInputEl) editorTextInputEl.value = "";
-  await commitComposedText(e.data || "");
-});
-
-// ---- AutoCorrect: smart quotes, automatic lists, corrections (`autocorrect.mjs`) --
-// The quote decision is `smartQuoteForTyped` (text_rules.mjs); the list and
-// correction rules are `input_rules.mjs`; each conversion is its own undo step.
-const autoCorrect = createAutoCorrect({
-  readPref,
-  writePref,
-  t,
-  getDoc: () => doc,
-  getSelection: () => selection,
-  editing: () => reviewMode === "editing",
-  runEdit: (thunk) => runEdit(thunk),
-  setStatus: (text) => setStatus(text),
-  reflect: () => updateToolbar(),
-  toggles: Object.fromEntries([["smartQuotes", "smartQuotesToggle"], ["lists", "autoFormatListsToggle"], ["autocorrect", "autocorrectToggle"]].map(([key, id]) => [key, document.getElementById(id)])),
-});
-
-/** Adds a word and SAYS whether it was stored. A personal dictionary that
- *  silently failed to persist is indistinguishable from one that worked until
- *  the next reload, and there is no management surface yet to notice with. */
-async function addWordToDictionary(word) {
-  const stored = await spellChecker.addToDictionary(word);
-  setStatus(
-    stored
-      ? `Added “${word}” to your dictionary`
-      : `“${word}” is accepted for this session — your dictionary could not be saved`,
-    stored ? "" : "error",
-  );
-}
-
-document.addEventListener("keydown", async (e) => {
-  if (!doc) return;
-  // The canvas editor owns keystrokes only while its focus owner is active.
-  // Chrome controls, popovers, and link chips keep normal browser semantics.
-  if (isInteractiveChromeTarget(e.target) || !eventTargetsEditor(e)) return;
-
-  const mod = e.metaKey || e.ctrlKey;
-  const key = e.key;
-
-  if (composingText || e.isComposing || key === "Process") return;
-
-  // The object interaction grammar (docs/85 §4) owns the keyboard while an
-  // object is selected. Escape is the two-step exit (editing → selected → text);
-  // Enter/Delete act on the object; a selected object swallows text keys so a
-  // stale caret is never edited.
-  if (key === "Escape" && objectTextDrag.cancel()) return void e.preventDefault();
-  if (keyboardObjectMove.onKey(e)) return; // F2 / Shift+F2, "Move to where?" (UX-OB-02)
-  if ((objectResize.active() || objectRotate.active() || objectMoveDrag) && key === "Escape") {
-    e.preventDefault();
-    objectResize.cancel();
-  objectRotate.cancel(); // Escape during a drag cancels it (docs/85 §4.2)
-    cancelObjectMove();
-    return;
-  }
-  // Crop mode owns Enter, Escape and the arrows before the object grammar —
-  // an arrow let through moved the PICTURE under the crop (HF-106).
-  if (objectCropSession && handleCropKey(e, cropKeyIo)) return;
-  // Esc leaves header/footer editing first: while that context is open it is the
-  // thing Esc most obviously means, and Word closes the header on Esc too.
-  if (runningEditBand && key === "Escape") {
-    e.preventDefault();
-    exitRunningEdit();
-    return;
-  }
-  if (objectSelection) {
-    if (key === "Escape") {
-      e.preventDefault();
-      if (objectSelection.mode === "editing") {
-        objectSelection = { ...objectSelection, mode: "selected" };
-      } else if (!climbOutOfGroup()) {
-        objectSelection = null; // collapse to the surrounding-text caret
-      }
-      clearObjectStatus();
-      drawSelection();
-      return;
-    }
-    if (objectSelection.mode === "selected") {
-      if (key === "Enter") {
-        e.preventDefault();
-        enterObjectEditMode(); // double-click's keyboard twin (§4.3)
-        return;
-      }
-      // Tab / Shift+Tab move to the next / previous object (docs/85 §8d, Q1).
-      // Word cycles floating objects with Tab once one is selected, and Word for
-      // the web moves between graphics the same way — so the gesture belongs to
-      // object-selected mode. From a text caret Tab keeps its indent /
-      // list-demote / next-cell meaning, which the handler further down still
-      // owns. This is the only way to reach an object without a pointer: nothing
-      // else selects one, so a keyboard user could not reach an image or text
-      // box at all.
-      if (key === "Tab" && !mod) {
-        e.preventDefault();
-        traverseObjects(e.shiftKey ? -1 : 1);
-        return;
-      }
-      if (key === "Delete" || key === "Backspace") {
-        e.preventDefault();
-        if (objectSelection.canDelete) deleteSelectedObject(); // one undoable delete; gated
-        else setStatus(capabilityRefusal(objectSelection, "canDelete", SESSION.sentenceFor), "error");
-        return;
-      }
-      // Arrow keys nudge a FLOATING object's position (Word/Docs): Shift a larger
-      // step, Ctrl/Option Word's one-pixel step. An inline image has no position,
-      // so its arrows still fall through to move the caret off it.
-      const nudge = objectNudge(e);
-      if (nudge && objectSelection.canMove) {
-        e.preventDefault();
-        nudgeSelectedObject(nudge);
-        return;
-      }
-      // A text key on an INLINE object (an inserted picture is selected, HF-303)
-      // drops the object and types at the caret after it — never a silent drop,
-      // and never Word's replace-the-picture. A floating object still keeps them.
-      if ([...key].length === 1 && !mod) {
-        if (objectSelection.anchored) return void e.preventDefault();
-        objectSelection = null; // HF-315; code points, so an emoji counts as one key
-        drawSelection();
-      }
-    }
-  }
-
-  // Space ticks the form checkbox the caret is in, as in Word — the keyboard
-  // half of the click in `onPointerDown` (`docs/118` §2). Collapsed caret and
-  // no modifier only: Ctrl+Space is Clear Formatting (a keymap row now, claimed
-  // by the dispatcher), and a Space over a selection is a replacement, not a
-  // toggle.
-  if (key === " " && !e.ctrlKey && !e.metaKey && !e.altKey && !hasRange() && selection) {
-    if (toggleFormCheckboxAt(selection.focus.node, selection.focus.offset)) {
-      e.preventDefault();
-      return;
-    }
-  }
-
-  // Every ⌘/Ctrl chord this handler used to carry — clipboard, select-all,
-  // history, B/I/U, the format painter, clear-formatting — is now a row in
-  // `keymap.mjs` claimed by the one dispatcher, which runs before this listener
-  // and stops the event. What stays here is the keyboard that is NOT a chord:
-  // caret movement, Enter, Tab, Backspace, the object grammar and text input.
-  if (!selection) return;
-
-  // Navigation uses an explicit macOS/Windows keymap. It runs before the
-  // generic modifier guard so the supported Ctrl/Command/Option combinations
-  // reach semantic engine moves. Shift extends every navigation intent.
-  const navDir = navigationDirection(e, EDITOR_KEYBOARD_PLATFORM);
-  // Shift+Arrow EXTENDS a cell selection once one exists — the Docs and Word
-  // behaviour — instead of collapsing it into a text range one character long.
-  // With no cell selection this is not reached and Shift+Arrow is text as ever.
-  if (navDir && e.shiftKey && tableRange.get() && tableRange.extendByStep(navDir)) {
-    e.preventDefault();
-    syncSelectionToCellRange();
-    tableRange.announce();
-    return;
-  }
-  if (navDir === "docStart" || navDir === "docEnd") {
-    e.preventDefault();
-    navToPosition(navDir === "docStart" ? doc.firstPosition() : doc.lastPosition(), e.shiftKey);
-    return;
-  }
-  if (navDir === "pageUp" || navDir === "pageDown") {
-    e.preventDefault();
-    navByViewport(navDir, e.shiftKey);
-    return;
-  }
-  if (navDir) {
-    e.preventDefault();
-    navCaret(navDir, e.shiftKey);
-    return;
-  }
-
-  // Tab / Shift+Tab indent / outdent the paragraph(s) the selection touches — the
-  // word-processor convention (and how lists are demoted/promoted). Caught before
-  // `if (mod) return` is irrelevant (Tab carries no ⌘), but before the browser can
-  // move focus off the page.
-  if (key === "Tab") {
-    e.preventDefault();
-    pendingFormat = null;
-    if (doc.inTable(selection.focus.node)) {
-      const from = selection.focus.node;
-      let target = null;
-      try {
-        // ONLY the engine call is guarded, so a throw from `navToPosition` can
-        // never be mistaken for "we are at the boundary" and append a row.
-        target = doc.moveTableCell(from, !e.shiftKey);
-      } catch {
-        // THE TABLE BOUNDARY (`docs/141` TBL-01). `moveTableCell` throws only
-        // "no adjacent table cell" here — `inTable` has already answered the
-        // other throw — so a forward Tab that fails is a Tab in the LAST cell,
-        // and Word and Google Docs both append a row for it. The engine's own
-        // caret lands in the new row's first cell (`insert_row`'s
-        // `apply_action_caret`), which is exactly where the gesture means to go,
-        // so nothing here moves the caret a second time.
-        //
-        // It used to be an empty `catch {}`, refusing with nothing at all.
-        if (e.shiftKey) setStatus(t("table.atFirstCell"));
-        else if (await runEdit(() => doc.insertRow(from, true), { gate: true })) setStatus(t("table.rowAppended"));
-      }
-      // Tab SELECTS the destination cell's contents, so typing replaces them (OL-03, docs/171).
-      const cellContents = target && cellContentsSelection(doc, target);
-      if (cellContents) {
-        tableRange.clear();
-        selection = cellContents;
-        drawSelection();
-        focusEditorSurface();
-        scrollCaretIntoView();
-      } else if (target) navToPosition(target, false);
-      return;
-    }
-    if (reviewMode === "suggesting") {
-      setStatus("Indent and list structure changes cannot be tracked yet; switch to Editing", "error");
-      return;
-    }
-    const listKind = doc.listStyleAt(selection.focus.node);
-    if (listKind) {
-      await runEdit(() =>
-        doc.adjustListLevel(
-          selection.anchor.node,
-          selection.anchor.offset,
-          selection.focus.node,
-          selection.focus.offset,
-          e.shiftKey ? -1 : 1,
-        ),
-      );
-    } else {
-      await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360), { paragraphLevel: true });
-    }
-    return;
-  }
-
-  const { anchor, focus } = selection;
-  const range = hasRange();
-  const wordDelete = wordDeletionDirection(e, EDITOR_KEYBOARD_PLATFORM);
-
-  if (wordDelete) {
-    e.preventDefault();
-    if (reviewMode === "suggesting") {
-      const start = range
-        ? (anchor.offset <= focus.offset ? anchor : focus)
-        : wordDelete === "backward"
-          ? (() => { const c = doc.moveCaret(focus.node, focus.offset, "wordLeft"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })()
-          : focus;
-      const end = range
-        ? (anchor.offset <= focus.offset ? focus : anchor)
-        : wordDelete === "forward"
-          ? (() => { const c = doc.moveCaret(focus.node, focus.offset, "wordRight"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })()
-          : focus;
-      if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
-      } else if (start.node !== end.node) {
-        await suggestAcrossParagraphs(start, end, null);
-      }
-      return;
-    }
-    await runEdit(() =>
-      range
-        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
-        : wordDelete === "backward"
-          ? doc.deleteWordBackward(focus.node, focus.offset)
-          : doc.deleteWordForward(focus.node, focus.offset),
-    );
-    return;
-  }
-
-  // macOS ⌘Backspace deletes from the caret to the start of the line (⌘Delete to
-  // the line end). The engine's `lineStart`/`lineEnd` caret move gives the same
-  // boundary Home/End navigation uses, and the span is removed as one undoable
-  // range delete. This must run before the `if (mod)` guard, which otherwise
-  // swallows the ⌘ chord.
-  const lineDelete = lineDeletionDirection(e, EDITOR_KEYBOARD_PLATFORM);
-  if (lineDelete) {
-    e.preventDefault();
-    const boundary = range
-      ? null
-      : (() => {
-          const c = doc.moveCaret(focus.node, focus.offset, lineDelete === "backward" ? "lineStart" : "lineEnd");
-          const p = { node: c.node, offset: c.offset };
-          c.free();
-          return p;
-        })();
-    const start = range
-      ? (anchor.offset <= focus.offset ? anchor : focus)
-      : lineDelete === "backward" ? boundary : focus;
-    const end = range
-      ? (anchor.offset <= focus.offset ? focus : anchor)
-      : lineDelete === "backward" ? focus : boundary;
-    if (reviewMode === "suggesting") {
-      if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
-      } else if (start.node !== end.node) {
-        // A no-op (the caret is already at the line boundary) is swallowed; a real
-        // cross-paragraph span is now a tracked suggestion.
-        await suggestAcrossParagraphs(start, end, null);
-      }
-      return;
-    }
-    if (!(start.node === end.node && start.offset === end.offset)) {
-      await runEdit(() => doc.deleteSelection(start.node, start.offset, end.node, end.offset));
-    }
-    return;
-  }
-
-  if (mod) {
-    breakTypingSession();
-    return; // leave other ⌘/Ctrl shortcuts to the browser
-  }
-
-  if (key === "Backspace") {
-    e.preventDefault();
-    if (!range && focus.offset === 0) {
-      const listKind = doc.listStyleAt(focus.node);
-      if (listKind) {
-        const level = doc.listLevelAt?.(focus.node) ?? 0;
-        await runToolbarEdit((a, b, c, d) =>
-          level > 0
-            ? doc.adjustListLevel(a, b, c, d, -1)
-            : doc.toggleList(a, b, c, d, listKind), { paragraphLevel: true });
-        return;
-      }
-    }
-    if (reviewMode === "suggesting") {
-      const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "left"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
-      const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : focus;
-      if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
-        return;
-      }
-      // Backspace at a paragraph start suggests deleting the PREVIOUS paragraph's
-      // mark: that mark is the break being removed.
-      if (!range && start.node !== end.node) {
-        try {
-          await runEdit(() => doc.suggestDeleteParagraphMark(start.node, undefined, new Date().toISOString()));
-        } catch (error) {
-          setStatus(String(error?.message ?? error), "error");
-        }
-        return;
-      }
-      if (start.node !== end.node) await suggestAcrossParagraphs(start, end, null);
-      return;
-    }
-    await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteBackward(focus.node, focus.offset));
-    return;
-  }
-  if (key === "Delete") {
-    e.preventDefault();
-    if (reviewMode === "suggesting") {
-      const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : focus;
-      const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "right"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
-      if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
-        return;
-      }
-      // Delete at a paragraph end suggests deleting THIS paragraph's mark.
-      if (!range && start.node !== end.node) {
-        try {
-          await runEdit(() => doc.suggestDeleteParagraphMark(start.node, undefined, new Date().toISOString()));
-        } catch (error) {
-          setStatus(String(error?.message ?? error), "error");
-        }
-        return;
-      }
-      if (start.node !== end.node) await suggestAcrossParagraphs(start, end, null);
-      return;
-    }
-    await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteForward(focus.node, focus.offset));
-    return;
-  }
-  if (key === "Enter") {
-    e.preventDefault();
-    // Shift+Enter is a SOFT line break: the text stays in one paragraph and so
-    // keeps its list membership, style, numbering and spacing. It used to fall
-    // through to the paragraph split below, which in a bulleted list produced a
-    // second bullet and at the end of a heading dropped the next line into body
-    // text — the opposite of what the gesture means in Word and Docs.
-    //
-    // Checked before the Suggesting gate and before the empty-list-item rule,
-    // because neither is about this gesture: a line break inside an empty list
-    // item must not exit the list.
-    if (e.shiftKey && !mod) {
-      await insertLineBreakAtSelection();
-      return;
-    }
-    if (reviewMode === "suggesting") {
-      // A tracked Enter. Over a selection the range goes first, as its own
-      // suggestion, then the break — the order Word writes them in.
-      if (range) {
-        const [s, e] = orderedSelectionEnds(selection, doc);
-        const ok = s.node === e.node
-          ? await runEdit(() => doc.suggestDelete(s.node, s.offset, e.offset, undefined, new Date().toISOString())).then(() => true)
-          : await suggestAcrossParagraphs(s, e, null);
-        if (!ok) return;
-      }
-      const at = selection?.focus ?? focus;
-      try {
-        await runEdit(() => doc.suggestSplit(at.node, at.offset, undefined, new Date().toISOString()));
-      } catch (error) {
-        setStatus(String(error?.message ?? error), "error");
-      }
-      return;
-    }
-    // Word/Docs convention: Enter on an empty list item exits the list instead
-    // of creating another empty bullet/number. The current paragraph remains in
-    // place, so the caret does not jump and Undo restores the list marker.
-    if (!range) {
-      const listKind = doc.listStyleAt(focus.node);
-      if (listKind && doc.paragraphLength(focus.node) === 0) {
-        const level = doc.listLevelAt?.(focus.node) ?? 0;
-        await runToolbarEdit((a, b, c, d) =>
-          level > 0
-            ? doc.adjustListLevel(a, b, c, d, -1)
-            : doc.toggleList(a, b, c, d, listKind), { paragraphLevel: true });
-        return;
-      }
-    }
-    await runEdit(() =>
-      doc.insertPlainTextAs(
-        anchor.node,
-        anchor.offset,
-        focus.node,
-        focus.offset,
-        "\n",
-        "paragraphBreak",
-      ),
-    );
-    return;
-  }
-  // A printable character (single key, no modifiers). Counted in CODE POINTS,
-  // not UTF-16 units: an emoji arrives as a surrogate pair, so `key.length === 1`
-  // silently discarded every astral character the user typed or an IME committed
-  // — while the same character pasted or inserted from a picker went in fine.
-  // Named keys ("Enter", "F1", "Tab") are still longer than one code point.
-  if ([...key].length === 1) {
-    e.preventDefault();
-    const session = typingSessionForKey();
-    // Straight quotes become typographic ones, decided from what precedes the
-    // insertion point — the start of the replaced range when there is a
-    // selection, since that is what the quote will actually follow.
-    const quoteNode = range ? (anchor.offset <= focus.offset ? anchor.node : focus.node) : focus.node;
-    const quoteOffset = range ? Math.min(anchor.offset, focus.offset) : focus.offset;
-    const typed = smartQuoteForTyped(key, {
-      enabled: autoCorrect.enabled("smartQuotes"),
-      offset: quoteOffset,
-      readPrefix: () => doc.copyText(quoteNode, 0, quoteNode, quoteOffset),
-    });
-    if (range) {
-      pendingFormat = null; // typing over a selection uses the selection's own runs
-      if (reviewMode === "suggesting" && anchor.node !== focus.node) {
-        const [s, e] = orderedSelectionEnds(selection, doc);
-        await suggestAcrossParagraphs(s, e, typed);
-        return;
-      }
-      await runEdit(
-        () => reviewMode === "suggesting"
-          ? doc.suggestReplace(
-            anchor.node,
-            Math.min(anchor.offset, focus.offset),
-            Math.max(anchor.offset, focus.offset),
-            typed,
-            undefined,
-            new Date().toISOString(),
-            session,
-          )
-          : doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, typed, session),
-        { typing: true },
-      );
-    } else if (pendingFormat) {
-      const pf = pendingFormat; // armed format persists across consecutive typing
-      if (
-        reviewMode === "suggesting" &&
-        !pf.character && (pf.underlineStyle != null || pf.underlineColor != null)
-      ) {
-        setStatus(
-          "Underline style and color are not tracked yet; switch to Editing to type with them",
-          "error",
-        );
-        return;
-      }
-      await runEdit(
-        () => pf.character ? typeArmedCharacter(doc, focus, typed, pf, session, reviewMode) : reviewMode === "suggesting"
-          ? doc.suggestStyledInsert(
-            focus.node,
-            focus.offset,
-            typed,
-            pf.bold,
-            pf.italic,
-            pf.underline,
-            pf.strike,
-            pf.sizeHalfPoints,
-            pf.color,
-            pf.highlight,
-            pf.vertAlign,
-            pf.font,
-            undefined,
-            new Date().toISOString(),
-            session,
-          )
-          : (pf.underlineStyle != null || pf.underlineColor != null)
-            ? doc.typeStyledTextWithUnderline(
-                focus.node,
-                focus.offset,
-                typed,
-                pf.bold,
-                pf.italic,
-                pf.underline,
-                pf.strike,
-                pf.sizeHalfPoints,
-                pf.color,
-                pf.highlight,
-                pf.vertAlign,
-                pf.font,
-                session,
-                pf.underlineStyle,
-                pf.underlineColor,
-              )
-            : doc.typeStyledText(
-                focus.node,
-                focus.offset,
-                typed,
-                pf.bold,
-                pf.italic,
-                pf.underline,
-                pf.strike,
-                pf.sizeHalfPoints,
-                pf.color,
-                pf.highlight,
-                pf.vertAlign,
-                pf.font,
-                session,
-              ),
-        { typing: true },
-      );
-    } else {
-      await runEdit(
-        () => reviewMode === "suggesting"
-          ? doc.suggestInsert(
-            focus.node,
-            focus.offset,
-            typed,
-            undefined,
-            new Date().toISOString(),
-            session,
-          )
-          : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, typed, session),
-        { typing: true },
-      );
-    }
-    if (!range) await autoCorrect.afterTyped(typed); // a list marker or a correction, as its own undo step (TA-05/06)
-  }
-});
-
-/** The viewer's package-admission limit, mirroring `max_input_bytes` in
- *  `casual-doc-wasm` (64 MiB). Mirrored rather than imported because the engine
- *  applies it inside `open(bytes)`, i.e. only once the whole file has already
- *  been read; this is the pre-check that lets the editor say no first. */
-const MAX_OPEN_BYTES = 64 * 1024 * 1024;
-
-/** The one entry point for "open these bytes as the document" — the picker and
- *  the viewport drop both land here, which is why the unsaved-work question is
- *  asked here and nowhere else (docs/104 HF-002). Two paths asking the same
- *  question two ways is how one of them ends up not asking it. */
-async function handleFile(file) {
-  if (!file) return;
-  // The WASM `open` auto-detects any registered format from the bytes, so accept
-  // every format the picker offers (DOCX, ODT, RTF, normalized JSON, plain text) —
-  // the extension is only a friendly pre-filter; detection is authoritative.
-  if (!/\.(docx|odt|rtf|json|txt)$/.test(file.name.toLowerCase())) {
-    setStatus("Please choose a .docx, .odt, .rtf, .json, or .txt file", "error");
-    return;
-  }
-  // The open document lives in the wasm heap and nowhere else, so replacing it
-  // is unrecoverable. Ask before, not after.
-  // The engine refuses anything over its package-admission limit, but it only
-  // gets to refuse AFTER the whole file has been read into memory. Checking the
-  // size the picker already told us is both faster and a message the user can
-  // act on ("this file is too big"), instead of a decode failure deep in open().
-  if (file.size > MAX_OPEN_BYTES) {
-    setStatus(
-      `${file.name} is ${Math.round(file.size / 1024 / 1024)} MB — the editor opens files up to 64 MB`,
-      "error",
-    );
-    return;
-  }
-  if (!(await confirmDiscardIfEdited())) {
-    setStatus("Open cancelled — your changes are still here");
-    return;
-  }
-  // Reading a file can fail for reasons that have nothing to do with its
-  // contents: it moved or was renamed since it was picked, the volume went away,
-  // permission was withdrawn. That rejection used to land on a discarded promise
-  // at both call sites, so a dropped file that could not be read did nothing at
-  // all — no status, no error, no clue (docs/104 HF-065). Reported here, at the
-  // one entry point both the picker and the drop go through, so neither caller
-  // can be the one that forgets.
-  let buf;
-  try {
-    buf = await file.arrayBuffer();
-  } catch (err) {
-    console.warn("file read failed:", err);
-    setStatus(`${file.name} could not be read — it may have moved or been renamed`, "error");
-    return;
-  }
-  await openBytes(new Uint8Array(buf), file.name);
-}
-
-fileEl.addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  // Clear the picker's value either way. A file input fires `change` only when
-  // the selection differs from what it already holds, so keeping the value
-  // makes "cancel the discard prompt, then pick the same file again" a dead
-  // control — and re-opening the same file impossible generally (HF-065).
-  e.target.value = "";
-  await handleFile(file);
-});
-// ---- Zoom (Q4): editable %, Fit width / Fit page, Ctrl+scroll ---------------
-const zoomMenu = document.getElementById("zoomMenu");
-const zoomMenuBtn = document.getElementById("zoomMenuBtn");
-const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-
-/** Fit-to-viewport factor for the CARET's page, not page 0. Fitting page 0 on a
- *  document whose later section turns landscape sized the view to the portrait
- *  page and let every landscape page overflow sideways — a "Fit width" that does
- *  not fit. The page index comes from the ruler, so the two cannot disagree
- *  about which page the user is on. The arithmetic is `view_zoom.mjs`. */
-function computeFitZoom(mode) {
-  if (!doc) return zoomFactor;
-  const size = doc.pageSize(fitPageIndex(rulerView.builtForPage(), doc.pageCount)); // the ENGINE bounds it, not the view (HF-400)
-  const factor = fitZoomFactor(mode, size, viewportEl.getBoundingClientRect(), { dpi: BASE_DPI, twipsPerInch: TWIPS_PER_INCH });
-  size.free();
-  return clampZoom(factor);
-}
-
-/** Repaints the zoom input (unless the user is mid-edit) and the preset checks. */
-function updateZoomDisplay() {
-  if (document.activeElement !== zoomEl) {
-    zoomEl.value =
-      zoomMode === "fit-width" ? "Fit width"
-        : zoomMode === "fit-page" ? "Fit page"
-          : `${Math.round(zoomFactor * 100)}%`;
-  }
-  reflectZoomMenu(zoomMenu, { mode: zoomMode, factor: zoomFactor });
-  viewZoom.reflect();
-}
-
+const { exportDocumentAs, saveDocument } = createSave(ed);
+const { navByViewport, navToPosition, selectAll } = createSelectionCommands(ed);
+const {
+  commitComposedText, cut, editorTextInputEvent, hidePasteOptions, paste, pasteAsText,
+  pasteOptionsShowing, pasteRichRunsJson, pasteText,
+} = createClipboard(ed);
+const { addWordToDictionary, autoCorrect } = createTextInput(ed);
+createKeyboard(ed);
+const { handleFile } = createFilePick(ed);
+const { clampZoom, computeFitZoom, updateZoomDisplay, zoomMenu } = createZoom(ed);
 /** Sets a fixed zoom factor (exits any fit mode) and re-renders. A deliberate
  * zoom command restores the editor; a native input `change` caused by focusing
  * some other control does not steal focus back from that control. */
@@ -12541,83 +10690,6 @@ function setZoomMode(mode, restoreFocus = true) {
 function stepZoom(dir) {
   setZoom(nextZoomStep(zoomFactor, dir, clampZoom));
 }
-
-/** Commit the typed zoom value. The parse is `view_zoom.mjs`'s. */
-function commitZoomInput({ restoreFocus = false } = {}) {
-  const asked = parseZoomInput(zoomEl.value);
-  if (asked.mode) setZoomMode(asked.mode, restoreFocus);
-  else if (asked.factor) setZoom(asked.factor, restoreFocus);
-  else updateZoomDisplay(); // reject: restore the last valid display
-}
-zoomEl.addEventListener("change", () => commitZoomInput());
-zoomEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    commitZoomInput({ restoreFocus: true });
-    zoomEl.blur();
-  } else if (e.key === "Escape") {
-    updateZoomDisplay();
-    zoomEl.blur();
-    focusEditorSurface();
-  }
-});
-zoomEl.addEventListener("focus", () => zoomEl.select());
-
-const zoomPopover = registerPopover(zoomMenuBtn, zoomMenu, updateZoomDisplay);
-zoomMenu.addEventListener("click", (e) => {
-  const preset = e.target.closest(".zoom-preset");
-  const fit = e.target.closest(".zoom-fit");
-  if (preset) setZoom(Number(preset.dataset.zoom));
-  else if (fit) setZoomMode(fit.dataset.zoomMode);
-  else return;
-  closePopover(zoomPopover);
-});
-for (const [id, dir] of [["zoomIn", 1], ["zoomOut", -1]]) document.getElementById(id).addEventListener("click", () => stepZoom(dir));
-
-// Ctrl/⌘+scroll over the document zooms (a fixed % centered on the pointer's
-// intent), the desktop-editor convention. Passive:false so we can preventDefault
-// the page zoom the browser would otherwise do.
-viewportEl.addEventListener(
-  "wheel",
-  (e) => {
-    if (!(e.ctrlKey || e.metaKey) || !doc) return;
-    e.preventDefault();
-    const base = zoomMode === "custom" ? zoomFactor : computeFitZoom(zoomMode);
-    setZoom(clampZoom(base * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
-  },
-  { passive: false },
-);
-
-// Re-fit on viewport resize while a fit mode is active.
-let fitResizeRaf = 0;
-window.addEventListener("resize", () => {
-  if (zoomMode === "custom") {
-    // The zoom is unchanged but the window is not: a different viewport height
-    // needs different sheets and gives the scroll mapping a new travel.
-    updatePageWindow({ force: true });
-    paintPagesInView();
-    return;
-  }
-  cancelAnimationFrame(fitResizeRaf);
-  fitResizeRaf = requestAnimationFrame(() => renderAll());
-});
-
-// Drag-and-drop anywhere over the viewport.
-for (const type of ["dragover", "drop"]) {
-  viewportEl.addEventListener(type, (e) => e.preventDefault());
-}
-viewportEl.addEventListener("dragover", () => viewportEl.classList.add("dragging"));
-viewportEl.addEventListener("dragleave", () => viewportEl.classList.remove("dragging"));
-viewportEl.addEventListener("drop", (e) => {
-  viewportEl.classList.remove("dragging");
-  // `handleFile` reports every failure it can name; this catch is for the ones
-  // it cannot, so a dropped file can never fail into silence (docs/104 HF-065).
-  handleFile(e.dataTransfer?.files?.[0]).catch((err) => {
-    console.error("open failed:", err);
-    setStatus("That file could not be opened", "error");
-  });
-});
-
 // ---- Settings: theme + accent + reviewer identity, persisted (OSS-customizable) ----
 const settingsBtn = document.getElementById("settingsBtn");
 const {
