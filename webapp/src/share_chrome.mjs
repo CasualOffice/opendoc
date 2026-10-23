@@ -1,14 +1,29 @@
 import { registerModal } from './modal.mjs';
 
-/** Uses the editor's modal contract so application shortcuts cannot fire behind the link. */
+/** Share, at the right end of the header's document row — after the state chips and
+ *  the people in the room, where Google Docs, Word on the web and ONLYOFFICE all put
+ *  it (`docs/109` HF-330). It was appended to the title row, beside the file name,
+ *  which painted it in the middle of the header.
+ *
+ *  The header's existing primary button (`.btn-primary`), with a glyph so the phone
+ *  rung can drop the word and keep the control (`style.css`, `.share-btn`). The name
+ *  is on `aria-label` as well as in the text, because the text is the part the phone
+ *  rung hides.
+ *
+ *  Uses the editor's modal contract so application shortcuts cannot fire behind the link. */
 export function createShareChrome({ root, parent, share, available, t }) {
   const button = root.createElement('button');
-  button.id = 'shareBtn'; button.type = 'button'; button.className = 'btn';
+  button.id = 'shareBtn'; button.type = 'button'; button.className = 'btn btn-primary share-btn';
+  const icon = root.createElement('span'); icon.className = 'ms'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = 'person_add';
+  const text = root.createElement('span'); text.className = 'share-label';
+  button.append(icon, text);
   parent.append(button);
   let dialog, controller;
   return {
+    button,
     reflect() {
-      button.textContent = t('collab.share');
+      text.textContent = t('collab.share');
+      button.setAttribute('aria-label', t('collab.share'));
       button.disabled = !available();
       button.title = t(button.disabled ? 'collab.shareHostRequired' : 'collab.share');
     },
