@@ -1,6 +1,6 @@
 # 94 — Oracle-Based Visual Fidelity Harness
 
-**Status:** H1 landed. **H2 landed and armed** — the LibreOffice geometry references are committed under `fixtures/oracle/` and the comparison runs on every pull request (`.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate"); see §H2 concretely. **H2b landed** — `opendoc-fidelity compare` measures any document, not only the six gated fixtures, and reports the difference as numbers rather than as an impression; see §H2b. H3 not started. Recommended before the remaining geometry-subtle rendering fixes (page-top spacing compat, numbering tab-suffix, `w:hideMark`, run shading), which cannot be verified safely without a visual oracle.
+**Status:** H1 landed. **H2 landed and armed** — the LibreOffice geometry references are committed under `fixtures/oracle/` and the comparison runs on every pull request (`.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate"); see §H2 concretely. **H2c landed** — six self-generated Latin-only fixtures join the gate, a missing reference now FAILS the comparison instead of skipping it, and the per-fixture deltas are a generated, freshness-checked report (`fixtures/oracle/REPORT.md`); see §H2c. **H2b landed** — `opendoc-fidelity compare` measures any document, not only the six gated fixtures, and reports the difference as numbers rather than as an impression; see §H2b. H3 not started. Recommended before the remaining geometry-subtle rendering fixes (page-top spacing compat, numbering tab-suffix, `w:hideMark`, run shading), which cannot be verified safely without a visual oracle.
 **Scope:** A new dev/CI-only crate (`casual-doc-oracle`, or a `tests/visual` harness) plus a pinned fixture corpus and a gated CI job. No change to the shipping crates' behavior; the harness only *reads* the existing deterministic CPU render path (`casual-doc-render::render` → `Surface::encode_png`).
 **Relates to:** doc 44 (rendering pipeline), doc 18 (support matrix — which the audit showed overstates coverage), doc 40 (font management — the bundled metric-compatible faces are what make oracle parity possible), the rendering-fidelity audit backlog.
 
@@ -100,7 +100,7 @@ Arming it measured three real divergences from LibreOffice and one comparability
 
 - **Font provenance is read off the artifact.** Each reference records `fonts`: the faces the producing PDF actually embedded (`pdffonts`, subset prefix stripped). A reference naming a face that is neither a pinned metric-compatible family nor the one reviewed non-parity face (`Symbol`, LibreOffice's list-bullet face, whose `U+F0B7` lines both sides exclude before any advance is compared) is refused. This replaces the previous `fc-match` transcript, which described the producing *machine* rather than the document and is meaningless on macOS, where LibreOffice ships and uses its own copies of exactly these families. The `fc-match` check survives as a pre-flight in the re-bless job, where failing early is cheaper than producing a bad reference.
 
-- **Known divergences are registered, not absorbed.** Three fixtures are genuinely outside the 40-twip band against LibreOffice 26.2.4.2, all on the page's bottom text edge, i.e. accumulated vertical drift: `rich` +263 twips (the paragraph after the nested table sits a line low), `table-merges` −55, and `table-list` −60 (drift accumulates monotonically down that page: table rows −10 then −25, list items −65, closing paragraph −60). These are the FID-L-21 signal, now reproducible from the repository rather than only from a local run. Each is listed in `KNOWN_DIVERGENCES` in the test with its measured delta and tracker row, and the comparison for that one edge is re-centred on `oracle + delta` **within the unchanged 40-twip band** — so the edge stays pinned to ±2pt, and the gate goes red if the divergence grows, shrinks, or is fixed. `known_divergences_are_still_divergent` refuses an entry small enough that the plain comparison would have passed, so the registry cannot decay into general slack. Neither the tolerance nor any reference was touched to make the gate green.
+- **Known divergences are registered, not absorbed.** *(The current set and every fixture's deltas are in the generated `fixtures/oracle/REPORT.md`; the history below is what the first arming measured.)* Three fixtures were genuinely outside the 40-twip band against LibreOffice 26.2.4.2, all on the page's bottom text edge, i.e. accumulated vertical drift: `rich` +263 twips (the paragraph after the nested table sits a line low), `table-merges` −55, and `table-list` −60 (drift accumulates monotonically down that page: table rows −10 then −25, list items −65, closing paragraph −60). These are the FID-L-21 signal, now reproducible from the repository rather than only from a local run. Each is listed in `KNOWN_DIVERGENCES` in the test with its measured delta and tracker row, and the comparison for that one edge is re-centred on `oracle + delta` **within the unchanged 40-twip band** — so the edge stays pinned to ±2pt, and the gate goes red if the divergence grows, shrinks, or is fixed. `known_divergences_are_still_divergent` refuses an entry small enough that the plain comparison would have passed, so the registry cannot decay into general slack. Neither the tolerance nor any reference was touched to make the gate green.
 
 - **Reference geometry (resolved open question #1):** auto-extracted from the LibreOffice PDF, *not* hand-blessed. `scripts/oracle/extract-geometry.sh` runs pinned `soffice --convert-to pdf`, then `pdftotext -bbox`, and reduces the word boxes as above to `{ "schema": 3, "fonts": [..], "pages": [ { "sizeTwips": [w,h], "contentBboxTwips": [x0,y0,x1,y1]|null, "excludedLines": n, "excludedExtentTwips": n } ] }` (PDF points → twips, origin top-left). Committed under `fixtures/oracle/<id>.geom.json`. **`schema` is the contract stamp:** bump it in the script and in the test's `ORACLE_SCHEMA` whenever the *meaning* of a field changes, so a reference blessed under the old meaning is never compared against the new one.
 
@@ -112,10 +112,92 @@ Arming it measured three real divergences from LibreOffice and one comparability
 
   40 twips therefore holds for any bundled face up to ≈115pt with ~5× headroom over the edges observed when it was set (the `lineGap/2` term is now fixed, so the real headroom is larger), while staying far below the errors worth catching (a one-line vertical slip at body size is 276 twips). A fixture that needs more must record *why* here — raising the number to turn a red edge green is not a fix. The `lineGap/2` term **was** a real fidelity difference and has been closed in the box model (§H2b) rather than absorbed here, which is what "belongs in the shaper, not in this tolerance" meant.
 
-- **Armed, and asserted to be armed:** all six references are committed, so the content comparison is live. A fixture with no committed reference is still **skipped** — that is what let the harness land before the oracle had run — but `the_oracle_gate_is_armed` now fails the build if any fixture in `ORACLE_FIXTURES` lacks a trustworthy, current-schema reference, and if `.github/workflows/ci.yml` stops running the gate by name on pull requests. The skip path can no longer become the normal path without someone noticing. A reference at an *older* schema is compared only on page count and page size — the quantities no schema bump has changed — and the test prints the re-bless instruction, so a semantics change degrades the gate loudly instead of reddening main or being quietly hand-patched.
+- **Armed, and asserted to be armed:** every reference is committed, so the content comparison is live. A gated fixture with no trustworthy reference now **fails** the comparison itself (until §H2c it was skipped, which is what let the harness land before the oracle had run, and also how it sat inert), and `the_oracle_gate_is_armed` independently fails the build if any fixture in `ORACLE_FIXTURES` lacks a trustworthy, current-schema reference, if `.github/workflows/ci.yml` stops running the gate by name on pull requests, or if the re-bless workflow stops regenerating a reference the test reads. A reference at an *older* schema is compared only on page count and page size — the quantities no schema bump has changed — and the test prints the re-bless instruction, so a semantics change degrades the gate loudly instead of reddening main or being quietly hand-patched.
 - **Hermetic main CI + reviewed re-bless:** the everyday gate is `.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate (docs/94 H2, FID-P-01)" — `cargo test -p casual-doc-render --test oracle_geometry`, no LibreOffice and no network, on every pull request. `.github/workflows/oracle-geometry.yml` is a manual (`workflow_dispatch`) job that installs a pinned LibreOffice and **only** the bundled metric-compatible faces (Liberation/Carlito/Caladea — the font-parity crux), regenerates the references, and opens a PR whose geometry diff a maintainer reviews. The everyday CI stays hermetic (no LibreOffice, no network) and just compares against the committed references.
 - **Where the references were blessed, stated plainly:** the committed set was produced with LibreOffice 26.2.4.2 on **macOS/arm64** (its app bundle ships the Liberation/Carlito/Caladea faces, and each reference's `fonts` records that those are what it embedded), because that is the pinned build that was actually available. The re-bless job regenerates them on Linux with the same pinned build and now prints the diff against the committed set, so its first run is also the first measurement of whether the oracle is platform-stable. If the two disagree beyond the band, the honest answer is to bless on one platform and say so in `fixtures/oracle/README.md` — or to generate references in CI per run — not to widen the tolerance. Our own side of the comparison is not platform-sensitive between Linux and macOS: it shapes with bundled faces and is already pinned identically on both by the H1 golden.
 - **Platform:** the geometry comparison is pinned to Linux/macOS and skipped on Windows, whose text stack shapes differently (the same reason H1 is Windows-gated — see the H1 test and PR #316).
+
+## H2c — a self-generated corpus, fail-not-skip, and a published baseline (FID-P-01)
+
+Three LibreOffice-authored fixtures were gated and three were held out, so the
+gate measured six pages. H2c widens it without loosening it.
+
+- **Self-generated fixtures.** `fixtures/tools/make_oracle_fixtures.py` writes six
+  documents into `fixtures/generated/oracle-*.docx`, each isolating one layout
+  family: alignment and indents, the `w:spacing@line` box model, the five pinned
+  families at four sizes and styles, multi-page flow with an explicit page
+  break, two sections with orientation and tab stops, and a plain bordered
+  table. Repository-written, so rights are not a question; Latin-only and every
+  run on a pinned face, so they satisfy the gate's premise by construction.
+  Their references were blessed with LibreOffice 26.2.4.2 (provenance and the
+  exact image in `fixtures/oracle/README.md`); the same run reproduced the six
+  existing references byte for byte.
+- **Fail, not skip.** A gated fixture with no trustworthy reference fails the
+  comparison with the re-bless instruction. Shown red by moving
+  `docx-oracle-plain-table.geom.json` aside.
+- **A generated report.** `the_published_oracle_report_is_current` renders every
+  fixture's verdict and its per-page `ours − oracle` deltas from the committed
+  references and the engine at the same commit, and refuses a stale
+  `fixtures/oracle/REPORT.md`. So a layout change that moves an edge *inside*
+  the band — which the gate cannot see — still shows up as a diff of that file in
+  the same PR (shown red by shifting every line's right edge 5 twips: the gate
+  stayed green, the report went red). CI appends the report to the run summary.
+  Held-out fixtures are listed without numbers, because what holds them out is
+  that our side of their comparison differs by platform.
+- **The honest baseline.** Read it from `REPORT.md`, not from here. In words: the
+  alignment/indent and multi-page fixtures pass; four self-generated fixtures
+  deviate and are registered in `KNOWN_DIVERGENCES` against new rows, none by
+  widening the band and none by editing a reference:
+  - *FID-L-26* — on the line-spacing fixture our breaker keeps a word whose pen
+    end is 13 twips past the right margin, where LibreOffice wraps it; every
+    later line wraps differently, so two lines and 952 twips go missing.
+  - *FID-L-27* — font-parity residue with three faces of it: (a) our Carlito
+    files are a **different build** from LibreOffice's (ours hhea
+    1950/−550/0, LibreOffice's 1536/−512/452, Calibri's own), which is the whole
+    uniform +44 on the table fixture and corrects the reading in "Signals" item 1
+    below: LibreOffice is not choosing `sTypoAscender` over `hhea`, its file
+    *has* that `hhea`; (b) Caladea lines run 42–87 twips short from a
+    byte-identical file, so that is shaping (kerning or features), not metrics;
+    (c) the font-families fixture's wrapping diverges from the Liberation Mono
+    paragraphs, cause not isolated.
+  - *FID-L-28* — a document that declares no face at all is not comparable: we
+    resolve Roboto, LibreOffice Carlito. Eleven older generated fixtures were
+    blessed, measured, and not kept for that reason.
+
+### How a Word-produced reference corpus plugs in (docs/106 Q2)
+
+LibreOffice is a proxy; Word is the reference this product is judged against, and
+FID-L-27(a) is exactly the kind of question only Word can settle. Nothing in the
+gate is LibreOffice-specific except the producer of the reference, so a Word
+corpus is additive:
+
+1. **Inputs.** Word-authored `.docx` under `fixtures/corpus/word-*.docx`, each with
+   a manifest entry stating the Word build and the rights review Q2 requires
+   (generate with a licensed copy; redistribute only what is cleared; a sensitive
+   owner document stays local and only its *measurements* may be published).
+   Latin-only and pinned faces, for the same reason as today.
+2. **References.** Word's own PDF export (`File ▸ Save As ▸ PDF`, or
+   `ExportAsFixedFormat` from automation), reduced by the **unchanged**
+   `scripts/oracle/extract-geometry.sh` minus its `soffice` step — the reduction
+   reads `pdftotext -bbox` and `pdffonts`, which do not care who wrote the PDF.
+   Stored as `fixtures/oracle/word/<id>.geom.json` with a `word/.toolchain`
+   naming the Word build, so the LibreOffice and Word references never share a
+   provenance file.
+3. **Test.** A second fixture table (`WORD_FIXTURES`) and a second pinned
+   producer (`ORACLE_WORD_VERSION`), compared by the same `geometry_diffs` within
+   the same band; `KNOWN_DIVERGENCES` gains a producer field so a divergence from
+   LibreOffice and one from Word are never confused; the report gains a column.
+   Where the two oracles disagree with each other, Word wins and the LibreOffice
+   entry says so.
+4. **Re-bless.** Word does not run on the Linux runner, so regeneration stays a
+   manual, reviewed step on a licensed machine — the same protocol the
+   LibreOffice references followed before the workflow existed.
+5. **Font caveat.** Word on Windows/macOS embeds the real Calibri, Times New
+   Roman and Arial, not their metric twins. `embedded_fonts_are_pinned` would
+   refuse those references as they stand, correctly: the Word table needs its own
+   allow-list mapping each real face to the twin we shape with, and that mapping
+   is only honest for faces whose metrics are verified identical (Liberation is;
+   our Carlito is in question, FID-L-27).
 
 ## H2b — the arbitrary-document comparison harness (`opendoc-fidelity compare`)
 
@@ -492,5 +574,5 @@ Each is reproducible with one command; none is a judgement by eye.
 1. ~~Geometry extraction from the oracle~~ — **resolved:** auto-extract from the LibreOffice PDF via `pdftotext -bbox` (see §H2). Per-*block* correspondence between the two renderers is unstable, so H2 compares **page-level** geometry (size + content bbox); per-block diffing is deferred unless a stable correspondence is found.
 2. Perceptual metric: tolerance-banded pixel-fraction is the floor; is SSIM worth the dependency, or is pixel-fraction + geometry enough? (Leaning: start without SSIM. The H2 image-diff gate is not yet built — geometry lands first.)
 3. Corpus location and licensing of any real-world sample docs (must be redistributable to live in-repo). H2 starts on the already-vetted `real-producer-libreoffice.docx`; expanding to the user's complex corpus (H3) still needs a redistribution check.
-4. **Is the oracle platform-stable?** The committed references were blessed with the pinned LibreOffice 26.2.4.2 on macOS/arm64; the re-bless job runs the same build on Linux. Nobody has yet measured whether the two agree inside the 40-twip band, because that job has never run. It now prints the diff against the committed set, so its first run answers this. If they disagree, the choices are: bless on one platform and document it, or stop committing references and generate them in CI per run (hermetic-ness lost, flap risk gained) — not a wider tolerance.
+4. **Is the oracle platform-stable?** *(Still unmeasured as of §H2c. One thing is now known in advance: Carlito differs between LibreOffice's macOS bundle and ours, and Linux will take a third build from `fonts-crosextra-carlito`, so `docx-oracle-plain-table` is the reference most likely to move on the first Linux run.)* The committed references were blessed with the pinned LibreOffice 26.2.4.2 on macOS/arm64; the re-bless job runs the same build on Linux. Nobody has yet measured whether the two agree inside the 40-twip band, because that job has never run. It now prints the diff against the committed set, so its first run answers this. If they disagree, the choices are: bless on one platform and document it, or stop committing references and generate them in CI per run (hermetic-ness lost, flap risk gained) — not a wider tolerance.
 5. **Corpus coverage vs. the pinned font set.** `real-producer-libreoffice.docx` spends its last paragraph on CJK + Arabic, which the pinned faces do not cover, so a quarter of its lines are excluded from the geometry comparison (see §H2 *Font-parity scoping*). A small Latin-only fixture exercising the geometry-subtle cases (page-top spacing, numbering tab-suffix, `w:hideMark`) would give H2 real coverage; the alternative — adding CJK/Arabic faces to the oracle container — is *not* equivalent, because the engine's bundled set would still have to match them face-for-face.

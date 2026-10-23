@@ -6,7 +6,7 @@
     <title data-i18n="site.fidelity.docxFidelitySupportMatrix">DOCX fidelity support matrix — OpenDoc</title>
     <meta
       name="description"
-      content="OpenDoc's DOCX fidelity, graded per construct against a LibreOffice oracle. Grades are hand-checked: the oracle geometry gate is manual and currently inert."
+      content="OpenDoc's DOCX fidelity, graded per construct against a LibreOffice oracle. Grades are hand-checked; layout geometry is gated in CI."
     />
     <meta name="author" content="CasualOffice" />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
@@ -53,7 +53,7 @@
             "url": "https://opendoc.casualoffice.org/fidelity.html",
             "name": "DOCX fidelity support matrix — OpenDoc",
             "headline": "Graded by construct, not by feature list.",
-            "description": "OpenDoc's DOCX fidelity, graded per construct against a LibreOffice oracle. Grades are hand-checked: the oracle geometry gate is manual and currently inert.",
+            "description": "OpenDoc's DOCX fidelity, graded per construct against a LibreOffice oracle. Grades are hand-checked; layout geometry is gated in CI.",
             "inLanguage": "en",
             "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
             "about": { "@id": "https://opendoc.casualoffice.org/#software" },
@@ -94,10 +94,11 @@
           reaches. The page counts are a <b>manual</b> LibreOffice-oracle measurement
           recorded in
           <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/60-FIDELITY-CORPUS-RENDERING-AUDIT.md">docs/60</a>
-          on 2026-07-27, not a CI gate: the automated geometry gate
-          (<code>oracle_geometry.rs</code>) is written but <b>inert</b> until its reference
-          is blessed, and no pixel-diff gate exists yet. Treat these as dated evidence,
-          not a live build signal.
+          on 2026-07-27, not a CI gate. Layout geometry is gated: on every pull request
+          <code>oracle_geometry.rs</code> compares each oracle fixture's text region with a
+          committed LibreOffice reference, and publishes the per-fixture deltas with
+          each run. No pixel-diff gate exists yet. Treat the grades as dated evidence, not a live
+          build signal.
         </p>
         <!-- The claim the whole page grades, drawn: a package goes in, the model keeps
              what it understands, and what it cannot is carried through or reported. -->

@@ -1,0 +1,55 @@
+{
+  "schema": 3,
+  "fonts": [
+    "Caladea-Bold",
+    "Caladea-BoldItalic",
+    "Caladea-Italic",
+    "Caladea-Regular",
+    "Carlito",
+    "Carlito-Bold",
+    "Carlito-BoldItalic",
+    "Carlito-Italic",
+    "LiberationMono",
+    "LiberationMono-Bold",
+    "LiberationMono-BoldItalic",
+    "LiberationMono-Italic",
+    "LiberationSans",
+    "LiberationSans-Bold",
+    "LiberationSans-BoldItalic",
+    "LiberationSans-Italic",
+    "LiberationSerif",
+    "LiberationSerif-Bold",
+    "LiberationSerif-BoldItalic",
+    "LiberationSerif-Italic"
+  ],
+  "pages": [
+    {
+      "sizeTwips": [
+        12240,
+        15840
+      ],
+      "contentBboxTwips": [
+        1082,
+        1080,
+        11078,
+        14234
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    },
+    {
+      "sizeTwips": [
+        12240,
+        15840
+      ],
+      "contentBboxTwips": [
+        1082,
+        1080,
+        10738,
+        2018
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    }
+  ]
+}
