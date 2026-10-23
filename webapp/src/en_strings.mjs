@@ -861,6 +861,14 @@ export const EN_STRINGS = Object.freeze({
   "paste.loss.note": "footnote references",
   "paste.loss.fieldRange": "field codes",
   "paste.loss.trackedMove": "tracked moves",
+  // Foreign HTML (docs/174 TA-11): structure rebuilt only at a body caret
+  // outside Suggesting; elsewhere it arrives as paragraphs, and pictures in the
+  // HTML are never fetched. Said rather than done silently.
+  "paste.flattened": "Pasted, but {items} became ordinary paragraphs here.",
+  "paste.flattened.heading": "headings",
+  "paste.flattened.list": "lists",
+  "paste.flattened.table": "tables",
+  "paste.dropped.pictures": "Pictures in the pasted content were not brought across.",
 
   // ── Version history (docs/139, docs/140, ADR-038/ADR-039) ──────────────────
   //

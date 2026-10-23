@@ -372,3 +372,34 @@ test("a pasted link cannot carry an executable scheme", () => {
     assert.equal(runs[0].href, safe.trim(), `dropped a safe target: ${safe}`);
   }
 });
+
+// TA-11: external headings and the font face.
+test("a pasted h1-h6 is a heading block, and makes the paste structured", () => {
+  const h2 = el("h2", null, txt("Section"));
+  const p = el("p", null, txt("Body"));
+  for (const node of [h2, p]) node.querySelector = () => null;
+  const structured = htmlToStructured(root(h2, p));
+  assert.ok(structured, "a heading alone is structure worth rebuilding");
+  assert.deepEqual(
+    structured.blocks.map((b) => [b.heading ?? null, b.runs.map((r) => r.text).join("")]),
+    [[2, "Section"], [null, "Body"]],
+  );
+});
+
+test("a wrapper holding a heading is recursed into, in order", () => {
+  const h1 = el("h1", null, txt("Title"));
+  h1.querySelector = () => null;
+  const wrapper = el("div", null, h1);
+  wrapper.querySelector = (selector) => (selector.includes("h1") ? h1 : null);
+  const { blocks } = htmlToStructured(root(wrapper));
+  assert.equal(blocks[0].heading, 1);
+});
+
+test("font-family keeps the first named face, with its case, past quotes and generics", () => {
+  const face = (style) => htmlToRuns(root(el("span", { style }, txt("x"))))[0].font;
+  assert.equal(face('font-family:"Georgia",serif'), "Georgia");
+  assert.equal(face("font-size:11pt;font-family:Arial,sans-serif"), "Arial");
+  assert.equal(face("font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"), "Segoe UI");
+  assert.equal(face("font-family:sans-serif"), undefined);
+  assert.equal(face("color:#000"), undefined);
+});

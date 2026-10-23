@@ -142,6 +142,117 @@ impl WasmDocument {
     }
 }
 
+/// Word's built-in heading sizes in half-points, `Heading 1`..`Heading 6`, used
+/// only when the document has no heading style of that level to reuse.
+const PASTED_HEADING_HALF_POINTS: [u32; 6] = [32, 26, 24, 22, 22, 22];
+
+impl WasmDocument {
+    /// The paragraph style a pasted `<hN>` takes (`docs/174` TA-11): the
+    /// document's own heading style of that level when it has one (by name,
+    /// `Heading N`, case- and space-insensitive — the engine's heading naming
+    /// rule), else a new `Heading N` whose creation is pushed onto `install`, so
+    /// the caller puts it in the SAME transaction as the paste and one undo
+    /// removes both (`147`, ADR-005). A style created earlier in the same paste
+    /// is found in `install` and reused, never created twice.
+    ///
+    /// The created style is Word's shape: outline level `N - 1` (which is what
+    /// makes it a heading to the outline, folding and the accessibility tree),
+    /// bold, Word's size for the level, kept with the next paragraph.
+    ///
+    /// **Complexity: O(styles + install)**, bounded by the style registry.
+    pub(crate) fn pasted_heading_style(
+        &mut self,
+        level: u8,
+        install: &mut Vec<casual_doc_edit::Operation>,
+    ) -> Result<casual_doc_model::v1::StyleId, String> {
+        use casual_doc_edit::Operation;
+        use casual_doc_layout::fold::heading_level_from_name;
+        use casual_doc_model::v1::{
+            ParagraphProperties, RunProperties, Spacing, Style, StyleId, StyleKind,
+        };
+        let level = level.clamp(1, 6);
+        let is_heading = |style: &Style| {
+            style.kind == StyleKind::Paragraph
+                && style
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.trim().to_ascii_lowercase().starts_with("heading"))
+                && heading_level_from_name(style.name.as_deref()) == Some(level)
+        };
+        if let Some(id) = self
+            .document
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| is_heading(style))
+            .map(|(id, _)| *id)
+        {
+            return Ok(id);
+        }
+        if let Some(id) = install.iter().find_map(|op| match op {
+            Operation::SetStyleDefinition {
+                id,
+                style: Some(style),
+            } if is_heading(style) => Some(*id),
+            _ => None,
+        }) {
+            return Ok(id);
+        }
+        let based_on = self
+            .document
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| style.kind == StyleKind::Paragraph && style.is_default)
+            .map(|(id, _)| *id);
+        let id = StyleId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| "id space exhausted".to_owned())?,
+        );
+        let style = Style {
+            kind: StyleKind::Paragraph,
+            is_default: false,
+            name: Some(format!("Heading {level}")),
+            aliases: None,
+            based_on,
+            next: based_on,
+            link: None,
+            hidden: false,
+            ui_priority: Some(9),
+            semi_hidden: false,
+            unhide_when_used: true,
+            q_format: true,
+            locked: false,
+            paragraph: Some(ParagraphProperties {
+                outline_level: Some(level - 1),
+                keep_next: Some(true),
+                spacing: Some(Spacing {
+                    before_twips: Some(240),
+                    after_twips: Some(80),
+                    ..Spacing::default()
+                }),
+                ..ParagraphProperties::default()
+            }),
+            run: Some(RunProperties {
+                bold: Some(true),
+                size_half_points: Some(PASTED_HEADING_HALF_POINTS[usize::from(level - 1)]),
+                ..RunProperties::default()
+            }),
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+            custom_style: false,
+        };
+        install.push(Operation::SetStyleDefinition {
+            id,
+            style: Some(Box::new(style)),
+        });
+        Ok(id)
+    }
+}
+
 /// Visits every paragraph under `blocks` with the outermost table cell holding
 /// it. A table's paragraphs — its nested tables' and text boxes' included — all
 /// report the outer cell.
@@ -277,6 +388,62 @@ mod tests {
                     .expect("outline");
             assert_eq!(outline.len(), breaks + 1, "range {a}..{b}");
         }
+    }
+
+    fn heading_styles(document: &WasmDocument) -> Vec<String> {
+        let mut names: Vec<String> = document
+            .document
+            .definitions()
+            .styles
+            .iter()
+            .filter_map(|(_, style)| style.name.clone())
+            .filter(|name| name.starts_with("Heading"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// TA-11: a pasted `<h2>` and `<h3>` become Heading 2 and Heading 3, the
+    /// styles are created once and in the paste's own undo step.
+    #[test]
+    fn pasted_headings_take_heading_styles_created_once_and_undone_with_the_paste() {
+        let mut document = wasm_document(import(&p("x")));
+        let first = all_paragraph_ids(&document)[0].to_string();
+        assert!(
+            heading_styles(&document).is_empty(),
+            "the fixture has no heading styles"
+        );
+        let fragment = r#"{"blocks":[
+            {"kind":"paragraph","runs":[{"text":"Two"}],"heading":2},
+            {"kind":"paragraph","runs":[{"text":"Three"}],"heading":3},
+            {"kind":"paragraph","runs":[{"text":"Again"}],"heading":2},
+            {"kind":"paragraph","runs":[{"text":"Body"}]}
+        ]}"#;
+        document
+            .paste_external_structured(&first, 0, &first, 0, fragment.to_owned())
+            .expect("paste");
+        assert_eq!(heading_styles(&document), ["Heading 2", "Heading 3"]);
+        let ids = all_paragraph_ids(&document);
+        let levels: Vec<Option<u8>> = document
+            .block_outline(ids[0], ids[3])
+            .into_iter()
+            .map(|entry| entry.heading)
+            .collect();
+        assert_eq!(levels, [Some(2), Some(3), Some(2), None]);
+
+        // A second paste reuses the styles the first one created.
+        let last = ids.last().expect("paragraphs").to_string();
+        document
+            .paste_external_structured(&last, 0, &last, 0, fragment.to_owned())
+            .expect("paste again");
+        assert_eq!(heading_styles(&document), ["Heading 2", "Heading 3"]);
+
+        document.undo().expect("undo");
+        document.undo().expect("undo");
+        assert!(
+            heading_styles(&document).is_empty(),
+            "undo removes the created styles"
+        );
     }
 
     #[test]
