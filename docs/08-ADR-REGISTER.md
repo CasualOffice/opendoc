@@ -495,7 +495,7 @@ last-writer-wins). A tombstoned operation is **reported through the disposition 
 
 ## ADR-034 — Experimental local PDF semantic reconstruction
 
-**Status:** Proposed; owner decided build order (Viewer first), viewer fonts, viewer formats and Java support on 2026-10-23 (docs/176 §10). experimental future feature; not accepted, implemented, supported,
+**Status:** Proposed experimental future feature; not accepted, implemented, supported,
 or part of the current v1 commitment. Designed in
 `131-PDF-SEMANTIC-RECONSTRUCTION-AND-BROWSER-OCR-ARCHITECTURE.md`.
 
@@ -524,7 +524,7 @@ candidates only; this proposed ADR accepts no dependency or model.
 
 ## ADR-035 — Experimental document assistance, semantic retrieval, and MCP adapter
 
-**Status:** Proposed; owner decided build order (Viewer first), viewer fonts, viewer formats and Java support on 2026-10-23 (docs/176 §10). experimental future feature; not accepted, implemented, supported,
+**Status:** Proposed experimental future feature; not accepted, implemented, supported,
 or part of the current v1 commitment. Designed in
 `132-EXPERIMENTAL-DOCUMENT-ASSISTANCE-SEMANTIC-SEARCH-AND-MCP-ARCHITECTURE.md`.
 
@@ -1212,7 +1212,7 @@ being **contradicted**.
 
 ## ADR-042 — Proofing is a versioned optional language-pack system, checked in a worker, behind an SDK boundary
 
-**Status:** Proposed; owner decided build order (Viewer first), viewer fonts, viewer formats and Java support on 2026-10-23 (docs/176 §10). as a whole; **Increments A and B accepted and implemented**. Design:
+**Status:** Proposed as a whole; **Increments A and B accepted and implemented**. Design:
 `docs/146` (the owner's architecture of 2026-09-28, reproduced in the repository with its
 verification corrections in place). Predecessor: `docs/114`, which is the record of proofing
 **as shipped** and is not superseded. Code for Increment A: `webapp/src/proof_protocol.mjs`,
@@ -1769,7 +1769,7 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
 
 ## ADR-048 — The reflow measure is capped in characters, and reading is a width POLICY, not a second layout mechanism
 
-**Status:** Proposed; owner decided build order (Viewer first), viewer fonts, viewer formats and Java support on 2026-10-23 (docs/176 §10). 2026-10-01; **Accepted and implemented 2026-10-02** — the clamp, the
+**Status:** Proposed 2026-10-01; **Accepted and implemented 2026-10-02** — the clamp, the
 four-step per-viewer control on three surfaces, the centred column, and the engine-ceiling
 mirror that closes the `ColumnTooWide` refusal. Raised by the owner's challenge that
 "the complete view and wider content is not at all suitable for reading", and specified in
@@ -4347,7 +4347,7 @@ undoing with the plain inverse (deletes the wrong text once anybody typed before
 
 ## ADR-070 — Identity is attested by the host and attached at the order; a participant never states who wrote an operation
 
-**Status:** Proposed; owner decided build order (Viewer first), viewer fonts, viewer formats and Java support on 2026-10-23 (docs/176 §10). 2026-10-23, awaiting owner review. **Row:** `docs/109` HF-360.
+**Status:** Proposed 2026-10-23, awaiting owner review. **Row:** `docs/109` HF-360.
 **Design:** `docs/175`. **Findings:** `docs/174` RC-05, RC-06, RC-07, RC-09, RC-10.
 
 **Context.** A shared session joins with the Settings name, or with the literal `"You"`
