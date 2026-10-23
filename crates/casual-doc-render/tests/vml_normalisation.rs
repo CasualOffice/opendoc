@@ -297,6 +297,16 @@ fn a_vml_group_places_its_children_and_text_inside_its_frame() {
         contains(frame, oval.origin),
         "oval {oval:?} outside frame {frame:?}"
     );
+    // The oval starts 100 coordinate units in from the group's origin on both
+    // axes: 100/4000 of 5760 twips across, 100/1000 of 1440 twips down.
+    assert_eq!(
+        (
+            oval.origin.x.0 - frame.origin.x.0,
+            oval.origin.y.0 - frame.origin.y.0
+        ),
+        (144, 144),
+        "the oval keeps its place in the group's coordinate space"
+    );
     // The oval is 800 of the group's 4000 coordinate units wide: a fifth of
     // the frame.
     assert_eq!(oval.size.width.0, frame.size.width.0 / 5);
@@ -306,6 +316,36 @@ fn a_vml_group_places_its_children_and_text_inside_its_frame() {
         contains(frame, origin),
         "text at {origin:?} outside frame {frame:?}"
     );
+    // And at ITS place in the group, not wherever an inline box would land:
+    // the text box starts 1100 of 4000 units in, 1584 twips across the frame.
+    assert!(
+        (origin.x.0 - frame.origin.x.0 - 1584).abs() <= 20,
+        "text at {origin:?}, frame at {:?}",
+        frame.origin
+    );
+    // One object: the group is a single model node holding the frame, the
+    // oval and the text box.
+    let groups: Vec<_> = document
+        .body()
+        .iter()
+        .filter_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => Some(paragraph.inlines.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|inline| match inline {
+            InlineNode::Group(group)
+                if group
+                    .children
+                    .iter()
+                    .any(|child| matches!(child, GroupChild::TextBox(_))) =>
+            {
+                Some(group.children.len())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(groups, vec![3], "one group of three children");
 }
 
 /// HF-393: a stand-alone `v:textbox` flows its content and paints it, and the

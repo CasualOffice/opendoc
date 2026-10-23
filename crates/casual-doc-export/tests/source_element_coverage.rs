@@ -122,6 +122,30 @@ const EXCEPTIONS: &[(&str, &str)] = &[
          `separator` above.",
     ),
     (
+        "AlternateContent",
+        "FID-P-03 / ECMA-376 Part 3 §10.2: markup compatibility's container. The \
+         branch the importer selects is modeled and written in the writer's own \
+         vocabulary; the wrapper is how a producer offers the SAME content twice, \
+         and writing one form is not a drop. First exercised by \
+         `vml-shapes.docx` (`109` HF-393), whose DrawingML text box carries a VML \
+         fallback.",
+    ),
+    (
+        "Choice",
+        "FID-P-03: the selected `mc:Choice` branch's content is modeled and \
+         written; see `AlternateContent`. A choice the importer could NOT read is \
+         reported at import (`body.rs`, the `Choice | Fallback` arm), so this \
+         row cannot hide that case.",
+    ),
+    (
+        "Fallback",
+        "FID-P-03: an `mc:Fallback` beside a choice the importer read in full is \
+         the same content in an older vocabulary (ECMA-376 Part 3 requires the \
+         branches to be equivalent), so not writing it again loses nothing; see \
+         `AlternateContent`. A fallback the importer SELECTED is modeled and \
+         written like any content.",
+    ),
+    (
         "fldSimple",
         "FID-P-03: `w:fldSimple` is modeled as a field and re-emitted in the \
          equivalent complex-field form (`w:fldChar` + `w:instrText`), which is the \

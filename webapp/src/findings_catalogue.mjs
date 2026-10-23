@@ -95,7 +95,36 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "textpath": entry("findings.feature.legacyWordArt", CONTENT),
   "path": entry("findings.feature.legacyShapePath", CONTENT),
   "fill": entry("findings.feature.shapeFill", CONTENT),
-  "textbox": entry("findings.feature.textBox", CONTENT),
+  // The rest of the legacy VML vocabulary a `w:pict` carries (`109` HF-394).
+  // Each is a local name, which is how the engine reports it; where a name is
+  // ALSO a WordprocessingML or package name the words cover both readings
+  // (`image` is a picture relationship too, `lock` a content control's lock,
+  // `shadow` a run's text shadow), so a word can never misname what it lists.
+  "textbox": entry("findings.feature.legacyTextBox", CONTENT),
+  "rect": entry("findings.feature.legacyRect", CONTENT),
+  "roundrect": entry("findings.feature.legacyRoundRect", CONTENT),
+  "oval": entry("findings.feature.legacyOval", CONTENT),
+  "line": entry("findings.feature.legacyLine", CONTENT),
+  "polyline": entry("findings.feature.legacyPolyline", CONTENT),
+  "curve": entry("findings.feature.legacyCurve", CONTENT),
+  "arc": entry("findings.feature.legacyArc", CONTENT),
+  "image": entry("findings.feature.picture", CONTENT),
+  "imagedata": entry("findings.feature.legacyPicture", CONTENT),
+  "group": entry("findings.feature.legacyGroup", CONTENT),
+  "stroke": entry("findings.feature.legacyStroke", CONTENT),
+  "wrap": entry("findings.feature.legacyWrap", CONTENT),
+  "shadow": entry("findings.feature.legacyShadow", CONTENT),
+  "extrusion": entry("findings.feature.legacyEffect3d", CONTENT),
+  "skew": entry("findings.feature.legacySkew", CONTENT),
+  "lock": entry("findings.feature.editingLock", CONTENT),
+  "callout": entry("findings.feature.legacyCallout", CONTENT),
+  "formulas": entry("findings.feature.legacyShapeFormulas", CONTENT),
+  "f": entry("findings.feature.legacyShapeFormulas", CONTENT),
+  "handles": entry("findings.feature.legacyShapeHandles", CONTENT),
+  "h": entry("findings.feature.legacyShapeHandles", CONTENT),
+  // A VML shape a save had to write as DrawingML, because it was edited
+  // (`docs/08` ADR-072).
+  "docx.export.vml.regenerated": entry("findings.feature.vmlRegenerated", CONTENT),
   "docx.watermark": entry("findings.feature.watermark", CONTENT),
 
   // ---- Charts and embedded files -------------------------------------------

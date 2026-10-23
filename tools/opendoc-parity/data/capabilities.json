@@ -1500,7 +1500,7 @@
       "title": "Remove hyperlink",
       "ours": {
         "anchor": {
-          "file": "webapp/src/main.js",
+          "file": "webapp/src/editor_link_dialog.mjs",
           "literal": "linkRemoveBtn"
         }
       },
@@ -1515,7 +1515,7 @@
       "title": "Hyperlink ScreenTip",
       "ours": {
         "anchor": {
-          "file": "webapp/src/main.js",
+          "file": "webapp/src/editor_link_dialog.mjs",
           "literal": "linkTooltipInput"
         }
       },
@@ -5886,7 +5886,7 @@
         "partial": {
           "evidence": {
             "anchor": {
-              "file": "webapp/src/main.js",
+              "file": "webapp/src/editor_formatting.mjs",
               "literal": "applyTableStyle"
             }
           },
@@ -5905,7 +5905,7 @@
       "title": "Tab between cells, and Tab in the last cell adds a row",
       "ours": {
         "anchor": {
-          "file": "webapp/src/main.js",
+          "file": "webapp/src/editor_keyboard.mjs",
           "literal": "moveTableCell"
         }
       },
