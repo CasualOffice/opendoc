@@ -3207,6 +3207,7 @@ async function loadStartupDocument(url, name, onOpened, onRendered) {
 }
 
 async function openBytes(bytes, name, onOpened, onRendered) {
+  let replaced = false; // set where the previous document is freed: past it, nothing is "still here" (HF-381)
   try {
     setStatus(`Opening ${name}…`);
     // Parse BEFORE anything on screen is touched. Freeing the open document
@@ -3238,7 +3239,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     backgroundMeasure = null;
     leaveSharedDocument();
     fontState.retired = true;
-    if (doc) doc.free();
+    if (doc) { replaced = true; doc.free(); }
     doc = next;
     fontState = { provisionedFallbackKeys: new Set(), inFlightFallbackKeys: new Set(), retired: false };
     delete document.body.dataset.fontsReady;
@@ -3408,11 +3409,10 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // fail on a deliberately oversized file.
     const message = String(err?.message ?? err);
     if (!/browser editor can hold in memory/.test(message)) console.error(err);
-    // `doc` is only ever reassigned after a successful parse, so if one was open
-    // it is still open, still painted and still editable. Say so: the failure
-    // message is the only thing the user gets, and "could not open" alone reads
-    // like the editor is now empty.
-    const kept = doc ? " — the document you had open is still here" : "";
+    // A failed PARSE leaves the previous document open, painted and editable, and
+    // the message says so: "could not open" alone reads like the editor is empty.
+    // A failure AFTER the previous document was freed must not claim it (HF-381).
+    const kept = replaced ? " — the document you had open was already closed" : doc ? " — the document you had open is still here" : "";
     setStatus(`Could not open ${name}: ${message}${kept}`, "error");
   }
 }
