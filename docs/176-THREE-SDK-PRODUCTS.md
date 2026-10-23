@@ -1,8 +1,10 @@
 # 176 — Three SDK products on one engine: Viewer, Editor, Native
 
-**Status:** Design, proposed 2026-10-23. **Decides:** ADR-071 (proposed). **Row:** `docs/109`
-RM-46. **Built in this change:** the measured viewer cut, `crates/casual-doc-viewer`, and
-nothing else. The Editor SDK is not changed by this document.
+**Status:** Design, proposed 2026-10-23; Viewer SDK phase 1 built 2026-10-24 (§11.1).
+**Decides:** ADR-071 (proposed). **Row:** `docs/109` RM-46. **Built:** the measured viewer cut
+(V0), then the Viewer SDK's stable read-only API, `crates/opendoc-viewer` (it was
+`crates/casual-doc-viewer`), and the `@casualoffice/opendoc-viewer` package
+(`packages/opendoc-viewer`, not published). The Editor SDK is not changed by this document.
 **Builds on:** `05` (SDK API), `83` (packaging), `126` (embeddability, three phases), ADR-030
 and `45` (extensibility invariants), ADR-005 (transactions), `98` (one layout for every
 output), `40` (fonts).
@@ -68,37 +70,45 @@ in the engine but not in this product's API. *Missing* means it is not built.
 
 ### 3.1 Viewer SDK
 
-Browser and Node, `@casualoffice/opendoc-viewer` (name: Q1). The shape below is what
-`crates/casual-doc-viewer/src/web.rs` exports today:
+Browser and Node, `@casualoffice/opendoc-viewer` (name decided, §10). The shape below is
+what `packages/opendoc-viewer/src/index.js` exports, over the wasm-bindgen façade in
+`crates/opendoc-viewer/src/web.rs`:
 
 ```ts
-import init, { WasmViewer } from "@casualoffice/opendoc-viewer";
-await init();
-const doc = WasmViewer.open(bytes);            // throws a sentence on a bad file
-doc.registerFont(robotoBytes);                 // optional; re-paginates once
+import { openDocument, packageFontProvider } from "@casualoffice/opendoc-viewer";
+const doc = await openDocument(bytes, {                  // rejects with a sentence on a bad file
+  fontProvider: packageFontProvider("/fonts/"),          // the host serves pkg/fonts/ (§10, Q2)
+});
 for (let i = 0; i < doc.pageCount; i++) {
-  const [wTw, hTw] = doc.pageSizeTwips(i);
-  const bmp = doc.renderPage(i, 96 * devicePixelRatio);   // RGBA for putImageData
-  const png = doc.renderPagePng(i, 24);                    // thumbnail
+  const { widthPt, heightPt } = doc.pageSize(i);
+  const { width, height, rgba } = doc.renderPage(i, { dpi: 96 * devicePixelRatio });
+  const png = doc.renderPagePng(i, { dpi: 24 });         // thumbnail
+  const text = doc.pageText(i);                          // the pages concatenate to doc.text()
 }
-const text = doc.plainText();
-const pdf = doc.toPdf();                       // `pdf` feature
+doc.outline();                                           // [{ level, text, page }]
+doc.fontNeeds();                                         // [{ requested, substitute, substituteAvailable }]
+const pdf = doc.toPdf();                                 // shipped in the package build
 ```
 
-The server shape is the same crate used natively (`ViewerDocument::open`, `render_page`,
-`render_page_png`, `plain_text`, `to_pdf`, `document()`).
+Node uses the same module through `@casualoffice/opendoc-viewer/node`, which reads the
+`.wasm` and the face files from disk. The server shape is the same crate used natively
+(`ViewerDocument::open`/`open_with`, `page_sizes_twips`, `render_page`, `render_page_png`,
+`page_text`, `plain_text`, `outline`, `font_needs`, `register_fonts`, `to_pdf`,
+`document()`).
 
 | Call | `docs/05` | Status |
 | --- | --- | --- |
-| `open(bytes)` (DOCX) | §4 `Engine::open_docx` | **Existing** in `casual-doc-viewer` |
+| `open(bytes, options)` (DOCX) | §4 `Engine::open_docx` | **Existing** in `opendoc-viewer`; options: faces to register before the first layout, OS fonts (native) |
 | `open` for ODT, RTF, TXT, JSON | §4 | **Existing** behind `formats`. It costs 3.6 MB until P1 (§4.2) |
-| `pageCount`, `pageSizeTwips` | §5 `scene` (subset) | **Existing** |
+| `pageCount`, `pageSize`, `pageSizes` | §5 `scene` (subset) | **Existing** |
 | `renderPage` (RGBA), `renderPagePng` | §5 `scene` | **Existing** |
 | `toPdf` | §13 | **Existing** behind `pdf` |
-| `plainText` | (none) | **Existing**. Body only: headers, footers and notes are not included yet |
-| `registerFont(bytes)` | §10 `ResourceRequest::Font` | **Existing**, synchronous. Host-pull only |
+| `text`, `pageText(i)` | (none) | **Existing**. Body only: headers, footers and notes are not included yet |
+| `outline()` | (none) | **Existing**: level, text and page of each body heading, by the editor's heading rule |
+| `fontNeeds()`, `missingCodePoints()`, `registerFonts`, `registerFallbackFont`, `fontProvider` | §10 `ResourceRequest::Font` | **Existing**: the host font hook (§10, Q2) |
+| Page to SVG | (none) | **Not built**: the engine has no SVG backend, so it is not cheap. A vector page is the PDF |
 | `importReport()`: what was degraded or dropped | (none) | **Partial**: `CompatibilityReport` exists in `casual-doc-import`/`-io`, but it is not exposed |
-| `outline()`, `metadata()` | (none) | **Partial**: in `casual-doc-wasm`, not in the cut |
+| `metadata()` | (none) | **Partial**: in `casual-doc-wasm`, not in the cut |
 | `search(query)` → page rectangles | (none) | **Partial**: Find in the editor; geometry needs a hit-test-free rect query |
 | `links()` per page | (none) | **Partial**: `linkAt` in the editor uses hit-testing; the viewer needs a per-page list instead |
 | Pages of a huge document (windowed) | (none) | **Missing** in the cut: `WindowedBody` lives in `casual-doc-wasm` (R4) |
@@ -277,9 +287,30 @@ cargo build --release --locked -p casual-doc-viewer --example convert [--feature
 /usr/bin/time -l target/release/examples/convert sample.docx /tmp/out --pdf
 ```
 
-There is **no size ratchet** on the viewer yet. `webapp/tests/wasm_size.test.mjs` guards the
-editor module only. Adding the viewer artefact to CI with a ceiling is part of phase V1 (§8),
-and until then the numbers above are a dated measurement, not a guarantee.
+The tables above are the V0 measurement of 2026-10-23, before the owner's font decision, and
+they stay as the record of that cut. What the package ships now is §4.5.
+
+### 4.5 The Viewer SDK package as built (V1)
+
+`packages/opendoc-viewer/build.sh` builds `@casualoffice/opendoc-viewer` with the owner's
+decisions (§10): DOCX only, `pdf` on, and the `core-fonts` policy, which embeds Liberation
+Sans alone and ships every other face as a file in `pkg/fonts/` that the host serves through
+the font hook. The table below is **generated**: `tools/measure-size.mjs` writes `size.json`
+from the build and renders this block from it, and `test/size_record.test.mjs` fails if the
+two disagree. The CI job `viewer-package` rebuilds the module on every change and
+`test/size_budget.test.mjs` holds it under a ceiling.
+
+<!-- viewer-size:begin (generated by packages/opendoc-viewer/tools/measure-size.mjs; do not edit) -->
+
+Built by `packages/opendoc-viewer/build.sh` with features `wasm,core-fonts,pdf`, Rust 1.96.0, wasm-bindgen 0.2.129; gzip level 9 and brotli quality 11 (Node zlib).
+
+| Artefact | Raw | gzip | brotli | code section | data section |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `opendoc_viewer_bg.wasm` (engine + core font) | 11,172,897 | 5,493,049 | 4,198,359 | 5,013,436 | 6,148,897 |
+| `opendoc_viewer.js` (glue) | 23,611 | 4,227 | 3,737 | | |
+| `pkg/fonts/` (21 host-served faces, fetched only when a document needs them) | 9,763,176 | 5,144,368 | 4,237,221 | | |
+
+<!-- viewer-size:end -->
 
 ## 5. Packaging, versioning and the feature-gating plan
 
@@ -427,7 +458,7 @@ wrong, and the Native SDK's render and convert half **is** the viewer cut behind
 | Phase | What a host gets | Exit gate (a host does it, in this repo) |
 | --- | --- | --- |
 | **V0**: this change | `casual-doc-viewer`, measured | The tables in §4, and tests that fail when render or PDF breaks (§11) |
-| **V1**: Viewer SDK | `@casualoffice/opendoc-viewer` on npm; `importReport`, `outline`, `metadata`, `links`, `search` rects; P1, P2, P7; a CI size ceiling for the viewer module | A static page in the repo opens a DOCX and shows every page and a PDF with the package alone; `wasm_size`-style guard on the viewer artefact |
+| **V1**: Viewer SDK | `@casualoffice/opendoc-viewer` on npm; `importReport`, `outline`, `metadata`, `links`, `search` rects; P1, P2, P7; a CI size ceiling for the viewer module | A static page in the repo opens a DOCX and shows every page and a PDF with the package alone; `wasm_size`-style guard on the viewer artefact. **Phase 1 built (§11.1)**: the package, the example page, `outline`, per-page text, the font hook, the size ceiling. Still open: `importReport` (P7), `metadata`, `links`, `search` rects, P1, P2, publishing |
 | **V2**: server viewer | `opendoc` CLI and crate; deterministic-render golden across Linux and macOS | The same DOCX renders byte-identical PNGs on both CI platforms |
 | **N1**: Native read + convert | C ABI (P4) and Python, Java and .NET packages for open, read view, `import_report`, render, PDF and save-as | One conformance suite of fixtures, run through all four languages, with identical outputs |
 | **N2**: Native modify | `edit` batches over `Operation`; DOCX save with a report | A program in each language creates a document with a heading, a table and a tracked change, saves it, and the reopened file matches |
@@ -504,6 +535,38 @@ wrong, and the Native SDK's render and convert half **is** the viewer cut behind
     `the_pdf_has_one_page_per_laid_out_page` fails with `Encode("pdf: font 268435464 is
     unusable: font file is 188589668 bytes, over the limit")`. This is R3, and it is
     machine-dependent: the test is red only where such a face is installed.
+
+
+### 11.1 Viewer SDK phase 1 (2026-10-24)
+
+- **Crate.** `crates/opendoc-viewer` (renamed from `casual-doc-viewer`, §10 Q1) adds
+  `open_with` faces, `page_sizes_twips`, `page_text`, `outline`, `font_needs`,
+  `missing_code_points`, `register_fonts` (one re-layout for any number of faces) and
+  `register_fallback_font`, and refuses a non-positive DPI. Still no editing crate.
+- **Font policy (§10, Q2).** `casual-doc-layout`'s `viewer-core-fonts` feature, `wasm32` only
+  like `external-web-fonts`, embeds Liberation Sans alone; every other family keeps its
+  `FontId` block and resolver identity with empty placeholders, and the shaper uses a
+  host-registered face under the family's own name. Native builds, `--all-features`
+  included, keep the whole bundle, so no native test or golden moves. The shaper now records
+  the requested families it could not find; that list is `font_needs`.
+- **A defect the policy exposed, fixed for the class.** A field value (`PAGE`, `NUMPAGES`)
+  is re-shaped at pagination, and its run kept the face id of its source run instead of the
+  face that shaped it. With Carlito served by the host, the value was shaped in Carlito and
+  outlined from Liberation Sans: `sample.docx`'s footer "2 of 14" painted as "Ï of ãÕ". The
+  run now carries the shaping face (`casual-doc-layout` `shape_field_run`); on the bundled
+  path the two ids are the same, so native output does not change.
+- **Package.** `packages/opendoc-viewer`: `build.sh` (DOCX only, `pdf` on, `core-fonts`, the
+  host-served faces and their licences in `pkg/fonts/`), the JS API `src/index.js` and its
+  types, `src/node.js` for Node, `examples/browser/index.html` (a page that opens a DOCX and
+  shows every page, the outline and the PDF with the package alone) and
+  `examples/node/render.mjs`. Not published.
+- **Guards.** `crates/opendoc-viewer/tests/api.rs` (render determinism per page across opens
+  and repeats, page text concatenating to the body text, page text across a page break, the
+  outline's levels and pages, a missing family reported and filled by a host face, the PDF's
+  page count and byte determinism) and `packages/opendoc-viewer/test/` in the CI job
+  `viewer-package` (the same API through the built module in Node, the core-font policy on
+  the shipped artefact, the field-face defect, the size budget, and the generated size
+  record). Each was seen red; the mutations are in the commit message.
 
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html

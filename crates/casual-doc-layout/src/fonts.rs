@@ -30,6 +30,11 @@
 //!   One face serves all four slots (emoji have no bold or italic), so the
 //!   shaper registers its bytes once.
 //!
+//! The Viewer SDK's `viewer-core-fonts` build (`wasm32` only, `docs/176` §10)
+//! embeds Liberation Sans alone. Every other family keeps its `FontId` block
+//! and resolver identity, with empty byte placeholders, and the host registers
+//! the faces it wants through the font-registry seam.
+//!
 //! Carlito and the Liberation families ship under the SIL Open Font License 1.1:
 //! a permissive license that governs only the font file (not this Apache-2.0
 //! code) and carries no copyleft effect. Because the faces are embedded as
@@ -45,51 +50,109 @@ use crate::text::FontId;
 /// Whether this target embeds Roboto rather than expecting the host to register
 /// it. The feature is deliberately WASM-only so `--all-features` native builds
 /// retain deterministic baselines.
-pub const ROBOTO_IS_BUNDLED: bool =
-    !cfg!(all(feature = "external-web-fonts", target_arch = "wasm32"));
+pub const ROBOTO_IS_BUNDLED: bool = !cfg!(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+));
 
 /// Roboto Regular (Apache-2.0).
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const ROBOTO_REGULAR: &[u8] = include_bytes!("../fonts/Roboto-Regular.ttf");
 /// Empty web placeholder for the externally provisioned Roboto Regular face.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+))]
 pub const ROBOTO_REGULAR: &[u8] = &[];
 /// Roboto Bold.
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const ROBOTO_BOLD: &[u8] = include_bytes!("../fonts/Roboto-Bold.ttf");
 /// Empty web placeholder for the externally provisioned Roboto Bold face.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+))]
 pub const ROBOTO_BOLD: &[u8] = &[];
 /// Roboto Italic.
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const ROBOTO_ITALIC: &[u8] = include_bytes!("../fonts/Roboto-Italic.ttf");
 /// Empty web placeholder for the externally provisioned Roboto Italic face.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+))]
 pub const ROBOTO_ITALIC: &[u8] = &[];
 /// Roboto Bold Italic.
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const ROBOTO_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Roboto-BoldItalic.ttf");
 /// Empty web placeholder for the externally provisioned Roboto Bold Italic face.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+))]
 pub const ROBOTO_BOLD_ITALIC: &[u8] = &[];
 
 /// Caladea Regular (Apache-2.0) — metric-compatible with Cambria.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CALADEA_REGULAR: &[u8] = include_bytes!("../fonts/Caladea-Regular.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CALADEA_REGULAR: &[u8] = &[];
 /// Caladea Bold.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CALADEA_BOLD: &[u8] = include_bytes!("../fonts/Caladea-Bold.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CALADEA_BOLD: &[u8] = &[];
 /// Caladea Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CALADEA_ITALIC: &[u8] = include_bytes!("../fonts/Caladea-Italic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CALADEA_ITALIC: &[u8] = &[];
 /// Caladea Bold Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CALADEA_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Caladea-BoldItalic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CALADEA_BOLD_ITALIC: &[u8] = &[];
 
 /// Carlito Regular (SIL OFL-1.1) — metric-compatible with Calibri.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CARLITO_REGULAR: &[u8] = include_bytes!("../fonts/Carlito-Regular.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CARLITO_REGULAR: &[u8] = &[];
 /// Carlito Bold.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CARLITO_BOLD: &[u8] = include_bytes!("../fonts/Carlito-Bold.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CARLITO_BOLD: &[u8] = &[];
 /// Carlito Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CARLITO_ITALIC: &[u8] = include_bytes!("../fonts/Carlito-Italic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CARLITO_ITALIC: &[u8] = &[];
 /// Carlito Bold Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const CARLITO_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Carlito-BoldItalic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const CARLITO_BOLD_ITALIC: &[u8] = &[];
 
 /// Liberation Sans Regular (SIL OFL-1.1) — metric-compatible with Arial/Helvetica.
 pub const LIBERATION_SANS_REGULAR: &[u8] =
@@ -105,30 +168,62 @@ pub const LIBERATION_SANS_BOLD_ITALIC: &[u8] =
     include_bytes!("../fonts/liberation/LiberationSans-BoldItalic.ttf");
 
 /// Liberation Serif Regular (SIL OFL-1.1) — metric-compatible with Times New Roman.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_SERIF_REGULAR: &[u8] =
     include_bytes!("../fonts/liberation/LiberationSerif-Regular.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_SERIF_REGULAR: &[u8] = &[];
 /// Liberation Serif Bold.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_SERIF_BOLD: &[u8] =
     include_bytes!("../fonts/liberation/LiberationSerif-Bold.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_SERIF_BOLD: &[u8] = &[];
 /// Liberation Serif Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_SERIF_ITALIC: &[u8] =
     include_bytes!("../fonts/liberation/LiberationSerif-Italic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_SERIF_ITALIC: &[u8] = &[];
 /// Liberation Serif Bold Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_SERIF_BOLD_ITALIC: &[u8] =
     include_bytes!("../fonts/liberation/LiberationSerif-BoldItalic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_SERIF_BOLD_ITALIC: &[u8] = &[];
 
 /// Liberation Mono Regular (SIL OFL-1.1) — metric-compatible with Courier New.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_MONO_REGULAR: &[u8] =
     include_bytes!("../fonts/liberation/LiberationMono-Regular.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_MONO_REGULAR: &[u8] = &[];
 /// Liberation Mono Bold.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_MONO_BOLD: &[u8] =
     include_bytes!("../fonts/liberation/LiberationMono-Bold.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_MONO_BOLD: &[u8] = &[];
 /// Liberation Mono Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_MONO_ITALIC: &[u8] =
     include_bytes!("../fonts/liberation/LiberationMono-Italic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_MONO_ITALIC: &[u8] = &[];
 /// Liberation Mono Bold Italic.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const LIBERATION_MONO_BOLD_ITALIC: &[u8] =
     include_bytes!("../fonts/liberation/LiberationMono-BoldItalic.ttf");
+/// Empty viewer placeholder: the host supplies this face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const LIBERATION_MONO_BOLD_ITALIC: &[u8] = &[];
 
 /// Noto Emoji (SIL OFL-1.1) — the monochrome emoji base.
 ///
@@ -141,7 +236,11 @@ pub const LIBERATION_MONO_BOLD_ITALIC: &[u8] =
 /// — the same seam the browser already uses for CJK. That keeps the guarantee
 /// local-first: an emoji always draws as its own shape, offline, headless, and
 /// before any network face arrives.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
 pub const NOTO_EMOJI_REGULAR: &[u8] = include_bytes!("../fonts/NotoEmoji-Variable.ttf");
+/// Empty viewer placeholder: the host supplies the emoji face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const NOTO_EMOJI_REGULAR: &[u8] = &[];
 
 /// A bundled fallback family: four faces (regular, bold, italic, bold-italic)
 /// addressed by a contiguous [`FontId`] block starting at `base`. The face for a
@@ -281,15 +380,37 @@ pub const NOTO_EMOJI: BundledFamily = BundledFamily {
 /// The target's deterministic default family. Browser builds use Liberation
 /// Sans until the host-provided Roboto family is registered; native/headless
 /// builds retain Roboto.
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const DEFAULT_FAMILY: &BundledFamily = &ROBOTO;
 /// Web-only fallback while external fonts load.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+))]
 pub const DEFAULT_FAMILY: &BundledFamily = &LIBERATION_SANS;
+
+/// Every family the resolver can name, in `base`-id order, whether or not this
+/// build embeds its faces. Under the Viewer SDK's core set most of them are
+/// placeholders the host fills by registering the face under the family's name.
+pub const RESOLVER_FAMILIES: [&BundledFamily; 7] = [
+    &ROBOTO,
+    &CALADEA,
+    &CARLITO,
+    &LIBERATION_SANS,
+    &LIBERATION_SERIF,
+    &LIBERATION_MONO,
+    &NOTO_EMOJI,
+];
 
 /// Every bundled family, in `base`-id order — the resolver's fallback chain and
 /// the shaper's registration order.
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const FAMILIES: [&BundledFamily; 7] = [
     &ROBOTO,
     &CALADEA,
@@ -303,7 +424,11 @@ pub const FAMILIES: [&BundledFamily; 7] = [
 
 /// The web bundle excludes Roboto's four blobs; the family remains a semantic
 /// resolver target and is supplied dynamically by the host.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(all(
+    feature = "external-web-fonts",
+    not(feature = "viewer-core-fonts"),
+    target_arch = "wasm32"
+))]
 pub const FAMILIES: [&BundledFamily; 6] = [
     &CALADEA,
     &CARLITO,
@@ -316,7 +441,10 @@ pub const FAMILIES: [&BundledFamily; 6] = [
 
 /// Every bundled face, `(FontId, bytes)`, in id order — the shaper registration
 /// and renderer lookup table.
-#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+#[cfg(not(any(
+    all(feature = "external-web-fonts", target_arch = "wasm32"),
+    all(feature = "viewer-core-fonts", target_arch = "wasm32")
+)))]
 pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
     (FontId(0), ROBOTO_REGULAR),
     (FontId(1), ROBOTO_BOLD),
@@ -349,7 +477,11 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
 ];
 
 /// Every face retained in the web bundle.
-#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+#[cfg(all(
+    feature = "external-web-fonts",
+    not(feature = "viewer-core-fonts"),
+    target_arch = "wasm32"
+))]
 pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(4), CALADEA_REGULAR),
     (FontId(5), CALADEA_BOLD),
@@ -375,6 +507,24 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(25), NOTO_EMOJI_REGULAR),
     (FontId(26), NOTO_EMOJI_REGULAR),
     (FontId(27), NOTO_EMOJI_REGULAR),
+];
+
+/// The Viewer SDK's core set (`docs/176` §10, Q2): Liberation Sans alone, the
+/// default family. Every other family keeps its resolver identity and its
+/// `FontId` block, so a host that registers Carlito, Caladea, Liberation
+/// Serif/Mono, Roboto or Noto Emoji by name gets exactly the substitution the
+/// full bundle would have made; until it does, those runs shape in Liberation
+/// Sans and the shaper reports the family as unresolved.
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const FAMILIES: [&BundledFamily; 1] = [&LIBERATION_SANS];
+
+/// The faces the Viewer SDK's core set embeds.
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const BUNDLED_FACES: [(FontId, &[u8]); 4] = [
+    (FontId(12), LIBERATION_SANS_REGULAR),
+    (FontId(13), LIBERATION_SANS_BOLD),
+    (FontId(14), LIBERATION_SANS_ITALIC),
+    (FontId(15), LIBERATION_SANS_BOLD_ITALIC),
 ];
 
 /// The [`FontId`] of the target's bundled default face for the given bold/italic

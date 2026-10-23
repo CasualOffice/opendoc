@@ -14,6 +14,12 @@ publish = false
 # supply Roboto through the runtime font registry; native/headless builds retain
 # the complete deterministic bundle even under `--all-features`.
 external-web-fonts = []
+# The Viewer SDK's core font set (`docs/176` §10, Q2), and also only for
+# `wasm32`: Liberation Sans alone is embedded, and every other bundled family
+# (Roboto, Caladea, Carlito, Liberation Serif/Mono, Noto Emoji) is supplied by
+# the host through the font-registry seam. Native builds, `--all-features`
+# included, keep the complete bundle, so no native test or golden moves.
+viewer-core-fonts = []
 # Native OS font fallback. Turns on `fontique`'s system font source (through
 # `parley`) so a run whose code points are not covered by the bundled faces
 # (CJK, symbols, complex scripts) shapes with an installed OS font, which the

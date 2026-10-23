@@ -1,0 +1,65 @@
+{
+  "name": "@casualoffice/opendoc-viewer",
+  "version": "0.1.0",
+  "description": "OpenDoc Viewer SDK: open a DOCX in the browser or in Node, render its pages to pixels or PNG, extract text and the outline, and write PDF. Read-only, deterministic, no server.",
+  "license": "Apache-2.0",
+  "author": "The CasualOffice Team (https://github.com/CasualOffice)",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./node": {
+      "types": "./types/node.d.ts",
+      "import": "./src/node.js"
+    },
+    "./opendoc_viewer_bg.wasm": "./pkg/opendoc_viewer_bg.wasm",
+    "./fonts/*": "./pkg/fonts/*"
+  },
+  "files": [
+    "src",
+    "types",
+    "pkg/opendoc_viewer.js",
+    "pkg/opendoc_viewer.d.ts",
+    "pkg/opendoc_viewer_bg.wasm",
+    "pkg/opendoc_viewer_bg.wasm.d.ts",
+    "pkg/fonts",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "./build.sh",
+    "measure": "node tools/measure-size.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "docx",
+    "document",
+    "viewer",
+    "preview",
+    "pdf",
+    "wasm",
+    "thumbnail"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CasualOffice/opendoc.git",
+    "directory": "packages/opendoc-viewer"
+  },
+  "homepage": "https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc-viewer",
+  "bugs": {
+    "url": "https://github.com/CasualOffice/opendoc/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

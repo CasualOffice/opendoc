@@ -1,6 +1,6 @@
 [package]
-name = "casual-doc-viewer"
-description = "Read-only OpenDoc engine cut (open, paginate, render, PDF) for the Viewer SDK and the headless render/convert path"
+name = "opendoc-viewer"
+description = "OpenDoc Viewer SDK: open a DOCX, paginate once, render pages (RGBA/PNG), extract text and outline, and write PDF, with no editing machinery"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,16 +9,17 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-# `docs/176` §4, ADR-071 (proposed). This crate is the MEASURED cut the Viewer SDK
-# and the headless render/convert path stand on: import → paginate → compose →
-# raster (and optionally PDF), with none of the editing machinery. It depends on
-# NO crate the editor alone needs — not `casual-doc-edit`, `casual-doc-transaction`,
-# `casual-doc-selection`, `casual-doc-diff` or `casual-doc-wasm` — and on no
-# writer unless a feature asks for one. It is additive: the editor's
-# `casual-doc-wasm` build does not depend on it and is unchanged by it.
+# `docs/176`, ADR-071. The Viewer SDK's stable read-only API, and the cut it
+# stands on: import → paginate → compose → raster (and optionally PDF), with
+# none of the editing machinery. It depends on NO crate the editor alone needs
+# — not `casual-doc-edit`, `casual-doc-transaction`, `casual-doc-selection`,
+# `casual-doc-diff` or `casual-doc-wasm` — and on no writer unless a feature
+# asks for one. It is additive: the editor's `casual-doc-wasm` build does not
+# depend on it and is unchanged by it. Not published yet (`docs/176` §5.2: the
+# crates.io name `opendoc-viewer` is reserved for it).
 #
-# `cdylib` for the wasm-pack artefact the size measurement in `docs/176` §4 is
-# taken from; `rlib` for native hosts and the example.
+# `cdylib` for the wasm-pack artefact `packages/opendoc-viewer` ships and
+# `docs/176` §4 measures; `rlib` for native hosts and the example.
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -26,13 +27,18 @@ crate-type = ["cdylib", "rlib"]
 default = []
 # The wasm-bindgen façade (`WasmViewer`). Off for native consumers, so a server or
 # a binding never links the JS glue.
-wasm = ["dep:wasm-bindgen"]
+wasm = ["dep:wasm-bindgen", "dep:serde_json"]
 # Same meaning as `casual-doc-wasm`'s: the browser host supplies Roboto/Noto, so
 # their faces are dropped from the module (`webapp/build.sh` builds with it on).
 web-host-fonts = ["casual-doc-layout/external-web-fonts"]
+# The Viewer SDK's font policy (`docs/176` §10, Q2): a small core set inside the
+# package (Liberation Sans) and every other face supplied by the host through
+# `register_fonts`, never fetched from a CDN. `wasm32` only, like
+# `web-host-fonts`: a native build keeps the whole bundle under any features.
+core-fonts = ["casual-doc-layout/viewer-core-fonts"]
 # Real-text vector PDF from the SAME layout the pages were rendered from.
 # Note: `casual-doc-pdf` depends on `casual-doc-edit` for `ParagraphIndex`
-# alone, so this feature links the edit crate (`docs/176` §4.3, prerequisite P2).
+# alone, so this feature links the edit crate (`docs/176` §4.2, prerequisite P2).
 pdf = ["dep:casual-doc-pdf"]
 # Every importer the editor opens (ODT, RTF, plain text, normalized JSON, DOTX)
 # through the `casual-doc-io` registry. That registry also links every WRITER
@@ -54,7 +60,11 @@ casual-doc-ooxml.workspace = true
 casual-doc-render.workspace = true
 casual-doc-io = { workspace = true, optional = true }
 casual-doc-pdf = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+
+[dev-dependencies]
+zip.workspace = true
 
 [lints]
 workspace = true
