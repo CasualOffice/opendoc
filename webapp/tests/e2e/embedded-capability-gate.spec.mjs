@@ -385,7 +385,7 @@ test("an ONLYOFFICE-shaped configuration changes the container, and reports what
   const ONLYOFFICE_CONFIG = {
     permissions: { print: false, edit: true },
     editorConfig: {
-      user: { name: "Ada Lovelace" },
+      user: { id: "u_ada", name: "Ada Lovelace" },
       customization: {
         hideRulers: true,
         review: { hideReviewDisplay: true },
@@ -422,8 +422,11 @@ test("an ONLYOFFICE-shaped configuration changes the container, and reports what
   expect(detail.capabilities).not.toContain("print");
   expect(detail.regions).not.toContain("ruler");
   expect(detail.regions).not.toContain("review");
-  expect(detail.preferences.authorName).toBe("Ada Lovelace");
+  // `user.name` is the host IDENTITY's name since `docs/175` §3.2, not a preference a
+  // visitor could overwrite (F9) — so it no longer reaches `prefs`, and it is mapped.
+  expect(detail.preferences.authorName).toBeUndefined();
   const answered = Object.fromEntries(detail.notes.map((note) => [note.option, note.code]));
+  expect(answered["editorConfig.user.name"]).toBe("mapped");
   expect(answered["permissions.edit"], "a true must be refused, not honoured").toBe("cannot-widen");
   expect(answered["customization.macros"]).toBe("declined");
   expect(answered["customization.unit"]).toBe("unsupported");
@@ -462,6 +465,8 @@ test("an ONLYOFFICE-shaped configuration changes the container, and reports what
   // say so, and every suggestion in the container is signed with it rather than
   // with nobody.
   await expect(frame.locator("#authorName")).toHaveValue("Ada Lovelace");
+  // And since `docs/175` §3.1 it is the ONLY identity: the visitor cannot overwrite it.
+  await expect(frame.locator("#authorName")).toBeDisabled();
 
   // And the withheld capability is refused where a visitor meets it — disabled,
   // present, and saying why, which is the rule one level down from composition.

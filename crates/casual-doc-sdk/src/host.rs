@@ -146,11 +146,15 @@ pub enum HostRefusal {
     BadRequest,
     /// The transport gave up waiting. Host side only.
     Timeout,
+    /// The host identity broke a bound (`docs/175` §3); the refusal names the field.
+    IdentityInvalid,
+    /// An identity was already given, or a room already joined: identity is boot-only.
+    IdentityFixed,
 }
 
 impl HostRefusal {
     /// Every refusal code, in the order the contract declares them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::UnknownCommand,
         Self::CapabilityWithheld,
         Self::Unavailable,
@@ -158,6 +162,8 @@ impl HostRefusal {
         Self::Threw,
         Self::BadRequest,
         Self::Timeout,
+        Self::IdentityInvalid,
+        Self::IdentityFixed,
     ];
 
     /// The code's spelling on the wire, which is also its spelling in the editor.
@@ -171,6 +177,8 @@ impl HostRefusal {
             Self::Threw => "threw",
             Self::BadRequest => "bad-request",
             Self::Timeout => "timeout",
+            Self::IdentityInvalid => "identity-invalid",
+            Self::IdentityFixed => "identity-fixed",
         }
     }
 
@@ -209,7 +217,7 @@ impl HostRefusal {
 
 /// What a host may ask of an editor, over either transport.
 ///
-/// Four, and the same four the in-process session exposes as methods, so neither
+/// Five, and the same five the in-process session exposes as methods, so neither
 /// transport has a verb the other lacks.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum HostRequest {
@@ -221,11 +229,19 @@ pub enum HostRequest {
     Query,
     /// Liveness, and the cheapest possible one.
     Ping,
+    /// Who is using the editor (`docs/175` §3): accepted once, before a room is joined.
+    Identify,
 }
 
 impl HostRequest {
     /// Every request verb, in the order the contract declares them.
-    pub const ALL: [Self; 4] = [Self::Describe, Self::Execute, Self::Query, Self::Ping];
+    pub const ALL: [Self; 5] = [
+        Self::Describe,
+        Self::Execute,
+        Self::Query,
+        Self::Ping,
+        Self::Identify,
+    ];
 
     /// The verb's spelling on the wire.
     #[must_use]
@@ -235,6 +251,7 @@ impl HostRequest {
             Self::Execute => "execute",
             Self::Query => "query",
             Self::Ping => "ping",
+            Self::Identify => "identify",
         }
     }
 }

@@ -1,6 +1,5 @@
 import { newRoster } from "../pkg/casual_doc_wasm.js";
 import { openRoom, resumeKey } from "./collab_transport.mjs";
-import { createPresence } from "./collab_presence.mjs";
 import { createRecovery } from "./collab_recovery.mjs";
 import { createSyncIndicator } from "./collab_sync.mjs";
 import { createShare, shareLink, sharedDocument } from "./share_flow.mjs";
@@ -8,6 +7,8 @@ import { createShareChrome } from "./share_chrome.mjs";
 import { createPresenceStrip } from "./presence_strip.mjs";
 import { createRecoveryDownloader } from "./recovery_chrome.mjs";
 import { refusalAnnouncement } from "./session_access.mjs";
+import { avatarPolicy, hostIdentity, joinIdentity } from "./host_identity.mjs";
+import { PRESENCE_OUTCOMES, createPresence } from "./collab_presence.mjs";
 
 /** Host-managed sharing, checkpoints, recovery and ephemeral presence scheduling. */
 export function createCollaborationShell({ root, getDocument, getTransport, setTransport,
@@ -18,8 +19,12 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
   // ONLYOFFICE share. Built hidden; it names nothing until a room opens, so no label
   // is read before the catalogue has landed (SKILL §11).
   const headerEnd = root.getElementById("documentState").parentElement;
-  const strip = createPresenceStrip({ root, parent: headerEnd, t, status, goTo: locateParticipant });
-  const remotePresence = createPresence({ newRoster, document: getDocument,
+  // One avatar policy for the mount, read once and handed to BOTH painters, so a
+  // chip and a caret label cannot disagree about whether a picture may be fetched
+  // (`docs/175` §8.1). Default "never".
+  const avatars = avatarPolicy(globalThis.location?.search);
+  const strip = createPresenceStrip({ root, parent: headerEnd, t, status, goTo: locateParticipant, avatars });
+  const remotePresence = createPresence({ newRoster, document: getDocument, avatars,
     transport: getTransport, selection: getSelection, paint: paintOverlay, t,
     roster: (room) => { strip.show(Boolean(room)); if (room) strip.update(room); } });
   /** Scrolls the document to a participant's painted caret and marks it briefly.
@@ -48,8 +53,19 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
       const revision = Number(new URLSearchParams(window.location.search).get("revision") || 0);
       getDocument().collabPrepare(revision);
     }
+    // Who joins (`docs/175` §3, §4.2): the host identity's `id` and profile when
+    // the host gave one, else the Settings name with a CLAIMED profile, else "You"
+    // with none. From here the identity is fixed: a room is never re-joined as
+    // somebody else, so a later `identify` is refused.
+    if (room) hostIdentity.markJoined();
+    const who = joinIdentity(getSettings());
+    const provider = globalThis.OPENDOC_COLLABORATION;
     setTransport(withSync(openRoom(getDocument(), room, globalThis.WebSocket, {
-      identity: getSettings().authorName.trim() || "You",
+      identity: who.identity,
+      profile: who.profile,
+      // Asked per join, reconnects included, and only when the host has a
+      // provider that can answer; the grant is never kept here (§3.3).
+      credentials: typeof provider?.credentialsFor === "function" ? () => provider.credentialsFor({ room }) : undefined,
       resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
       onFrame: (bytes) => remotePresence.frame(bytes),
       onOutcome: (o) => {
@@ -65,7 +81,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
           if (said) status(said, "warn");
         }
         if (["welcome", "resumed", "ack", "applied"].includes(o.kind)) publishCheckpoint();
-        if (["awareness", "departed", "welcome", "resumed"].includes(o.kind)) { paintOverlay(); remotePresence.changed(); }
+        if (PRESENCE_OUTCOMES.includes(o.kind)) { paintOverlay(); remotePresence.changed(); }
         const said = receiveAccess(o); if (said) status(said);
         if (o.documentChanged) { followArrival(); arrival(o); }
         sync.update();

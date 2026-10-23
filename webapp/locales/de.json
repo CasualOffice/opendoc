@@ -1682,6 +1682,7 @@
   "settingsPanel.checkSpellingAsYou": "Rechtschreibung während der Eingabe prüfen",
   "settingsPanel.checkingHappensBrowserDictionary": "Die Prüfung erfolgt in diesem Browser: Das Wörterbuch wird einmal von dieser Website heruntergeladen, und Ihr Text wird nirgendwohin gesendet. Von Ihnen hinzugefügte Wörter werden nur in diesem Browser gespeichert und lassen sich derzeit nur durch Löschen der Websitedaten entfernen.",
   "settingsPanel.autoCorrect": "AutoKorrektur",
+  "settingsPanel.identitySetByHost": "Ihr Name wird von der Anwendung festgelegt, in der Sie dies geöffnet haben",
   "settingsPanel.smartQuotes": "Typografische Anführungszeichen",
   "settingsPanel.smartQuotesDetail": "Gerade Anführungszeichen werden beim Tippen zu typografischen.",
   "settingsPanel.automaticLists": "Automatische Aufzählungen und Nummerierungen",

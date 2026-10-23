@@ -1686,6 +1686,7 @@
   "settingsPanel.checkSpellingAsYou": "التدقيق الإملائي أثناء الكتابة",
   "settingsPanel.checkingHappensBrowserDictionary": "يتم التدقيق داخل هذا المستعرض: يُنزَّل القاموس مرة واحدة من هذا الموقع ولا يُرسَل نصك إلى أي مكان. الكلمات التي تضيفها تُخزَّن في هذا المستعرض فقط، ولا يمكن حاليًا إزالتها إلا بمسح بيانات هذا الموقع.",
   "settingsPanel.autoCorrect": "التصحيح التلقائي",
+  "settingsPanel.identitySetByHost": "اسمك محدد من قِبل التطبيق الذي فتحت هذا المستند فيه",
   "settingsPanel.smartQuotes": "علامات الاقتباس الذكية",
   "settingsPanel.smartQuotesDetail": "تصبح علامات الاقتباس المستقيمة منحنية أثناء الكتابة.",
   "settingsPanel.automaticLists": "قوائم نقطية ورقمية تلقائية",

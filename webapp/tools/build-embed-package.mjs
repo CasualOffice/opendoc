@@ -334,6 +334,10 @@ export interface OpenDocCapabilitiesDetail {
  *  permission. */
 export declare class OpenDocEditorElement extends HTMLElement {
   mode: string | null;
+  /** WHO this person is (\`docs/175\` §3). Setting it remounts; reading it gives
+   *  the validated identity in force, or null. Never put in the frame's URL: it
+   *  is handed over in a one-shot \`identify\` message once the frame has loaded. */
+  identity: HostIdentity | null;
   readonly capabilities: readonly Capability[];
   readonly regions: readonly Region[];
   readonly preferences: Readonly<Record<string, unknown>>;
@@ -406,8 +410,52 @@ export interface HostEvent<Detail = Record<string, unknown>> {
   detail: Detail;
 }
 
+/** WHO this editor's person is (\`docs/175\` §3, version 1). The fourth host
+ *  input: not a preference, so the visitor cannot overwrite it. */
+export interface HostIdentity {
+  /** Opaque and pseudonymous, 1..128 bytes. Never shown, never in a saved file. */
+  id: string;
+  /** Display name, 1..255 bytes. */
+  name: string;
+  /** 1..8 characters; derived from \`name\` when absent. */
+  initials?: string;
+  /** \`"#rrggbb"\`; shown only when a grant vouches for it. */
+  color?: string;
+  /** \`https:\` only, at most 1,024 bytes; fetched only with \`avatars="fetch"\`. */
+  avatar?: { url: string } | null;
+  /** OPT-IN: written to \`people.xml\` presenceInfo in a saved DOCX. */
+  persist?: { providerId: string; userId: string };
+}
+
+/** The bounds \`validateHostIdentity\` enforces, as refusals and never truncations. */
+export declare const IDENTITY_BOUNDS: {
+  readonly idBytes: number;
+  readonly nameBytes: number;
+  readonly initialsGraphemes: number;
+  readonly avatarUrlBytes: number;
+  readonly persistBytes: number;
+};
+
+/** THE one identity validator every transport calls. A bound broken is an
+ *  \`identity-invalid\` refusal whose \`field\` names the part; \`group\` is reported
+ *  \`not-honoured\`. Accepts the object or its JSON text. */
+export declare function validateHostIdentity(raw: unknown):
+  | { ok: true; identity: Readonly<HostIdentity>; notes: readonly HostOptionNote[] }
+  | { ok: false; refusal: Refusal & { field: string } };
+
+/** What \`identify\` answers: accepted once, or a refusal (\`identity-invalid\`,
+ *  \`identity-fixed\`) as a value, like a refused command. */
+export interface IdentifyResult {
+  ok: boolean;
+  notes?: readonly HostOptionNote[];
+  refusal?: Refusal & { field?: string };
+}
+
 /** The editor, as a host addresses it. Both transports expose this. */
 export interface OpenDocHostSession {
+  /** Says who this person is, ONCE per mount and before a shared room is joined
+   *  (\`docs/175\` §3.2). A second call is refused \`identity-fixed\`. */
+  identify(identity: HostIdentity): Promise<IdentifyResult> | IdentifyResult;
   describe(): Promise<unknown> | unknown;
   execute(id: string, args?: readonly unknown[]): Promise<CommandResult>;
   query(id: string): Promise<CommandState> | CommandState;

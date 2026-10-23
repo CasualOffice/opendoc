@@ -271,7 +271,8 @@ export function resumeKey(storage, mint) {
  * @param {object} session the engine handle (a `WasmDocument`)
  * @param {unknown} room the `room` field of `hostConfig()`
  * @param {(new (url: string) => object)|undefined} WebSocketImpl the host's constructor
- * @param {{identity?: string, resumeKey?: string, onOutcome?: (o: object) => void,
+ * @param {{identity?: string, resumeKey?: string, profile?: string,
+ *          credentials?: () => unknown, onOutcome?: (o: object) => void,
  *          onState?: (s: object) => void}} hooks
  * @returns {object|null}
  */
@@ -293,6 +294,8 @@ export function openRoom(session, room, WebSocketImpl, hooks = {}) {
     // it gets the engine's own `session.resume-key-unusable` on `state().problem`,
     // which is a sentence pointing at the real mistake.
     resumeKey: typeof hooks.resumeKey === "string" ? hooks.resumeKey : "",
+    profile: hooks.profile,
+    credentials: hooks.credentials,
     open: webSocketOpener(WebSocketImpl),
     onOutcome: hooks.onOutcome,
     onState: hooks.onState,
@@ -325,6 +328,8 @@ export function openRoom(session, room, WebSocketImpl, hooks = {}) {
  *   url: string,
  *   identity: string,
  *   resumeKey: string,
+ *   profile?: string,
+ *   credentials?: () => unknown,
  *   open: (url: string) => object,
  *   setTimer?: (fn: () => void, ms: number) => unknown,
  *   clearTimer?: (handle: unknown) => void,
@@ -342,6 +347,14 @@ export function collabTransport(options) {
     url,
     identity,
     resumeKey,
+    // The display profile this person claims (JSON, `docs/175` §4.2), or
+    // undefined. Read by the relay only in an open room, and marked unverified.
+    profile = undefined,
+    // `() => { grant } | Promise<{ grant }> | undefined`, asked PER JOIN —
+    // reconnects included — because the relay re-verifies every join (`docs/152`
+    // §10 Q4). The grant is held only for the `collabJoinFrame` call: never
+    // stored here, logged, or put in a state, an outcome or an error.
+    credentials = undefined,
     open,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
@@ -355,8 +368,10 @@ export function collabTransport(options) {
     attemptCeiling = 8,
   } = options ?? {};
 
-  /** `idle` → `connecting` → `open`, and `waiting` between attempts. `stopped`
-   *  is the only one nothing leaves on its own. */
+  /** `idle` → `connecting` → (`joining`, while a credentials provider answers)
+   *  → `open`, and `waiting` between attempts. `stopped` is the only one nothing
+   *  leaves on its own. `joining` reads as `reconnecting`: the socket is open but
+   *  nothing is shared until the `Join` is written. */
   let phase = "idle";
   let socket = null;
   let recoveryPaused = false;
@@ -564,7 +579,7 @@ export function collabTransport(options) {
    *  during the same wait is refused — the scheduled attempt already owns the
    *  next socket. */
   function connect() {
-    if (phase === "stopped" || phase === "open" || phase === "connecting") return;
+    if (phase === "stopped" || phase === "open" || phase === "connecting" || phase === "joining") return;
     if (phase === "waiting" && timer !== null) return;
     phase = "connecting";
     report();
@@ -587,19 +602,67 @@ export function collabTransport(options) {
   }
 
   /** The handshake: a `Join` first and nothing before it, then the custody
-   *  queue, then anything new.
+   *  queue, then anything new. With a credentials provider the `Join` waits for
+   *  this connection's grant (`docs/175` §3.3); without one it is written at once,
+   *  exactly as before.
    *
    *  The join is written DIRECTLY rather than queued, because the queue may hold
    *  chunks from the previous connection and a `Join` behind them is a `Join` the
    *  relay refuses; and because a join that failed to write must not be left at
    *  the head of the queue, where the next connection would send two. */
   function opened() {
+    if (typeof credentials !== "function") {
+      join(undefined);
+      return;
+    }
+    // AWAIT THE GRANT, then write the `Join` — and nothing before it: the queue
+    // and `pump` stay shut while `joining`, for the reason the header gives about
+    // a handover with nowhere to go. The answer is checked against the socket it
+    // was asked for, so a grant that arrives after that socket dropped is thrown
+    // away rather than written down a newer one.
+    phase = "joining";
+    report();
+    const live = socket;
+    let asked;
+    try {
+      asked = Promise.resolve(credentials());
+    } catch (error) {
+      asked = Promise.reject(error);
+    }
+    asked.then(
+      (answer) => {
+        if (socket !== live || phase !== "joining") return;
+        const grant = typeof answer?.grant === "string" && answer.grant !== "" ? answer.grant : undefined;
+        join(grant);
+      },
+      () => {
+        // A provider that could not produce a grant is a failed CONNECTION, not a
+        // refused person: close and retry on the backoff, as for a dropped socket.
+        // Never a join without the grant the host meant to send — on a granted
+        // relay that is a terminal refusal blaming the wrong thing.
+        if (socket !== live || phase !== "joining") return;
+        // Detached first, so the close this causes is not counted as a second
+        // drop (which would double the attempt and halve every backoff).
+        live.onclose = null;
+        try {
+          live.close();
+        } catch {
+          // Already closing.
+        }
+        dropped();
+      },
+    );
+  }
+
+  /** Writes the `Join` (with the grant for THIS connection, if any), then the
+   *  custody queue, then anything new. `grant` lives only in this call. */
+  function join(grant) {
     phase = "open";
     attempt = 0;
     code = null;
-    let join;
+    let frame;
     try {
-      join = session.collabJoinFrame(identity, resumeKey, revisionNow());
+      frame = session.collabJoinFrame(identity, resumeKey, revisionNow(), grant, profile);
     } catch (error) {
       // An identity or a key the engine will not take is terminal and is the
       // host's to fix: retrying cannot change the answer, so this does not.
@@ -607,7 +670,7 @@ export function collabTransport(options) {
       halt(null, false);
       return;
     }
-    if (!sendNow(join)) return;
+    if (!sendNow(frame)) return;
     drain();
     pump();
     report();

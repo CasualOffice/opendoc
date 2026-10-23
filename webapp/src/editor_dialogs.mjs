@@ -21,6 +21,7 @@ import { t } from "./i18n.mjs";
 import { newestObject, placedObjectIds } from "./placed_objects.mjs";
 import { EMU_PER_TWIP } from "./units.mjs";
 import { fieldLabel, fieldResultText } from "./field_kinds.mjs";
+import { authorNameFor } from "./host_identity.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -138,7 +139,7 @@ export function createDialogs(ed) {
     const { node, offset } = ed.selection.focus;
     let res;
     try {
-      res = ed.doc.insertField(node, offset, kind, fieldResultText(kind, { fileName: ed.currentName, authorName: ed.settings.authorName }));
+      res = ed.doc.insertField(node, offset, kind, fieldResultText(kind, { fileName: ed.currentName, authorName: authorNameFor(ed.settings) }));
     } catch (err) {
       console.warn("insertField ignored:", err?.message ?? err);
       ed.setStatus("A field can’t be inserted at this position", "error");

@@ -1681,6 +1681,7 @@
   "settingsPanel.checkSpellingAsYou": "入力時にスペルチェックする",
   "settingsPanel.checkingHappensBrowserDictionary": "チェックはこのブラウザー内で行われます。辞書はこのサイトから一度だけダウンロードされ、入力した文章がどこかに送信されることはありません。追加した単語はこのブラウザーにのみ保存され、現在はこのサイトのデータを消去する方法でのみ削除できます。",
   "settingsPanel.autoCorrect": "オートコレクト",
+  "settingsPanel.identitySetByHost": "名前は、これを開いたアプリケーションによって設定されています",
   "settingsPanel.smartQuotes": "スマート引用符",
   "settingsPanel.smartQuotesDetail": "入力中にまっすぐな引用符を曲がった引用符に変えます。",
   "settingsPanel.automaticLists": "箇条書きと段落番号を自動で設定",

@@ -1681,6 +1681,7 @@
   "settingsPanel.checkSpellingAsYou": "輸入時檢查拼字",
   "settingsPanel.checkingHappensBrowserDictionary": "檢查在本瀏覽器中進行：字典只從本網站下載一次，您的文字絕不會傳送到任何地方。您新增的字詞僅儲存在本瀏覽器中，目前只能透過清除本網站資料來移除。",
   "settingsPanel.autoCorrect": "自動校正",
+  "settingsPanel.identitySetByHost": "你的姓名由你開啟此文件所用的應用程式設定",
   "settingsPanel.smartQuotes": "智慧引號",
   "settingsPanel.smartQuotesDetail": "輸入時將直引號換成彎引號。",
   "settingsPanel.automaticLists": "自動項目符號與編號清單",

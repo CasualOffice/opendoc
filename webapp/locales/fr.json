@@ -1683,6 +1683,7 @@
   "settingsPanel.checkSpellingAsYou": "Vérifier l’orthographe pendant la frappe",
   "settingsPanel.checkingHappensBrowserDictionary": "La vérification a lieu dans ce navigateur : le dictionnaire est téléchargé une fois depuis ce site et votre texte n’est jamais envoyé nulle part. Les mots que vous ajoutez sont stockés uniquement dans ce navigateur et ne peuvent actuellement être supprimés qu’en effaçant les données de ce site.",
   "settingsPanel.autoCorrect": "Correction automatique",
+  "settingsPanel.identitySetByHost": "Votre nom est défini par l’application dans laquelle vous avez ouvert ce document",
   "settingsPanel.smartQuotes": "Guillemets typographiques",
   "settingsPanel.smartQuotesDetail": "Les guillemets droits deviennent typographiques pendant la saisie.",
   "settingsPanel.automaticLists": "Listes à puces et numérotées automatiques",

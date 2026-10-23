@@ -92,11 +92,21 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // is the engine growing, decided and recorded. About 130 KiB of headroom is
 // kept on both, and the code ceiling stays below the opt-level-3 measurement
 // (12,376,042 B) so a dropped `z` still fails.
-const MAX_TOTAL_BYTES = 26_240_000;
+// `docs/109` HF-360 (host identity, ADR-070), measured both sides with
+// `build.sh`'s settings on 2026-10-24: `main` at cd95c00b (#880) is 26,199,731 B
+// with a 12,282,103 B code section; with HF-360 26,272,292 B with 12,349,976 B —
+// +72,561 B, +67,873 B of it code (0.28%): `authorship::conform` and its walks,
+// the `Profile`/`Participant` wire types and their serde, the participant list
+// on the roster, and the people.xml save projection. The engine growing, decided
+// and recorded; about 128 KiB of headroom is restored on both. The #805
+// opt-level-3 reference above is stale for the CODE ceiling: THIS engine at
+// opt-level 3 measured 14,144,617 B of code, so a dropped `z` still fails by
+// 1.6 MB with the ceiling at 12,480,000.
+const MAX_TOTAL_BYTES = 26_400_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
- *  after §19. opt-level 3 measured 12,376,042 B on the smaller #805 engine, so
- *  a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 12_320_000;
+ *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
+ *  so a dropped `z` still lands far outside this. */
+const MAX_CODE_BYTES = 12_480_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

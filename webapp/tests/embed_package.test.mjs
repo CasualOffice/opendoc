@@ -143,7 +143,17 @@ test("the element module stays independent of the editor page", () => {
   // vocabularies back out of `capabilities.mjs`, and `host_options.test.mjs`
   // fails on a row that names anything they do not contain.
   const imports = [...source.matchAll(/^import .*?from\s+["']([^"']+)["']/gms)].map((m) => m[1]);
-  assert.deepEqual(imports, ["./capabilities.mjs", "./host_options.mjs"]);
+  // Plus, since HF-360, the host contract (for `validateHostIdentity`, the one
+  // identity validator every transport calls) and the host client (which carries
+  // the one-shot `identify` into the frame, so the identity never enters a URL,
+  // `docs/175` §3.2). Both are pure and both already ship in this package.
+  assert.deepEqual(imports, ["./capabilities.mjs", "./host_options.mjs", "./host_contract.mjs", "./host_client.mjs"]);
+  for (const name of ["host_contract.mjs", "host_client.mjs"]) {
+    const pure = readFileSync(join(WEBAPP, "src", name), "utf8");
+    const reached = [...pure.matchAll(/^import .*?from\s+["']([^"']+)["']/gms)].map((m) => m[1]);
+    assert.ok(reached.every((path) => ["./capabilities.mjs", "./host_contract.mjs"].includes(path)),
+      `${name} reaches beyond the package's pure modules: ${reached.join(", ")}`);
+  }
   // And that second module is pure too, or the first assertion above is only
   // true one level deep.
   const options = readFileSync(join(WEBAPP, "src", "host_options.mjs"), "utf8");

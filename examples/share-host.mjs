@@ -1,8 +1,15 @@
 // Optional local development host. Production hosts supply authentication and durable storage.
+//
+// OPENDOC_SHARE_ACCESS=granted runs every room as a GRANTED room (`docs/175` §4.1): the relay
+// verifies an EdDSA JWT against this host's public key, refuses a join whose identity is not
+// the grant's subject, and shows the grant's name. The key is a DEVELOPMENT key generated at
+// start-up, and "who you are" is a `opendoc_dev_user` cookie (`<id>|<display name>`) that
+// anybody can set: this host has no authentication, and a real host signs grants only for the
+// person its own session authenticated.
 import http from "node:http";
 import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve, extname } from "node:path";
@@ -14,7 +21,30 @@ const directory = await mkdtemp(resolve(tmpdir(), "opendoc-share-"));
 const rooms = new Map();
 const children = new Set();
 const MAX_BYTES = 64 * 1024 * 1024;
+const GRANTED = process.env.OPENDOC_SHARE_ACCESS === "granted";
+// DEVELOPMENT KEY. Generated per process and never written anywhere; the relay is handed only
+// the public half, so it can verify grants and never mint one.
+const devKey = GRANTED ? generateKeyPairSync("ed25519") : null;
+const devPublicKey = devKey ? devKey.publicKey.export({ format: "jwk" }).x : "";
+const b64url = (value) => Buffer.from(value).toString("base64url");
+/** A compact JWS (EdDSA) carrying the grant claims `JwtVerifier` reads. */
+function grantFor(roomId, cookie) {
+  const raw = /(?:^|;\s*)opendoc_dev_user=([^;]+)/.exec(cookie || "")?.[1];
+  if (!raw) return null;
+  const [sub, name] = decodeURIComponent(raw).split("|");
+  if (!sub) return null;
+  const claims = { sub, aud: roomId, exp: Math.floor(Date.now() / 1000) + 600, role: "editor" };
+  if (name) claims.name = name;
+  const signed = `${b64url(JSON.stringify({ alg: "EdDSA", typ: "JWT" }))}.${b64url(JSON.stringify(claims))}`;
+  return `${signed}.${b64url(sign(null, Buffer.from(signed), devKey.privateKey))}`;
+}
 const hostScript = `globalThis.OPENDOC_COLLABORATION = {
+ ${GRANTED ? `async credentialsFor({room}) {
+  const id = new URL(room).pathname.split('/').pop();
+  const result = await fetch('/api/shares/'+id+'/grant', {method:'POST'});
+  if (!result.ok) throw new Error('The share host would not issue a grant.');
+  return { grant: await result.text() };
+ },` : ""}
  async createShare({bytes}) {
   const result = await fetch('/api/shares', {method:'POST', body:bytes});
   if (!result.ok) throw new Error('The share host refused the document.');
@@ -65,7 +95,8 @@ async function createRoomInner(seed) {
   await new Promise((done, fail) => { listener.once('error',fail); listener.listen(0,'127.0.0.1',done); });
   const port = listener.address().port;
   await new Promise(done => listener.close(done));
-  const child = spawn(relay, ['serve',journal,`127.0.0.1:${port}`,'editor'], {stdio:['ignore','pipe','pipe']});
+  const access = GRANTED ? ['granted', devPublicKey, id] : ['editor'];
+  const child = spawn(relay, ['serve',journal,`127.0.0.1:${port}`,...access], {stdio:['ignore','pipe','pipe']});
   children.add(child); child.once('exit',() => children.delete(child));
   await new Promise((done, fail) => {
     const deadline = setTimeout(() => { child.kill(); fail(new Error('Relay startup timed out')); },10000);
@@ -90,6 +121,13 @@ const server = http.createServer(async (request, response) => {
       const room = await createRoom(await bytes(request));
       response.setHeader('Content-Type','application/json');
       response.end(JSON.stringify({room:`ws://127.0.0.1:${server.address().port}/rooms/${room.id}`,documentUrl:`${origin}/documents/${room.id}.json`,revision:0})); return;
+    }
+    const granting = /^\/api\/shares\/([^/]+)\/grant$/.exec(url.pathname);
+    if (granting && GRANTED && request.method === 'POST') {
+      // Issued for whoever the session cookie says; never logged, never stored.
+      const token = rooms.has(granting[1]) ? grantFor(granting[1], request.headers.cookie) : null;
+      if (!token) { response.writeHead(403); response.end(); return; }
+      response.setHeader('Content-Type','text/plain'); response.end(token); return;
     }
     const checkpoint = /^\/api\/shares\/([^/]+)\/snapshot$/.exec(url.pathname);
     if (checkpoint) {

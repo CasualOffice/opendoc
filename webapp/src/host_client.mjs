@@ -68,10 +68,10 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
     if (!waiter) return;
     pending.delete(rid);
     clearTimeout(waiter.timer);
-    if (waiter.type === "execute") {
-      // `execute` resolves whatever came back, refusal included: "a refused
-      // command must say so in its RESULT" means a host branches on the value,
-      // never on a rejection.
+    if (waiter.type === "execute" || waiter.type === "identify") {
+      // `execute` and `identify` resolve whatever came back, refusal included:
+      // "a refused command must say so in its RESULT" means a host branches on
+      // the value, never on a rejection.
       const { [PROTOCOL.marker]: _marker, kind: _kind, rid: _rid, ...result } = message;
       waiter.resolve(Object.freeze(result));
       return;
@@ -111,15 +111,15 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(rid);
-        if (type === "execute") {
+        if (type === "execute" || type === "identify") {
           resolve(
             Object.freeze({
               ok: false,
-              command: body.id ?? null,
+              command: type === "identify" ? "identify" : (body.id ?? null),
               revision: null,
               refusal: Object.freeze({
                 code: "timeout",
-                command: body.id ?? null,
+                command: type === "identify" ? "identify" : (body.id ?? null),
                 requires: null,
                 message: "",
               }),
@@ -142,9 +142,9 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
   }
 
   /** The verbs, generated from the schema. A host gets `client.execute(...)`,
-   *  `client.query(...)`, `client.describe()` and `client.ping()` because those
-   *  are the four the schema declares — not because four methods were typed out
-   *  here. */
+   *  `client.query(...)`, `client.describe()`, `client.ping()` and
+   *  `client.identify(identity)` because those are the verbs the schema declares
+   *  — not because the methods were typed out here. */
   const client = {
     /** Subscribes to one of the contract's events; returns an unsubscribe. */
     on(name, listener) {
@@ -177,7 +177,9 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
         ? (id, args = []) => send("execute", { id, args })
         : type === "query"
           ? (id) => send("query", { id })
-          : () => send(type);
+          : type === "identify"
+            ? (identity) => send("identify", { identity })
+            : () => send(type);
   }
   return client;
 }

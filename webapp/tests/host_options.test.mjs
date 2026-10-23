@@ -85,7 +85,10 @@ test("the table states no vocabulary of its own", () => {
         ? CAPABILITIES
         : row.via.kind === "region"
           ? REGIONS
-          : PREFERENCES.map((pref) => pref.name);
+          : row.via.kind === "identity"
+            // The `docs/175` §3 identity fields the lowering may write.
+            ? ["id", "name", "avatar"]
+            : PREFERENCES.map((pref) => pref.name);
     assert.ok(known.includes(row.via.target), `${row.option} names an unknown ${row.via.kind}`);
   }
 });
@@ -201,13 +204,30 @@ test("every preference lands on a setting the editor really has", () => {
 test("a host's opening positions reach the settings the editor merges", () => {
   const { settings } = containerFor({
     editorConfig: {
-      user: { name: "Ada Lovelace" },
-      customization: { spellcheck: false, uiTheme: "dark" },
+      customization: { spellcheck: false, uiTheme: "dark", anonymous: "Guest" },
     },
   });
-  assert.equal(settings.authorName, "Ada Lovelace");
+  assert.equal(settings.authorName, "Guest");
   assert.equal(settings.spellCheck, false);
   assert.equal(settings.theme, "dark");
+});
+
+// ---- `editorConfig.user` is an IDENTITY, not a preference (`docs/175` §3.2) --
+
+test("their user is lowered onto the host identity, never onto prefs.user", () => {
+  const out = translateHostConfig({
+    editorConfig: { user: { id: "u_8f2c", name: "Ada Lovelace", image: "https://cdn.example/ada.png", group: "Legal" } },
+  });
+  // The name the visitor could overwrite (F9) is exactly the hole this closes.
+  assert.equal(out.prefs.user, undefined, "user.name must not become an overridable preference");
+  assert.deepEqual(out.identity, { id: "u_8f2c", name: "Ada Lovelace", avatar: { url: "https://cdn.example/ada.png" } });
+  const byOption = new Map(out.notes.map((note) => [note.option, note]));
+  assert.equal(byOption.get("editorConfig.user.name").message, "identity.name");
+  assert.equal(byOption.get("editorConfig.user.id").message, "identity.id");
+  assert.equal(byOption.get("editorConfig.user.image").message, "identity.avatar.url");
+  assert.equal(byOption.get("editorConfig.user.group").code, "not-honoured", "group is reserved, and said to be");
+  // A config with no user names nobody.
+  assert.equal(translateHostConfig({ editorConfig: { lang: "de" } }).identity, null);
 });
 
 test("a value the preference cannot mean is dropped, not coerced", () => {

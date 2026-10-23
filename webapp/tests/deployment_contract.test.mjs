@@ -36,6 +36,9 @@ const REPO = dirname(WEBAPP);
 const read = (...parts) => readFileSync(join(REPO, ...parts), "utf8");
 
 const MAIN_RS = read("server", "src", "main.rs");
+// The role table moved here when a grant's `role` claim began naming the same presets
+// (`docs/175` §15): one table for the command line and the JWT, not two.
+const ACCESS_RS = read("server", "src", "access.rs");
 const PRESENCE_RS = read("crates", "casual-doc-transaction", "src", "presence.rs");
 const TOOLCHAIN = read("rust-toolchain.toml");
 const CI = read(".github", "workflows", "ci.yml");
@@ -90,7 +93,13 @@ function binaryInterface() {
 function binaryRoles() {
   const body = MAIN_RS.split("fn open_room_role")[1];
   assert.ok(body, "server/src/main.rs must define open_room_role");
-  const arms = [...body.split("fn ")[0].matchAll(/"([a-z]+)"\s*=>\s*Capabilities::/g)].map(
+  // `open_room_role` delegates to the one role table in access.rs; follow it there, and
+  // only there, so a delegation to anything else still finds no arms and fails.
+  const own = body.split("fn ")[0];
+  const table = own.includes("role_capabilities(")
+    ? ACCESS_RS.split("pub fn role_capabilities")[1]?.split("\nfn ")[0].split("\npub ")[0] ?? ""
+    : own;
+  const arms = [...table.matchAll(/"([a-z]+)"\s*=>\s*Capabilities::/g)].map(
     (match) => match[1],
   );
   assert.ok(arms.length > 0, "no role arms found in open_room_role");
