@@ -122,7 +122,6 @@ import { downloadBytes } from "./save_formats.mjs";
 import { formatShortcut, matchesShortcut } from "./keyboard.mjs";
 import { focusMenuIndex, renderMenuLevel } from "./menu_render.mjs";
 import { createChangeNavigator, redlineEntries } from "./diff_canvas.mjs";
-import { reviewAuthorColor, reviewAuthorKey } from "./review_labels.mjs";
 import {
   CAPTURE_REASON,
   HISTORY_STATUS,
@@ -143,6 +142,9 @@ import {
   versionRowRef,
   versionRowText,
 } from "./version_policy.mjs";
+import { HISTORY_SCOPE, ORIGIN, versionSections } from "./shared_versions.mjs";
+import { createSharedHistory } from "./version_shared_part.mjs";
+import { fillVersionGrid, optionId, renderVersionRow } from "./version_rows.mjs";
 
 /** How long arrow-key navigation settles before it opens a preview.
  *
@@ -152,12 +154,6 @@ import {
  *  costs one parse and short enough that a single press feels immediate. A click
  *  does not wait: the reader has already chosen. */
 const PREVIEW_SETTLE_MS = 220;
-
-/** Row ids have to be stable within one render and unique in the document, and a
- *  `versionId` is already both. Named `versionOption-…` since the rows were
- *  options; the spelling is kept because it is what the specs and the panel's
- *  `aria` wiring already say, and renaming it buys nothing. */
-const optionId = (versionId) => `versionOption-${versionId}`;
 
 /** The two row keys, declared in the same Apple notation every other chord in
  *  this editor is declared in, so `matchesShortcut` binds exactly what
@@ -174,20 +170,6 @@ const DELETE_KEY = "⌦";
 const CELL_ENTRY = 0;
 const CELL_MENU = 1;
 
-/** A Material Symbols glyph, `aria-hidden` because it is decoration and the
- *  state it stands for is already in the option's accessible name.
- *
- *  A helper rather than three inline lines, for the same reason
- *  `compact_toolbar.mjs` and `review_chrome.mjs` have one: a ligature NAME is not
- *  prose, and writing it straight into `textContent` at the call site makes the
- *  unrouted-string scanner read a font instruction as English. */
-function iconSpan(name, className = "") {
-  const icon = document.createElement("span");
-  icon.className = className ? `ms ${className}` : "ms";
-  icon.setAttribute("aria-hidden", "true");
-  icon.textContent = name;
-  return icon;
-}
 
 /**
  * Builds the version history panel and everything behind it.
@@ -275,6 +257,13 @@ export function createVersionHistory({
   // it knows whether the document is in a shared room — where a restore would replace the
   // reader's copy alone and fork the document (ADR-068, `docs/109` HF-312).
   restoreRefusal = () => "",
+  // The room's shared history (`docs/175` §11, HF-362): `{scope, source, current}` where
+  // `scope` is a `HISTORY_SCOPE`, `source` is `sharedVersionSource(provider, room)` or
+  // null, and `current()` is `{revision, bytes}` of the LIVE document as a
+  // `collabSnapshot()` package. Standalone by default, which is the panel unchanged.
+  shared = () => ({ scope: HISTORY_SCOPE.STANDALONE, source: null, current: null }),
+  // The name prompt, worded for a version everyone in the room will see.
+  promptSharedName = (current) => promptName(current),
   storeOptions = {},
 }) {
   const panel = document.getElementById("versionPanel");
@@ -307,6 +296,24 @@ export function createVersionHistory({
     ? createChangeNavigator(changesRoot, { navigate: (entry) => navigateTo(entry.anchor) })
     : null;
   const clearBtn = document.getElementById("versionClearBtn");
+  // The room's shared versions (`docs/175` §11): a grid of their own above this device's,
+  // never one list, with its pager, its controls and "Save a version for everyone" in
+  // `version_shared_part.mjs`. Every callback below is a hoisted declaration in this
+  // closure.
+  const room = createSharedHistory({
+    shared,
+    publish,
+    report: (result) => report(result),
+    allows: (capability) => allows(capability),
+    documentInfo,
+    promptName: promptSharedName,
+    restoreRefusal,
+    isOpen: () => isOpen(),
+    repaint: () => rerender(),
+    closePreview: () => closePreview(),
+    select: (versionId) => select(versionId, CELL_ENTRY),
+    canRedline: () => typeof redline === "function",
+  });
 
   /** The store, once. `null` until asked for; `storeReason` is non-empty once
    *  the browser has refused it, which is what the disabled entry point says. */
@@ -394,8 +401,16 @@ export function createVersionHistory({
     return hostAllows() && s.autosave !== false && s.versionHistory !== false;
   }
 
-  /** Why the entry point is disabled, or "". Never a silent absence (SKILL §10). */
+  /** Why the entry point is disabled, or "". Never a silent absence (SKILL §10). In a
+   *  room whose host keeps versions the panel opens even with local capture off: the
+   *  room's history is the host's, not this browser's. */
   function unavailableReason() {
+    return room.available() ? "" : deviceUnavailableReason();
+  }
+
+  /** Why THIS DEVICE's history is unavailable, or "": the footer's sentence in a room,
+   *  where the panel stays open for the room's versions even without local capture. */
+  function deviceUnavailableReason() {
     const s = settings();
     return historyUnavailableReason({
       hasDocument: Boolean(documentInfo().hasDocument),
@@ -431,161 +446,60 @@ export function createVersionHistory({
     // to. A menu left pointing at a detached button is a menu whose Escape has
     // nowhere to give the keyboard back to.
     closeRowMenu();
-    body.replaceChildren();
     const namedOnly = Boolean(namedOnlyBox?.checked);
+    const scope = room.scope();
+    const sharedRows = room.rows();
     // What changed between each version and the one before it, for the whole
     // timeline at once. From the UNFILTERED list, so "since the previous version"
     // means the same thing with the named-only filter on as off — and O(rows)
     // once per repaint rather than per row, because a per-row lookup of the
-    // previous row would be the quadratic shape SKILL §8 names.
+    // previous row would be the quadratic shape SKILL §8 names. Each origin
+    // against its own predecessors: a shared version's "previous" is the room's
+    // previous version, never something this browser captured.
     deltas = versionRowDeltas(rows);
-    const groups = groupVersions(rows, { now: Date.now(), namedOnly });
-    if (groups.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "outline-empty";
-      // A FILTERED timeline that comes back empty is not an empty timeline, and
-      // saying "no versions yet" over a document that has nine of them is a lie
-      // the reader can see through.
-      empty.textContent = namedOnly && rows.length > 0
-        ? t("versionHistory.emptyNamed")
-        : t("versionHistory.empty");
-      body.append(empty);
-      // With no rows there is no cell to be the grid's tab stop, so the grid
-      // itself takes the keyboard — otherwise opening an empty timeline would
-      // drop focus on `<body>`.
-      body.tabIndex = 0;
-      reflectActions();
-      return;
-    }
-    body.tabIndex = -1;
-    for (const group of groups) {
-      // `role="rowgroup"`, because `group` is not a permitted child of a grid.
-      // The visible heading stays hidden from the accessibility tree and the day
-      // stays inside every row's accessible name, which is where it was already
-      // — so nothing is lost by `rowgroup` carrying no name of its own.
-      const section = document.createElement("div");
-      section.className = "version-group";
-      section.setAttribute("role", "rowgroup");
-      const day = document.createElement("div");
-      day.className = "version-group-day";
-      day.setAttribute("aria-hidden", "true");
-      day.textContent = group.label;
-      section.append(day);
-      for (const row of group.rows) {
-        section.append(renderRow(row));
-      }
-      body.append(section);
-    }
+    for (const [id, delta] of versionRowDeltas(sharedRows)) deltas.set(id, delta);
+    // Sections partition by ORIGIN (`versionSections`), so a shared row and a device
+    // row can never land in one grid (`docs/175` §11).
+    const sections = versionSections({
+      scope,
+      rows: [...sharedRows, ...rows],
+      group: (list) => groupVersions(list, { now: Date.now(), namedOnly }),
+    });
+    const sharedPart = sections.find((section) => section.origin === ORIGIN.SHARED) ?? null;
+    const devicePart = sections.find((section) => section.origin === ORIGIN.DEVICE);
+    room.paintHeadings(sharedPart, devicePart, body);
+    if (sharedPart && room.list) fillGrid(room.list, sharedPart, { namedOnly, empty: room.emptyText() });
+    fillGrid(body, devicePart, { namedOnly, empty: t("versionHistory.empty") });
     reflectSelection();
   }
 
-  /**
-   * One row: a `div[role=row]` holding two `gridcell`s — the entry, and the ⋮
-   * that carries this version's own actions.
-   *
-   * The entry cell is the one that carries the accessible name, because it is
-   * the cell focus lands on; putting the same sentence on the row as well would
-   * make a screen reader read the version twice for one arrow press.
-   *
-   * O(1) per row, and nothing here reads the document.
-   */
-  function renderRow(row) {
-    const text = versionRowText(row, {
-      isHead: row.versionId === headVersionId,
+  /** One grid's rows (`version_rows.mjs`), wired to this panel's selection, preview
+   *  and row menu. O(rows in the section). */
+  function fillGrid(grid, section, options) {
+    fillVersionGrid(grid, section, { ...options, renderRow });
+  }
+
+  function renderRow(row, sectionHeading) {
+    return renderVersionRow(row, {
+      sectionHeading,
+      isHead: row.origin !== ORIGIN.SHARED && row.versionId === headVersionId,
       delta: deltas.get(row.versionId) ?? null,
+      open: () => {
+        select(row.versionId, CELL_ENTRY);
+        void openPreview(row.versionId);
+      },
+      menu: () => {
+        // A second press on the same ⋮ closes it, which is what every menu button
+        // in this editor does and what a reader expects of one.
+        if (menuVersionId === row.versionId) return void closeRowMenu({ restoreFocus: true });
+        select(row.versionId, CELL_MENU);
+        openRowMenu(row.versionId);
+      },
+      contextMenu: (x, y) => {
+        select(row.versionId, CELL_MENU);
+        openRowMenu(row.versionId, { x, y });
+      },
     });
-    const item = document.createElement("div");
-    item.className = "version-item";
-    item.id = optionId(row.versionId);
-    item.setAttribute("role", "row");
-    item.setAttribute("aria-selected", "false");
-    item.dataset.versionId = row.versionId;
-
-    const entry = document.createElement("div");
-    entry.className = "version-item-entry";
-    entry.setAttribute("role", "gridcell");
-    entry.tabIndex = -1;
-    entry.setAttribute("aria-label", text.label);
-    entry.title = text.timestamp;
-
-    const head = document.createElement("div");
-    head.className = "version-item-head";
-    const title = document.createElement("span");
-    title.className = "version-item-title";
-    title.textContent = text.title;
-    head.append(title);
-    if (text.named) {
-      // The pin is a STATE, and a colour-only or icon-only state is not a state
-      // a screen reader can read — `versionRowText` puts "Named" into the
-      // option's accessible name, so this glyph is decoration.
-      head.append(iconSpan("push_pin", "version-item-pin"));
-    }
-    if (row.versionId === headVersionId) {
-      const now = document.createElement("span");
-      now.className = "version-item-current";
-      now.setAttribute("aria-hidden", "true");
-      now.textContent = t("versionHistory.current");
-      head.append(now);
-    }
-
-    // `<time datetime>` beside the locale spelling: `docs/139` §14 requires the
-    // exact machine-readable instant to be present, not implied by a friendly
-    // label.
-    const detail = document.createElement("time");
-    detail.className = "version-item-detail";
-    if (text.exact) detail.dateTime = text.exact;
-    detail.textContent = text.named ? `${text.clock} · ${text.detail}` : text.detail;
-    // The author's colour, as Google's list shows it: the same hue the
-    // version's changes are painted in when it is opened (ADR-065), so the dot
-    // and the marks on the page say the same thing. A version with no recorded
-    // name was made in this browser and is painted as "You", so is its dot.
-    const dot = document.createElement("span");
-    dot.className = "version-item-author-dot";
-    dot.setAttribute("aria-hidden", "true");
-    const painter = text.author || t("diffCanvas.someone");
-    dot.style.setProperty("--diff-author-color", reviewAuthorColor(reviewAuthorKey({ author: painter })));
-    detail.prepend(dot);
-
-    entry.append(head, detail);
-    entry.addEventListener("click", () => {
-      select(row.versionId, CELL_ENTRY);
-      // A click is a decision already made, so it does not wait out the settle.
-      void openPreview(row.versionId);
-    });
-
-    // The ⋮. Always painted, never revealed by hover: a hover affordance is no
-    // affordance at all on a phone, and this list is one of the surfaces the
-    // narrow-screen drawer carries.
-    const actionCell = document.createElement("div");
-    actionCell.className = "version-item-actions";
-    actionCell.setAttribute("role", "gridcell");
-    const menuBtn = document.createElement("button");
-    menuBtn.type = "button";
-    menuBtn.className = "version-item-menu";
-    menuBtn.tabIndex = -1;
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.setAttribute("aria-expanded", "false");
-    menuBtn.setAttribute("aria-label", t("versionHistory.rowActions", { when: text.timestamp }));
-    menuBtn.append(iconSpan("more_vert"));
-    menuBtn.addEventListener("click", () => {
-      // A second press on the same ⋮ closes it, which is what every menu button
-      // in this editor does and what a reader expects of one.
-      if (menuVersionId === row.versionId) return void closeRowMenu({ restoreFocus: true });
-      select(row.versionId, CELL_MENU);
-      openRowMenu(row.versionId);
-    });
-    actionCell.append(menuBtn);
-
-    item.append(entry, actionCell);
-    // The platform gesture, on the whole row: `docs/139` §14 asks for row menus
-    // that work by keyboard, and a right-click is the pointer half of the same
-    // affordance. Shift+F10 and the ContextMenu key are handled on the grid.
-    item.addEventListener("contextmenu", (event) => {
-      event.preventDefault();
-      select(row.versionId, CELL_MENU);
-      openRowMenu(row.versionId, { x: event.clientX, y: event.clientY });
-    });
-    return item;
   }
 
   /**
@@ -604,21 +518,37 @@ export function createVersionHistory({
    * O(rows).
    */
   function reflectSelection() {
-    const items = [...body.querySelectorAll(".version-item")];
-    const selected = items.find((item) => item.dataset.versionId === selectedId) ?? null;
-    const stop = selected ?? items[0] ?? null;
-    for (const item of items) {
-      const active = item === selected;
-      item.setAttribute("aria-selected", String(active));
-      item.classList.toggle("is-active", active);
-      item.classList.toggle("is-previewing", item.dataset.versionId === previewVersionId);
-      const cells = cellsOf(item);
-      const wanted = item === stop ? (selected ? activeCell : CELL_ENTRY) : -1;
-      cells.forEach((cell, index) => {
-        if (cell) cell.tabIndex = index === wanted ? 0 : -1;
-      });
+    // Per grid: each of the (at most two) grids has its one tab stop, so Tab reaches
+    // the room's versions and this device's alike.
+    for (const grid of grids()) {
+      const items = [...grid.querySelectorAll(".version-item")];
+      const selected = items.find((item) => item.dataset.versionId === selectedId) ?? null;
+      const stop = selected ?? items[0] ?? null;
+      for (const item of items) {
+        const active = item === selected;
+        item.setAttribute("aria-selected", String(active));
+        item.classList.toggle("is-active", active);
+        item.classList.toggle("is-previewing", item.dataset.versionId === previewVersionId);
+        const cells = cellsOf(item);
+        const wanted = item === stop ? (selected ? activeCell : CELL_ENTRY) : -1;
+        cells.forEach((cell, index) => {
+          if (cell) cell.tabIndex = index === wanted ? 0 : -1;
+        });
+      }
     }
     reflectActions();
+  }
+
+  /** The grids on screen, in reading order: the room's shared versions when shown, then
+   *  this device's. O(1). */
+  function grids() {
+    return room.shown() ? [room.list, body] : [body];
+  }
+
+  /** The DOM row for a version id, wherever it is. O(1). */
+  function itemFor(versionId) {
+    const item = versionId ? document.getElementById(optionId(versionId)) : null;
+    return item && panel.contains(item) ? item : null;
   }
 
   /** A row's two cells, in keyboard order. O(1). */
@@ -626,9 +556,13 @@ export function createVersionHistory({
     return [item.querySelector(".version-item-entry"), item.querySelector(".version-item-menu")];
   }
 
-  /** The grid's single tab stop, or the grid itself when it is empty. */
+  /** The tab stop of the selected row's grid — or of the first grid with rows — or the
+   *  grid itself when it is empty. */
   function focusGrid() {
-    const cell = body.querySelector('.version-item [tabindex="0"]');
+    const selected = itemFor(selectedId);
+    const cell = selected
+      ? selected.querySelector('[tabindex="0"]')
+      : grids().map((grid) => grid.querySelector('.version-item [tabindex="0"]')).find(Boolean);
     if (cell instanceof HTMLElement) cell.focus({ preventScroll: true });
     else body.focus();
   }
@@ -678,7 +612,18 @@ export function createVersionHistory({
 
   /** The visible rows, in list order — what the arrow keys walk. O(rows). */
   function visibleIds() {
-    return [...body.querySelectorAll(".version-item")].map((item) => item.dataset.versionId);
+    return grids().flatMap((grid) => [...grid.querySelectorAll(".version-item")].map((item) => item.dataset.versionId));
+  }
+
+  /** A row record by version id: this device's or the room's. O(rows). */
+  function findRow(versionId) {
+    return rows.find((candidate) => candidate.versionId === versionId)
+      ?? room.find(versionId);
+  }
+
+  /** Whether a version id is one of the room's shared versions. O(1). */
+  function isShared(versionId) {
+    return String(versionId).startsWith("shared:");
   }
 
   /**
@@ -742,6 +687,7 @@ export function createVersionHistory({
       else button.title = t("capability.notGranted");
     }
     if (banner) banner.hidden = !previewing;
+    room.reflect();
   }
 
   /** The panel's one transient sentence: why a capture wrote no row.
@@ -767,7 +713,7 @@ export function createVersionHistory({
     if (!summaryEl) return;
     const ready = await ensureStore();
     if (!ready) {
-      summaryEl.textContent = unavailableReason();
+      summaryEl.textContent = deviceUnavailableReason();
       if (detailEl) detailEl.textContent = "";
       if (policyEl) policyEl.textContent = "";
       return;
@@ -782,8 +728,17 @@ export function createVersionHistory({
     if (policyEl) policyEl.textContent = words.policy;
   }
 
+  /** Repaints and, if that took the keyboard out of the panel, puts it back on the grid:
+   *  a page that lands while the reader is arrowing must not drop them on `<body>`. */
+  function rerender() {
+    const had = panel.contains(document.activeElement);
+    renderList();
+    if (had && !panel.contains(document.activeElement)) focusGrid();
+  }
+
   /** Re-reads the timeline from the store and repaints. O(versions). */
   async function refresh() {
+    room.sync();
     const ready = await ensureStore();
     if (!ready || !lineageId) {
       rows = [];
@@ -793,12 +748,32 @@ export function createVersionHistory({
     }
     rows = await ready.listVersions(lineageId);
     headVersionId = await ready.head(lineageId);
-    if (selectedId && !rows.some((row) => row.versionId === selectedId)) selectedId = "";
+    if (selectedId && !findRow(selectedId)) selectedId = "";
     renderList();
     await reflectSummary();
   }
 
   // ── Preview ────────────────────────────────────────────────────────────────
+
+  /**
+   * A version's bytes: a device checkpoint from the store (hash-verified there), or one
+   * of the room's from the host's `versionBytes` — a `collabSnapshot()` package the
+   * engine's `open` reads like any document. `{ok: true, bytes}`, or `{ok: false}` with
+   * what to say; never thrown, so every caller reports the same way. O(version bytes).
+   */
+  async function readBytes(row) {
+    if (row.origin === ORIGIN.SHARED) return room.bytes(row);
+    const ready = await ensureStore();
+    if (!ready) return { ok: false, message: deviceUnavailableReason() || t("versionHistory.disabled.noDocument") };
+    return ready.readCheckpoint(row.checkpointId);
+  }
+
+  /** Says why a read failed: the store's own status sentence, or the message `readBytes`
+   *  built. Never silent. O(1). */
+  function sayRead(result) {
+    if (result?.status) report(result);
+    else publish(result?.message || t("versionHistory.shared.malformed"), "error");
+  }
 
   function select(versionId, cell = activeCell) {
     selectedId = versionId;
@@ -847,7 +822,7 @@ export function createVersionHistory({
             : ids.length - 1
           : Math.min(ids.length - 1, Math.max(0, at + delta));
     select(ids[next]);
-    body.querySelector(`#${CSS.escape(optionId(ids[next]))}`)?.scrollIntoView({ block: "nearest" });
+    itemFor(ids[next])?.scrollIntoView({ block: "nearest" });
     // A grid moves REAL focus, so the cell the tab stop just landed on has to
     // take it — `aria-activedescendant` is what a listbox uses, and this list
     // stopped being one when its rows gained a menu button.
@@ -872,6 +847,15 @@ export function createVersionHistory({
    * whole time and the PANEL was not; `compare_documents.mjs` is it now.)
    */
   function rowMenuEntries(row) {
+    // One of the room's versions: its own seven rows (`version_shared_part.mjs`).
+    if (row.origin === ORIGIN.SHARED) {
+      return room.menuEntries(row, {
+        keys: { name: NAME_KEY, delete: DELETE_KEY },
+        makeCopy: () => void queue(() => makeCopy(row.versionId)),
+        download: () => void queue(() => downloadVersion(row.versionId)),
+        showChanges: () => void queue(() => showChangesFor(row.versionId)),
+      });
+    }
     const id = row.versionId;
     const isHead = id === headVersionId;
     return [
@@ -978,7 +962,7 @@ export function createVersionHistory({
    * O(entries): five rows, no document access.
    */
   function openRowMenu(versionId, at = null) {
-    const row = rows.find((candidate) => candidate.versionId === versionId);
+    const row = findRow(versionId);
     if (!row) return;
     closeRowMenu();
     const el = ensureRowMenu();
@@ -991,8 +975,7 @@ export function createVersionHistory({
       item.setAttribute("aria-checked", String(Boolean(row.pinned)));
     }
     menuVersionId = versionId;
-    menuButton =
-      body.querySelector(`#${CSS.escape(optionId(versionId))} .version-item-menu`) ?? null;
+    menuButton = itemFor(versionId)?.querySelector(".version-item-menu") ?? null;
     menuButton?.setAttribute("aria-expanded", "true");
     // Right-aligned under the ⋮, which is where a menu button's menu belongs;
     // a right-click uses the pointer instead.
@@ -1096,21 +1079,20 @@ export function createVersionHistory({
       await closePreview();
       return;
     }
-    const row = rows.find((candidate) => candidate.versionId === versionId);
-    const ready = await ensureStore();
-    if (!row || !ready) return;
+    const row = findRow(versionId);
+    if (!row) return;
     const token = ++previewToken;
-    const loaded = await ready.readCheckpoint(row.checkpointId);
+    const loaded = await readBytes(row);
     if (token !== previewToken) return;
     if (!loaded.ok) {
-      report(loaded);
+      sayRead(loaded);
       return;
     }
     let next = null;
     let entries = null;
     const author = String(row.actor ?? "").trim() || t("diffCanvas.someone");
     if (older) {
-      const previous = await ready.readCheckpoint(older.checkpointId);
+      const previous = await readBytes(older);
       if (token !== previewToken) return;
       if (previous.ok) {
         // The stamp that marks THIS comparison's changes: the version's own
@@ -1137,7 +1119,7 @@ export function createVersionHistory({
           publish(t("compare.failed", { reason: painted.reason }), "error");
         }
       } else {
-        report(previous);
+        sayRead(previous);
       }
     }
     if (!next) {
@@ -1215,6 +1197,12 @@ export function createVersionHistory({
    * document-sized and none is on an interaction path.
    */
   async function restore(versionId) {
+    // One of the ROOM'S versions is never restored here, whatever reached this: it is a
+    // restore in a shared room, which ADR-068 refuses until it can travel as one
+    // transaction (HF-314). Said, with the reason, before any store is opened.
+    if (isShared(versionId)) {
+      return void publish(restoreRefusal() || t("versionHistory.restore.sharedRefused"), "warn");
+    }
     const ready = await ensureStore();
     const row = rows.find((candidate) => candidate.versionId === versionId);
     if (!ready || !row) return;
@@ -1376,9 +1364,13 @@ export function createVersionHistory({
    *
    *  O(versions). Called on an explicit act, never per render. */
   function predecessorOf(versionId) {
-    const index = rows.findIndex((candidate) => candidate.versionId === versionId);
+    // Within the row's OWN origin: a shared version's predecessor is the room's previous
+    // version, never a checkpoint this browser happened to take (`docs/175` §11).
+    if (isShared(versionId)) return room.predecessorOf(versionId);
+    const list = rows;
+    const index = list.findIndex((candidate) => candidate.versionId === versionId);
     if (index < 0) return null;
-    return rows[index + 1] ?? null;
+    return list[index + 1] ?? null;
   }
 
   /**
@@ -1402,11 +1394,10 @@ export function createVersionHistory({
 
   async function downloadVersion(versionId) {
     if (!allows("download")) return void publish(t("capability.notGranted"), "error");
-    const ready = await ensureStore();
-    const row = rows.find((candidate) => candidate.versionId === versionId);
-    if (!ready || !row) return;
-    const loaded = await ready.readCheckpoint(row.checkpointId);
-    if (!loaded.ok) return void report(loaded);
+    const row = findRow(versionId);
+    if (!row) return;
+    const loaded = await readBytes(row);
+    if (!loaded.ok) return void sayRead(loaded);
     const format = formatInfo(row.formatId);
     const saved = downloadBytes(loaded.bytes, format.mime, fileNameFor(row), document);
     if (!isKnownFormat(row.formatId)) {
@@ -1450,9 +1441,8 @@ export function createVersionHistory({
    */
   async function makeCopy(versionId) {
     if (!allows("open")) return void publish(t("capability.notGranted"), "error");
-    const ready = await ensureStore();
-    const row = rows.find((candidate) => candidate.versionId === versionId);
-    if (!ready || !row) return;
+    const row = findRow(versionId);
+    if (!row) return;
     const copyName = t("versionHistory.copy.name", { name: fileNameFor(row) });
     const words = versionRowText(row, { isHead: row.versionId === headVersionId });
     const ok = await confirm({
@@ -1464,8 +1454,8 @@ export function createVersionHistory({
       icon: "file_copy",
     });
     if (!ok) return;
-    const loaded = await ready.readCheckpoint(row.checkpointId);
-    if (!loaded.ok) return void report(loaded);
+    const loaded = await readBytes(row);
+    if (!loaded.ok) return void sayRead(loaded);
     // Back to the live document before the capture, for the reason `restore`
     // spells out: `snapshot()` exports what the canvas is showing.
     await closePreview();
@@ -1612,6 +1602,9 @@ export function createVersionHistory({
     // about the moment it was written, so it does not survive a reopen.
     clearNote();
     await refresh();
+    // The room's newest page, fresh on every open: other people save versions while
+    // the panel is shut. Not awaited: a slow host must not hold the keyboard out.
+    void room.first();
     // The grid's tab stop, not the grid: a grid manages focus with a roving
     // tabindex, and landing on the container would leave a screen reader
     // announcing a list with nothing in it.
@@ -1623,6 +1616,8 @@ export function createVersionHistory({
   async function close() {
     if (!panel || !isOpen()) return;
     closeRowMenu();
+    // A page still in flight is for a panel nobody is looking at.
+    room.cancel();
     await closePreview();
     panel.hidden = true;
     for (const entry of entryPoints) entry.setAttribute("aria-pressed", "false");
@@ -1641,7 +1636,7 @@ export function createVersionHistory({
   // Left/Right walk the two cells, and the three gestures that open a row's menu
   // — Shift+F10, the ContextMenu key and Enter on the ⋮ — all reach the same
   // menu the pointer does.
-  body?.addEventListener("keydown", (event) => {
+  function onGridKey(event) {
     const onMenuButton =
       event.target instanceof HTMLElement && event.target.closest(".version-item-menu") !== null;
     if (event.key === "ArrowDown") moveActive(1);
@@ -1661,12 +1656,17 @@ export function createVersionHistory({
     } else if ((event.key === "F10" && event.shiftKey) || event.key === "ContextMenu") {
       if (selectedId) openRowMenu(selectedId);
     } else if (matchesShortcut(NAME_KEY, event)) {
-      if (selectedId) void queue(() => nameVersion(selectedId));
+      // A room's version is named when it is saved; the key says so rather than
+      // doing nothing.
+      if (isShared(selectedId)) publish(t("versionHistory.shared.nameAtSave"), "warn");
+      else if (selectedId) void queue(() => nameVersion(selectedId));
     } else if (matchesShortcut(DELETE_KEY, event)) {
       // The head is the document; deleting it is refused for the same reason its
       // menu row is disabled — and SAID, because a key that silently does
-      // nothing is the dead control `SKILL` §10 forbids.
-      if (selectedId === headVersionId) publish(t("versionHistory.headNotDeletable"), "error");
+      // nothing is the dead control `SKILL` §10 forbids. The room's versions are
+      // the host's to keep, and that is said too.
+      if (isShared(selectedId)) publish(t("versionHistory.shared.hostKeeps"), "warn");
+      else if (selectedId === headVersionId) publish(t("versionHistory.headNotDeletable"), "error");
       else if (selectedId) void queue(() => removeVersion(selectedId));
     } else if (event.key === "Escape") {
       void close();
@@ -1674,7 +1674,11 @@ export function createVersionHistory({
       return;
     }
     event.preventDefault();
-  });
+  }
+  body?.addEventListener("keydown", onGridKey);
+  room.list?.addEventListener("keydown", onGridKey);
+  room.moreButton?.addEventListener("click", () => void room.more());
+  room.saveButton?.addEventListener("click", () => void queue(() => room.save()));
 
   // Light dismiss, on `pointerdown` — the phase every dismissable surface in this
   // editor uses, because `mousedown` never fires for a pen or a consumed touch
@@ -1711,10 +1715,18 @@ export function createVersionHistory({
     open,
     close,
     toggle,
-    available: enabled,
+    // In a room whose host keeps versions the panel opens even with local capture off:
+    // the room's history is the host's, not this browser's (`docs/175` §11).
+    available: () => enabled() || room.available(),
     unavailableReason,
     previewing: () => Boolean(previewVersionId),
     closePreview,
+    /** "Save a version for everyone", for the palette (the panel's button is the other
+     *  surface), and why it cannot run, or "". */
+    saveShared: () => queue(() => room.save()),
+    saveSharedRefusal: () => room.saveRefusal(),
+    /** "Save a version for everyone", for the palette (the panel's button is the other
+     *  surface). Refuses with the reason outside a room whose host can save. */
 
     /**
      * Joins a freshly opened document to its own timeline and records the import

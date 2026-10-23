@@ -85,7 +85,36 @@ export function createVersions(ed) {
   }
 
 
+  /**
+   * The same name dialog, worded for a version everyone in the room will see
+   * (`docs/175` §11): its local wording ("kept until you delete it") is not true of a
+   * version the host keeps. The four lines are put back when it closes, so the local
+   * prompt is never left saying the shared one's words.
+   */
+  const SHARED_NAME_WORDS = [
+    ["versionNameTitle", "versionHistory.shared.prompt.title"],
+    ["versionNameDescription", "versionHistory.shared.prompt.description"],
+    ["versionNameNote", "versionHistory.shared.prompt.note"],
+    ["versionNameConfirm", "versionHistory.shared.prompt.confirm"],
+  ];
+  async function promptSharedName(current) {
+    const before = SHARED_NAME_WORDS.map(([id, key]) => {
+      const el = document.getElementById(id);
+      const was = el?.textContent ?? "";
+      if (el) el.textContent = t(key);
+      return [el, was];
+    });
+    try {
+      return await versionNamePrompt.prompt(current);
+    } finally {
+      for (const [el, was] of before) if (el) el.textContent = was;
+    }
+  }
+
   const versionHistory = createVersionHistory({
+    // The room's shared history, when there is a room (`docs/175` §11, HF-362).
+    shared: () => ed.sharedHistory(),
+    promptSharedName,
     parse: (bytes) => open(bytes),
     showPreview: (previewDoc, _row, options) => showVersionPreview(previewDoc, options),
     // Through the ORDINARY open path, so a restored document is indistinguishable

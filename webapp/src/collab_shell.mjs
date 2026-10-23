@@ -10,6 +10,7 @@ import { refusalAnnouncement } from "./session_access.mjs";
 import { avatarPolicy, hostIdentity, joinIdentity } from "./host_identity.mjs";
 import { PRESENCE_OUTCOMES, createPresence } from "./collab_presence.mjs";
 import { mentionsOrdered } from "./mention_notices.mjs";
+import { historyScope, sharedVersionSource } from "./shared_versions.mjs";
 
 /** Host-managed sharing, checkpoints, recovery and ephemeral presence scheduling. */
 export function createCollaborationShell({ root, getDocument, getTransport, setTransport,
@@ -223,5 +224,20 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
      *  wholesale, so in a shared room it would fork it — this reader's copy goes back and
      *  everybody else's stays — and leave the room without a word (ADR-068, `docs/109`
      *  HF-312). Refused with the reason until a restore can travel as one transaction. */
-    restoreRefusal: () => (getTransport() ? t("versionHistory.restore.sharedRefused") : "") };
+    restoreRefusal: () => (getTransport() ? t("versionHistory.restore.sharedRefused") : ""),
+    /** The version history's scope (`docs/175` §11, HF-362): standalone outside a room;
+     *  in one, the host's shared history when its provider lists versions, else this
+     *  device's only. `current()` is the LIVE document as the `collabSnapshot()` package
+     *  a shared version is, with the room revision this replica has reached. O(1), and
+     *  O(document) only when `current` is called. */
+    sharedHistory() {
+      const room = getTransport() ? hostConfig().room : "";
+      const provider = globalThis.OPENDOC_COLLABORATION;
+      const scope = historyScope({ room, provider });
+      return { scope, source: sharedVersionSource(provider, room),
+        current: () => {
+          const doc = getDocument();
+          return { revision: Number(JSON.parse(doc.collabState).revision), bytes: doc.collabSnapshot() };
+        } };
+    } };
 }
