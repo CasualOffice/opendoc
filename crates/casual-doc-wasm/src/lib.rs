@@ -261,6 +261,11 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
+// The opt-in sparse-strip raster (`docs/179`, ADR-073 Proposed): one more export
+// with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
+#[cfg(feature = "sparse-raster")]
+mod sparse_raster;
+
 use window::BodyLayout;
 use window::WindowedBody;
 
