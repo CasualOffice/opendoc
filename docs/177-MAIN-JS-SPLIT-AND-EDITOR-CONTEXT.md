@@ -55,8 +55,12 @@ Sizes are `wc -l` at the commit that last touched the row.
 
 | Module | Factory | Domain | Lines |
 |---|---|---|---|
+| `editor_caret_nav.mjs` | `createCaretNav` | Caret navigation: the vertical goal column and `navCaret` | 90 |
 | `editor_dialogs.mjs` | `createDialogs` | Shortcuts reference, About, bookmarks, Insert field / picture, captions and cross-references, Symbol / Emoji | 470 |
+| `editor_dirty.mjs` | `createDirtyTracking` | Unsaved-work tracking: saved and current revisions, the dirty answer | 134 |
 | `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
+| `editor_edit_pipeline.mjs` | `createEditPipeline` | The edit choke point: `runEdit`, `applyEditResult`, typing sessions, mode gates | 202 |
+| `editor_file_open.mjs` | `createFileOpen` | Boot, demo presets, a blank document, `openBytes`, and the header rename | 420 |
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
 | `editor_link_dialog.mjs` | `createLinkDialog` | Insert / edit link dialog | 218 |
 | `editor_palette.mjs` | `createPalette` | Command palette and `editorCommands()`, the registry of editor actions | 652 |
@@ -64,7 +68,7 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_settings.mjs` | `createSettings` | Settings dialog: theme, accent, reviewer identity, autosave and proofing switches; localisation start | 205 |
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 
-`main.js`: 16,030 lines when the split began, 13,516 now. The domain modules hold 2,873.
+`main.js`: 16,030 lines when the split began, 12,795 now. The domain modules hold 3,719.
 
 ## 4. What is left for HF-109
 

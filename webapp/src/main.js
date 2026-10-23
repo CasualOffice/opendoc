@@ -4,7 +4,7 @@
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
-import init, { open, beginVersionDiff, defaultDiffSlice } from "../pkg/casual_doc_wasm.js";
+import { open, beginVersionDiff, defaultDiffSlice } from "../pkg/casual_doc_wasm.js";
 import { toggleTextCheckboxAt } from "./text_checkbox.mjs";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
@@ -59,7 +59,7 @@ import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, 
 import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
-import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
+import { downloadBytes } from "./save_formats.mjs";
 import { createCompatibilityFindings, findingTotals } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
@@ -68,7 +68,6 @@ import { createCompactToolbar } from "./compact_toolbar.mjs";
 import { createConfirmDialog } from "./confirm_dialog.mjs";
 import { createPropertiesDialog } from "./document_metadata.mjs";
 import { createNamePrompt } from "./name_dialog.mjs";
-import { CAPTURE_REASON } from "./version_history.mjs";
 import {
   PAGE_WINDOW_OVERSCAN_PX,
   buildPageBand,
@@ -123,7 +122,7 @@ import { bindRadioGroup } from "./radio_group.mjs";
 import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./popover_manager.mjs";
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
-import { createViewZoom, fitPageIndex, fitZoomFactor, nextZoomStep, openingZoomMode, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
+import { createViewZoom, fitPageIndex, fitZoomFactor, nextZoomStep, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
@@ -142,7 +141,7 @@ import { createAutoCorrect } from "./autocorrect.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
+import { orderedSelectionEnds, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
   reviewCardSignature,
   reviewCommentIsReplyTo,
@@ -210,13 +209,10 @@ import { revealOnSettings } from "./surface_reveal.mjs";
 const SETTINGS_SURFACE = { showPane: () => showSettingsPane(), openDialog: () => toggleSettings(true) };
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
 import {
-  BLANK_DOCX_PARTS,
   DOCUMENT_TEMPLATES,
-  UNTITLED_DOCUMENT_NAME,
   templateBytes,
   templateName,
   templateThumbnail,
-  zipStore,
 } from "./blank_document.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
 import { externalPasteLossMessage, pasteLossMessage, structureFamilies } from "./paste_loss.mjs";
@@ -250,6 +246,10 @@ import { createPalette } from "./editor_palette.mjs";
 import { createDialogs } from "./editor_dialogs.mjs";
 import { createLinkDialog } from "./editor_link_dialog.mjs";
 import { createPaletteUi } from "./editor_palette_ui.mjs";
+import { createFileOpen } from "./editor_file_open.mjs";
+import { createDirtyTracking } from "./editor_dirty.mjs";
+import { createEditPipeline } from "./editor_edit_pipeline.mjs";
+import { createCaretNav } from "./editor_caret_nav.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -259,16 +259,22 @@ const ed = {
   get EDITOR_KEYBOARD_PLATFORM() { return EDITOR_KEYBOARD_PLATFORM; },
   get HOST_CAPS() { return HOST_CAPS; },
   get HOST_CHROME() { return HOST_CHROME; },
+  get HOST_MODE() { return HOST_MODE; },
   get LAYOUT_SURFACE() { return LAYOUT_SURFACE; },
   get NO_TABLE_STYLE() { return NO_TABLE_STYLE; },
   get REFERENCE_SURFACE() { return REFERENCE_SURFACE; },
   get SESSION() { return SESSION; },
   get SETTINGS_SURFACE() { return SETTINGS_SURFACE; },
+  get TYPING_PAUSE_MS() { return TYPING_PAUSE_MS; },
   get UNDERLINE_STYLE_LABELS() { return UNDERLINE_STYLE_LABELS; },
   get accessChrome() { return accessChrome; },
   get activatingRestore() { return activatingRestore; }, set activatingRestore(v) { activatingRestore = v; },
-  get activeReviewCommentId() { return activeReviewCommentId; },
+  get activeReviewCommentId() { return activeReviewCommentId; }, set activeReviewCommentId(v) { activeReviewCommentId = v; },
+  get activeReviewItemId() { return activeReviewItemId; }, set activeReviewItemId(v) { activeReviewItemId = v; },
   get adjustIndentCommand() { return adjustIndentCommand; },
+  get adoptDraftDocument() { return adoptDraftDocument; },
+  get anchorAt() { return anchorAt; },
+  get applyActiveAuthorToDocument() { return applyActiveAuthorToDocument; },
   get applyChangeCase() { return applyChangeCase; },
   get applyEditResult() { return applyEditResult; },
   get applyFontFamily() { return applyFontFamily; },
@@ -279,15 +285,22 @@ const ed = {
   get armFormatPainter() { return armFormatPainter; },
   get autoCorrect() { return autoCorrect; },
   get autosaveToggle() { return autosaveToggle; },
+  get backgroundMeasure() { return backgroundMeasure; }, set backgroundMeasure(v) { backgroundMeasure = v; },
   get blockMutationInViewing() { return blockMutationInViewing; },
   get blockUntrackedInSuggesting() { return blockUntrackedInSuggesting; },
   get bookmarkManager() { return bookmarkManager; },
   get breakTypingSession() { return breakTypingSession; },
+  get buildAccessibilityTree() { return buildAccessibilityTree; },
   get buildCommands() { return buildCommands; },
+  get buildOutline() { return buildOutline; },
   get bulletGalleryMenu() { return bulletGalleryMenu; },
+  get cancelCrop() { return cancelCrop; },
   get caretIsImplicit() { return caretIsImplicit; },
   get clearAllDrafts() { return clearAllDrafts; },
+  get clearFindParagraphCache() { return clearFindParagraphCache; },
   get clearFormattingBtn() { return clearFormattingBtn; },
+  get clearObjectStatus() { return clearObjectStatus; },
+  get clientPointEvent() { return clientPointEvent; },
   get closeAppMenu() { return closeAppMenu; },
   get closeFilePage() { return closeFilePage; },
   get cmdInput() { return cmdInput; },
@@ -297,25 +310,31 @@ const ed = {
   get collabFeatureCommands() { return collabFeatureCommands; },
   get commentEdit() { return commentEdit; },
   get commentQuotes() { return commentQuotes; },
+  get compactToolbarUi() { return compactToolbarUi; },
   get comparePanel() { return comparePanel; },
   get compatFindings() { return compatFindings; },
+  get computeFitZoom() { return computeFitZoom; },
   get confirmDiscardIfEdited() { return confirmDiscardIfEdited; },
   get confirmModal() { return confirmModal; },
   get contextAt() { return contextAt; },
   get copySelection() { return copySelection; },
   get createStyleFromSelection() { return createStyleFromSelection; },
-  get currentName() { return currentName; },
+  get currentName() { return currentName; }, set currentName(v) { currentName = v; },
   get currentParagraphStyleName() { return currentParagraphStyleName; },
-  get currentRevision() { return currentRevision; },
-  get currentSourceFormat() { return currentSourceFormat; },
+  get currentRevision() { return currentRevision; }, set currentRevision(v) { currentRevision = v; },
+  get currentSourceFormat() { return currentSourceFormat; }, set currentSourceFormat(v) { currentSourceFormat = v; },
   get cut() { return cut; },
   get cycleReviewMode() { return cycleReviewMode; },
   get decideAllReviewChanges() { return decideAllReviewChanges; },
   get decideReviewAndAdvance() { return decideReviewAndAdvance; },
   get decideReviewAtCaret() { return decideReviewAtCaret; },
+  get discardOwnDraft() { return discardOwnDraft; },
   get doc() { return doc; }, set doc(v) { doc = v; },
-  get documentEpoch() { return documentEpoch; },
+  get docTitleEl() { return docTitleEl; },
+  get documentChrome() { return documentChrome; },
+  get documentEpoch() { return documentEpoch; }, set documentEpoch(v) { documentEpoch = v; },
   get documentHasObjects() { return documentHasObjects; },
+  get documentHasTrackedChanges() { return documentHasTrackedChanges; },
   get documentIsDirty() { return documentIsDirty; },
   get documentProtection() { return documentProtection; },
   get draftDocKey() { return draftDocKey; }, set draftDocKey(v) { draftDocKey = v; },
@@ -326,6 +345,8 @@ const ed = {
   get editRunningContent() { return editRunningContent; },
   get editSelectionLink() { return editSelectionLink; },
   get editorCommands() { return editorCommands; },
+  get editorSurfaceHasFocus() { return editorSurfaceHasFocus; },
+  get ensureGlyphCoverage() { return ensureGlyphCoverage; },
   get enterObjectEditMode() { return enterObjectEditMode; },
   get eventTargetsEditor() { return eventTargetsEditor; },
   get exportDocumentAs() { return exportDocumentAs; },
@@ -336,11 +357,17 @@ const ed = {
   get fontFamilyBtn() { return fontFamilyBtn; },
   get fontInventory() { return fontInventory; },
   get fontSizeSel() { return fontSizeSel; },
+  get fontState() { return fontState; }, set fontState(v) { fontState = v; },
   get formattingMarks() { return formattingMarks; },
   get grammarCheckToggle() { return grammarCheckToggle; },
+  get handOverDraftBeforeOpen() { return handOverDraftBeforeOpen; },
   get hasRange() { return hasRange; },
   get headerFooterSettings() { return headerFooterSettings; },
+  get hideLinkChip() { return hideLinkChip; },
+  get hidePasteOptions() { return hidePasteOptions; },
   get highlightPopover() { return highlightPopover; },
+  get hostSession() { return hostSession; },
+  get implicitCaretAt() { return implicitCaretAt; }, set implicitCaretAt(v) { implicitCaretAt = v; },
   get insertChartWithData() { return insertChartWithData; },
   get insertCommandEnabled() { return insertCommandEnabled; },
   get insertFieldAtCaret() { return insertFieldAtCaret; },
@@ -350,7 +377,10 @@ const ed = {
   get insertTableBtn() { return insertTableBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
+  get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
+  get leaveSharedDocument() { return leaveSharedDocument; },
   get listAdvanced() { return listAdvanced; },
+  get loadSharedStartup() { return loadSharedStartup; },
   get measurement() { return measurement; },
   get navToPosition() { return navToPosition; },
   get navigateReview() { return navigateReview; },
@@ -358,11 +388,14 @@ const ed = {
   get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
   get numberGalleryMenu() { return numberGalleryMenu; },
+  get objectCapabilities() { return objectCapabilities; },
   get objectContextMenuHost() { return objectContextMenuHost; },
+  get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
   get objectPresence() { return objectPresence; },
-  get objectSelection() { return objectSelection; },
+  get objectSelection() { return objectSelection; }, set objectSelection(v) { objectSelection = v; },
   get openBookmarkManager() { return openBookmarkManager; },
+  get openBtn() { return openBtn; },
   get openBytes() { return openBytes; },
   get openCmd() { return openCmd; },
   get openEmojiPicker() { return openEmojiPicker; },
@@ -371,6 +404,7 @@ const ed = {
   get openReviewComposer() { return openReviewComposer; },
   get openShapeGallery() { return openShapeGallery; },
   get openSymbolPicker() { return openSymbolPicker; },
+  get pageFromClientPoint() { return pageFromClientPoint; },
   get pageSetup() { return pageSetup; },
   get pages() { return pages; },
   get pagesEl() { return pagesEl; },
@@ -379,45 +413,64 @@ const ed = {
   get paragraphAdvanced() { return paragraphAdvanced; },
   get paste() { return paste; },
   get pasteAsText() { return pasteAsText; },
+  get pasteOptionsShowing() { return pasteOptionsShowing; },
   get pasteRichRunsJson() { return pasteRichRunsJson; },
   get pasteText() { return pasteText; },
+  get pendingFormat() { return pendingFormat; }, set pendingFormat(v) { pendingFormat = v; },
   get place() { return place; },
   get plainTableInfo() { return plainTableInfo; },
+  get pointerHover() { return pointerHover; },
+  get populateStyles() { return populateStyles; },
+  get populateTableStyles() { return populateTableStyles; },
   get proofing() { return proofing; },
   get propertiesUi() { return propertiesUi; },
+  get provisionFonts() { return provisionFonts; },
   get queueDraftWork() { return queueDraftWork; },
+  get railOutline() { return railOutline; },
+  get railPages() { return railPages; },
   get readOnlyReason() { return readOnlyReason; }, set readOnlyReason(v) { readOnlyReason = v; },
   get readReviewData() { return readReviewData; },
   get redlineOf() { return redlineOf; },
+  get referenceCommands() { return referenceCommands; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
   get reflowView() { return reflowView; },
   get refreshDraftOffers() { return refreshDraftOffers; },
   get regionCycle() { return regionCycle; },
+  get remotePresence() { return remotePresence; },
   get renderAll() { return renderAll; },
   get renderFilePage() { return renderFilePage; },
   get repaintPage() { return repaintPage; },
+  get resetDirtyTracking() { return resetDirtyTracking; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
   get reviewCardCache() { return reviewCardCache; },
   get reviewCommentActions() { return reviewCommentActions; },
+  get reviewComposerState() { return reviewComposerState; }, set reviewComposerState(v) { reviewComposerState = v; },
+  get reviewDeleteConfirmId() { return reviewDeleteConfirmId; }, set reviewDeleteConfirmId(v) { reviewDeleteConfirmId = v; },
   get reviewLayout() { return reviewLayout; }, set reviewLayout(v) { reviewLayout = v; },
   get reviewMode() { return reviewMode; },
   get reviewSidebar() { return reviewSidebar; },
   get reviewSidebarPreference() { return reviewSidebarPreference; }, set reviewSidebarPreference(v) { reviewSidebarPreference = v; },
-  get revisionUnreadable() { return revisionUnreadable; },
+  get reviewTracking() { return reviewTracking; },
+  get revisionUnreadable() { return revisionUnreadable; }, set revisionUnreadable(v) { revisionUnreadable = v; },
   get ribbonSurfaceEnabled() { return ribbonSurfaceEnabled; },
   get ribbonSurfaceReason() { return ribbonSurfaceReason; },
   get ribbonViewCollapsed() { return ribbonViewCollapsed; },
   get runEdit() { return runEdit; },
   get runNodeEdit() { return runNodeEdit; },
   get runToolbarEdit() { return runToolbarEdit; },
+  get saveBtn() { return saveBtn; },
   get saveDocument() { return saveDocument; },
+  get saveFormatEl() { return saveFormatEl; },
   get saveSettings() { return saveSettings; },
   get scheduleChromeRefresh() { return scheduleChromeRefresh; },
+  get scheduleReviewMarginRender() { return scheduleReviewMarginRender; },
+  get scrollCaretIntoView() { return scrollCaretIntoView; },
   get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
   get searchTrigger() { return searchTrigger; },
   get selEndpoints() { return selEndpoints; },
   get selectAll() { return selectAll; },
   get selectObject() { return selectObject; },
+  get selectRibbonTab() { return selectRibbonTab; },
   get selectedObjectContext() { return selectedObjectContext; },
   get selection() { return selection; }, set selection(v) { selection = v; },
   get setDocumentState() { return setDocumentState; },
@@ -437,7 +490,11 @@ const ed = {
   get showingChanges() { return showingChanges; }, set showingChanges(v) { showingChanges = v; },
   get spacingMenuControl() { return spacingMenuControl; },
   get spellCheckToggle() { return spellCheckToggle; },
+  get spellChecker() { return spellChecker; },
+  get startCollaboration() { return startCollaboration; },
+  get startDrafts() { return startDrafts; },
   get statusChannel() { return statusChannel; },
+  get statusEl() { return statusEl; },
   get stepFontSize() { return stepFontSize; },
   get stepZoom() { return stepZoom; },
   get styleAdvanced() { return styleAdvanced; },
@@ -448,6 +505,7 @@ const ed = {
   get tableToolCommands() { return tableToolCommands; },
   get takeDraftSnapshot() { return takeDraftSnapshot; },
   get textColorPopover() { return textColorPopover; },
+  get tocCommands() { return tocCommands; },
   get toggleAbout() { return toggleAbout; },
   get toggleChecklistCommand() { return toggleChecklistCommand; },
   get toggleFormat() { return toggleFormat; },
@@ -457,13 +515,20 @@ const ed = {
   get toggleShortcutsReference() { return toggleShortcutsReference; },
   get toggleShowChanges() { return toggleShowChanges; },
   get traverseObjects() { return traverseObjects; },
+  get typingSession() { return typingSession; }, set typingSession(v) { typingSession = v; },
+  get typingSessionActive() { return typingSessionActive; }, set typingSessionActive(v) { typingSessionActive = v; },
+  get updateObjectContextBar() { return updateObjectContextBar; },
+  get updateObjectSelectionState() { return updateObjectSelectionState; },
   get updateStats() { return updateStats; },
   get updateStyleFromSelection() { return updateStyleFromSelection; },
   get updateToolbar() { return updateToolbar; },
   get versionHistory() { return versionHistory; },
   get versionPreviewHome() { return versionPreviewHome; }, set versionPreviewHome(v) { versionPreviewHome = v; },
+  get verticalGoal() { return verticalGoal; },
   get zoomEl() { return zoomEl; },
+  get zoomFactor() { return zoomFactor; },
   get zoomMenu() { return zoomMenu; },
+  get zoomMode() { return zoomMode; }, set zoomMode(v) { zoomMode = v; },
 };
 // editor-context:end
 
@@ -3065,412 +3130,7 @@ function updatePageNumber() {
   pagesPanelView.reflect(cur);
 }
 
-async function boot() {
-  // Armed before the engine loads, because the hole it closes is open from the
-  // first keystroke. The document lives in the wasm heap and nowhere else —
-  // there is no server, no autosave and no local copy — so closing the tab,
-  // reloading, or pressing Back discarded every edit without a word.
-  //
-  // A document that has been saved does not warn, because the user has the
-  // bytes; `documentIsDirty` decides that from the revision watermark rather
-  // than from the state pill, so a save between two edits clears it correctly.
-  // Everything past `preventDefault` is legacy the browsers still want, and the
-  // wording is the browser's own — a page cannot choose it.
-  window.addEventListener("beforeunload", (e) => {
-    if (!documentIsDirty()) return;
-    e.preventDefault();
-    e.returnValue = "";
-  });
-
-  try {
-    await init();
-    // The engine is only now instantiated. `createMeasurementUnits` runs during
-    // module evaluation -- long before this line -- so its roster is faulted in
-    // rather than read at construction, and THIS is the call that fills the
-    // chooser. Reaching for a free function on an uninstantiated wasm module
-    // throws `Cannot read properties of undefined (reading
-    // '__wbindgen_add_to_stack_pointer')`, and a throw during module evaluation
-    // takes the whole editor down: nothing after it runs, so the document never
-    // opens at all.
-    measurement.reflect();
-    setStatus("Ready — open a .docx, .odt, .rtf, .json, or .txt");
-    fileEl.disabled = false;
-    if (openBtn) openBtn.disabled = false;
-  } catch (err) {
-    console.error(err);
-    setStatus("Failed to load the WASM engine", "error");
-    return;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  // The public demo and plain editor both open sample.docx. The smaller rich
-  // corpus remains available only through the explicit e2e fixture route,
-  // whose specs assert on its exact content. ?blank=1 opts out for the bare
-  // local-upload state.
-  const demo = params.get("demo");
-  if (await loadSharedStartup(params, loadStartupDocument)) {
-  } else if (params.get("fixture") === "rich") {
-    await loadStartupDocument("./demo.docx", "opendoc-demo.docx");
-  } else if (params.get("fixture") === "styled") {
-    // A document whose styles carry EXPLICIT colors — Word's own built-in
-    // #2F5496 headings plus a near-black body — because no other fixture does.
-    // Every shipped sample leaves style colors automatic, which is why the
-    // Styles gallery could paint an unreadable label on the dark theme and every
-    // test still passed.
-    await loadStartupDocument("./styled.docx", "styled.docx");
-  } else if (params.get("fixture") === "sections") {
-    // A document with a SECTION BREAK that turns landscape at page 5, each
-    // section owning its own header/footer — for the running-content e2e, where
-    // "which section does this page belong to" is the whole question. No shipped
-    // sample has a section break. Generated by the
-    // `generate_sections_fixture_docx` engine test.
-    await loadStartupDocument("./sections.docx", "sections.docx");
-  } else if (params.get("fixture") === "float") {
-    // A document with a top-level floating image, for the object move/wrap e2e
-    // (no shipped sample doc contains a float). Generated by the
-    // `generate_float_fixture_docx` engine test.
-    await loadStartupDocument("./float.docx", "float.docx");
-  } else if (demo && DEMO_PRESETS[demo]) {
-    await applyDemoPreset(DEMO_PRESETS[demo]);
-  } else if (params.get("blank") !== "1") {
-    await loadStartupDocument("./sample.docx", "sample.docx");
-  }
-
-  // Last, and deliberately after the startup document: the recovery bar is an
-  // offer about work the user already has a document open next to, and it
-  // reads the store rather than the engine, so nothing above waits on it
-  // (HF-011, docs/112 §4.6).
-  await startDrafts();
-  // Last of all: a restore a killed tab left prepared, and the age window. Both
-  // are boot-time work by nature (`docs/140` §7.5) and neither blocks anything
-  // above — a timeline is not what the user is waiting for.
-  versionHistory.resume();
-}
-
-// Curated `?demo=<kind>` presets for the editor. `?demo=1` — used by the Home
-// hero live embed — is the plain sample with no panel; the named kinds boot the
-// REAL editor on a shipped sample document and open the surface most relevant to
-// the capability, so a deep link lands directly in a meaningful state.
-const DEMO_PRESETS = {
-  "1": { src: "./sample.docx", name: "sample.docx" },
-  tables: { src: "./sample.docx", name: "sample.docx", tab: "insert" },
-  changes: { src: "./demo.docx", name: "opendoc-demo.docx", review: "suggesting" },
-  comments: { src: "./demo.docx", name: "opendoc-demo.docx", sidebar: true },
-  find: { src: "./sample.docx", name: "sample.docx", find: true },
-  formatting: { src: "./sample.docx", name: "sample.docx", tab: "home", selectAll: true },
-  export: { src: "./sample.docx", name: "sample.docx", tab: "view" },
-};
-
-// Loads a preset's document, then applies its optional UI action. Every action
-// reuses an existing editor function, so a preset can only reach real, working
-// surfaces — never fabricate one. Failures are non-fatal: the plain editor is
-// already usable, so a preset action that can't run just leaves it as-is.
-async function applyDemoPreset(preset) {
-  // Apply the preset's UI state through the opened-document hook, so it lands the
-  // moment the document opens — before the (network) font fetch — instead of
-  // leaving the demo on the plain editor until fonts arrive. Every action reuses
-  // an existing editor function, so a preset can only reach real, working
-  // surfaces. Failures are non-fatal: the plain editor is already usable.
-  await loadStartupDocument(
-    preset.src,
-    preset.name,
-    () => {
-      try {
-        if (preset.tab) selectRibbonTab(preset.tab);
-        if (preset.review) setReviewMode(preset.review, { restoreFocus: false });
-        if (preset.sidebar) {
-          reviewSidebarPreference = true;
-          scheduleReviewMarginRender();
-        }
-        if (preset.find) openFind();
-      } catch (err) {
-        console.error("demo preset action failed", err);
-      }
-    },
-    () => {
-      // Post-render actions that need laid-out geometry.
-      try {
-        if (preset.selectAll) selectAll();
-      } catch (err) {
-        console.error("demo preset render action failed", err);
-      }
-    },
-  );
-}
-
-
-/** Opens a new, empty document. Goes through the same `confirmDiscardIfEdited`
- *  gate as Open, because it replaces what is on screen exactly as Open does —
- *  a new document that silently discarded the last one would be the worst kind
- *  of data loss, the kind the user asked for without knowing. */
-async function newBlankDocument() {
-  if (!(await confirmDiscardIfEdited())) return;
-  await openBytes(zipStore(BLANK_DOCX_PARTS), UNTITLED_DOCUMENT_NAME, () => {
-    // A brand-new document is where the user wants to type, not somewhere they
-    // have to click first.
-    focusEditorSurface();
-  });
-}
-
-async function loadStartupDocument(url, name, onOpened, onRendered) {
-  try {
-    setStatus("Loading the sample document…");
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`sample request returned ${response.status}`);
-    await openBytes(new Uint8Array(await response.arrayBuffer()), name, onOpened, onRendered);
-  } catch (err) {
-    console.error(err);
-    setStatus("The sample could not be loaded — you can still open a local DOCX", "error");
-  }
-}
-
-async function openBytes(bytes, name, onOpened, onRendered) {
-  let replaced = false; // set where the previous document is freed: past it, nothing is "still here" (HF-381)
-  try {
-    setStatus(`Opening ${name}…`);
-    // Parse BEFORE anything on screen is touched. Freeing the open document
-    // first and parsing second meant any file the engine rejected — a corrupt
-    // .docx, an unsupported .odt, the wrong file picked by mistake — destroyed
-    // the document the user was editing: its pages stayed painted and every
-    // control stayed enabled, but `doc` held a freed wrapper, so the next
-    // keystroke, click or Save threw "null pointer passed to rust" and there was
-    // no way back. Only a successful parse replaces what is on screen; a failed
-    // one leaves the previous document open, because the previous document is
-    // what the user still has.
-    const next = open(bytes);
-    await versionHistory.closePreview(); await comparePanel.closeView(); // a borrowed canvas goes home first, or `doc.free()` below frees the preview and strands the live wrapper
-    hideLinkChip();
-    pointerHover.clear();
-    // Only now that the new document has PARSED — a failed open leaves the
-    // previous document on screen, and handing its draft over before knowing
-    // that would orphan the draft of a document the user is still editing.
-    // Still before `free()`, because the snapshot needs the live wrapper: the
-    // user may have chosen "Discard and open", but that discards the document
-    // from the screen, not the only copy of unsaved work from the disk.
-    handOverDraftBeforeOpen();
-    // Before the free, not after: a background measure tick calls into this
-    // wrapper, and between `free()` and the point further down where the new
-    // document arms its own ticker there is an `await` — so an idle tick can
-    // land in exactly that gap and read freed memory. Stopping here closes the
-    // gap by construction instead of relying on the gap being short.
-    backgroundMeasure?.stop();
-    backgroundMeasure = null;
-    leaveSharedDocument();
-    fontState.retired = true;
-    if (doc) { replaced = true; doc.free(); }
-    doc = next;
-    fontState = { provisionedFallbackKeys: new Set(), inFlightFallbackKeys: new Set(), retired: false };
-    delete document.body.dataset.fontsReady;
-    // A different document, so the remembered object answer belongs to a
-    // document that no longer exists.
-    objectPresence.forget();
-    currentSourceFormat = doc.sourceFormat;
-    applyActiveAuthorToDocument();
-    // The room's grant into the engine that ENFORCES it, per DOCUMENT because a new document is a new minting base.
-    const grantProblem = SESSION.adopt(doc) || SESSION.problemMessage();
-    // The shared session, per DOCUMENT and for the same reason the grant is: a
-    // new document is a new minting base for the NodeIds an op names.
-    startCollaboration();
-    // Word/Docs: an open document always has an insertion point, so Insert ▸
-    // Picture / Symbol / Emoji / Field / Table are live the instant it loads
-    // instead of demanding a click first. Seeded from the engine's own
-    // body-start position — `firstPosition()` walks the body only, so it is
-    // never a header, footer or footnote, and it descends into a leading table
-    // exactly as Word's insertion point does. Set here, before `onOpened()` and
-    // the first render/`drawSelection`, so the very first `updateToolbar` is
-    // already correct and the ribbon is never briefly wrong.
-    const startPosition = doc.firstPosition();
-    selection = {
-      anchor: { node: startPosition.node, offset: startPosition.offset },
-      focus: { node: startPosition.node, offset: startPosition.offset },
-    };
-    // ...but only implicit while the surface is UNFOCUSED. If `#pages` already
-    // holds focus when a document opens — drop a .docx onto the viewport after
-    // clicking into the previous one, and HTML5 drag never moves focus — no
-    // `focus` event will fire to promote it, and the pair would sit in the one
-    // state that is genuinely a lie: typing accepted, no caret painted. Decide
-    // it here from the live focus instead of waiting for an event that has
-    // already happened.
-    implicitCaretAt = editorSurfaceHasFocus()
-      ? null
-      : { node: startPosition.node, offset: startPosition.offset };
-    startPosition.free();
-    tableRange.clear();
-    objectCropSession = null; // a new document invalidates any in-progress crop
-    // Ask the engine, before anything is offered, whether this document can be
-    // edited at all: the mode buttons, the banner, the chrome and every refusal
-    // message all read this one answer (`docs/113` §8.7).
-    readOnlyReason = String(doc.editingUnavailableReason ?? "");
-    reviewSidebarPreference = null;
-    activeReviewCommentId = null;
-    activeReviewItemId = null;
-    reviewComposerState = null;
-    reviewDeleteConfirmId = null;
-    // A new document invalidates every retained card and its cached geometry.
-    reviewLayout = [];
-    reviewCardCache.clear();
-    commentEdit.end(); commentQuotes.clear(); commentQuotes.prime(doc, readReviewData(doc).comments);
-    // The mode this document opens in, through the ONE owner of mode state — which
-    // sets `reviewMode`, both banners, the pressed states, the tracking flag and the
-    // composed chrome, so none can drift. It used to be called only for a non-editing
-    // mode, with four of those five done again by hand beside it; the case that could
-    // not cover is an editable document REPLACING a read-only one, which kept the old
-    // mode and, now that chrome follows it, the reading chrome. Skipped only where
-    // nothing can have changed — editing to editing.
-    // ...narrowed by the ROOM's grant too: a read-only guest arrives in Viewing, as a `readonly` container does.
-    const openMode = readOnlyReason ? "viewing" : reviewTracking.openMode(SESSION.openMode(HOST_MODE), doc.trackRevisions);
-    if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode, { restoreFocus: false });
-    breakTypingSession();
-    currentName = name;
-    docTitleEl.value = name;
-    documentChrome.hidden = false;
-    resetDirtyTracking(currentName);
-    // The identity a draft records, computed from the bytes the document was
-    // opened from. O(1) in document size — see `documentKey`.
-    adoptDraftDocument(name, bytes);
-    // And the timeline this document rejoins: `adopt` mints or finds the lineage
-    // and records the import baseline (`docs/140` §7.5). See `activatingRestore`
-    // for why a restore skips it.
-    if (!activatingRestore) void versionHistory.adopt();
-    // Ignored words and cached paragraphs belong to the document that is being
-    // replaced; the personal dictionary and the fetched word lists do not, and
-    // are kept. Reading the personal words is one IndexedDB round trip and
-    // never blocks the open.
-    spellChecker.reset();
-    void spellChecker.loadPersonal();
-    setDocumentState("opened");
-    if (grantProblem) setStatus(grantProblem, "error"); // never swallowed: a silent narrowing looks like a working read-only mode
-    if (saveBtn) saveBtn.disabled = false;
-    populateSaveFormats(saveFormatEl, doc ? doc.availableExportFormats() : [], currentSourceFormat, document);
-    // What the IMPORT lost, not a cleared slate. `importReportJson` was a shipped
-    // engine getter with zero consumers: loss was computed on every open and
-    // thrown away, while export loss was reported. SKILL §1 names reporting as
-    // the condition under which verbatim retention is an advantage at all.
-    compatFindings.show(doc.importReportJson, "import");
-    railOutline.disabled = railPages.disabled = false;
-    reflowView.setEnabled();
-    // The reader's formatting-mark preference, replayed onto the new handle: the
-    // PREFERENCE is the person's and outlives the document, while the STATE lives on
-    // the document because that is where the renderer reads it. Idempotent and O(1)
-    // when the two already agree, which is the common case.
-    formattingMarks.adopt();
-    versionHistory.reflect();
-    populateStyles();
-    populateTableStyles();
-    document.getElementById("drop").hidden = true;
-    document.body.classList.add("doc-loaded");
-    hostSession?.noteReady();
-    // The compact bar is built from the command registry, and at import time
-    // that registry holds only the `noDoc` commands — so a reload straight into
-    // compact mode rendered an EMPTY bar (every lookup missed, leaving just the
-    // four adopted controls). Rebuild it now the document exists.
-    if (document.body.classList.contains("compact-mode")) compactToolbarUi.render();
-    // Redline visible by default (Q1): a document that arrives already carrying
-    // tracked changes shows markup on open, so struck deletions are never
-    // invisible behind a buried toggle. A clean document opens with markup off.
-    // Set before the first `renderAll` so it renders the correct layout once.
-    showingChanges = documentHasTrackedChanges();
-    reflectShowingChangesState();
-    // Apply any caller-supplied opened-document state (e.g. a gallery demo
-    // preset) now — after the review/mode reset above and before the first
-    // render, so it renders once in the requested state — rather than making the
-    // caller await the network font fetch below (which would leave a demo sitting
-    // on the plain editor for seconds).
-    if (typeof onOpened === "function") onOpened();
-    // Fit a page too wide for its container (`view_zoom.mjs`); after `onOpened`, so a caller's zoom wins.
-    zoomMode = openingZoomMode(computeFitZoom("fit-width"), { mode: zoomMode, factor: zoomFactor });
-    // Paint from the target-bundled metric-compatible faces FIRST. The named web
-    // families are ~9.5 MB of variable fonts from a CDN, and awaiting them here
-    // meant the document stayed invisible until every one of them had landed —
-    // on top of the engine's own download, seconds of blank editor before a
-    // single glyph appeared. The bundled faces are metric-compatible substitutes,
-    // so this first pass is laid out on the right advance widths rather than
-    // being a throwaway approximation, and the upgrade below re-renders once the
-    // real faces register. Word and Docs both show the document before every
-    // font it references is resolved; so do browsers, for the same reason.
-    await renderAll();
-    if (statusEl.textContent === `Opening ${name}…`) setStatus(spellChecker.statusNote()); // the render clears only its own line
-    buildOutline();
-    referenceCommands.numbering.refresh();
-    tocCommands.fields.refresh();
-    buildAccessibilityTree();
-    drawSelection();
-    armBackgroundMeasure();
-    if (typeof onRendered === "function") onRendered();
-
-    // Then upgrade in the background: fetch, register, and re-render. Not
-    // awaited, so the caller — and the user — are not held behind the network.
-    if (doc === next) void provisionFonts(name, next).then(async (fontWarnings) => {
-      // A newer document may have been opened while these bytes were in flight;
-      // its own provisioning owns the screen, so this one must not repaint it.
-      if (doc !== next) return;
-      await renderAll();
-      if (doc !== next) return;
-      buildOutline();
-      buildAccessibilityTree();
-      drawSelection();
-      if (fontWarnings.length > 0) {
-        setStatus(
-          `Opened ${name}; unavailable web fonts: ${[...new Set(fontWarnings)].join(", ")}`,
-          "error",
-        );
-      }
-      // The signal that the document is now painted with its real faces. Tests
-      // wait on this so their geometry assertions are never racing an upgrade
-      // repaint; nothing in the product blocks on it.
-      document.body.dataset.fontsReady = "true";
-    });
-  } catch (err) {
-    // An admission refusal ("this document is too large for the browser") is an
-    // expected answer, not a fault: logging it as a console error made a handled
-    // case look like a crash, and every spec that asserts a clean console would
-    // fail on a deliberately oversized file.
-    const message = String(err?.message ?? err);
-    if (!/browser editor can hold in memory/.test(message)) console.error(err);
-    // A failed PARSE leaves the previous document open, painted and editable, and
-    // the message says so: "could not open" alone reads like the editor is empty.
-    // A failure AFTER the previous document was freed must not claim it (HF-381).
-    const kept = replaced ? " — the document you had open was already closed" : doc ? " — the document you had open is still here" : "";
-    setStatus(`Could not open ${name}: ${message}${kept}`, "error");
-  }
-}
-
-// ---- Document rename ---------------------------------------------------------
-// The header title is the input itself (styled as plain text until focused),
-// matching the Word/Docs "click the title to rename" convention. Renaming
-// only changes `currentName` (what Save downloads as); it never touches the
-// open document's own model or its docProps/core.xml `dc:title`.
-function commitRename() {
-  const trimmed = docTitleEl.value.trim();
-  if (!trimmed) {
-    docTitleEl.value = currentName;
-    return;
-  }
-  const named = /\.docx$/i.test(trimmed) ? trimmed : `${trimmed}.docx`;
-  const changed = named !== currentName;
-  currentName = named;
-  docTitleEl.value = named;
-  if (changed) {
-    setDocumentState("edited");
-    // A rename changes what Save produces without touching the model, so no
-    // revision observes it — but the draft's name is now stale, and a recovery
-    // bar naming the old file is a recovery bar the user does not recognise.
-    noteDraftDirty();
-  }
-}
-
-docTitleEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    docTitleEl.blur();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    docTitleEl.value = currentName;
-    docTitleEl.blur();
-  }
-});
-docTitleEl.addEventListener("focus", () => docTitleEl.select());
-docTitleEl.addEventListener("blur", commitRename);
+const { boot, newBlankDocument, openBytes } = createFileOpen(ed);
 
 // Provision the host-owned named families in one bounded batch/repagination,
 // then fetch only the script fallbacks this document's uncovered code points
@@ -8334,28 +7994,10 @@ function scrollFindMatchIntoView() {
   scrollOverlayIntoView(marker, "center");
 }
 
-// ---- Unsaved-work tracking ---------------------------------------------------
-//
-// Engine-authoritative and fail-dirty. Two independent axes make a document
-// unsaved, and BOTH must be tracked or the guard is silently wrong for one of
-// them:
-//
-//   * the MODEL — every applied edit carries the engine's own monotonic
-//     revision, so the question "has this changed since it was last written
-//     out?" is answered by the engine rather than inferred by the UI;
-//   * the NAME — renaming changes what Save produces without touching the model
-//     at all, so no revision can ever observe it.
-//
-// A watermark, not a boolean: a boolean cannot be cleared correctly by a save
-// that lands between two edits. And when the revision cannot be read for any
-// reason, `revisionUnreadable` latches and the document reports dirty — a
-// needless warning costs one click, the opposite mistake costs the document.
-//
-// Undo back to the original content still reports dirty, because revisions are
-// monotonic. That is the intended direction of the error.
-let savedRevision = 0;
+const {
+  documentIsDirty, markDocumentSaved, noteDocumentEdited, resetDirtyTracking,
+} = createDirtyTracking(ed);
 let currentRevision = 0;
-let savedName = "";
 let revisionUnreadable = false;
 // A third axis, and the only one that is not about editing: a document restored
 // from a crash draft — or from a version in the timeline (`docs/139` §8.5 step
@@ -8365,47 +8007,6 @@ let revisionUnreadable = false;
 // Both restores set it for the same reason, which is why it is one flag and not
 // two. Cleared by the same two places that clear the others.
 let restoredFromDraft = false;
-
-/** Everything true of EVERY landed edit, whichever path applied it.
- *
- *  Four apply paths grew independently and diverged: `applyEditResult` cleared
- *  the find cache but never marked the document edited, `runToolbarEdit` marked
- *  it but never cleared the cache, `applyBookmarkEdit` did both, and
- *  `runNodeEdit` — the path every table and list structural edit takes — did
- *  neither. Shading a cell or converting a list left the header reading
- *  "Opened" and left Find matching against pre-edit text.
- *
- *  A rule that enumerates its subjects is one omission from being wrong, and the
- *  omission is the write path somebody adds last. What is true of every edit
- *  belongs here and nowhere else; what genuinely differs between the paths
- *  (caret movement, stats, sync vs async repaint) stays with them.
- *
- *  Call with the revision read BEFORE `res.free()`. */
-function noteDocumentEdited(revision) {
-  clearFindParagraphCache();
-  // Every landed edit can add or remove a floating object, so the memoized
-  // yes/no answer is dropped here — the one choke point every edit passes
-  // (`109` HF-183). Costs one engine call on the next question, which is the
-  // price of not asking on every keystroke.
-  objectPresence.forget();
-  if (revision === null || revision === undefined) revisionUnreadable = true;
-  else currentRevision = revision;
-  setDocumentState("edited");
-  // Autosave's only contact with the edit path, and it must stay O(1) in
-  // document size (docs/107 §4): this stores an integer and re-arms a timer.
-  // The snapshot itself is taken from that timer, never from a keystroke.
-  noteDraftDirty();
-  // Spelling's only contact with it, under the same constraint and for the
-  // same reason: a keystroke must never touch the dictionary (docs/114 §3).
-  spellChecker.noteEdited();
-  // And the host's, under the same constraint: one revision integer, one boolean.
-  hostSession?.noteChange();
-  remotePresence.sync(); // Map each view change before a later arrival can replace its map.
-  collab?.flush(); // Send local edits even when no remote presence changes.
-  // An edit that changed the document's Track Changes setting — an Undo, a co-author — moves the mode with it (HF-283).
-  reviewTracking.follow(doc?.trackRevisions, reviewMode, (mode) => SESSION.modeAuthority?.allows(mode).allowed !== false && setReviewMode(mode, { restoreFocus: false }));
-}
-
 /** How many documents this tab has opened.
  *
  *  `currentRevision` restarts at 0 for each one, so it identifies a document's
@@ -8415,254 +8016,14 @@ function noteDocumentEdited(revision) {
  *  document, because the demo opened before it had already asked at revision 0.
  *  Paired with the revision, this makes the key identify both. */
 let documentEpoch = 0;
-
 /** A token that changes whenever the document changes OR is replaced. */
 function documentVersion() {
   return `${documentEpoch}:${currentRevision}`;
 }
-
-/** Re-baseline onto a freshly opened document: nothing is unsaved yet. */
-function resetDirtyTracking(name) {
-  documentEpoch += 1;
-  savedRevision = 0;
-  currentRevision = 0;
-  savedName = name;
-  revisionUnreadable = false;
-  restoredFromDraft = false;
-}
-
-/** The bytes have left the editor, so the current state is now the saved one. */
-function markDocumentSaved() {
-  savedRevision = currentRevision;
-  savedName = currentName;
-  revisionUnreadable = false;
-  restoredFromDraft = false;
-  setDocumentState("downloaded");
-  // An explicit Save is ALWAYS a version (ADR-038 / `docs/139` §18 question 3):
-  // it is the point a user recognises in a timeline, and because checkpoints are
-  // content-addressed a Save whose bytes are identical to the last version costs
-  // one ~300-byte row rather than a second copy of the document. This takes its
-  // own snapshot in the document's own format — the download may have been a PDF,
-  // and a checkpoint has to be fidelity-capable whatever was handed over.
-  versionHistory.capture(CAPTURE_REASON.SAVE);
-  // The user has the bytes, so the draft has nothing left to protect. Keeping
-  // it would mean offering back, after the next crash, work that is already on
-  // disk — and the offer would look like the save had not happened.
-  discardOwnDraft();
-}
-
-/** Whether closing right now would lose work. */
-function documentIsDirty() {
-  if (!doc) return false;
-  if (revisionUnreadable || restoredFromDraft) return true;
-  return currentRevision !== savedRevision || currentName !== savedName;
-}
-
-/** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild
- *  on a page-count change), redraw the caret, and keep it in view. */
-/** Adopts the position an edit reports, or the nearest one that exists.
- *
- *  The engine's `EditResult` position was trusted unconditionally, and for undo,
- *  redo and accept/reject-all it can name a node that the very same operation
- *  removed. Nothing then painted a caret — `caretRect` returns an empty rect, so
- *  `place()` bailed — and every following keystroke threw inside `runEdit`, which
- *  turned it into a console warning and the generic status "That edit isn't
- *  supported for this selection yet". The document was still intact and the
- *  editor still looked alive; it simply ignored the keyboard until the user
- *  happened to click. That is the worst failure shape available to a text
- *  editor, and it is why this validates rather than trusts.
- *
- *  `caretRect` is the oracle because it is the same call the painter makes: if
- *  it cannot place the caret, neither can the user. The fallback is the body's
- *  first position, which the open path already relies on.
- *
- *  The engine should also not report a position it has just deleted; this is the
- *  host-side belt, not a reason to leave that unfixed. */
-function adoptEditPosition(node, offset) {
-  const at = { anchor: { node, offset }, focus: { node, offset } };
-  try {
-    if (doc.caretRect(node, offset).length >= 5) return at;
-  } catch {
-    // fall through — an unplaceable position is exactly what we are guarding
-  }
-  try {
-    const fallback = doc.firstPosition();
-    const recovered = { node: fallback.node, offset: fallback.offset };
-    fallback.free?.();
-    if (doc.caretRect(recovered.node, recovered.offset).length >= 5) {
-      return { anchor: recovered, focus: recovered };
-    }
-  } catch {
-    // no recoverable position: keep the reported one rather than crashing, and
-    // let the caller repaint. Better a missing caret than a dead editor.
-  }
-  return at;
-}
-
-/** Repaints what a remote arrival changed; the engine applied it, and the shell already
- *  carried `selection` across it synchronously (`collabMapSelection`, `107` P-4). */
-async function paintArrival({ dirty = [], pageCount, viewRevision }) {
-  noteDocumentEdited(viewRevision);
-  if (pageCount !== pages.length) await renderAll();
-  else { for (const i of dirty) repaintPage(i); drawSelection(); }
-  scheduleChromeRefresh({ stats: true, outline: true });
-}
-
-async function applyEditResult(res, { keepView = false, keepSelection = false } = {}) {
-  const node = res.node;
-  const offset = res.offset;
-  const dirty = res.dirtyPages;
-  const newCount = res.pageCount;
-  const revision = readRevision(res);
-  res.free();
-  // The engine reports an edit that changed nothing — a picture dropped where it
-  // came from, an empty comparison — as the SAME revision and no dirty pages.
-  if (revision === null || revision !== currentRevision || dirty.length > 0) noteDocumentEdited(revision);
-  // An edit has landed, so the caret the editor now shows is the result of the
-  // user's own action — never the untouched load-time seed, even if the two
-  // positions coincide.
-  implicitCaretAt = null;
-  verticalGoal.clear(); // an edit ends a run of vertical moves (HF-164)
-  if (!keepSelection || !selection) selection = adoptEditPosition(node, offset); // a setting keeps the reader's selection (HF-283)
-  // A content mutation invalidates a row/column/table selection the same way it
-  // invalidates an object selection. Without this the accent fill survives
-  // typing, deleting, undo and arrow keys, so the editor claims a whole table is
-  // selected while the real selection is a collapsed caret in one cell — Copy
-  // returns "" and Backspace removes a single character.
-  tableRange.clear();
-  // The paste-options chip only ever means "redo the paste you just made,
-  // differently" — it acts by undoing it. Once any other edit has landed, an
-  // undo removes that edit instead, so the offer has expired. Retiring it here,
-  // where every edit passes, is what stops a ⌘Z before the click from silently
-  // deleting the sentence the user typed before the paste.
-  if (pasteOptionsShowing()) hidePasteOptions();
-  dropVanishedObjectSelection();
-  if (newCount !== pages.length) {
-    await renderAll(); // structural change (page added/removed): rebuild the list
-  } else {
-    for (const i of dirty) repaintPage(i);
-    drawSelection();
-  }
-  scheduleChromeRefresh({ stats: true, outline: true });
-  // A review edit is not a text edit: the caret never moved, and it is usually
-  // nowhere near the comment being worked on — so scrolling it into view sent
-  // the reader back to wherever the caret happened to be (the top, normally).
-  // ...and neither is an OBJECT edit: the user is manipulating the object, not
-  // the caret, so following the caret throws them off it (`object-edit-keeps-view`).
-  if (!keepView && !objectSelection) scrollCaretIntoView();
-  // Any edit can introduce a scalar no provisioned face covers — an emoji from
-  // the picker, a paste from another app, an IME commit. Coverage used to be
-  // checked only on open and for the two edits known to add symbols (checklist
-  // and list markers), so everything else rendered as notdef boxes until the
-  // document was reopened. `missingCoverage()` is an engine-side scan that
-  // returns nothing in the overwhelmingly common case, and the fetch only
-  // happens when a bucket is genuinely absent, so this stays off the hot path.
-  void ensureGlyphCoverage("this edit");
-}
-
-/** Drops an object selection whose object is no longer in the document.
- *
- *  Undoing an insert (or any edit that removes the selected object) left the
- *  selection, its handles and its context bar pointing at a node the model no
- *  longer holds — chrome hovering over nothing, and a Fill button that would
- *  fail. `deleteSelectedObject` clears the selection itself; every other path
- *  that can remove an object needed this. */
-function dropVanishedObjectSelection() {
-  if (!doc || !objectSelection) return;
-  let rect = [];
-  try {
-    rect = doc.objectRect(objectSelection.node);
-  } catch {
-    rect = [];
-  }
-  if (rect.length >= 5) {
-    refreshObjectCapabilities();
-    return;
-  }
-  objectSelection = null;
-  objectCropSession = null;
-  updateObjectSelectionState();
-  updateObjectContextBar();
-}
-
-/** Re-reads the ENGINE's capability bits for the object that is still selected.
- *
- *  They were snapshotted when the object was selected and never read again, so
- *  an edit that CHANGES what the object can do left the chip offering the old
- *  answer. `setObjectAnchorKind` is exactly that edit: an object taken in line
- *  can no longer be moved or wrapped — the flow decides where it sits — and the
- *  chip went on offering Move and a wrap mode for a node that has no anchor.
- *  The same is true of grouping, ungrouping and anything else that rewrites the
- *  node under a live selection.
- *
- *  Cost: O(objects) once per EDIT, never per keystroke and never per pointermove
- *  — `objectOrder()` is the same walk `objectPresence` already memoises, and a
- *  document with no selected object pays nothing. */
-function refreshObjectCapabilities() {
-  const held = objectSelection;
-  if (!held || held.mode === "editing") return;
-  let entries;
-  try {
-    entries =
-      held.ref.subject === held.ref.root
-        ? JSON.parse(doc.objectOrder())
-        : JSON.parse(doc.objectDescendants(held.ref.root));
-  } catch {
-    return;
-  }
-  const fresh = Array.isArray(entries)
-    ? entries.find((entry) => entry.node === held.node)
-    : null;
-  // Not in the list any more (it became a group's child, say): leave what is
-  // held rather than guessing. `objectRect` already proved it is still placed.
-  if (!fresh) return;
-  objectSelection = {
-    ...held,
-    kind: fresh.kind ?? held.kind,
-    anchored: fresh.anchored ?? held.anchored,
-    ...objectCapabilities(fresh),
-  };
-}
-
-/** Ends the current typing gesture. The next printable key receives a fresh
- * session id and therefore cannot merge with earlier history. */
-function breakTypingSession() {
-  typingSessionActive = false;
-  lastTypingAt = 0;
-}
-
-/** Returns the gesture id for an adjacent typing tick. A pause is a semantic
- * boundary even if the caret has not moved. */
-function typingSessionForKey() {
-  const now = performance.now();
-  if (!typingSessionActive || now - lastTypingAt > TYPING_PAUSE_MS) {
-    typingSession = (typingSession + 1) >>> 0;
-    if (typingSession === 0) typingSession = 1;
-  }
-  typingSessionActive = true;
-  lastTypingAt = now;
-  return typingSession;
-}
-
-// Pointer interaction always establishes a new caret/selection/command gesture.
-document.addEventListener("pointerdown", breakTypingSession, { capture: true });
-
-/** True (after showing the standard status message and returning focus to the
- *  canvas) if Suggesting mode should block a command whose mutation cannot -
- *  yet or ever - be represented as a tracked revision. This is the single
- *  fail-closed gate shared by every mutation path (`runEdit`, `runNodeEdit`,
- *  `runToolbarEdit`): a command that bypasses tracking must never silently
- *  apply while the mode still reads Suggesting (REVIEW-GAP-004). */
-function blockUntrackedInSuggesting({ paragraphLevel = false } = {}) {
-  if (reviewMode !== "suggesting") return false;
-  // Paragraph formatting IS trackable now: the engine records a `w:pPrChange`
-  // holding the prior while Suggesting is on (docs/108 phase 2, HF-131).
-  if (paragraphLevel) return false;
-  setStatus("This command cannot be tracked yet; switch to Editing to apply it", "error");
-  focusEditorSurface();
-  return true;
-}
-
+const {
+  applyEditResult, blockUntrackedInSuggesting, breakTypingSession, paintArrival,
+  typingSessionForKey,
+} = createEditPipeline(ed);
 /** True (after showing the read-only status message and returning focus to the
  *  canvas) if Viewing mode should block a document mutation. Viewing is fully
  *  read-only — no Operation reaches apply (docs/68 §"Suggesting mode") — so
@@ -8681,7 +8042,6 @@ function blockMutationInViewing() {
   focusEditorSurface();
   return true;
 }
-
 /** Runs an edit thunk and applies its result; unsupported edits are ignored.
  *  `gate: true` marks a mutation that has no tracked-revision representation
  *  (yet, or ever, per REVIEW-GAP-009's structural backlog): it is blocked
@@ -8715,88 +8075,7 @@ async function runEdit(thunk, { typing = false, gate = false, keepView = false, 
   await applyEditResult(res, { keepView, keepSelection });
   return true;
 }
-
-/** The column a run of vertical caret moves is aiming at (HF-164). */
-const verticalGoal = createVerticalGoal();
-
-/** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
-function navCaret(dir, extend) {
-  if (!selection) return;
-  if (objectCropSession) cancelCrop(); // arrow-navigating away discards the crop preview
-  objectSelection = null; // moving the caret leaves any object selection
-  // ...and so does it leave a row/column/table selection. These two were written
-  // as one rule and only one of them was applied here, which is how arrowing out
-  // of a table left the whole table still painted as selected.
-  tableRange.clear();
-  clearObjectStatus();
-  breakTypingSession();
-  pendingFormat = null; // caret moved → disarm typing format
-  const collapseToStart = dir === "left" || dir === "wordLeft";
-  const collapseToEnd = dir === "right" || dir === "wordRight";
-  const goalX = verticalGoal.columnFor(dir, selection.focus, () => caretColumn(selection.focus));
-  const c =
-    !extend && hasRange() && (collapseToStart || collapseToEnd)
-      ? doc.selectionEdge(
-          selection.anchor.node,
-          selection.anchor.offset,
-          selection.focus.node,
-          selection.focus.offset,
-          collapseToEnd,
-        )
-      : doc.moveCaret(selection.focus.node, selection.focus.offset, dir, goalX ?? undefined);
-  const to = { node: c.node, offset: c.offset };
-  c.free();
-  // The engine still dead-ends going UP out of a table: it answers with the
-  // position it was given and the key does nothing visible. `recoverVerticalMove`
-  // takes the engine's answer whenever it really moved and only otherwise finds
-  // the neighbouring line by hit-testing — and a rescued move is then put back
-  // on the run's goal column, which the probe's own geometry cannot know about.
-  const rescued =
-    dir === "up" || dir === "down"
-      ? recoverVerticalMove(dir, selection.focus, to, caretProbeIO())
-      : to;
-  const next = rescued === to ? to : atGoalColumn(rescued, goalX);
-  verticalGoal.keep(goalX, next);
-  selection = extend ? { anchor: selection.anchor, focus: next } : { anchor: next, focus: next };
-  drawSelection();
-  scrollCaretIntoView();
-}
-
-/** The caret's own column at `position` — page-local twips, the units the goal
- *  column is held in — or null where the position has no geometry. */
-function caretColumn(position) {
-  return doc.caretRect(position.node, position.offset)[1] ?? null;
-}
-
-/** `position`, moved sideways onto `goalX` on its own line. The rescue probe
- *  finds a LINE by hit-testing below/above the painted caret, and the caret's
- *  x is not the column the run aims at once a short line has clamped it. */
-function atGoalColumn(position, goalX) {
-  const flat = goalX === null ? [] : doc.caretRect(position.node, position.offset);
-  if (flat.length < 5) return position;
-  const hit = doc.hitTest(flat[0], goalX, flat[2] + Math.round(flat[4] / 2));
-  if (!hit) return position;
-  const at = { node: hit.node, offset: hit.offset };
-  hit.free();
-  return at;
-}
-
-/** The geometry and model access `probeVerticalNeighbour` needs, bound to this
- *  editor's DOM and engine. */
-function caretProbeIO() {
-  return {
-    caretRect: () => pagesEl.querySelector(".overlay .caret")?.getBoundingClientRect() ?? null,
-    resolveAt: (x, y) => {
-      const page = pageFromClientPoint(x, y);
-      return page ? anchorAt(page, clientPointEvent(x, y)) : null;
-    },
-    positionRect: (position) => {
-      const flat = doc.caretRect(position.node, position.offset);
-      return flat.length >= 5 ? { page: flat[0], y: flat[2], height: flat[4] } : null;
-    },
-  };
-}
-
+const { navCaret, verticalGoal } = createCaretNav(ed);
 // ---- Formatting toolbar (run + paragraph properties) -------------------------
 
 /** The current selection endpoints as `[sNode, sOff, eNode, eOff]`, or null. */
