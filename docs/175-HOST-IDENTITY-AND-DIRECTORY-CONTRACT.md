@@ -1,7 +1,8 @@
 # 175 — Host identity and directory: who is here, who wrote this, who can be mentioned
 
-**Status:** Design, proposed 2026-10-23. Not built. Nothing in this document is shipped
-until `docs/109` HF-360 closes.
+**Status:** Design accepted 2026-10-23 (owner decisions in §12). **Built by HF-360 (PR #881)
+except §7 (the @mention directory, `docs/109` HF-361) and §11 (shared version history,
+HF-362)**, whose seams are kept. §15 records where the build differs from this text and why.
 **Decides:** ADR-070, **identity is attested by the host and attached at the order. A
 participant never states who wrote an operation.**
 **Rows:** `docs/109` HF-360, for findings `docs/174` RC-05, RC-06, RC-07, RC-09 and RC-10.
@@ -624,3 +625,17 @@ Rules the strip may rely on:
   label carried by the chip's accessible name. On `error` it falls back to initials.
 - Today every entry has no `profile` and `attested: false`, so the function returns exactly
   today's label and palette. The strip built now is the strip that ships.
+
+---
+
+## 15. As built (HF-360), and where it differs from the text above
+
+| Section | As built | Why |
+| --- | --- | --- |
+| §3.3, §12 Q6 | The grant is a compact JWS: `{"alg":"EdDSA"}` over JWT claims `sub`, `aud`, `exp`, `nbf`?, `role`, and the display claims `name`, `initials`, `color`, `picture` (OpenID Connect's name for an avatar). `opendoc_relay::JwtVerifier` accepts **only** EdDSA over Ed25519 (RFC 8037) and holds only the public key; `opendoc-relay serve <journal> <addr> granted <key> <audience>`. | One algorithm, so neither `alg: none` nor key confusion is reachable. `role` maps onto the existing capability presets, so a grant cannot spell a combination the command line cannot. |
+| §4.1 | `GrantVerifier::verify` returns `Verified { capabilities, subject, profile }`, and the subject rule lives in `Access::admit`, so it holds for every verifier, not only the built-in one. A grant whose profile `id` is not its subject is refused the same way. | A rule each verifier had to remember is the rule `access.rs` used to call optional. |
+| §4.2 | An open room's claimed profile takes the join's identity as its `id`, whatever the client wrote. A claimed profile out of bounds stops the join with `ODC-7007`. | A participant must not claim a second person's id either. |
+| §4.5 | The author stamp is journalled inside each `Admission` and on each ordered entry, without the avatar; the relay's in-memory list carries the attested avatar. | Recovery replays admissions before chunks, so a crash cannot change whose name a later chunk carries. |
+| §5.2 | `conform` decides "introduced" by the **id space** of the identity that carries the mark (the node, or for a run-format change its editor group): held → keeps its author; not held and minted by the sender → the stamp; not held and minted elsewhere → kept (an undo of "accept" puts back somebody else's suggestion). An introduced comment's `person` is cleared unless it already names the stamp, rather than set to the name, because the editor's own lowering writes none and an honest arrival must stay a no-op. | Without the third rule an undo would hand a restored suggestion to whoever pressed undo. **Known limit:** a rewritten client that mints a new mark in *another* participant's space reaches that rule and keeps its forged author; telling it from a genuine undo needs a record of who minted what, which no replica keeps. Table row and cell marks are not conformed (no editor command authors one). |
+| §5.2 | Conform runs in `apply_remote`, at the horizon, on both the uncontended and the contended path, and in the editor's `apply_group` with the room's `me`. In a room the facade also authors under `me` rather than the Settings name. | The horizon is the ordered state every replica shares; a comment this replica deleted in unordered work must still read as held. |
+| §6.2 | `setAuthorPersistence(providerId, userId)` opts the active author in; at save time a `w15:person` with `w15:presenceInfo` is added for the active author if they authored a comment or a change and `people.xml` has no entry for the name. An existing entry under another account refuses the save with `identity-name-collision`. | §12 Q3 settled the display half (a "(2)" suffix that never reaches the file); the file half stays a refusal, because merging two accounts under one name is the silent loss §1 forbids. |

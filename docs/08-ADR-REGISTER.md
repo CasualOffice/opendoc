@@ -4347,7 +4347,8 @@ undoing with the plain inverse (deletes the wrong text once anybody typed before
 
 ## ADR-070 — Identity is attested by the host and attached at the order; a participant never states who wrote an operation
 
-**Status:** Proposed 2026-10-23, awaiting owner review. **Row:** `docs/109` HF-360.
+**Status:** Accepted 2026-10-23 (owner decisions, `docs/175` §12); built by HF-360 (PR #881)
+except decisions 6 and 7 (HF-361, HF-362). **Row:** `docs/109` HF-360.
 **Design:** `docs/175`. **Findings:** `docs/174` RC-05, RC-06, RC-07, RC-09, RC-10.
 
 **Context.** A shared session joins with the Settings name, or with the literal `"You"`
