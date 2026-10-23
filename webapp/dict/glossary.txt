@@ -10,6 +10,7 @@ ASCII
 Alt
 App
 Arial
+Aspose
 AutoCorrect
 AutoFit
 AutoText
@@ -102,6 +103,7 @@ IndexedDB
 Indic
 InteropGrabBag
 Invariants
+JNI
 JPEG
 JSON
 JWT
@@ -234,6 +236,7 @@ USENIX
 UTF
 UXOBJ
 Ungroup
+UniFFI
 Unicode
 UnlimitedOCR
 Unlinking
@@ -265,6 +268,7 @@ XML
 XMP
 XOR
 XObjects
+XWPF
 Yjs
 accessor
 accessors
@@ -429,9 +433,11 @@ gridBefore
 gridSpan
 gridlines
 gzip
+gzipped
 handoff
 hardcoded
 hardcodes
+harfrust
 hideMark
 hlinkClick
 hostable
@@ -609,6 +615,7 @@ serializer
 shaper
 shippable
 skia
+skrifa
 snapToGrid
 splitter
 src

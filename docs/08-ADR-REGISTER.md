@@ -4395,3 +4395,56 @@ who is here. ONLYOFFICE, Google Docs and Word all show real, account-backed name
 - Localising the anonymous author.
 
 **Decided by the owner 2026-10-23:** `docs/175` §12 Q1, Q2, Q3 and Q5. **Open:** Q4 (measure Word's mention shape). Q6 decided 2026-10-23: the grant is a JWT.
+
+## ADR-071 — Three SDK products on one engine, cut by cargo dependency, not by runtime mode
+
+**Status:** Proposed; owner decided build order (Viewer first), viewer fonts, viewer formats and Java support on 2026-10-23 (docs/176 §10). 2026-10-23, awaiting owner review. **Row:** `docs/109` RM-46.
+**Design:** `docs/176`. **Owner decision being implemented:** 2026-10-23, split OpenDoc
+into a Viewer SDK, an Editor SDK and a Native/headless SDK, each marketed against named
+competitors.
+
+**Context.** Every host gets the editor today. The only browser artefact is
+`casual-doc-wasm`, 25,955,980 B raw and 11,914,308 B gzip (`docs/176` §4), and its code
+section carries the caret, selection, hit-testing, the incremental galley cache, the
+transaction log, diff and the collaboration client whether the host edits or not.
+`docs/83` §2 designed preview as a `readOnly` *mode* of that same runtime, which saves
+nothing a reader downloads. There is no native artefact for Java, Python or .NET at all.
+
+**Decision.**
+
+1. **Three products, one engine, one layout.** Viewer, Editor and Native share
+   `casual-doc-model`, the importers, `casual-doc-layout` and `casual-doc-render`
+   unchanged. No product gets a second layout or a "lighter" paginator (`docs/98`).
+2. **A product is a dependency cut, not a flag on the editor.** The read-only and batch
+   path is the new crate `casual-doc-viewer`, which depends on no editing crate
+   (`casual-doc-edit`, `-transaction`, `-selection`, `-diff`, `-wasm`). Features add
+   capability, never remove it: `pdf`, `formats`, `wasm`, `web-host-fonts`. The editor's
+   `casual-doc-wasm` is unchanged and does not depend on it.
+3. **Request in, result out.** The Viewer and Native APIs are batch: open → read or
+   modify → save, render or convert. They paginate once per document state; there is no
+   viewport, scene, caret, input or event stream in them (`docs/05` §5's interactive
+   members belong to the Editor only).
+4. **Deterministic by default.** The viewer cut opens with bundled faces plus host-registered
+   ones only (`ParleyShaper::without_system_fonts`); OS fallback is an explicit option.
+5. **Native bindings sit on one C ABI.** A single handle-based `casual-doc-ffi` crate is the
+   contract; Java (FFM, JDK 22+, with a JNI shim only if the owner wants Java 8–21), .NET
+   (P/Invoke) and Python (ctypes/cffi wheel) wrap it thinly. It is the one crate allowed
+   `unsafe`, as a recorded exception to `unsafe_code = "forbid"`.
+6. **Modification in the Native SDK goes through `casual_doc_edit::apply`** (ADR-030 I1,
+   the closed invertible operation set), not through a DOM that writes model fields.
+
+**Rejected.**
+
+- A `readOnly` mode of the editor bundle as the Viewer: measured, it ships 7.7 MB more code
+  than the cut (`docs/176` §4.1).
+- PyO3, JNI and a .NET-native binding each written against Rust directly: three bindings to
+  keep in step, three unsafe surfaces, and no C consumer.
+- UniFFI as the contract: Java and C# are third-party generators there, and it has no C
+  output, which `docs/05` §1 promises.
+- A public DOM of mutable model structs: it bypasses I1 and makes every model field a
+  public API.
+
+**Open.** `docs/176` §10 Q1–Q8: names and registry ownership, fonts in the viewer bundle,
+the minimum Java version, whether the headless SDK needs the transaction log, the viewer's
+default formats, the native platform matrix, Node, and whether a `<opendoc-viewer>` element
+is ever in scope.
