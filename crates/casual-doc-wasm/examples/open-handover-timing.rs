@@ -3,7 +3,7 @@
 //! The committed artifact behind `docs/180` §3.2. A worker that imports and lays
 //! a document out only helps the editor if the main thread can then ADOPT the
 //! result for less than it would cost to compute it, because the editor's
-//! editing path holds the document synchronously on the main thread (ADR-074).
+//! editing path holds the document synchronously on the main thread (ADR-073).
 //! Without `SharedArrayBuffer` the only thing that crosses is bytes, so the
 //! question is how the cost of decoding the model and the laid-out pages from
 //! bytes compares with importing and paginating:
