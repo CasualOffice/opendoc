@@ -546,8 +546,11 @@ async versionBytes({ room, id })                     // → { bytes, revision }
    the model is extended. This is a build task, not a preference.
 5. **Pasted tracked changes in a room take the paster's name, for now** (§5.2), as
    recommended. A known difference from Word until `152` §10 Q2's subtree walk exists.
-6. **Still open: the grant encoding** (`143` §16 Q5). This contract adds claims to the grant
-   (subject, profile) without choosing JWT or PASETO.
+6. **The grant encoding is JWT** (owner decision 2026-10-23; closes `143` §16 Q5). The grant's
+   subject and profile are JWT claims, signed by the host; the relay verifies the signature
+   and refuses an identity that differs from the grant's subject. Algorithm choice and key
+   distribution follow standard JWT practice (asymmetric signatures, so the relay holds only
+   the public key).
 
 ---
 

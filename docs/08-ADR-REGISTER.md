@@ -4394,4 +4394,4 @@ who is here. ONLYOFFICE, Google Docs and Word all show real, account-backed name
 - Writing the wire id into every saved file.
 - Localising the anonymous author.
 
-**Decided by the owner 2026-10-23:** `docs/175` §12 Q1, Q2, Q3 and Q5. **Open:** Q4 (measure Word's mention shape) and Q6 (grant encoding).
+**Decided by the owner 2026-10-23:** `docs/175` §12 Q1, Q2, Q3 and Q5. **Open:** Q4 (measure Word's mention shape). Q6 decided 2026-10-23: the grant is a JWT.
