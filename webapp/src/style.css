@@ -6076,13 +6076,30 @@ body.is-format-painting .page-wrap * {
   margin-top: 0;
 }
 
+/* An icon-only rail, as Google Docs' and Word's are (`109` HF-331, owner:
+   "remove names below icons on left side bar.. and make it slim").
+
+   It used to carry a caption under every glyph (doc 69 §1.2), and a caption
+   tile is as wide as the longest word in the ACTIVE LOCALE: measured at 1440,
+   the rail was 78px in English (a 66px tile inside 6px of side padding), and
+   wider in Russian or Brazilian Portuguese — all of it taken from the page,
+   which `.workarea`'s flex row centres in whatever the rail leaves. The name
+   now lives where a glyph rail keeps it: the `aria-label` and the `title`
+   tooltip every tile already carried, both translated through
+   `data-i18n-label`/`data-i18n-title`. `rail-icon-only.spec.mjs` fails if a
+   word paints again or the rail grows past 44px.
+
+   Geometry: a 32px tile (the `--icon-rail` glyph plus 6px either side) inside
+   `--space-1` of side padding, which is exactly the room the global
+   `:focus-visible` ring needs (2px outline + 1px offset) — so the rail is 40px
+   and spends nothing on air a focus ring does not use. */
 .rail {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 10px 6px;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-1);
   /* The rail is chrome, so it shares the one grey field rather than sitting on
      its own tint with an edge — the tint is what made it read as a separate bar
      glued to the header. */
@@ -6090,35 +6107,27 @@ body.is-format-painting .page-wrap * {
   border-right: 0;
 }
 
-/* A text caption under the icon (doc 69 §1.2/§1.4.4): every rail destination
-   in the reference has a visible label; OpenDoc's had icon+tooltip only.
-
-   The caption was `--fs-micro` (9px, semibold) inside a 40x44 tile, which is
-   below the size at which a word reads as a label rather than as texture — the
-   rail looked cramped and the four destinations ran together. Word's navigation
-   pane and Docs' outline pane both give a destination a full-size caption; this
-   is a rail, so it takes the caption size the rest of the chrome uses for a
-   caption (`--fs-caption`) in a tile wide enough to hold "Comments" without
-   ellipsis, with real air between tiles. */
 .rail-btn {
-  /* Width comes from the longest caption, not from a number: "Comments" already
-     ellipsised to "Comme…" at 56px in English, and German's "Kommentare" is
-     longer still. `.rail` stretches its children, so every tile matches the
-     widest one and the column stays a column. */
-  width: auto;
-  min-width: 52px;
-  height: var(--h-rail-control);
+  width: 32px;
+  height: 32px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 0 7px;
+  padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+}
+
+/* A finger gets the 44px floor every other coarse-pointer control in this
+   shell keeps; a mouse keeps the slim rail. */
+@media (pointer: coarse) {
+  .rail-btn {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 .rail-btn .ms {
@@ -6130,48 +6139,12 @@ body.is-format-painting .page-wrap * {
   font-variation-settings: "wght" 400, "opsz" 24, "GRAD" 0, "FILL" 0;
 }
 
-.rail-btn > span:not(.ms) {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: var(--fs-caption);
-  font-weight: 550;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* `--surface`, not `--bg-2`: the rail's own background IS `--bg-2` (see `.rail`
    above), so the old hover fill was the same colour as what it painted over, in
    every theme — a declaration that could never show. Only the icon recoloured,
    so the rail did not read as a set of buttons the way the rest of the shell's
    icon controls do (HF-096). `--surface` is the one token guaranteed to sit a
    step off `--bg-2` in both palettes. */
-/* The rail sheds its captions when the review column takes the margin, for the
-   same reason it sheds them on a phone: the room the document gets is whatever
-   the rail and the column leave it.
-
-   A caption-sized tile is 78px in English and wider in Russian or Brazilian
-   Portuguese, and at 860px with the column in the margin those pixels come
-   straight off the page — measured, the sheet starts at x=78 instead of x=40
-   and the column then covers a third of it rather than a quarter. The icons
-   keep their `aria-label`, which is what `editor-narrow-chrome.spec.mjs` asserts
-   for the phone rung, so nothing becomes unreachable or unnameable.
-
-   THE WIDTH CONDITION IS THE FIX (HF-265 D6). This rule carried none: its own
-   comment justifies itself "at 860px", and it was matching at EVERY width, so
-   opening Comments on a 1920x1080 screen with 1113px of spare room silently
-   took the four rail captions away — measured, the rail went 78px -> 64px and
-   `display` on `#railOutline`'s caption went `block` -> `none` at 1920. A
-   justification that names a breakpoint and a selector that does not is the
-   same defect as a dead token: the stylesheet states an intention it does not
-   implement. 860px is the rung the column's own geometry already uses (see the
-   `.review-sidebar` block below), so the two now move together; below 620px the
-   captions are gone anyway, for the phone's own reason. */
-@media (max-width: 860px) {
-  :root:has(#viewport.has-review-sidebar:not(.review-sheet)) .rail-btn > span:not(.ms) {
-    display: none;
-  }
-}
 
 .rail-btn:hover:not(:disabled) {
   background: var(--surface);
@@ -7681,7 +7654,7 @@ body.is-format-painting .page-wrap * {
   /* Reserve the comment column's width — but only out of space that exists.
      `.pages` is `width: max-content`, so a fixed reservation is ADDED to the
      sheet's own width rather than taken out of the window: 364px of gutter plus
-     an 816px Letter sheet plus the 55px rail needs a 1235px window, and the
+     an 816px Letter sheet plus the (then 55px) rail needed a 1235px window, and the
      first step-down below was at 860px. Every window between those two numbers
      rendered the page hanging off the right edge, with the comment column —
      absolutely positioned inside this same box — carried off-screen with it.
@@ -10481,29 +10454,6 @@ body:not(.doc-loaded) .drop-title {
   }
 
   .controls .btn-label {
-    display: none;
-  }
-
-  /* The navigation rail joins the same rung: below this width it is glyphs, and
-     the name is carried by the `aria-label` and the tooltip every tile already
-     has (`109` HF-232). Word and Google Docs both drop a rail caption on a
-     narrow window, and this is the rung where this chrome ALREADY drops a
-     caption — one rule for the whole bar rather than a second breakpoint that
-     only the rail knows about.
-     `visibility` would keep the box; `display: none` is what actually returns
-     the width, and returning the width is the point.
-
-     WHAT THE DEFECT REALLY IS, measured rather than inherited. HF-232 was filed
-     as "the captions clip — the rail reads Outlin…, Commen…, Version…", and that
-     symptom is gone: the tile is `width: auto` now, so the caption no longer
-     ellipsises. It grows instead, and the growth is the harm — a tile is as wide
-     as the longest caption in the ACTIVE LOCALE, so the rail measures 66px in
-     English, 86px in Russian and 111px in Brazilian Portuguese, which at a 320px
-     viewport is 35% of the screen spent on four destinations that fit in 36px.
-     Measured in Chromium at 1280/640/390/320 across en, de, ru, vi, id and
-     pt-BR; the numbers are in `editor-narrow-chrome.spec.mjs`, which fails if a
-     caption comes back. */
-  .rail-btn > span:not(.ms) {
     display: none;
   }
 

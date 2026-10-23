@@ -41,11 +41,11 @@
 /** The width at or below which this shell stops being a desktop.
  *
  *  620px is not a new number: it is the rung at which this chrome ALREADY
- *  drops the rail's captions, the header buttons' labels, the brand mark and
+ *  drops the header buttons' labels, the brand mark and
  *  the status bar's informational half. Adding a fourth breakpoint so the
  *  phone could have one of its own is exactly the "second breakpoint that only
  *  the rail knows about" that `style.css` argues against where it sheds those
- *  captions. `phone_chrome.test.mjs` asserts the stylesheet's own
+ *  labels. `phone_chrome.test.mjs` asserts the stylesheet's own
  *  `@media (max-width: 620px)` literal still names this number. */
 export const PHONE_MAX_WIDTH = 620;
 
