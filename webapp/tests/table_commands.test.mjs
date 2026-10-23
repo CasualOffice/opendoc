@@ -60,16 +60,19 @@ function stubDoc() {
   };
 }
 
-function build({ regular = true, merged = false, suggesting = false, tableSelection = null, rowHeightRule = "auto" } = {}) {
+function build({ regular = true, merged = false, suggesting = false, tableSelection = null, rowHeightRule = "auto", lands = true } = {}) {
   const doc = stubDoc();
+  doc.said = [];
   const host = {
     doc: () => doc,
+    status: (text) => doc.said.push(text),
     tableSelection: () => tableSelection,
     clearTableSelection: () => doc.calls.push(["clearTableSelection", []]),
     plainTableInfo: () => ({ found: true, regular, table: "t1" }),
     runEdit: (thunk) => {
       doc.calls.push(["runEdit", []]);
-      return thunk();
+      // `runEdit` resolves to whether the edit landed; a refusal is `false`.
+      return lands ? thunk() : false;
     },
     selectTableContext: (node, mode) => doc.calls.push(["selectTableContext", [node, mode]]),
     openSplitCellDialog: () => doc.calls.push(["openSplitCellDialog", []]),
@@ -226,5 +229,35 @@ test("no command in the tree is enabled without a run, or disabled without a rea
         }
       }
     }
+  }
+});
+
+test("every structural command announces what it did once it lands, and nothing when refused (HF-346)", async () => {
+  // The live region is the only place a screen reader learns that a row it was
+  // not on has gone. The menu, the context menu and the palette all render this
+  // tree, and before HF-346 only the gutter's + disc said anything.
+  const expected = {
+    "table.insert.rowAbove": "Row inserted",
+    "table.insert.rowBelow": "Row inserted",
+    "table.insert.columnLeft": "Column inserted",
+    "table.insert.columnRight": "Column inserted",
+    "table.delete.row": "Row deleted",
+    "table.delete.column": "Column deleted",
+    "table.delete.table": "Table deleted",
+    "table.distribute.rows": "Rows distributed evenly",
+    "table.distribute.columns": "Columns distributed evenly",
+    "table.sort.ascending": "Table sorted ascending",
+    "table.sort.descending": "Table sorted descending",
+    "table.merge": "Cells merged",
+    "table.unmerge": "Cells unmerged",
+  };
+  const selection = { table: "t1", cells: 4, anchorNode: "a", focusNode: "b" };
+  for (const [id, sentence] of Object.entries(expected)) {
+    const landed = build({ merged: true, rowHeightRule: "exact", tableSelection: selection });
+    await landed.row(id).run();
+    assert.deepEqual(landed.doc.said, [sentence], `${id} must say "${sentence}"`);
+    const refused = build({ merged: true, rowHeightRule: "exact", tableSelection: selection, lands: false });
+    await refused.row(id).run();
+    assert.deepEqual(refused.doc.said, [], `${id} must say nothing when the edit is refused`);
   }
 });

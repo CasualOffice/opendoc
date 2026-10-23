@@ -46,6 +46,13 @@ function clampedTolerance(edges, index, tol, extent) {
  * resolves to the horizontal edge there too; and a user travelling along a row
  * edge must not have the gesture change under them at every column it crosses.
  *
+ * **A boundary's zone never reaches back over the table's leading border.**
+ * Along its own length it starts `inset` past the leading edge, where the
+ * gutter's strip ends (`table_gutter_zones.mjs` `INSIDE_PX`), and it used to
+ * reach `tol` OUTSIDE the table there, over the strip and the line above, so
+ * two targets contested the same pixels (HF-342). It still reaches `tol` past
+ * the trailing end, where nothing else lives.
+ *
  * `tables` is the `tableChromeOnPage` payload for one page. Complexity is
  * O(boundaries on the page) — a few dozen, with no document read at all.
  *
@@ -54,22 +61,23 @@ function clampedTolerance(edges, index, tol, extent) {
  * @param {number} y page-local twips
  * @param {number} tolX tolerance across the column axis, twips
  * @param {number} tolY tolerance across the row axis, twips
+ * @param {number} [inset] where a zone starts past the leading edge, twips
  * @returns {object|null} `{ kind, table, i, x, y, w, h, width, height, outer, anchor }`
  */
-export function boundaryAt(tables, x, y, tolX, tolY) {
+export function boundaryAt(tables, x, y, tolX, tolY, inset = 0) {
   for (const table of tables ?? []) {
     if (!within(x, table.x, table.x + table.w, tolX)) continue;
     if (!within(y, table.y, table.y + table.h, tolY)) continue;
     const rowEdges = table.rowEdges ?? [];
     for (const [index, edge] of rowEdges.entries()) {
       if (Math.abs(y - edge.y) > clampedTolerance(rowEdges, index, tolY, "height")) continue;
-      if (!within(x, edge.x, edge.x + edge.w, tolX)) continue;
+      if (x < edge.x + inset || x > edge.x + edge.w + tolX) continue;
       return { kind: "row", table, ...edge };
     }
     const colEdges = table.colEdges ?? [];
     for (const [index, edge] of colEdges.entries()) {
       if (Math.abs(x - edge.x) > clampedTolerance(colEdges, index, tolX, "width")) continue;
-      if (!within(y, edge.y, edge.y + edge.h, tolY)) continue;
+      if (y < edge.y + inset || y > edge.y + edge.h + tolY) continue;
       return { kind: "column", table, ...edge };
     }
   }
@@ -92,10 +100,11 @@ export function boundaryAt(tables, x, y, tolX, tolY) {
  * @param {number} tolX tolerance, twips
  * @param {number} tolY tolerance, twips
  * @param {{editsBlocked?:boolean, geometryBlocked?:boolean}} mode the review mode
+ * @param {number} [inset] see {@link boundaryAt}
  * @returns {{boundary: object|null, refusal: string}}
  */
-export function armTableBoundary(tables, x, y, tolX, tolY, mode = {}) {
-  const boundary = boundaryAt(tables, x, y, tolX, tolY);
+export function armTableBoundary(tables, x, y, tolX, tolY, mode = {}, inset = 0) {
+  const boundary = boundaryAt(tables, x, y, tolX, tolY, inset);
   if (!boundary) return { boundary: null, refusal: "" };
   if (mode.editsBlocked) return { boundary: null, refusal: "" };
   if (mode.geometryBlocked) return { boundary: null, refusal: "table.reason.notTracked" };

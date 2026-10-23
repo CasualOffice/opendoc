@@ -44,6 +44,44 @@ export const TABLE_ROW_COLUMN_ACTIONS = Object.freeze({
   "delete-table": (doc, node) => doc.deleteTable(node),
 });
 
+/** What a landed structural edit SAYS, by the action that ran it: the band's
+ *  `data-table-*` value, or the menu's `merge` / `unmerge`.
+ *
+ *  A structural edit changes what a screen reader would walk over without
+ *  moving the caret, so the live region is the only place a reader learns it
+ *  happened. Only the gutter's `+` disc used to say so; the band, the Table
+ *  menu, the context menu and the palette ran the same edits in silence
+ *  (HF-346, `docs/171` §7 item 8). One table, so the surfaces cannot drift. */
+export const TABLE_EDIT_ANNOUNCEMENTS = Object.freeze({
+  "insert-row-above": "table.rowInserted",
+  "insert-row-below": "table.rowInserted",
+  "insert-column-left": "table.columnInserted",
+  "insert-column-right": "table.columnInserted",
+  "delete-row": "table.rowDeleted",
+  "delete-column": "table.columnDeleted",
+  "delete-table": "table.tableDeleted",
+  rows: "table.rowsDistributed",
+  columns: "table.columnsDistributed",
+  ascending: "table.sortedAscending",
+  descending: "table.sortedDescending",
+  merge: "table.cellsMerged",
+  unmerge: "table.cellsUnmerged",
+});
+
+/** Announces `action`'s sentence once `pending` (a `runEdit` result) lands.
+ *
+ *  AFTER the edit resolves, never beside it: `runEdit` is async and its
+ *  `applyEditResult` repaints, so a sentence written first was overwritten. A
+ *  refused edit says nothing here, because `runEdit` has already said why.
+ *
+ *  Complexity: O(1). */
+export async function announceTableEdit(pending, action, status) {
+  const landed = await pending;
+  const key = TABLE_EDIT_ANNOUNCEMENTS[action];
+  if (landed && key && status) status(t(key));
+  return landed;
+}
+
 /** Even distribution, by `data-table-distribute`. */
 export const TABLE_DISTRIBUTE_ACTIONS = Object.freeze({
   rows: (doc, node) => doc.distributeTableRows(node),
@@ -163,6 +201,7 @@ export function bindTableBand({
   clearTableSelection,
   selectTableContext,
   caretTableColumn,
+  status,
 }) {
   /** The caret's node, or null when there is nothing to act on. */
   const caretNode = () => (getDoc() && getSelection() ? getSelection().focus.node : null);
@@ -187,14 +226,16 @@ export function bindTableBand({
       // accent fill is dropped before the edit rather than left claiming a
       // selection the new grid no longer has.
       clearTableSelection();
-      runEdit(() => operation(getDoc(), node), { gate: true });
+      const action = control.dataset.tableAction;
+      announceTableEdit(runEdit(() => operation(getDoc(), node), { gate: true }), action, status);
     });
   }
 
   for (const control of root.querySelectorAll("[data-table-distribute]")) {
     bind(control, TABLE_DISTRIBUTE_ACTIONS, control.dataset.tableDistribute, (operation, node) => {
       clearTableSelection();
-      runEdit(() => operation(getDoc(), node), { gate: true });
+      const action = control.dataset.tableDistribute;
+      announceTableEdit(runEdit(() => operation(getDoc(), node), { gate: true }), action, status);
     });
   }
 
@@ -211,7 +252,8 @@ export function bindTableBand({
       const node = caretNode();
       if (!node) return;
       const column = caretTableColumn(node);
-      runEdit(() => getDoc().sortTable(node, direction, column), { gate: true });
+      const sorted = runEdit(() => getDoc().sortTable(node, direction, column), { gate: true });
+      announceTableEdit(sorted, direction, status);
     });
   }
 

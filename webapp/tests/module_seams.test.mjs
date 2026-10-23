@@ -450,8 +450,14 @@ const SRC = new URL("../src/", import.meta.url);
  *
  *  16,042 on the merge of the two: each branch measured 16,044 against its
  *  own base, and the two reductions do not overlap. MEASURED with `wc -l` on
- *  the merged tree. */
-const MAIN_JS_LINE_CEILING = 16042;
+ *  the merged tree.
+ *
+ *  16,032 -> 16,030 by the table chrome round (`109` HF-341..HF-346): the
+ *  structural-edit announcements cost two host bindings (the band's and the
+ *  command tree's `status`), paid for by folding both `clearTableSelection`
+ *  arrows to one line each; the scroll re-hover lives in `table_gutter.mjs`.
+ *  MEASURED with `wc -l`. */
+const MAIN_JS_LINE_CEILING = 16030;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

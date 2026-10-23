@@ -259,8 +259,10 @@ test("the + disc inserts at the boundary the pointer is on, not at the caret", a
 
   const at = await findRowStrip(page, { top: cell.y, height: cell.h });
   expect(at).not.toBeNull();
-  // Move onto the boundary BELOW the second row — the table's own trailing edge.
+  // Move onto the boundary BELOW the second row — the table's own trailing edge —
+  // in the disc lane, one 24px target beyond the strip (HF-341).
   const discY = box.y + cell.y + cell.h * 2;
+  at.x = box.x + cell.x - 33;
   await page.mouse.move(at.x, discY);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
   const disc = page.locator(".overlay .table-insert-target");
@@ -322,22 +324,30 @@ test("the accessibility mirror expresses the cell selection, not only the fill",
   expect(consoleErrors).toEqual([]);
 });
 
-test("the gutter arms by ENTERING the table, so the line above one is still that line", async ({
+test("the line above a table is still that line: no strip over it, and a press places the caret", async ({
   page,
   consoleErrors,
 }) => {
-  // The column strip is a 14px band directly above the table, and body text
-  // frequently sits in it. Arming on proximity alone made the paragraph above a
-  // table report a column strip — and a press there would have selected a column
-  // instead of placing the caret in that paragraph. The pointer-cursor sweep
-  // caught it as "a form checkbox one line above a table stopped being a
-  // control", which is the same defect seen from the other end.
+  // The column strip used to reach 14px up over whatever was there, and body
+  // text frequently sits there: hovering the paragraph above a table reported a
+  // column strip, and a press selected a column instead of placing the caret (a
+  // form checkbox one line above a table stopped being a control). The gutter
+  // now arms on approach (HF-343), so the guarantee is held by geometry rather
+  // than by arming late: no lane is ever drawn over a line box (HF-344).
   await insertTable(page, 3, 3);
   const cell = await activeCell(page);
   const box = await stableBox(page.locator(".page-wrap .page").first());
-  const justAbove = { x: box.x + cell.x + cell.w / 2, y: box.y + cell.y - 4 };
+  await moveCaretToDocStart(page);
+  await page.keyboard.press("Shift+End");
+  const line = await page.evaluate(() => {
+    const all = [...document.querySelectorAll(".overlay .highlight")].map((el) => el.getBoundingClientRect());
+    const last = all[all.length - 1];
+    return { y: last.y, h: last.height };
+  });
+  await page.keyboard.press("ArrowRight");
+  const onTheLine = { x: box.x + cell.x + cell.w / 2, y: line.y + line.h - 2 };
 
-  await page.mouse.move(justAbove.x, justAbove.y);
+  await page.mouse.move(onTheLine.x, onTheLine.y);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
   await expect(page.locator(".overlay .table-column-strip")).toHaveCount(0);
   const target = await page.evaluate(
@@ -346,7 +356,7 @@ test("the gutter arms by ENTERING the table, so the line above one is still that
   expect(target, "the router must still speak for the text under the pointer").not.toBe("");
 
   // …and a press there places a caret rather than selecting a column.
-  await page.mouse.click(justAbove.x, justAbove.y);
+  await page.mouse.click(onTheLine.x, onTheLine.y);
   await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
 });
@@ -643,12 +653,11 @@ test("selecting on the border does not cost the resize: both survive, a few pixe
   );
 
   // ON the border where an inner row boundary crosses it — the one place the
-  // two gestures really do meet. The gutter still owns it, as the `+` disc that
-  // inserts at that boundary, and no resize is promised.
+  // two gestures really do meet. The gutter still owns it, as the select strip
+  // (the `+` disc for that boundary is one lane further out, HF-341), and no
+  // resize is promised: the boundary zone starts past the strip (HF-342).
   const cross = await owner(box.x + border.at, box.y + crossing);
-  expect(cross.klass, "the gutter owns the crossing, as its insert disc").toContain(
-    "table-insert-target",
-  );
+  expect(cross.klass, "the gutter owns the crossing, as its strip").toContain("table-row-strip");
   expect(cross.pageCursor, "a resize must not be promised at the crossing either").not.toBe(
     "row-resize",
   );

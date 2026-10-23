@@ -290,6 +290,22 @@ pub struct TableChrome {
     pub column_edges: Vec<TableBoundary>,
     /// Row boundaries, top to bottom; the last one is `outer`.
     pub row_edges: Vec<TableBoundary>,
+    /// The free space above the table on this page: the distance from the
+    /// table's top border up to the bottom of the nearest line box painted
+    /// above it over the table's own width, or up to the sheet's top edge when
+    /// no line is there. Body, header, footer, note and text-box lines all
+    /// count.
+    ///
+    /// The host's column strip and its insert discs live in this space and must
+    /// never cover a line of text (`docs/171` §7 item 6, HF-344): Word and
+    /// Docs never put a table affordance over the paragraph above, and a press
+    /// there must place the caret in that paragraph.
+    pub clear_above: Twip,
+    /// The free space before the table's leading (left) border, level with its
+    /// rows: the distance to the nearest line box painted beside it on that
+    /// side, or to the sheet's left edge. Where the row strip and its discs
+    /// live, under the same rule.
+    pub clear_before: Twip,
 }
 
 /// A read-only view over a [`PaginatedLayout`] that maps between screen geometry
@@ -627,7 +643,44 @@ impl<'a> LayoutSnapshot<'a> {
                 &mut rows,
             );
         }
-        chrome_from_rows(rows)
+        let mut chrome = chrome_from_rows(rows);
+        if chrome.is_empty() {
+            return chrome;
+        }
+        let lines = self.lines_painted_on(page_number);
+        for table in &mut chrome {
+            let (above, before) = clearance(&lines, table.rect);
+            table.clear_above = above;
+            table.clear_before = before;
+        }
+        chrome
+    }
+
+    /// Every line box painted on page `page_number`: its body, its text boxes,
+    /// its header, footer and notes. Unlike `line_boxes_with_running` this
+    /// walks ONE page, so it is O(fragments on the page) and never
+    /// O(document): it runs on the table-chrome query, which a repaint asks.
+    fn lines_painted_on(&self, page_number: u32) -> Vec<LineBox<'a>> {
+        let mut out = self.line_boxes_on(page_number);
+        out.extend(self.text_box_line_boxes(page_number));
+        for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
+            let running = page
+                .header
+                .iter()
+                .chain(page.footer.iter())
+                .chain(page.footnotes.iter());
+            for placed in running {
+                collect_fragment(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    page.number,
+                    None,
+                    &mut out,
+                );
+            }
+        }
+        out
     }
 
     /// One rectangle per line-fragment the `range` covers, in page-local twips,
@@ -1506,7 +1559,44 @@ fn chrome_for_table(table: NodeId, rows: &[ChromeRow]) -> Option<TableChrome> {
         rows: u32::try_from(rows.len()).unwrap_or(u32::MAX),
         column_edges,
         row_edges,
+        // Filled by `table_chrome_on_page`, which holds the page's lines; the
+        // whole page is free until it has looked.
+        clear_above: top,
+        clear_before: left,
     })
+}
+
+/// The free space above and before `table`, measured against `lines`: the
+/// page-local `(above, before)` distances [`TableChrome::clear_above`] and
+/// [`TableChrome::clear_before`] document.
+///
+/// A line's horizontal extent is its INKED span (the caret slots it holds, the
+/// same span a selection highlight fills), widened to one twip for an empty
+/// line so an empty paragraph above a table still counts as text. Its vertical
+/// extent is the full line box.
+///
+/// **Complexity: O(lines on the page)** per table.
+fn clearance(lines: &[LineBox<'_>], table: Rect) -> (Twip, Twip) {
+    let (left, top) = (table.origin.x.raw(), table.origin.y.raw());
+    let (right, bottom) = (left + table.size.width.raw(), top + table.size.height.raw());
+    let mut above = top.max(0);
+    let mut before = left.max(0);
+    for lb in lines {
+        let stops = stops_for(lb.line, lb.left);
+        let lo = line_left(&stops).raw();
+        let hi = line_right(&stops).raw().max(lo + 1);
+        let (line_top, line_bottom) = (lb.top.raw(), lb.bottom());
+        // Above: ends at or above the table's top, over the table's width.
+        if line_bottom <= top && hi > left && lo < right {
+            above = above.min(top - line_bottom);
+        }
+        // Before: level with the table's rows and ending at or before its left
+        // border.
+        if line_top < bottom && line_bottom > top && hi <= left {
+            before = before.min(left - hi);
+        }
+    }
+    (Twip(above), Twip(before))
 }
 
 /// The page-local border box of the innermost table cell containing paragraph
@@ -4033,6 +4123,47 @@ mod table_chrome_tests {
     /// A nested table is reported beside its host rather than swallowed by it, so
     /// the chrome layer behaves the same inside a cell as in the body (the
     /// uniform-pipeline rule).
+    /// The column strip must never cover the line above a table (HF-344), so
+    /// the chrome reports how much free space there is, measured from layout.
+    /// A table first on the page has the whole top margin; one directly below a
+    /// paragraph has exactly the gap between that paragraph's line box and the
+    /// table's top border, which is zero here.
+    #[test]
+    fn chrome_reports_the_free_space_above_and_before_a_table() {
+        let paginated = paginate(&grid(2, 3), &letter_config());
+        let chrome = LayoutSnapshot::new(&paginated).table_chrome_on_page(1);
+        assert_eq!(
+            chrome[0].clear_above.raw(),
+            MARGIN,
+            "first on the page: the top margin"
+        );
+        assert_eq!(
+            chrome[0].clear_before.raw(),
+            MARGIN,
+            "nothing beside it: the left margin"
+        );
+
+        let mut blocks = vec![para(50)];
+        blocks.extend(grid(2, 3));
+        let paginated = paginate(&blocks, &letter_config());
+        let chrome = LayoutSnapshot::new(&paginated).table_chrome_on_page(1);
+        assert_eq!(
+            chrome[0].rect.origin.y.raw(),
+            MARGIN + 200,
+            "below the 200-twip line"
+        );
+        assert_eq!(
+            chrome[0].clear_above.raw(),
+            0,
+            "the line above ends on the table's top border"
+        );
+        assert_eq!(
+            chrome[0].clear_before.raw(),
+            MARGIN,
+            "the line above is not beside the table"
+        );
+    }
+
     #[test]
     fn a_nested_table_is_reported_as_its_own_table() {
         let mut outer = grid(1, 2);
