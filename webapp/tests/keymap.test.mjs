@@ -15,13 +15,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 
 import { APPLE_PLATFORM, STANDARD_PLATFORM, matchesShortcut, parseShortcut } from "../src/keyboard.mjs";
 import { APP_SCOPE, EDITOR_SCOPE, KEYMAP, chordCommand, chordTitle, shortcutForCommand } from "../src/keymap.mjs";
 import { QUICK_STYLES } from "../src/quick_styles.mjs";
 import { REGION_COMMAND_IDS } from "../src/region_focus.mjs";
 
-const MAIN_JS = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+// `main.js` and the domain modules split out of it (docs/177): the editor page's code.
+const MAIN_JS = editorSource(fileURLToPath(new URL("../src/", import.meta.url)));
 const PLATFORMS = [APPLE_PLATFORM, STANDARD_PLATFORM];
 
 /** The keystroke a declared chord describes, as the fields a `keydown` carries.
@@ -152,7 +155,10 @@ const EDITOR_COMMANDS_SOURCE = (() => {
   // before `start` and took the whole scan with it.
   const returned = MAIN_JS.indexOf("cmds.filter(", start);
   assert.ok(returned > start, "editorCommands() no longer ends by filtering `cmds`");
-  const end = MAIN_JS.indexOf("\n}", returned);
+  // The closing brace at the function's own indentation: column 0 in `main.js`,
+  // two spaces inside a `create*(ed)` factory (docs/177).
+  const indent = MAIN_JS.slice(MAIN_JS.lastIndexOf("\n", start) + 1, start).match(/^\s*/)[0];
+  const end = MAIN_JS.indexOf(`\n${indent}}`, returned);
   assert.ok(end > start, "the end of editorCommands() could not be found");
   return MAIN_JS.slice(start, end);
 })();
@@ -166,7 +172,7 @@ const EDITOR_COMMANDS_SOURCE = (() => {
 const TABLE_COMMAND_IDS = (() => {
   assert.match(
     EDITOR_COMMANDS_SOURCE,
-    /flattenCommandTree\(tableToolCommands\(/,
+    /flattenCommandTree\((?:ed\.)?tableToolCommands\(/,
     "editorCommands() no longer composes tableToolCommands(); the table ids below " +
       "are no longer in the registry and every table chord is dead",
   );
@@ -191,7 +197,7 @@ const SPACING_COMMAND_IDS = (() => {
   );
   assert.match(
     EDITOR_COMMANDS_SOURCE,
-    /spacingMenuControl\.commands\(/,
+    /(?:ed\.)?spacingMenuControl\.commands\(/,
     "editorCommands() no longer composes the spacing command rows, so they are " +
       "not in the registry and the ⌘1 / ⌘5 / ⌘2 chords are dead",
   );
@@ -218,7 +224,7 @@ const SPACING_COMMAND_IDS = (() => {
 const BREAK_COMMAND_IDS = (() => {
   assert.match(
     EDITOR_COMMANDS_SOURCE,
-    /\.\.\.LAYOUT_SURFACE\.filter\(\(entry\) => entry\.label\)\.map\(/,
+    /\.\.\.(?:ed\.)?LAYOUT_SURFACE\.filter\(\(entry\) => entry\.label\)\.map\(/,
     "editorCommands() no longer maps LAYOUT_SURFACE into palette rows, so the " +
       "break commands are not in the registry and ⌘⏎ is dead",
   );

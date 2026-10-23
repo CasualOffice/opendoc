@@ -6,6 +6,8 @@
 // under Word's internal spelling and the editor printed what was stored. Word
 // shows "Heading 1", "Caption" and "Macro Text" (`desk-08c`, `desk-08f`).
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
@@ -50,7 +52,7 @@ test("every surface that prints a paragraph style name prints it through styleDi
   // The four places a reader meets a style name in `main.js`: a Styles-menu
   // option, the trigger's own label, the palette row and Paragraph properties'
   // Style list. Each used to print the stored name directly.
-  const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+  const main = editorSource(fileURLToPath(new URL("../src/", import.meta.url))); // main.js and its domain modules (docs/177)
   for (const site of [
     "label.textContent = styleDisplayName(name);",
     'stylesTriggerLabel.textContent = styleDisplayName(active || "Normal");',
