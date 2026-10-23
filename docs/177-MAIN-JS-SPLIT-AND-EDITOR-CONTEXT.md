@@ -60,11 +60,15 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_context_menu.mjs` | `createContextMenu` | The context-aware editor menu: what a right-click offers | 643 |
 | `editor_dialogs.mjs` | `createDialogs` | Shortcuts reference, About, bookmarks, Insert field / picture, captions and cross-references, Symbol / Emoji | 470 |
 | `editor_dirty.mjs` | `createDirtyTracking` | Unsaved-work tracking: saved and current revisions, the dirty answer | 134 |
+| `editor_doc_tools.mjs` | `createDocTools` | Formatting marks, measurement units, access chrome, protection, Compare | 99 |
 | `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
 | `editor_edit_pipeline.mjs` | `createEditPipeline` | The edit choke point: `runEdit`, `applyEditResult`, typing sessions, mode gates | 202 |
 | `editor_file_open.mjs` | `createFileOpen` | Boot, demo presets, a blank document, `openBytes`, and the header rename | 420 |
+| `editor_file_page.mjs` | `createFilePage` | The compact menu bar and the ribbon File page | 143 |
 | `editor_file_pick.mjs` | `createFilePick` | Opening a picked or dropped file: size ceiling and handleFile | 67 |
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
+| `editor_font_color.mjs` | `createFontColor` | Text colour and highlight popovers, recent colours, underline styles | 253 |
+| `editor_font_menu.mjs` | `createFontMenu` | Font family menu, grow / shrink font, change case, list galleries | 167 |
 | `editor_format_painter.mjs` | `createFormatPainter` | Format painter, font size, indents, line break, checklist toggle | 348 |
 | `editor_formatting.mjs` | `createFormatting` | Formatting toolbar state: run format, font and underline faces, toggles, table styles | 299 |
 | `editor_header_footer.mjs` | `createHeaderFooter` | Header and footer editing: running bands, markers, notes | 478 |
@@ -78,6 +82,7 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_paint.mjs` | `createPaint` | Page virtualization and painting (renderAll stays in main.js) | 232 |
 | `editor_palette.mjs` | `createPalette` | Command palette and `editorCommands()`, the registry of editor actions | 652 |
 | `editor_palette_ui.mjs` | `createPaletteUi` | The palette's surface: filtered list, row selection, run by row or id, its keyboard | 222 |
+| `editor_paragraph_inspector.mjs` | `createParagraphInspector` | Paragraph properties inspector, indents, shading, text colour / highlight | 231 |
 | `editor_pointer.mjs` | `createPointer` | Pointer input, links and the link chip, table chrome, hover, touch, drag selection, copy | 948 |
 | `editor_proofing.mjs` | `createProofing` | Proofing chrome, the overlay layer and drawSelection | 191 |
 | `editor_review_decisions.mjs` | `createReviewDecisions` | Review decisions: inline accept/reject card, Next/Previous over comments and changes, decisions at the caret | 539 |
@@ -86,11 +91,15 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_selection_commands.mjs` | `createSelectionCommands` | Caret to a position, Page Up / Page Down, Select all | 97 |
 | `editor_selection_toolbar.mjs` | `createSelectionToolbar` | The floating selection toolbar | 73 |
 | `editor_settings.mjs` | `createSettings` | Settings dialog: theme, accent, reviewer identity, autosave and proofing switches; localisation start | 205 |
+| `editor_shape_chrome.mjs` | `createShapeChrome` | Shape Fill / Outline menus and the object chip Arrange, Position, Rotate menus | 245 |
+| `editor_shape_gallery.mjs` | `createShapeGallery` | Insert > Shapes gallery and the spacing menu | 96 |
+| `editor_table_format.mjs` | `createTableFormat` | Table and cell format menu, table popover, breaks menu | 42 |
+| `editor_table_props.mjs` | `createTableProps` | Table band, merge / split cells, Table properties, the size grid | 224 |
 | `editor_text_input.mjs` | `createTextInput` | Soft keyboards and dictation; AutoCorrect as you type | 110 |
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 | `editor_zoom.mjs` | `createZoom` | Zoom: editable %, Fit width / Fit page, Ctrl+scroll (setZoom stays in main.js) | 120 |
 
-`main.js`: 16,030 lines when the split began, 6,311 now. The domain modules hold 10,802.
+`main.js`: 16,030 lines when the split began, 5,038 now. The domain modules hold 12,302.
 
 ## 4. What is left for HF-109
 

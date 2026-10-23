@@ -4,19 +4,11 @@
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
-import { open, beginVersionDiff, defaultDiffSlice } from "../pkg/casual_doc_wasm.js";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
 // with nothing loaded — which is also why they are handed to
 // `measurement_units.mjs` rather than reached for there (that module stays
 // browser-free and engine-free, so its policy is answerable in node).
-import {
-  decimalSeparatorForLanguage,
-  defaultMeasurementUnit,
-  formatMeasurement,
-  measurementUnits,
-  parseMeasurement,
-} from "../pkg/casual_doc_wasm.js";
 import {
   NAMED_WEB_FONT_FACES,
   SCRIPT_FALLBACK_FONTS,
@@ -24,14 +16,10 @@ import {
   fetchSharedFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { escapeHtml } from "./text_rules.mjs";
-import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
-import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
-import { EXPORT_COMMANDS } from "./export_commands.mjs";
+import { breakSurfaceRows } from "./break_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
-import { createSpacingMenu } from "./spacing_menu.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import {
   reflectReviewSurface,
@@ -42,8 +30,7 @@ import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
-import { wireListGallery } from "./list_gallery_wiring.mjs";
-import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
 import { createCompatibilityFindings } from "./compat_findings.mjs";
@@ -60,38 +47,26 @@ import {
   pageBandPitch,
   scrollToDoc,
 } from "./page_scroll.mjs";
-import {
-  formatInfo,
-} from "./format_io.mjs";
-import { formatShortcut, keyboardPlatform } from "./keyboard.mjs";
+import { keyboardPlatform } from "./keyboard.mjs";
 import { chordTitle } from "./keymap.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 import { objectBarPosition } from "./object_guides.mjs";
 // Own lines (anti-conflict): the two direct-manipulation geometry gestures.
 import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
-import { renderShapeMenu } from "./shape_format_menu.mjs";
-import { POSITION_PRESETS, ROTATE_CHOICES, Z_ORDER_CHOICES, positionAvailability, positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
-import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
-import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
-import { activeLocale, t } from "./i18n.mjs";
+import { positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
+import { t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs";
 import { localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
-import { createFormattingMarks } from "./formatting_marks.mjs";
-import { createMeasurementUnits } from "./measurement_units.mjs";
-import { createDocumentProtection } from "./document_protection.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
-import { closeAllPopovers, onButton, openPopover } from "./popover_manager.mjs";
+import { onButton } from "./popover_manager.mjs";
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
-import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
-import { createAccessChrome } from "./access_chrome.mjs";
-import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 // Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
 import { createCollaborationShell } from "./collab_shell.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
@@ -110,7 +85,7 @@ import {
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, createReviewBanners, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
 import { commentEditButton, commentEditor, commentQuoteElement, createCommentEditState, createCommentQuotes } from "./review_comment_card.mjs";
-import { makeMenuHeading, makeSwatchCell, makeSwatchGrid, makeUnderlineStyleOption, renderColorMenu as renderColorMenuChrome } from "./picker_chrome.mjs";
+import { makeMenuHeading } from "./picker_chrome.mjs";
 import {
   formatReviewDate,
   reviewAuthorColor,
@@ -122,16 +97,9 @@ import {
   reviewRevisionTooltip,
 } from "./review_labels.mjs";
 import {
-  recaseRichRuns,
-} from "./text_rules.mjs";
-import {
   TWIPS_PER_INCH,
-  inchesToTwips,
-  optionalInchesToTwips,
   round2,
-  signedInchesToTwips,
   twipsToDialogInches,
-  twipsToInchText,
 } from "./units.mjs";
 import {
   documentStateBadge,
@@ -141,43 +109,25 @@ import {
 } from "./status_policy.mjs";
 import { createStatusChannel } from "./status_channel.mjs";
 import {
-  APP_MENU_SECTIONS,
-} from "./command_taxonomy.mjs";
-import { fileMenuSections } from "./command_taxonomy.mjs";
-import {
-  createMenuBar,
-  renderCommandRows,
   renderExportPane,
   renderFilePageInfo,
 } from "./command_menu.mjs";
 import {
-  fileCategoryRowFor,
   showSettingsPane,
   releaseSettingsPanel,
-  renderFilePane,
-  setFilePane,
 } from "./file_pane.mjs";
-import { revealOnSettings } from "./surface_reveal.mjs";
 
 /** Settings' two homes, for `revealOnSettings`. The gear is deliberately NOT
  *  routed through this: it TOGGLES, which is a real difference. */
 const SETTINGS_SURFACE = { showPane: () => showSettingsPane(), openDialog: () => toggleSettings(true) };
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
-import {
-  DOCUMENT_TEMPLATES,
-  templateBytes,
-  templateName,
-  templateThumbnail,
-} from "./blank_document.mjs";
 import { createTableRange } from "./table_range.mjs";
-import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createFontAdvanced } from "./font_advanced.mjs";
 import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
-import { announceTableEdit, bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
-import { createTableGridPicker } from "./table_grid_picker.mjs";
+import { tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { createRegionCycle } from "./region_focus.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
@@ -216,6 +166,15 @@ import { createOverlayPaint } from "./editor_overlay_paint.mjs";
 import { createPointer } from "./editor_pointer.mjs";
 import { createSelection } from "./editor_selection.mjs";
 import { createObjects } from "./editor_objects.mjs";
+import { createFontColor } from "./editor_font_color.mjs";
+import { createShapeChrome } from "./editor_shape_chrome.mjs";
+import { createFontMenu } from "./editor_font_menu.mjs";
+import { createShapeGallery } from "./editor_shape_gallery.mjs";
+import { createParagraphInspector } from "./editor_paragraph_inspector.mjs";
+import { createTableFormat } from "./editor_table_format.mjs";
+import { createDocTools } from "./editor_doc_tools.mjs";
+import { createTableProps } from "./editor_table_props.mjs";
+import { createFilePage } from "./editor_file_page.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -223,6 +182,7 @@ import { createObjects } from "./editor_objects.mjs";
 const ed = {
   get AUTOSAVE_ALLOWED_HERE() { return AUTOSAVE_ALLOWED_HERE; },
   get BASE_DPI() { return BASE_DPI; },
+  get BREAK_IO() { return BREAK_IO; },
   get EDITOR_KEYBOARD_PLATFORM() { return EDITOR_KEYBOARD_PLATFORM; },
   get HOST_CAPS() { return HOST_CAPS; },
   get HOST_CHROME() { return HOST_CHROME; },
@@ -237,6 +197,7 @@ const ed = {
   get SESSION() { return SESSION; },
   get SETTINGS_SURFACE() { return SETTINGS_SURFACE; },
   get SHAPE_MENU_COLORS() { return SHAPE_MENU_COLORS; },
+  get TWIPS_PER_POINT() { return TWIPS_PER_POINT; },
   get TYPING_PAUSE_MS() { return TYPING_PAUSE_MS; },
   get UNDERLINE_STYLE_LABELS() { return UNDERLINE_STYLE_LABELS; },
   get ZOOM_MAX() { return ZOOM_MAX; },
@@ -257,9 +218,11 @@ const ed = {
   get applyEditResult() { return applyEditResult; },
   get applyFontFamily() { return applyFontFamily; },
   get applyFontSize() { return applyFontSize; },
+  get applyHighlight() { return applyHighlight; },
   get applyListFormatCommand() { return applyListFormatCommand; },
   get applyShapeFill() { return applyShapeFill; },
   get applyShapeOutline() { return applyShapeOutline; },
+  get applyTextColor() { return applyTextColor; },
   get applyUnderlineStyle() { return applyUnderlineStyle; },
   get armBackgroundMeasure() { return armBackgroundMeasure; },
   get armFormatPainter() { return armFormatPainter; },
@@ -279,11 +242,16 @@ const ed = {
   get buildCommands() { return buildCommands; },
   get buildContextCommands() { return buildContextCommands; },
   get buildOutline() { return buildOutline; },
+  get buildShortcutsReference() { return buildShortcutsReference; },
   get bulletGalleryMenu() { return bulletGalleryMenu; },
   get bulletListBtn() { return bulletListBtn; },
+  get bulletListMenuBtn() { return bulletListMenuBtn; },
   get cancelCrop() { return cancelCrop; },
   get cancelObjectMove() { return cancelObjectMove; },
   get caretIsImplicit() { return caretIsImplicit; },
+  get caretTableColumn() { return caretTableColumn; },
+  get changeCaseBtn() { return changeCaseBtn; },
+  get changeCaseMenu() { return changeCaseMenu; },
   get chartSurface() { return chartSurface; },
   get checkListBtn() { return checkListBtn; },
   get chromeShows() { return chromeShows; },
@@ -372,6 +340,7 @@ const ed = {
   get exitRunningEdit() { return exitRunningEdit; },
   get exportDocumentAs() { return exportDocumentAs; },
   get fileEl() { return fileEl; },
+  get filePageBody() { return filePageBody; },
   get findSession() { return findSession; },
   get finishObjectMove() { return finishObjectMove; },
   get fmtButtons() { return fmtButtons; },
@@ -383,12 +352,17 @@ const ed = {
   get fontFamilyBtn() { return fontFamilyBtn; },
   get fontFamilyLabel() { return fontFamilyLabel; },
   get fontInventory() { return fontInventory; },
+  get fontMenu() { return fontMenu; },
+  get fontMenuEmpty() { return fontMenuEmpty; },
+  get fontMenuInput() { return fontMenuInput; },
+  get fontMenuList() { return fontMenuList; },
   get fontSizeSel() { return fontSizeSel; },
   get fontState() { return fontState; }, set fontState(v) { fontState = v; },
   get formatPainter() { return formatPainter; }, set formatPainter(v) { formatPainter = v; },
   get formatPainterBtn() { return formatPainterBtn; },
   get formattingMarks() { return formattingMarks; },
   get grammarCheckToggle() { return grammarCheckToggle; },
+  get growFontBtn() { return growFontBtn; },
   get handOverDraftBeforeOpen() { return handOverDraftBeforeOpen; },
   get handleFile() { return handleFile; },
   get hasRange() { return hasRange; },
@@ -398,11 +372,19 @@ const ed = {
   get hideLinkChip() { return hideLinkChip; },
   get hidePasteOptions() { return hidePasteOptions; },
   get hideRunningMarker() { return hideRunningMarker; },
+  get highlightApplyBtn() { return highlightApplyBtn; },
+  get highlightBar() { return highlightBar; },
+  get highlightCaret() { return highlightCaret; },
+  get highlightMenu() { return highlightMenu; },
   get highlightPopover() { return highlightPopover; },
   get hostSession() { return hostSession; },
   get implicitCaretAt() { return implicitCaretAt; }, set implicitCaretAt(v) { implicitCaretAt = v; },
   get indentDecBtn() { return indentDecBtn; },
   get indentIncBtn() { return indentIncBtn; },
+  get indentLeftInput() { return indentLeftInput; },
+  get indentRightInput() { return indentRightInput; },
+  get indentSpecialByInput() { return indentSpecialByInput; },
+  get indentSpecialSel() { return indentSpecialSel; },
   get insertChartWithData() { return insertChartWithData; },
   get insertCommandEnabled() { return insertCommandEnabled; },
   get insertFieldAtCaret() { return insertFieldAtCaret; },
@@ -410,14 +392,18 @@ const ed = {
   get insertImageFromFile() { return insertImageFromFile; },
   get insertLineBreakAtSelection() { return insertLineBreakAtSelection; },
   get insertNote() { return insertNote; },
+  get insertShapeBtn() { return insertShapeBtn; },
   get insertShapeObject() { return insertShapeObject; },
   get insertTableBtn() { return insertTableBtn; },
+  get insertTableMenu() { return insertTableMenu; },
   get insertTextBoxObject() { return insertTextBoxObject; },
   get insideGroupSelection() { return insideGroupSelection; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
   get keyboardLevelIndex() { return keyboardLevelIndex; }, set keyboardLevelIndex(v) { keyboardLevelIndex = v; },
   get keyboardObjectMove() { return keyboardObjectMove; },
   get labelledObjectMenuButton() { return labelledObjectMenuButton; },
+  get lastHighlight() { return lastHighlight; }, set lastHighlight(v) { lastHighlight = v; },
+  get lastTextColor() { return lastTextColor; }, set lastTextColor(v) { lastTextColor = v; },
   get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
   get leaveSharedDocument() { return leaveSharedDocument; },
   get linkAt() { return linkAt; },
@@ -433,6 +419,7 @@ const ed = {
   get materializedPages() { return materializedPages; },
   get measurement() { return measurement; },
   get menuLevels() { return menuLevels; }, set menuLevels(v) { menuLevels = v; },
+  get mergeCellsBtn() { return mergeCellsBtn; },
   get navByViewport() { return navByViewport; },
   get navCaret() { return navCaret; },
   get navToPosition() { return navToPosition; },
@@ -444,6 +431,7 @@ const ed = {
   get nudgeSelectedObject() { return nudgeSelectedObject; },
   get numberGalleryMenu() { return numberGalleryMenu; },
   get numberedListBtn() { return numberedListBtn; },
+  get numberedListMenuBtn() { return numberedListMenuBtn; },
   get objectArrange() { return objectArrange; },
   get objectArrangeBtn() { return objectArrangeBtn; },
   get objectCapabilities() { return objectCapabilities; },
@@ -494,7 +482,19 @@ const ed = {
   get paintReviewMarkers() { return paintReviewMarkers; },
   get paintSelection() { return paintSelection; },
   get paintSnapGuides() { return paintSnapGuides; },
+  get paraBordersMixed() { return paraBordersMixed; },
+  get paraLineSpacing() { return paraLineSpacing; },
+  get paraOptsBtn() { return paraOptsBtn; },
+  get paraPanelAlign() { return paraPanelAlign; },
+  get paraPanelStyle() { return paraPanelStyle; },
+  get paraShade() { return paraShade; },
+  get paraShadeMixed() { return paraShadeMixed; },
+  get paraShadeNone() { return paraShadeNone; },
+  get paraSpaceAfter() { return paraSpaceAfter; },
+  get paraSpaceBefore() { return paraSpaceBefore; },
   get paragraphAdvanced() { return paragraphAdvanced; },
+  get paragraphPropertiesContext() { return paragraphPropertiesContext; },
+  get paragraphPropertiesPanel() { return paragraphPropertiesPanel; },
   get paragraphRevisionRects() { return paragraphRevisionRects; },
   get paste() { return paste; },
   get pasteAsText() { return pasteAsText; },
@@ -502,6 +502,9 @@ const ed = {
   get pasteRichRunsJson() { return pasteRichRunsJson; },
   get pasteText() { return pasteText; },
   get pendingFormat() { return pendingFormat; }, set pendingFormat(v) { pendingFormat = v; },
+  get pgBreakBefore() { return pgBreakBefore; },
+  get pgKeepLines() { return pgKeepLines; },
+  get pgKeepNext() { return pgKeepNext; },
   get pictureReplace() { return pictureReplace; },
   get place() { return place; },
   get plainTableInfo() { return plainTableInfo; },
@@ -523,17 +526,26 @@ const ed = {
   get readOnlyReason() { return readOnlyReason; }, set readOnlyReason(v) { readOnlyReason = v; },
   get readReviewData() { return readReviewData; },
   get reanchorPageOverlays() { return reanchorPageOverlays; },
+  get recentHighlights() { return recentHighlights; },
+  get recentTextColors() { return recentTextColors; },
+  get recordRecent() { return recordRecent; },
   get redlineOf() { return redlineOf; },
   get referenceCommands() { return referenceCommands; },
   get referenceObjectMenuRows() { return referenceObjectMenuRows; },
+  get reflectFontFamily() { return reflectFontFamily; },
+  get reflectHighlightSwatch() { return reflectHighlightSwatch; },
+  get reflectListGallery() { return reflectListGallery; },
+  get reflectShapeFormatState() { return reflectShapeFormatState; },
   get reflectShapeSwatches() { return reflectShapeSwatches; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
+  get reflectTextColorSwatch() { return reflectTextColorSwatch; },
   get reflowView() { return reflowView; },
   get refreshDraftOffers() { return refreshDraftOffers; },
   get refusedObjectDrag() { return refusedObjectDrag; },
   get regionCycle() { return regionCycle; },
   get remotePresence() { return remotePresence; },
   get renderAll() { return renderAll; },
+  get renderCommands() { return renderCommands; },
   get renderFilePage() { return renderFilePage; },
   get renderStylesGallery() { return renderStylesGallery; },
   get repaintPage() { return repaintPage; },
@@ -587,19 +599,28 @@ const ed = {
   get scheduleReviewMarginRender() { return scheduleReviewMarginRender; },
   get scrollCaretIntoView() { return scrollCaretIntoView; },
   get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
+  get scrollModelRectIntoView() { return scrollModelRectIntoView; },
   get scrollOverlayIntoView() { return scrollOverlayIntoView; },
   get scrollReviewSelectionIntoView() { return scrollReviewSelectionIntoView; },
   get searchTrigger() { return searchTrigger; },
   get selComment() { return selComment; },
   get selEndpoints() { return selEndpoints; },
+  get selHighlightBar() { return selHighlightBar; },
+  get selHighlightBtn() { return selHighlightBtn; },
+  get selHighlightMenu() { return selHighlightMenu; },
+  get selTextColorBar() { return selTextColorBar; },
+  get selTextColorBtn() { return selTextColorBtn; },
+  get selTextColorMenu() { return selTextColorMenu; },
   get selectAll() { return selectAll; },
   get selectObject() { return selectObject; },
   get selectRibbonTab() { return selectRibbonTab; },
+  get selectTableContext() { return selectTableContext; },
   get selectedObjectContext() { return selectedObjectContext; },
   get selectedShapeFormat() { return selectedShapeFormat; },
   get selection() { return selection; }, set selection(v) { selection = v; },
   get selectionAutoScrollFrame() { return selectionAutoScrollFrame; }, set selectionAutoScrollFrame(v) { selectionAutoScrollFrame = v; },
   get selectionContainsClientPoint() { return selectionContainsClientPoint; },
+  get selectionModelRect() { return selectionModelRect; },
   get setDocumentState() { return setDocumentState; },
   get setDraftStatus() { return setDraftStatus; },
   get setGrammarCheckEnabled() { return setGrammarCheckEnabled; },
@@ -607,6 +628,7 @@ const ed = {
   get setReviewMode() { return setReviewMode; },
   get setRibbonCollapsed() { return setRibbonCollapsed; },
   get setRunningContext() { return setRunningContext; },
+  get setShowingChanges() { return setShowingChanges; },
   get setSpellCheckEnabled() { return setSpellCheckEnabled; },
   get setStatus() { return setStatus; },
   get setZoom() { return setZoom; },
@@ -622,11 +644,20 @@ const ed = {
   get showDraftRecovery() { return showDraftRecovery; },
   get showImePreedit() { return showImePreedit; },
   get showReviewInlineCard() { return showReviewInlineCard; },
+  get showVersionPreview() { return showVersionPreview; },
   get showingChanges() { return showingChanges; }, set showingChanges(v) { showingChanges = v; },
+  get shrinkFontBtn() { return shrinkFontBtn; },
   get snapContextFor() { return snapContextFor; },
   get spacingMenuControl() { return spacingMenuControl; },
   get spellCheckToggle() { return spellCheckToggle; },
   get spellChecker() { return spellChecker; },
+  get splitCellBtn() { return splitCellBtn; },
+  get splitCellCancel() { return splitCellCancel; },
+  get splitCellClose() { return splitCellClose; },
+  get splitCellColumns() { return splitCellColumns; },
+  get splitCellConfirm() { return splitCellConfirm; },
+  get splitCellDialog() { return splitCellDialog; },
+  get splitCellRows() { return splitCellRows; },
   get startCollaboration() { return startCollaboration; },
   get startDrafts() { return startDrafts; },
   get startObjectMove() { return startObjectMove; },
@@ -646,15 +677,41 @@ const ed = {
   get syncSelectionToCellRange() { return syncSelectionToCellRange; },
   get syncStylesGalleryActive() { return syncStylesGalleryActive; },
   get tabStopsDialog() { return tabStopsDialog; },
+  get tableAlign() { return tableAlign; },
   get tableBtn() { return tableBtn; },
+  get tableCaption() { return tableCaption; },
+  get tableCellMargin() { return tableCellMargin; },
+  get tableCellSpacing() { return tableCellSpacing; },
   get tableChrome() { return tableChrome; },
+  get tableColumnWidth() { return tableColumnWidth; },
+  get tableColumnWidthNote() { return tableColumnWidthNote; },
+  get tableDescription() { return tableDescription; },
+  get tableFixedLayout() { return tableFixedLayout; },
+  get tableFmtMenu() { return tableFmtMenu; },
+  get tableFormula() { return tableFormula; },
+  get tableFormulaApply() { return tableFormulaApply; },
   get tableGutter() { return tableGutter; },
+  get tableHeaderRow() { return tableHeaderRow; },
+  get tableIndent() { return tableIndent; },
+  get tablePopover() { return tablePopover; },
+  get tablePropertiesBtn() { return tablePropertiesBtn; },
+  get tablePropertiesContext() { return tablePropertiesContext; },
+  get tablePropertiesPanel() { return tablePropertiesPanel; },
   get tableRange() { return tableRange; },
+  get tableRibbon() { return tableRibbon; },
+  get tableRowHeight() { return tableRowHeight; },
+  get tableRowHeightRule() { return tableRowHeightRule; },
   get tableStyleBtn() { return tableStyleBtn; },
   get tableStyleMenu() { return tableStyleMenu; },
   get tableStylePopover() { return tableStylePopover; }, set tableStylePopover(v) { tableStylePopover = v; },
   get tableToolCommands() { return tableToolCommands; },
+  get tableWidth() { return tableWidth; },
   get takeDraftSnapshot() { return takeDraftSnapshot; },
+  get textColorApplyBtn() { return textColorApplyBtn; },
+  get textColorBar() { return textColorBar; },
+  get textColorCaret() { return textColorCaret; },
+  get textColorInput() { return textColorInput; },
+  get textColorMenu() { return textColorMenu; },
   get textColorPopover() { return textColorPopover; },
   get tocCommands() { return tocCommands; },
   get tocEntryTargetAt() { return tocEntryTargetAt; },
@@ -675,6 +732,8 @@ const ed = {
   get typingSession() { return typingSession; }, set typingSession(v) { typingSession = v; },
   get typingSessionActive() { return typingSessionActive; }, set typingSessionActive(v) { typingSessionActive = v; },
   get typingSessionForKey() { return typingSessionForKey; },
+  get underlineColorInput() { return underlineColorInput; },
+  get underlineMenu() { return underlineMenu; },
   get underlineMenuBtn() { return underlineMenuBtn; },
   get updateImePreedit() { return updateImePreedit; },
   get updateObjectContextBar() { return updateObjectContextBar; },
@@ -4587,435 +4646,16 @@ const {
 // is applied through the very same engine ops the toolbar's own Bold/color/…
 // controls use, so painted formatting is indistinguishable from hand-applied.
 let formatPainter = null; // { fmt, sticky } while armed, else null
-// -- Font family menu, color/highlight pickers, grow/shrink, change case -------
-// (Q1/Q2/Q5) Real dropdown swatch pickers replace the raw OS color input and
-// the native highlight <select>; a searchable font menu replaces the native
-// font <select>; A⁺/A⁻ step the standard sizes; a Change case menu transforms
-// the selection through the existing rich-run copy/paste ops (no new engine op).
-
-// The swatch vocabularies themselves live in `palettes.mjs`: literal data plus
-// one lookup, with the engine-parity guard that keeps the highlight list from
-// falling behind `HighlightColor`.
-
-// Session-remembered recently-used swatches (most-recent first, deduped, capped).
-const recentTextColors = [];
-const recentHighlights = [];
-const recentUnderlineColors = [];
-function recordRecent(list, value) {
-  const i = list.indexOf(value);
-  if (i !== -1) list.splice(i, 1);
-  list.unshift(value);
-  if (list.length > 10) list.length = 10;
-}
-
+const {
+  applyUnderlineStyle, highlightPopover, recentHighlights, recentTextColors, recordRecent,
+  reflectHighlightSwatch, reflectTextColorSwatch, textColorPopover,
+} = createFontColor(ed);
 let lastTextColor = "#000000";
 let lastHighlight = "yellow";
-
-/** Reflect the current text color onto the "A" underline bar (and remember it as
- *  the color the split-button's apply half reapplies). */
-function reflectTextColorSwatch(hex) {
-  if (hex) lastTextColor = hex;
-  textColorBar.style.background = lastTextColor;
-  if (selTextColorBar) selTextColorBar.style.background = lastTextColor;
-}
-/** Reflect the current highlight onto the highlighter bar (transparent for none). */
-function reflectHighlightSwatch(name) {
-  if (name && name !== "none") lastHighlight = name;
-  const hex = name === "none" ? null : highlightHex(name || lastHighlight);
-  highlightBar.style.background = hex || "transparent";
-  highlightBar.classList.toggle("is-none", !hex);
-  if (selHighlightBar) {
-    selHighlightBar.style.background = hex || "transparent";
-    selHighlightBar.classList.toggle("is-none", !hex);
-  }
-}
-
-/** (Re)renders a color picker menu, marking the active swatch and refreshing the
- *  recently-used row. Called on each open via the popover's reflect hook. The
- *  menu's SHAPE is `picker_chrome.mjs`; what is here is the two vocabularies and
- *  the session state that decide which swatch is lit. */
-function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highlightMenu) {
-  const isText = kind === "text";
-  const active = isText ? lastTextColor.toLowerCase() : lastHighlight;
-  renderColorMenuChrome(menu, {
-    kind,
-    swatches: isText ? TEXT_STANDARD_COLORS : HIGHLIGHT_COLORS.map((c) => c.name),
-    recents: isText ? recentTextColors : recentHighlights,
-    colorOf: (v) => (isText ? v : highlightHex(v) ?? "#000000"),
-    labelOf: (v) => (isText ? v.toUpperCase() : HIGHLIGHT_LABEL.get(v) ?? v),
-    matches: (v) => (isText ? v.toLowerCase() === active : v === active),
-  });
-}
-
-/** Builds the combined underline style/color menu from canonical engine tokens.
- *  The explicit Automatic row maps to `Some(None)` in the edit delta. */
-function renderUnderlineMenu() {
-  underlineMenu.replaceChildren();
-  underlineMenu.appendChild(makeMenuHeading("Underline style"));
-  const styleGroup = document.createElement("div");
-  styleGroup.setAttribute("role", "radiogroup");
-  styleGroup.setAttribute("aria-label", "Underline style");
-  for (const [style, label] of UNDERLINE_STYLE_LABELS) {
-    styleGroup.appendChild(makeUnderlineStyleOption(style, label));
-  }
-  underlineMenu.appendChild(styleGroup);
-  // The menu is rebuilt on every open, so the group is bound per render. It is a
-  // real radio group — one of the eleven underline styles is always the current
-  // one — and it now gets the same single Tab stop and arrow behaviour as every
-  // other segmented control instead of eleven Tab stops and dead arrows.
-  bindRadioGroup(styleGroup, {
-    attr: "data-underline-style",
-    onSelect: (style) => applyUnderlineStyle(style),
-  }).reflect(currentUnderlineMixed ? null : currentUnderlineStyle);
-
-  underlineMenu.appendChild(makeMenuHeading("Underline color"));
-  const automatic = document.createElement("button");
-  automatic.type = "button";
-  automatic.className = "color-row-action";
-  automatic.dataset.underlineAuto = "1";
-  automatic.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic (text color)</span>';
-  automatic.classList.toggle("is-active", !currentUnderlineMixed && !currentUnderlineColor);
-  underlineMenu.appendChild(automatic);
-  underlineMenu.appendChild(makeSwatchGrid(
-    TEXT_STANDARD_COLORS.map((hex) =>
-      makeSwatchCell(
-        "text",
-        hex,
-        hex,
-        `Underline ${hex.toUpperCase()}`,
-        !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
-      )),
-  ));
-  if (recentUnderlineColors.length) {
-    underlineMenu.appendChild(makeMenuHeading("Recent"));
-    underlineMenu.appendChild(makeSwatchGrid(
-      recentUnderlineColors.map((hex) =>
-        makeSwatchCell(
-          "text",
-          hex,
-          hex,
-          `Underline ${hex.toUpperCase()}`,
-          !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
-        )),
-    ));
-  }
-  const more = document.createElement("button");
-  more.type = "button";
-  more.className = "color-row-action color-more";
-  more.dataset.underlineMore = "1";
-  more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
-  underlineMenu.appendChild(more);
-}
-
-const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
-const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
-const underlinePopover = registerPopover(underlineMenuBtn, underlineMenu, renderUnderlineMenu);
-
-function underlineEditBlockedByReview() {
-  if (reviewMode !== "suggesting") return false;
-  setStatus(
-    "Underline style and color are not tracked yet; switch to Editing to apply them",
-    "error",
-  );
-  return true;
-}
-
-function applyUnderlineStyle(style) {
-  if (underlineEditBlockedByReview()) return;
-  const patch = style === "none"
-    ? { underline: false, underlineStyle: "single", underlineColor: "" }
-    : { underline: true, underlineStyle: style };
-  armOrApplyRun(patch, () =>
-    runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, style)),
-  );
-}
-
-function applyUnderlineColor(color) {
-  if (underlineEditBlockedByReview()) return;
-  const patch = color ? { underline: true, underlineColor: color } : { underlineColor: "" };
-  armOrApplyRun(patch, () =>
-    runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, color)),
-  );
-}
-
-underlineMenu.addEventListener("click", (e) => {
-  // The style radio group applies the pick itself (so the arrow keys work, which
-  // is the whole of `109` UX-021); what a POINTER pick adds is dismissal.
-  if (e.target.closest("[data-underline-style]")) {
-    closePopover(underlinePopover);
-    focusEditorSurface();
-    return;
-  }
-  if (e.target.closest("[data-underline-more]")) {
-    underlineColorInput.value = currentUnderlineColor || "#000000";
-    underlineColorInput.click();
-    return;
-  }
-  const colorCell = e.target.closest("[data-color], [data-underline-auto]");
-  if (!colorCell) return;
-  const color = colorCell.dataset.underlineAuto ? "" : colorCell.dataset.color;
-  applyUnderlineColor(color);
-  if (color) recordRecent(recentUnderlineColors, color);
-  closePopover(underlinePopover);
-  focusEditorSurface();
-});
-underlineColorInput.addEventListener("change", () => {
-  const color = underlineColorInput.value;
-  applyUnderlineColor(color);
-  recordRecent(recentUnderlineColors, color);
-  closePopover(underlinePopover);
-  focusEditorSurface();
-});
-
-// One text-color menu-click handler, shared by the ribbon menu and the floating
-// selection-toolbar menu. `popover` is the popover to close after applying; the
-// apply goes through the same `applyTextColor` path (one undoable action, gated
-// in Viewing/Suggesting). (mousedown is preventDefault'd by the popover manager,
-// so the document selection survives the pointer press.)
-function handleTextColorMenuClick(e, popover) {
-  if (e.target.closest("[data-more]")) {
-    textColorInput.value = lastTextColor;
-    textColorInput.click(); // opens the OS color input as the custom fallback
-    return;
-  }
-  const cell = e.target.closest("[data-color], [data-auto]");
-  if (!cell) return;
-  const hex = cell.dataset.auto ? "#000000" : cell.dataset.color;
-  applyTextColor(hex);
-  lastTextColor = hex;
-  if (!cell.dataset.auto) recordRecent(recentTextColors, hex);
-  reflectTextColorSwatch(hex);
-  closePopover(popover);
-  focusEditorSurface();
-}
-function handleHighlightMenuClick(e, popover) {
-  const cell = e.target.closest("[data-highlight]");
-  if (!cell) return;
-  const name = cell.dataset.highlight;
-  applyHighlight(name);
-  if (name !== "none") {
-    lastHighlight = name;
-    recordRecent(recentHighlights, name);
-  }
-  reflectHighlightSwatch(name);
-  closePopover(popover);
-  focusEditorSurface();
-}
-
-textColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, textColorPopover));
-// "More colors…" custom fallback commits when the OS picker closes.
-textColorInput.addEventListener("change", () => {
-  const hex = textColorInput.value;
-  applyTextColor(hex);
-  lastTextColor = hex;
-  recordRecent(recentTextColors, hex);
-  reflectTextColorSwatch(hex);
-});
-
-highlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, highlightPopover));
-
-// Floating selection-toolbar pickers: same renderer, same apply path, popovers
-// anchored to the floating buttons so they open next to the selection. Registered
-// after the ribbon popovers so the ribbon behavior is untouched.
-const selTextColorPopover = registerPopover(selTextColorBtn, selTextColorMenu, () =>
-  renderColorMenu("text", selTextColorMenu),
-);
-const selHighlightPopover = registerPopover(selHighlightBtn, selHighlightMenu, () =>
-  renderColorMenu("highlight", selHighlightMenu),
-);
-selTextColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, selTextColorPopover));
-selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, selHighlightPopover));
-
-// --- Shape Fill / Shape Outline (Word's Shape Format tab) --------------------
-// A drawing was renderable, selectable, movable and resizable but had no way to
-// change what it LOOKS like: the model carried `fill` and `stroke` and nothing
-// could write either. These are the two controls Word's Shape Format tab is
-// built around, on the same palette as the text pickers.
-
-/** What the context bar calls each kind of object. A shape used to read
- *  "Image", which also handed it a Crop button it has no source rectangle for. */
-
-const EMU_PER_POINT = 12700;
-/** The short palette the right-click submenu offers; the bar's picker has the
- *  full grid. A menu is a list, so it gets the colors people actually reach for. */
-const SHAPE_MENU_COLORS = ["#000000", "#ffffff", "#ff0000", "#ff9900", "#ffff00", "#00ff00", "#4a86e8", "#9900ff"];
-/** Word's Shape Outline > Weight list, in points. */
-const OUTLINE_WEIGHTS = [0.25, 0.5, 1, 1.5, 2.25, 3, 4.5, 6];
-
-const shapeFillMenu = document.getElementById("shapeFillMenu");
-const shapeOutlineMenu = document.getElementById("shapeOutlineMenu");
-
-/** The selected shape's current fill/outline, or an empty record when there is
- *  no shape selected. Read from the model, never remembered from the last
- *  apply — the swatch must describe THIS shape. */
-function selectedShapeFormat() {
-  // A picture has the outline half — its border (HF-254) — read the same way.
-  if (!doc || !objectSelection || (!objectSelection.canFill && !objectSelection.canStroke)) return {};
-  try {
-    return doc.shapeFormat(objectSelection.node) ?? {};
-  } catch {
-    return {};
-  }
-}
-
-/** Paints each bar button's underline bar with the shape's own color (or the
- *  none-hatch when it has none), so the control reads before it is opened. */
-function reflectShapeSwatches() {
-  reflectShapeFormatState();
-  const format = selectedShapeFormat();
-  for (const [btn, color] of [
-    [shapeFillBtn, format.fill],
-    [shapeOutlineBtn, format.outline],
-  ]) {
-    const bar = btn.querySelector(".color-apply-bar");
-    if (!bar) continue;
-    bar.style.background = color || "transparent";
-    bar.classList.toggle("is-none", !color);
-  }
-}
-
-/** A bar button carrying a color bar, matching the ribbon's split controls. */
-function makeShapeBarButton(icon, label, title) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "object-bar-btn object-bar-color";
-  btn.title = title;
-  btn.setAttribute("aria-label", title);
-  btn.setAttribute("aria-haspopup", "dialog");
-  btn.setAttribute("aria-expanded", "false");
-  btn.innerHTML =
-    `<span class="ms" aria-hidden="true">${icon}</span><span>${label}</span>` +
-    `<span class="color-apply-bar" aria-hidden="true"></span>`;
-  // The other bar buttons cancel `pointerdown` to keep the selection, but these
-  // open popovers, and cancelling pointerdown suppresses the compatibility
-  // `mousedown` the popover manager opens on — the button would do nothing at
-  // all. `onButton` cancels that mousedown itself, preserving the selection.
-  return btn;
-}
-
-const shapeFillBtn = makeShapeBarButton("format_color_fill", "Fill", "Shape fill");
-const shapeOutlineBtn = makeShapeBarButton("border_color", "Outline", "Shape outline");
-
-/** Word's Shape Fill / Shape Outline menus. `shape_format_menu.mjs`. */
-const shapeMenuHost = {
-  menu: (kind) => (kind === "fill" ? shapeFillMenu : shapeOutlineMenu),
-  format: () => selectedShapeFormat(),
-  heading: (text) => makeMenuHeading(text),
-  swatchGrid: (cells) => makeSwatchGrid(cells),
-  swatchCell: (...args) => makeSwatchCell(...args),
-  colors: () => TEXT_STANDARD_COLORS,
-  weights: () => OUTLINE_WEIGHTS,
-  emuPerPoint: EMU_PER_POINT,
-};
-
-const shapeFillPopover = registerPopover(shapeFillBtn, shapeFillMenu, () => renderShapeMenu("fill", shapeMenuHost));
-const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, () =>
-  renderShapeMenu("outline", shapeMenuHost),
-);
-
-// ---- The object chip's Arrange controls ------------------------------------
-// Three popovers on the chip a selected object carries: Word's Position gallery,
-// its Arrange menu (stacking + Group/Ungroup) and its Rotate menu. Registered
-// here rather than beside the commands because `registerPopover` and the
-// `popovers` list it appends to are declared further down the file.
-
-/** A chip button that OPENS a popover. Unlike the chip's action buttons it must
- *  NOT cancel `pointerdown`: cancelling it suppresses the compatibility
- *  `mousedown` the popover manager opens on, and the button would do nothing at
- *  all — the same trap `makeShapeBarButton` documents. */
-function makeObjectMenuButton(icon, labelKey, menuId) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  // Icon-only, like Word's own Arrange group and Docs' image chip. The chip is
-  // already the densest control in the product and these three would have added
-  // ~150px of text to a bar that sits OVER the object when there is no room
-  // above it. The name is on the tooltip AND on the accessible name.
-  btn.className = "object-bar-btn object-bar-icon";
-  btn.setAttribute("aria-haspopup", "menu");
-  btn.setAttribute("aria-expanded", "false");
-  btn.setAttribute("aria-controls", menuId);
-  const glyph = document.createElement("span");
-  glyph.className = "ms";
-  glyph.setAttribute("aria-hidden", "true");
-  glyph.textContent = icon;
-  btn.appendChild(glyph);
-  btn.dataset.objectMenu = menuId;
-  btn.dataset.labelKey = labelKey;
-  return labelledObjectMenuButton(btn);
-}
-
-/** Re-reads a chip menu button's name from the catalogue.
- *
- *  These buttons are built ONCE, at import, when no catalogue is loaded — so a
- *  name baked in there is the KEY, in every language including English. Reading
- *  it on every bar render is also what makes a locale switch reach them. */
-function labelledObjectMenuButton(btn) {
-  const label = t(btn.dataset.labelKey);
-  btn.title = label;
-  btn.setAttribute("aria-label", label);
-  return btn;
-}
-
-const objectPositionMenu = document.getElementById("objectPositionMenu");
-const objectArrangeMenu = document.getElementById("objectArrangeMenu");
-const objectRotateMenu = document.getElementById("objectRotateMenu");
-const objectPositionBtn = makeObjectMenuButton("open_with", "object.position", "objectPositionMenu");
-const objectArrangeBtn = makeObjectMenuButton("layers", "object.arrange", "objectArrangeMenu");
-const objectRotateBtn = makeObjectMenuButton("rotate_right", "object.rotate", "objectRotateMenu");
-
-const objectPositionPopover = registerPopover(objectPositionBtn, objectPositionMenu, () => {
-  const state = arrangeState();
-  const availability = positionAvailability(state?.read ?? { object: false });
-  renderPositionGallery(objectPositionMenu, {
-    presets: POSITION_PRESETS,
-    t,
-    activeId: null,
-    reason: availability.available ? null : t(availability.reasonKey),
-    onPick: (preset) => {
-      closePopover(objectPositionPopover);
-      objectArrange.applyPosition(preset);
-    },
-  });
-});
-const objectArrangePopover = registerPopover(objectArrangeBtn, objectArrangeMenu, () => {
-  const verdict = objectArrange.groupability();
-  renderArrangeMenu(objectArrangeMenu, {
-    t,
-    zChoices: Z_ORDER_CHOICES,
-    zOrder: objectArrange.zOrderAvailability(arrangeState()),
-    group: { enabled: verdict.can, reason: verdict.reason },
-    ungroup: {
-      enabled: objectSelection?.kind === "group",
-      reason: t("object.ungroup.notAGroup"),
-    },
-    onZOrder: (order) => {
-      closePopover(objectArrangePopover);
-      objectArrange.setZOrder(order);
-    },
-    onGroup: () => {
-      closePopover(objectArrangePopover);
-      void objectArrange.group();
-    },
-    onUngroup: () => {
-      closePopover(objectArrangePopover);
-      void objectArrange.ungroup();
-    },
-  });
-});
-const objectRotatePopover = registerPopover(objectRotateBtn, objectRotateMenu, () => {
-  const state = arrangeState();
-  renderRotateMenu(objectRotateMenu, {
-    t,
-    choices: ROTATE_CHOICES,
-    enabled: !!state?.transform,
-    reason: t("object.rotate.unsupported"),
-    onPick: (value) => {
-      closePopover(objectRotatePopover);
-      objectArrange.rotate(value);
-    },
-  });
-});
-
+const {
+  SHAPE_MENU_COLORS, labelledObjectMenuButton, objectArrangeBtn, objectPositionBtn, objectRotateBtn,
+  reflectShapeSwatches, selectedShapeFormat, shapeFillBtn, shapeOutlineBtn,
+} = createShapeChrome(ed);
 /** Applies a fill to the selected shape (`null` clears it). One undoable action,
  *  through the same gate every object edit uses. */
 function applyShapeFill(hex) {
@@ -5024,7 +4664,6 @@ function applyShapeFill(hex) {
   runEdit(() => doc.setShapeFill(node, hex ?? undefined), { gate: true });
   reflectShapeSwatches();
 }
-
 /** Applies an outline color and/or weight. Setting a weight on an unoutlined
  *  shape gives it Word's default black outline, so the weight is never a no-op. */
 function applyShapeOutline({ color, widthEmu }) {
@@ -5038,452 +4677,12 @@ function applyShapeOutline({ color, widthEmu }) {
   });
   reflectShapeSwatches();
 }
-
-function handleShapeMenuClick(event, kind, popover) {
-  const none = event.target.closest("[data-shape-none]");
-  const cell = event.target.closest("[data-shape-color]");
-  const weight = event.target.closest("[data-shape-weight]");
-  if (!none && !cell && !weight) return;
-  if (kind === "fill") {
-    applyShapeFill(none ? null : cell.dataset.shapeColor);
-  } else if (none) {
-    applyShapeOutline({ color: null });
-  } else if (weight) {
-    applyShapeOutline({ widthEmu: Number(weight.dataset.shapeWeight) });
-  } else {
-    applyShapeOutline({ color: cell.dataset.shapeColor });
-  }
-  closePopover(popover);
-}
-
-shapeFillMenu.addEventListener("click", (e) => handleShapeMenuClick(e, "fill", shapeFillPopover));
-shapeOutlineMenu.addEventListener("click", (e) =>
-  handleShapeMenuClick(e, "outline", shapeOutlinePopover),
-);
-
-// Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
-onButton(textColorApplyBtn, () => {
-  applyTextColor(lastTextColor);
-  recordRecent(recentTextColors, lastTextColor);
-});
-onButton(highlightApplyBtn, () => {
-  applyHighlight(lastHighlight);
-  recordRecent(recentHighlights, lastHighlight);
-});
-reflectTextColorSwatch(lastTextColor);
-reflectHighlightSwatch(lastHighlight);
-
-// ---- Font family menu (Q2): searchable, own-typeface, recently-used group ----
-// No font-enumeration API is exposed to the webapp, so this is a curated common
-// list (the registry seam populates faces for rendering; this list is the menu
-// inventory). The caret's actual family is always included so an imported font
-// stays selectable/visible even when it is not in the list.
-const COMMON_FONTS = [
-  "Arial", "Calibri", "Cambria", "Comic Sans MS", "Consolas", "Courier New",
-  "Georgia", "Helvetica", "Lato", "Montserrat", "Noto Sans", "Noto Serif",
-  "Open Sans", "Roboto", "Segoe UI", "Tahoma", "Times New Roman",
-  "Trebuchet MS", "Verdana",
-];
-const recentFonts = [];
-let fontMenuActiveIndex = -1;
-
-function fontInventory() {
-  const all = new Set(COMMON_FONTS);
-  if (currentFontFamily) all.add(currentFontFamily);
-  return [...all].sort((a, b) => a.localeCompare(b));
-}
-
-/** (Re)renders the font list filtered by the search box; recently-used first,
- *  then the alphabetical inventory, each name shown in its own typeface. */
-function renderFontMenu() {
-  const query = fontMenuInput.value.trim().toLowerCase();
-  const match = (name) => name.toLowerCase().includes(query);
-  const recent = recentFonts.filter(match);
-  const inventory = fontInventory().filter((name) => match(name) && !recent.includes(name));
-  fontMenuList.replaceChildren();
-
-  const addRow = (name, group) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "font-menu-item";
-    row.setAttribute("role", "option");
-    row.dataset.font = name;
-    row.style.fontFamily = `"${name}", system-ui, sans-serif`;
-    row.setAttribute("aria-selected", String(name === currentFontFamily));
-    if (name === currentFontFamily) row.classList.add("is-current");
-    row.innerHTML = `<span class="font-menu-check ms" aria-hidden="true">check</span><span class="font-menu-name">${escapeHtml(name)}</span>`;
-    fontMenuList.appendChild(row);
-    if (group) row.dataset.group = group;
-  };
-
-  if (recent.length) {
-    const h = makeMenuHeading("Recently used");
-    fontMenuList.appendChild(h);
-    for (const name of recent) addRow(name, "recent");
-    fontMenuList.appendChild(makeMenuHeading("All fonts"));
-  }
-  for (const name of inventory) addRow(name);
-
-  const rows = fontMenuList.querySelectorAll(".font-menu-item");
-  fontMenuEmpty.hidden = rows.length > 0;
-  // Default the active row to the current font (or the first row).
-  fontMenuActiveIndex = [...rows].findIndex((r) => r.dataset.font === currentFontFamily);
-  if (fontMenuActiveIndex < 0 && rows.length) fontMenuActiveIndex = 0;
-  paintFontActive();
-}
-function paintFontActive() {
-  const rows = fontMenuList.querySelectorAll(".font-menu-item");
-  rows.forEach((row, i) => row.classList.toggle("is-active", i === fontMenuActiveIndex));
-  rows[fontMenuActiveIndex]?.scrollIntoView({ block: "nearest" });
-}
-function chooseFont(name) {
-  applyFontFamily(name);
-  reflectFontFamily(name);
-  recordRecent(recentFonts, name);
-  closePopover(fontPopover);
-  focusEditorSurface();
-}
-
-const fontPopover = registerPopover(fontFamilyBtn, fontMenu, () => {
-  fontMenuInput.value = "";
-  renderFontMenu();
-  requestAnimationFrame(() => fontMenuInput.focus());
-});
-fontMenuInput.addEventListener("input", renderFontMenu);
-fontMenuInput.addEventListener("keydown", (e) => {
-  const rows = fontMenuList.querySelectorAll(".font-menu-item");
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    fontMenuActiveIndex = Math.min(rows.length - 1, fontMenuActiveIndex + 1);
-    paintFontActive();
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    fontMenuActiveIndex = Math.max(0, fontMenuActiveIndex - 1);
-    paintFontActive();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const row = rows[fontMenuActiveIndex];
-    if (row) chooseFont(row.dataset.font);
-  }
-});
-fontMenuList.addEventListener("click", (e) => {
-  const row = e.target.closest(".font-menu-item");
-  if (row) chooseFont(row.dataset.font);
-});
-
-// ---- Grow / shrink font (Q5) -------------------------------------------------
-// The ladder and the step rule are `nextFontSizeStep` in `style_picker.mjs`,
-// beside `previewPx`: both are point sizes, and the epsilon and the past-the-end
-// behaviour are exactly the parts that want a unit test rather than a browser.
-function currentFontPt() {
-  const v = Number(fontSizeSel.value);
-  if (Number.isFinite(v) && v >= 1) return v;
-  if (pendingFormat?.sizeHalfPoints != null) return pendingFormat.sizeHalfPoints / 2;
-  return 11;
-}
-function stepFontSize(dir) {
-  const next = nextFontSizeStep(currentFontPt(), dir);
-  armOrApplyRun({ sizeHalfPoints: Math.round(next * 2) }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, next)),
-  );
-}
-onButton(growFontBtn, () => stepFontSize(1));
-onButton(shrinkFontBtn, () => stepFontSize(-1));
-
-// ---- Change case (Q5): transform selected text, preserving per-run format ----
-// The cross-run re-slicing rule is `recaseRichRuns` in `text_rules.mjs`, with
-// the two formatting boundaries that make it hard; what is left here is reading
-// the runs out of the engine and writing them back.
-async function applyChangeCase(mode) {
-  if (!doc || !hasRange()) return;
-  const { anchor, focus } = selection;
-  let runs;
-  try {
-    runs = JSON.parse(doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset));
-  } catch {
-    return;
-  }
-  if (!Array.isArray(runs) || !runs.length) return;
-  await pasteRichRunsJson(JSON.stringify(recaseRichRuns(runs, mode)));
-}
-const changeCasePopover = registerPopover(changeCaseBtn, changeCaseMenu, () => {});
-changeCaseMenu.addEventListener("click", (e) => {
-  const item = e.target.closest("[data-case]");
-  if (!item) return;
-  closePopover(changeCasePopover);
-  void applyChangeCase(item.dataset.case);
-});
-
-// -- List marker-format galleries (bullet glyph / number format) ---------------
-// The bullet and numbered buttons carry a ▾ split that opens a small gallery of
-// marker choices; picking one retargets the caret's list through the gated
-// `setListFormat` path (one undo; blocked in Viewing/Suggesting like the sibling
-// restart/continue list ops). The main button keeps its plain on/off toggle.
-/** Mark the gallery cell matching the caret's current list marker as checked. */
-function reflectListGallery(menu) {
-  const current = doc && selection ? doc.listFormatAt(selection.focus.node) : "";
-  for (const cell of menu.querySelectorAll(".list-gallery-cell")) {
-    cell.setAttribute("aria-checked", String(cell.dataset.spec === current));
-  }
-}
-// --- Insert ▸ Shapes gallery -------------------------------------------------
-const shapeGalleryMenu = document.getElementById("shapeGalleryMenu");
-
-/** The gallery cells, in keyboard order, and where each visual row starts —
- *  rebuilt on every open because the catalogue is fixed but the DOM is not. */
-let shapeGalleryCells = [];
-const SHAPE_GALLERY_COLUMNS = 6;
-
-/** Renders Word's grouped shape gallery: every preset the engine models, under
- *  the headings Word files them under. `shape_gallery.mjs` owns the DOM. */
-function paintShapeGallery() {
-  shapeGalleryCells = renderShapeGallery(shapeGalleryMenu, {
-    t,
-    onPick: (token) => {
-      closePopover(shapeGalleryPopover);
-      // Word ARMS the pointer here rather than inserting: the next gesture on
-      // the page decides where the shape goes and how big it is. A click
-      // without a drag still places the default size, so the gallery works for
-      // someone who has never been told about the drag.
-      shapeDrawMode.arm(token);
-      focusEditorSurface();
-    },
-  });
-  shapeGalleryMenu.style.setProperty("--shape-gallery-columns", String(SHAPE_GALLERY_COLUMNS));
-}
-
-const shapeGalleryPopover = registerPopover(insertShapeBtn, shapeGalleryMenu, paintShapeGallery);
-
-/** Opens the gallery, wherever the command came from (ribbon button or palette). */
-function openShapeGallery() {
-  if (!doc) return;
-  if (shapeGalleryMenu.hidden) openPopover(shapeGalleryPopover);
-  queueMicrotask(() => shapeGalleryCells[0]?.focus());
-}
-
-// Arrow keys walk the grid, which is what makes 22 icon cells operable without a
-// pointer. The rule is `nextGalleryIndex`; this is the focus half.
-shapeGalleryMenu.addEventListener("keydown", (event) => {
-  const index = shapeGalleryCells.indexOf(document.activeElement);
-  const next = nextGalleryIndex(
-    event.key,
-    index,
-    galleryRowStarts(SHAPE_GALLERY_COLUMNS),
-    shapeGalleryCells.length,
-  );
-  if (next < 0) return;
-  event.preventDefault();
-  shapeGalleryCells[next]?.focus();
-});
-
-const bulletGalleryPopover = registerPopover(bulletListMenuBtn, bulletGalleryMenu, () =>
-  reflectListGallery(bulletGalleryMenu),
-);
-const numberGalleryPopover = registerPopover(numberedListMenuBtn, numberGalleryMenu, () =>
-  reflectListGallery(numberGalleryMenu),
-);
-/** Applies a list-marker spec ("bullet:•", "numbered:decimal", …) to the caret's
- *  list. Shared by the gallery cells and by the `paragraph.listFormat.*`
- *  commands, which are generated from the very same cells. */
-function applyListFormatCommand(spec) {
-  if (!selection || !doc) return;
-  const applied = runNodeEdit(() => doc.setListFormat(selection.focus.node, spec));
-  // A newly chosen bullet glyph may need its covering symbol font fetched
-  // (once) so it renders instead of a .notdef box, then re-render.
-  if (applied && spec.startsWith("bullet:")) void ensureGlyphCoverage("list marker");
-}
-for (const [menu, popover] of [[bulletGalleryMenu, bulletGalleryPopover], [numberGalleryMenu, numberGalleryPopover]]) {
-  wireListGallery(menu, popover, { canApply: () => !!selection && !!doc, closePopover, apply: applyListFormatCommand });
-}
-
-// -- Line & paragraph spacing --------------------------------------------------
-// Wiring lives in `spacing_menu.mjs`; the competitive reference and the reason
-// an inherited line spacing reads back as "from the style" are recorded there.
-const spacingMenuControl = createSpacingMenu({
-  doc: () => doc,
-  focusNode: () => selection?.focus?.node ?? null,
-  runToolbarEdit,
-  registerPopover,
-  onButton,
-  t,
-});
-
-// -- Paragraph properties inspector ------------------------------------------
-/** An inches field's value → twips (≥ 0); "" or non-numeric → 0. */
-function inchTwips(input) {
-  return inchesToTwips(input.value);
-}
-
-/** An inches field's value → signed twips; blank/non-numeric → 0. */
-function setMixedCheckbox(input, state) {
-  input.indeterminate = state === 2;
-  input.checked = state === 1;
-}
-
-function reflectParagraphProperties() {
-  if (!doc || !selection) return;
-  const [startNode, startOffset, endNode, endOffset] = selEndpoints();
-  paragraphAdvanced.reflect();
-  listAdvanced.reflect();
-  styleAdvanced.reflect();
-  const state = doc.selectionParagraphState(startNode, startOffset, endNode, endOffset);
-  paragraphPropertiesContext.textContent =
-    state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
-
-  paraPanelStyle.options[0].textContent = state.styleMixed ? "Mixed" : "Style";
-  if (document.activeElement !== paraPanelStyle) {
-    paraPanelStyle.value = state.styleMixed ? "" : state.style;
-  }
-  for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
-    button.setAttribute(
-      "aria-pressed",
-      state.alignmentMixed ? "mixed" : String(button.dataset.palign === state.alignment),
-    );
-  }
-
-  if (document.activeElement !== indentLeftInput) {
-    indentLeftInput.placeholder = state.startMixed ? "Mixed" : "";
-    indentLeftInput.value = state.startMixed ? "" : twipsToInchText(state.startTwip);
-  }
-  if (document.activeElement !== indentRightInput) {
-    indentRightInput.placeholder = state.endMixed ? "Mixed" : "";
-    indentRightInput.value = state.endMixed ? "" : twipsToInchText(state.endTwip);
-  }
-  if (![indentSpecialByInput, indentSpecialSel].includes(document.activeElement)) {
-    if (state.firstLineMixed || state.hangingMixed) {
-      indentSpecialSel.value = "";
-      indentSpecialByInput.value = "";
-      indentSpecialByInput.placeholder = "Mixed";
-    } else if (state.firstLineTwip > 0) {
-      indentSpecialSel.value = "first";
-      indentSpecialByInput.value = twipsToInchText(state.firstLineTwip);
-      indentSpecialByInput.placeholder = "";
-    } else if (state.hangingTwip > 0) {
-      indentSpecialSel.value = "hanging";
-      indentSpecialByInput.value = twipsToInchText(state.hangingTwip);
-      indentSpecialByInput.placeholder = "";
-    } else {
-      indentSpecialSel.value = "none";
-      indentSpecialByInput.value = "";
-      indentSpecialByInput.placeholder = "";
-    }
-  }
-
-  if (document.activeElement !== paraLineSpacing) {
-    paraLineSpacing.value = state.lineMixed ? "" : String(state.linePercent || "");
-  }
-  if (document.activeElement !== paraSpaceBefore) {
-    paraSpaceBefore.placeholder = state.beforeMixed ? "Mixed" : "";
-    paraSpaceBefore.value =
-      state.beforeMixed || state.beforeTwip < 0
-        ? ""
-        : String(Math.round(state.beforeTwip / TWIPS_PER_POINT));
-  }
-  if (document.activeElement !== paraSpaceAfter) {
-    paraSpaceAfter.placeholder = state.afterMixed ? "Mixed" : "";
-    paraSpaceAfter.value =
-      state.afterMixed || state.afterTwip < 0
-        ? ""
-        : String(Math.round(state.afterTwip / TWIPS_PER_POINT));
-  }
-
-  setMixedCheckbox(pgKeepNext, state.keepNextState);
-  setMixedCheckbox(pgKeepLines, state.keepLinesState);
-  setMixedCheckbox(pgBreakBefore, state.pageBreakBeforeState);
-  paraShadeMixed.hidden = !state.shadingMixed;
-  paraShadeNone.setAttribute(
-    "aria-pressed",
-    state.shadingMixed ? "mixed" : String(state.shading < 0),
-  );
-  if (!state.shadingMixed && state.shading >= 0 && document.activeElement !== paraShade) {
-    paraShade.value = `#${state.shading.toString(16).padStart(6, "0")}`;
-  }
-  paraBordersMixed.hidden = !state.bordersMixed;
-  const bit = { top: 1, bottom: 2, left: 4, right: 8 };
-  for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
-    const k = b.dataset.border;
-    const on =
-      k === "box"
-        ? state.borderEdges === 0b1111
-        : k === "none"
-          ? state.borderEdges === 0
-          : (state.borderEdges & bit[k]) !== 0;
-    b.setAttribute("aria-pressed", state.bordersMixed ? "mixed" : String(on));
-  }
-  state.free();
-}
-
-// `focusTarget` lets Layout ▸ Indent and Layout ▸ Spacing land on the fieldset
-// the user asked for. The panel owns the real indent/spacing values — the ribbon
-// deliberately holds no second copy of them — so the deep link is what makes the
-// ribbon button honest about what it does.
-function toggleParagraphProperties(open, focusTarget = null) {
-  const show = open ?? paragraphPropertiesPanel.hidden;
-  if (show && (!doc || !selection)) return;
-  const returnFocus =
-    !show && paragraphPropertiesPanel.contains(document.activeElement);
-  paragraphPropertiesPanel.hidden = !show;
-  paraOptsBtn.setAttribute("aria-expanded", String(show));
-  if (show) {
-    toggleTableProperties(false);
-    closeAllPopovers();
-    reflectParagraphProperties();
-    queueMicrotask(() => (focusTarget?.() ?? paraPanelStyle).focus());
-  } else if (returnFocus) {
-    paraOptsBtn.focus({ preventScroll: true });
-  }
-}
-
-paraOptsBtn.addEventListener("click", (event) => {
-  event.stopPropagation();
-  toggleParagraphProperties();
-});
-document.getElementById("paragraphPropertiesClose").addEventListener("click", () =>
-  toggleParagraphProperties(false),
-);
-document.addEventListener("keydown", (event) => {
-  if (
-    event.key === "Escape" &&
-    !paragraphPropertiesPanel.hidden &&
-    (document.activeElement === paraOptsBtn ||
-      paragraphPropertiesPanel.contains(document.activeElement))
-  ) {
-    event.preventDefault();
-    toggleParagraphProperties(false);
-  }
-});
-
-paraPanelStyle.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) =>
-    doc.setParagraphStyle(a, b, c, d, paraPanelStyle.value), { paragraphLevel: true }),
-);
-for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
-  onButton(button, () =>
-    runToolbarEdit((a, b, c, d) =>
-      doc.setAlignment(a, b, c, d, button.dataset.palign), { paragraphLevel: true }),
-  );
-}
-paraLineSpacing.addEventListener("change", () => {
-  if (!paraLineSpacing.value) return;
-  runToolbarEdit((a, b, c, d) =>
-    doc.setLineSpacing(a, b, c, d, Number(paraLineSpacing.value)), { paragraphLevel: true });
-});
-/** A points field's value → twips (≥ 0); "" clears the paragraph's own value so
- *  the style decides again, which is what `-1` means to the engine. */
-function applySpace(input, setter) {
-  const raw = input.value.trim();
-  if (raw !== "" && !Number.isFinite(Number(raw))) return;
-  const twips = raw === "" ? -1 : Math.max(0, Math.round(Number(raw) * TWIPS_PER_POINT));
-  runToolbarEdit((a, b, c, d) => setter(a, b, c, d, twips));
-}
-paraSpaceBefore.addEventListener("change", () =>
-  applySpace(paraSpaceBefore, (a, b, c, d, twips) => doc.setSpaceBefore(a, b, c, d, twips)),
-);
-paraSpaceAfter.addEventListener("change", () =>
-  applySpace(paraSpaceAfter, (a, b, c, d, twips) => doc.setSpaceAfter(a, b, c, d, twips)),
-);
-
-// -- Table & cell formatting (a single-node edit: applies to the caret's cell) --
+const { applyChangeCase, fontInventory, reflectListGallery, stepFontSize } = createFontMenu(ed);
+const { applyListFormatCommand, openShapeGallery, spacingMenuControl } = createShapeGallery(ed);
+const {
+  applyHighlight, applyTextColor, reflectParagraphProperties, toggleParagraphProperties,
+} = createParagraphInspector(ed);
+const { tablePopover } = createTableFormat(ed);
 /** Runs a `(node) => EditResult` edit on the caret's node, preserving the selection
  *  and repainting only the dirty pages (rebuild on a page-count change). Every
  *  current caller is a table/list structural mutation with no tracked-revision
@@ -5518,315 +4717,13 @@ function runNodeEdit(thunk) {
   scheduleChromeRefresh({ outline: true });
   return true;
 }
-
-// The cell-format popover and the split-cell dialog are `table_cell_chrome.mjs`;
-// what stays here is the editor state they need. `formatRange` is the one line
-// that removed the old *"put the caret in the cell to format it"* refusal: the
-// caret's own node passed twice is a one-cell range, so one path serves both.
-const cellFormatMenu = bindCellFormatMenu({
-  menu: tableFmtMenu,
-  shade: document.getElementById("cellShade"),
-  shadeNone: document.getElementById("cellShadeNone"),
-  vAlign: document.getElementById("cellVAlign"),
-  cellBorderColor: document.getElementById("cellBorderColor"),
-  tableBorderColor: document.getElementById("tableBorderColor"),
-  borderWeight: document.getElementById("borderWeight"),
-  borderStyle: document.getElementById("borderStyle"),
-  doc: () => doc,
-  caretNode: () => (selection && doc ? selection.focus.node : ""),
-  formatRange: (apply) =>
-    selection && doc ? tableRange.formatRange(apply, selection.focus.node) : false,
-  runNodeEdit,
-  onButton,
-  bindRadioGroup,
-  hexToRgb,
-});
-const tablePopover = registerPopover(tableBtn, tableFmtMenu, () => cellFormatMenu.reflect());
-bindBreaksMenu(BREAK_IO);
-
-// ---- Four engine capabilities that had no control at all --------------------
-// Each of these was reachable from the engine in one call and from the product in
-// none (`SKILL` §9 rule 4). What stays here is the editor state they need; every
-// decision — the competitor shape, the labels, the refusals, the command rows —
-// lives with its own control.
-//
-// `repaint` for the marks is the page WINDOW, not the document: turning marks on
-// is a repaint and never a repagination, so re-rastering what is on screen is the
-// whole of the chrome's duty and it is O(window) rather than O(document).
-const formattingMarks = createFormattingMarks({
-  getDoc: () => doc,
-  repaint: () => {
-    for (let i = pageWindow.first; i <= pageWindow.last; i++) repaintPage(i);
-  },
-  setStatus,
-});
-const measurement = createMeasurementUnits({
-  engine: {
-    measurementUnits,
-    defaultMeasurementUnit,
-    decimalSeparatorForLanguage,
-    parseMeasurement,
-    formatMeasurement,
-  },
-  select: document.getElementById("measurementUnitSelect"),
-  locale: () => activeLocale(),
-  // The browser's tag, because it carries a REGION: the first-run default is
-  // inches only for the US and Canada, and the UI locale is a language choice
-  // that is usually just "en".
-  region: () => navigator.language || activeLocale(),
-  onChanged: () => pageSetup.reflectUnits(),
-  setStatus,
-  openChooser: () => {
-    revealOnSettings(SETTINGS_SURFACE, document.getElementById("measurementUnitSelect"), {
-      group: ".settings-section",
-    });
-  },
-});
-/** "Who may do what", in one handle — `access_chrome.mjs`, which composes the
- *  rights dialog and the persistent access indicator over the same four
- *  authorities. One call here rather than two modules wired separately, because a
- *  permission resolved at two call sites is a permission two call sites can
- *  disagree about. Constructed after `documentProtection` because it reads that
- *  module's state, which is the DOCUMENT's own authority. */
-const accessChrome = createAccessChrome({
-  getDoc: () => doc,
-  getTransport: () => collab,
-  getGrant: () => SESSION.grant,
-  getProtection: () => documentProtection.state(),
-  getCapabilities: () => HOST_CAPS,
-  getReadOnlyReason: () => readOnlyReason,
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  setStatus,
-  t: (key, values) => t(key, values),
-});
-const documentProtection = createDocumentProtection({
-  getDoc: () => doc,
-  runEdit,
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  bindRadioGroup,
-  setStatus,
-  participantRefusal: () => SESSION.refusalFor("review.restrictEditing"),
-  onChanged: () => updateToolbar(),
-});
-// Review ▸ Compare's seams (ADR-061, ADR-065), inline because this module has no
-// mount seam (`109` HF-085); `landed` is also the capability test for "Keep".
-const yieldFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-const redlineOf = (io) => buildRedline({ ...io, engine: { begin: beginVersionDiff, slice: defaultDiffSlice, open }, yieldToHost: yieldFrame });
-/** Takes the reader to one change on a redline (ADR-065): the selection and the scroll, focus left on the control they stepped with. */
-const showChange = (a) => { selection = { anchor: { node: a.node, offset: Number(a.start) || 0 }, focus: { node: a.node, offset: Number(a.end) || Number(a.start) || 0 } }; drawSelection(); if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer(); };
-const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), redline: redlineOf, showView: (view) => (view ? showVersionPreview(view, { markup: true, reason: t("compare.viewReadOnly") }) : showVersionPreview(null)), beforeView: () => versionHistory.closePreview(), yieldToHost: yieldFrame, setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); }, navigate: showChange });
-
-// The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
-// Its Select handler used to be a second copy of `selectTableContext`.
-bindTableBand({
-  root: tableRibbon,
-  onButton,
-  getDoc: () => doc,
-  getSelection: () => selection,
-  runEdit,
-  clearTableSelection: () => tableRange.clear(),
-  selectTableContext,
-  caretTableColumn,
-  status: (text) => setStatus(text),
-});
-
-onButton(mergeCellsBtn, async () => {
-  // The "select something first" branch that used to be here was UNREACHABLE —
-  // the button is disabled whenever fewer than two cells are selected — and it
-  // carried a second, divergent copy of the menu's own sentence. The band's
-  // disabled reason is now that one sentence, from the catalogue (`docs/141`
-  // TBL-03, TBL-05).
-  //
-  // `mergeTableCellRange` takes the RECTANGLE, not one of the three degenerate
-  // shapes a mode string could name, so an arbitrary drag merges (TBL-17).
-  const range = tableRange.get();
-  if (!selection || !doc || !range) return;
-  await announceTableEdit(runEdit(() => doc.mergeTableCellRange(range.anchorNode, range.focusNode), { gate: true }), "merge", setStatus);
-  tableRange.clear();
-  updateToolbar();
-});
-
-const splitCellDialogView = bindSplitCellDialog({
-  dialog: splitCellDialog,
-  rows: splitCellRows,
-  columns: splitCellColumns,
-  open: splitCellBtn,
-  close: splitCellClose,
-  cancel: splitCellCancel,
-  confirm: splitCellConfirm,
-  fallbackFocus: () => pagesEl,
-  registerModal,
-  onButton,
-  runEdit: (fn, options) => runEdit(fn, options),
-  doc: () => doc,
-  caretNode: () => (selection && doc ? selection.focus.node : ""),
-  afterSplit: () => {
-    tableRange.clear();
-    updateToolbar();
-  },
-});
-const toggleSplitCellDialog = (open) => splitCellDialogView.toggle(open);
-
-// -- Table properties inspector ----------------------------------------------
-let tablePropertiesCurrent = null;
-let tablePropertiesNode = null;
-
-/** An optional inches field's value → twips, or -1 for "leave it unset". */
-function updateTableRowHeightField() {
-  const automatic = tableRowHeightRule.value === "auto";
-  tableRowHeight.disabled = automatic;
-  tableRowHeight.required = !automatic;
-  if (automatic) tableRowHeight.setCustomValidity("");
-}
-
-function reflectTableProperties(node = selection?.focus.node) {
-  if (!doc || node == null) return false;
-  const info = doc.tableInfo(node);
-  if (!info.found) {
-    info.free();
-    return false;
-  }
-
-  tablePropertiesNode = node;
-  tablePropertiesContext.textContent = tableContextLabel(info);
-  tableCaption.value = info.caption || "";
-  tableDescription.value = info.description || "";
-  tableHeaderRow.checked = info.headerRow;
-  tableFixedLayout.checked = info.fixedLayout;
-  tableColumnWidth.disabled = false; // a merged table sizes its grid columns too (docs/171)
-  tableColumnWidth.value = twipsToDialogInches(info.columnWidthTwips);
-  tableColumnWidthNote.textContent = "Sets the width of the current column.";
-  tableWidth.value = twipsToDialogInches(info.tableWidthTwips);
-  tableIndent.value = twipsToDialogInches(info.tableIndentTwips);
-  tableRowHeight.value = twipsToDialogInches(info.rowHeightTwips);
-  tableRowHeightRule.value = info.rowHeightRule || "auto";
-  tableCellMargin.value = twipsToDialogInches(info.cellMarginTwips);
-  tableCellSpacing.value = twipsToDialogInches(info.cellSpacingTwips);
-  tableAlignGroup.reflect(info.alignment);
-  updateTableRowHeightField();
-
-  tablePropertiesCurrent = {
-    alignment: info.alignment,
-    tableWidthTwips: optionalInchesToTwips(tableWidth.value),
-    tableIndentTwips: signedInchesToTwips(tableIndent.value),
-    fixedLayout: info.fixedLayout,
-    headerRow: info.headerRow,
-    columnWidthTwips: optionalInchesToTwips(tableColumnWidth.value),
-    rowHeightTwips:
-      tableRowHeightRule.value === "auto" ? -1 : optionalInchesToTwips(tableRowHeight.value),
-    rowHeightRule: info.rowHeightRule || "auto",
-    cellMarginTwips: optionalInchesToTwips(tableCellMargin.value),
-    cellSpacingTwips: optionalInchesToTwips(tableCellSpacing.value),
-    caption: tableCaption.value,
-    description: tableDescription.value,
-  };
-  info.free();
-  return true;
-}
-
-function toggleTableProperties(open) {
-  const show = open ?? tablePropertiesPanel.hidden;
-  if (show && !reflectTableProperties()) return;
-  const returnFocus = !show && tablePropertiesPanel.contains(document.activeElement);
-  tablePropertiesPanel.hidden = !show;
-  tablePropertiesBtn.setAttribute("aria-expanded", String(show));
-  if (show) {
-    toggleParagraphProperties(false);
-    closePopover(tablePopover);
-    queueMicrotask(() =>
-      tableAlignGroup.focusSelected(),
-    );
-  } else if (returnFocus) {
-    tablePropertiesBtn.focus({ preventScroll: true });
-  }
-}
-
-tablePropertiesBtn.addEventListener("click", (event) => {
-  event.stopPropagation();
-  toggleTableProperties();
-});
-tableFormulaApply.addEventListener("click", () => {
-  if (!selection || !doc || !tableFormula.value.trim()) return;
-  runNodeEdit((node) => doc.calculateTableFormula(node, tableFormula.value));
-});
-document.getElementById("tablePropertiesClose").addEventListener("click", () => toggleTableProperties(false));
-const tableAlignGroup = bindRadioGroup(tableAlign, {
-  attr: "data-talign",
-  onSelect: () => commitTableProperties(),
-});
-tablePropertiesPanel.addEventListener("change", (event) => {
-  if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) {
-    return;
-  }
-  if (event.target === tableRowHeightRule) updateTableRowHeightField();
-  commitTableProperties();
-});
-
-/** The form's live fields, named once so the patch builder is a pure function of
- *  its bag rather than of this file's eighteen consts. */
-const TABLE_PROPERTIES_FORM = { width: tableWidth, indent: tableIndent, columnWidth: tableColumnWidth, rowHeight: tableRowHeight, rowHeightRule: tableRowHeightRule, cellMargin: tableCellMargin, cellSpacing: tableCellSpacing, fixedLayout: tableFixedLayout, headerRow: tableHeaderRow, caption: tableCaption, description: tableDescription };
-/** Validation and the CHANGED-only diff live in `table_properties_patch.mjs`,
- *  where a test can reach them — `main.js` has no exports, so the diff that
- *  decides whether eleven untouched properties are re-asserted was unreachable
- *  from node. */
-function tablePropertiesPatch() {
-  return tablePatch(TABLE_PROPERTIES_FORM, { alignment: tableAlignGroup.value() ?? "left", current: tablePropertiesCurrent, inchesToTwips: optionalInchesToTwips, signedInchesToTwips, rowHeightRequired: "Enter a row height or choose Auto." });
-}
-
-function commitTableProperties() {
-  if (!doc || !tablePropertiesCurrent || !tablePropertiesNode) return;
-  const patch = tablePropertiesPatch();
-  if (!patch) return;
-  if (Object.keys(patch).length === 0) {
-    return;
-  }
-  const applied = runNodeEdit(() =>
-    doc.applyTableProperties(tablePropertiesNode, JSON.stringify(patch)),
-  );
-  if (applied) {
-    const activeNode =
-      selection && doc.inTable(selection.focus.node) ? selection.focus.node : null;
-    if (activeNode == null) toggleTableProperties(false);
-    else reflectTableProperties(activeNode);
-    setStatus("Table properties updated");
-  }
-}
-document.addEventListener("keydown", (event) => {
-  if (
-    tablePropertiesPanel.hidden ||
-    (document.activeElement !== tablePropertiesBtn &&
-      !tablePropertiesPanel.contains(document.activeElement))
-  ) {
-    return;
-  }
-  if (event.key === "Escape") {
-    event.preventDefault();
-    toggleTableProperties(false);
-  }
-});
-
-// -- Insert table: the size grid (`table_grid_picker.mjs`) --------------------
-createTableGridPicker({
-  picker: document.getElementById("gridPicker"),
-  label: document.getElementById("gridLabel"),
-  button: insertTableBtn,
-  menu: insertTableMenu,
-  registerPopover,
-  closePopover,
-  blocked: () => blockMutationInViewing(),
-  insert: async (rows, columns) => {
-    if (!selection || !doc) return false;
-    await runEdit(() => doc.insertTable(selection.focus.node, rows, columns), { gate: true });
-    return true;
-  },
-  focusEditor: focusEditorSurface,
-});
-
-/** Rebuilds the off-screen accessibility mirror for the caret's part of the
- *  document. The projection lives in `a11y_mirror.mjs`; what stays here is the
- *  editor state it needs and the gated toggle a mirror checkbox runs (HF-178). */
+const {
+  accessChrome, comparePanel, documentProtection, formattingMarks, measurement, redlineOf,
+  showChange,
+} = createDocTools(ed);
+const {
+  reflectTableProperties, toggleSplitCellDialog, toggleTableProperties,
+} = createTableProps(ed);
 function buildAccessibilityTree() {
   renderAccessibilityMirror(doc, selection?.focus?.node ?? "", tableRange.gridRect(), (control) => runEdit(() => doc.toggleFormCheckbox(control)));
 }
@@ -5909,132 +4806,7 @@ const {
 // same grouped/move-aware decision path as the sidebar and context menu.
 let reviewInlineCard = null;
 const { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger } = createPalette(ed);
-// ---- One navigation axis: the compact menu bar and the ribbon's File page ---
-// The editor used to show TWO navigation systems at once — this menu bar and the
-// ribbon tab strip — so a command's home was a guess between two places (`109`
-// UX-014). Each chrome now has exactly one axis (docs/122):
-//
-//   compact mode  the menu bar IS the axis; File is a dropdown, as in Google
-//                 Docs and Drive. `style.css` hides the bar in ribbon mode.
-//   ribbon mode   the tab strip is the axis; File is its first tab and opens a
-//                 PAGE, as in ONLYOFFICE (`app/view/Toolbar.js:182`, the only
-//                 tab declared `haspanel: false`).
-//
-// Both read `FILE_SURFACE` and both render through `command_menu.mjs`, so the
-// two File rosters cannot drift and neither can invent its own gating: the rows
-// come from the same `editorCommands()` descriptors the palette and the context
-// menu use.
-const appMenuBar = document.getElementById("appMenuBar");
-const appMenuPopover = document.getElementById("appMenuPopover");
-const menuRegistry = () =>
-  new Map(
-    editorCommands({ surface: "menu", hasRange: hasRange() }).map((command) => [command.id, command]),
-  );
-const appMenu = createMenuBar({
-  bar: appMenuBar,
-  popover: appMenuPopover,
-  sectionsFor: (name) => APP_MENU_SECTIONS[name] ?? [],
-  registry: menuRegistry,
-  formatShortcut,
-});
-const closeAppMenu = (options) => appMenu.close(options);
-
-// The File page. Same rows, rendered as headed groups instead of a dropdown,
-// because a full-window route has the room to say what a group is and a dropdown
-// does not. Rebuilt on every open rather than kept in sync — the same reason the
-// compact toolbar is — so a row can never hold a stale `enabled`.
-function renderFilePage() {
-  if (!filePageBody) return 0;
-  renderFilePane({
-    menuRegistry,
-    exportRows: EXPORT_COMMANDS,
-    formatInfoOf: formatInfo,
-    closeFilePage,
-    templates: DOCUMENT_TEMPLATES,
-    templateThumbnailFor: templateThumbnail,
-    onTemplate: async (id) => {
-      closeFilePage();
-      if (!(await confirmDiscardIfEdited())) return;
-      await openBytes(templateBytes(id), templateName(id));
-    },
-    // What each panel's dialog does on open, so the pane shows the same thing.
-    prepare: (pane) => {
-      if (pane === "shortcuts") buildShortcutsReference();
-      if (pane === "commands") {
-        // The palette renders its rows from the live registry when it opens;
-        // shown as a pane nothing had asked it to, so it came up as an empty
-        // search box. Same call, and the query starts clean.
-        const input = document.getElementById("cmdInput");
-        if (input) input.value = "";
-        renderCommands("");
-        // You came to this pane to type a command name. Both entry points —
-        // opening the File tab on this pane, and selecting it in the rail —
-        // are moments the person chose it, so taking the keyboard cannot
-        // interrupt anything they were doing.
-        input?.focus();
-      }
-      if (pane === "about") toggleAbout.stampVersion?.(); else if (pane === "pageSetup") pageSetup.reflect?.();
-      if (pane === "properties") propertiesUi.fill();
-    },
-  });
-  // The rail lists every File command, but three kinds of them are rendered as
-  // a CATEGORY row that opens a pane instead of a row that runs: the six export
-  // formats collapse into one `Export`, and the rows that used to open a dialog
-  // over the page — Settings, Document properties, the Help rows, New — open
-  // panes. The owner asked for exactly this — "basically in this view replace
-  // dialogs with this space", and for export, "one export on left and right
-  // list of them with icons, like in onlyoffice".
-  //
-  // `fileMenuSections()` itself is untouched, so the compact chrome's File
-  // DROPDOWN — which has no pane to open — still runs all of them directly, and
-  // each category row records the ids it stands in for so the two surfaces can
-  // be proved to offer the same roster.
-  const count = renderCommandRows(
-    filePageBody,
-    fileMenuSections(),
-    menuRegistry(),
-    {
-      itemClass: "file-page-item",
-      headings: true,
-      formatShortcut,
-      rowFor: (id, ids) =>
-        fileCategoryRowFor(id, ids, {
-          itemClass: "file-page-item",
-          onSelect: (pane) => {
-            setFilePane(pane);
-            renderFilePage();
-          },
-        }),
-      onRun: (command) => {
-        // Every File row returns to the document first, which is what a dropdown
-        // does implicitly by closing and what ONLYOFFICE's page does through its
-        // own "Back to Document". One rule, no exception list: Settings and the
-        // Help rows open dialogs, and a modal over a full-window page is two
-        // layers of chrome between the user and the document they came for.
-        //
-        // Through `closeFilePage` rather than `selectRibbonTab` alone, because
-        // the row the click landed on is about to be hidden: without moving the
-        // keyboard somewhere real first, focus falls to <body> and a dialog
-        // opened from here has nowhere to hand it back to on Escape — the
-        // HF-062 failure, where the editor looked frozen after a dialog closed.
-        closeFilePage();
-        command.run();
-      },
-    },
-  );
-  return count;
-}
-
-
-{
-  const back = document.getElementById("filePageBack");
-  if (back) onButton(back, () => closeFilePage());
-}
-
-function buildCommands() {
-  return editorCommands({ surface: "palette" });
-}
-
+const { buildCommands, closeAppMenu, renderFilePage } = createFilePage(ed);
 const {
   bookmarkManager, buildShortcutsReference, dropCapDialog, insertFieldAtCaret, insertImageFromBlob,
   insertImageFromFile, insertShapeObject, insertTextBoxObject, openBookmarkManager, openEmojiPicker,
@@ -6047,51 +4819,6 @@ const { openCmd, renderCommands } = createPaletteUi(ed);
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
-indentLeftInput.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) => doc.setLeftIndent(a, b, c, d, inchTwips(indentLeftInput)), { paragraphLevel: true }),
-);
-indentRightInput.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) => doc.setRightIndent(a, b, c, d, inchTwips(indentRightInput)), { paragraphLevel: true }),
-);
-function applyIndentSpecial() {
-  const by = inchTwips(indentSpecialByInput);
-  const kind = indentSpecialSel.value;
-  const twips = kind === "first" ? by : kind === "hanging" ? -by : 0;
-  runToolbarEdit((a, b, c, d) => doc.setFirstLineIndent(a, b, c, d, twips), { paragraphLevel: true });
-}
-indentSpecialSel.addEventListener("change", applyIndentSpecial);
-indentSpecialByInput.addEventListener("change", applyIndentSpecial);
-
-paraShade.addEventListener("change", () => {
-  const [r, g, b] = hexToRgb(paraShade.value);
-  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false), { paragraphLevel: true });
-});
-onButton(paraShadeNone, () =>
-  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, 0, 0, 0, true), { paragraphLevel: true }),
-);
-for (const [box, setter] of [
-  [pgKeepNext, (a, b, c, d, on) => doc.setKeepWithNext(a, b, c, d, on)],
-  [pgKeepLines, (a, b, c, d, on) => doc.setKeepLinesTogether(a, b, c, d, on)],
-  [pgBreakBefore, (a, b, c, d, on) => doc.setPageBreakBefore(a, b, c, d, on)],
-]) {
-  box.addEventListener("change", () =>
-    runToolbarEdit((a, b, c, d) => setter(a, b, c, d, box.checked)),
-  );
-}
-/** Apply a text color (hex `#rrggbb`) to the range or arm it at the caret. */
-function applyTextColor(hex) {
-  const [r, g, b] = hexToRgb(hex);
-  armOrApplyRun({ color: hex }, () =>
-    runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
-  );
-}
-/** Apply a named OOXML highlight (or "none") to the range or arm it at the caret. */
-function applyHighlight(name) {
-  armOrApplyRun({ highlight: name }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
-  );
-}
-
 const { positionSelToolbar } = createSelectionToolbar(ed);
 function applyFontFamily(family) {
   if (!family) return;

@@ -241,6 +241,9 @@ const CEILINGS = new Map([
   // The domain modules split out of `main.js` (docs/177, `109` HF-380) carry the
   // literals that moved with them: the same debt in a new place, and `main.js`
   // came down by as much in the same commit. MEASURED from each file.
+  ["src/editor_table_props.mjs", 2],
+  ["src/editor_paragraph_inspector.mjs", 1],
+  ["src/editor_font_color.mjs", 2],
   ["src/editor_pointer.mjs", 4],
   ["src/editor_objects.mjs", 4],
   ["src/editor_object_moves.mjs", 3],
