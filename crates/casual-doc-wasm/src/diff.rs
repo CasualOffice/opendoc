@@ -68,17 +68,16 @@ use casual_doc_edit::refused;
 use casual_doc_io::{DetectionRequest, FormatSelection, builtin_registry_with_limits};
 use casual_doc_layout::flow::append_node_plain_text;
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{
-    BlockNode, Document, InlineNode, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind,
-    RevisionKind, Run, RunProperties,
-};
+use casual_doc_model::v1::{BlockNode, Document, InlineNode, ReviewProjection, RevisionKind};
+#[cfg(test)]
+use casual_doc_model::v1::{Run, RunProperties};
 use wasm_bindgen::prelude::*;
 
 use crate::{
     EditResult, HistoryKind, NoteAnchorLengths, WasmDocument, collect_paragraph_revisions_all,
-    collect_review_format_ids_all, collect_review_revision_ids_all, inline_anchor_len,
-    insert_review_revision, to_js, update_review_operation_across,
-    validate_authored_revision_author, viewer_limits, viewer_text_limits, wrap_review_deletion,
+    collect_review_format_ids_all, collect_review_revision_ids_all, inline_anchor_len, to_js,
+    update_review_operation_across, validate_authored_revision_author, viewer_limits,
+    viewer_text_limits,
 };
 
 /// The default slice size a host that has no measurement yet can pass.
@@ -1062,75 +1061,22 @@ impl WasmDocument {
         date: &Option<String>,
         loss: &mut BTreeSet<&'static str>,
     ) -> Result<(), String> {
-        let group = match (edit.marked, edit.removed.as_ref()) {
-            (Some(_), Some(_)) => Some(RevisionGroup {
-                id: self
-                    .edit_ids
-                    .next_id()
-                    .map_err(|_| "id space exhausted".to_owned())?,
-                kind: RevisionGroupKind::Replacement,
-            }),
-            _ => None,
-        };
-        if let Some(kind) = edit.marked {
-            let revision = Revision {
-                id: self
-                    .edit_ids
-                    .next_id()
-                    .map_err(|_| "id space exhausted".to_owned())?,
-                kind,
-                author: Some(author.to_owned()),
-                date: date.clone(),
-                revision_id: Some(self.revision_ids.allocate()?),
-                editor_group: group,
-                inlines: Vec::new(),
-            };
-            // Misnamed by history: it wraps a range in whatever revision it is
-            // given, which is how a comparison's INSERTION is marked with it.
-            if !wrap_review_deletion(
-                notes,
-                body,
-                edit.node,
-                edit.start,
-                edit.end,
-                revision,
-                &mut self.edit_ids,
-            ) {
-                loss.insert("notParagraphText");
-                return Ok(());
-            }
-        }
-        if let Some(text) = edit.removed.clone() {
-            let run = self
-                .edit_ids
-                .next_id()
-                .map_err(|_| "id space exhausted".to_owned())?;
-            let revision = Revision {
-                id: self
-                    .edit_ids
-                    .next_id()
-                    .map_err(|_| "id space exhausted".to_owned())?,
-                kind: RevisionKind::Deletion,
-                author: Some(author.to_owned()),
-                date: date.clone(),
-                revision_id: Some(self.revision_ids.allocate()?),
-                editor_group: group,
-                inlines: vec![InlineNode::Run(Run {
-                    id: run,
-                    properties: RunProperties::default().into(),
-                    text,
-                })],
-            };
-            if !insert_review_revision(
-                notes,
-                body,
-                edit.node,
-                edit.start,
-                revision,
-                &mut self.edit_ids,
-            ) {
-                loss.insert("notParagraphText");
-            }
+        if let Some(code) = casual_doc_review::lower::record_compared_change(
+            &mut casual_doc_review::ReviewIds {
+                nodes: &mut self.edit_ids,
+                revisions: &mut self.revision_ids,
+            },
+            notes,
+            body,
+            edit.node,
+            edit.start,
+            edit.end,
+            edit.marked,
+            edit.removed.clone(),
+            author,
+            date,
+        )? {
+            loss.insert(code);
         }
         Ok(())
     }

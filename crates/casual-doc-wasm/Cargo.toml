@@ -45,6 +45,9 @@ casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 casual-doc-render.workspace = true
+# The one lowering of review edits (suggestions, comments, decisions), shared
+# with the Native SDK and the MCP server (`docs/178` §8 A1).
+casual-doc-review.workspace = true
 # The rectangular cell selection and its merged-cell expansion live in the
 # selection crate, beside `TextSelection`: OT will have to transform a cell
 # selection exactly as it transforms a text one (ADR-033), and a facade-local

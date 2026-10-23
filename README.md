@@ -274,6 +274,7 @@ The editor is a thin shell over a Rust engine that owns everything a document is
 | `casual-doc-pdf` | Real-text vector PDF from the shared display list, with subsetted embedded fonts |
 | `casual-doc-io` | Format identities, capability descriptors, detection, the adapter registry, and the HTML, Markdown and text writers |
 | `casual-doc-edit` | The closed set of editing operations, each returning its inverse |
+| `casual-doc-review` | The one lowering of review commands (tracked suggestions, comments, accept and reject), shared by the editor and native callers (`docs/178`) |
 | `casual-doc-transaction` | Transactions and the ordered revision log — the one mutation path — plus the collaboration session and transform |
 | `casual-doc-selection` | Validated caret, text-range and table-cell-range selection |
 | `casual-doc-diff` | Structural difference between two documents, for version history and Compare |

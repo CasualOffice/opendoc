@@ -38,31 +38,6 @@ fn parse_character(json: &str) -> Result<CharacterFormatDelta, String> {
     Ok(delta)
 }
 
-fn character_values(props: &RunProperties) -> serde_json::Map<String, serde_json::Value> {
-    serde_json::json!({
-        "allCaps":props.all_caps,"smallCaps":props.small_caps,"doubleStrike":props.double_strike,
-        "outline":props.outline,"shadow":props.shadow,"emboss":props.emboss,"imprint":props.imprint,
-        "emphasis":props.emphasis,"border":props.border,"characterSpacingTwips":props.character_spacing_twips,
-        "characterScalePercent":props.character_scale_percent,"positionHalfPoints":props.position_half_points,
-        "kerningHalfPoints":props.kerning_half_points,"ligatures":props.ligatures,
-    }).as_object().expect("character projection is an object").clone()
-}
-
-pub(super) fn append_review_changes(
-    changes: &mut Vec<serde_json::Value>,
-    current: &RunProperties,
-    prior: &RunProperties,
-) {
-    let before = character_values(prior);
-    for (property, after) in character_values(current) {
-        if before[&property] != after {
-            changes.push(
-                serde_json::json!({"property":property,"before":before[&property],"after":after}),
-            );
-        }
-    }
-}
-
 #[wasm_bindgen]
 impl WasmDocument {
     /// Apply an advanced character patch across paragraphs as one undo action.
@@ -155,43 +130,20 @@ impl WasmDocument {
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let (start, end) = self.order_endpoints(sn, so, en, eo).map_err(to_js)?;
         let ranges = self.selection_subranges(start, end);
-        if ranges.is_empty() {
-            return Err(to_js(
-                "tracked character formatting requires a range".into(),
-            ));
-        }
-        let group = RevisionGroup {
-            id: self
-                .edit_ids
-                .next_id()
-                .map_err(|_| to_js("id space exhausted".into()))?,
-            kind: RevisionGroupKind::Formatting,
-        };
-        let notes = NoteAnchorLengths::of(&self.document);
-        let mut ops = Vec::new();
-        for (node, a, b) in ranges {
-            let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
-            if !apply_review_format_change(
-                &notes,
-                &mut body,
-                node,
-                a,
-                b,
-                delta.clone(),
-                author.clone(),
-                date.clone(),
-                group,
-                &mut self.revision_ids,
-                &mut self.edit_ids,
-            )
-            .map_err(to_js)?
-            {
-                return Err(to_js("tracked formatting requires paragraph text".into()));
-            }
-            ops.push(update_review_operation(&self.document, &body, None).map_err(to_js)?);
-        }
-        self.apply_action_caret_as(ops, start, HistoryKind::Review)
-            .map_err(to_js)
+        let lowered = casual_doc_review::lower::suggest_format_ranges(
+            &self.document,
+            &mut casual_doc_review::ReviewIds {
+                nodes: &mut self.edit_ids,
+                revisions: &mut self.revision_ids,
+            },
+            &ranges,
+            &delta,
+            author,
+            date,
+            start,
+        )
+        .map_err(to_js)?;
+        self.commit_review(lowered).map_err(to_js)
     }
 
     /// Armed typing with additive character formatting and typed underline.
