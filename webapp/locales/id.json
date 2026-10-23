@@ -1681,6 +1681,7 @@
   "settingsPanel.checkSpellingAsYou": "Periksa ejaan saat mengetik",
   "settingsPanel.checkingHappensBrowserDictionary": "Pemeriksaan berlangsung di browser ini: kamus diunduh sekali dari situs ini dan teks Anda tidak pernah dikirim ke mana pun. Kata yang Anda tambahkan hanya disimpan di browser ini dan saat ini hanya dapat dihapus dengan menghapus data situs ini.",
   "settingsPanel.autoCorrect": "Koreksi otomatis",
+  "settingsPanel.identitySetByHost": "Nama Anda ditetapkan oleh aplikasi tempat Anda membuka ini",
   "settingsPanel.smartQuotes": "Tanda kutip cerdas",
   "settingsPanel.smartQuotesDetail": "Tanda kutip lurus menjadi melengkung saat Anda mengetik.",
   "settingsPanel.automaticLists": "Daftar berpoin dan bernomor otomatis",

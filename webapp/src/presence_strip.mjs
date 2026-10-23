@@ -447,6 +447,12 @@ export function createPresenceStrip({ root, parent, before = null, t, goTo, stat
     },
   });
   const clientOf = (value) => (typeof value === "object" && value !== null ? value.client : value);
+  /** What about an entry would change a chip: its number, whether it is vouched
+   *  for, and its profile. Rows are rebuilt from JSON on every frame, so object
+   *  identity says nothing; this does. O(profile size), at most 2 KiB. */
+  const signature = (value) => (typeof value === "object" && value !== null
+    ? `${value.client}|${value.attested === true}|${value.profile ? JSON.stringify(value.profile) : ""}`
+    : String(value));
 
   return {
     element: strip,
@@ -463,10 +469,10 @@ export function createPresenceStrip({ root, parent, before = null, t, goTo, stat
     update({ self = null, others = [], reconnected = false }) {
       const mine = clientOf(self);
       const next = { self, others: others.filter((p) => clientOf(p) !== mine) };
-      // Called on every frame, document frames included: an unchanged room of
-      // bare numbers costs a comparison, not a repaint.
-      const same = mine === clientOf(state.self) && next.others.length === state.others.length
-        && next.others.every((p, i) => p === state.others[i]);
+      // Called on every frame, document frames included: an unchanged room costs
+      // a comparison, not a repaint.
+      const same = signature(self) === signature(state.self) && next.others.length === state.others.length
+        && next.others.every((p, i) => signature(p) === signature(state.others[i]));
       state = next;
       if (!shown || (same && !reconnected)) return;
       if (reconnected) announcer.open();

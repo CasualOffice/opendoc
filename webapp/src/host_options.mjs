@@ -58,6 +58,14 @@ import { CAPABILITIES, PREFERENCES, PRESET_NAMES, REGIONS } from "./capabilities
  *    elsewhere   it belongs to a product this one is not (spreadsheets,
  *                presentations, PDF forms) — `SKILL` §1's scope table
  *    unknown     not an option ONLYOFFICE has either, so probably a typo
+ *    not-honoured  accepted and reported, but reserved: it changes nothing
+ *                (`user.group`, `docs/175` §3 — groups are not built)
+ *    superseded-by-identity  a preference that names the person (`prefs.user`,
+ *                `prefs.initials`) given beside a host identity, which is then
+ *                the only identity (`docs/175` §3.1); never a table verdict,
+ *                only a note on a mount that carried both
+ *    identity-invalid  the mount's identity broke a `docs/175` §3 bound and was
+ *                not used; the note's `option` names the field
  */
 export const NOTE_CODES = Object.freeze([
   "mapped",
@@ -67,14 +75,20 @@ export const NOTE_CODES = Object.freeze([
   "declined",
   "elsewhere",
   "unknown",
+  "not-honoured",
+  "superseded-by-identity",
+  "identity-invalid",
 ]);
 
 /** A capability withhold: `permissions.print: false` → `can=-print`. */
 const cap = (name) => Object.freeze({ kind: "capability", target: name });
 /** A region withhold: `customization.hideRulers: true` → `chrome=-ruler`. */
 const region = (name) => Object.freeze({ kind: "region", target: name });
-/** A preference: `editorConfig.user.name` → `prefs={"user":…}`. */
+/** A preference: `customization.anonymous` → `prefs={"user":…}`. */
 const pref = (name) => Object.freeze({ kind: "preference", target: name });
+/** A host-identity field: `editorConfig.user.name` → `identity.name` (`docs/175`
+ *  §3.2). The fourth axis, and NOT a preference: a visitor cannot overwrite it. */
+const ident = (field) => Object.freeze({ kind: "identity", target: field });
 
 /**
  * Every option in ONLYOFFICE's host configuration, against ours.
@@ -228,31 +242,33 @@ export const OPTIONS = Object.freeze([
   Object.freeze({ option: "editorConfig.lang", ours: "lang", code: "mapped", via: null }),
   Object.freeze({
     option: "editorConfig.user.name",
-    ours: 'prefs={"user":…}',
+    ours: "identity.name",
     code: "mapped",
-    via: pref("user"),
-    note: "Signs this visitor's comments and tracked changes.",
+    via: ident("name"),
+    note:
+      "The host identity's name (docs/175 §3): it signs this person's comments and tracked changes, " +
+      "and the visitor cannot change it in Settings.",
   }),
   Object.freeze({
     option: "editorConfig.user.id",
-    ours: null,
-    code: "unsupported",
-    via: null,
-    note: "A stable identity matters when there are several; it lands with collaboration.",
+    ours: "identity.id",
+    code: "mapped",
+    via: ident("id"),
+    note: "Opaque and pseudonymous: it identifies the person to a shared room and is never written into the file.",
   }),
   Object.freeze({
     option: "editorConfig.user.group",
     ours: null,
-    code: "unsupported",
+    code: "not-honoured",
     via: null,
-    note: "Only meaningful with `reviewGroups`/`commentGroups`, which need identity.",
+    note: "Reserved: only meaningful with `reviewGroups`/`commentGroups`, which are not built.",
   }),
   Object.freeze({
     option: "editorConfig.user.image",
-    ours: null,
-    code: "unsupported",
-    via: null,
-    note: "No avatar surface: presence is not shipped.",
+    ours: "identity.avatar.url",
+    code: "mapped",
+    via: ident("avatar"),
+    note: 'Never fetched unless the host consents with avatars="fetch" (docs/175 §8.1); initials otherwise.',
   }),
   Object.freeze({
     option: "editorConfig.region",
@@ -950,6 +966,7 @@ const VOCABULARY = Object.freeze({
   capability: CAPABILITIES,
   region: REGIONS,
   preference: Object.freeze(PREFERENCES.map((row) => row.name)),
+  identity: Object.freeze(["id", "name", "avatar"]),
 });
 
 /** Whether every `via` in the table names something that exists. Exported for
@@ -992,7 +1009,9 @@ const MODE_ALIASES = Object.freeze({ view: "readonly", edit: "edit" });
 /**
  * Lowers an ONLYOFFICE-shaped host configuration onto ours.
  *
- * Returns the four things the element needs to build a URL, plus the notes. It
+ * Returns the four things the element needs to build a URL, the identity
+ * fields their `editorConfig.user` named (validated by the element, through
+ * `validateHostIdentity`, never here), plus the notes. It
  * does NOT resolve a capability set: resolution is `capabilities.mjs`'s, once,
  * at boot, and a translator that resolved as well would be the second answer
  * that eventually disagrees.
@@ -1002,6 +1021,7 @@ const MODE_ALIASES = Object.freeze({ view: "readonly", edit: "edit" });
  * @param {object|string|null|undefined} config their config, or its JSON text.
  * @returns {{mode: string|null, can: readonly string[], chrome: readonly string[],
  *            prefs: Readonly<Record<string, unknown>>, lang: string|null,
+ *            identity: Readonly<object>|null,
  *            notes: readonly {option: string, code: string, message: string}[]}}
  */
 export function translateHostConfig(config) {
@@ -1010,10 +1030,11 @@ export function translateHostConfig(config) {
   const can = [];
   const chrome = [];
   const prefs = {};
+  const identity = {};
   let mode = null;
   let lang = null;
   if (!source || typeof source !== "object") {
-    return Object.freeze({ mode, can: Object.freeze([]), chrome: Object.freeze([]), prefs: Object.freeze({}), lang, notes: Object.freeze([]) });
+    return Object.freeze({ mode, can: Object.freeze([]), chrome: Object.freeze([]), prefs: Object.freeze({}), lang, identity: null, notes: Object.freeze([]) });
   }
 
   const add = (option, code, message) => notes.push(Object.freeze({ option, code, message }));
@@ -1048,6 +1069,16 @@ export function translateHostConfig(config) {
     }
     if (!row.via) {
       add(option, row.code, row.note ?? `No equivalent: ours is ${row.ours ?? "nothing"}.`);
+      continue;
+    }
+    // Identity is not a boolean and has no narrowing direction: it is lowered
+    // as given, onto the fourth axis, and the element validates the whole
+    // object once (`validateHostIdentity`) — a bound is never checked here AND
+    // there, which is how two checks come to disagree.
+    if (row.via.kind === "identity") {
+      if (row.via.target === "avatar") identity.avatar = { url: value };
+      else identity[row.via.target] = value;
+      add(option, "mapped", `identity.${row.via.target === "avatar" ? "avatar.url" : row.via.target}`);
       continue;
     }
     // THE NARROWING RULE, and the one place it could be lost. Their booleans go
@@ -1085,6 +1116,7 @@ export function translateHostConfig(config) {
     chrome: Object.freeze(chrome),
     prefs: Object.freeze(prefs),
     lang,
+    identity: Object.keys(identity).length ? Object.freeze(identity) : null,
     notes: Object.freeze(notes),
   });
 }

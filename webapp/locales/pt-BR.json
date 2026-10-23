@@ -1683,6 +1683,7 @@
   "settingsPanel.checkSpellingAsYou": "Verificar ortografia ao digitar",
   "settingsPanel.checkingHappensBrowserDictionary": "A verificação ocorre neste navegador: o dicionário é baixado uma vez deste site e seu texto nunca é enviado a lugar algum. As palavras que você adicionar ficam somente neste navegador e, no momento, só podem ser removidas limpando os dados deste site.",
   "settingsPanel.autoCorrect": "Autocorreção",
+  "settingsPanel.identitySetByHost": "Seu nome é definido pelo aplicativo em que você abriu isto",
   "settingsPanel.smartQuotes": "Aspas inteligentes",
   "settingsPanel.smartQuotesDetail": "Aspas retas viram curvas enquanto você digita.",
   "settingsPanel.automaticLists": "Listas com marcadores e numeradas automáticas",

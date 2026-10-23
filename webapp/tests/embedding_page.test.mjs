@@ -404,8 +404,9 @@ test("everything under 'does not do yet' is still not done", () => {
   const withArgs = COMMAND_CONTRACT.filter((row) => row.args.length > 0).map((row) => row.id);
   assert.deepEqual(withArgs, ["view.zoom"], "more commands take arguments now");
 
-  // No document I/O through the contract: none of the four verbs moves bytes.
-  assert.deepEqual([...PROTOCOL.requests], ["describe", "execute", "query", "ping"]);
+  // No document I/O through the contract: none of the verbs moves bytes.
+  // `identify` carries who the person is (`docs/175` §3), never a document.
+  assert.deepEqual([...PROTOCOL.requests], ["describe", "execute", "query", "ping", "identify"]);
   const write = HOST_EVENTS.find((event) => event.name === "export");
   assert.deepEqual(
     [...write.detail],

@@ -1682,6 +1682,7 @@
   "settingsPanel.checkSpellingAsYou": "Spelling controleren tijdens typen",
   "settingsPanel.checkingHappensBrowserDictionary": "De controle gebeurt in deze browser: het woordenboek wordt één keer van deze site gedownload en uw tekst wordt nooit ergens naartoe gestuurd. Woorden die u toevoegt, worden alleen in deze browser opgeslagen en kunnen momenteel alleen worden verwijderd door de sitegegevens te wissen.",
   "settingsPanel.autoCorrect": "AutoCorrectie",
+  "settingsPanel.identitySetByHost": "Je naam wordt bepaald door de applicatie waarin je dit hebt geopend",
   "settingsPanel.smartQuotes": "Typografische aanhalingstekens",
   "settingsPanel.smartQuotesDetail": "Rechte aanhalingstekens worden tijdens het typen gekruld.",
   "settingsPanel.automaticLists": "Automatische opsommingen en nummering",

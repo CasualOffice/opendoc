@@ -188,6 +188,14 @@ const REFUSAL_MEANINGS = Object.freeze({
   threw: ["It raised; the message is the exception's.", "the command"],
   "bad-request": ["The envelope or the arguments were not the contract's.", "the transport"],
   timeout: ["The transport gave up waiting for an answer.", "the transport"],
+  "identity-invalid": [
+    "`identify` was handed an identity outside the docs/175 bounds; `field` names the part. Nothing was used.",
+    "the contract",
+  ],
+  "identity-fixed": [
+    "`identify` came a second time, or after a shared room was joined. An identity is decided once per mount; remount to change it.",
+    "the session",
+  ],
 });
 
 /** For a capability the editor page consults, what it decides there.
@@ -1747,7 +1755,13 @@ const VERDICT = Object.freeze({
   declined: "Declined",
   elsewhere: "Another product",
   unknown: "n/a",
+  "not-honoured": "Reserved",
+  "superseded-by-identity": "n/a",
+  "identity-invalid": "n/a",
 });
+
+/** Codes a mount's notes can carry that no row of the option table does. */
+const MOUNT_ONLY = Object.freeze(["unknown", "superseded-by-identity", "identity-invalid"]);
 
 /** The option map, as the two generated regions of `docs/149`. */
 function optionMapRegions() {
@@ -1759,7 +1773,9 @@ function optionMapRegions() {
   const summary = [
     "| Verdict | Options | What it means |",
     "| --- | --- | --- |",
-    ...NOTE_CODES.filter((code) => code !== "unknown").map(
+    // `unknown` and the two identity answers are answers a MOUNT gets, never a
+    // verdict a row of the table carries, so they have no line in its summary.
+    ...NOTE_CODES.filter((code) => !MOUNT_ONLY.includes(code)).map(
       (code) => `| ${VERDICT[code]} | ${tally[code]} | ${cell(CODE_MEANING[code])} |`,
     ),
     `| **Total enumerated** | **${OPTIONS.length}** | every leaf of their \`permissions\`, \`editorConfig\` and \`customization\` |`,
@@ -1787,6 +1803,7 @@ const CODE_MEANING = Object.freeze({
   unsupported: "the editor has no such state or surface yet; the note names the work",
   declined: "deliberately not wanted, with the argument",
   elsewhere: "belongs to spreadsheets, presentations or PDF forms (`SKILL` §1)",
+  "not-honoured": "accepted and reported, but reserved for a feature that is not built; it changes nothing",
 });
 
 /** The pages this tool owns, each with the region and claim maps it uses.

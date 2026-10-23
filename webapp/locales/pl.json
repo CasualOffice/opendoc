@@ -1684,6 +1684,7 @@
   "settingsPanel.checkSpellingAsYou": "Sprawdzaj pisownię podczas pisania",
   "settingsPanel.checkingHappensBrowserDictionary": "Sprawdzanie odbywa się w tej przeglądarce: słownik jest pobierany raz z tej witryny, a Twój tekst nigdy nie jest nigdzie wysyłany. Dodane słowa są przechowywane tylko w tej przeglądarce i obecnie można je usunąć jedynie przez wyczyszczenie danych tej witryny.",
   "settingsPanel.autoCorrect": "Autokorekta",
+  "settingsPanel.identitySetByHost": "Twoje imię i nazwisko ustala aplikacja, w której to otwarto",
   "settingsPanel.smartQuotes": "Cudzysłowy drukarskie",
   "settingsPanel.smartQuotesDetail": "Proste cudzysłowy zmieniają się w drukarskie podczas pisania.",
   "settingsPanel.automaticLists": "Automatyczne listy punktowane i numerowane",

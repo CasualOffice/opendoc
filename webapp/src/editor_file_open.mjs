@@ -6,6 +6,7 @@ import init, { open } from "../pkg/casual_doc_wasm.js";
 import { populateSaveFormats } from "./save_formats.mjs";
 import { openingZoomMode } from "./view_zoom.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
+import { hostIdentity, identityPromised } from "./host_identity.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -46,6 +47,12 @@ export function createFileOpen(ed) {
       ed.setStatus("Failed to load the WASM engine", "error");
       return;
     }
+
+    // A host that said it will send an identity (`awaitIdentity=1`, `docs/175`
+    // §3.2) gets it in before anything opens: a startup document, and above all a
+    // startup ROOM, opened first would be opened as somebody else. Bounded, so a
+    // host that promised and never sent costs a wait rather than an editor.
+    if (identityPromised(window.location.search)) await hostIdentity.settled();
 
     const params = new URLSearchParams(window.location.search);
     // The public demo and plain editor both open sample.docx. The smaller rich

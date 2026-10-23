@@ -49,6 +49,18 @@ import {
   sandboxTokensFor,
 } from "./capabilities.mjs";
 import { translateHostConfig, unhandledNotes } from "./host_options.mjs";
+import { validateHostIdentity } from "./host_contract.mjs";
+import { createHostClient } from "./host_client.mjs";
+
+/** The editor-URL flag saying an identity is on its way (`host_identity.mjs`'s
+ *  `AWAIT_IDENTITY_PARAM`). It carries no identity: the identity itself never
+ *  enters a URL (`docs/175` §3.2). Spelled here rather than imported because the
+ *  published package does not ship the editor's page modules. */
+const AWAIT_IDENTITY = "awaitIdentity";
+/** The avatar-consent parameter (`host_identity.mjs`'s `AVATARS_PARAM`). */
+const AVATARS = "avatars";
+/** The preferences a host identity supersedes: both name the person (§3.1). */
+const IDENTITY_PREFERENCES = Object.freeze(["user", "initials"]);
 
 /** Where the editor lives relative to the host page, when the host does not say. */
 export const DEFAULT_EDITOR_SRC = "./editor.html";
@@ -75,6 +87,8 @@ const MOUNT_ATTRIBUTES = Object.freeze([
   "editor-lang",
   "editor-src",
   "frame-title",
+  "identity",
+  "avatars",
 ]);
 
 /** The two NARROWING attributes, each read against the authority's own vocabulary.
@@ -167,10 +181,22 @@ const SHADOW_STYLE = `
  *    (`?blank=1`, `?fixture=rich`); `mode` is merged into it, never appended
  *    twice, and `can`/`chrome` are unioned with any the query already carries.
  *  * `frame-title` — the frame's accessible name, in the host's language.
+ *  * `identity` — WHO this person is, as JSON: `'{"id":"u_8f2c","name":"Ada"}'`
+ *    (`docs/175` §3). The fourth host input: not a preference, so the visitor
+ *    cannot change it, and when it is given it is the only identity — `prefs.user`
+ *    and `prefs.initials` are dropped and reported `superseded-by-identity`. It
+ *    NEVER enters the frame's URL (history, `Referer` and access logs would all
+ *    keep it); the element hands it over in a one-shot `identify` message once the
+ *    frame has loaded, and the URL says only that one is coming. Also settable as
+ *    the `identity` property, for a host that would rather not put a name in the
+ *    DOM; the property wins over the attribute, and both over `config`'s
+ *    `editorConfig.user`. A change remounts.
+ *  * `avatars` — `"fetch"` is the host's consent to load participants' avatar
+ *    URLs (`docs/175` §8.1). Absent, nothing is fetched and chips show initials.
  *
- * Properties: `mode`, `capabilities`, `regions`, `editingMode`, `sandbox`,
- * `frame`, `can(name)`. `can` and `chrome` have no reflecting property on
- * purpose — see the note in the class body.
+ * Properties: `mode`, `identity`, `capabilities`, `regions`, `editingMode`,
+ * `sandbox`, `frame`, `can(name)`. `can` and `chrome` have no reflecting
+ * property on purpose — see the note in the class body.
  *
  * Complexity: O(1) per mount. Nothing here walks a document.
  */
@@ -185,6 +211,27 @@ export class OpenDocEditorElement extends ElementBase {
   #regions = new Set();
   #preferences = Object.freeze({});
   #remountQueued = false;
+  /** What the host set as the `identity` PROPERTY, unvalidated; `undefined` when
+   *  it never did, so the attribute and then `config` are read instead. */
+  #identityProperty = undefined;
+  /** The validated identity this mount hands the frame, or null. */
+  #identity = null;
+  /** The host client carrying the one-shot `identify`, while it is in flight. */
+  #identifier = null;
+
+  /** The identity in force for this mount: validated and frozen, or null when
+   *  none was given or the one given was refused (the refusal is on the
+   *  capabilities event's `notes`). */
+  get identity() {
+    return this.#identity;
+  }
+
+  /** Sets the identity without putting a name in the DOM. Remounts, like every
+   *  other mount input: an identity is decided once per mount (`docs/175` §3.2). */
+  set identity(value) {
+    this.#identityProperty = value ?? undefined;
+    if (this.isConnected && this.#root) this.#queueRemount();
+  }
 
   /** The role or preset this embed resolved to, as the host asked for it. */
   get mode() {
@@ -253,6 +300,10 @@ export class OpenDocEditorElement extends ElementBase {
     if (previous === next) return;
     if (!MOUNT_ATTRIBUTES.includes(name)) return;
     if (!this.isConnected || !this.#root) return;
+    this.#queueRemount();
+  }
+
+  #queueRemount() {
     // Coalesce: a host setting `mode` and `editor-src` in the same turn means
     // one new embed, not two, and booting a WebAssembly instance to throw it
     // away a microtask later is ~100 MB of pointless work.
@@ -311,6 +362,14 @@ export class OpenDocEditorElement extends ElementBase {
     if (title) frame.title = title;
     else reportMissingTitle();
     frame.src = url.href;
+    // The identity crosses in a MESSAGE, after the frame's scripts have run (a
+    // module script has finished before `load`), never in the URL above. The frame
+    // was told by `awaitIdentity=1` to hold its startup document and room until
+    // this lands.
+    if (this.#identity) {
+      const identity = this.#identity;
+      frame.addEventListener("load", () => this.#identify(frame, url.origin, identity), { once: true });
+    }
 
     const style = document.createElement("style");
     style.textContent = SHADOW_STYLE;
@@ -411,7 +470,76 @@ export class OpenDocEditorElement extends ElementBase {
     else url.searchParams.delete("prefs");
     const lang = this.getAttribute("editor-lang") ?? translated.lang;
     if (lang) url.searchParams.set("lang", lang);
-    return { url, notes: translated.notes };
+    const notes = [...translated.notes, ...this.#resolveIdentity(url, translated.identity)];
+    if (this.getAttribute(AVATARS) === "fetch") url.searchParams.set(AVATARS, "fetch");
+    else url.searchParams.delete(AVATARS);
+    return { url, notes: Object.freeze(notes) };
+  }
+
+  /** The identity for this mount, validated once, and what it did to the URL.
+   *
+   *  Property, then attribute, then `config`'s `editorConfig.user` — most to
+   *  least specific, the order every other input here follows. A valid identity
+   *  makes the frame wait for it (`awaitIdentity=1`) and SUPERSEDES the two
+   *  preferences that also name the person, which are taken out of the URL and
+   *  reported, never silently kept beside it (`docs/175` §3.1). An invalid one is
+   *  not used at all — half an identity is somebody else's — and the refusal is
+   *  reported naming the field.
+   *
+   *  Complexity: O(identity size). */
+  #resolveIdentity(url, fromConfig) {
+    url.searchParams.delete(AWAIT_IDENTITY);
+    const given = this.#identityProperty !== undefined ? this.#identityProperty
+      : this.hasAttribute("identity") ? this.getAttribute("identity")
+        : fromConfig;
+    this.#identity = null;
+    if (given === undefined || given === null) return [];
+    const checked = validateHostIdentity(given);
+    if (!checked.ok) {
+      return [Object.freeze({ option: checked.refusal.field, code: "identity-invalid", message: checked.refusal.message })];
+    }
+    this.#identity = checked.identity;
+    url.searchParams.set(AWAIT_IDENTITY, "1");
+    const notes = [...checked.notes];
+    const prefs = parsePreferenceObject(url.searchParams.get("prefs"));
+    const superseded = IDENTITY_PREFERENCES.filter((name) => name in prefs);
+    for (const name of superseded) {
+      delete prefs[name];
+      notes.push(Object.freeze({
+        option: `prefs.${name}`,
+        code: "superseded-by-identity",
+        message: "The host identity names this person; a preference cannot name them differently.",
+      }));
+    }
+    if (superseded.length) {
+      if (Object.keys(prefs).length) url.searchParams.set("prefs", JSON.stringify(prefs));
+      else url.searchParams.delete("prefs");
+    }
+    return notes;
+  }
+
+  /** Hands the identity to the frame in the one-shot `identify` request. A
+   *  refusal (a frame that already decided, or one that is not ours) is said
+   *  once in the console with its code, never with the identity. */
+  #identify(frame, origin, identity) {
+    if (this.#frame !== frame) return;
+    let client;
+    try {
+      client = createHostClient({ frame, editorOrigin: origin, view: window });
+    } catch {
+      return;
+    }
+    this.#identifier = client;
+    client
+      .identify(identity)
+      .then((result) => {
+        if (!result?.ok) reportNotes([{ option: "identity", code: result?.refusal?.code ?? "refused", message: result?.refusal?.message ?? "" }]);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (this.#identifier === client) this.#identifier = null;
+        client.dispose();
+      });
   }
 
   /** The opening positions in force, keyed by the SETTING each one moves. The
@@ -427,6 +555,8 @@ export class OpenDocEditorElement extends ElementBase {
    *  detached — the same order `home-embed.js` established for the marketing
    *  page's live demo, where a leaked instance is ~100 MB. */
   #teardown() {
+    this.#identifier?.dispose();
+    this.#identifier = null;
     if (this.#frame) {
       try {
         this.#frame.src = "about:blank";
@@ -516,3 +646,4 @@ export { editingModeFor, resolveCapabilities, resolveRegions, sandboxTokensFor }
 export { CAPABILITIES, LEGACY_PRESETS, PRESET_NAMES, PREFERENCES, REGIONS, ROLES } from "./capabilities.mjs";
 export { resolvePreferences } from "./capabilities.mjs";
 export { NOTE_CODES, OPTIONS, OPTION_PATHS, optionTally, translateHostConfig } from "./host_options.mjs";
+export { IDENTITY_BOUNDS, validateHostIdentity } from "./host_contract.mjs";

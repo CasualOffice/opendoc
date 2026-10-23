@@ -1682,6 +1682,7 @@
   "settingsPanel.checkSpellingAsYou": "टाइप करते समय वर्तनी जाँचें",
   "settingsPanel.checkingHappensBrowserDictionary": "जाँच इसी ब्राउज़र में होती है: शब्दकोश इस साइट से एक बार डाउनलोड होता है और आपका टेक्स्ट कहीं नहीं भेजा जाता। आपके जोड़े गए शब्द केवल इस ब्राउज़र में संग्रहीत होते हैं और फ़िलहाल केवल इस साइट का डेटा साफ़ करके ही हटाए जा सकते हैं।",
   "settingsPanel.autoCorrect": "स्वतः सुधार",
+  "settingsPanel.identitySetByHost": "आपका नाम उस ऐप्लिकेशन द्वारा तय किया गया है जिसमें आपने इसे खोला है",
   "settingsPanel.smartQuotes": "स्मार्ट उद्धरण चिह्न",
   "settingsPanel.smartQuotesDetail": "टाइप करते समय सीधे उद्धरण चिह्न घुमावदार हो जाते हैं।",
   "settingsPanel.automaticLists": "स्वचालित बुलेट और क्रमांकित सूचियाँ",
