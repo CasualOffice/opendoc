@@ -131,7 +131,7 @@ import { bindRadioGroup } from "./radio_group.mjs";
 import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./popover_manager.mjs";
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
-import { createViewZoom, fitZoomFactor, nextZoomStep, openingZoomMode, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
+import { createViewZoom, fitPageIndex, fitZoomFactor, nextZoomStep, openingZoomMode, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
@@ -14569,7 +14569,7 @@ const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
  *  about which page the user is on. The arithmetic is `view_zoom.mjs`. */
 function computeFitZoom(mode) {
   if (!doc) return zoomFactor;
-  const size = doc.pageSize(Math.max(0, Math.min(rulerView.builtForPage(), pages.length - 1)));
+  const size = doc.pageSize(fitPageIndex(rulerView.builtForPage(), doc.pageCount)); // the ENGINE bounds it, not the view (HF-400)
   const factor = fitZoomFactor(mode, size, viewportEl.getBoundingClientRect(), { dpi: BASE_DPI, twipsPerInch: TWIPS_PER_INCH });
   size.free();
   return clampZoom(factor);

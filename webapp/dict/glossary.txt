@@ -72,6 +72,7 @@ Embeddings
 Endnote
 Esc
 FFI
+FFM
 FID
 FNV
 FORMCHECKBOX
@@ -103,6 +104,7 @@ IndexedDB
 Indic
 InteropGrabBag
 Invariants
+JDK
 JNI
 JPEG
 JSON

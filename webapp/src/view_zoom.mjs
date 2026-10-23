@@ -163,6 +163,30 @@ export function fitZoomFactor(mode, page, viewport, { dpi, twipsPerInch }) {
   return Math.min(fitW, fitH);
 }
 
+/** The page a fit-zoom measures: the view's page index, bounded by the ENGINE's
+ *  page count rather than by the view's own page array (`docs/109` HF-400).
+ *
+ *  The view's `pages` describe the layout it last rendered, which is not always
+ *  the layout the engine now answers from: an open fits the zoom before the first
+ *  render publishes the new page set, and the Show changes toggle swaps the
+ *  markup layout for the editing one before the render that follows it. Bounding
+ *  by the stale array asked a four-page document for page 13 and failed the open.
+ *  `engineCount` is the count of the layout `pageSize` will be asked about, so the
+ *  index returned is always one it has. A negative or non-finite index (no ruler
+ *  yet, or one built for another document) means "the first page".
+ *
+ *  Complexity: O(1).
+ *
+ * @param {number} viewIndex 0-based page index from the view, possibly stale
+ * @param {number} engineCount the engine's current page count
+ * @returns {number} a 0-based index in `0..max(engineCount, 1)`
+ */
+export function fitPageIndex(viewIndex, engineCount) {
+  const last = Math.max(0, Math.floor(engineCount) - 1);
+  if (!Number.isFinite(viewIndex) || viewIndex < 0) return 0;
+  return Math.min(Math.floor(viewIndex), last);
+}
+
 /** What a value typed into the status bar's zoom field asks for: a fit `mode`, a
  *  `factor`, or neither (which the caller answers by restoring the last valid
  *  display rather than by guessing).
