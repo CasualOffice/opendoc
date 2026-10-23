@@ -237,10 +237,13 @@ const CEILINGS = new Map([
   // MEASURED from the file after rebasing onto `origin/main` 0e441fc, whose
   // status-progress change (#809) took two more literals out underneath the
   // branch's own 297 — measured, never calculated.
-  ["src/main.js", 133],
+  ["src/main.js", 119],
   // The domain modules split out of `main.js` (docs/177, `109` HF-380) carry the
   // literals that moved with them: the same debt in a new place, and `main.js`
   // came down by as much in the same commit. MEASURED from each file.
+  ["src/editor_palette_ui.mjs", 1],
+  ["src/editor_link_dialog.mjs", 2],
+  ["src/editor_dialogs.mjs", 11],
   ["src/editor_palette.mjs", 145],
   ["src/editor_drafts.mjs", 14],
   // The nine `label:`/`disabledReason:` literals that moved out of `main.js` with

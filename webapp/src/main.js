@@ -4,7 +4,7 @@
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
-import init, { open, beginVersionDiff, defaultDiffSlice, engineVersion } from "../pkg/casual_doc_wasm.js";
+import init, { open, beginVersionDiff, defaultDiffSlice } from "../pkg/casual_doc_wasm.js";
 import { toggleTextCheckboxAt } from "./text_checkbox.mjs";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
@@ -32,14 +32,10 @@ import { bindComparePanel, buildRedline, comparableBytes } from "./compare_docum
 import { EXPORT_COMMANDS } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
-import { createAboutDialog } from "./about_dialog.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
-import { createBookmarkManager } from "./bookmark_manager.mjs";
 import { createSpacingMenu } from "./spacing_menu.mjs";
 import { createTocNavigator } from "./toc_navigation.mjs";
-import { createDropCapDialog } from "./drop_cap.mjs";
-import { createReferenceCommands, objectMenuRows } from "./reference_commands.mjs";
-import { createTocCommands } from "./toc_commands.mjs";
+import { objectMenuRows } from "./reference_commands.mjs";
 import {
   reflectReviewSurface,
   ribbonSurfaceEnabled as surfaceEnabled,
@@ -50,22 +46,19 @@ import { handleCropKey, objectNudge } from "./object_keys.mjs";
 import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
 import { createKeyboardObjectMove, createObjectTextDrag } from "./object_text_move.mjs";
 import { edgeScrollStep } from "./edge_scroll.mjs";
-import { EMU_PER_PX, INSERTABLE_IMAGE_TYPES, canChangePicture, createPictureReplace, decodeImageBlob } from "./picture_replace.mjs";
+import { canChangePicture } from "./picture_replace.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
 import { wireListGallery } from "./list_gallery_wiring.mjs";
-import { createGlyphPicker } from "./glyph_picker.mjs";
-import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
 import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
-import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
 import { createCompatibilityFindings, findingTotals } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
@@ -89,8 +82,8 @@ import {
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
-import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, navigationShortcuts, wordDeletionDirection } from "./keyboard.mjs";
-import { chordCommand, chordTitle, shortcutForCommand } from "./keymap.mjs";
+import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, wordDeletionDirection } from "./keyboard.mjs";
+import { chordTitle, shortcutForCommand } from "./keymap.mjs";
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import {
   focusMenuIndex,
@@ -109,7 +102,7 @@ import { renderShapeMenu } from "./shape_format_menu.mjs";
 import { createObjectInspector } from "./object_inspector.mjs";
 import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, runWrapPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
 import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
-import { SHAPE_PRESETS, shapeNameKey } from "./shape_catalogue.mjs";
+import { SHAPE_PRESETS } from "./shape_catalogue.mjs";
 import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
 import { createShapeDrawMode } from "./shape_draw_mode.mjs";
 import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
@@ -140,7 +133,6 @@ import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs
 import { insertChartAtCaret } from "./chart_insert.mjs";
 // Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
 import { createChartSurface } from "./chart_surface.mjs";
-import { newestObject, placedObjectIds } from "./placed_objects.mjs";
 import { createCollaborationShell } from "./collab_shell.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
@@ -197,7 +189,6 @@ import {
   APP_MENU_SECTIONS,
 } from "./command_taxonomy.mjs";
 import { fileMenuSections } from "./command_taxonomy.mjs";
-import { fieldLabel, fieldResultText } from "./field_kinds.mjs";
 import {
   createMenuBar,
   renderCommandRows,
@@ -256,6 +247,9 @@ import { createDrafts } from "./editor_drafts.mjs";
 import { createVersions } from "./editor_versions.mjs";
 import { createSettings } from "./editor_settings.mjs";
 import { createPalette } from "./editor_palette.mjs";
+import { createDialogs } from "./editor_dialogs.mjs";
+import { createLinkDialog } from "./editor_link_dialog.mjs";
+import { createPaletteUi } from "./editor_palette_ui.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -276,6 +270,7 @@ const ed = {
   get activeReviewCommentId() { return activeReviewCommentId; },
   get adjustIndentCommand() { return adjustIndentCommand; },
   get applyChangeCase() { return applyChangeCase; },
+  get applyEditResult() { return applyEditResult; },
   get applyFontFamily() { return applyFontFamily; },
   get applyFontSize() { return applyFontSize; },
   get applyListFormatCommand() { return applyListFormatCommand; },
@@ -284,11 +279,20 @@ const ed = {
   get armFormatPainter() { return armFormatPainter; },
   get autoCorrect() { return autoCorrect; },
   get autosaveToggle() { return autosaveToggle; },
+  get blockMutationInViewing() { return blockMutationInViewing; },
   get blockUntrackedInSuggesting() { return blockUntrackedInSuggesting; },
+  get bookmarkManager() { return bookmarkManager; },
+  get breakTypingSession() { return breakTypingSession; },
+  get buildCommands() { return buildCommands; },
   get bulletGalleryMenu() { return bulletGalleryMenu; },
   get caretIsImplicit() { return caretIsImplicit; },
   get clearAllDrafts() { return clearAllDrafts; },
   get clearFormattingBtn() { return clearFormattingBtn; },
+  get closeAppMenu() { return closeAppMenu; },
+  get closeFilePage() { return closeFilePage; },
+  get cmdInput() { return cmdInput; },
+  get cmdList() { return cmdList; },
+  get cmdPalette() { return cmdPalette; },
   get collab() { return collab; },
   get collabFeatureCommands() { return collabFeatureCommands; },
   get commentEdit() { return commentEdit; },
@@ -321,6 +325,9 @@ const ed = {
   get dropCapDialog() { return dropCapDialog; },
   get editRunningContent() { return editRunningContent; },
   get editSelectionLink() { return editSelectionLink; },
+  get editorCommands() { return editorCommands; },
+  get enterObjectEditMode() { return enterObjectEditMode; },
+  get eventTargetsEditor() { return eventTargetsEditor; },
   get exportDocumentAs() { return exportDocumentAs; },
   get fileEl() { return fileEl; },
   get focusEditorSurface() { return focusEditorSurface; },
@@ -342,13 +349,17 @@ const ed = {
   get insertNote() { return insertNote; },
   get insertTableBtn() { return insertTableBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
+  get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
   get listAdvanced() { return listAdvanced; },
   get measurement() { return measurement; },
+  get navToPosition() { return navToPosition; },
   get navigateReview() { return navigateReview; },
   get newBlankDocument() { return newBlankDocument; },
+  get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
   get numberGalleryMenu() { return numberGalleryMenu; },
   get objectContextMenuHost() { return objectContextMenuHost; },
+  get objectEditBlocked() { return objectEditBlocked; },
   get objectPresence() { return objectPresence; },
   get objectSelection() { return objectSelection; },
   get openBookmarkManager() { return openBookmarkManager; },
@@ -361,12 +372,15 @@ const ed = {
   get openShapeGallery() { return openShapeGallery; },
   get openSymbolPicker() { return openSymbolPicker; },
   get pageSetup() { return pageSetup; },
+  get pages() { return pages; },
   get pagesEl() { return pagesEl; },
   get pagesPanelView() { return pagesPanelView; },
   get paintOverlayLayer() { return paintOverlayLayer; },
   get paragraphAdvanced() { return paragraphAdvanced; },
   get paste() { return paste; },
   get pasteAsText() { return pasteAsText; },
+  get pasteRichRunsJson() { return pasteRichRunsJson; },
+  get pasteText() { return pasteText; },
   get place() { return place; },
   get plainTableInfo() { return plainTableInfo; },
   get proofing() { return proofing; },
@@ -381,6 +395,7 @@ const ed = {
   get regionCycle() { return regionCycle; },
   get renderAll() { return renderAll; },
   get renderFilePage() { return renderFilePage; },
+  get repaintPage() { return repaintPage; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
   get reviewCardCache() { return reviewCardCache; },
   get reviewCommentActions() { return reviewCommentActions; },
@@ -399,7 +414,10 @@ const ed = {
   get saveSettings() { return saveSettings; },
   get scheduleChromeRefresh() { return scheduleChromeRefresh; },
   get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
+  get searchTrigger() { return searchTrigger; },
+  get selEndpoints() { return selEndpoints; },
   get selectAll() { return selectAll; },
+  get selectObject() { return selectObject; },
   get selectedObjectContext() { return selectedObjectContext; },
   get selection() { return selection; }, set selection(v) { selection = v; },
   get setDocumentState() { return setDocumentState; },
@@ -11622,8 +11640,6 @@ for (const mode of reviewModeButtons) {
 }
 
 const { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger } = createPalette(ed);
-let cmdMatches = [];
-let cmdSel = 0;
 // ---- One navigation axis: the compact menu bar and the ribbon's File page ---
 // The editor used to show TWO navigation systems at once — this menu bar and the
 // ribbon tab strip — so a command's home was a guess between two places (`109`
@@ -11750,855 +11766,14 @@ function buildCommands() {
   return editorCommands({ surface: "palette" });
 }
 
-// ---- Keyboard shortcuts reference (HF-151) ---------------------------------
-// Help offered "Keyboard shortcuts and commands", which opened the palette — a
-// launcher, not a reference. Nothing in the product ever told a user what the
-// chords WERE. Generated from the command registry plus the caret-movement
-// table in `keyboard.mjs`, so it can neither list a shortcut that does not
-// exist nor miss one that does, and every chord is rendered for the keyboard in
-// front of the user rather than in Apple glyphs on every platform.
-const shortcutsDialog = document.getElementById("shortcutsDialog");
-const shortcutsBody = document.getElementById("shortcutsBody");
-const shortcutsClose = document.getElementById("shortcutsClose");
-
-function buildShortcutsReference() {
-  if (!shortcutsBody) return;
-  renderShortcutsReference(
-    shortcutsBody,
-    shortcutGroups(editorCommands({ surface: "palette" }), navigationShortcuts(), formatShortcut),
-  );
-}
-
-const shortcutsModal = shortcutsDialog
-  ? registerModal(shortcutsDialog, {
-      initialFocus: () => shortcutsClose,
-      fallbackFocus: () => pagesEl,
-    })
-  : null;
-
-function toggleShortcutsReference(open) {
-  if (!shortcutsModal) return;
-  if (open) {
-    // Built on open, not once at boot: the registry's labels move with the
-    // document (undo names its action) and the roster grows with the styles.
-    buildShortcutsReference();
-    shortcutsModal.open();
-  } else {
-    shortcutsModal.close();
-  }
-}
-for (const b of shortcutsDialog?.querySelectorAll("[data-shortcuts-dismiss]") ?? []) b.addEventListener("click", () => toggleShortcutsReference(false));
-
-// ---- About -----------------------------------------------------------------
-const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);
-
-// ---- Bookmark manager ------------------------------------------------------
-// The dialog is `bookmark_manager.mjs`; what is left here is the two things
-// that are not about bookmarks — the review-mode gate, which is about review
-// mode, and the repaint, which is about pages.
-
-/** True (after surfacing the standard read-only/untracked message) if a bookmark
- *  mutation must not apply in the current review mode. Bookmark markers are a
- *  structural model change with no tracked-revision representation, so like table
- *  insertion they are blocked in Viewing (read-only) and Suggesting (untracked). */
-function bookmarkMutationBlocked() {
-  return blockMutationInViewing() || blockUntrackedInSuggesting();
-}
-
-/** Repaints after a bookmark edit and marks the document dirty, WITHOUT moving
- *  the caret: the engine's create/rename/delete rest the caret at a marker or the
- *  document root, but the user's selection should stay put (the manager is a
- *  side panel, not a navigation). */
-async function applyBookmarkEdit(res) {
-  const dirty = res.dirtyPages;
-  const newCount = res.pageCount;
-  const revision = readRevision(res);
-  res.free();
-  noteDocumentEdited(revision);
-  if (newCount !== pages.length) {
-    await renderAll();
-  } else {
-    for (const i of dirty) repaintPage(i);
-    drawSelection();
-  }
-  scheduleChromeRefresh({ stats: true, outline: true });
-}
-
-const bookmarkManager = createBookmarkManager({
-  getDoc: () => doc,
-  applyEdit: applyBookmarkEdit,
-  mutationBlocked: bookmarkMutationBlocked,
-  hasRange,
-  selectionEndpoints: selEndpoints,
-  navigateTo: (position) => navToPosition(position, false),
-  status: (text, kind) => setStatus(text, kind),
-  registerModal,
-  fallbackFocus: () => pagesEl,
-});
-
-function openBookmarkManager() {
-  bookmarkManager.open();
-}
-
-// ---- Insert field ----------------------------------------------------------
-// A Word/Docs-style field inserter over the engine's insertField op (one
-// undoable "Field change"). The kind table and the host-side result formatter
-// are `field_kinds.mjs`; the insert mirrors the bookmark/table structural
-// inserts: blocked in Viewing (read-only) and Suggesting (no tracked-revision
-// representation yet).
-
-/** Inserts a common field at the caret as a single undoable "Field change".
- *  Fails closed exactly like the bookmark/table inserts (`blockMutationInViewing`
- *  + `blockUntrackedInSuggesting`), then applies the EditResult through the shared
- *  caret-position path so the field renders inline, the caret lands after it, and
- *  Undo/Redo treats it as one action. */
-async function insertFieldAtCaret(kind) {
-  // A null `selection` here means no document is open, not "click first" — an
-  // open document always carries an insertion point. Defensive guard only; the
-  // command is not reachable without a document.
-  if (!doc || !selection) return;
-  if (blockMutationInViewing()) return;
-  breakTypingSession();
-  if (blockUntrackedInSuggesting()) return;
-  const { node, offset } = selection.focus;
-  let res;
-  try {
-    res = doc.insertField(node, offset, kind, fieldResultText(kind, { fileName: currentName, authorName: settings.authorName }));
-  } catch (err) {
-    console.warn("insertField ignored:", err?.message ?? err);
-    setStatus("A field can’t be inserted at this position", "error");
-    focusEditorSurface();
-    return;
-  }
-  await applyEditResult(res);
-  setStatus(`Inserted ${fieldLabel(kind)}`);
-  focusEditorSurface();
-}
-
-// ---- Insert picture ----------------------------------------------------------
-// The engine owns no image codec (docs/85 §Q8), so the host decodes the image to
-// bytes + natural pixel size (`picture_replace.mjs`, shared with Change Picture)
-// and hands them to the `insertImage` op. A wide image is scaled down to fit the
-// text column, preserving aspect.
-const MAX_IMAGE_WIDTH_EMU = 6 * 914_400; // ~6in, a sane default display width
-
-/** Inserts an already-decoded image at the caret as one undoable action, gated
- *  like the other object edits (read-only in Viewing, blocked in Suggesting). */
-async function insertImageAtCaret(bytes, widthPx, heightPx, mime) {
-  // Defensive only — see `insertFieldAtCaret`. The picture lands at the caret,
-  // which on a document nobody has clicked into is the start of the body.
-  if (!doc || !selection) return;
-  if (blockMutationInViewing()) return;
-  breakTypingSession();
-  if (blockUntrackedInSuggesting()) return;
-  let widthEmu = Math.max(1, Math.round(widthPx * EMU_PER_PX));
-  let heightEmu = Math.max(1, Math.round(heightPx * EMU_PER_PX));
-  if (widthEmu > MAX_IMAGE_WIDTH_EMU) {
-    heightEmu = Math.round((heightEmu * MAX_IMAGE_WIDTH_EMU) / widthEmu);
-    widthEmu = MAX_IMAGE_WIDTH_EMU;
-  }
-  const { node, offset } = selection.focus;
-  const before = placedObjectIds(doc);
-  let res;
-  try {
-    res = doc.insertImage(node, offset, bytes, widthEmu, heightEmu, mime);
-  } catch (err) {
-    console.warn("insertImage ignored:", err?.message ?? err);
-    setStatus("This picture can’t be inserted here", "error");
-    focusEditorSurface();
-    return;
-  }
-  await applyEditResult(res);
-  // Word, Docs and ONLYOFFICE all leave an inserted picture SELECTED, with its
-  // handles and its toolbar, the same rule a shape and a chart already follow
-  // (`docs/109` OL-03).
-  const picture = newestObject(doc, before, "image");
-  if (picture) selectObject(picture.node, picture.kind, null, picture.anchored, picture);
-  setStatus("Picture inserted");
-  focusEditorSurface();
-}
-
-/** Decodes a File/Blob (a picked file or a pasted image) and inserts it. */
-async function insertImageFromBlob(blob) {
-  if (!doc) return;
-  if (!INSERTABLE_IMAGE_TYPES.has((blob.type || "").toLowerCase())) {
-    setStatus("That image format isn’t supported", "error");
-    return;
-  }
-  try {
-    const decoded = await decodeImageBlob(blob);
-    await insertImageAtCaret(decoded.bytes, decoded.widthPx, decoded.heightPx, decoded.mime);
-  } catch (err) {
-    console.warn("image decode failed:", err);
-    setStatus("Could not read that image", "error");
-  }
-}
-
-/** Insert ▸ Picture: opens a file picker and inserts the chosen image at the
- *  insertion point — the caret if the user placed one, otherwise the start of
- *  the body, exactly as Word and Google Docs do. */
-/** Word's Insert ▸ Text Box. Inserts a floating box at the caret and enters it,
- *  so the user types where they just clicked instead of hunting for the box. */
-async function insertTextBoxObject() {
-  if (!doc || !selection) return;
-  if (blockMutationInViewing()) return;
-  if (reviewMode === "suggesting") {
-    setStatus("Inserting a text box cannot be tracked yet; switch to Editing", "error");
-    return;
-  }
-  const before = placedObjectIds(doc);
-  let result;
-  try {
-    result = doc.insertTextBox(selection.focus.node, selection.focus.offset);
-  } catch (err) {
-    setStatus(`Could not insert the text box: ${err.message ?? err}`, "error");
-    return;
-  }
-  await applyEditResult(result);
-  // Land INSIDE the box through the SAME path a double-click uses, so entry can
-  // never diverge between the two ways of getting there.
-  const box = newestObject(doc, before, "textbox");
-  if (box) {
-    selectObject(box.node, box.kind, null, box.anchored, box);
-    enterObjectEditMode();
-  }
-  setStatus("Text box added — type its text");
-  focusEditorSurface();
-}
-
-/** Word's Insert ▸ Shapes. Inserts a floating preset shape and leaves it
- *  SELECTED (not entered) — a shape has no text until you ask for some.
- *
- *  `at` is the rectangle the user DREW, in page-local twips, or null for the
- *  plain command. `insertShape` authors a fixed 2"x1" at the caret's paragraph,
- *  so the drawn geometry is applied by the resize that follows — one more
- *  undoable action, which is why the two are reported as one gesture in the
- *  status line rather than as two. */
-async function insertShapeObject(geometry, at = null) {
-  if (!doc || !selection) return;
-  if (blockMutationInViewing()) return;
-  if (reviewMode === "suggesting") {
-    setStatus("Inserting a shape cannot be tracked yet; switch to Editing", "error");
-    return;
-  }
-  const before = placedObjectIds(doc);
-  let result;
-  try {
-    result = doc.insertShape(selection.focus.node, selection.focus.offset, geometry);
-  } catch (err) {
-    setStatus(`Could not insert the shape: ${err.message ?? err}`, "error");
-    return;
-  }
-  await applyEditResult(result);
-  // Word leaves a new shape SELECTED, not entered — which also puts Fill and
-  // Outline within reach straight away.
-  const shape = newestObject(doc, before, "shape");
-  if (shape) selectObject(shape.node, shape.kind, null, shape.anchored, shape);
-  if (at && shape) {
-    try {
-      await applyEditResult(
-        doc.resizeObject(
-          // The ROOT, not the leaf: `insertShape` wraps the shape in a
-          // group-of-one (the only shape a shape takes in this model), and
-          // geometry belongs to the group. Resizing the leaf is refused.
-          shape.ref?.root ?? shape.root ?? shape.node,
-          at.left * EMU_PER_TWIP,
-          at.top * EMU_PER_TWIP,
-          at.width * EMU_PER_TWIP,
-          at.height * EMU_PER_TWIP,
-        ),
-      );
-    } catch (err) {
-      // The shape exists at its default size; saying so beats silence.
-      setStatus(editRefusalMessage(err, { routeRefusal: SESSION.sentenceFor }), "error");
-    }
-  }
-  const key = shapeNameKey(geometry);
-  setStatus(t("shape.added", { shape: key ? t(key) : "Shape" }));
-  focusEditorSurface();
-}
-
-function insertImageFromFile() {
-  if (!doc || !selection) return;
-  if (blockMutationInViewing()) return;
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = [...INSERTABLE_IMAGE_TYPES].join(",");
-  input.addEventListener("change", () => {
-    const file = input.files?.[0];
-    if (file) void insertImageFromBlob(file);
-  });
-  input.click();
-}
-
-/** Word's Change Picture (`picture_replace.mjs`, HF-252). */
-const pictureReplace = createPictureReplace({
-  doc: () => doc,
-  selection: () => objectSelection,
-  runEdit: (thunk, options) => runEdit(thunk, { ...options, keepView: true }),
-  blocked: () => objectEditBlocked(),
-  setStatus: (text, kind) => setStatus(text, kind),
-  t,
-  createInput: () => document.createElement("input"),
-});
-
-const fieldDialog = document.getElementById("fieldDialog");
-const fieldList = document.getElementById("fieldList");
-const fieldClose = document.getElementById("fieldClose");
-const fieldCancel = document.getElementById("fieldCancel");
-
-function fieldChoiceButtons() {
-  return fieldList ? [...fieldList.querySelectorAll(".field-choice")] : [];
-}
-
-const fieldModal = fieldDialog
-  ? registerModal(fieldDialog, {
-      initialFocus: () => fieldChoiceButtons()[0],
-      fallbackFocus: () => pagesEl,
-    })
-  : null;
-
-/** Opens the field picker against the current insertion point; the first choice
- *  is focused for keyboard use. Needs only an open document — Word's Insert ▸
- *  Quick Parts ▸ Field is never gated on having clicked into the page first. */
-function openFieldDialog() {
-  if (!doc || !fieldDialog) return;
-  // Viewing is read-only: refuse before opening, as the symbol and emoji pickers
-  // do, so the dialog never opens onto an insert that cannot happen. Promoting
-  // Field to the ribbon is what makes this reachable without a deliberate detour
-  // through the palette, and picking a field only to be told no is a worse
-  // answer than not opening.
-  if (blockMutationInViewing()) return;
-  fieldModal.open();
-}
-
-function closeFieldDialog() {
-  fieldModal?.close();
-}
-
-/** Closes the picker, then inserts — insertFieldAtCaret ends by focusing the
- *  editor surface so the caret (now after the field) is ready for typing. */
-function chooseFieldFromDialog(kind) {
-  closeFieldDialog();
-  insertFieldAtCaret(kind);
-}
-
-if (fieldDialog) {
-  for (const button of fieldChoiceButtons()) {
-    button.addEventListener("click", () => chooseFieldFromDialog(button.dataset.fieldKind));
-  }
-  fieldClose.addEventListener("click", () => closeFieldDialog());
-  fieldCancel.addEventListener("click", () => closeFieldDialog());
-  fieldDialog.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const items = fieldChoiceButtons();
-      const index = items.indexOf(document.activeElement);
-      const dir = event.key === "ArrowDown" ? 1 : -1;
-      items[(index + dir + items.length) % items.length]?.focus();
-    }
-  });
-}
-
-const dropCapDialog = createDropCapDialog({
-  registerModal, getDoc: () => doc, selectionNode: () => selection?.focus.node ?? "",
-  mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
-  apply: (mode, lines) => runEdit(() => doc.setDropCap(selection.focus.node, mode, lines), { gate: true }),
-  status: setStatus, fallbackFocus: () => pagesEl,
-});
-
-// ---- References ▸ captions and cross-references (OO-005) --------------------
-// Both dialogs and the caption-numbering cache are `reference_commands.mjs`; what
-// is here is the application state they read. Every insert goes through the SAME
-// gated, tracked, undoable path as every other edit. The caption's target is the
-// caret's block — selecting a picture or table puts the caret at its anchor.
-const referenceCommands = createReferenceCommands({
-  registerModal, getDoc: () => doc, status: setStatus, fallbackFocus: () => pagesEl,
-  mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
-  targetNode: () => selection?.focus.node ?? "",
-  caret: () => (selection ? { node: selection.focus.node, offset: selection.focus.offset } : null),
-  applyEdit: (run) => runEdit(run, { gate: true }),
-});
-
-// References ▸ Table of contents. Same shape and the same cache discipline as
-// the caption numbering beside it: the count the ribbon reads is refreshed on
-// the deliberate interactions that change it, never on the keystroke path.
-const tocCommands = createTocCommands({
-  registerModal, getDoc: () => doc, status: setStatus, fallbackFocus: () => pagesEl,
-  mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
-  caretNode: () => selection?.focus.node ?? "",
-  applyEdit: (run) => runEdit(run, { gate: true }),
-  changed: () => updateToolbar(),
-});
-
-// ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------
-// Word's Insert ▸ Symbol and Docs' Insert ▸ Special characters / emoji, built to
-// that standard: a categorized grid of curated glyphs. Clicking a glyph inserts
-// it at the caret and KEEPS the dialog open (Word/Docs behavior) so the user can
-// add several; Done / Esc / the close button dismiss. Insertion reuses the same
-// gated, tracked, undoable text path as paste (`pasteText` → `insertPlainTextAs`
-// with the "paste" HistoryKind, which never coalesces): each glyph is ONE undo,
-// fails closed read-only in Viewing, and routes through the suggestion path in
-// Suggesting — no engine change, an ordinary text edit. The curated sets are in
-// `glyph_sets.mjs` and the dialog itself is in `glyph_picker.mjs`; what is left
-// here is the insertion and the two one-line openers the commands call.
-
-/** Inserts a glyph (symbol or emoji) at the caret through the shared gated,
- *  tracked, undoable text path. `pasteText(glyph, "paste")` fails closed in
- *  Viewing, routes through the suggestion path in Suggesting, and records ONE
- *  non-coalescing history entry per call (the "paste" HistoryKind never merges),
- *  so every glyph is exactly one Undo. The picker stays open (Word/Docs). */
-async function insertGlyphAtCaret(glyph) {
-  // Defensive only: an open document always has an insertion point, so the
-  // glyph lands at the caret, or at the start of the body if none was placed.
-  if (!doc || !glyph || !selection) return;
-  await pasteText(glyph, "paste");
-}
-
-/** Builds a categorized glyph picker (symbol or emoji) over an existing dialog
- *  skeleton in the markup. Returns `{ open }`; the controller owns tab switching,
- *  keyword search, roving arrow-key grid navigation, insertion (keep-open), and
- *  Esc / backdrop / Done dismissal — mirroring the field dialog's focus-trap and
- *  return-focus contract. */
-
-const glyphPickerHost = {
-  insertGlyph: insertGlyphAtCaret,
-  blockedInViewing: blockMutationInViewing,
-  returnFocusToEditor: focusEditorSurface,
-  isDocumentOpen: () => doc !== null,
-};
-const symbolPicker = createGlyphPicker({
-  dialogId: "symbolDialog", gridId: "symbolGrid", tabsId: "symbolTabs", searchId: "symbolSearch",
-  emptyId: "symbolEmpty", closeId: "symbolClose", doneId: "symbolDone", groups: SYMBOL_GROUPS,
-  tabsAreEmoji: false, triggerId: "insertSymbolBtn", ...glyphPickerHost,
-});
-const emojiPicker = createGlyphPicker({
-  dialogId: "emojiDialog", gridId: "emojiGrid", tabsId: "emojiTabs", searchId: "emojiSearch",
-  emptyId: "emojiEmpty", closeId: "emojiClose", doneId: "emojiDone", groups: EMOJI_GROUPS,
-  tabsAreEmoji: true, triggerId: "insertEmojiBtn", ...glyphPickerHost,
-});
-
-function openSymbolPicker() {
-  symbolPicker.open();
-}
-
-function openEmojiPicker() {
-  emojiPicker.open();
-}
-
-// ---- Insert / edit link dialog ---------------------------------------------
-// A Word/Docs-style hyperlink dialog: a "Text to display" field, a Web-address /
-// Place-in-this-document target picker (the picker is populated from the
-// document's bookmarks so a user never hand-types "#name"), and an optional
-// ScreenTip. It replaces the old window.prompt UI and applies through the very
-// same gated engine ops (`setHyperlink`/`removeHyperlink`, one undoable action,
-// fail-closed in Viewing/Suggesting). Changing the display text re-applies the
-// link via the rich-run paste op so text + link stay one undoable action.
-const linkDialog = document.getElementById("linkDialog");
-const linkDialogForm = document.getElementById("linkDialogForm");
-const linkDialogTitle = document.getElementById("linkDialogTitle");
-const linkTextInput = document.getElementById("linkTextInput");
-const linkUrlInput = document.getElementById("linkUrlInput");
-const linkPlaceSelect = document.getElementById("linkPlaceSelect");
-const linkPlaceEmpty = document.getElementById("linkPlaceEmpty");
-const linkTooltipInput = document.getElementById("linkTooltipInput");
-const linkModeUrl = document.getElementById("linkModeUrl");
-const linkModePlace = document.getElementById("linkModePlace");
-const linkModeUrlPanel = document.getElementById("linkModeUrlPanel");
-const linkModePlacePanel = document.getElementById("linkModePlacePanel");
-const linkDialogNote = document.getElementById("linkDialogNote");
-const linkDialogClose = document.getElementById("linkDialogClose");
-const linkCancelBtn = document.getElementById("linkCancelBtn");
-const linkRemoveBtn = document.getElementById("linkRemoveBtn");
-const LINK_DIALOG_HINT = "Enter applies; Esc cancels.";
-/** The range a currently-open link dialog targets. `null` when it is closed. */
-let linkDialogCtx = null;
-let linkDialogMode = "url";
-
-function setLinkDialogNote(message, isError) {
-  linkDialogNote.textContent = message || LINK_DIALOG_HINT;
-  linkDialogNote.classList.toggle("error", !!isError && !!message);
-}
-
-/** Switches the target picker between an external "Web address" field and the
- *  document's "Place in this document" bookmark dropdown. */
-function setLinkDialogMode(mode) {
-  linkDialogMode = mode === "place" ? "place" : "url";
-  const place = linkDialogMode === "place";
-  linkModeUrl.setAttribute("aria-selected", String(!place));
-  linkModePlace.setAttribute("aria-selected", String(place));
-  linkModeUrl.classList.toggle("is-active", !place);
-  linkModePlace.classList.toggle("is-active", place);
-  linkModeUrlPanel.hidden = place;
-  linkModePlacePanel.hidden = !place;
-}
-
-/** Fills the place dropdown from the document's bookmarks (headings are not
- *  offered: the engine's link target is a bookmark anchor or URL, and
- *  auto-bookmarking a heading would be a second, separate undoable op). Returns
- *  the bookmark count; `selectedAnchor` pre-selects an existing internal link. */
-function populateLinkPlaces(selectedAnchor) {
-  const entries = bookmarkManager.entries();
-  linkPlaceSelect.replaceChildren();
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = entries.length ? "Choose a bookmark…" : "No bookmarks in this document";
-  linkPlaceSelect.append(placeholder);
-  for (const { name } of entries) {
-    const option = document.createElement("option");
-    option.value = `#${name}`;
-    option.textContent = name;
-    if (selectedAnchor && name === selectedAnchor) option.selected = true;
-    linkPlaceSelect.append(option);
-  }
-  linkPlaceSelect.disabled = entries.length === 0;
-  linkPlaceEmpty.hidden = entries.length !== 0;
-  return entries.length;
-}
-
-const linkModal = linkDialog
-  ? registerModal(linkDialog, {
-      initialFocus: () => (linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput),
-      fallbackFocus: () => pagesEl,
-      onOpen: () => {
-        if (linkDialogMode !== "place") linkUrlInput.select();
-      },
-      onClose: () => {
-        linkDialogCtx = null;
-      },
-    })
-  : null;
-
-/** Opens the dialog over `[node, start)..[node, end)`. `link` (optional) is an
- *  existing hyperlink to edit — it prefills the URL / bookmark / ScreenTip and
- *  shows Remove; a fresh insert leaves them empty. `text` is the current display
- *  text. Fails closed in Viewing/Suggesting (the same gate the apply path
- *  enforces) so the dialog never opens onto a dead Apply. */
-function openLinkDialog({ node, start, end, link = null, text = "" }) {
-  if (!doc || !linkDialog) return;
-  if (blockMutationInViewing() || blockUntrackedInSuggesting()) return;
-  linkDialogCtx = { node, start, end, editing: !!link, originalText: text };
-
-  const internal = link?.kind === "internal";
-  const hasPlaces = populateLinkPlaces(internal ? link.anchor : null);
-  linkTextInput.value = text;
-  linkTooltipInput.value = link?.tooltip || "";
-  linkUrlInput.value = internal ? "" : (link?.url || "");
-  setLinkDialogMode(internal && hasPlaces ? "place" : "url");
-  setLinkDialogNote("", false);
-  linkDialogTitle.textContent = link ? "Edit link" : "Insert link";
-  linkRemoveBtn.hidden = !link;
-
-  linkModal.open();
-}
-
-function closeLinkDialog() {
-  linkModal?.close();
-}
-
-/** The target string the active mode resolves to: a trimmed URL, or the picked
- *  bookmark's `#anchor` value. */
-function linkDialogTarget() {
-  return linkDialogMode === "place"
-    ? linkPlaceSelect.value.trim()
-    : linkUrlInput.value.trim();
-}
-
-/** Applies the dialog as one undoable, gated action. An empty target is
- *  rejected inline (never creates an empty link). When the display text is
- *  unchanged the link is set via `setHyperlink` (carrying the ScreenTip); when
- *  the user edits the text, the text + link are re-applied together via the
- *  rich-run paste op (one undoable action — the ScreenTip is only persisted
- *  when the text is left unchanged, since that op carries no tooltip). */
-async function applyLinkDialog() {
-  if (!doc || !linkDialogCtx) return;
-  const { node, start, end, originalText } = linkDialogCtx;
-  const target = linkDialogTarget();
-  if (!target) {
-    setLinkDialogNote(
-      linkDialogMode === "place"
-        ? "Choose a bookmark to link to."
-        : "Enter a web address, or link to a place in this document.",
-      true,
-    );
-    (linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput).focus();
-    return;
-  }
-  const tooltip = linkTooltipInput.value.trim();
-  const displayText = linkTextInput.value;
-  const textChanged = displayText.length > 0 && displayText !== originalText;
-  // Point the model selection at the target range so the shared, gated apply
-  // paths (which read the live selection) act on exactly this link.
-  selection = { anchor: { node, offset: start }, focus: { node, offset: end } };
-  drawSelection();
-
-  if (!textChanged) {
-    await runToolbarEdit(() => doc.setHyperlink(node, start, end, target, tooltip || null));
-  } else {
-    // Rebuild the range as a single run carrying the first run's formatting plus
-    // the new text and href; pasteRichRuns batches InsertText+FormatText+
-    // SetHyperlink into one undoable action.
-    let base = {};
-    try {
-      base = (JSON.parse(doc.copyRichRuns(node, start, node, end)) || [])
-        .find((run) => !run.paragraphBreak) || {};
-    } catch { /* fall back to an unformatted run */ }
-    const run = { ...base, text: displayText, href: target, paragraphBreak: false };
-    await pasteRichRunsJson(JSON.stringify([run]));
-    if (tooltip) setStatus("Link added. Its ScreenTip needs the display text left unchanged.");
-  }
-  closeLinkDialog();
-}
-
-/** Removes the link over the dialog's range (`removeHyperlink`, one gated
- *  undoable action) — the Remove button, shown only when editing. */
-async function removeLinkDialog() {
-  if (!doc || !linkDialogCtx) return;
-  const { node, start, end } = linkDialogCtx;
-  selection = { anchor: { node, offset: start }, focus: { node, offset: end } };
-  drawSelection();
-  await runToolbarEdit(() => doc.removeHyperlink(node, start, end));
-  closeLinkDialog();
-  setStatus("Link removed");
-}
-
-if (linkDialog) {
-  linkDialogForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void applyLinkDialog();
-  });
-  linkModeUrl.addEventListener("click", () => {
-    setLinkDialogMode("url");
-    linkUrlInput.focus();
-  });
-  linkModePlace.addEventListener("click", () => {
-    setLinkDialogMode("place");
-    linkPlaceSelect.focus();
-  });
-  // Picking a place is a target choice; clear any stale "enter a URL" error.
-  linkPlaceSelect.addEventListener("change", () => setLinkDialogNote("", false));
-  for (const field of [linkUrlInput, linkTextInput, linkTooltipInput]) {
-    field.addEventListener("input", () => {
-      if (linkDialogNote.classList.contains("error")) setLinkDialogNote("", false);
-    });
-  }
-  linkRemoveBtn.addEventListener("click", () => void removeLinkDialog());
-  linkCancelBtn.addEventListener("click", () => closeLinkDialog());
-  linkDialogClose.addEventListener("click", () => closeLinkDialog());
-  linkDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && event.target === linkPlaceSelect) {
-      // Enter on the native select would not submit the form; apply explicitly.
-      event.preventDefault();
-      void applyLinkDialog();
-    }
-  });
-}
-
-function renderCommands(query) {
-  const q = query.trim().toLowerCase();
-  const all = buildCommands();
-  cmdMatches = q
-    ? all.filter((c) => `${c.label} ${c.group} ${c.kw} ${c.shortcut ?? ""}`.toLowerCase().includes(q))
-    : all;
-  cmdSel = cmdMatches.findIndex((command) => command.enabled !== false);
-  cmdList.replaceChildren();
-  if (!cmdMatches.length) {
-    const empty = document.createElement("div");
-    empty.className = "cmd-empty";
-    empty.textContent = "No matching commands";
-    cmdList.appendChild(empty);
-    cmdInput.setAttribute("aria-expanded", "false");
-    cmdInput.removeAttribute("aria-activedescendant");
-    return;
-  }
-  cmdInput.setAttribute("aria-expanded", "true");
-  cmdMatches.forEach((c, i) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = `cmd-item${i === cmdSel ? " sel" : ""}`;
-    item.setAttribute("role", "option");
-    // A stable id per option is what `aria-activedescendant` points at; the
-    // option itself must stay out of the tab order because focus never leaves
-    // the query input.
-    item.id = `cmdOption-${i}`;
-    // The command id, on the row, for the same reason the context menu carries
-    // it (`data-command-id`) and the ribbon buttons carry `data-command`: it
-    // makes "is this capability on more than one surface?" a question the DOM can
-    // answer, so a parity guard compares id sets instead of matching labels that
-    // are context sensitive and carry their shortcut in the same box.
-    item.dataset.commandId = c.id;
-    item.tabIndex = -1;
-    item.setAttribute("aria-selected", String(i === cmdSel));
-    item.disabled = c.enabled === false;
-    if (c.enabled === false && c.disabledReason) item.title = c.disabledReason;
-    // The hint column shows the disabled reason when unavailable, else the
-    // command's keyboard shortcut when it has one (so the palette teaches the
-    // shortcut), else its group.
-    const hint = c.enabled === false ? c.disabledReason : (formatShortcut(c.shortcut) || c.group);
-    // The shortcut, separately from the hint TEXT. The hint box holds a chord, a
-    // group name or a refusal reason depending on state, so a test reading it
-    // cannot tell "has a chord" from "has a group" — and a reachability guard
-    // that counts a group name as a keyboard surface passes for every command
-    // there is, which is the green-but-worthless guard this repo keeps catching.
-    if (c.shortcut) item.dataset.commandShortcut = formatShortcut(c.shortcut);
-    item.innerHTML = `<span>${escapeHtml(c.label)}</span><span class="cmd-hint">${escapeHtml(hint)}</span>`;
-    item.addEventListener("mousemove", () => setCmdSel(i));
-    item.addEventListener("click", () => runCommand(i));
-    cmdList.appendChild(item);
-  });
-  reflectCmdSel();
-}
-
-function setCmdSel(i) {
-  if (i < 0 || cmdMatches[i]?.enabled === false) return;
-  cmdSel = i;
-  reflectCmdSel();
-}
-
-/** Publishes the current selection to both channels: the `.sel` class the eye
- *  reads, and the `aria-selected` / `aria-activedescendant` pair a screen reader
- *  reads. Arrowing used to move only the class, so the palette said nothing
- *  while the highlight travelled and Enter ran whatever happened to be under
- *  it. The option's own text carries the hint column, so a disabled command
- *  announces its reason with its name. */
-function reflectCmdSel() {
-  const items = cmdList.querySelectorAll(".cmd-item");
-  items.forEach((el, k) => {
-    el.classList.toggle("sel", k === cmdSel);
-    el.setAttribute("aria-selected", String(k === cmdSel));
-  });
-  const active = items[cmdSel];
-  if (active) {
-    cmdInput.setAttribute("aria-activedescendant", active.id);
-    active.scrollIntoView({ block: "nearest" });
-  } else {
-    cmdInput.removeAttribute("aria-activedescendant");
-  }
-}
-
-function moveCmdSelection(direction) {
-  if (!cmdMatches.some((command) => command.enabled !== false)) return;
-  let index = cmdSel;
-  for (let count = 0; count < cmdMatches.length; count++) {
-    index = (index + direction + cmdMatches.length) % cmdMatches.length;
-    if (cmdMatches[index].enabled !== false) {
-      setCmdSel(index);
-      return;
-    }
-  }
-}
-
-function runCommand(i) {
-  const cmd = cmdMatches[i];
-  if (!cmd || cmd.enabled === false) return;
-  closeCmd();
-  // From the File page's PANE there is no modal for `closeCmd` to close, so
-  // the command ran with the page still over the document. No-op when closed.
-  closeFilePage();
-  cmd.run();
-}
-
-// The palette is modal too — it takes the keyboard and dims the app behind it —
-// so it joins the same stack rather than keeping a fourth dismissal contract.
-// It brings its own Arrow/Enter handling on #cmdInput; the primitive only owns
-// Escape, Tab containment and the shortcut lock.
-const cmdModal = registerModal(cmdPalette, {
-  initialFocus: () => cmdInput,
-  fallbackFocus: () => pagesEl,
-  // A shortcut that opens a surface must also close it; the lock would
-  // otherwise swallow the second ⌘⇧P and strand the palette open.
-  toggleChord: (event) => (event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "p",
-  onClose: () => searchTrigger?.setAttribute("aria-expanded", "false"),
-});
-
-function openCmd() {
-  closeAppMenu();
-  cmdInput.value = "";
-  renderCommands("");
-  searchTrigger?.setAttribute("aria-expanded", "true");
-  cmdModal.open();
-}
-function closeCmd() {
-  cmdModal.close();
-}
-
-cmdInput.addEventListener("input", () => renderCommands(cmdInput.value));
-cmdInput.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    moveCmdSelection(1);
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    moveCmdSelection(-1);
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    runCommand(cmdSel);
-  }
-});
-/** Runs the command `id` names, or says why it cannot run.
- *
- *  A chord that exists and does nothing is a dead control (SKILL.md §10), so a
- *  shortcut whose command is unavailable refuses OUT LOUD with the same reason
- *  the ribbon button and the menu row give — and since `109` UX-017 that reason
- *  is perceivable at phone widths and to a screen reader too. Returns false only
- *  when no such command exists in the current state, which is how a chord whose
- *  command needs a document (⌘S) still falls through to the browser when nothing
- *  is open, exactly as it did before.
- *
- *  Cost: one `editorCommands()` build per chord press. That is the same build the
- *  command palette already performs on EVERY keystroke typed into its input
- *  (`renderCommands` → `buildCommands`), so this is an accepted cost on an
- *  existing path rather than a new one — but it is not O(1): `documentHasObjects`
- *  inside the build calls `objectOrder()` and parses it, which is O(objects).
- *  That is pre-existing and worth its own row; it is not introduced here.
- */
-function runCommandById(id) {
-  const command = editorCommands({ surface: "palette" }).find((c) => c.id === id);
-  if (!command) return false;
-  if (command.enabled === false) {
-    setStatus(command.disabledReason ?? "That command is not available right now", "error");
-    return true;
-  }
-  command.run();
-  return true;
-}
-
-// THE dispatcher: the one place a keyboard chord becomes a command (`109`
-// UX-006). It replaces four separate `keydown` handlers that each carried their
-// own hand-written if-chain, which is why the editor could advertise a chord it
-// had never bound and bind one it advertised nowhere.
-//
-// No modal check here, and none is needed: `modal.mjs` already swallows
-// application chords in the capture phase while a dialog is open, with an
-// allowlist for text-editing chords and a `toggleChord` escape hatch. That is
-// ONLYOFFICE's `common/main/lib/util/Shortcuts.js:96-107` suspend/resume, with
-// the two refinements their version lacks.
-//
-// `stopImmediatePropagation` once a chord is claimed, because a chord the table
-// owns must not also be read by anything else — that is what made ⌘⌥⏎ need it by
-// hand, or it would both decide a tracked change and insert a paragraph. Every
-// other document-level `keydown` listener in this file is Escape-only or
-// popover-only, so nothing legitimate is cut off.
-document.addEventListener("keydown", (e) => {
-  const id = chordCommand(e, EDITOR_KEYBOARD_PLATFORM, {
-    inEditor: !isInteractiveChromeTarget(e.target) && eventTargetsEditor(e),
-  });
-  if (!id) return;
-  // The palette is the one command that toggles: its own chord has to close it
-  // as well as open it.
-  if (id === "help.commands" && cmdModal.isOpen) {
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    closeCmd();
-    return;
-  }
-  if (!runCommandById(id)) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-});
-// Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
-// worked, it just had no on-screen affordance to discover it.
-searchTrigger?.addEventListener("click", () => openCmd());
+const {
+  bookmarkManager, buildShortcutsReference, dropCapDialog, insertFieldAtCaret, insertImageFromBlob,
+  insertImageFromFile, insertShapeObject, insertTextBoxObject, openBookmarkManager, openEmojiPicker,
+  openFieldDialog, openSymbolPicker, pictureReplace, referenceCommands, tocCommands, toggleAbout,
+  toggleShortcutsReference,
+} = createDialogs(ed);
+const { openLinkDialog } = createLinkDialog(ed);
+const { openCmd, renderCommands } = createPaletteUi(ed);
 
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent

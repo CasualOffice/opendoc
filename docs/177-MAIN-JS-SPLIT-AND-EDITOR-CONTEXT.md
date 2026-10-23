@@ -55,13 +55,16 @@ Sizes are `wc -l` at the commit that last touched the row.
 
 | Module | Factory | Domain | Lines |
 |---|---|---|---|
+| `editor_dialogs.mjs` | `createDialogs` | Shortcuts reference, About, bookmarks, Insert field / picture, captions and cross-references, Symbol / Emoji | 470 |
 | `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
+| `editor_link_dialog.mjs` | `createLinkDialog` | Insert / edit link dialog | 218 |
 | `editor_palette.mjs` | `createPalette` | Command palette and `editorCommands()`, the registry of editor actions | 652 |
+| `editor_palette_ui.mjs` | `createPaletteUi` | The palette's surface: filtered list, row selection, run by row or id, its keyboard | 222 |
 | `editor_settings.mjs` | `createSettings` | Settings dialog: theme, accent, reviewer identity, autosave and proofing switches; localisation start | 205 |
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 
-`main.js`: 16,030 lines when the split began, 14,341 now. The domain modules hold 1,963.
+`main.js`: 16,030 lines when the split began, 13,516 now. The domain modules hold 2,873.
 
 ## 4. What is left for HF-109
 
