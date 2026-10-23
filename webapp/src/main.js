@@ -9,50 +9,34 @@
 // with nothing loaded — which is also why they are handed to
 // `measurement_units.mjs` rather than reached for there (that module stays
 // browser-free and engine-free, so its policy is answerable in node).
-import {
-  NAMED_WEB_FONT_FACES,
-  SCRIPT_FALLBACK_FONTS,
-  fallbackKeysFor,
-  fetchSharedFontBytes,
-  packFontBytes,
-} from "./web_fonts.mjs";
-import { breakSurfaceRows } from "./break_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
-import { objectMenuRows } from "./reference_commands.mjs";
 import {
   reflectReviewSurface,
-  ribbonSurfaceEnabled as surfaceEnabled,
-  ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
-import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { previewPx } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
-import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
+import { applyPreviewInk } from "./style_preview.mjs";
 import { createCompatibilityFindings } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
 import { createCompactToolbar } from "./compact_toolbar.mjs";
-import { createConfirmDialog } from "./confirm_dialog.mjs";
 import { createPropertiesDialog } from "./document_metadata.mjs";
-import { createNamePrompt } from "./name_dialog.mjs";
 import {
   buildPageBand,
-  docToScroll,
   pageBandPitch,
-  scrollToDoc,
 } from "./page_scroll.mjs";
 import { keyboardPlatform } from "./keyboard.mjs";
 import { chordTitle } from "./keymap.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 import { objectBarPosition } from "./object_guides.mjs";
 // Own lines (anti-conflict): the two direct-manipulation geometry gestures.
-import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
 import { positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
 import { t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
@@ -62,40 +46,20 @@ import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
 import { onButton } from "./popover_manager.mjs";
-import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
+import { reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
-import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
+import { editingModeFor, hostCapabilities, hostChrome, hostConfig } from "./capabilities.mjs";
 // Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
 import { createCollaborationShell } from "./collab_shell.mjs";
-import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
-import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
-import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { orderedSelectionEnds, sameModelPosition } from "./caret_navigation.mjs";
-import {
-  reviewCardSignature,
-  reviewCommentIsReplyTo,
-  reviewStackHeight,
-  stackReviewCards,
-} from "./review_layout.mjs";
+import { sameModelPosition } from "./caret_navigation.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, createReviewBanners, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
-import { commentEditButton, commentEditor, commentQuoteElement, createCommentEditState, createCommentQuotes } from "./review_comment_card.mjs";
-import { makeMenuHeading } from "./picker_chrome.mjs";
-import {
-  formatReviewDate,
-  reviewAuthorColor,
-  reviewAuthorKey,
-  reviewCardAriaLabel,
-  reviewChangeTypeLabel,
-  reviewCommentTooltip,
-  reviewFormattingDescription,
-  reviewRevisionTooltip,
-} from "./review_labels.mjs";
+import { createReviewBanners } from "./review_chrome.mjs";
+import { createCommentEditState, createCommentQuotes } from "./review_comment_card.mjs";
 import {
   TWIPS_PER_INCH,
   round2,
@@ -175,6 +139,11 @@ import { createTableFormat } from "./editor_table_format.mjs";
 import { createDocTools } from "./editor_doc_tools.mjs";
 import { createTableProps } from "./editor_table_props.mjs";
 import { createFilePage } from "./editor_file_page.mjs";
+import { createRibbon } from "./editor_ribbon.mjs";
+import { createReviewMargin } from "./editor_review_margin.mjs";
+import { createFonts } from "./editor_fonts.mjs";
+import { createCommandSurfaces } from "./editor_command_surfaces.mjs";
+import { createScroll } from "./editor_scroll.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -194,6 +163,7 @@ const ed = {
   get REFERENCE_SURFACE() { return REFERENCE_SURFACE; },
   get REVIEW_SURFACE() { return REVIEW_SURFACE; },
   get REVIEW_TEXTLESS_KINDS() { return REVIEW_TEXTLESS_KINDS; },
+  get REVIEW_WINDOW_OVERSCAN() { return REVIEW_WINDOW_OVERSCAN; },
   get SESSION() { return SESSION; },
   get SETTINGS_SURFACE() { return SETTINGS_SURFACE; },
   get SHAPE_MENU_COLORS() { return SHAPE_MENU_COLORS; },
@@ -265,6 +235,7 @@ const ed = {
   get climbOutOfGroup() { return climbOutOfGroup; },
   get closeAppMenu() { return closeAppMenu; },
   get closeFilePage() { return closeFilePage; },
+  get closeFlankingPanel() { return closeFlankingPanel; },
   get closeReviewInlineCard() { return closeReviewInlineCard; },
   get closeReviewPopover() { return closeReviewPopover; },
   get cmdInput() { return cmdInput; },
@@ -294,6 +265,7 @@ const ed = {
   get currentFontFamily() { return currentFontFamily; }, set currentFontFamily(v) { currentFontFamily = v; },
   get currentName() { return currentName; }, set currentName(v) { currentName = v; },
   get currentParagraphStyleName() { return currentParagraphStyleName; },
+  get currentReviewTimestamp() { return currentReviewTimestamp; },
   get currentRevision() { return currentRevision; }, set currentRevision(v) { currentRevision = v; },
   get currentSourceFormat() { return currentSourceFormat; }, set currentSourceFormat(v) { currentSourceFormat = v; },
   get currentStoryKey() { return currentStoryKey; },
@@ -309,6 +281,7 @@ const ed = {
   get deleteSelectedObject() { return deleteSelectedObject; },
   get descendIntoSelectedGroup() { return descendIntoSelectedGroup; },
   get descendSelectedGroup() { return descendSelectedGroup; },
+  get disarmFormatPainter() { return disarmFormatPainter; },
   get discardOwnDraft() { return discardOwnDraft; },
   get doc() { return doc; }, set doc(v) { doc = v; },
   get docTitleEl() { return docTitleEl; },
@@ -346,9 +319,11 @@ const ed = {
   get fmtButtons() { return fmtButtons; },
   get focusEditorSurface() { return focusEditorSurface; },
   get focusReviewComment() { return focusReviewComment; },
+  get focusReviewRevision() { return focusReviewRevision; },
   get foldView() { return foldView; },
   get followTocEntry() { return followTocEntry; },
   get fontAdvanced() { return fontAdvanced; },
+  get fontCache() { return fontCache; },
   get fontFamilyBtn() { return fontFamilyBtn; },
   get fontFamilyLabel() { return fontFamilyLabel; },
   get fontInventory() { return fontInventory; },
@@ -367,6 +342,7 @@ const ed = {
   get handleFile() { return handleFile; },
   get hasRange() { return hasRange; },
   get headerFooterSettings() { return headerFooterSettings; },
+  get headerFooterSettingsBtn() { return headerFooterSettingsBtn; },
   get hexToRgb() { return hexToRgb; },
   get hideImePreedit() { return hideImePreedit; },
   get hideLinkChip() { return hideLinkChip; },
@@ -385,17 +361,33 @@ const ed = {
   get indentRightInput() { return indentRightInput; },
   get indentSpecialByInput() { return indentSpecialByInput; },
   get indentSpecialSel() { return indentSpecialSel; },
+  get insertBookmarkBtn() { return insertBookmarkBtn; },
+  get insertChartBtn() { return insertChartBtn; },
   get insertChartWithData() { return insertChartWithData; },
   get insertCommandEnabled() { return insertCommandEnabled; },
+  get insertCommentBtn() { return insertCommentBtn; },
+  get insertDateBtn() { return insertDateBtn; },
+  get insertDropCapBtn() { return insertDropCapBtn; },
+  get insertEmojiBtn() { return insertEmojiBtn; },
+  get insertEvenOddVariantBtn() { return insertEvenOddVariantBtn; },
   get insertFieldAtCaret() { return insertFieldAtCaret; },
+  get insertFieldBtn() { return insertFieldBtn; },
+  get insertFirstPageVariantBtn() { return insertFirstPageVariantBtn; },
+  get insertFooterBtn() { return insertFooterBtn; },
+  get insertHeaderBtn() { return insertHeaderBtn; },
   get insertImageFromBlob() { return insertImageFromBlob; },
   get insertImageFromFile() { return insertImageFromFile; },
   get insertLineBreakAtSelection() { return insertLineBreakAtSelection; },
+  get insertLinkBtn() { return insertLinkBtn; },
   get insertNote() { return insertNote; },
+  get insertPageNumberBtn() { return insertPageNumberBtn; },
+  get insertPictureBtn() { return insertPictureBtn; },
   get insertShapeBtn() { return insertShapeBtn; },
   get insertShapeObject() { return insertShapeObject; },
+  get insertSymbolBtn() { return insertSymbolBtn; },
   get insertTableBtn() { return insertTableBtn; },
   get insertTableMenu() { return insertTableMenu; },
+  get insertTextBoxBtn() { return insertTextBoxBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
   get insideGroupSelection() { return insideGroupSelection; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
@@ -405,7 +397,23 @@ const ed = {
   get lastHighlight() { return lastHighlight; }, set lastHighlight(v) { lastHighlight = v; },
   get lastTextColor() { return lastTextColor; }, set lastTextColor(v) { lastTextColor = v; },
   get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
+  get layoutBringForwardBtn() { return layoutBringForwardBtn; },
+  get layoutColumnsBtn() { return layoutColumnsBtn; },
+  get layoutGroupBtn() { return layoutGroupBtn; },
+  get layoutIndentDecBtn() { return layoutIndentDecBtn; },
+  get layoutIndentFieldsBtn() { return layoutIndentFieldsBtn; },
+  get layoutIndentIncBtn() { return layoutIndentIncBtn; },
+  get layoutMarginsBtn() { return layoutMarginsBtn; },
+  get layoutOrientationBtn() { return layoutOrientationBtn; },
+  get layoutPositionBtn() { return layoutPositionBtn; },
+  get layoutRotateBtn() { return layoutRotateBtn; },
+  get layoutSendBackwardBtn() { return layoutSendBackwardBtn; },
+  get layoutSizeBtn() { return layoutSizeBtn; },
+  get layoutSpacingFieldsBtn() { return layoutSpacingFieldsBtn; },
+  get layoutUngroupBtn() { return layoutUngroupBtn; },
+  get layoutWrapBtn() { return layoutWrapBtn; },
   get leaveSharedDocument() { return leaveSharedDocument; },
+  get lineNumbersBtn() { return lineNumbersBtn; },
   get linkAt() { return linkAt; },
   get linkChip() { return linkChip; },
   get linkChipAction() { return linkChipAction; },
@@ -439,6 +447,7 @@ const ed = {
   get objectContextMenuHost() { return objectContextMenuHost; },
   get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
+  get objectInspector() { return objectInspector; },
   get objectMoveDrag() { return objectMoveDrag; }, set objectMoveDrag(v) { objectMoveDrag = v; },
   get objectPositionBtn() { return objectPositionBtn; },
   get objectPresence() { return objectPresence; },
@@ -478,6 +487,7 @@ const ed = {
   get paintFormatFromGesture() { return paintFormatFromGesture; },
   get paintObjectCrop() { return paintObjectCrop; },
   get paintOverlayLayer() { return paintOverlayLayer; },
+  get paintPageCanvas() { return paintPageCanvas; },
   get paintPagesInView() { return paintPagesInView; },
   get paintReviewMarkers() { return paintReviewMarkers; },
   get paintSelection() { return paintSelection; },
@@ -530,11 +540,23 @@ const ed = {
   get recentTextColors() { return recentTextColors; },
   get recordRecent() { return recordRecent; },
   get redlineOf() { return redlineOf; },
+  get refBookmarkBtn() { return refBookmarkBtn; },
+  get refCaptionBtn() { return refCaptionBtn; },
+  get refCrossRefBtn() { return refCrossRefBtn; },
+  get refEndnoteBtn() { return refEndnoteBtn; },
+  get refFieldBtn() { return refFieldBtn; },
+  get refFootnoteBtn() { return refFootnoteBtn; },
+  get refGoToHeadingBtn() { return refGoToHeadingBtn; },
+  get refTocBtn() { return refTocBtn; },
+  get refUpdateCaptionsBtn() { return refUpdateCaptionsBtn; },
+  get refUpdateFieldsBtn() { return refUpdateFieldsBtn; },
   get referenceCommands() { return referenceCommands; },
   get referenceObjectMenuRows() { return referenceObjectMenuRows; },
+  get reflectChrome() { return reflectChrome; },
   get reflectFontFamily() { return reflectFontFamily; },
   get reflectHighlightSwatch() { return reflectHighlightSwatch; },
   get reflectListGallery() { return reflectListGallery; },
+  get reflectReviewBanners() { return reflectReviewBanners; },
   get reflectShapeFormatState() { return reflectShapeFormatState; },
   get reflectShapeSwatches() { return reflectShapeSwatches; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
@@ -543,6 +565,7 @@ const ed = {
   get refreshDraftOffers() { return refreshDraftOffers; },
   get refusedObjectDrag() { return refusedObjectDrag; },
   get regionCycle() { return regionCycle; },
+  get releasePageCanvas() { return releasePageCanvas; },
   get remotePresence() { return remotePresence; },
   get renderAll() { return renderAll; },
   get renderCommands() { return renderCommands; },
@@ -555,33 +578,58 @@ const ed = {
   get restartListBtn() { return restartListBtn; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
   get reviewAcceptAll() { return reviewAcceptAll; },
-  get reviewAnchorIndex() { return reviewAnchorIndex; },
+  get reviewAcceptAllBtn() { return reviewAcceptAllBtn; },
+  get reviewAcceptBtn() { return reviewAcceptBtn; },
+  get reviewAnchorIndex() { return reviewAnchorIndex; }, set reviewAnchorIndex(v) { reviewAnchorIndex = v; },
   get reviewBtn() { return reviewBtn; },
+  get reviewBulkActions() { return reviewBulkActions; },
   get reviewCardCache() { return reviewCardCache; },
   get reviewClose() { return reviewClose; },
   get reviewColumnStartMemo() { return reviewColumnStartMemo; }, set reviewColumnStartMemo(v) { reviewColumnStartMemo = v; },
   get reviewCommentActions() { return reviewCommentActions; },
+  get reviewCommentBtn() { return reviewCommentBtn; },
   get reviewComposerState() { return reviewComposerState; }, set reviewComposerState(v) { reviewComposerState = v; },
   get reviewContextAt() { return reviewContextAt; },
+  get reviewDeleteBtn() { return reviewDeleteBtn; },
   get reviewDeleteConfirmId() { return reviewDeleteConfirmId; }, set reviewDeleteConfirmId(v) { reviewDeleteConfirmId = v; },
   get reviewFilter() { return reviewFilter; }, set reviewFilter(v) { reviewFilter = v; },
   get reviewFilters() { return reviewFilters; },
+  get reviewGrammarCheckBtn() { return reviewGrammarCheckBtn; },
   get reviewInlineCard() { return reviewInlineCard; }, set reviewInlineCard(v) { reviewInlineCard = v; },
   get reviewLayout() { return reviewLayout; }, set reviewLayout(v) { reviewLayout = v; },
-  get reviewMode() { return reviewMode; },
+  get reviewMarginCommentBtn() { return reviewMarginCommentBtn; },
+  get reviewMarginFrame() { return reviewMarginFrame; }, set reviewMarginFrame(v) { reviewMarginFrame = v; },
+  get reviewMode() { return reviewMode; }, set reviewMode(v) { reviewMode = v; },
   get reviewModeButtons() { return reviewModeButtons; },
+  get reviewMoveEndButton() { return reviewMoveEndButton; },
   get reviewNext() { return reviewNext; },
+  get reviewNextBtn() { return reviewNextBtn; },
+  get reviewPanelBtn() { return reviewPanelBtn; },
+  get reviewPrevBtn() { return reviewPrevBtn; },
   get reviewPrevious() { return reviewPrevious; },
+  get reviewProofLanguagesBtn() { return reviewProofLanguagesBtn; },
   get reviewRangeClientRect() { return reviewRangeClientRect; },
   get reviewRejectAll() { return reviewRejectAll; },
+  get reviewRejectAllBtn() { return reviewRejectAllBtn; },
+  get reviewRejectBtn() { return reviewRejectBtn; },
+  get reviewResolveBtn() { return reviewResolveBtn; },
+  get reviewSheetMode() { return reviewSheetMode; },
+  get reviewShowChangesBtn() { return reviewShowChangesBtn; },
   get reviewSidebar() { return reviewSidebar; },
+  get reviewSidebarBody() { return reviewSidebarBody; },
+  get reviewSidebarHeader() { return reviewSidebarHeader; },
   get reviewSidebarPreference() { return reviewSidebarPreference; }, set reviewSidebarPreference(v) { reviewSidebarPreference = v; },
+  get reviewSmartQuotesBtn() { return reviewSmartQuotesBtn; },
+  get reviewSpellCheckBtn() { return reviewSpellCheckBtn; },
+  get reviewTrackBtn() { return reviewTrackBtn; },
   get reviewTracking() { return reviewTracking; },
+  get reviewWindowFrame() { return reviewWindowFrame; }, set reviewWindowFrame(v) { reviewWindowFrame = v; },
   get revisionRange() { return revisionRange; },
   get revisionUnreadable() { return revisionUnreadable; }, set revisionUnreadable(v) { revisionUnreadable = v; },
+  get ribbonPanels() { return ribbonPanels; },
   get ribbonSurfaceEnabled() { return ribbonSurfaceEnabled; },
   get ribbonSurfaceReason() { return ribbonSurfaceReason; },
-  get ribbonViewCollapsed() { return ribbonViewCollapsed; },
+  get ribbonViewCollapsed() { return ribbonViewCollapsed; }, set ribbonViewCollapsed(v) { ribbonViewCollapsed = v; },
   get rulerView() { return rulerView; },
   get runEdit() { return runEdit; },
   get runNodeEdit() { return runNodeEdit; },
@@ -668,12 +716,14 @@ const ed = {
   get styleAdvanced() { return styleAdvanced; },
   get stylesMenu() { return stylesMenu; },
   get stylesMenuInput() { return stylesMenuInput; },
+  get stylesPopover() { return stylesPopover; },
   get stylesTrigger() { return stylesTrigger; },
   get subBtn() { return subBtn; },
   get suggestAcrossParagraphs() { return suggestAcrossParagraphs; },
   get suggestingBannerEdit() { return suggestingBannerEdit; },
   get superBtn() { return superBtn; },
   get syncActiveReviewCommentToCaret() { return syncActiveReviewCommentToCaret; },
+  get syncRibbonTabStops() { return syncRibbonTabStops; },
   get syncSelectionToCellRange() { return syncSelectionToCellRange; },
   get syncStylesGalleryActive() { return syncStylesGalleryActive; },
   get tabStopsDialog() { return tabStopsDialog; },
@@ -752,6 +802,7 @@ const ed = {
   get viewZoom() { return viewZoom; },
   get viewingBannerEdit() { return viewingBannerEdit; },
   get viewportEl() { return viewportEl; },
+  get watermarkBtn() { return watermarkBtn; },
   get zoomEl() { return zoomEl; },
   get zoomFactor() { return zoomFactor; },
   get zoomMenu() { return zoomMenu; },
@@ -1073,460 +1124,14 @@ document.querySelector(".ribbon-tabs")?.addEventListener("keydown", (event) => {
   enabled[next].focus();
 });
 
-// --- Compact ↔ ribbon view toggle (collapse/expand the band) -----------------
-const ribbonViewToggle = document.getElementById("ribbonViewToggle");
 let ribbonViewCollapsed = false;
-
-/** Collapses the ribbon to just its tab strip (compact view) or expands it back
- *  to the full band, persisting the choice. */
-function setRibbonCollapsed(collapsed) {
-  ribbonViewCollapsed = collapsed;
-  const ribbon = document.querySelector(".ribbon");
-  ribbon?.classList.toggle("is-collapsed", collapsed);
-  if (ribbonViewToggle) {
-    ribbonViewToggle.setAttribute("aria-expanded", String(!collapsed));
-    ribbonViewToggle.setAttribute(
-      "aria-label",
-      collapsed ? "Expand the ribbon" : "Collapse the ribbon",
-    );
-    ribbonViewToggle.title = collapsed
-      ? "Expand the ribbon"
-      : "Collapse the ribbon (compact view)";
-    const icon = ribbonViewToggle.querySelector(".ms");
-    if (icon) icon.textContent = collapsed ? "keyboard_arrow_down" : "keyboard_arrow_up";
-  }
-  writePref("opendoc.ribbonCollapsed", collapsed ? "1" : "0");
-  if (!collapsed && typeof scheduleRibbonOverflow === "function") scheduleRibbonOverflow();
-}
-
-if (ribbonViewToggle) {
-  ribbonViewToggle.addEventListener("click", () => setRibbonCollapsed(!ribbonViewCollapsed));
-  if (readPref("opendoc.ribbonCollapsed") === "1") setRibbonCollapsed(true);
-}
-
-// --- Home ribbon: Clipboard, Styles gallery, overflow, tooltips (docs/64) ----
-// The Home band mirrors template.png. Every control below maps to a real,
-// working opendoc action; nothing is a placeholder (docs/64 "no dead controls").
-
-const pasteBtn = document.getElementById("pasteBtn");
-const cutBtn = document.getElementById("cutBtn");
-const copyBtn = document.getElementById("copyBtn");
-const replaceBtn = document.getElementById("replaceBtn");
-// Clipboard buttons reuse the exact clipboard actions the command palette and
-// keyboard already invoke (`paste`/`cut`/`copySelection`), so they are never a
-// second code path. Replace opens the same Find & Replace panel on its replace field.
-pasteBtn.addEventListener("click", () => { paste(); });
-cutBtn.addEventListener("click", () => { cut(); });
-copyBtn.addEventListener("click", () => { copySelection(); });
-replaceBtn.addEventListener("click", () => { if (!replaceBtn.disabled) openFind({ replace: true }); });
-
-// The Styles control — the ONE control the band offers for paragraph styles (docs/115).
-// It replaces three: a `#paragraphStyle` select listing every style in the document
-// flat, this strip, and a "▾" popover listing every style again. Word puts a curated
-// Quick Styles gallery in the ribbon and the full list in a pane; Docs offers six named
-// styles and nothing else. So the band offers a SHORT list and the full stylesheet stays
-// reachable off it — the palette's `Style: <name>` rows and Paragraph properties ▸ Style.
-// Import, cascade, layout, render and round-trip are untouched: this is what is offered
-// for AUTHORING, not what is supported.
-const stylesTrigger = document.getElementById("stylesTrigger");
-const stylesTriggerLabel = document.getElementById("stylesTriggerLabel");
-const stylesMenu = document.getElementById("stylesMenu");
-const stylesMenuInput = document.getElementById("stylesMenuInput");
-const stylesMenuList = document.getElementById("stylesMenuList");
-const stylesMenuEmpty = document.getElementById("stylesMenuEmpty");
-
-// Styles the document is USING, offered alongside the recommended ones — otherwise
-// opening a file whose paragraphs use `Quotation` leaves the user unable to see or
-// re-apply it. Word adds in-use styles to its gallery too. This is what the CHROME
-// observed (styles the caret visited, plus ones applied this session), not a document
-// scan: there is no `stylesInUse()` on the engine and walking every paragraph from JS
-// is O(n) in document size, which docs/107 §4 forbids. Pruned on document load.
-const stylesInUse = new Set();
-
-/** The paragraph style at the caret. The deleted select held this; the active card
- *  and `#stylesTrigger`'s label and `data-active-style` hold it now. */
-let activeParagraphStyle = "";
-
-// Up/Down move between the options while the menu is open, matching every other
-// product popover in the band and the WAI-ARIA listbox pattern. Enter and Space
-// activate a focused option natively (they are <button>s). Bound once to the
-// container, so rebuilding the options never stacks duplicate listeners.
-const STYLE_ROVE_STEP = { ArrowDown: 1, ArrowUp: -1 };
-stylesMenu.addEventListener("keydown", (event) => {
-  const options = [...stylesMenuList.querySelectorAll(".style-option")];
-  if (!options.length) return;
-  const at = options.indexOf(document.activeElement);
-  const step = STYLE_ROVE_STEP[event.key];
-  let next;
-  if (step) next = at < 0 ? (step > 0 ? 0 : options.length - 1) : (at + step + options.length) % options.length;
-  else if (event.key === "Home") next = 0;
-  else if (event.key === "End") next = options.length - 1;
-  else return;
-  event.preventDefault();
-  options[next].focus();
-});
-
-/** Builds one option row, drawn IN the style it applies — with a tick on the one
- *  the caret is already in, which is how Docs and every menu-shaped picker says
- *  "you are here". */
-function makeStyleOption(name) {
-  const slug = styleSlug(name);
-  const option = document.createElement("button");
-  option.type = "button";
-  option.className = `menu-item style-option style-option-${slug}`;
-  option.dataset.style = name;
-  option.setAttribute("role", "option");
-  option.setAttribute("aria-selected", "false");
-  const check = document.createElement("span");
-  check.className = "menu-check";
-  check.setAttribute("aria-hidden", "true");
-  option.appendChild(check);
-  const label = document.createElement("span");
-  label.className = "style-option-name";
-  label.textContent = styleDisplayName(name);
-  applyStylePreview(label, name, (style) => doc?.stylePreview?.(style));
-  option.appendChild(label);
-  option.addEventListener("click", () => {
-    runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
-    closePopover(stylesPopover);
-    // Back to the document, as Word and Docs do after a style pick and as
-    // `chooseFont` already does.
-    focusEditorSurface();
-  });
-  return option;
-}
-
-/** What `listStyles()` last reported, and `RECOMMENDED_STYLES` ∩ that — both resolved
- *  once per registry change, not per caret move: `offeredStyles` is on the
- *  per-keystroke path, and matching 15 names case-insensitively against every defined
- *  style there would be O(15n) a keystroke. */
-let definedStyles = new Set();
-let recommendedHere = [];
-
-/** The suggested group, narrowed to WHERE THE CARET IS. The rule itself is
- *  `offeredStyleNames`; this is only the question "where are we". */
-function offeredStyles() {
-  return offeredStyleNames({
-    recommended: recommendedHere,
-    inUse: stylesInUse,
-    defined: definedStyles,
-    active: activeParagraphStyle,
-    contexts: caretContexts(caretStyleContext()),
-  });
-}
-
-/** The caret's surroundings, as the style list cares about them. Every signal
- *  is one the toolbar already reads on the same refresh, so this adds no
- *  per-keystroke engine work. */
-function caretStyleContext() {
-  const node = selection?.focus?.node;
-  if (!doc || !node) return {};
-  let story = "body";
-  if (runningEditBand === "header" || runningEditBand === "footer") story = runningEditBand;
-  let inTable = false;
-  let listKind = "";
-  try {
-    inTable = doc.inTable(node);
-    listKind = doc.listStyleAt(node) || "";
-  } catch {
-    // A node the engine no longer has (mid-edit) is not a context; the
-    // general list is still correct, just not narrowed.
-  }
-  return { story, inTable, listKind };
-}
-
-/** Rebuilds the option rows, but only when the offered set actually changed. This is
- *  on the per-keystroke path (`updateToolbar` runs on every caret move and the offered
- *  set depends on the caret's style), so rebuilding unconditionally would re-resolve a
- *  preview per option per keystroke — and would tear the menu out from under a pointer
- *  while it is open. */
-function renderStylesGallery() {
-  const { suggested, rest } = styleMenuGroups({
-    suggested: offeredStyles(),
-    defined: definedStyles,
-    query: stylesMenuInput.value,
-  });
-  stylesMenuList.replaceChildren();
-  // The split is the point: "what you probably want here" and "what this
-  // document has" mean different things, and Word's Styles pane makes the
-  // same one with its Recommended / All filter.
-  if (suggested.length && rest.length) {
-    stylesMenuList.appendChild(makeMenuHeading("Suggested"));
-  }
-  for (const name of suggested) stylesMenuList.appendChild(makeStyleOption(name));
-  if (rest.length) {
-    if (suggested.length) stylesMenuList.appendChild(makeMenuHeading("All styles"));
-    for (const name of rest) stylesMenuList.appendChild(makeStyleOption(name));
-  }
-  stylesMenuEmpty.hidden = suggested.length + rest.length > 0;
-}
-
-/** Rebuilds the menu for a (re)loaded document or a changed style registry. The
- *  full stylesheet is NOT put on the band (docs/115 §5). */
-function buildStylesGallery(styles) {
-  definedStyles = new Set(styles);
-  // Matched case-insensitively, so `body text` from an ODT package still counts.
-  const byName = new Map(styles.map((s) => [s.toLowerCase(), s]));
-  recommendedHere = RECOMMENDED_STYLES.map((s) => byName.get(s.toLowerCase())).filter(Boolean);
-  // A style remembered from the previous document is not in use in this one, and a
-  // name that no longer exists cannot be applied.
-  for (const name of [...stylesInUse]) if (!definedStyles.has(name)) stylesInUse.delete(name);
-  // Force the rebuild `renderStylesGallery` skips when the offered NAMES are
-  // unchanged: "Update <style> to match selection" changes a DEFINITION, not a name,
-  // and the rows would keep previewing the old one. `ribbon-home` caught that.
-  stylesMenuInput.value = "";
-  stylesMenuList.replaceChildren();
-  renderStylesGallery();
-  syncStylesGalleryActive();
-}
-
-/** Puts the caret's style on the trigger, ticks it in the menu, and publishes it
- *  on the control so the chrome has one answer to "what style is the caret in".
- *
- *  The trigger's LABEL is the whole of what the deleted 14-entry select
- *  contributed that the card gallery did not: a control that says, without being
- *  opened, which style you are in. Docs does exactly this. */
-function syncStylesGalleryActive() {
-  const active = activeParagraphStyle;
-  stylesTrigger.dataset.activeStyle = active;
-  // A style outside the offered six is still shown on the trigger — it is what
-  // the caret is in, and a control reporting something else is worse than one
-  // reporting a style it cannot re-offer. `offeredStyles` gives it a slot anyway.
-  stylesTriggerLabel.textContent = styleDisplayName(active || "Normal");
-  stylesTrigger.classList.toggle("is-placeholder", !active);
-  stylesTrigger.setAttribute(
-    "aria-label",
-    active ? `Paragraph style: ${styleDisplayName(active)}` : "Paragraph style",
-  );
-  for (const option of stylesMenuList.querySelectorAll(".style-option")) {
-    const selected = option.dataset.style === active;
-    option.setAttribute("aria-selected", String(selected));
-    option.classList.toggle("is-selected", selected);
-  }
-  // The band owns exactly one Tab stop across everything it holds. Re-assert that
-  // after the control publishes its own, or the band grows a second one on every
-  // caret move — which is precisely how it came to have three.
-  syncRibbonTabStops();
-}
-
-/** Records the style at the caret and keeps the offered set in step. A style the caret
- *  visits is one the document is using, so it joins `stylesInUse` and stays offered
- *  after the caret leaves. */
-function reflectParagraphStyle(name) {
-  activeParagraphStyle = name || "";
-  if (activeParagraphStyle) stylesInUse.add(activeParagraphStyle);
-  renderStylesGallery();
-  syncStylesGalleryActive();
-}
-
-// --- Named-style edits: update-from-selection and create-from-selection ------
-// Word's two core Styles verbs, both routed through the same engine op
-// (`SetStyleDefinition`): "Update <Style> to match selection" mutates the style
-// definition so every paragraph using it reflows; "Create a style" adds a new
-// paragraph style (based on the current one) and applies it. Both rebuild the
-// gallery previews and dropdowns from the (now changed) style registry.
-// Both name cards go through ONE contract (`name_dialog.mjs`): the staged-result
-// dance that keeps Escape from leaving the promise pending is subtle enough that
-// a second copy of it is a second place for that bug to live.
-const styleNamePrompt = createNamePrompt({
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  ids: {
-    dialog: "styleNameDialog",
-    input: "styleNameInput",
-    confirm: "styleNameConfirm",
-    cancel: "styleNameCancel",
-    close: "styleNameClose",
-  },
-});
-
-/** Opens the create-style dialog and resolves to the entered name, or null if
- *  cancelled. */
-function promptStyleName() {
-  return styleNamePrompt.prompt("");
-}
-
-// ---- Confirmation ----------------------------------------------------------
-// The application's single yes/no question, in `confirm_dialog.mjs`. Why it is
-// never `window.confirm`, and why the answer is staged rather than resolved
-// directly, are both recorded there.
-const confirmDialogUi = createConfirmDialog({ registerModal, fallbackFocus: () => pagesEl });
-const confirmModal = (options) => confirmDialogUi.ask(options);
-
-/** Gate for anything that replaces the open document. Returns true when it is
- *  safe to proceed. Reads `documentIsDirty()` — the engine revision watermark,
- *  which fails dirty — so this and the beforeunload guard can never disagree
- *  about whether work would be lost (docs/104 T-14: one dirty signal, one
- *  reader). */
-async function confirmDiscardIfEdited() {
-  if (!documentIsDirty()) return true;
-  return confirmModal({
-    title: "Discard unsaved changes?",
-    message: `Opening another file replaces “${currentName || "this document"}”. Your edits have not been saved and there is no copy of them anywhere else.`,
-    confirmLabel: "Discard and open",
-    cancelLabel: "Keep editing",
-    note: "Save the .docx first to keep your work.",
-    icon: "warning",
-  });
-}
-
-/** The paragraph style applied at the caret, or "" when none — the target of
- *  "Update to match selection" and the base for a new style. */
-function currentParagraphStyleName() {
-  if (!doc || !selection) return "";
-  try {
-    return doc.paragraphStyleAt(selection.focus.node) || "";
-  } catch {
-    return "";
-  }
-}
-
-/** Redefines paragraph style `name` to match the selection (Word's "Update
- *  <Style> to Match Selection"). Every paragraph using it reflows. */
-async function updateStyleFromSelection(name) {
-  if (!doc || !name) return;
-  await runToolbarEdit((a, b, c, d) => doc.updateStyleFromSelection(a, b, c, d, name));
-  populateStyles();
-  updateToolbar();
-  setStatus(`Updated “${styleDisplayName(name)}” to match the selection`);
-}
-
-/** Creates a new paragraph style from the selection and applies it (Word's
- *  "Create a Style"). Prompts for the name; refuses duplicates via the engine. */
-async function createStyleFromSelection() {
-  if (!doc || !selection) return;
-  const name = await promptStyleName();
-  if (!name) return;
-  const exists = doc.listStyles().some((s) => s.toLowerCase() === name.toLowerCase());
-  if (exists) {
-    setStatus(`A style named “${name}” already exists`, "error");
-    return;
-  }
-  await runToolbarEdit((a, b, c, d) => doc.createStyleFromSelection(a, b, c, d, name));
-  populateStyles();
-  updateToolbar();
-  setStatus(`Created style “${name}”`);
-}
-
-// --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
-const ribbonBodyEl = document.querySelector(".ribbon-body");
-const ribbonOverflowBtn = document.getElementById("ribbonOverflowBtn");
-const ribbonOverflowMenu = document.getElementById("ribbonOverflowMenu");
-// Canonical group order per panel, captured before any group is relocated.
-const ribbonPanelGroups = new Map(
-  ribbonPanels.map((p) => [p, [...p.querySelectorAll(":scope > .rgroup")]]),
-);
-
-function closeRibbonOverflow({ restoreFocus = false } = {}) {
-  if (!ribbonOverflowMenu) return;
-  ribbonOverflowMenu.hidden = true;
-  ribbonOverflowBtn?.setAttribute("aria-expanded", "false");
-  if (restoreFocus) ribbonOverflowBtn?.focus();
-}
-
-/** Reflows the active ribbon panel: groups that don't fit move into the "⋯"
- *  overflow menu so the ribbon never shows a horizontal scrollbar. */
-function updateRibbonOverflow() {
-  if (!ribbonBodyEl || !ribbonOverflowBtn || !ribbonOverflowMenu) return;
-  closeRibbonOverflow();
-  // Restore every group to its home panel in canonical order before measuring.
-  for (const [panel, groups] of ribbonPanelGroups) {
-    for (const group of groups) panel.appendChild(group);
-  }
-  ribbonOverflowMenu.replaceChildren();
-  ribbonOverflowBtn.hidden = true;
-  const active = ribbonPanels.find((p) => !p.hidden);
-  if (!active) return;
-  const groups = ribbonPanelGroups.get(active) || [];
-  const style = getComputedStyle(active);
-  const avail =
-    active.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  // An unmeasurable band is not a narrow band. If the panel is display:none or
-  // zero-width (mode switch mid-flight, ribbon collapsed, first paint), every
-  // unpinned group would "not fit" and be exiled to the overflow menu on no
-  // evidence at all. Leave the inline composition alone and wait to be called
-  // again once there is a width to measure against.
-  if (!(avail > 0)) return;
-  const widths = new Map(groups.map((group) => [group, group.offsetWidth]));
-  const total = groups.reduce((sum, group) => sum + widths.get(group), 0);
-  if (total <= avail + 0.5) return; // everything fits — no overflow control
-  // Reserve room for the ⋯ button. Clipboard, Editing, and Mode are persistent
-  // anchors; relocate the other groups from right to left until the inline set
-  // fits. Mode can fall back to the footer at very small widths.
-  const moved = groupsToOverflow({
-    groups,
-    widthOf: (group) => widths.get(group),
-    avail,
-    reserve: 44,
-    isPinned: (group) => group.hasAttribute("data-ribbon-pinned"),
-    isLastResort: (group) => group.dataset.group === "clipboard",
-  });
-  for (const group of groups) if (moved.includes(group)) ribbonOverflowMenu.appendChild(group);
-  ribbonOverflowBtn.hidden = false;
-}
-
-let ribbonOverflowFrame = 0;
-function scheduleRibbonOverflow() {
-  cancelAnimationFrame(ribbonOverflowFrame);
-  ribbonOverflowFrame = requestAnimationFrame(() => {
-    updateRibbonOverflow();
-    syncRibbonTabStops();
-  });
-}
-
-if (ribbonOverflowBtn && ribbonOverflowMenu) {
-  // The menu is fixed-positioned and lives on <body> so the ribbon's
-  // `overflow:hidden` never clips the dropdown.
-  document.body.appendChild(ribbonOverflowMenu);
-  const positionOverflowMenu = () => {
-    const rect = ribbonOverflowBtn.getBoundingClientRect();
-    const mw = ribbonOverflowMenu.offsetWidth;
-    const left = Math.max(6, Math.min(rect.right - mw, window.innerWidth - mw - 6));
-    const top = Math.round(rect.bottom + 4);
-    ribbonOverflowMenu.style.left = `${Math.round(left)}px`;
-    ribbonOverflowMenu.style.top = `${top}px`;
-    ribbonOverflowMenu.style.maxHeight = `${Math.max(120, window.innerHeight - top - 6)}px`;
-  };
-  ribbonOverflowBtn.addEventListener("click", () => {
-    const open = ribbonOverflowMenu.hidden;
-    ribbonOverflowMenu.hidden = !open;
-    ribbonOverflowBtn.setAttribute("aria-expanded", String(open));
-    if (open) {
-      positionOverflowMenu();
-      requestAnimationFrame(() => {
-        ribbonOverflowMenu.querySelector(
-          'button:not(:disabled), select:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
-        )?.focus();
-      });
-    }
-  });
-  document.addEventListener("pointerdown", (e) => {
-    if (ribbonOverflowMenu.hidden) return;
-    if (e.target.closest("#ribbonOverflowMenu, #ribbonOverflowBtn")) return;
-    closeRibbonOverflow();
-  });
-  ribbonOverflowMenu.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    event.stopPropagation();
-    closeRibbonOverflow({ restoreFocus: true });
-  });
-  if (typeof ResizeObserver === "function" && ribbonBodyEl) {
-    new ResizeObserver(scheduleRibbonOverflow).observe(ribbonBodyEl);
-  } else {
-    window.addEventListener("resize", scheduleRibbonOverflow);
-  }
-  // The band is measured in whatever face is available at first paint. Until
-  // Inter arrives that is a fallback with wider metrics, so the groups measure
-  // wider than they will ever actually be drawn — enough, on a 1280px Home
-  // band with about 55px of slack, to exile Styles to the overflow menu. The
-  // ResizeObserver above cannot save us: `.ribbon-body` stays exactly as wide
-  // as the viewport, so swapping the face resizes the GROUPS without ever
-  // resizing the observed element, and the wrong decision stood permanently.
-  // Re-decide when the real metrics are in.
-  if (document.fonts?.ready) document.fonts.ready.then(scheduleRibbonOverflow).catch(() => {});
-}
-
+const {
+  buildStylesGallery, confirmDiscardIfEdited, confirmModal, copyBtn, createStyleFromSelection,
+  currentParagraphStyleName, cutBtn, pasteBtn, reflectParagraphStyle, renderStylesGallery,
+  replaceBtn, ribbonBodyEl, ribbonOverflowBtn, ribbonOverflowMenu, scheduleRibbonOverflow,
+  setRibbonCollapsed, stylesMenu, stylesMenuInput, stylesTrigger, syncStylesGalleryActive,
+  updateRibbonOverflow, updateStyleFromSelection,
+} = createRibbon(ed);
 // --- Ribbon keyboard navigation (WAI-ARIA toolbar pattern) -------------------
 // The band is ONE Tab stop; Left/Right/Home/End move between its controls. It
 // used to be roughly forty-five stops on Home alone, so anyone driving the
@@ -1871,1002 +1476,14 @@ const REVIEW_TEXTLESS_KINDS = new Set([
  *  lines" bar — because the change applies to the paragraph, not to a span of
  *  its text. Returns flat `[page, x, y, w, h]` rects in twips, like the engine's
  *  own rect calls. */
-function paragraphRevisionRects(revision) {
-  const { node, start, end } = revision.anchor ?? {};
-  if (!node) return [];
-  const caret = () => doc.caretRect(node, Number(end) || 0);
-  if (revision.kind !== "paragraph_format") {
-    const at = caret();
-    if (at.length < 5) return [];
-    // A glyph-wide box starting at the caret, so the pilcrow has room to show.
-    return [at[0], at[1], at[2], Math.max(at[4] * 0.6, 120), at[4]];
-  }
-  const lines = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
-  const pagesSeen = new Map();
-  const include = (page, x, y, h) => {
-    const box = pagesSeen.get(page) ?? { left: x, top: y, bottom: y + h };
-    box.left = Math.min(box.left, x);
-    box.top = Math.min(box.top, y);
-    box.bottom = Math.max(box.bottom, y + h);
-    pagesSeen.set(page, box);
-  };
-  for (let i = 0; i + 4 < lines.length; i += 5) include(lines[i], lines[i + 1], lines[i + 2], lines[i + 4]);
-  if (!pagesSeen.size) {
-    // An empty paragraph selects nothing; its caret still has a line box.
-    const at = caret();
-    if (at.length >= 5) include(at[0], at[1], at[2], at[4]);
-  }
-  // The bar belongs in the page margin, beside the text column, wherever the
-  // paragraph's own text happens to sit. Anchoring it to the text's left edge put
-  // it mid-page for any centred or right-aligned paragraph — the very paragraphs a
-  // formatting change most often touches. The margin is the paragraph's own
-  // section's, because a document can change margins between sections.
-  const BAR_OFFSET = 200; // twips out from the text column
-  const BAR_WIDTH = 40;
-  const columnStart = paragraphColumnStart(node);
-  const flat = [];
-  for (const [page, box] of pagesSeen) {
-    const edge = Number.isFinite(columnStart) ? columnStart : box.left;
-    flat.push(page, Math.max(edge - BAR_OFFSET, 0), box.top, BAR_WIDTH, box.bottom - box.top);
-  }
-  return flat;
-}
-
 // Per-paint memo for `paragraphColumnStart`: `pageSetupSections` walks every
 // paragraph, and a heavily reviewed document can carry a formatting change on
 // most of them. Reset at the start of each marker paint.
 let reviewColumnStartMemo = new Map();
-
-/** The text column's start edge (twips from the page edge) for the section that
- *  owns `node`, or NaN when the engine cannot say. */
-function paragraphColumnStart(node) {
-  if (reviewColumnStartMemo.has(node)) return reviewColumnStartMemo.get(node);
-  let start = Number.NaN;
-  try {
-    const raw = doc.pageSetupSections(node);
-    const list = raw === "null" ? null : JSON.parse(raw);
-    const section = list?.sections?.find((item) => item.section === list.current) ?? list?.sections?.[0];
-    start = Number(section?.pageMargins?.startTwips);
-  } catch {
-    start = Number.NaN;
-  }
-  reviewColumnStartMemo.set(node, start);
-  return start;
-}
-
-// Enable the three-state mode control (Editing / Suggesting / Viewing) once a
-// document is loaded (its per-button pressed state is owned by setReviewMode),
-// and reflect the review-sidebar workflow controls' availability: Next/Previous
-// and Accept-all/Reject-all need at least one tracked change, and bulk decisions
-// are hidden in read-only Viewing mode (REVIEW-GAP-018).
-function updateReviewControls() {
-  // A document the engine will not let anyone edit cannot offer Editing or
-  // Suggesting: the buttons are disabled WITH the reason, not left live. And the
-  // banner's "Switch to editing" is withdrawn rather than disabled — an offer
-  // that can never be taken is a dead control. Ahead of the `doc` guard: a
-  // container's grant is knowable with no document open.
-  reflectReviewModeAccess({
-    buttons: reviewModeButtons,
-    bannerEdit: viewingBannerEdit,
-    capabilities: HOST_CAPS,
-    readOnlyReason,
-    withheldReason: t("capability.embedded"),
-    participant: SESSION.modeAuthority,
-  });
-  if (!doc) return;
-  let count = 0;
-  try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
-  if (reviewPrevious) reviewPrevious.disabled = count === 0;
-  if (reviewNext) reviewNext.disabled = count === 0;
-  const canDecide = count > 0 && reviewMode !== "viewing";
-  if (reviewAcceptAll) reviewAcceptAll.disabled = !canDecide;
-  if (reviewRejectAll) reviewRejectAll.disabled = !canDecide;
-  if (reviewBulkActions) reviewBulkActions.hidden = reviewMode === "viewing";
-}
-
-/** The three review modes (docs/68 §"Suggesting mode"): `editing` applies
- *  edits directly, `suggesting` records them as tracked revisions, and
- *  `viewing` is fully read-only — no Operation reaches apply. Any unrecognized
- *  value falls back to `editing`. */
-function setReviewMode(mode, { restoreFocus = true } = {}) {
-  const previous = reviewMode;
-  // A read-only document has one mode. Asked for another — by a shortcut, the
-  // palette, or a stale click — it stays where it is and says why.
-  if (readOnlyReason && mode !== "viewing") {
-    setStatus(readOnlyReason, "error");
-    mode = "viewing";
-  }
-  reviewMode =
-    mode === "suggesting" ? "suggesting" : mode === "viewing" ? "viewing" : "editing";
-  // The banners announce a MODE, so they show only where a mode can change: in a
-  // container granted neither `edit` nor `comment` the mode IS the container, and
-  // composition is silent (`docs/126`).
-  reflectReviewBanners(containerCanEdit ? reviewMode : "", readOnlyReason);
-  // The banner's "Switch to editing" offer is `updateReviewControls`'s, below,
-  // so the segments and the banner cannot disagree about whether editing is possible.
-  reflectChrome(); // every edge — `readOnlyReason`, a preview's two, and the MODE
-  for (const button of reviewModeButtons) {
-    button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
-  }
-  // Announce a genuine user mode change (not the load-time reset to Editing).
-  if (reviewMode !== previous) {
-    announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
-    disarmFormatPainter(); // a mode change disarms the painter (its apply path may differ)
-  }
-  // Entering Suggesting auto-enables the markup view so a reviewer immediately
-  // sees struck deletions + author-colored insertions (Word/Docs behavior, Q1).
-  // Leaving Suggesting keeps whatever the reader last chose — the toggle stays
-  // manual in Editing/Viewing. `setShowingChanges` is idempotent and re-renders
-  // only on a real change, so this is a no-op when markup is already shown.
-  if (reviewMode === "suggesting" && !showingChanges) {
-    void setShowingChanges(true);
-  }
-  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus && !hostSession?.executing, caret: selection?.focus, runEdit }); // HF-131; HF-283: a host's switch is not the reader's
-  updateReviewControls();
-  drawSelection();
-  // Toolbar controls must not retain focus after changing mode: clipboard,
-  // typing, and deletion events are deliberately accepted only while the
-  // canvas editor owns focus. `restoreFocus: false` is for callers where the mode
-  // change is not the user's gesture at all — opening a document, a demo preset,
-  // entering and leaving a version preview — because those arrive while the user
-  // is working somewhere else (the version TIMELINE above all, which is how a
-  // preview is left again); moving focus out from under them there is not a
-  // safety measure, it is losing their place.
-  if (restoreFocus) focusEditorSurface();
-}
-
-function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
-  let rects = doc?.selectionRects(startNode, startOffset, endNode, endOffset) ?? [];
-  if (rects.length < 5 && startNode === endNode && startOffset === endOffset) {
-    rects = doc?.caretRect(startNode, startOffset) ?? [];
-  }
-  if (rects.length < 5) return null;
-  const [pageNumber, x, y, width, height] = rects;
-  const page = pages[pageNumber - 1];
-  if (!page) return null;
-  const { rect: canvasRect, sx, sy } = scaleOf(page);
-  return {
-    pageNumber,
-    left: canvasRect.left + x * sx,
-    right: canvasRect.left + (x + width) * sx,
-    top: canvasRect.top + y * sy,
-    bottom: canvasRect.top + (y + height) * sy,
-    pageRight: canvasRect.right,
-  };
-}
-
-function revisionRange(revision) {
-  if (revision?.anchor?.node) {
-    return {
-      startNode: revision.anchor.node,
-      startOffset: Number(revision.anchor.start) || 0,
-      endNode: revision.anchor.node,
-      endOffset: Number(revision.anchor.end) || Number(revision.anchor.start) || 0,
-    };
-  }
-  const text = String(revision?.text || "");
-  if (!doc || !text) return null;
-  const first = doc.firstPosition();
-  const match = doc.findText(text, first.node, first.offset, true, false);
-  first.free();
-  if (!match.found) { match.free(); return null; }
-  const range = {
-    startNode: match.startNode,
-    startOffset: match.startOffset,
-    endNode: match.endNode,
-    endOffset: match.endOffset,
-  };
-  match.free();
-  return range;
-}
-
-/** The right-margin comment affordance (`review_chrome.mjs`). Placed against the
- *  caret's line — or a selection's FIRST line, endpoints put in document order
- *  so a backwards drag still anchors where the selection starts. A collapsed
- *  selection falls through to `caretRect`, which is what keeps the button on the
- *  page while nothing is selected: dimmed, since `review.comment` needs a
- *  range. */
-const commentAffordance = createCommentAffordance({
-  button: reviewMarginCommentBtn,
-  viewport: viewportEl,
-  rect: () => {
-    if (!doc || !selection) return null;
-    const [start, end] = orderedSelectionEnds(selection, doc);
-    return reviewRangeClientRect(start.node, start.offset, end.node, end.offset);
-  },
-});
-
-function scheduleReviewMarginRender() {
-  if (reviewMarginFrame) return;
-  reviewMarginFrame = requestAnimationFrame(() => {
-    reviewMarginFrame = 0;
-    renderReviewMarginItems();
-  });
-}
-
-/** The in-place editor for `comment` when it is the one being edited (RC-11), else `null`. */
-function commentEditorFor(comment, kind) {
-  const draft = commentEdit.draftFor(comment.id);
-  if (draft === null) return null;
-  const done = () => { commentEdit.end(); scheduleReviewMarginRender(); focusEditorSurface(); };
-  const editor = commentEditor({ text: draft, kind, t, onInput: (text) => commentEdit.update(comment.id, text), onCancel: done,
-    onSave: async (text) => {
-      await runEdit(() => doc.updateComment(comment.id, text), { keepView: true });
-      announceReview(t(kind === "reply" ? "reviewCard.replyUpdated" : "reviewCard.commentUpdated"));
-      done();
-    } });
-  requestAnimationFrame(() => { if (editor.root.isConnected && document.activeElement !== editor.field) editor.focus(); });
-  return editor.root;
-}
-function renderReviewMarginItems() {
-  reviewSidebarBody.replaceChildren();
-  if (!doc || !pages.length) {
-    reviewSidebar.hidden = true;
-    commentAffordance.sync(false);
-    viewportEl.classList.remove("has-review-sidebar");
-    reviewLayout = [];
-    reviewCardCache.clear();
-    return;
-  }
-  const summary = readReviewData(doc);
-  const items = [];
-  const comments = summary.comments ?? [];
-  updateReviewControls();
-  for (const comment of comments) {
-    if (!comment.anchor?.node) continue;
-    // Open / Resolved / All comment filter (REVIEW-GAP-018/019). A reply always
-    // follows its root's visibility so a thread is never half-shown: match on the
-    // root comment's resolved state when this is a reply.
-    if (reviewFilter !== "all") {
-      const root = comment.parentParaId
-        ? comments.find((c) => c.paraId === comment.parentParaId) ?? comment
-        : comment;
-      const resolved = !!root.resolved;
-      if (reviewFilter === "resolved" ? !resolved : resolved) continue;
-    }
-    const rect = reviewRangeClientRect(comment.anchor.node, Number(comment.anchor.start) || 0, comment.anchor.node, Number(comment.anchor.end) || 0);
-    if (rect) items.push({ type: "comment", data: comment, rect, quote: commentQuotes.read(doc, comment) });
-  }
-  const revisionItems = [];
-  const groupedRevisions = new Map();
-  const groupedMoves = new Map();
-  for (const revision of summary.revisions ?? []) {
-    if (revision.movePair?.fromStart && revision.movePair?.toStart) {
-      const moveKey = `${revision.movePair.fromStart}:${revision.movePair.toStart}`;
-      const group = groupedMoves.get(moveKey) ?? [];
-      group.push(revision);
-      groupedMoves.set(moveKey, group);
-      continue;
-    }
-    const groupId = String(revision.groupId || "");
-    const groupKind = String(revision.groupKind || "");
-    if (groupId && ["typing", "replacement", "formatting"].includes(groupKind)) {
-      const group = groupedRevisions.get(groupId) ?? [];
-      group.push(revision);
-      groupedRevisions.set(groupId, group);
-    } else {
-      revisionItems.push(revision);
-    }
-  }
-  for (const [groupId, revisions] of groupedRevisions) {
-    const ranges = revisions.map(revisionRange).filter(Boolean);
-    const node = ranges[0]?.startNode;
-    if (!node || ranges.some((range) => range.startNode !== node || range.endNode !== node)) {
-      revisionItems.push(...revisions);
-      continue;
-    }
-    const deletions = revisions.filter((revision) => revision.kind === "deletion");
-    const insertions = revisions.filter((revision) => revision.kind === "insertion");
-    const formatting = revisions.filter((revision) => revision.kind === "formatting");
-    const groupKind = String(revisions[0]?.groupKind || "");
-    const kind = groupKind === "formatting"
-      ? "formatting"
-      : groupKind === "replacement" || deletions.length > 0
-        ? "replacement"
-        : "insertion";
-    revisionItems.push({
-      id: groupId,
-      groupId,
-      kind,
-      author: revisions.find((revision) => revision.author)?.author,
-      date: revisions.find((revision) => revision.date)?.date,
-      text: (kind === "formatting" ? formatting : kind === "insertion" ? insertions : deletions)
-        .map((revision) => String(revision.text || "")).join(""),
-      oldText: deletions.map((revision) => String(revision.text || "")).join(""),
-      newText: insertions.map((revision) => String(revision.text || "")).join(""),
-      formattingDelta: formatting.flatMap((revision) =>
-        Array.isArray(revision.formattingDelta) ? revision.formattingDelta : []),
-      anchor: {
-        node,
-        start: Math.min(...ranges.map((range) => range.startOffset)),
-        end: Math.max(...ranges.map((range) => range.endOffset)),
-      },
-      revisions,
-    });
-  }
-  for (const [moveKey, revisions] of groupedMoves) {
-    const source = revisions.filter((revision) => revision.kind === "move_from");
-    const destination = revisions.filter((revision) => revision.kind === "move_to");
-    const ranges = revisions.map(revisionRange).filter(Boolean);
-    if (!source.length || !destination.length || ranges.length !== revisions.length) {
-      revisionItems.push(...revisions);
-      continue;
-    }
-    const movePair = revisions[0].movePair;
-    revisionItems.push({
-      id: `move:${moveKey}`,
-      kind: "move",
-      author: revisions.find((revision) => revision.author)?.author,
-      date: revisions.find((revision) => revision.date)?.date,
-      text: destination.map((revision) => String(revision.text || "")).join(""),
-      oldText: source.map((revision) => String(revision.text || "")).join(""),
-      newText: destination.map((revision) => String(revision.text || "")).join(""),
-      anchor: source[0].anchor,
-      destinationAnchor: destination[0].anchor,
-      movePair,
-      ranges,
-      revisions,
-    });
-  }
-  // Tracked changes are not "resolved" — the Resolved filter is comment-only, so
-  // it hides revisions; Open and All show them (REVIEW-GAP-018/019).
-  for (const revision of reviewFilter === "resolved" ? [] : revisionItems) {
-    const ranges = revision.ranges ?? [revisionRange(revision)].filter(Boolean);
-    const positioned = ranges
-      .map((range) => ({
-        range,
-        rect: reviewRangeClientRect(
-          range.startNode,
-          range.startOffset,
-          range.endNode,
-          range.endOffset,
-        ),
-      }))
-      .filter((item) => item.rect)
-      .sort((a, b) => a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top);
-    if (positioned.length) {
-      items.push({
-        type: "revision",
-        data: revision,
-        range: positioned[0].range,
-        rect: positioned[0].rect,
-        ranges: positioned.map((item) => item.range),
-      });
-    }
-  }
-  if (reviewComposerState?.range) {
-    const { start, end } = reviewComposerState.range;
-    const rect = reviewRangeClientRect(start.node, start.offset, end.node, end.offset);
-    if (rect) items.push({ type: "composer", data: reviewComposerState, rect });
-  }
-  items.sort((a, b) => a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top);
-
-  // Suggesting mode reserves the column whether or not a change exists yet.
-  // Keying off `items.length` meant the gutter appeared with the FIRST tracked
-  // change, so the whole page slid 85px sideways the moment a reviewer began
-  // editing — and slid back on Undo. Everything the user was aiming at moved
-  // under the pointer, which is the worst possible moment for the page to jump.
-  const show = reviewSidebarPreference ?? (items.length > 0 || reviewMode === "suggesting");
-  reviewSidebar.hidden = !show;
-  // Mutually exclusive with the outline panel (see toggleOutline): whenever the
-  // review sidebar is shown the outline closes, so the canvas is only ever
-  // inset from one side at a time.
-  if (show) closeFlankingPanel(outlinePanel, railOutline);
-  if (show) closeFlankingPanel(pagesPanel, railPages);
-  // Reserve the comment column's width in the page stack only while the column
-  // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
-  // sits past the comments (never between the canvas and the comments).
-  viewportEl.classList.toggle("has-review-sidebar", show);
-  // HF-088: below `REVIEW_SHEET_MAX_WIDTH` there is no margin to put a column
-  // in — a 320px column over a 390px window leaves the document about 70px and
-  // covers the text it annotates. The column becomes a bottom sheet instead:
-  // the page keeps its full width and the top half of the screen, and the
-  // comments are a scrollable, dismissable list.
-  const sheet = show && reviewSheetMode();
-  viewportEl.classList.toggle("review-sheet", sheet);
-  // The margin's affordance belongs to the margin's EMPTY state: shown exactly
-  // when the column is not. Deliberately NOT also gated on `reviewSheetMode()`
-  // — at the sheet's widths the page is already wider than the window, so
-  // `commentAffordanceSpot` refuses on the geometry first. See its note.
-  // …and only where this container annotates at all: the margin button is
-  // `review.comment`'s second face, and a preview is a picture of a document
-  // rather than a place to say something about one.
-  commentAffordance.sync(!show && HOST_CAPS.has("comment"), bandOffset);
-  reviewBtn.setAttribute("aria-pressed", String(show));
-  railReview.setAttribute("aria-pressed", String(show));
-  if (!show) {
-    reviewLayout = [];
-    return;
-  }
-
-  // The comment layer rides inside `.viewport`'s single scroll context; its body
-  // spans the page-stack height so the transparent margin remains click-to-
-  // deselect and cards are never clipped. No scrollTop sync: one scroll owner.
-  const viewportRect = viewportEl.getBoundingClientRect();
-  reviewSidebarBody.style.height = `${Math.max(pagesEl.scrollHeight, viewportEl.clientHeight)}px`;
-  // Cancel the sticky header's flow height so cards stay pixel-aligned to their
-  // canvas anchors (the header floats above via `position: sticky`). In the
-  // sheet there are no canvas anchors to align to and the header is the sheet's
-  // own title bar, so that offset would hide the first card behind it.
-  if (reviewSidebarHeader) {
-    reviewSidebarBody.style.marginTop = sheet
-      ? "0px"
-      : `-${reviewSidebarHeader.offsetHeight}px`;
-  }
-
-  if (!items.length) {
-    // The sheet is only as tall as its content; the page-height reservation
-    // above is a margin-column idea and would leave the sheet scrolling over
-    // an empty area taller than the phone.
-    if (sheet) reviewSidebarBody.style.height = "auto";
-    const empty = document.createElement("div");
-    empty.className = "review-sidebar-empty";
-    empty.innerHTML = '<span class="ms" aria-hidden="true">chat_bubble_outline</span><br>No comments or suggestions yet.<br>Select text and choose Add comment.';
-    reviewSidebarBody.appendChild(empty);
-    reviewLayout = [];
-    reviewCardCache.clear();
-    return;
-  }
-
-  // Build (or reuse) each item's card, but do not mount them all: compute every
-  // card's stacked document-scroll position once here, then mount only the
-  // viewport window (`mountReviewWindow`). A collapsed card whose content
-  // signature is unchanged is reused from `reviewCardCache` without rebuilding
-  // or re-measuring; the active/expanded card and the composer always rebuild so
-  // their live controls stay fresh (REVIEW-GAP-020).
-  const built = [];
-  reviewAnchorIndex = [];
-  for (const item of items) {
-    const itemId = item.type === "composer" ? "composer" : `${item.type}:${item.data.id}`;
-    const anchor = item.data?.anchor;
-    if (item.type !== "composer" && anchor?.node) {
-      reviewAnchorIndex.push({
-        itemId,
-        type: item.type,
-        dataId: item.data.id,
-        node: anchor.node,
-        start: Number(anchor.start) || 0,
-        end: Number(anchor.end) || Number(anchor.start) || 0,
-      });
-    }
-    const expanded = activeReviewItemId === itemId;
-    const sig = reviewCardSignature(item, comments, {
-      activeItemId: activeReviewItemId,
-      deleteConfirmId: reviewDeleteConfirmId,
-      editingId: commentEdit.id(),
-    });
-    let entry = reviewCardCache.get(itemId);
-    if (entry && entry.sig === sig && item.type !== "composer" && !expanded) {
-      built.push({ itemId, item, entry });
-      continue;
-    }
-    if (item.type === "composer") {
-      const composer = document.createElement("article");
-      composer.className = "review-margin-card review-margin-composer expanded";
-      composer.setAttribute("role", "group");
-      // Through the catalogue: the ribbon's own Add comment button already has
-      // this sentence translated into all eighteen languages, and a second,
-      // English-only spelling of one name is how two surfaces start to disagree.
-      composer.setAttribute("aria-label", t("panelReview.addComment.label"));
-      const textarea = document.createElement("textarea");
-      textarea.rows = 3;
-      textarea.maxLength = 4096;
-      textarea.placeholder = "Add a comment…";
-      textarea.dataset.testid = "review-comment-composer";
-      const actions = document.createElement("div");
-      actions.className = "review-composer-actions";
-      const cancel = reviewCardButton("Cancel", () => { closeReviewPopover(); focusEditorSurface(); });
-      cancel.dataset.testid = "review-comment-cancel";
-      const submit = reviewCardButton("Comment", async () => {
-        const text = textarea.value.trim();
-        if (!text || !reviewComposerState?.range) return;
-        const { start, end } = reviewComposerState.range;
-        const metadata = currentReviewTimestamp();
-        await runEdit(() => doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date), { keepView: true });
-        reviewComposerState = null;
-        reviewSidebarPreference = true;
-        announceReview("Comment added");
-        drawSelection();
-        focusEditorSurface();
-      }, false, "Add comment");
-      submit.dataset.testid = "review-comment-submit";
-      // Enter submits, Shift+Enter is a newline, Esc cancels — the modern
-      // Docs/Word comment interaction, identical to the reply composer (Q5).
-      attachComposerKeys(textarea, {
-        onSubmit: () => submit.click(),
-        onCancel: () => cancel.click(),
-      });
-      autoGrowTextarea(textarea);
-      actions.append(cancel, submit);
-      composer.append(textarea, actions);
-      entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: true };
-      reviewCardCache.set(itemId, entry);
-      built.push({ itemId, item, entry });
-      continue;
-    }
-
-    const card = document.createElement("article");
-    const revisionKind = item.type === "revision" ? ` review-margin-${String(item.data.kind || "change").replaceAll("_", "-")}` : "";
-    card.className = `review-margin-card review-margin-${item.type}${revisionKind}${item.data.resolved ? " resolved" : ""}${expanded ? " expanded" : ""}`;
-    card.tabIndex = 0;
-    card.dataset.reviewItemId = itemId;
-    card.setAttribute("aria-expanded", String(expanded));
-    // A labelled, expandable group so a screen reader announces what the card is
-    // (who, what kind, a text snippet) and its expanded/collapsed state, instead
-    // of a nameless generic article (REVIEW-GAP-023). `group` (not `button`)
-    // because an expanded card contains real action buttons.
-    card.setAttribute("role", "group");
-    card.setAttribute("aria-label", reviewCardAriaLabel(item));
-    const header = document.createElement("div");
-    header.className = "review-margin-card-head";
-    const avatar = document.createElement("span");
-    avatar.className = "review-margin-avatar";
-    const authorName = item.data.author || item.data.initials || "You";
-    avatar.textContent = authorName.trim().slice(0, 1).toUpperCase() || "U";
-    // Per-author color (docs/81 REVIEW-GAP-015): the avatar chip is filled with
-    // the author's stable palette color so the same reviewer is recognizable
-    // across their comments and tracked changes, matching the inline markers.
-    const authorColor = reviewAuthorColor(reviewAuthorKey(item.data));
-    avatar.style.setProperty("--review-author-color", authorColor);
-    // Attribution tooltip on the whole card: author · type · date for a tracked
-    // change, author · state · date for a comment (reuses the native `title`
-    // tooltip pattern used across the editor's chrome).
-    card.title = item.type === "revision"
-      ? reviewRevisionTooltip(item.data)
-      : reviewCommentTooltip(item.data);
-    const title = document.createElement("div");
-    title.className = "review-margin-title";
-    const author = document.createElement("strong");
-    author.textContent = authorName;
-    const meta = document.createElement("small");
-    meta.textContent = item.type === "revision"
-      ? formatReviewDate(item.data.date)
-      : `${item.data.resolved ? "Resolved · " : ""}${formatReviewDate(item.data.date)}`;
-    title.append(author, meta);
-    header.append(avatar, title);
-    if (expanded && item.type === "comment") {
-      header.append(
-        reviewIconButton(item.data.resolved ? "undo" : "check", item.data.resolved ? "Reopen comment" : "Resolve comment", async () => {
-          const resolving = !item.data.resolved;
-          await runEdit(() => doc.setCommentResolved(item.data.id, resolving), { keepView: true });
-          announceReview(resolving ? "Comment resolved" : "Comment reopened");
-          if (resolving) {
-            activeReviewItemId = null;
-            activeReviewCommentId = null;
-            reviewDeleteConfirmId = null;
-            if (item.data.anchor?.node) {
-              const end = Number(item.data.anchor.end) || Number(item.data.anchor.start) || 0;
-              selection = {
-                anchor: { node: item.data.anchor.node, offset: end },
-                focus: { node: item.data.anchor.node, offset: end },
-              };
-            }
-          }
-          drawSelection();
-          focusEditorSurface();
-        }),
-        ...(item.data.resolved ? [] : [commentEditButton(t, () => {
-          commentEdit.begin(item.data.id, item.data.text);
-          scheduleReviewMarginRender();
-        })]),
-        reviewIconButton("more_vert", "More options", () => {
-          reviewDeleteConfirmId = reviewDeleteConfirmId === item.data.id ? null : item.data.id;
-          scheduleReviewMarginRender();
-        }),
-      );
-    }
-    const body = document.createElement("p");
-    body.className = "review-margin-body";
-    if (item.type === "revision") {
-      if (item.data.kind === "replacement") {
-        body.textContent = `Replaced “${item.data.oldText}” with “${item.data.newText}”`;
-      } else if (item.data.kind === "formatting") {
-        const target = item.data.text || item.data.newText || item.data.oldText;
-        const details = reviewFormattingDescription(item.data.formattingDelta);
-        body.textContent = `Changed formatting for “${target}”${details ? `\n${details}` : ""}`;
-      } else if (item.data.kind === "move") {
-        body.textContent = `Moved “${item.data.newText || item.data.oldText}”`;
-      } else if (item.data.kind === "paragraph_format") {
-        const details = reviewFormattingDescription(item.data.formattingDelta);
-        body.textContent = `Formatted paragraph${details ? `\n${details}` : ""}`;
-      } else if (item.data.kind === "paragraph_mark_insertion") {
-        body.textContent = "Added a paragraph break";
-      } else if (item.data.kind === "paragraph_mark_deletion") {
-        // Say what accepting will do: the break goes and the paragraph joins the
-        // next one, which is not obvious from "deleted" alone.
-        body.textContent = "Deleted a paragraph break — accepting joins this paragraph to the next";
-      } else {
-        const verb = item.data.kind === "deletion"
-          ? "Deleted"
-          : item.data.kind === "insertion"
-            ? "Added"
-            : item.data.kind === "move_from"
-              ? "Unpaired move source"
-              : item.data.kind === "move_to"
-                ? "Unpaired move destination"
-                : "Changed";
-        body.textContent = `${verb} “${String(item.data.text || "")}”`;
-      }
-    } else {
-      body.textContent = String(item.data.text || "");
-    }
-    const quote = item.type === "comment" ? commentQuoteElement(item.quote, t) : null;
-    const bodyOrEditor = item.type === "comment" && expanded ? commentEditorFor(item.data, "comment") ?? body : body;
-    const actions = document.createElement("div");
-    actions.className = "review-margin-card-actions";
-    if (item.type === "comment") {
-      if (reviewDeleteConfirmId === item.data.id) {
-        const prompt = document.createElement("span");
-        prompt.textContent = "Delete this thread?";
-        actions.append(
-          prompt,
-          reviewCardButton("Delete", async () => {
-            reviewDeleteConfirmId = null;
-            activeReviewItemId = null;
-            await runEdit(() => doc.deleteComment(item.data.id), { keepView: true });
-            drawSelection();
-            focusEditorSurface();
-          }, true),
-          reviewCardButton("Cancel", () => {
-            reviewDeleteConfirmId = null;
-            scheduleReviewMarginRender();
-          }),
-        );
-      }
-    } else if (!["move_from", "move_to"].includes(item.data.kind) || item.data.movePair) {
-      const changeLabel = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
-      actions.append(
-        reviewCardButton("Accept", async () => {
-          await runEdit(() => item.data.movePair
-            ? doc.decideMovePair(
-              item.data.movePair.fromStart,
-              item.data.movePair.toStart,
-              true,
-            )
-            : item.data.groupId
-              ? doc.decideRevisionGroup(item.data.groupId, true)
-              : doc.decideRevision(item.data.id, true));
-          announceReview(`Accepted ${changeLabel}`);
-          drawSelection();
-          focusEditorSurface();
-        }, false, `Accept this ${changeLabel}`),
-        reviewCardButton("Reject", async () => {
-          await runEdit(() => item.data.movePair
-            ? doc.decideMovePair(
-              item.data.movePair.fromStart,
-              item.data.movePair.toStart,
-              false,
-            )
-            : item.data.groupId
-              ? doc.decideRevisionGroup(item.data.groupId, false)
-              : doc.decideRevision(item.data.id, false));
-          announceReview(`Rejected ${changeLabel}`);
-          drawSelection();
-          focusEditorSurface();
-        }, true, `Reject this ${changeLabel}`),
-      );
-    }
-    const focus = () => {
-      const expanding = activeReviewItemId !== itemId;
-      activeReviewItemId = expanding ? itemId : null;
-      reviewDeleteConfirmId = null;
-      if (item.type === "comment") {
-        if (expanding) {
-          focusReviewComment(item.data, false);
-        } else if (item.data.resolved && item.data.anchor?.node) {
-          activeReviewCommentId = null;
-          const end = Number(item.data.anchor.end) || Number(item.data.anchor.start) || 0;
-          selection = {
-            anchor: { node: item.data.anchor.node, offset: end },
-            focus: { node: item.data.anchor.node, offset: end },
-          };
-          drawSelection();
-        }
-      } else {
-        focusReviewRevision(item.data, false);
-      }
-      scheduleReviewMarginRender();
-    };
-    card.addEventListener("click", (event) => {
-      if (event.target.closest("button, textarea, input, select")) return;
-      focus();
-    });
-    card.addEventListener("keydown", (event) => {
-      // Let inner controls (Accept/Reject, the move source/destination
-      // navigation buttons, composers) handle their own Enter/Space instead
-      // of also toggling the card's expansion — mirrors the click guard above.
-      if (event.target.closest("button, textarea, input, select")) return;
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        focus();
-      }
-    });
-    card.append(header, ...(quote ? [quote] : []), bodyOrEditor);
-    if (item.type === "revision" && item.data.kind === "move") {
-      const path = document.createElement("div");
-      path.className = "review-move-path";
-      const source = reviewMoveEndButton(
-        "From",
-        item.data.anchor,
-        "Original location",
-        "Go to the moved text's original location",
-      );
-      const arrow = document.createElement("span");
-      arrow.className = "ms";
-      arrow.setAttribute("aria-hidden", "true");
-      arrow.textContent = "arrow_forward";
-      const destination = reviewMoveEndButton(
-        "To",
-        item.data.destinationAnchor,
-        "New location",
-        "Go to the moved text's new location",
-      );
-      path.append(source, arrow, destination);
-      card.appendChild(path);
-    }
-    // REVIEW-GAP-012: thread comments that overlap this tracked change beneath
-    // it, read-only, on an expanded revision card. `revisionThread` reports the
-    // overlap; authoring a reply to a change is `addComment` over the change's
-    // own range (unchanged DOCX comment ownership). Only rendered when the
-    // overlap is non-empty, so a change with no related comment adds no chrome.
-    if (item.type === "revision" && expanded && item.data.id) {
-      let related = [];
-      try {
-        related = JSON.parse(doc.revisionThread(item.data.id) || "[]");
-      } catch {
-        related = [];
-      }
-      if (related.length) {
-        const relatedList = document.createElement("div");
-        relatedList.className = "review-margin-revision-comments";
-        const relatedLabel = document.createElement("small");
-        relatedLabel.textContent = "Related comments";
-        relatedList.appendChild(relatedLabel);
-        for (const related_comment of related) {
-          const relatedItem = document.createElement("div");
-          relatedItem.className = "review-margin-revision-comment";
-          const relatedAuthor = document.createElement("strong");
-          relatedAuthor.textContent =
-            related_comment.author || related_comment.initials || "You";
-          const relatedText = document.createElement("p");
-          relatedText.textContent = String(related_comment.text || "");
-          relatedItem.append(relatedAuthor, relatedText);
-          relatedList.appendChild(relatedItem);
-        }
-        card.appendChild(relatedList);
-      }
-    }
-    if (item.type === "comment") {
-      const replies = comments.filter((comment) => reviewCommentIsReplyTo(comment, item.data));
-      if (replies.length) {
-        const thread = document.createElement("div");
-        thread.className = "review-margin-replies";
-        for (const reply of replies) {
-          const replyItem = document.createElement("div");
-          replyItem.className = `review-margin-reply${reply.resolved ? " resolved" : ""}`;
-          const replyHead = document.createElement("div");
-          replyHead.className = "review-margin-reply-head";
-          const replyAuthor = document.createElement("strong");
-          replyAuthor.textContent = reply.author || reply.initials || "You";
-          const replyDate = document.createElement("small");
-          replyDate.textContent = `${reply.resolved ? "Resolved · " : ""}${formatReviewDate(reply.date)}`;
-          replyHead.append(replyAuthor, replyDate);
-          const replyBody = document.createElement("p");
-          replyBody.textContent = String(reply.text || "");
-          replyItem.append(replyHead, (expanded && commentEditorFor(reply, "reply")) || replyBody);
-          // REVIEW-GAP-011: edit or delete this specific reply (not just the
-          // whole thread). Only on an expanded, unresolved parent card, so the
-          // controls stay out of the collapsed/resolved presentation.
-          if (expanded && !item.data.resolved) {
-            const replyActionRow = document.createElement("div");
-            replyActionRow.className = "review-margin-reply-actions";
-            const editReply = reviewCardButton(t("reviewCard.edit"), () => {
-              commentEdit.begin(reply.id, reply.text);
-              scheduleReviewMarginRender();
-            }, false, t("reviewCard.editReply"));
-            const deleteReply = reviewCardButton(
-              "Delete",
-              async () => {
-                await runEdit(() => doc.deleteReply(reply.id));
-                announceReview("Reply deleted");
-                drawSelection();
-                focusEditorSurface();
-              },
-              true,
-              "Delete reply",
-            );
-            replyActionRow.append(editReply, deleteReply);
-            replyItem.appendChild(replyActionRow);
-          }
-          thread.appendChild(replyItem);
-        }
-        card.appendChild(thread);
-      }
-      if (expanded && !item.data.resolved) {
-        // Always-ready multi-line reply composer (Q5): a textarea the user can
-        // type into immediately — no click-to-arm step — matching modern Docs/
-        // Word comment threads. It auto-grows; Enter submits, Shift+Enter is a
-        // newline, Esc clears. The action row surfaces only once the composer
-        // is focused or has text, so a collapsed thread stays dense.
-        const replyComposer = document.createElement("div");
-        replyComposer.className = "review-reply-composer";
-        const textarea = document.createElement("textarea");
-        textarea.rows = 1;
-        textarea.maxLength = 4096;
-        textarea.placeholder = "Reply…";
-        textarea.dataset.testid = "review-reply-composer";
-        textarea.setAttribute("aria-label", "Reply to this comment");
-        const replyActions = document.createElement("div");
-        replyActions.className = "review-composer-actions";
-        const resize = autoGrowTextarea(textarea);
-        const clear = () => {
-          textarea.value = "";
-          resize();
-          syncActions();
-        };
-        const submit = reviewCardButton("Reply", async () => {
-          const text = textarea.value.trim();
-          if (!text) return;
-          const metadata = currentReviewTimestamp();
-          await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date), { keepView: true });
-          announceReview("Reply added");
-          drawSelection();
-          focusEditorSurface();
-        }, false, "Send reply");
-        const cancel = reviewCardButton("Cancel", () => {
-          clear();
-          focusEditorSurface();
-        });
-        replyActions.append(cancel, submit);
-        const syncActions = () => {
-          const active = document.activeElement === textarea || textarea.value.trim().length > 0;
-          replyActions.hidden = !active;
-        };
-        syncActions();
-        textarea.addEventListener("pointerdown", (event) => event.stopPropagation());
-        textarea.addEventListener("input", syncActions);
-        textarea.addEventListener("focus", syncActions);
-        textarea.addEventListener("blur", () => requestAnimationFrame(syncActions));
-        attachComposerKeys(textarea, {
-          onSubmit: () => submit.click(),
-          onCancel: () => cancel.click(),
-        });
-        replyComposer.append(textarea, replyActions);
-        card.appendChild(replyComposer);
-      }
-    }
-    if (actions.childElementCount) card.appendChild(actions);
-    entry = { el: card, sig, height: 0, measured: false };
-    reviewCardCache.set(itemId, entry);
-    built.push({ itemId, item, entry });
-  }
-
-  // Measure only the freshly built cards, batched: mount them all off-view, read
-  // every height (one layout for all reads, since no DOM mutation interleaves),
-  // then detach them. Reused cards keep their cached measured height, so a large
-  // review set is not re-measured on every edit.
-  const toMeasure = built.filter(({ entry }) => !entry.measured);
-  for (const { entry } of toMeasure) {
-    entry.el.style.top = "-99999px";
-    reviewSidebarBody.appendChild(entry.el);
-  }
-  for (const { entry } of toMeasure) {
-    entry.height = entry.el.offsetHeight;
-    entry.measured = true;
-  }
-  for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
-
-  // Position pass. `stackReviewCards` owns the arithmetic for both shapes: the
-  // anchored margin column, and the narrow-width bottom sheet where cards are a
-  // plain list (HF-088). Anchors are still computed for the margin shape in
-  // document-scroll coordinates, from each item's on-canvas marker.
-  const seen = new Set();
-  // BAND coordinates, not scroll coordinates. `bandOffset` moves on every
-  // scroll once a document is compressed (`page_scroll.mjs`), so an anchor
-  // stored in scroll coordinates drifts from its marker by (scale - 1) × the
-  // distance scrolled; subtracting it here and adding it back at mount time
-  // pins the card. At scale 1 the offset is 0 and nothing changes.
-  const anchorY = built.map(
-    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop - bandOffset,
-  );
-  const heights = built.map(({ entry }) => entry.height);
-  const tops = stackReviewCards({
-    anchorY,
-    heights,
-    activeIndex: activeReviewItemId
-      ? built.findIndex((b) => b.itemId === activeReviewItemId)
-      : -1,
-    sheet,
-  });
-  const layout = built.map(({ itemId, entry }, i) => {
-    seen.add(itemId);
-    return { itemId, top: tops[i], entry };
-  });
-  // In the sheet the card body is the scrolled content, so it must be exactly as
-  // tall as the stack; in the margin it spans the page stack (set above).
-  if (sheet) {
-    reviewSidebarBody.style.height = `${Math.round(reviewStackHeight(tops, heights))}px`;
-  }
-  // Drop cache entries (and their retained DOM) for items no longer present.
-  for (const key of [...reviewCardCache.keys()]) {
-    if (!seen.has(key)) reviewCardCache.delete(key);
-  }
-  reviewLayout = layout;
-  mountReviewWindow();
-}
-
-/** Mounts only the cards whose precomputed position falls inside (or within
- *  `REVIEW_WINDOW_OVERSCAN` of) the viewport, and detaches the rest. Runs after
- *  a full render and on every scroll frame; it never re-parses the review
- *  payload, recomputes geometry, or rebuilds a card — it only attaches/detaches
- *  retained DOM by comparing cached positions to the current scroll band. This
- *  is what keeps the mounted card count bounded regardless of review size
- *  (REVIEW-GAP-020). */
-function mountReviewWindow() {
-  if (reviewSidebar.hidden) return;
-  // Whichever element owns the scroll owns the window: the viewport in the
-  // margin shape, the sheet itself when the sheet is the scroller (HF-088).
-  const scroller = reviewSheetMode() ? reviewSidebar : viewportEl;
-  const scrollTop = scroller.scrollTop;
-  // Stored in band coordinates; the live offset converts them back. Here
-  // rather than in the layout pass because this runs on every scroll frame.
-  // The bottom sheet scrolls itself and is never the compressed band, so its
-  // offset is 0 — taking it unconditionally keeps one expression for both.
-  const offset = reviewSheetMode() ? 0 : bandOffset;
-  const bandTop = scrollTop - offset - REVIEW_WINDOW_OVERSCAN;
-  const bandBottom = scrollTop - offset + scroller.clientHeight + REVIEW_WINDOW_OVERSCAN;
-  for (const { itemId, top, entry } of reviewLayout) {
-    // The composer and the active/expanded card are always kept mounted: they
-    // own live focus/controls the user is interacting with.
-    const force = itemId === "composer" || itemId === activeReviewItemId;
-    const visible = force || (top + entry.height >= bandTop && top <= bandBottom);
-    const mounted = entry.el.parentNode === reviewSidebarBody;
-    if (visible) {
-      entry.el.style.top = `${Math.round(top + offset)}px`;
-      if (!mounted) reviewSidebarBody.appendChild(entry.el);
-      if (entry.needsFocus && entry.focusTextarea) {
-        entry.needsFocus = false;
-        const textarea = entry.focusTextarea;
-        requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
-      }
-    } else if (mounted) {
-      reviewSidebarBody.removeChild(entry.el);
-    }
-  }
-}
-
-/** rAF-debounced `mountReviewWindow` for the scroll path: re-windowing is cheap
- *  (no parse/geometry/rebuild), but coalescing to one call per frame keeps a
- *  fast scroll from doing redundant DOM work. */
-function scheduleReviewWindow() {
-  if (reviewWindowFrame) return;
-  reviewWindowFrame = requestAnimationFrame(() => {
-    reviewWindowFrame = 0;
-    commentAffordance.ride(bandOffset);
-    mountReviewWindow();
-  });
-}
-
-// One scroll owner: the comment layer lives inside `.viewport` and rides its
-// scroll context natively, so cards stay pinned to their anchored text without
-// any scroll-sync or per-frame re-render (that eliminates the momentum drift and
-// the between-canvas scrollbar). Cards are positioned in document-scroll
-// coordinates; only content edits and resizes recompute those positions. On a
-// plain scroll we only re-window the already-computed layout (mount the cards
-// entering the viewport, detach those leaving it) — no re-parse, no geometry,
-// no rebuild — so a document with hundreds of comments scrolls with a bounded,
-// viewport-sized number of mounted cards (REVIEW-GAP-020).
-viewportEl.addEventListener("scroll", scheduleReviewWindow, { passive: true });
-// In the sheet the cards ride the sheet's own scroll instead (HF-088).
-reviewSidebar.addEventListener("scroll", scheduleReviewWindow, { passive: true });
-reviewSidebarBody.addEventListener("click", (event) => {
-  if (event.target !== reviewSidebarBody || !activeReviewItemId) return;
-  activeReviewItemId = null;
-  activeReviewCommentId = null;
-  reviewDeleteConfirmId = null;
-  drawSelection();
-});
-window.addEventListener("resize", scheduleReviewMarginRender);
+const {
+  paragraphRevisionRects, reviewRangeClientRect, revisionRange, scheduleReviewMarginRender,
+  setReviewMode, updateReviewControls,
+} = createReviewMargin(ed);
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -3363,88 +1980,8 @@ const { boot, newBlankDocument, openBytes } = createFileOpen(ed);
 // then fetch only the script fallbacks this document's uncovered code points
 // require. Network failures do not block opening: the target-bundled
 // metric-compatible faces remain available.
-async function provisionFonts(name, target = doc, state = fontState) {
-  if (!target || state.retired) return [];
-  const warnings = [];
-  statusChannel.progress(`Fetching web fonts for ${name}…`);
-
-  const named = await Promise.allSettled(
-    NAMED_WEB_FONT_FACES.map((face) => fetchSharedFontBytes(face.url, fontCache)),
-  );
-  const namedBytes = named
-    .filter((result) => result.status === "fulfilled")
-    .map((result) => result.value);
-  if (namedBytes.length > 0 && !state.retired) {
-    const packed = packFontBytes(namedBytes);
-    target.registerFonts(packed.bytes, packed.lengths);
-  }
-  // The WASM shaper now holds the authoritative copy of these faces, so release
-  // the JS byte cache (~9 MB) rather than double-holding it for the tab's life.
-  // A subsequent document re-fetches + re-registers from the CDN as usual.
-  for (const face of NAMED_WEB_FONT_FACES) fontCache.delete(face.url);
-  for (const [index, result] of named.entries()) {
-    if (result.status === "rejected") {
-      const face = NAMED_WEB_FONT_FACES[index];
-      console.warn(`font ${face.family} (${face.url}) failed:`, result.reason);
-      warnings.push(face.family);
-    }
-  }
-
-  warnings.push(...(await provisionMissingFallbacks(name, target, state)));
-  return warnings;
-}
-
 let fontState = { provisionedFallbackKeys: new Set(), inFlightFallbackKeys: new Set(), retired: false };
-
-/** Fetches and registers any script fallback fonts the document now needs but
- *  hasn't got yet (`doc.missingCoverage()` → buckets), skipping ones already
- *  provisioned. Used both on open and after an edit that introduces new glyphs
- *  (e.g. a checklist's `☐`/`☒` markers), so newly-added symbols render instead of
- *  tofu. Returns the keys that failed to load. */
-async function provisionMissingFallbacks(label, target = doc, state = fontState) {
-  const warnings = [];
-  if (!target || state.retired) return warnings;
-  const { provisionedFallbackKeys, inFlightFallbackKeys } = state;
-  const missing = target.missingCoverage();
-  const keys = fallbackKeysFor(missing).filter(
-    (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
-  );
-  if (keys.length === 0) return warnings;
-  if (doc === target) statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
-  for (const key of keys) inFlightFallbackKeys.add(key);
-  for (const key of keys) {
-    const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
-    try {
-      const bytes = await fetchSharedFontBytes(url, fontCache);
-      if (!state.retired) {
-        target.registerFallbackFont(bytes, scripts); // registers + re-paginates
-        provisionedFallbackKeys.add(key);
-      }
-      // WASM holds the authoritative copy now; drop the JS cache entry so the
-      // fallback bytes are not double-held for the session (see registerFonts).
-      fontCache.delete(url);
-    } catch (err) {
-      console.warn(`font ${key} (${url}) failed:`, err);
-      if (doc === target) setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
-      warnings.push(key);
-    } finally {
-      inFlightFallbackKeys.delete(key);
-    }
-  }
-  return warnings;
-}
-
-/** Ensures any glyphs a just-applied edit introduced (e.g. checklist checkbox
- *  markers) have a covering font, then re-renders if one was fetched. */
-async function ensureGlyphCoverage(label, target = doc, state = fontState) {
-  if (versionPreviewHome) return;
-  const before = state.provisionedFallbackKeys.size;
-  await provisionMissingFallbacks(label, target, state);
-  if (doc === target && state.provisionedFallbackKeys.size !== before) {
-    await renderAll();
-  }
-}
-
+const { ensureGlyphCoverage, provisionFonts } = createFonts(ed);
 const {
   materializedPages, pageIndexOfWrap, paintPageCanvas, paintPagesInView, releasePageCanvas,
   updatePageWindow, virtualPageRect,
@@ -3732,499 +2269,14 @@ function hasRange() {
   );
 }
 
-// ---- Insert surface: one declaration per Insert command ---------------------
-// The Insert ribbon tab, the Insert app menu, and the command palette are three
-// faces of the SAME command set. Their membership used to be authored three
-// times — hand-written HTML buttons, an id list in APP_MENU_SECTIONS, and
-// bespoke `someBtn.disabled = …` lines in `updateToolbar` — with nothing
-// reconciling them, and they drifted: Picture, Symbol, Emoji, Bookmark and Field
-// shipped to the menu and the palette while the ribbon still showed only Table
-// and Link, so a user looking at the Insert tab could not insert a picture at
-// all. This table is the single declaration the ribbon is built from: each row
-// names the command it mirrors, the button that renders it, what the command
-// genuinely requires, and how the button activates it.
-// It unifies enablement and activation, not membership: the buttons are still
-// authored in editor.html and the menu roster is still its own id list, so a new
-// command CAN still reach one surface and miss another. What closes that gap is
-// the test — each row stamps its command id onto its button, and
-// `insert-surface.spec.mjs` asserts the ribbon's id set equals the Insert menu's,
-// so the omission that shipped Picture unreachable now fails CI instead.
-//
-// `buttons` is a LIST because one command can legitimately have more than one
-// ribbon face: Word shows Bookmark on both Insert ▸ Links and References ▸
-// Navigation, and Insert field on both Insert ▸ Text and References ▸ Fields.
-// Declaring the faces here keeps enablement and activation single-sourced —
-// a second `someBtn.disabled = …` line written next to the new tab is exactly
-// how the Insert ribbon drifted out of sync with its menu the first time.
-const INSERT_SURFACE = [
-  // "doc" is Word's rule: an open document has an insertion point, so the
-  // command is live the moment a document loads (see `implicitCaretAt`).
-  // Viewing/Suggesting are deliberately NOT expressed here — every run path
-  // already fails closed through `blockMutationInViewing` /
-  // `blockUntrackedInSuggesting`, which tells the user WHY the insert did not
-  // happen. A greyed button would only say "no".
-  { command: "insert.table", buttons: [insertTableBtn], requires: "doc", activate: null },
-  { command: "insert.image", buttons: [insertPictureBtn], requires: "doc", activate: () => insertImageFromFile() },
-  // Link is the one Insert command that genuinely needs a range: it hyperlinks
-  // selected text. A cross-paragraph range still enables the button and is
-  // answered by `editSelectionLink`'s "Links must stay within one paragraph",
-  // which is more useful than a silently dead control.
-  // The gallery popover registers its own toggle on this button (like the list
-  // galleries), so wiring `activate` here too would open it on mousedown and
-  // immediately close it again.
-  { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
-  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartWithData() },
-  { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
-  { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
-  { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
-  { command: "insert.field", buttons: [insertFieldBtn, refFieldBtn], requires: "doc", activate: () => openFieldDialog() },
-  // Page number and Date are the two field kinds the competition puts on the
-  // Insert TAB rather than behind a generic field picker: Word's Insert tab has
-  // Page Number in its Header & Footer group and Date & Time in its Text group,
-  // and ONLYOFFICE's Insert tab has both as their own buttons (their groups 5
-  // and 6). Here they were one level deeper — Insert ▸ Field, then a row in the
-  // picker — which is a reachability gap, not a missing capability.
-  //
-  // They are the SAME commands the palette already registers per kind
-  // (`insert.field.<kind>`, generated from FIELD_KINDS) running the SAME
-  // `insertFieldAtCaret`, so there is no second insert path to keep in step:
-  // this table supplies the enablement and the click, exactly as it does for the
-  // picker's own button. The other four kinds (number of pages, time, file name,
-  // author) stay in the picker, where Word and ONLYOFFICE also keep them.
-  { command: "insert.field.page", buttons: [insertPageNumberBtn], requires: "doc", activate: () => insertFieldAtCaret("page") },
-  { command: "insert.field.date", buttons: [insertDateBtn], requires: "doc", activate: () => insertFieldAtCaret("date") },
-  { command: "insert.dropCap", buttons: [insertDropCapBtn], requires: "doc", activate: () => dropCapDialog.open() },
-  // Notes live on References only, as they do in Word. The app-menu row and the
-  // palette entry are untouched, so the command keeps three surfaces.
-  { command: "insert.footnote", buttons: [refFootnoteBtn], requires: "doc", activate: () => insertNote("footnote") },
-  { command: "insert.endnote", buttons: [refEndnoteBtn], requires: "doc", activate: () => insertNote("endnote") },
-  { command: "insert.header", buttons: [insertHeaderBtn], requires: "doc", activate: () => editRunningContent("header") },
-  { command: "insert.footer", buttons: [insertFooterBtn], requires: "doc", activate: () => editRunningContent("footer") },
-  { command: "insert.symbol", buttons: [insertSymbolBtn], requires: "doc", activate: () => openSymbolPicker() },
-  { command: "insert.emoji", buttons: [insertEmojiBtn], requires: "doc", activate: () => openEmojiPicker() },
-];
-
-// ---- Layout and References surfaces ----------------------------------------
-// The same seam as INSERT_SURFACE/REVIEW_SURFACE, for the two tabs the ribbon
-// did not have (docs/105 UX-010, and the IA half of OO-001/OO-005). Each row is
-// one command: the palette entry, the ribbon button, and the enablement rule all
-// read from this table, so there is nowhere to write a second opinion.
-//
-// `requires` values:
-//   "doc"      — an open document is the only precondition.
-//   "caret"    — a paragraph to act on (the caret, wherever it is).
-//   "object"   — a selected image, shape or text box.
-//   "missing"  — the command is REAL as a user intention but has no engine
-//                operation behind it. It ships permanently disabled carrying the
-//                reason, because a control that silently does nothing is the one
-//                thing docs/63 forbids outright, and hiding it would make the
-//                gap invisible to the person deciding what to build next.
-const BREAK_IO = { doc: () => doc, caret: () => selection?.focus ?? null, runEdit: (thunk, options) => runEdit(thunk, options), setStatus: (text) => setStatus(text) };
-const LAYOUT_SURFACE = [
-  // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
-  // into the same section geometry; each one opens the dialog with its own
-  // fieldset focused rather than pretending to be a separate dialog.
-  { command: "layout.margins", label: "Page margins", kw: "margins page setup top bottom left right gutter", buttons: () => [layoutMarginsBtn], requires: "doc", run: () => pageSetup.open(true, "margins") },
-  { command: "layout.orientation", label: "Page orientation", kw: "orientation portrait landscape rotate page setup", buttons: () => [layoutOrientationBtn], requires: "doc", run: () => pageSetup.open(true, "orientation") },
-  { command: "layout.size", label: "Page size", kw: "size paper a4 letter legal width height page setup", buttons: () => [layoutSizeBtn], requires: "doc", run: () => pageSetup.open(true, "size") },
-  { command: "layout.columns", label: "Text columns", kw: "columns newspaper two three spacing separator page setup", buttons: () => [layoutColumnsBtn], requires: "doc", run: () => pageSetup.open(true, "columns") },
-  // The button's click is the popover's own (`registerPopover`), so this row
-  // declares `ownsClick` and contributes only the command id, the enablement
-  // rule and the palette row — the same split INSERT_SURFACE spells `activate:
-  // null` for `insert.table`. Without it the wiring below would attach a handler
-  // that re-clicks the button the popover manager is already listening on.
-  { command: "layout.lineNumbers", label: "Line numbers", kw: "line numbers numbering margin legal pleading count suppress", buttons: () => [lineNumbersBtn], requires: "doc", ownsClick: true, run: () => pageSetup.openLineNumbers() },
-  // Watermark. NOT `ownsClick`: this one opens a modal the module registers
-  // itself, so the click belongs to this table's own wiring — the popover
-  // manager is not involved, and `page_setup.mjs` deliberately binds no listener
-  // of its own to the button.
-  { command: "layout.watermark", label: "Watermark", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [watermarkBtn], requires: "doc", run: () => pageSetup.openWatermark(true) },
-  // Paragraph: the existing relative nudges, plus the two fieldsets of the
-  // paragraph-properties panel that hold the absolute indent and spacing values.
-  // The ribbon deliberately does NOT carry its own numeric fields: the panel
-  // reflects engine state and applies through the gated edit path, and a second
-  // pair of inputs would be a second answer to "what is this paragraph's indent".
-  { command: "paragraph.indent.decrease", buttons: () => [layoutIndentDecBtn], requires: "caret", run: () => adjustIndentCommand(-360) },
-  { command: "paragraph.indent.increase", buttons: () => [layoutIndentIncBtn], requires: "caret", run: () => adjustIndentCommand(360) },
-  { command: "layout.indent", label: "Indentation…", kw: "indent left right first line hanging exact fields paragraph", buttons: () => [layoutIndentFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => indentLeftInput) },
-  { command: "layout.spacing", label: "Paragraph spacing…", kw: "spacing line before after leading paragraph fields", buttons: () => [layoutSpacingFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => paraLineSpacing) },
-  // Arrange: the object inspector's own wrap and geometry sections, reached from
-  // a durable affordance instead of only the floating bar that appears on hover.
-  // The two running-content variants. No `label`/`kw`: `editorCommands` already
-  // declares both rows (their labels read as switches — "Different first page:
-  // on"), and a second declaration here would put two rows for one command in
-  // the palette. What they needed was a RIBBON FACE: they were reachable from
-  // the Insert menu and the palette only, so a chrome with no menu bar left them
-  // palette-only. `pressed` is what makes the button say which way the switch is
-  // set, the way the Review toggles do.
-  { command: "layout.firstPageVariant", buttons: () => [insertFirstPageVariantBtn], requires: "doc", pressed: () => headerFooterSettings.variantState().firstPage, run: () => headerFooterSettings.toggleVariant("firstPage") },
-  { command: "layout.evenOddVariant", buttons: () => [insertEvenOddVariantBtn], requires: "doc", pressed: () => headerFooterSettings.variantState().evenOdd, run: () => headerFooterSettings.toggleVariant("evenOdd") },
-  // Header and footer settings. No `label`/`kw` for the same reason as the two
-  // above: `editorCommands` declares the palette row, and a second declaration
-  // here would put two rows for one command in the palette.
-  { command: "layout.headerFooterSettings", buttons: () => [headerFooterSettingsBtn], requires: "doc", run: () => headerFooterSettings.open(true) },
-  { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
-  { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
-  ...breakSurfaceRows(BREAK_IO),
-  ...arrangeSurfaceRows(objectArrange, {
-    bringForward: () => layoutBringForwardBtn,
-    sendBackward: () => layoutSendBackwardBtn,
-    group: () => layoutGroupBtn,
-    ungroup: () => layoutUngroupBtn,
-    rotate: () => layoutRotateBtn,
-    inLine: () => setObjectWrap("inline"),
-  }),
-];
-
-const REFERENCE_SURFACE = [
-  {
-    command: "reference.tableOfContents",
-    label: "Table of contents",
-    kw: "table of contents toc outline headings index navigation",
-    buttons: () => [refTocBtn],
-    // Body-only, and for the engine's own reason: `insertTableOfContents`
-    // refuses a caret outside the body, as Word does.
-    requires: "bodyCaret",
-    run: () => tocCommands.insert.open(),
-  },
-  // The keyboard half of following a contents entry. The pointer half is a plain
-  // click on the entry, and `contextMenu: true` puts the same row on the
-  // right-click menu, so the capability is reachable from three surfaces and from
-  // none of them only.
-  {
-    command: "reference.goToHeading",
-    label: "Go to the heading this entry names",
-    kw: "toc table of contents entry heading navigate go to jump follow outline",
-    buttons: () => [refGoToHeadingBtn],
-    requires: "tocEntry",
-    // NOT `contextMenu: true` — that flag puts a row on the OBJECT and table
-    // right-click menus, and a contents entry is text. Its right-click row is
-    // built with the other text rows, beside Open link, which is the same
-    // capability for the case where the author's field did hyperlink it.
-    run: () => void followTocEntry(selection?.focus?.node),
-  },
-  // Word's Captions group. A caption attaches to the caret's block — which is
-  // also the block that holds a selected picture or table, since selecting an
-  // object puts the caret at its anchor — and a cross-reference is inserted at
-  // the caret. `contextMenu: true` is what puts Insert caption on the object and
-  // table right-click menus, the way ONLYOFFICE does
-  // (`DocumentHolderExt.js:46`), from this one declaration.
-  {
-    command: "reference.caption",
-    // English, like every other row here: these labels are read at import, before
-    // a catalogue exists, so `t()` would put the KEY in the palette. The
-    // context-menu row is built on demand and does route through the catalogue.
-    label: "Insert caption",
-    kw: "caption figure table equation label numbering sequence seq chapter",
-    buttons: () => [refCaptionBtn],
-    requires: "bodyCaret",
-    contextMenu: true,
-    run: () => referenceCommands.caption.open(),
-  },
-  {
-    command: "reference.crossReference",
-    label: "Cross-reference",
-    kw: "cross reference ref heading bookmark figure numbered item caption footnote endnote",
-    buttons: () => [refCrossRefBtn],
-    requires: "caret",
-    run: () => referenceCommands.crossReference.open(),
-  },
-  // Word recomputes fields on print, on F9 and on open; ours are not recomputed
-  // on a Backspace, deliberately, because renumbering there would make a keystroke
-  // O(document). So the product has to OFFER the fix, or "dirty rather than
-  // silently stale" is just "stale".
-  {
-    command: "reference.updateCaptionNumbers",
-    label: "Update caption numbers",
-    kw: "update caption numbers renumber stale seq figure table refresh fix",
-    buttons: () => [refUpdateCaptionsBtn],
-    requires: "staleCaptions",
-    run: () => void referenceCommands.numbering.update(),
-  },
-  // Word's Update Table, and its two-radio dialog. The id stays
-  // `reference.updateFields` because it is a published host-contract id; what
-  // changed is that it now runs something. The two MODES are commands of their
-  // own, so neither is reachable only from inside a modal — the same
-  // >=2-surface rule the rest of this table follows.
-  { command: "reference.updateFields", label: "Update table of contents", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [refUpdateFieldsBtn], requires: "tocField", run: () => tocCommands.update.open() },
-  { command: "reference.updateToc.pageNumbers", label: "Update table of contents: page numbers only", kw: "toc contents update page numbers only repaginate refresh", buttons: () => [], requires: "tocField", run: () => void tocCommands.update.run("pageNumbers") },
-  { command: "reference.updateToc.entire", label: "Update table of contents: entire table", kw: "toc contents update entire rebuild regenerate headings refresh", buttons: () => [], requires: "tocField", run: () => void tocCommands.update.run("entire") },
-];
-
-/** The object/table right-click rows the References surface declares — see
- *  `objectMenuRows`, which is where the rule and its citations live. */
-const referenceObjectMenuRows = () =>
-  objectMenuRows(REFERENCE_SURFACE, ribbonSurfaceEnabled, ribbonSurfaceReason);
-
-/** The O(1) state the two surface rules read. `tocEntryTargetAt` returns
- *  immediately unless the document holds a TOC field and the heading index
- *  behind it is built once per revision; the two counts are caches. Nothing
- *  here walks the document, because this runs on every keystroke. */
-function ribbonSurfaceState(entry) {
-  return {
-    hasDoc: !!doc,
-    objectSelected: !!(objectSelection && objectSelection.mode === "selected"),
-    hasCaret: !!selection,
-    inRunningStory: !!runningEditBand,
-    staleCaptions: referenceCommands.numbering.count,
-    tocFields: tocCommands.fields.count,
-    onTocEntry:
-      entry.requires === "tocEntry" && !!selection && !!tocEntryTargetAt(selection.focus.node),
-  };
-}
-
-const ribbonSurfaceEnabled = (entry) => surfaceEnabled(entry, ribbonSurfaceState(entry));
-const ribbonSurfaceReason = (entry) => surfaceReason(entry, ribbonSurfaceState(entry));
-
-/** Opens the object inspector focused on one control — Layout ▸ Wrap text lands
- *  on the wrap control, not on the panel's first field. `object_inspector.mjs`. */
-const openObjectInspectorAt = (selector) => objectInspector.openAt(selector);
-
-/** The one enablement rule for an Insert command, shared by its ribbon button,
- *  its app-menu row, and its palette entry. `context.hasRange` lets a surface
- *  that already computed the selection state (the context menu) pass it in. */
-// ---- Review surface: one declaration per Review command ---------------------
-// Word's Review tab — Tracking, Changes, Comments. Every command below already
-// existed and was reachable ONLY from the command palette, or from buttons
-// living inside the review sidebar, which exist only while that sidebar is open.
-// So a user with a document full of tracked changes had no durable affordance
-// for accepting one. Each row names the command its buttons run and whether the
-// button is a toggle, and `review-surface.spec.mjs` asserts the ribbon's id set
-// equals the Review menu's, so a command cannot reach one surface and miss the
-// other.
-//
-// `buttons`, plural, and the same shape LAYOUT_SURFACE/REFERENCE_SURFACE
-// already use — one command can have more than one face. `review.comment` has
-// two: the Review band's button and the right-margin affordance beside the
-// selection. They are declared together on purpose. A margin button wired up on
-// its own would be a second way to open the comment composer, free to drift
-// from the first in what it runs and in when it is available, which is the
-// command-surface defect class this table exists to prevent (`105` UX-004).
-//
-// Enablement is deliberately just "a document is open": the commands
-// themselves report why nothing happened (no change at the cursor, none left to
-// accept), which is more use than a button that is silently dead.
-const reviewCommentActions = createReviewCommentActions({ runEdit, getDoc: () => doc, commentId: () => activeReviewCommentId, announce: (m) => announceReview(m), afterChange: () => drawSelection() });
-const REVIEW_SURFACE = [
-  { command: "review.mode.suggesting", buttons: () => [reviewTrackBtn], run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"), pressed: () => reviewMode === "suggesting" },
-  { command: "view.showChanges", buttons: () => [reviewShowChangesBtn], run: () => toggleShowChanges(), pressed: () => showingChanges },
-  { command: "review.previous", buttons: () => [reviewPrevBtn], run: () => navigateReview(-1) },
-  { command: "review.next", buttons: () => [reviewNextBtn], run: () => navigateReview(1) },
-  { command: "review.acceptNext", buttons: () => [reviewAcceptBtn], run: () => decideReviewAndAdvance(true) },
-  { command: "review.rejectNext", buttons: () => [reviewRejectBtn], run: () => decideReviewAndAdvance(false) },
-  { command: "review.acceptAll", buttons: () => [reviewAcceptAllBtn], run: () => void decideAllReviewChanges(true) },
-  { command: "review.rejectAll", buttons: () => [reviewRejectAllBtn], run: () => void decideAllReviewChanges(false) },
-  // Three faces, and the third is on the INSERT band: ONLYOFFICE carries Comment
-  // on both Insert and Collaboration, and Word's Insert tab has a Comments group
-  // of its own. Commenting was already in this editor's Insert MENU (Google
-  // Docs files it at Insert ▸ Comment, which is where `command_taxonomy.mjs`
-  // took it from) but had no Insert BAND button, so in the ribbon chrome — which
-  // has no menu bar (docs/122) — the Insert tab could not reach it at all.
-  // Declared here rather than beside the new button for the reason the comment
-  // above gives: a second wiring is free to drift in what it runs and in when it
-  // is available.
-  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", reasonKey: "review.comment.needsRange", run: () => openReviewComposer() },
-  // `requires: "comment"` — the caret is inside a commented range. Word and
-  // ONLYOFFICE both target that comment rather than a sidebar selection, so a
-  // reviewer never has to open a panel to resolve what they are reading.
-  { command: "review.comment.resolve", buttons: () => [reviewResolveBtn], requires: "comment", run: () => void reviewCommentActions.resolve() },
-  { command: "review.comment.delete", buttons: () => [reviewDeleteBtn], requires: "comment", run: () => void reviewCommentActions.remove() },
-  { command: "review.toggle", buttons: () => [reviewPanelBtn], run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
-  // TWO faces, one command. This table owns their DISABLED state;
-  // `compare_documents.mjs` owns the clicks and the pressed states, hence
-  // `ownsClick`. Listing one face only shipped the rail entry dead (`105` UX-004).
-  { command: "review.compare", buttons: () => [document.getElementById("reviewCompareBtn"), document.getElementById("railCompare")].filter(Boolean), requires: "doc", reasonKey: "compare.needsDocument", ownsClick: true, run: () => comparePanel.open() },
-  // Proofing. Both switches were the whole content of a `Tools` menu, which is
-  // one top-level name for two toggles — and one of the two names that scrolled
-  // off the end of the menu bar (`109` HF-097). Word's Review tab opens with a
-  // Proofing group, so that is where they go now that the ribbon is the only
-  // navigation axis in this chrome. `requires: "always"`: both are `noDoc`
-  // commands — they are preferences, and switching one with no document open is
-  // meaningful and already supported.
-  { command: "tools.spellCheck", buttons: () => [reviewSpellCheckBtn], requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
-  { command: "tools.grammarCheck", buttons: () => [reviewGrammarCheckBtn], requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
-  { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => autoCorrect.enabled("smartQuotes"), run: () => autoCorrect.toggle("smartQuotes") },
-  { command: "tools.languages", buttons: () => [reviewProofLanguagesBtn], requires: "always", run: () => proofing.openLanguages() },
-  // Restrict Editing (ADR-052, ADR-059). Declared HERE rather than beside the
-  // button for the reason this table gives twice over: one owner for `disabled`,
-  // for the reason it carries while disabled, and for the pressed state. The
-  // module owns the dialog and the engine call and nothing about the button, so
-  // the two cannot disagree about whether a restriction is in force.
-  //
-  // `pressed` reads the ENGINE, not what the dialog last asked for — ONLYOFFICE's
-  // Protect button is a state too — so a document that arrives protected shows the
-  // button pressed before anyone opens anything.
-  { command: "review.restrictEditing", buttons: () => [document.getElementById("reviewProtectBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", pressed: () => documentProtection.isActive(), run: () => documentProtection.open() },
-  // Manage access. `requires: "doc"` because there is nothing to manage access TO
-  // without one; whether the button is PRESENT at all is `accessChrome.reflect`'s
-  // answer and not this table's, because absence is a permission decision and
-  // this table only knows about enablement. Same group as Restrict Editing, which
-  // is Word's own grouping of the two authority questions.
-  { command: "review.manageAccess", buttons: () => [document.getElementById("reviewManageAccessBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => accessChrome.open() },
-];
-
-function insertCommandEnabled(commandId, context = {}) {
-  const entry = INSERT_SURFACE.find((candidate) => candidate.command === commandId);
-  if (!entry || !doc) return false;
-  if (entry.requires === "range") return !!(context.hasRange ?? hasRange());
-  return true;
-}
-
-/** Re-raster a single page after an edit — the incremental repaint that keeps
- *  editing latency to one page, not the whole document. If the page is on screen
- *  it is re-rendered in place; if it is virtualized off-screen, its stale canvas
- *  is dropped so it re-renders fresh (from current model state) when scrolled in. */
-function repaintPage(i) {
-  const page = pages[i];
-  if (!page) return;
-  releasePageCanvas(page);
-  if (page.visible) paintPageCanvas(page, i);
-}
-
-/** Scroll to a rectangle the ENGINE reported — `[page, x, y, w, h]` in twips —
- *  rather than to a DOM node that may not exist.
- *
- *  A find match 20,000 pages away, a comment anchor, a caret after a jump: none
- *  has an overlay element until its page is materialized, and its page is not
- *  materialized until something scrolls there. Model geometry plus the band's
- *  arithmetic answers "where is that, in scroll coordinates" without either.
- *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
-/** Breathing room between a revealed caret and the edge it was revealed past;
- *  flush lasts one frame and the next repaint puts it back outside. */
-const SCROLL_INTO_VIEW_MARGIN = 8;
-
-function scrollModelRectIntoView(flat, block = "nearest") {
-  if (!pageBandModel || !flat || flat.length < 5) return false;
-  const [pageNumber, , y, , h] = flat;
-  const page = pages[pageNumber - 1];
-  if (!page) return false;
-  const { sy } = scaleOf(page);
-  const top = pageBandModel.tops[pageNumber - 1] + y * sy;
-  const bottom = top + Math.max(1, h * sy);
-  const viewportHeight = viewportEl.clientHeight;
-  const { docY } = scrollToDoc(pageBandModel, viewportHeight, viewportEl.scrollTop - bandTopInScroller);
-  let wanted = docY;
-  const margin = SCROLL_INTO_VIEW_MARGIN; // as the overlay path, in doc space
-  if (block === "center") wanted = top + (bottom - top) / 2 - viewportHeight / 2;
-  else if (top < docY) wanted = top - margin;
-  else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight + margin;
-  else return false;
-  const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, Math.max(0, wanted));
-  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
-  // Synchronously, not on the scroll event: the caller is about to look for the
-  // marker it just asked to be shown, and an event a frame later would hand it
-  // an empty page.
-  updatePageWindow();
-  paintPagesInView();
-  return true;
-}
-
-/** The engine rectangle the caret or selection occupies, or null. */
-function selectionModelRect() {
-  if (!doc || !selection) return null;
-  const { anchor, focus } = selection;
-  if (anchor.node !== focus.node || anchor.offset !== focus.offset) {
-    const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
-    if (rects.length >= 5) return rects.slice(0, 5);
-  }
-  const caret = doc.caretRect(focus.node, focus.offset);
-  return caret.length >= 5 ? caret.slice(0, 5) : null;
-}
-
-/** Scroll one engine-derived overlay marker in the editor viewport (not an
- * arbitrary page ancestor). The selection is painted before this runs, so its
- * DOM rectangle is only a projection of model geometry, never a source of
- * document state. */
-function scrollOverlayIntoView(marker, block = "nearest") {
-  if (!marker) return;
-  scrollMarkerIntoViewX(marker); // sideways first: it moves nothing vertically (TA-10)
-  const target = scrollTargetFor({
-    marker: marker.getBoundingClientRect(),
-    viewport: viewportEl.getBoundingClientRect(),
-    current: viewportEl.scrollTop,
-    max: Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight),
-    scale: pageBandModel?.scale ?? 1,
-    block,
-    margin: SCROLL_INTO_VIEW_MARGIN,
-  });
-  if (target !== null) viewportEl.scrollTo({ top: target, behavior: "auto" });
-}
-
-/** Follows a marker sideways when zoom makes the page wider than the window
- *  (`docs/174` TA-10; Word and Docs do). Every scroll-into-view path ends here,
- *  the model path included once it has painted the marker. */
-function scrollMarkerIntoViewX(marker) {
-  if (!marker || viewportEl.scrollWidth <= viewportEl.clientWidth) return;
-  const { left } = viewportEl.getBoundingClientRect();
-  const max = viewportEl.scrollWidth - viewportEl.clientWidth;
-  const viewport = { left, right: left + viewportEl.clientWidth };
-  const target = scrollLeftFor({ marker: marker.getBoundingClientRect(), viewport, current: viewportEl.scrollLeft, max, margin: SCROLL_INTO_VIEW_MARGIN });
-  if (target !== null) viewportEl.scrollLeft = target;
-}
-
-/** Scroll the caret in the editor viewport. Navigation callers can request a
- * centered target so headings/anchors retain useful reading room. */
-function scrollCaretIntoView(block = "nearest") {
-  const marker = pagesEl.querySelector(".overlay .caret");
-  // Two cases take the model path. No marker: the caret's page has no sheet,
-  // which is where a 25,556-page document spends most of its time. And a
-  // COMPRESSED band: a target computed from a screen delta is only as exact as
-  // the compression factor it is divided by, and near the ends of the scroll
-  // range it is not exact at all — measured 57 px short at the bottom of a
-  // 3,300-page document, which is a caret just off screen after an arrow key.
-  // Document space has no such error: `docToScroll` is the exact inverse of
-  // the mapping that placed the page.
-  if (!marker || pageBandModel?.scale > 1) {
-    if (scrollModelRectIntoView(selectionModelRect(), block)) paintOverlayLayer();
-    return scrollMarkerIntoViewX(pagesEl.querySelector(".overlay .caret"));
-  }
-  scrollOverlayIntoView(marker, block);
-}
-
-/** Bring the current review selection's OWN on-canvas marker just into view when
- *  focusing a comment/change from the sidebar or Next/Previous. A review target
- *  is a range, so it paints a highlight (not a caret) — scrolling only `.caret`
- *  did nothing, leaving an off-screen item unreachable. And a "center" scroll
- *  overshot: for a clustered paragraph it recentred on the whole selection and
- *  pushed the very item the reviewer picked out of the viewport. "nearest" fixes
- *  both — an already-visible marker never moves (no overshoot), and an off-screen
- *  one is revealed by the minimum scroll to its own rect, not the paragraph's. */
-function scrollReviewSelectionIntoView() {
-  // Prefer the ACTIVE review item's own marker: in a clustered paragraph several
-  // items paint highlights, and `.highlight` in DOM order can belong to an
-  // earlier item — scrolling to it lands on the paragraph top, not the item the
-  // reviewer selected. The active marker (painted from the item resolved in
-  // `syncActiveReviewCommentToCaret`) is unambiguous; fall back to the selection
-  // highlight, then the caret.
-  const marker =
-    pagesEl.querySelector(".overlay .review-comment-marker-active, .overlay .review-revision-marker-active")
-    || pagesEl.querySelector(".overlay .highlight")
-    || pagesEl.querySelector(".overlay .caret");
-  if (!marker || pageBandModel?.scale > 1) {
-    if (scrollModelRectIntoView(selectionModelRect(), "nearest")) paintOverlayLayer();
-    return;
-  }
-  scrollOverlayIntoView(marker, "nearest");
-}
-
-/** Find selects a real range, so paintSelection deliberately emits highlights
- * and no caret. Scroll its first rectangle into view; querying only `.caret`
- * made Previous/Next update the selection on an off-screen page without moving
- * the canvas. */
-function scrollFindMatchIntoView() {
-  const marker = pagesEl.querySelector(".overlay .highlight");
-  // A match found on a page the reader is nowhere near has no highlight to
-  // scroll to until its page exists. This is the guard `find-far-page` covers:
-  // Find used to update the selection on an off-screen page and leave the
-  // canvas exactly where it was.
-  if (!marker || pageBandModel?.scale > 1) {
-    if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer();
-    return scrollMarkerIntoViewX(pagesEl.querySelector(".overlay .highlight"));
-  }
-  scrollOverlayIntoView(marker, "center");
-}
-
+const {
+  BREAK_IO, INSERT_SURFACE, LAYOUT_SURFACE, REFERENCE_SURFACE, REVIEW_SURFACE, insertCommandEnabled,
+  referenceObjectMenuRows, reviewCommentActions, ribbonSurfaceEnabled, ribbonSurfaceReason,
+} = createCommandSurfaces(ed);
+const {
+  repaintPage, scrollCaretIntoView, scrollFindMatchIntoView, scrollModelRectIntoView,
+  scrollOverlayIntoView, scrollReviewSelectionIntoView, selectionModelRect,
+} = createScroll(ed);
 const {
   documentIsDirty, markDocumentSaved, noteDocumentEdited, resetDirtyTracking,
 } = createDirtyTracking(ed);
