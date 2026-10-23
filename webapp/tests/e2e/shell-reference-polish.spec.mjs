@@ -284,7 +284,7 @@ for (const width of [720, 390]) {
     } else {
       await expect(page.locator("#tabFile")).toBeVisible();
     }
-    await expect(page.locator("#railOutline")).toContainText("Outline");
+    await expect(page.locator("#railOutline")).toHaveAttribute("aria-label", "Outline"); // icon-only since HF-331; hidden on phones, so the attribute, not the computed name
     expect(consoleErrors).toEqual([]);
   });
 }

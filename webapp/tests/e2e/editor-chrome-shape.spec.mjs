@@ -157,19 +157,18 @@ test("the Home band is Word's: captioned groups, and Word's grouping", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("the rail's destinations are readable, not ellipsised", async ({ page }) => {
+test("the rail's destinations are named, now that it is icon-only (HF-331)", async ({ page }) => {
+  // The rail lost its visible captions (#859, HF-331), so "readable" now means
+  // every destination still carries its name for a screen reader and a tooltip.
   await page.setViewportSize({ width: 1280, height: 900 });
   await gotoEditor(page);
-  const cut = await page.evaluate(() =>
-    [...document.querySelectorAll(".rail-btn > span:not(.ms)")]
-      .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.textContent),
+  const unnamed = await page.evaluate(() =>
+    [...document.querySelectorAll(".rail-btn")]
+      .filter((el) => el.offsetParent !== null)
+      .filter((el) => !(el.getAttribute("aria-label") || "").trim() || !(el.title || "").trim())
+      .map((el) => el.id || el.outerHTML.slice(0, 60)),
   );
-  expect(cut, "a rail caption is cut off").toEqual([]);
-  const size = await page
-    .locator("#railReview > span:not(.ms)")
-    .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-  expect(size, "the rail caption is back at micro size").toBeGreaterThanOrEqual(10);
+  expect(unnamed, "a rail destination has no accessible name or tooltip").toEqual([]);
 });
 
 test("the margin comment button is round and says what it needs", async ({ page }) => {
