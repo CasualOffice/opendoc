@@ -280,7 +280,7 @@ The editor is a thin shell over a Rust engine that owns everything a document is
 | `casual-doc-layout` | Style cascade, shaping, flow, pagination, charts and shapes, and the backend-neutral display list |
 | `casual-doc-render` | CPU rasterization of the display list (`tiny-skia`, `skrifa`, colour glyphs) |
 | `casual-doc-sdk` | Host-facing engine and document-session facade |
-| `casual-doc-viewer` | Read-only cut for the Viewer and headless SDKs: open, paginate once, render pages, PDF; no editing crates (`docs/176`) |
+| `opendoc-viewer` | Viewer SDK: open, paginate once, render pages, page text, outline, font hook, PDF; no editing crates. Packaged for npm as `packages/opendoc-viewer` (`docs/176`) |
 | `casual-doc-wasm` | WebAssembly bridge: the document session, edit operations and page raster the editor drives |
 | `opendoc-relay` (`server/`) | Optional collaboration relay that orders and forwards changes and holds no document |
 

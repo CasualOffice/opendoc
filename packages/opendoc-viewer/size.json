@@ -1,0 +1,23 @@
+{
+  "features": "wasm,core-fonts,pdf",
+  "toolchain": "1.96.0",
+  "wasmBindgen": "0.2.129",
+  "module": {
+    "raw": 11172897,
+    "gzip": 5493049,
+    "brotli": 4198359,
+    "code": 5013436,
+    "data": 6148897
+  },
+  "glue": {
+    "raw": 23611,
+    "gzip": 4227,
+    "brotli": 3737
+  },
+  "hostFonts": {
+    "files": 21,
+    "raw": 9763176,
+    "gzip": 5144368,
+    "brotli": 4237221
+  }
+}
