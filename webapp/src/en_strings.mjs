@@ -889,6 +889,18 @@ export const EN_STRINGS = Object.freeze({
   "paste.flattened.table": "tables",
   "paste.dropped.pictures": "Pictures in the pasted content were not brought across.",
 
+  // AutoCorrect options (docs/174 TA-05, TA-06; `autocorrect.mjs`). Three
+  // switches, one composed label and one composed status line, so a translator
+  // sees each shape once.
+  "autocorrect.smartQuotes": "Smart quotes",
+  "autocorrect.lists": "Automatic lists",
+  "autocorrect.text": "AutoCorrect",
+  "autocorrect.command": "{name}: {state}",
+  "autocorrect.stateOn": "on",
+  "autocorrect.stateOff": "off",
+  "autocorrect.statusOn": "{name} on",
+  "autocorrect.statusOff": "{name} off",
+
   // ── Version history (docs/139, docs/140, ADR-038/ADR-039) ──────────────────
   //
   // `version_history.mjs` returns status CODES and no English at all, because a

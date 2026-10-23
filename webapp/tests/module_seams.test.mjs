@@ -553,6 +553,13 @@ const PURE_MODULES = [
   // rule and the all-match highlight. The engine, the selection and the overlay
   // are injected, so "typing fox stays on 1 of 4" is a node question.
   "find_session.mjs",
+  // What typing one character turns into (TA-05, TA-06): a list trigger or a
+  // correction, strings in and an edit description out.
+  "input_rules.mjs",
+  // The AutoCorrect switches and their application as you type. The engine,
+  // the prefs and the Settings checkboxes are injected, so the undo contract
+  // ("the conversion is its own step") is checked with a stand-in engine.
+  "autocorrect.mjs",
   // The whole target -> cursor mapping. Its DOM half is `pointer_hover.mjs`;
   // keeping them apart is what lets `pointer_cursor.test.mjs` drive the entire
   // hover cascade with plain objects, with no browser and no engine.
