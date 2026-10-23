@@ -254,6 +254,23 @@ impl ViewerDocument {
     /// As [`open`](Self::open).
     pub fn open_with(bytes: &[u8], options: &ViewerOptions) -> Result<Self, ViewerError> {
         let (document, media) = import(bytes)?;
+        Ok(Self::from_document(document, media.0, options))
+    }
+
+    /// Paginates a document the caller already holds (one edited after it was
+    /// opened, say), with its media parts keyed by part name, the shape of
+    /// `casual_doc_io::DocumentResources`. This is how a headless editing session
+    /// (`casual-doc-ai`, `docs/178`) renders the state it has rather than the
+    /// bytes it started from.
+    ///
+    /// **O(document)**: one pagination.
+    #[must_use]
+    pub fn from_document(
+        document: Document,
+        media: BTreeMap<String, Vec<u8>>,
+        options: &ViewerOptions,
+    ) -> Self {
+        let media = Media(media);
         let shaper = if options.system_fonts {
             ParleyShaper::new()
         } else {
@@ -272,7 +289,7 @@ impl ViewerDocument {
             text_index: OnceCell::new(),
         };
         doc.relayout();
-        Ok(doc)
+        doc
     }
 
     /// Paginates from scratch and re-reads what the pass could not supply.

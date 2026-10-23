@@ -1,0 +1,33 @@
+[package]
+name = "casual-doc-ai"
+description = "The Rust core of opendoc.ai: anchored reading, retrieval chunks and closed edit plans for agents, over the same engine the editor uses"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# `docs/178` §3-§5 and ADR-072. One implementation that every agent front door
+# (the `opendoc-mcp` server now; the Python and JS packages later) adapts. It
+# never calls a model and opens no network connection.
+
+[dependencies]
+casual-doc-diff.workspace = true
+casual-doc-edit.workspace = true
+casual-doc-io.workspace = true
+casual-doc-layout.workspace = true
+casual-doc-model.workspace = true
+casual-doc-ooxml.workspace = true
+casual-doc-review.workspace = true
+casual-doc-transaction.workspace = true
+opendoc-viewer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
+
+[lints]
+workspace = true

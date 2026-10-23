@@ -490,6 +490,7 @@ lossy
 macOS
 margined
 max
+mcp
 memoised
 memoized
 meta
@@ -629,6 +630,7 @@ skrifa
 snapToGrid
 splitter
 src
+stderr
 stdio
 strikethrough
 struct

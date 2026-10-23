@@ -1,6 +1,7 @@
 # 178 — MCP and the AI-native SDK: agents read by anchor and edit through the closed op set
 
-**Status:** Design, proposed 2026-10-24. Documentation only; nothing here is built.
+**Status:** Design, proposed 2026-10-24. A1 (shared review lowering), M1 and M2 over stdio are
+built; what is built and what is not is in §15.
 **Decides:** ADR-072 (proposed). **Row:** `docs/109` RM-47.
 **Builds on:** `45` and ADR-030 (the four seams, I1 to I4), `132` and ADR-035 (the document
 assistance layer, which this refines for MCP), `176` and ADR-071 (the Native/headless SDK
@@ -744,3 +745,53 @@ no dependency, no support claim.
 - **Direct (untracked) edits only with an explicit grant.** The default is tracked suggestions. A host or operator may grant a session edit rights; those edits are still undoable and loss-checked.
 - **Transport: local stdio first.** Hosted streamable HTTP with OAuth comes later (M3), after the host identity contract (HF-360, JWT grants) is built.
 - **WebMCP (M4): opt-in behind a flag**, off by default, tracking the draft specification.
+
+## 15. Built, 2026-10-24
+
+What exists, measured by the tests named, and what does not.
+
+**Built.**
+
+- A1: `crates/casual-doc-review` holds the one lowering of every review command; the
+  editor's methods wrap it (#879). Guard: `casual-doc-review/tests/one_lowering.rs`.
+- The Rust core: `crates/casual-doc-ai` (`Session`, `read`, `anchor`, `plan`, `compare`).
+  Every plan runs on a copy-on-write clone of the session state and commits through ONE
+  choke point that calls the engine's `refuse_if_not_permitted` and `refuse_if_protected`
+  before the transaction log applies it; preview runs the same code and discards the clone.
+- `tools/opendoc-mcp`: stdio, newline-delimited JSON-RPC; answers `server/discover` and,
+  for older clients, `initialize` (2025-11-25, 2025-06-18, 2025-03-26: Q12 answered yes);
+  the 20 tools of §6.2 filtered by profile (16 under `read`), the resource templates and the
+  four prompts of §6.3; `--root`, `--write-root` (default none), `--profile` (default `read`),
+  `--author`, `--allow-overwrite`; an audit line per call on stderr with no document text.
+- Guards, each driven red by a mutation in its PR: MCP conformance over the real binary
+  (list, then call every tool); a suggestion saved as DOCX carries `w:ins`, `w:del`,
+  `w:delText` and the configured `w:author`, and reopens as two tracked changes; a direct
+  plan is refused without an edit grant (and refused **by the engine** with the adapter's
+  check removed); paths outside the roots (`..`, absolute, `file://`, a symlink) are refused
+  without echoing the target; `.docm` is refused.
+
+**An engine defect the first headless suggester found.** `is_tracked_only` and
+`is_comment_only` compared paragraphs by full equality, ids included, so a suggestion or a
+comment that split a run (any mark not on a run boundary) was refused as an untracked edit
+for every suggest-only or comment-only participant. `protection.rs` now rejoins only runs the
+split minted fresh onto the run before them before comparing; a held run that comes back
+re-minted still differs, so ADR-052's identity convention is unchanged.
+
+**Not built, stated.**
+
+- Reading covers the body; headers, footers, notes and text boxes are not projected yet.
+- `search` has exact, case-insensitive and whole-word modes; regular expressions are not
+  supported (no regex dependency), and case folding is ASCII-only.
+- Paragraphs holding an equation, a note reference or a preview-less embedded object are
+  refused for edits (`unsupported-content`): the engine's two offset spaces disagree there.
+- Table structure (`table_insert_row`/`table_delete_row`) is direct-only (Q11); `insert_table`
+  and column edits are not in vocabulary version 1.
+- Schemas are hand-written in `tools/opendoc-mcp/src/catalog.rs`; A4 (generated schemas and
+  the staleness guard) is not built. Resource subscriptions, the tasks extension,
+  elicitation, Streamable HTTP and OAuth (M3), WebMCP (M4), rooms (M5), and the Python and
+  JavaScript bindings are not built.
+- The preview does not compute whether a plan changes the compatibility report; it says so.
+- `get_styles` reports what each style declares, not the cascaded effective formatting.
+- `undo_change` applies the log's exact inverse of the latest change without re-judging it
+  as a new authoring act (withdrawing one's own suggestion removes a revision, which the
+  suggest class does not admit as fresh input).
