@@ -7,6 +7,7 @@ API
 APIs
 APP
 ASCII
+Ada
 Alt
 App
 Arial
@@ -141,6 +142,7 @@ Namespace
 NodeId
 NodeIds
 Noto
+OAuth
 OCR
 ODC
 ODF
@@ -183,6 +185,7 @@ PowerPoint
 Pre
 Prev
 ProseMirror
+PyPI
 README
 RFC
 RFL
@@ -216,6 +219,7 @@ SharePoint
 SharedArrayBuffer
 Skia
 SmartArt
+Streamable
 Strikethrough
 TBL
 TCP
@@ -261,6 +265,7 @@ WebAssembly
 WebCrypto
 WebGPU
 WebKit
+WebMCP
 WebSocket
 Webapp
 WordArt
@@ -623,6 +628,7 @@ skrifa
 snapToGrid
 splitter
 src
+stdio
 strikethrough
 struct
 structs

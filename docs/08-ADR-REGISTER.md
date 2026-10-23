@@ -3734,7 +3734,7 @@ a mechanical answer.
 - ~~collaboration operation model: OT vs CRDT~~ — superseded by **ADR-033** (proposed; owner decision 2026-09-15; see doc 107);
 - ~~PDF generation backend~~ — superseded by **ADR-031** (Phase 0 accepted and implemented; see doc 98);
 - PDF semantic reconstruction and browser OCR — **ADR-034 proposed experimental**;
-- document assistance, local semantic retrieval, and MCP adapter — **ADR-035 proposed experimental**;
+- document assistance, local semantic retrieval, and MCP adapter — **ADR-035 proposed experimental**; its MCP part is refined by **ADR-072** (proposed; see doc 178);
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
 - proofing context pack: which source corpus is redistributable — **ADR-042** leaves it open;
@@ -4449,57 +4449,63 @@ the minimum Java version, whether the headless SDK needs the transaction log, th
 default formats, the native platform matrix, Node, and whether a `<opendoc-viewer>` element
 is ever in scope.
 
-## ADR-072 — Legacy VML is normalised into the DrawingML model, and kept as VML until an edit changes it
+## ADR-072 — Agents reach documents through one AI layer over the Native SDK: anchors by id and quote, a closed edit-plan vocabulary, suggestions by default
 
-**Status:** Accepted, 2026-10-24. **Rows:** `docs/109` HF-390..HF-395.
+**Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-47.
+**Design:** `docs/178`. **Refines:** ADR-035 (its MCP adapter part; the assistance layer and
+semantic retrieval stay there). **Builds on:** ADR-030, ADR-036, ADR-052, ADR-070, ADR-071.
+**Owner request, 2026-10-24:** "plan and design MCP for this product as well as with SDK, for
+AI tools".
 
-**Context.** Word still writes VML (`w:pict`) for text boxes and shapes, as the
-`mc:Fallback` of a DrawingML choice and, from older Word and PDF-to-Word converters, on its
-own. The owner's document listed 86 VML items as "kept in the file, not shown or editable";
-most were in fact drawn, but the report called them unshown, groups fell apart into loose
-floats with their text drained inline, and a `v:shape` was its bounding box. And every edited
-save rewrote every VML shape as DrawingML, dropping what the model does not hold.
+**Context.** `docs/132` placed MCP at the edge of a document assistance layer, read-only
+first and with no edit tool. Since then `docs/176` made a Native/headless SDK a product, and
+the owner asks for agents that edit. The engine already has what safe agent editing needs:
+a closed, invertible op set (67 variants), capabilities enforced at the operation including
+a suggest-only class (`access.rs`), a loss report, a layout and a diff job. What it lacks is
+an agent-facing surface: `ModelPos` offsets are UTF-8 bytes no model can count, the
+suggestion lowering lives inside the editor's WASM crate, and no SDK exposes the loss
+report.
 
 **Decision.**
 
-1. **Normalise, do not render twice.** VML is translated at import into the typed DrawingML
-   model — `WordprocessingGroup`, `GroupShape` with a custom geometry, `GroupPicture`,
-   `TextBox`/`GroupTextBox` — which the one renderer already draws. This is what LibreOffice
-   (`oox/source/vml`) and ONLYOFFICE do. A second, VML-specific renderer would double every
-   later fix. The VML path language and `v:f` formulas are evaluated at import into literal
-   geometry (`casual-doc-import` `vml_path`); a construct the translation cannot express is
-   refused and keeps a stated fallback rather than being guessed.
-2. **Copy-on-write retention.** The pict's source is kept beside its projection
-   (`Definitions::legacy_vml`, a side table keyed by the first projected node) with a
-   fingerprint of the projection. A save writes the source while the projection is unchanged
-   and the projection, as DrawingML, once an edit has changed it, naming that in the export
-   report (`docx.export.vml.regenerated`, degraded, not retained). Writing DrawingML for an
-   edited shape is chosen over writing VML back from the model: the model holds no VML-only
-   detail to write, so "VML from the model" would be a lossy VML, and Word reads DrawingML
-   natively.
-3. **Text-box content is never part of the kept source.** The source is stored split at each
-   `w:txbxContent`, and the writer fills each hole with the box's current blocks. Inside a
-   text box are style, numbering, bookmark and relationship ids the writer regenerates;
-   spliced in verbatim they would dangle. It also means typing in a VML text box keeps it VML.
-4. **The kept source is self-contained.** Every namespace prefix it uses is declared on its
-   `w:pict`, and a pict that names a relationship the regenerated part would not declare (an
-   image its projection does not draw, a control) is not kept — its projection is all a save
-   writes, and its findings say so.
-5. **Findings tell what happened.** VML inside a pict is reported when the pict closes: drawn
-   VML is `degraded` (shown approximately) and preserved — on the semantic path too, under a
-   ledger record of its own, because its source is in the model; VML that drew nothing stays
-   `omitted`; a `v:shapetype` and its formulas, handles and locks are a consumed definition.
+1. **One AI layer, several front doors.** `opendoc::ai` (Rust, in the Native SDK façade)
+   holds outline, read, chunk, search, anchor resolution, the edit-plan compiler, preview,
+   report and diff. `opendoc-mcp`, the Python and JS packages and the editor's `editor.ai` /
+   WebMCP tools are adapters over it, with schemas generated from one set of Rust types.
+2. **Anchors are a `NodeId` plus a W3C `TextQuoteSelector`, resolved inside that node.**
+   Ambiguity and absence are refusals with candidates. No document-global offset and no
+   paragraph index is accepted; `ModelPos` is accepted only as a value the caller was given.
+3. **Edits are a closed, versioned edit-plan vocabulary compiled to
+   `casual_doc_edit::Operation`.** It is not a second op set and has no raw escape hatch.
+   A plan is all-or-nothing, against a `base_revision`, with a preview that runs the same
+   compiler and commits nothing, and one `change_id` naming its inverse.
+4. **Suggestions by default, enforced by the engine.** The server's launch profile becomes
+   an engine `Capabilities` value; the default profile is read-only; `suggest` mode writes
+   Word revisions by an author the agent cannot set; a direct edit needs `edit`, and the
+   engine, not the adapter, refuses it otherwise.
+5. **No silent loss, bounded everything.** DOCX save refuses a reported loss unless each
+   loss is named; every list is paged, every text result has a token ceiling and states its
+   truncation; files come only from an operator allowlist; untrusted files run under the
+   engine's ceilings and per-call budgets.
+6. **The server never calls a model.** No sampling (deprecated in MCP 2026-07-28); the
+   agent reasons, OpenDoc resolves, validates, compiles and commits.
+7. **MCP 2026-07-28, stdio first.** State lives in server-minted document handles;
+   confirmations use multi-round-trip elicitation bound to the plan's digest; Streamable HTTP
+   with OAuth is a later, host-operated profile.
+8. **Order:** prerequisites (shared suggestion lowering, the loss report, the read view, the
+   anchor resolver), then read-only MCP, then suggestions and comments, then person-granted
+   edit and review, then the editor's in-page tools, then an agent as a room participant
+   with a host-attested AI identity.
 
 **Rejected.**
 
-- A VML renderer beside the DrawingML one: two drawing paths for one picture.
-- Keeping the whole pict, text-box content included, verbatim: its ids would dangle after any
-  regenerating save.
-- Keeping a clone of the projection to compare against: duplicate node ids in the snapshot and
-  twice the memory, for an equality a fingerprint answers.
-- Re-emitting VML from the model after an edit: the model has none of the VML-only detail.
+- An unrestricted `apply_operations` or `set_xml` tool: it bypasses validation and makes
+  every model field an agent API.
+- Addressing by paragraph index or a global character index (python-docx servers, the Google
+  Docs API): it shifts under every earlier edit.
+- Enforcing the profile only in the adapter: one adapter bug widens what an agent may do.
+- Separate MCP servers written in Python and JS over the bindings: a second implementation
+  of anchors, lowering and bounds.
+- Using MCP sampling to run generation inside the server.
 
-**Not done.** The run properties of the run that carried the pict are not kept (a `w:noProof`
-or `w:position` on it is regenerated as nothing); `ae`/`al` path forms, `h*` extensions,
-polyline/curve/arc point lists, shadows, extrusion, skew and pattern fills are not drawn
-(`webapp/src/fidelity.js` enumerates them).
+**Open.** `docs/178` §13 Q1–Q12.
