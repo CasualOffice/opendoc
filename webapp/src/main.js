@@ -5,7 +5,6 @@
 // no server, deployable as static files (e.g. GitHub Pages).
 
 import { open, beginVersionDiff, defaultDiffSlice } from "../pkg/casual_doc_wasm.js";
-import { toggleTextCheckboxAt } from "./text_checkbox.mjs";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
 // with nothing loaded — which is also why they are handed to
@@ -25,7 +24,6 @@ import {
   fetchSharedFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { embedMarker, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
 import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
@@ -34,24 +32,17 @@ import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
 import { createSpacingMenu } from "./spacing_menu.mjs";
-import { createTocNavigator } from "./toc_navigation.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import {
   reflectReviewSurface,
   ribbonSurfaceEnabled as surfaceEnabled,
   ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
-import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
-import { createKeyboardObjectMove, createObjectTextDrag } from "./object_text_move.mjs";
-import { edgeScrollStep } from "./edge_scroll.mjs";
-import { canChangePicture } from "./picture_replace.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
 import { wireListGallery } from "./list_gallery_wiring.mjs";
-import { createProofingChrome } from "./proofing_chrome.mjs";
-import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
 import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
@@ -64,12 +55,9 @@ import { createConfirmDialog } from "./confirm_dialog.mjs";
 import { createPropertiesDialog } from "./document_metadata.mjs";
 import { createNamePrompt } from "./name_dialog.mjs";
 import {
-  PAGE_WINDOW_OVERSCAN_PX,
   buildPageBand,
   docToScroll,
   pageBandPitch,
-  pageClientRect,
-  pageRangeAt,
   scrollToDoc,
 } from "./page_scroll.mjs";
 import {
@@ -78,22 +66,13 @@ import {
 import { formatShortcut, keyboardPlatform } from "./keyboard.mjs";
 import { chordTitle } from "./keymap.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
-import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object_crop_chrome.mjs";
-import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles } from "./object_guides.mjs";
+import { objectBarPosition } from "./object_guides.mjs";
 // Own lines (anti-conflict): the two direct-manipulation geometry gestures.
-import { createObjectResizeDrag, sizeLabel as resizeSizeLabel } from "./object_resize_drag.mjs";
-import { createObjectRotateDrag } from "./object_rotate_drag.mjs";
-import { arrangeSurfaceRows, createObjectArrangeCommands } from "./object_arrange_commands.mjs";
-import { createObjectBar } from "./object_bar.mjs";
+import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
 import { renderShapeMenu } from "./shape_format_menu.mjs";
-import { createObjectInspector } from "./object_inspector.mjs";
-import { POSITION_PRESETS, ROTATE_CHOICES, Z_ORDER_CHOICES, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, runWrapPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
+import { POSITION_PRESETS, ROTATE_CHOICES, Z_ORDER_CHOICES, positionAvailability, positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
 import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
-import { SHAPE_PRESETS } from "./shape_catalogue.mjs";
 import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
-import { createShapeDrawMode } from "./shape_draw_mode.mjs";
-import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
-import { pageSnapTargets, snapBox } from "./object_snap.mjs";
 import { activeLocale, t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs";
@@ -102,9 +81,6 @@ import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
 import { createFormattingMarks } from "./formatting_marks.mjs";
 import { createMeasurementUnits } from "./measurement_units.mjs";
 import { createDocumentProtection } from "./document_protection.mjs";
-import {
-  openWordStore,
-} from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
 import { closeAllPopovers, onButton, openPopover } from "./popover_manager.mjs";
@@ -112,17 +88,13 @@ import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_ma
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
-import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createAccessChrome } from "./access_chrome.mjs";
 import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
-import { insertChartAtCaret } from "./chart_insert.mjs";
 // Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
-import { createChartSurface } from "./chart_surface.mjs";
 import { createCollaborationShell } from "./collab_shell.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
-import { smallestContaining } from "./review_anchor.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
@@ -153,7 +125,6 @@ import {
   recaseRichRuns,
 } from "./text_rules.mjs";
 import {
-  EMU_PER_TWIP,
   TWIPS_PER_INCH,
   inchesToTwips,
   optionalInchesToTwips,
@@ -198,17 +169,12 @@ import {
   templateName,
   templateThumbnail,
 } from "./blank_document.mjs";
-import { followExternalTarget } from "./link_targets.mjs";
-import { createPointerHover } from "./pointer_hover.mjs";
-import { createTableChrome } from "./table_chrome.mjs";
-import { createTableGutter } from "./table_gutter.mjs";
 import { createTableRange } from "./table_range.mjs";
 import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createFontAdvanced } from "./font_advanced.mjs";
 import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
-import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { announceTableEdit, bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { createTableGridPicker } from "./table_grid_picker.mjs";
@@ -216,7 +182,6 @@ import { createRegionCycle } from "./region_focus.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
-import { installViewportFocusGuard } from "./viewport_focus.mjs";
 import { createFind } from "./editor_find.mjs";
 import { createDrafts } from "./editor_drafts.mjs";
 import { createVersions } from "./editor_versions.mjs";
@@ -243,6 +208,14 @@ import { createMenuRender } from "./editor_menu_render.mjs";
 import { createFormatting } from "./editor_formatting.mjs";
 import { createFormatPainter } from "./editor_format_painter.mjs";
 import { createOutline } from "./editor_outline.mjs";
+import { createProofing } from "./editor_proofing.mjs";
+import { createHeaderFooter } from "./editor_header_footer.mjs";
+import { createPaint } from "./editor_paint.mjs";
+import { createObjectMoves } from "./editor_object_moves.mjs";
+import { createOverlayPaint } from "./editor_overlay_paint.mjs";
+import { createPointer } from "./editor_pointer.mjs";
+import { createSelection } from "./editor_selection.mjs";
+import { createObjects } from "./editor_objects.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -270,7 +243,7 @@ const ed = {
   get ZOOM_MIN() { return ZOOM_MIN; },
   get accessChrome() { return accessChrome; },
   get activatingRestore() { return activatingRestore; }, set activatingRestore(v) { activatingRestore = v; },
-  get activeLink() { return activeLink; },
+  get activeLink() { return activeLink; }, set activeLink(v) { activeLink = v; },
   get activeReviewCommentId() { return activeReviewCommentId; }, set activeReviewCommentId(v) { activeReviewCommentId = v; },
   get activeReviewItemId() { return activeReviewItemId; }, set activeReviewItemId(v) { activeReviewItemId = v; },
   get addWordToDictionary() { return addWordToDictionary; },
@@ -295,6 +268,9 @@ const ed = {
   get autoCorrect() { return autoCorrect; },
   get autosaveToggle() { return autosaveToggle; },
   get backgroundMeasure() { return backgroundMeasure; }, set backgroundMeasure(v) { backgroundMeasure = v; },
+  get bandEl() { return bandEl; },
+  get bandOffset() { return bandOffset; }, set bandOffset(v) { bandOffset = v; },
+  get bandTopInScroller() { return bandTopInScroller; },
   get blockMutationInViewing() { return blockMutationInViewing; },
   get blockUntrackedInSuggesting() { return blockUntrackedInSuggesting; },
   get bookmarkManager() { return bookmarkManager; },
@@ -315,10 +291,14 @@ const ed = {
   get clearFindParagraphCache() { return clearFindParagraphCache; },
   get clearFormattingBtn() { return clearFormattingBtn; },
   get clearObjectStatus() { return clearObjectStatus; },
+  get clearOverlays() { return clearOverlays; },
+  get clearSnapGuides() { return clearSnapGuides; },
   get clientPointEvent() { return clientPointEvent; },
   get climbOutOfGroup() { return climbOutOfGroup; },
   get closeAppMenu() { return closeAppMenu; },
   get closeFilePage() { return closeFilePage; },
+  get closeReviewInlineCard() { return closeReviewInlineCard; },
+  get closeReviewPopover() { return closeReviewPopover; },
   get cmdInput() { return cmdInput; },
   get cmdList() { return cmdList; },
   get cmdPalette() { return cmdPalette; },
@@ -327,6 +307,7 @@ const ed = {
   get commentEdit() { return commentEdit; },
   get commentQuotes() { return commentQuotes; },
   get commitComposedText() { return commitComposedText; },
+  get commitCrop() { return commitCrop; },
   get compactToolbarUi() { return compactToolbarUi; },
   get comparePanel() { return comparePanel; },
   get compatFindings() { return compatFindings; },
@@ -341,11 +322,13 @@ const ed = {
   get copySelection() { return copySelection; },
   get createStyleFromSelection() { return createStyleFromSelection; },
   get cropKeyIo() { return cropKeyIo; },
+  get currentDpi() { return currentDpi; },
   get currentFontFamily() { return currentFontFamily; }, set currentFontFamily(v) { currentFontFamily = v; },
   get currentName() { return currentName; }, set currentName(v) { currentName = v; },
   get currentParagraphStyleName() { return currentParagraphStyleName; },
   get currentRevision() { return currentRevision; }, set currentRevision(v) { currentRevision = v; },
   get currentSourceFormat() { return currentSourceFormat; }, set currentSourceFormat(v) { currentSourceFormat = v; },
+  get currentStoryKey() { return currentStoryKey; },
   get currentUnderlineColor() { return currentUnderlineColor; }, set currentUnderlineColor(v) { currentUnderlineColor = v; },
   get currentUnderlineMixed() { return currentUnderlineMixed; }, set currentUnderlineMixed(v) { currentUnderlineMixed = v; },
   get currentUnderlineStyle() { return currentUnderlineStyle; }, set currentUnderlineStyle(v) { currentUnderlineStyle = v; },
@@ -356,6 +339,8 @@ const ed = {
   get decideReviewAndAdvance() { return decideReviewAndAdvance; },
   get decideReviewAtCaret() { return decideReviewAtCaret; },
   get deleteSelectedObject() { return deleteSelectedObject; },
+  get descendIntoSelectedGroup() { return descendIntoSelectedGroup; },
+  get descendSelectedGroup() { return descendSelectedGroup; },
   get discardOwnDraft() { return discardOwnDraft; },
   get doc() { return doc; }, set doc(v) { doc = v; },
   get docTitleEl() { return docTitleEl; },
@@ -365,9 +350,12 @@ const ed = {
   get documentHasTrackedChanges() { return documentHasTrackedChanges; },
   get documentIsDirty() { return documentIsDirty; },
   get documentProtection() { return documentProtection; },
+  get documentVersion() { return documentVersion; },
   get draftDocKey() { return draftDocKey; }, set draftDocKey(v) { draftDocKey = v; },
   get draftOffers() { return draftOffers; }, set draftOffers(v) { draftOffers = v; },
   get draftsClearBtn() { return draftsClearBtn; },
+  get dragging() { return dragging; }, set dragging(v) { dragging = v; },
+  get drawRunningBands() { return drawRunningBands; },
   get drawSelection() { return drawSelection; },
   get dropCapDialog() { return dropCapDialog; },
   get editRunningContent() { return editRunningContent; },
@@ -384,6 +372,8 @@ const ed = {
   get exitRunningEdit() { return exitRunningEdit; },
   get exportDocumentAs() { return exportDocumentAs; },
   get fileEl() { return fileEl; },
+  get findSession() { return findSession; },
+  get finishObjectMove() { return finishObjectMove; },
   get fmtButtons() { return fmtButtons; },
   get focusEditorSurface() { return focusEditorSurface; },
   get focusReviewComment() { return focusReviewComment; },
@@ -407,6 +397,7 @@ const ed = {
   get hideImePreedit() { return hideImePreedit; },
   get hideLinkChip() { return hideLinkChip; },
   get hidePasteOptions() { return hidePasteOptions; },
+  get hideRunningMarker() { return hideRunningMarker; },
   get highlightPopover() { return highlightPopover; },
   get hostSession() { return hostSession; },
   get implicitCaretAt() { return implicitCaretAt; }, set implicitCaretAt(v) { implicitCaretAt = v; },
@@ -419,23 +410,34 @@ const ed = {
   get insertImageFromFile() { return insertImageFromFile; },
   get insertLineBreakAtSelection() { return insertLineBreakAtSelection; },
   get insertNote() { return insertNote; },
+  get insertShapeObject() { return insertShapeObject; },
   get insertTableBtn() { return insertTableBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
+  get insideGroupSelection() { return insideGroupSelection; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
   get keyboardLevelIndex() { return keyboardLevelIndex; }, set keyboardLevelIndex(v) { keyboardLevelIndex = v; },
   get keyboardObjectMove() { return keyboardObjectMove; },
+  get labelledObjectMenuButton() { return labelledObjectMenuButton; },
   get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
   get leaveSharedDocument() { return leaveSharedDocument; },
   get linkAt() { return linkAt; },
+  get linkChip() { return linkChip; },
+  get linkChipAction() { return linkChipAction; },
+  get linkChipEdit() { return linkChipEdit; },
+  get linkChipKind() { return linkChipKind; },
+  get linkChipRemove() { return linkChipRemove; },
+  get linkChipTarget() { return linkChipTarget; },
   get listAdvanced() { return listAdvanced; },
   get loadSharedStartup() { return loadSharedStartup; },
   get markDocumentSaved() { return markDocumentSaved; },
+  get materializedPages() { return materializedPages; },
   get measurement() { return measurement; },
   get menuLevels() { return menuLevels; }, set menuLevels(v) { menuLevels = v; },
   get navByViewport() { return navByViewport; },
   get navCaret() { return navCaret; },
   get navToPosition() { return navToPosition; },
   get navigateReview() { return navigateReview; },
+  get navigateToAnchor() { return navigateToAnchor; },
   get newBlankDocument() { return newBlankDocument; },
   get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
@@ -443,18 +445,22 @@ const ed = {
   get numberGalleryMenu() { return numberGalleryMenu; },
   get numberedListBtn() { return numberedListBtn; },
   get objectArrange() { return objectArrange; },
+  get objectArrangeBtn() { return objectArrangeBtn; },
   get objectCapabilities() { return objectCapabilities; },
   get objectContextAtEvent() { return objectContextAtEvent; },
   get objectContextMenuHost() { return objectContextMenuHost; },
   get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
-  get objectMoveDrag() { return objectMoveDrag; },
+  get objectMoveDrag() { return objectMoveDrag; }, set objectMoveDrag(v) { objectMoveDrag = v; },
+  get objectPositionBtn() { return objectPositionBtn; },
   get objectPresence() { return objectPresence; },
   get objectReference() { return objectReference; },
   get objectResize() { return objectResize; },
   get objectRotate() { return objectRotate; },
+  get objectRotateBtn() { return objectRotateBtn; },
   get objectSelection() { return objectSelection; }, set objectSelection(v) { objectSelection = v; },
   get objectTextDrag() { return objectTextDrag; },
+  get objectTextIo() { return objectTextIo; },
   get openAltTextDialog() { return openAltTextDialog; },
   get openBookmarkManager() { return openBookmarkManager; },
   get openBtn() { return openBtn; },
@@ -470,16 +476,26 @@ const ed = {
   get outlineBody() { return outlineBody; },
   get outlineClose() { return outlineClose; },
   get outlinePanel() { return outlinePanel; },
+  get pageBandModel() { return pageBandModel; },
   get pageFromClientPoint() { return pageFromClientPoint; },
   get pageFromEvent() { return pageFromEvent; },
+  get pageIndexOfWrap() { return pageIndexOfWrap; },
   get pageSetup() { return pageSetup; },
+  get pageWindow() { return pageWindow; }, set pageWindow(v) { pageWindow = v; },
   get pages() { return pages; },
   get pagesEl() { return pagesEl; },
   get pagesPanel() { return pagesPanel; },
   get pagesPanelView() { return pagesPanelView; },
+  get paintChecklistMarkers() { return paintChecklistMarkers; },
+  get paintFormatFromGesture() { return paintFormatFromGesture; },
+  get paintObjectCrop() { return paintObjectCrop; },
   get paintOverlayLayer() { return paintOverlayLayer; },
   get paintPagesInView() { return paintPagesInView; },
+  get paintReviewMarkers() { return paintReviewMarkers; },
+  get paintSelection() { return paintSelection; },
+  get paintSnapGuides() { return paintSnapGuides; },
   get paragraphAdvanced() { return paragraphAdvanced; },
+  get paragraphRevisionRects() { return paragraphRevisionRects; },
   get paste() { return paste; },
   get pasteAsText() { return pasteAsText; },
   get pasteOptionsShowing() { return pasteOptionsShowing; },
@@ -491,10 +507,12 @@ const ed = {
   get plainTableInfo() { return plainTableInfo; },
   get pointInsideObject() { return pointInsideObject; },
   get pointToTwip() { return pointToTwip; },
+  get pointerGesture() { return pointerGesture; }, set pointerGesture(v) { pointerGesture = v; },
   get pointerHover() { return pointerHover; },
   get populateStyles() { return populateStyles; },
   get populateTableStyles() { return populateTableStyles; },
   get positionEditorTextInput() { return positionEditorTextInput; },
+  get positionSelToolbar() { return positionSelToolbar; },
   get proofing() { return proofing; },
   get propertiesUi() { return propertiesUi; },
   get provisionFonts() { return provisionFonts; },
@@ -508,9 +526,11 @@ const ed = {
   get redlineOf() { return redlineOf; },
   get referenceCommands() { return referenceCommands; },
   get referenceObjectMenuRows() { return referenceObjectMenuRows; },
+  get reflectShapeSwatches() { return reflectShapeSwatches; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
   get reflowView() { return reflowView; },
   get refreshDraftOffers() { return refreshDraftOffers; },
+  get refusedObjectDrag() { return refusedObjectDrag; },
   get regionCycle() { return regionCycle; },
   get remotePresence() { return remotePresence; },
   get renderAll() { return renderAll; },
@@ -519,12 +539,15 @@ const ed = {
   get repaintPage() { return repaintPage; },
   get replaceMisspelling() { return replaceMisspelling; },
   get resetDirtyTracking() { return resetDirtyTracking; },
+  get resetPointerGesture() { return resetPointerGesture; },
   get restartListBtn() { return restartListBtn; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
   get reviewAcceptAll() { return reviewAcceptAll; },
+  get reviewAnchorIndex() { return reviewAnchorIndex; },
   get reviewBtn() { return reviewBtn; },
   get reviewCardCache() { return reviewCardCache; },
   get reviewClose() { return reviewClose; },
+  get reviewColumnStartMemo() { return reviewColumnStartMemo; }, set reviewColumnStartMemo(v) { reviewColumnStartMemo = v; },
   get reviewCommentActions() { return reviewCommentActions; },
   get reviewComposerState() { return reviewComposerState; }, set reviewComposerState(v) { reviewComposerState = v; },
   get reviewContextAt() { return reviewContextAt; },
@@ -551,16 +574,20 @@ const ed = {
   get runEdit() { return runEdit; },
   get runNodeEdit() { return runNodeEdit; },
   get runToolbarEdit() { return runToolbarEdit; },
-  get runningEditBand() { return runningEditBand; },
+  get runningBandAt() { return runningBandAt; },
+  get runningEditBand() { return runningEditBand; }, set runningEditBand(v) { runningEditBand = v; },
+  get runningEditPage() { return runningEditPage; }, set runningEditPage(v) { runningEditPage = v; },
   get saveBtn() { return saveBtn; },
   get saveDocument() { return saveDocument; },
   get saveFormatEl() { return saveFormatEl; },
   get saveSettings() { return saveSettings; },
   get scaleOf() { return scaleOf; },
   get scheduleChromeRefresh() { return scheduleChromeRefresh; },
+  get scheduleReviewInlineCardHide() { return scheduleReviewInlineCardHide; },
   get scheduleReviewMarginRender() { return scheduleReviewMarginRender; },
   get scrollCaretIntoView() { return scrollCaretIntoView; },
   get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
+  get scrollOverlayIntoView() { return scrollOverlayIntoView; },
   get scrollReviewSelectionIntoView() { return scrollReviewSelectionIntoView; },
   get searchTrigger() { return searchTrigger; },
   get selComment() { return selComment; },
@@ -569,7 +596,9 @@ const ed = {
   get selectObject() { return selectObject; },
   get selectRibbonTab() { return selectRibbonTab; },
   get selectedObjectContext() { return selectedObjectContext; },
+  get selectedShapeFormat() { return selectedShapeFormat; },
   get selection() { return selection; }, set selection(v) { selection = v; },
+  get selectionAutoScrollFrame() { return selectionAutoScrollFrame; }, set selectionAutoScrollFrame(v) { selectionAutoScrollFrame = v; },
   get selectionContainsClientPoint() { return selectionContainsClientPoint; },
   get setDocumentState() { return setDocumentState; },
   get setDraftStatus() { return setDraftStatus; },
@@ -577,6 +606,7 @@ const ed = {
   get setObjectWrap() { return setObjectWrap; },
   get setReviewMode() { return setReviewMode; },
   get setRibbonCollapsed() { return setRibbonCollapsed; },
+  get setRunningContext() { return setRunningContext; },
   get setSpellCheckEnabled() { return setSpellCheckEnabled; },
   get setStatus() { return setStatus; },
   get setZoom() { return setZoom; },
@@ -584,16 +614,22 @@ const ed = {
   get settings() { return settings; }, set settings(v) { settings = v; },
   get settingsBtn() { return settingsBtn; },
   get shapeDrawMode() { return shapeDrawMode; },
+  get shapeFillBtn() { return shapeFillBtn; },
+  get shapeOutlineBtn() { return shapeOutlineBtn; },
   get sharedRestoreRefusal() { return sharedRestoreRefusal; },
   get showChange() { return showChange; },
+  get showContextMenu() { return showContextMenu; },
   get showDraftRecovery() { return showDraftRecovery; },
   get showImePreedit() { return showImePreedit; },
+  get showReviewInlineCard() { return showReviewInlineCard; },
   get showingChanges() { return showingChanges; }, set showingChanges(v) { showingChanges = v; },
+  get snapContextFor() { return snapContextFor; },
   get spacingMenuControl() { return spacingMenuControl; },
   get spellCheckToggle() { return spellCheckToggle; },
   get spellChecker() { return spellChecker; },
   get startCollaboration() { return startCollaboration; },
   get startDrafts() { return startDrafts; },
+  get startObjectMove() { return startObjectMove; },
   get statusChannel() { return statusChannel; },
   get statusEl() { return statusEl; },
   get stepFontSize() { return stepFontSize; },
@@ -642,8 +678,12 @@ const ed = {
   get underlineMenuBtn() { return underlineMenuBtn; },
   get updateImePreedit() { return updateImePreedit; },
   get updateObjectContextBar() { return updateObjectContextBar; },
+  get updateObjectMove() { return updateObjectMove; },
   get updateObjectSelectionState() { return updateObjectSelectionState; },
+  get updatePageNumber() { return updatePageNumber; },
   get updatePageWindow() { return updatePageWindow; },
+  get updateReviewControls() { return updateReviewControls; },
+  get updateRunningMarker() { return updateRunningMarker; },
   get updateStats() { return updateStats; },
   get updateStyleFromSelection() { return updateStyleFromSelection; },
   get updateToolbar() { return updateToolbar; },
@@ -3346,22 +3386,10 @@ async function ensureGlyphCoverage(label, target = doc, state = fontState) {
   }
 }
 
-// ---- Page virtualization -----------------------------------------------------
-// The pages live inside ONE positioned element, `.page-band`, whose height is
-// the scroll container's height. A sheet element (`.page-wrap`) exists only for
-// the pages in or near the viewport; every other page is arithmetic in
-// `page_scroll.mjs` and nothing in the DOM at all. A live raster `<canvas>` is
-// mounted inside a sheet as it comes on screen and released as it leaves, so
-// tab memory AND node count are bounded by the viewport, not the page count.
-//
-// Why a band rather than one sheet per page in flow, and what the mapping from
-// scroll space to document space costs: `page_scroll.mjs`, `docs/113` §8.6.
-
-/** Keep a live canvas for pages within ~one viewport-height of the visible band
- *  above and below, so a normal scroll never reveals an unpainted page. */
-const PAGE_VIRTUALIZATION_ROOT_MARGIN = "100% 0px";
-let pageObserver = null;
-
+const {
+  materializedPages, pageIndexOfWrap, paintPageCanvas, paintPagesInView, releasePageCanvas,
+  updatePageWindow, virtualPageRect,
+} = createPaint(ed);
 /** The current page stack + scroll mapping (`buildPageBand`), or null. */
 let pageBandModel = null;
 /** The `.page-band` element holding the materialized sheets, or null. */
@@ -3375,207 +3403,6 @@ let bandTopInScroller = 0;
 /** The materialized page range, inclusive; `last < first` means none. The
  *  Pages navigator keeps its own, because it windows separately. */
 let pageWindow = { first: 0, last: -1 };
-
-function ensurePageObserver() {
-  if (pageObserver) return pageObserver;
-  pageObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        const idx = pageIndexOfWrap(entry.target);
-        if (idx < 0) continue;
-        const page = pages[idx];
-        page.visible = entry.isIntersecting;
-        if (entry.isIntersecting) paintPageCanvas(page, idx);
-        else releasePageCanvas(page);
-      }
-    },
-    { root: viewportEl, rootMargin: PAGE_VIRTUALIZATION_ROOT_MARGIN },
-  );
-  return pageObserver;
-}
-
-/** Resolve an observed wrap back to its (still-current) page index, or -1. */
-function pageIndexOfWrap(wrap) {
-  const idx = wrap.__pageIndex;
-  return Number.isInteger(idx) && pages[idx]?.wrap === wrap ? idx : -1;
-}
-
-/** The pages that currently have a sheet, in page order. Every loop that walks
- *  `pages` looking for DOM goes through this: bounded by the window, not by a
- *  page count that can be 25,556. */
-function materializedPages() {
-  const out = [];
-  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
-    if (pages[i]?.wrap) out.push(pages[i]);
-  }
-  return out;
-}
-
-/** How far outside the viewport a page stays materialized: at least a viewport
- *  height (so an ordinary scroll never reveals a missing sheet) and at least
- *  `PAGE_WINDOW_OVERSCAN_PX`, which covers the comment column's mounting band
- *  so a card never anchors to a page that does not exist. */
-function pageWindowOverscan() {
-  return Math.max(viewportEl.clientHeight, PAGE_WINDOW_OVERSCAN_PX);
-}
-
-/** The band-local y a page's sheet is positioned at, in CSS px. */
-function pageBandTop(index) {
-  return bandOffset + pageBandModel.tops[index];
-}
-
-/** The client rect a page's sheet has, or WOULD have if it were materialized.
- *
- *  Every twip→pixel conversion goes through `scaleOf`, and the pages it is
- *  asked about are no longer all in the DOM: a comment eight pages down, a
- *  find match on page 20,000, the caret after a jump. The band's rect plus the
- *  page's position answers those exactly — and identically to
- *  `getBoundingClientRect()`, because that is where the sheet was put. */
-function virtualPageRect(index) {
-  return pageClientRect(bandEl.getBoundingClientRect(), pageBandModel, index, bandOffset);
-}
-
-/** Build the sheet (and overlay) for one page, in page order in the band. */
-function materializePage(index) {
-  const page = pages[index];
-  if (!page || page.wrap) return;
-  const wrap = document.createElement("div");
-  wrap.className = "page-wrap";
-  wrap.dataset.pageNumber = String(index + 1);
-  wrap.style.width = `${pageBandModel.widths[index]}px`;
-  wrap.style.height = `${pageBandModel.heights[index]}px`;
-  wrap.style.left = `${Math.round((pageBandModel.width - pageBandModel.widths[index]) / 2)}px`;
-  wrap.style.top = `${pageBandTop(index)}px`;
-  wrap.__pageIndex = index;
-
-  // A transparent overlay above the canvas holds the caret/selection we draw
-  // ourselves from engine geometry — so the highlight matches the raster
-  // exactly (doc 58: custom engine-driven selection, no overlay-vs-glyph drift).
-  const overlay = document.createElement("div");
-  overlay.className = "overlay";
-  wrap.appendChild(overlay);
-
-  // Keep the DOM in page order: hit-testing and the browser suite both read
-  // document order off element order.
-  let before = null;
-  for (const el of bandEl.children) {
-    if (Number(el.dataset.pageNumber) > index + 1) {
-      before = el;
-      break;
-    }
-  }
-  bandEl.insertBefore(wrap, before);
-  page.wrap = wrap;
-  page.overlay = overlay;
-  ensurePageObserver().observe(wrap);
-}
-
-/** Drop one page's sheet, canvas and overlay. The page RECORD survives. */
-function dematerializePage(page) {
-  if (!page.wrap) return;
-  pageObserver?.unobserve(page.wrap);
-  page.wrap.remove();
-  page.wrap = null;
-  page.overlay = null;
-  page.canvas = null;
-  page.visible = false;
-}
-
-/** Re-place the window of sheets for the current scroll position.
- *
- *  Called from the scroll handler, so it must be cheap: a binary search, a few
- *  node insertions and one style write per sheet. It repaints the overlay layer
- *  only when the window moved — the sheets that just appeared have empty
- *  overlays, and the markers on them have to be drawn again. */
-function updatePageWindow({ force = false } = {}) {
-  if (!doc || !pageBandModel || !bandEl) return;
-  const viewportHeight = viewportEl.clientHeight;
-  const { docY, offset } = scrollToDoc(
-    pageBandModel,
-    viewportHeight,
-    viewportEl.scrollTop - bandTopInScroller,
-  );
-  const overscan = pageWindowOverscan();
-  const range = pageRangeAt(pageBandModel, docY - overscan, docY + viewportHeight + overscan);
-  const moved = range.first !== pageWindow.first || range.last !== pageWindow.last;
-  if (!force && !moved && offset === bandOffset) return;
-
-  bandOffset = offset;
-  const previous = pageWindow;
-  pageWindow = range;
-  // Only a page that HAD a sheet can lose one: bounded by the window's size.
-  for (let i = previous.first; i <= previous.last; i++) {
-    if ((i < range.first || i > range.last) && pages[i]) dematerializePage(pages[i]);
-  }
-  for (let i = range.first; i <= range.last; i++) {
-    materializePage(i);
-    // The offset moves on every scroll once the document is compressed, so the
-    // sheets that stayed have to move with it.
-    pages[i].wrap.style.top = `${pageBandTop(i)}px`;
-  }
-  if (moved || force) {
-    spellChecker.noteWindowChanged();
-    paintOverlayLayer();
-    if (runningEditBand) drawRunningBands(runningEditBand);
-    pagesPanelView.sync();
-  }
-}
-
-/** The scroll owner for page materialization. Synchronous on purpose: a sheet
- *  one frame late is a blank page under the reader's eyes, and every geometry
- *  answer (`scaleOf`) before that frame would use a stale offset. */
-viewportEl.addEventListener("scroll", () => updatePageWindow(), { passive: true });
-
-/** Mount and paint a page's raster canvas if it has none. The RGBA buffer is
- *  freed back to WASM immediately after the blit so it never accumulates. */
-function paintPageCanvas(page, index) {
-  if (!doc || page.canvas) return;
-  let bmp;
-  try {
-    bmp = doc.renderPage(index, currentDpi());
-  } catch (err) {
-    console.error(`render page ${index}`, err);
-    return;
-  }
-  const canvas = document.createElement("canvas");
-  canvas.className = "page";
-  canvas.width = bmp.widthPx;
-  canvas.height = bmp.heightPx;
-  // The surface is fully opaque, so tiny-skia's premultiplied RGBA equals the
-  // straight-alpha RGBA `ImageData` expects — a direct blit is correct.
-  canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
-  bmp.free(); // return the ~13 MB RGBA Vec to WASM deterministically, not at GC.
-  // The canvas sits under the transparent caret/selection overlay.
-  page.wrap.insertBefore(canvas, page.overlay);
-  page.canvas = canvas;
-}
-
-/** Drop a page's raster canvas (releases its GPU/CPU pixels). The sheet-sized
- *  wrap remains, so layout and scroll height are unchanged. */
-function releasePageCanvas(page) {
-  if (!page.canvas) return;
-  page.canvas.remove();
-  page.canvas = null;
-}
-
-/** Synchronously paint the pages currently on screen (plus one screenful of
- *  margin), so the viewport is never briefly blank before the async observer
- *  fires. Matches the observer's rootMargin. */
-function paintPagesInView() {
-  if (!pages.length) return;
-  const vr = viewportEl.getBoundingClientRect();
-  const margin = vr.height;
-  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
-    const page = pages[i];
-    if (!page?.wrap) continue;
-    const r = page.wrap.getBoundingClientRect();
-    const onscreen = r.bottom >= vr.top - margin && r.top <= vr.bottom + margin;
-    page.visible = onscreen;
-    if (onscreen) paintPageCanvas(page, i);
-  }
-}
-
-
 async function renderAll() {
   if (!doc) return;
   // Keep the engine's render layout in sync with the "Show changes" toggle: a
@@ -3669,9 +3496,10 @@ async function renderAll() {
     pagesPanelView.build();
   }
 }
-
-// ---- Selection & copy (doc 58 pipeline: hit-test → selection → draw → copy) ---
-
+const {
+  anchorAt, clearOverlays, currentStoryKey, paintReviewMarkers, pointInsideObject, pointToTwip,
+  syncActiveReviewCommentToCaret, toggleFormCheckboxAt,
+} = createSelection(ed);
 /** twip → CSS px scale for a page, from the wrap's live on-screen size, so it
  *  tracks the render under any zoom / DPR / CSS scaling. */
 function scaleOf(page) {
@@ -3684,1029 +3512,24 @@ function scaleOf(page) {
   const rect = page.wrap ? page.wrap.getBoundingClientRect() : virtualPageRect(page.pageNumber - 1);
   return { rect, sx: rect.width / page.wTwip, sy: rect.height / page.hTwip };
 }
-
-/** A pointer event on a page's overlay/canvas → that page's local twip point. */
-function pointToTwip(page, event) {
-  const { rect, sx, sy } = scaleOf(page);
-  return {
-    // Clamp edge/gap clicks into the page box. The layout hit tester then
-    // resolves the nearest caret on that page instead of returning no hit for
-    // a point just outside the rasterized sheet.
-    x: Math.max(0, Math.min(page.wTwip, Math.round((event.clientX - rect.left) / sx))),
-    y: Math.max(0, Math.min(page.hTwip, Math.round((event.clientY - rect.top) / sy))),
-  };
-}
-
-/** Resolve a pointer event to a model anchor, or null if it misses content. */
-/** Identifies the story the caret is currently in — the body, a running band, or
- *  a specific text box. Two positions belong to the same range only if this
- *  agrees for both; a range across stories is not representable in
- *  WordprocessingML and no edit can apply to one. */
-function currentStoryKey() {
-  if (objectSelection?.mode === "editing") return `object:${objectSelection.node}`;
-  if (runningEditBand) return `running:${runningEditBand}:${runningEditPage}`;
-  return "body";
-}
-
-/** Ticks the form checkbox at the caret position `node`/`offset`, and reports
- *  whether it did.
- *
- *  The engine answers "is this inside a checkbox control", so the host never
- *  has to know where content controls are — it asks about whatever the pointer
- *  or the caret landed on. Gated through `runEdit` like every other mutation,
- *  so Viewing refuses it and Suggesting tracks it. */
-function toggleFormCheckboxAt(node, offset) {
-  if (!doc || !node) return false;
-  let control = null;
-  try {
-    control = doc.formCheckboxAt(node, offset ?? 0) ?? null;
-  } catch {
-    return false;
-  }
-  if (!control) return toggleTextCheckboxAt(doc, node, offset, runEdit);
-  runEdit(() => doc.toggleFormCheckbox(control));
-  return true;
-}
-
-function anchorAt(page, event) {
-  const { x, y } = pointToTwip(page, event);
-  // While a header or footer is open, a point inside a running band belongs to
-  // THAT content: without this every click and drag in the band resolved through
-  // the body walk, so the caret jumped into the body and text in the header
-  // could not be selected at all. Outside the context the body walk still owns
-  // margin clicks, which is what keeps entering a header deliberate.
-  // Editing a text box: a point inside it belongs to the box's text, so clicks
-  // and drags select within it instead of jumping out to the body.
-  if (objectSelection?.mode === "editing") {
-    // Geometry decides the story, exactly as it does for a header band: the
-    // box's own rect says whether this point belongs to the box. `textBoxHitTest`
-    // snaps to the nearest line across the WHOLE page, so asking it first meant
-    // a click far down in the body still resolved inside the box — the caret
-    // moved into the box's text while the user was aiming at a paragraph, and
-    // there was no way to click out at all.
-    if (pointInsideObject(objectSelection.node, page, x, y)) {
-      const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
-      if (inBox) {
-        const anchor = { node: inBox.node, offset: inBox.offset };
-        inBox.free?.();
-        return anchor;
-      }
-      return null; // inside the box but it has no line to land on
-    }
-    // Outside the box: leave it, then resolve as an ordinary body click — the
-    // same deliberate way out that leaving a header uses.
-    exitObjectEditMode();
-  }
-  if (runningEditBand) {
-    // One rule, in the engine: geometry decides the story, content decides only
-    // the offset inside it. The host used to infer "the user left the header"
-    // from a hit-test finding no glyph, so clicking the empty space to the right
-    // of a header line — or below its last line, still inside the band — threw
-    // the user out of the context they were typing in.
-    const hit = doc.resolveClick(page.pageNumber, x, y);
-    if (!hit) return null;
-    const anchor = { node: hit.node, offset: hit.offset };
-    const band = hit.band;
-    hit.free?.();
-    if (band) {
-      // Still in running content: stay there, and follow the user if they moved
-      // to the other band or to another page's copy.
-      if (!anchor.node) {
-        // That band has no content on this page. Entering it is the ask — the
-        // same one the double-click makes — so probe it, and create it when the
-        // document has none, rather than letting the click do nothing.
-        void editRunningContent(band, page);
-        return null;
-      }
-      if (band !== runningEditBand || page.pageNumber !== runningEditPage) {
-        setRunningContext(band, page);
-      }
-      return anchor;
-    }
-    // A click in the body area leaves the context — the deliberate way back, as
-    // in Word, Docs, OnlyOffice and LibreOffice.
-    exitRunningEdit();
-    return anchor;
-  }
-  const hit = doc.hitTest(page.pageNumber, x, y);
-  if (!hit) return null;
-  const anchor = { node: hit.node, offset: hit.offset };
-  hit.free(); // release the WASM-owned payload; we copied out its fields
-  return anchor;
-}
-
-/** Whether a page-local point falls inside `node`'s placed rectangle.
- *
- *  Asked of the engine's own geometry (`objectRect`), so the host never carries
- *  a second opinion about where an object is. */
-function pointInsideObject(node, page, x, y) {
-  if (!doc || !node) return false;
-  let rect = [];
-  try {
-    rect = doc.objectRect(node); // [page, x, y, w, h] in twips
-  } catch {
-    return false;
-  }
-  if (rect.length < 5 || rect[0] !== page.pageNumber) return false;
-  return x >= rect[1] && x <= rect[1] + rect[3] && y >= rect[2] && y <= rect[2] + rect[4];
-}
-
-/** Leaves a text box's editing context, dropping the object selection with it —
- *  a click in the body is a click in the body, not a half-exit that leaves the
- *  box's chrome on screen. */
-function exitObjectEditMode() {
-  if (!objectSelection) return;
-  objectSelection = null;
-  updateObjectSelectionState();
-  updateObjectContextBar();
-}
-
-/** Clears caret/selection chrome while retaining previews of held object gestures. */
-function clearOverlays() {
-  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
-    const overlay = pages[i]?.overlay;
-    overlay?.replaceChildren(...overlay.querySelectorAll(":scope > .object-resize-preview, :scope > .object-rotate-preview"));
-  }
-}
-
-/** Reads the current comment list once (JSON round-trip), or `[]` on
- *  failure. Shared by marker rendering and by the caret-driven activation
- *  below so both agree on the same anchors. */
-function reviewComments() {
-  if (!doc) return [];
-  try { return JSON.parse(doc.listComments()) ?? []; } catch { return []; }
-}
-
-/** The comment (if any) whose anchor range contains `anchor` (a `{node,
- *  offset}` model position), matching the same open/resolved visibility rule
- *  `paintReviewMarkers` uses. Resolved comments only match while their card
- *  is already explicitly expanded. */
-function reviewCommentAtAnchor(anchor) {
-  if (!anchor?.node) return null;
-  for (const comment of reviewComments()) {
-    const explicitlyOpen = activeReviewItemId === `comment:${comment.id}`;
-    if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
-    if (comment.anchor.node !== anchor.node) continue;
-    const start = Number(comment.anchor.start) || 0;
-    const end = Number(comment.anchor.end) || 0;
-    if (anchor.offset >= start && anchor.offset <= end) return comment;
-  }
-  return null;
-}
-
-/** Non-blocking side effect of an authoritative caret placement
- *  (REVIEW-GAP-005, docs/81): if the resulting caret lands inside a
- *  commented range, expand/surface that comment's card. This never touches
- *  `selection` — document hit-testing (docs/80) is always the sole source
- *  of truth for where the caret lands; card expansion is derived from the
- *  resulting caret, never the other way around, and never blocks or delays
- *  caret placement. */
-/** The review item (comment or revision) whose anchor range EXACTLY equals the
- *  current non-collapsed selection, or null. A review target is focused by
- *  selecting its exact range, so an exact match uniquely identifies the item the
- *  reviewer picked — even where a suggestion shares a boundary with (or nests
- *  inside) a comment, which the point-based `reviewCommentAtAnchor` /
- *  smallest-containing scans would otherwise resolve to the wrong item. */
-function reviewItemForExactSelection() {
-  const a = selection?.anchor;
-  const f = selection?.focus;
-  if (!a || !f || a.node !== f.node) return null;
-  const lo = Math.min(a.offset, f.offset);
-  const hi = Math.max(a.offset, f.offset);
-  if (lo === hi) return null; // a collapsed caret has no range to match exactly
-  for (const entry of reviewAnchorIndex) {
-    if (entry.node === a.node && entry.start === lo && entry.end === hi) return entry;
-  }
-  return null;
-}
-
-function syncActiveReviewCommentToCaret(anchor) {
-  // A freshly focused review target selects its own exact range: activate THAT
-  // item so the clustered sidebar layout (REVIEW-GAP-019) anchors the selected
-  // card to its own marker. Without this, selecting a suggestion that shares a
-  // boundary with a comment activated the comment instead, and the suggestion's
-  // card drifted from its marker (they moved together on scroll, never closing
-  // the gap).
-  const exact = reviewItemForExactSelection();
-  if (exact) {
-    activeReviewItemId = exact.itemId;
-    activeReviewCommentId = exact.type === "comment" ? exact.dataId : null;
-    reviewSidebarPreference = true;
-    scheduleReviewMarginRender();
-    return;
-  }
-  const comment = reviewCommentAtAnchor(anchor);
-  if (comment) {
-    activeReviewCommentId = comment.id;
-    activeReviewItemId = `comment:${comment.id}`;
-    reviewSidebarPreference = true;
-    scheduleReviewMarginRender();
-    return;
-  }
-  // No comment under the caret — surface a tracked-change card whose anchor range
-  // contains the caret, so caret-driven expansion works for suggestions too
-  // (REVIEW-GAP-019). The smallest containing range wins when several stack.
-  if (!anchor?.node) return;
-  const best = smallestContaining(reviewAnchorIndex, anchor.node, Number(anchor.offset) || 0);
-  if (!best || best.itemId === activeReviewItemId) return;
-  activeReviewItemId = best.itemId;
-  reviewSidebarPreference = true;
-  scheduleReviewMarginRender();
-}
-
-/** Paint comment ranges in the existing overlay layer. This never touches the
- * canvas or document layout; it is the same interaction layer used by the
- * selection highlight and caret. These markers are a pure visual affordance:
- * they intentionally carry no click handler of their own, so a pointer event
- * always falls through to the page's normal pointerdown hit-testing (see
- * `onPointerDown` / `syncActiveReviewCommentToCaret`) instead of hijacking
- * caret placement (REVIEW-GAP-005). */
-function paintReviewMarkers() {
-  if (!doc) return;
-  reviewColumnStartMemo = new Map();
-  const summary = readReviewData(doc);
-  for (const comment of summary.comments ?? []) {
-    const explicitlyOpen = activeReviewItemId === `comment:${comment.id}`;
-    if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
-    const { node, start, end } = comment.anchor;
-    const rects = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
-    const color = reviewAuthorColor(reviewAuthorKey(comment));
-    const tooltip = reviewCommentTooltip(comment);
-    for (let i = 0; i < rects.length; i += 5) {
-      const el = place(rects.slice(i, i + 5), activeReviewCommentId === comment.id ? "review-comment-marker review-comment-marker-active" : "review-comment-marker");
-      if (el) {
-        el.dataset.reviewCommentId = comment.id;
-        el.style.setProperty("--review-author-color", color);
-        el.title = tooltip;
-      }
-    }
-  }
-  for (const revision of summary.revisions ?? []) {
-    const range = revisionRange(revision);
-    if (!range) continue;
-    const paragraphLevel = revision.kind === "paragraph_format"
-      || revision.kind === "paragraph_mark_insertion"
-      || revision.kind === "paragraph_mark_deletion";
-    const deletionLike = revision.kind === "deletion"
-      || revision.kind === "move_from"
-      || revision.kind === "paragraph_mark_deletion";
-    let rects = paragraphLevel
-      ? paragraphRevisionRects(revision)
-      : doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
-    if (!paragraphLevel && rects.length < 5 && deletionLike && range.startNode === range.endNode) {
-      rects = doc.caretRect(range.startNode, range.startOffset);
-    }
-    const moveItemId = revision.movePair?.fromStart && revision.movePair?.toStart
-      ? `revision:move:${revision.movePair.fromStart}:${revision.movePair.toStart}`
-      : null;
-    // Highlight the marker whenever ITS sidebar item is active. A revision can be
-    // surfaced under any of three ids depending on how the sidebar groups it — a
-    // move pair, a typing/replacement/formatting group (keyed by groupId), or an
-    // ungrouped revision (keyed by its own id) — so match against all three. This
-    // makes a selected inline suggestion show the active state (and lets
-    // `scrollReviewSelectionIntoView` target its marker), not only moves.
-    const activeIds = [
-      moveItemId,
-      revision.groupId ? `revision:${revision.groupId}` : null,
-      `revision:${revision.id}`,
-    ];
-    // `activeIds` holds `null` for any revision that is not a move or in a group,
-    // and `null` is also what `activeReviewItemId` holds when NOTHING is active —
-    // so `includes` matched and every such marker rendered active the moment a
-    // document opened. Only a real, selected id may activate a marker.
-    const active = activeReviewItemId != null && activeIds.filter(Boolean).includes(activeReviewItemId)
-      ? " review-revision-marker-active"
-      : "";
-    const kind = `${revision.kind === "paragraph_format"
-      ? "review-revision-marker review-paragraph-format-bar"
-      : paragraphLevel
-        ? `review-revision-marker review-paragraph-mark-marker ${deletionLike ? "review-paragraph-mark-deleted" : "review-paragraph-mark-inserted"}`
-        : deletionLike
-          ? "review-revision-marker review-deletion-marker"
-          : "review-revision-marker review-insertion-marker"}${active}`;
-    const color = reviewAuthorColor(reviewAuthorKey(revision));
-    const tooltip = reviewRevisionTooltip(revision);
-    for (let i = 0; i < rects.length; i += 5) {
-      const el = place(rects.slice(i, i + 5), kind);
-      if (el) {
-        el.style.setProperty("--review-author-color", color);
-        el.title = tooltip;
-        // Inline accept/reject affordance (Q2): hovering a tracked-change marker
-        // previews a compact card; pressing on it pins the card open. The
-        // pointerdown is NOT swallowed, so it still bubbles to the page's
-        // hit-testing and caret placement is unaffected (REVIEW-GAP-005). Opening
-        // on pointerdown (before the caret repaint detaches this marker) keeps the
-        // pinned card reliable; the card itself lives on document.body and
-        // survives the repaint.
-        el.dataset.reviewRevisionId = String(revision.id ?? "");
-        el.addEventListener("mouseenter", () => showReviewInlineCard(revision, el, false));
-        el.addEventListener("mouseleave", () => scheduleReviewInlineCardHide());
-        el.addEventListener("pointerdown", () => showReviewInlineCard(revision, el, true));
-      }
-    }
-  }
-}
-
-// ---- Proofing (docs/114, docs/146, `109` HF-035) -----------------------------
-// The coordinator, the two switches, the one replacement path and the language
-// packs are all `proofing_chrome.mjs`; what is here is this application's answers
-// to the questions it asks. The three hooks are the whole of proofing's contact
-// with the editor: `paint()` from the overlay repaint, `noteEdited()` from the
-// edit choke point (O(1) — it re-arms a timer and nothing else), and
-// `noteWindowChanged()` from the scroll that moves the page window.
-const proofing = createProofingChrome({
-  getDoc: () => doc,
-  pages: () => pages,
-  pageWindow: () => pageWindow,
-  place,
-  caret: () => (selection ? selection.focus : null),
-  preference: (key) => settings[key],
-  setPreference: (key, value) => {
-    settings[key] = value;
-    saveSettings();
-  },
-  toggles: () => ({ spell: spellCheckToggle, grammar: grammarCheckToggle }),
-  status: (text, kind) => setStatus(text, kind),
-  repaint: () => paintOverlayLayer(),
-  redraw: () => drawSelection(),
-  reflect: () => updateToolbar(),
-  openWords: () => openWordStore({}),
-  runEdit,
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  activeLocale: () => activeLocale(),
-  indexedDB: globalThis.indexedDB,
-  stamp: new URL(import.meta.url).search,
-  origin: () => location.origin,
-});
-const spellChecker = proofing.checker;
-const { replaceMisspelling, setSpellCheckEnabled, setGrammarCheckEnabled } = proofing;
-
-/** Draws the current selection from engine geometry: a highlight for a real
- *  range, else a caret at the focus (so a click — or a range with no visible
- *  rects — always shows a cursor). */
-/** Repaints everything the page overlays carry, and nothing else.
- *
- *  Split out of `drawSelection` because scrolling now creates and destroys
- *  overlays: a sheet materialized by `updatePageWindow` arrives empty, and the
- *  caret, selection, comment markers and checklist boxes that belong on it have
- *  to be drawn again. The chrome around them (toolbar state, page number, the
- *  comment column) does not change when the window moves, so it stays in
- *  `drawSelection` and is not paid for on every scroll. */
-function paintOverlayLayer() {
-  if (!doc) return;
-  clearOverlays();
-  // A repaint is the only thing that can move a table boundary, so it is the only
-  // place the chrome layer's geometry cache must be dropped — which is what makes a
-  // pointer-move a lookup rather than an engine query. AFTER `clearOverlays`,
-  // because the same call puts an in-flight drag's guide back (`docs/141` D-1).
-  tableChrome.invalidate();
-  // The cell range's memo has the same lifetime and the same reason: a repaint
-  // is the only thing that can change which cells a pair of endpoints covers.
-  tableRange.invalidate();
-  paintReviewMarkers();
-  paintChecklistMarkers();
-  spellChecker.paint();
-  findSession.paint(); // every Find match, the current one distinct (TA-04)
-  // A selected object owns the visible chrome (outline + handles) in place of the
-  // text caret; in "editing" mode the ordinary text caret is shown instead.
-  if (objectSelection && objectSelection.mode === "selected") {
-    paintObjectSelection();
-  } else if (selection) {
-    paintTableSelection();
-    // ONE `cellRect` for the whole table chrome. It used to be asked twice — once
-    // for the active-cell outline and once inside the handle query's own
-    // `inTable` — and it is a page scan each time.
-    const cellRect = doc.cellRect(selection.focus.node); // [page, x, y, w, h] or []
-    paintActiveCell(cellRect); // under the caret/highlight
-    paintSelection(selection);
-    tableChrome.paintCaretColumnHandles(pages, cellRect);
-    tableChrome.paintTouchPills(pages);
-    touchSelection.paint(pages); // the finger's handles, same layer, same reason
-  }
-  // Outside the `selection` branch: a strip is armed by the POINTER, and being
-  // over a table is not a reason to require a caret.
-  tableGutter.paint(pages);
-  remotePresence.paint(place);
-}
-
-function drawSelection() {
-  if (!doc) return;
-  paintOverlayLayer();
-  foldView.syncBodyChevron(); // after the overlay repaint, which clears it
-  updateObjectSelectionState();
-  updateObjectContextBar();
-  updateToolbar();
-  updateReviewControls();
-  scheduleReviewMarginRender();
-  updatePageNumber();
-  if (tableRange.mirrorChanged()) scheduleChromeRefresh({ a11y: true });
-  rulerView.syncToCaret();
-  positionSelToolbar();
-  hostSession?.noteSelection();
-  remotePresence.changed();
-}
-
-function paintTableSelection() {
-  const rects = tableRange.rects();
-  for (let i = 0; i + 4 < rects.length; i += 5) place(rects.slice(i, i + 5), "table-cell-selection");
-}
-
-/** Outlines the table cell the caret is in (nothing when not in a table), so the
- *  user always sees which cell they are editing. */
-function paintActiveCell(flat) {
-  if (flat.length >= 5) place(flat, "cell-outline");
-}
-
-/** Paints the selected object's outline + exact supported resize handles from engine
- *  geometry (docs/85 §3.3), the same overlay mechanism as the caret/highlight so
- *  the chrome matches the raster exactly. Unsupported carrier/edge combinations
- *  are omitted by the engine. */
-function paintObjectSelection() {
-  const { node } = objectSelection;
-  // In crop mode the image shows crop chrome (dimmed cut region + crop handles)
-  // in place of the resize handles — the Word/Docs crop experience.
-  if (objectCropSession && objectCropSession.node === node) {
-    paintObjectCrop();
-    return;
-  }
-  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
-  const outlineEl = place(rect, "object-outline");
-  // The objects held alongside it (Ctrl/⌘+click), so a multi-object selection
-  // is visible before Group is pressed rather than being a state only the menu
-  // knows about. One rect per HELD member — a user-picked handful, on a repaint,
-  // never on a pointermove — which is why this is a loop and the object chip's
-  // arrange gather is not.
-  for (const member of objectArrange.multiSelect()) {
-    // By SUBJECT: `objectRect` is answered for the subject, and a root id
-    // answers nothing at all — which is why holding only the root drew no
-    // outline for the second object.
-    place(doc.objectRect(member.node), "object-outline is-co-selected");
-  }
-  // A movable object's BODY needs `touch-action: none` the way its grips
-  // already have it, or the browser starts scrolling at touch-start and the
-  // move gesture is gone before any handler runs. Selected + movable only.
-  const padPage = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  if ((objectSelection.canMove || objectSelection.canMoveInText) && padPage?.overlay) {
-    paintMovePad(padPage.overlay, rect.slice(1, 5), scaleOf(padPage), (event) =>
-      objectSelection.canMove ? startObjectMove(event, padPage, node) : objectTextDrag.arm(event, padPage, objectSelection));
-  }
-  // The angle comes with the frame, in ONE engine read: the grips are drawn at
-  // the object's rotated corners, the cursors are turned with them, and the
-  // rotation grip is pushed out along the object's own axis.
-  const turned = (doc.objectFrame?.(node) ?? [])[5] ?? 0;
-  const rotationDegrees = turned / 1000;
-  // The outline is TURNED with the object rather than redrawn as its
-  // axis-aligned bounding box: a box that is bigger than the object on every
-  // side is not an outline of it, and Word, Docs and ONLYOFFICE all draw the
-  // turned rectangle.
-  if (rotationDegrees && outlineEl) outlineEl.style.transform = `rotate(${rotationDegrees}deg)`;
-  paintResizeHandles(
-    (pageNumber) => {
-      const page = pages[pageNumber - 1];
-      return page?.overlay ? { overlay: page.overlay, scale: scaleOf(page) } : null;
-    },
-    doc.objectHandles(node), // [page, cx, cy, kind] * supported handle count
-    (event, pageNumber, kind) => objectResize.start(event, pages[pageNumber - 1], node, kind),
-    {
-      rotationDegrees,
-      rotateLabel: t("object.rotate.handle"),
-      rotateValueText: t("object.rotate.degrees", { degrees: Math.round(rotationDegrees) }),
-      onRotateDown: objectSelection.canRotate
-        ? (event, pageNumber) => objectRotate.start(event, pages[pageNumber - 1], node)
-        : null,
-      onRotateKey: (event) => objectRotate.onKey(event),
-    },
-  );
-}
-
-// ---- Image crop (direct-manipulation, Word/Docs standard) -------------------
-// The chrome, the clamping rule and the crop's own prose are in
-// `object_crop_chrome.mjs`. What stays here is entering, committing and
-// cancelling the MODE: crop is picture-only and, like resize, is not
-// representable as a tracked revision, so it is blocked in Suggesting/Viewing.
-// Double-clicking the picture is the doorway (Docs' gesture); Crop is surface 2.
-
-/** Enters crop mode on the selected image (or, if already cropping, commits). */
-function enterCropMode() {
-  if (!doc || !objectSelection || !objectSelection.canCrop) return;
-  if (objectCropSession) {
-    commitCrop();
-    return;
-  }
-  if (reviewMode === "viewing") {
-    blockMutationInViewing();
-    return;
-  }
-  if (reviewMode === "suggesting") {
-    setStatus("Cropping an image is not tracked; switch to Editing to crop it", "error");
-    return;
-  }
-  const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h] twips
-  if (rect.length < 5) return;
-  const [, x, y, w, h] = rect;
-  const authoredCrop = doc.objectCrop?.(objectSelection.node);
-  const cropValues = authoredCrop && authoredCrop.length === 4
-    ? authoredCrop
-    : [0, 0, 0, 0];
-  objectCropSession = {
-    node: objectSelection.node,
-    box: [x, y, w, h],
-    crop: { l: cropValues[0], t: cropValues[1], r: cropValues[2], b: cropValues[3] },
-    handleDrag: null,
-  };
-  focusEditorSurface();
-  drawSelection();
-  updateObjectContextBar();
-  setStatus("Drag the handles to crop · Enter to apply · Esc to cancel");
-}
-
-/** Paints the crop chrome — the image outline, the dimmed region being cut, the
- *  kept rectangle with its live size, and eight draggable grips. The geometry
- *  and the clamping rule live in `object_crop_chrome.mjs`; what stays here is
- *  resolving which page and which scale, which only the editor can answer. */
-function paintObjectCrop() {
-  const s = objectCropSession;
-  const rectFlat = doc.objectRect(s.node);
-  if (rectFlat.length < 5) return;
-  s.box = rectFlat.slice(1, 5); // the picture as placed NOW, not at enterCropMode (HF-106)
-  const [bx, by, bw, bh] = s.box;
-  const pageNumber = rectFlat[0];
-  const page = pages[pageNumber - 1];
-  if (!page?.overlay) return;
-  place([pageNumber, bx, by, bw, bh], "object-outline");
-  const kept = keptRect(s.box, s.crop);
-  paintCropChrome(page.overlay, s.box, s.crop, scaleOf(page), {
-    sizeLabel: sizeLabel(kept.w, kept.h),
-    onGripDown: (event, kind) => startCropHandleDrag(event, page, kind),
-  });
-}
-
-/** Begins dragging a crop handle. The kept rectangle updates live; the model is
- *  untouched until commit. */
-function startCropHandleDrag(event, page, handleKind) {
-  if (!objectCropSession) return;
-  objectCropSession.handleDrag = {
-    handleKind,
-    page,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    startCrop: { ...objectCropSession.crop },
-  };
-  beginGripDrag(event, {
-    onMove: updateCropHandleDrag,
-    onEnd: (cancelled) => {
-      if (!objectCropSession) return;
-      // A gesture the browser cancelled leaves the crop where it started.
-      if (cancelled) objectCropSession.crop = objectCropSession.handleDrag?.startCrop ?? objectCropSession.crop;
-      objectCropSession.handleDrag = null;
-      if (cancelled) drawSelection();
-    },
-  });
-}
-
-/** Updates the kept rectangle from a crop-grip drag. The clamping rule is
- *  `cropFromDrag`; the repaint carries the new kept size with it. */
-function updateCropHandleDrag(event) {
-  const s = objectCropSession;
-  if (!s || !s.handleDrag) return;
-  const drag = s.handleDrag;
-  const [, , bw, bh] = s.box;
-  const { sx, sy } = scaleOf(drag.page);
-  const dxFrac = bw > 0 ? (event.clientX - drag.startClientX) / sx / bw : 0;
-  const dyFrac = bh > 0 ? (event.clientY - drag.startClientY) / sy / bh : 0;
-  s.crop = cropFromDrag(drag.startCrop, drag.handleKind, dxFrac, dyFrac);
-  drawSelection();
-  event.preventDefault();
-}
-
-/** Commits the crop as one SetImageCrop op (or clears it when nothing is cropped),
- *  then exits crop mode. */
-function commitCrop() {
-  const s = objectCropSession;
-  if (!s) return;
-  const { l, t, r, b } = s.crop;
-  const node = s.node;
-  const cropped = l > 0.0005 || t > 0.0005 || r > 0.0005 || b > 0.0005;
-  objectCropSession = null;
-  runEdit(() => doc.setImageCrop(node, cropped ? [l, t, r, b] : null), { gate: true }).then(() => {
-    updateObjectContextBar();
-    setStatus(cropped ? "Image cropped" : "");
-  });
-}
-
-/** Exits crop mode with no change. */
-function cancelCrop() {
-  if (!objectCropSession) return;
-  objectCropSession = null;
-  drawSelection();
-  updateObjectContextBar();
-  setStatus("");
-}
-
-/** The two direct-manipulation geometry gestures. Both are modules: a grip
- *  drag that now reasons in the object's own space, and the rotation handle.
- *  What stays here is the application state they read and the gated edit path
- *  they write through. */
-const gestureIo = {
-  doc: () => doc,
-  selection: () => objectSelection,
-  scaleOf: (page) => scaleOf(page),
-  runEdit: (thunk, options) => runEdit(thunk, options),
-  setStatus: (text, kind) => setStatus(text, kind),
-  t,
-  drawSelection: () => drawSelection(),
-  focusEditorSurface: () => focusEditorSurface(),
-  reviewMode: () => reviewMode,
-  blockMutationInViewing: () => blockMutationInViewing(),
-};
-const objectResize = createObjectResizeDrag({
-  ...gestureIo,
-  // A GETTER, not the module: `measurement` is constructed further down this
-  // file, so naming it in this object literal would read it in its temporal
-  // dead zone. The drag only asks during a pointer move, by which time it
-  // exists.
-  measure: () => measurement,
-  snapContextFor: (page) => snapContextFor(page),
-  paintSnapGuides: (drag, guides) => paintSnapGuides(drag, guides),
-  clearSnapGuides: (drag) => clearSnapGuides(drag),
-  hideLinkChip: () => hideLinkChip(),
-  resetPointerGesture: () => resetPointerGesture(),
-});
-const objectRotate = createObjectRotateDrag(gestureIo);
-/** A drag on an object that cannot move says why, once (HF-259). */
-const refusedObjectDrag = createRefusedDrag({ setStatus: (text, kind) => setStatus(text, kind) });
-/** Dragging, or F2 ("Move to where?"), an in-line object to a new place in the text (`109` UX-OB-02). */
-const objectTextIo = {
-  doc: () => doc, pageAt: pageFromClientPoint, pageByNumber: (n) => pages[n - 1], pointToTwip, scaleOf, platform: EDITOR_KEYBOARD_PLATFORM, t, viewport: () => viewportEl,
-  blocked: () => objectEditBlocked(), runEdit: (thunk, options) => runEdit(thunk, options), setStatus: (text, kind) => setStatus(text, kind),
-  select: (node, held) => selectObject(node, held.kind, null, false, { ...held, ref: { ...held.ref, root: node, subject: node } }),
-  caret: () => selection?.focus ?? null,
-  selection: () => (objectSelection?.mode === "selected" ? objectSelection : null),
-  leaveObject: () => { objectSelection = null; clearObjectStatus(); drawSelection(); },
-  refusal: (held) => capabilityRefusal(held, held.anchored ? "canMove" : "canMoveInText", SESSION.sentenceFor),
-};
-const objectTextDrag = createObjectTextDrag(objectTextIo);
-const keyboardObjectMove = createKeyboardObjectMove(objectTextIo);
-/** The crop session's keyboard (`object_keys.mjs`). */
-const cropKeyIo = {
-  get session() { return objectCropSession; },
-  commit: () => commitCrop(),
-  cancel: () => cancelCrop(),
-  redraw: () => drawSelection(),
-  nothingToMove: () => setStatus(t("object.crop.nothingToMove")),
-};
-const sizeLabel = (widthTwip, heightTwip) =>
-  resizeSizeLabel(t, widthTwip, heightTwip, measurement);
-
-/** Reflects the object-selection state onto `#pages` as data attributes so the
- *  host (and tests) can observe the grammar state machine without reading into
- *  the overlay. */
-function updateObjectSelectionState() {
-  reflectObjectSelection(pagesEl, objectSelection, OBJECT_CAPABILITY_KEYS);
-  reflectShapeFormatState();
-}
-
-/** Reflects a selected shape's own fill and outline onto `#pages`. */
-function reflectShapeFormatState() {
-  reflectShapeFormat(pagesEl, objectSelection?.canFill || objectSelection?.canStroke ? selectedShapeFormat() : null);
-}
-
-/** The object properties panel. Its 170 lines are `object_inspector.mjs`; what
- *  stays here is the application state it reads and the gated edit path it
- *  writes through. */
-const objectInspector = createObjectInspector({
-  doc: () => doc,
-  selection: () => objectSelection,
-  runEdit: (thunk, options) => runEdit(thunk, options),
-  setStatus: (text, kind) => setStatus(text, kind),
-  openShapeFill: () => shapeFillBtn.click(),
-  openShapeOutline: () => shapeOutlineBtn.click(),
-  t,
-});
-const toggleObjectInspector = (open) => objectInspector.toggle(open);
-
-/** The floating object chip. Its rendering is `object_bar.mjs`; what stays here
- *  is the application state it renders and the verbs it calls. */
-const objectBar = createObjectBar({
-  doc: () => doc,
-  selection: () => objectSelection,
-  pages: () => pages,
-  scaleOf: (page) => scaleOf(page),
-  viewportRect: () => viewportEl.getBoundingClientRect(),
-  t,
-  croppingNode: () => objectCropSession?.node ?? null,
-  arrangeState: () => arrangeState(),
-  ensureInspector: () => objectInspector.ensure(),
-  toggleInspector: (open) => objectInspector.toggle(open),
-  inspectorOpen: () => objectInspector.isOpen(),
-  reflectInspector: () => objectInspector.reflect(),
-  setWrap: (mode) => setObjectWrap(mode),
-  openAltText: () => openAltTextDialog(),
-  openChartData: () => chartSurface.openData(),
-  enterCrop: () => enterCropMode(),
-  canChangePicture,
-  changePicture: () => pictureReplace.choose(),
-  deleteObject: () => deleteSelectedObject(),
-  reflectShapeSwatches: () => reflectShapeSwatches(),
-  fillButton: () => shapeFillBtn,
-  outlineButton: () => shapeOutlineBtn,
-  positionButton: () => labelledObjectMenuButton(objectPositionBtn),
-  arrangeButton: () => labelledObjectMenuButton(objectArrangeBtn),
-  rotateButton: () => labelledObjectMenuButton(objectRotateBtn),
-});
-const updateObjectContextBar = () => (objectBar.update(), chartSurface.sync());
-/** The chart's Chart tab, settings panel, data dialog and command tree (`chart_surface.mjs`). */
-const chartSurface = createChartSurface({
-  doc: () => doc,
-  selection: () => objectSelection,
-  blocked: () => objectEditBlocked(),
-  blockedReason: () => readOnlyReason || (reviewMode === "viewing" ? t("chart.reason.viewing") : reviewMode === "suggesting" ? t("chart.reason.suggesting") : ""),
-  apply: (result) => applyEditResult(result, { keepView: true }),
-  setStatus: (text, kind) => setStatus(text, kind),
-  returnFocus: () => focusEditorSurface(),
-  registerModal,
-  showMenu: (button, commands) => { const box = button.getBoundingClientRect(); showContextMenu(box.left, box.bottom, { surface: "ribbon", commands }); },
-  reflectTab: (tab, state) => reflectEnablement(tab, state, EDITOR_KEYBOARD_PLATFORM),
-  selectTab: (name) => selectRibbonTab(name),
-  t,
-});
-/** Insert ▸ Chart, as ONLYOFFICE and Word do it: the chart lands SELECTED with its data open. */
-const insertChartWithData = () => chartSurface.insertAndOpen(() => insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }), (chart) => selectObject(chart.node, chart.kind, null, chart.anchored, chart));
-const positionObjectContextBar = () => objectBar.reposition();
-
-/** Every arrange fact about the selected object, gathered in ONE pass per
- *  repaint: its anchor kind, its wrap, its stacking and its transform.
- *
- *  `objectPosition` and `objectTransform` are each O(document) with one walk.
- *  Asking them here — once, when the selection or the layout changed — is what
- *  keeps the wrap row, the Position gallery and the Rotate menu from each
- *  asking again, which is the per-object-query-in-a-loop shape that has already
- *  cost this repository a quadratic. Nothing on a pointermove path calls this. */
-function arrangeState() {
-  const selection = objectSelection;
-  if (!doc || !selection || selection.mode !== "selected") return null;
-  const root = selection.ref.root;
-  const read = readPosition(doc.objectPosition?.(root) ?? "");
-  if (!read.object) return null;
-  return {
-    root,
-    node: selection.node,
-    read,
-    wrap: read.floating ? doc.objectWrap(root) : "",
-    transform: readTransform(doc.objectTransform?.(selection.node) ?? ""),
-  };
-}
-
-/** The Arrange commands — position, stacking, grouping, rotation, text in a
- *  shape. `object_arrange_commands.mjs`; what stays here is the state they read
- *  and the gated edit path they write through. */
-const objectArrange = createObjectArrangeCommands({
-  doc: () => doc,
-  selection: () => objectSelection,
-  state: () => arrangeState(),
-  runEdit: (thunk, options) => runEdit(thunk, options),
-  setStatus: (text, kind) => setStatus(text, kind),
-  select: (entry) => selectObject(entry.node, entry.kind, null, entry.anchored, entry),
-  t,
-  // Ctrl on Windows/Linux, ⌘ on a Mac — derived, never spelled, because a spec
-  // that asserts a Mac glyph fails on the Linux runner (`105` UX-009).
-  modifier: formatShortcut("\u2318"),
-});
-
-/** Insert ▸ Shapes arms the pointer; the next gesture on the page draws the
- *  shape. Word's sequence, and every drawing tool's. `shape_draw_mode.mjs`
- *  holds the state machine and the preview; the arithmetic is `shape_draw.mjs`.
- *
- *  O(1) per pointermove: the gesture never touches the document while it runs. */
-const shapeDrawMode = createShapeDrawMode({
-  pointToTwip: (page, event) => pointToTwip(page, event),
-  scaleOf: (page) => scaleOf(page),
-  outlineFor: (token) => SHAPE_PRESETS.find((shape) => shape.token === token)?.outline ?? null,
-  insert: (token, rect) => void insertShapeObject(token, rect),
-  setStatus: (text, kind) => setStatus(text, kind),
-  t,
-});
-
-// The five viewport scroll listeners never touched the object bar, and the page
-// IntersectionObserver never calls drawSelection, so scrolling left it behind.
-// Window scroll and resize matter too: the whole shell can move under a bar that
-// is positioned in viewport coordinates.
-viewportEl.addEventListener("scroll", positionObjectContextBar, { passive: true });
-window.addEventListener("scroll", positionObjectContextBar, { passive: true });
-window.addEventListener("resize", positionObjectContextBar);
-
-/** Selects an object as a unit (docs/85 §4.1). Keeps `selection` as a caret at
- *  the object's surrounding-text anchor so the two-step Escape can return to it.
- *  `anchored` records placement only; the engine-owned capability bits below
- *  are the authority for every exposed operation. */
-const OBJECT_CAPABILITY_KEYS = [
-  "canResize",
-  "canRotate",
-  "canMove",
-  "canWrap",
-  "canDelete",
-  "canAltText",
-  "canCrop",
-  "canFill",
-  "canStroke",
-  "canEditText",
-  "canMoveInText",
-];
-
-/** Copies the engine-declared structural capabilities before a wasm hit payload
- *  is freed. JSON object-order entries use the same camelCase field names. */
-function objectCapabilities(source) {
-  if (source && OBJECT_CAPABILITY_KEYS.some((key) => key in source)) {
-    // The engine's reason for every `false` travels with the bits (HF-259), and so does the file's aspect lock (FID-AT-09).
-    const reasons = { capabilityReasons: readCapabilityReasons(source), locksAspectRatio: source.locksAspectRatio === true };
-    return Object.assign(Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true])), reasons);
-  }
-  // A missing or stale engine payload must never make an unsupported mutation
-  // appear safe. A correctly built production bridge always supplies the bits.
-  return Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, false]));
-}
-
-/** Copies the engine-owned object identity before a wasm payload is freed.
- *  `node` remains the subject compatibility alias; root owns structural and
- *  anchor commands while subject owns kind-specific properties/text. */
-function objectReference(source, node) {
-  const value = source?.ref ?? source;
-  const subject = value?.subject || value?.node || node;
-  return {
-    surface: value?.surface || "body",
-    root: value?.root || subject,
-    subject,
-    path: Array.from(value?.path ?? []),
-  };
-}
-
-function selectObject(node, kind, anchor, anchored = false, descriptor = null) {
-  // Handles nobody can see are still handles Delete is aimed at.
-  if (!chromeShows("objects")) return;
-  if (anchor) selection = { anchor, focus: anchor };
-  const ref = objectReference(descriptor, node);
-  objectSelection = {
-    node: ref.subject,
-    ref,
-    kind,
-    mode: "selected",
-    anchored,
-    ...objectCapabilities(descriptor),
-  };
-  pendingFormat = null;
-  tableRange.clear();
-  drawSelection();
-}
-
-/** The object context for whatever is selected right now.
- *
- *  `objectContextAtEvent` builds the same shape from a pointer hit, which is why
- *  every object command used to need a mouse to exist. `objectSelection` already
- *  carries the identity and the engine-declared capabilities, so this is a
- *  reshape rather than a second source of truth — the capabilities are never
- *  re-derived here, or they could disagree with what the bar offers. */
-function selectedObjectContext() {
-  if (!objectSelection) return null;
-  const { node, ref, kind, anchored, ...rest } = objectSelection;
-  return {
-    surface: "object",
-    node,
-    ref,
-    kind,
-    anchored,
-    ...Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, rest[key] === true])),
-  };
-}
-
-/** Whether the document holds any floating object at all, which is what decides
- *  if the "select next object" commands are offered rather than greyed. Asked of
- *  the engine's own paint order so the answer cannot drift from what traversal
- *  would actually land on — and memoized, because the question is asked on a
- *  per-keystroke path while `objectOrder()` is O(objects) (`109` HF-183; the
- *  whole argument, and the invalidation contract, is in `object_presence.mjs`).
- *
- *  Cost: O(1) per call, O(objects) once per edit. */
-const objectPresence = createObjectPresence(() => doc.objectOrder());
-function documentHasObjects() {
-  if (!doc) return false;
-  return objectPresence.has();
-}
-
-/** Moves the object selection `step` places through the document's objects, in
- *  the engine's own paint order, wrapping at both ends so the gesture never
- *  dead-ends. Reads the order fresh each time because an edit may have added or
- *  removed an object since the last keystroke. */
-function traverseObjects(step) {
-  // Deliberately NOT gated on an existing selection. It used to be, which made
-  // the whole object surface mouse-only: Tab cycles objects once one is
-  // selected, but nothing else selected one, so a keyboard user could not reach
-  // an image or a text box at all — while the comment beside the Tab handler
-  // claimed this was "the only way to reach an object without a pointer". The
-  // wrap-around below already handles "no current object" by starting at either
-  // end, so seeding a first selection needs no extra machinery.
-  if (!doc) return;
-  // Inside a group Tab walks that group's children; at the top level, the
-  // top-level objects. `object_traversal.mjs` carries why the one flat list
-  // that used to serve both made every shape but a group's first unreachable.
-  const inside = traversalRoot(objectSelection?.ref);
-  let objects;
-  try {
-    objects = JSON.parse(inside ? doc.objectDescendants(inside) : doc.objectOrder());
-  } catch {
-    return;
-  }
-  if (!Array.isArray(objects) || objects.length === 0) return;
-  const current = objectSelection
-    ? objects.findIndex((entry) => entry.node === objectSelection.node)
-    : -1;
-  const next = nextObjectIndex(objects.length, current, step);
-  const target = objects[next];
-  selectObject(target.node, target.kind, null, target.anchored, target);
-  // `selectObject` repaints synchronously, so the outline it just drew is the
-  // marker to reveal — a traversal that lands off-screen would otherwise look
-  // like nothing happened.
-  scrollOverlayIntoView(pagesEl.querySelector(".overlay .object-outline"));
-  // Screen readers get no handles to look at, so the position is announced.
-  setStatus(traversalAnnouncement(target.kind, next, objects.length, Boolean(inside)));
-}
-
-/** Escape from a shape inside a group selects the GROUP. `escapeClimbsToGroup`
- *  is the rule; this is the DOM half. */
-function climbOutOfGroup() {
-  const ref = objectSelection?.ref;
-  if (!escapeClimbsToGroup(ref)) return false;
-  // The parent group is a TOP-LEVEL object, so it is in the ordinary order;
-  // there is no second lookup to add to the engine for this.
-  let group = null;
-  try {
-    group = JSON.parse(doc.objectOrder()).find((entry) => entry.node === ref.root) ?? null;
-  } catch {
-    return false;
-  }
-  // The engine can no longer describe the parent — a group deleted out from
-  // under the selection. Collapsing to the caret is the honest fallback: a
-  // selection naming a node that is gone is worse than none.
-  if (!group) return false;
-  selectObject(
-    group.node,
-    group.kind,
-    selection?.focus || null,
-    group.anchored,
-    group,
-  );
-  return true;
-}
-
-/** Selects the shape under the pointer when the click lands in a group that is
- *  already held. `clickDescendsIntoGroup` is the rule; this is the DOM half. */
-function descendIntoSelectedGroup(object, page, x, y, event) {
-  const held = objectSelection?.ref;
-  const onHeldChild =
-    !!held && held.subject !== held.root && pointInsideObject(objectSelection.node, page, x, y);
-  const action = groupClickAction(held, object, onHeldChild);
-  // Pressing down on the shape already held begins its DRAG. Falling through
-  // to the ordinary path re-selected the group and dragged that instead, so a
-  // grouped shape could be picked up and never moved (`docs/109` HF-173).
-  if (action === "keep") {
-    if (objectSelection.canMove) startObjectMove(event, page, objectSelection.node);
-    return true;
-  }
-  if (action !== "descend") return false;
-  const child = doc.objectDescendantAt(object.root, page.pageNumber, x, y);
-  if (!child) return false;
-  const node = child.node;
-  const kind = child.kind;
-  const anchored = child.anchored;
-  const descriptor = { ...objectCapabilities(child), ...objectReference(child, node) };
-  child.free?.();
-  selectObject(node, kind, selection?.focus || null, anchored, descriptor);
-  // The SAME pointerdown that reached the shape also begins its drag, exactly
-  // as a click on a top-level object does.
-  if (descriptor.canMove) startObjectMove(event, page, node);
-  setStatus(`${OBJECT_LABELS[kind] ?? "Object"} inside group selected`);
-  return true;
-}
-
-/** Descends a selected multi-child group to its first paint-ordered leaf. The
- *  engine returns the complete root/subject/path reference and capabilities;
- *  the host never reconstructs group structure from canvas geometry. */
-function descendSelectedGroup() {
-  if (!doc || objectSelection?.kind !== "group") return false;
-  let descendants;
-  try {
-    descendants = JSON.parse(doc.objectDescendants(objectSelection.ref.root));
-  } catch {
-    return false;
-  }
-  const target = Array.isArray(descendants) ? descendants[0] : null;
-  if (!target) return false;
-  selectObject(target.node, target.kind, null, target.anchored, target);
-  setStatus(`${OBJECT_LABELS[target.kind] ?? "Object"} inside group selected`);
-  return true;
-}
-
-// ---- Header / footer editing -----------------------------------------------
+const {
+  drawSelection, paintOverlayLayer, proofing, replaceMisspelling, setGrammarCheckEnabled,
+  setSpellCheckEnabled, spellChecker,
+} = createProofing(ed);
+const {
+  OBJECT_CAPABILITY_KEYS, arrangeState, cancelCrop, chartSurface, climbOutOfGroup, commitCrop,
+  cropKeyIo, descendIntoSelectedGroup, descendSelectedGroup, documentHasObjects, enterCropMode,
+  insertChartWithData, keyboardObjectMove, objectArrange, objectCapabilities, objectInspector,
+  objectPresence, objectReference, objectResize, objectRotate, objectTextDrag, objectTextIo,
+  paintObjectCrop, reflectShapeFormatState, refusedObjectDrag, selectObject, selectedObjectContext,
+  shapeDrawMode, toggleObjectInspector, traverseObjects, updateObjectContextBar,
+  updateObjectSelectionState,
+} = createObjects(ed);
+const {
+  blockedFromPageSetup, deleteSelectedObject, drawRunningBands, editRunningContent, exitRunningEdit,
+  hideRunningMarker, insertNote, pageInView, runningBandAt, runningEditPageOrView, setObjectWrap,
+  setRunningContext, updateRunningMarker,
+} = createHeaderFooter(ed);
 // Word, Docs, OnlyOffice and LibreOffice all treat this as an editing CONTEXT
 // SWITCH — double-click into the band, edit in place with the body
 // de-emphasised, leave with Esc or a click in the body — never a modal dialog
@@ -4720,925 +3543,15 @@ function descendSelectedGroup() {
 let runningEditBand = null; // "header" | "footer" | null
 /** The 1-based page whose band is open — the other half of the editing context. */
 let runningEditPage = null;
-/** One viewport-driven projection update per animation frame. */
-let runningContextScrollFrame = 0;
-
-// ---- Header / footer markers -------------------------------------------------
-// LibreOffice Writer raises a marker with a `+` button when the pointer is in the
-// top or bottom margin, and that is the affordance adopted in docs/85 §8d. Word
-// and Docs rely on a bare double-click, which is invisible to anyone who has not
-// been told about it — and an ABSENT header has nothing to double-click on, so
-// the capability is unreachable without knowing the command exists. This is the
-// same one-surface-only reachability failure the command-surface audit kept
-// finding, so it is worth the small piece of chrome.
-let runningMarkerEl = null;
-let runningMarkerBand = null;
-
-/** ONE page's running-content context: its top/bottom margin bands in page-local
- *  twips, which section (1-based, of how many) the page belongs to, and whether
- *  each band is inherited from the previous section ("Same as Previous").
- *
- *  Asked of the engine PER PAGE. This used to read `pageSetup()` — the FIRST
- *  section's geometry — so on a document whose later section changes orientation
- *  or margins (the reported case: page 5 turns landscape) every page of that
- *  section drew its header boundary at the wrong height, and nothing on screen
- *  could say which section's header was open. */
-function runningBandsOf(page) {
-  if (!doc || !page) return null;
-  let bands;
-  try {
-    bands = JSON.parse(doc.runningBands(page.pageNumber));
-  } catch {
-    return null;
-  }
-  if (!bands) return null;
-  return {
-    top: bands.headerTwips,
-    bottom: bands.footerTwips,
-    section: bands.section,
-    sectionCount: bands.sectionCount,
-    headerLinked: bands.headerLinked === true,
-    footerLinked: bands.footerLinked === true,
-  };
-}
-
-function hideRunningMarker() {
-  if (!runningMarkerEl) return;
-  runningMarkerEl.hidden = true;
-  runningMarkerBand = null;
-}
-
-/** Shows the marker over `band` on `page`, creating the element on first use. */
-function showRunningMarker(page, band) {
-  if (runningMarkerBand === band && runningMarkerEl && !runningMarkerEl.hidden) return;
-  if (!runningMarkerEl) {
-    runningMarkerEl = document.createElement("button");
-    runningMarkerEl.type = "button";
-    runningMarkerEl.className = "running-marker";
-    runningMarkerEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      const target = runningMarkerBand;
-      hideRunningMarker();
-      if (target) editRunningContent(target);
-    });
-  }
-  if (page.wrap && runningMarkerEl.parentElement !== page.wrap) {
-    page.wrap.appendChild(runningMarkerEl);
-  }
-  runningMarkerBand = band;
-  runningMarkerEl.textContent = band === "header" ? "+ Header" : "+ Footer";
-  runningMarkerEl.title = `Edit the page ${band}`;
-  runningMarkerEl.setAttribute("aria-label", `Edit the page ${band}`);
-  // Page-local, inside the sheet: positioned against the page's own wrap (which
-  // the overlays already use as their containing block) rather than against the
-  // scroller, where the offsets put it above the paper entirely.
-  runningMarkerEl.style.left = "10px";
-  runningMarkerEl.style.top = band === "header" ? "10px" : "auto";
-  runningMarkerEl.style.bottom = band === "footer" ? "10px" : "auto";
-  runningMarkerEl.hidden = false;
-}
-
-/** Which margin band a page-local y falls in, or `null` for the body. The one
- *  place the band geometry is interpreted, so the marker, the double-click and
- *  the context all agree on where the header is. */
-function runningBandAt(page, yTwip) {
-  if (!doc || !page) return null;
-  // Asked of the engine, which owns page geometry. Deriving it here from the
-  // DOCUMENT's page setup was wrong the moment a document had two sections with
-  // different margins: the host and the engine then disagreed about where a
-  // page's header ends, and the same click meant two different things.
-  return doc.bandAt(page.pageNumber, 0, yTwip) || null;
-}
-
-/** Decides whether the pointer is in a margin band and shows/hides the marker.
- *  Suppressed while already editing running content — the context is open, so
- *  the marker would only be an invitation to do what is already happening. */
-function updateRunningMarker(page, event) {
-  // Moving onto the marker itself must not dismiss it: the pointer is then over
-  // the button rather than a page, so `pageFromEvent` finds nothing and the
-  // naive read of that is "left the band". Hovering an affordance cannot be the
-  // thing that destroys it.
-  if (runningMarkerEl && event?.target && runningMarkerEl.contains(event.target)) return;
-  if (!doc || runningEditBand || !page) {
-    hideRunningMarker();
-    return;
-  }
-  // `bandAt` alone answers this. Asking `runningBands` first — a second engine
-  // call and a JSON parse, per pointer move — only proved the page had margins.
-  const { y } = pointToTwip(page, event);
-  const band = runningBandAt(page, y);
-  if (band) showRunningMarker(page, band);
-  else hideRunningMarker();
-}
-
-/** The page every running-content command acts on: the page whose band is open
- *  while editing one, otherwise the page in view. Stays here rather than moving
- *  with the variant toggles, because it reads `runningEditPage` and `pages` — the
- *  application's own state — and is handed to the module as `io.runningPage`. */
-function runningEditPageOrView() {
-  if (runningEditPage) {
-    return pages.find((page) => page.pageNumber === runningEditPage) ?? pageInView();
-  }
-  return pageInView();
-}
-
-/** Whether a section-property change is forbidden right now, having already said
- *  why. The two review gates every page-setup edit shares, in one place: the
- *  modules that own those surfaces take this as `io.blockedFromMutating` rather
- *  than each carrying its own copy of the review policy. */
-function blockedFromPageSetup() {
-  if (blockMutationInViewing()) return true;
-  if (reviewMode === "suggesting") {
-    setStatus("Page-setup changes cannot be tracked yet; switch to Editing", "error");
-    return true;
-  }
-  return false;
-}
-
-/** Inserts a footnote or endnote at the caret and puts the caret IN the new
- *  note's body, which is where Word and Docs both leave it.
- *
- *  The engine ops existed but nothing called them, precisely because a note body
- *  could not be typed into: inserting one would have created a note the user
- *  could not fill in. That is fixed — a note body is an ordinary block surface
- *  now — so the command can finally ship. */
-async function insertNote(kind) {
-  if (!doc || !selection) return;
-  if (blockMutationInViewing()) return;
-  if (reviewMode === "suggesting") {
-    setStatus(`Inserting a ${kind} cannot be tracked yet; switch to Editing`, "error");
-    return;
-  }
-  let result;
-  try {
-    result =
-      kind === "footnote"
-        ? doc.insertFootnote(selection.focus.node, selection.focus.offset)
-        : doc.insertEndnote(selection.focus.node, selection.focus.offset);
-  } catch (err) {
-    setStatus(`Could not insert the ${kind}: ${err.message ?? err}`, "error");
-    return;
-  }
-  const node = result.node;
-  const offset = result.offset;
-  await applyEditResult(result);
-  // `applyEditResult` already left the caret on the note's first paragraph; make
-  // that explicit and tell the user where they now are.
-  selection = { anchor: { node, offset }, focus: { node, offset } };
-  drawSelection();
-  updateToolbar();
-  setStatus(`${kind === "footnote" ? "Footnote" : "Endnote"} added — type the note text`);
-  focusEditorSurface();
-}
-
-/** Creates an empty header or footer **for the section `page` belongs to** and
- *  enters it. Gated like any other mutation: refused read-only in Viewing, and
- *  blocked in Suggesting because adding running content has no tracked-change
- *  representation. */
-async function createRunningContent(band, page = pageInView()) {
-  if (!doc || !page) return;
-  if (blockMutationInViewing()) return;
-  if (reviewMode === "suggesting") {
-    setStatus(`Adding a ${band} cannot be tracked yet; switch to Editing`, "error");
-    return;
-  }
-  // The context is known BEFORE the edit — the user asked for this page's band —
-  // and the edit needs it: applying an edit places and scrolls to its caret, and
-  // a caret in running content has a placement on every page. Entering
-  // afterwards meant that scroll resolved without a context and landed on the
-  // last page's copy, throwing the user to the end of the document.
-  const previous = { band: runningEditBand, page: runningEditPage };
-  setRunningContext(band, page);
-  let result;
-  try {
-    result = doc.createRunningContent(band, page.pageNumber);
-  } catch (err) {
-    if (previous.band) setRunningContext(previous.band, { pageNumber: previous.page });
-    else exitRunningEdit();
-    setStatus(`Could not add a ${band}: ${err.message ?? err}`, "error");
-    return;
-  }
-  const node = result.node;
-  const offset = result.offset;
-  await applyEditResult(result);
-  // The new body is now laid out, so its paragraph has geometry to put a caret
-  // on; entering after the render is what makes the caret visible.
-  enterRunningEdit(band, node, offset, page);
-}
-
-/** Finds a caret position inside a page's header or footer by walking the band
- *  inward from the page edge until the engine answers.
- *
- *  `runningHitTest` resolves only points actually inside placed running content,
- *  and the band's height depends on the document's own margins, so a fixed probe
- *  point would miss. Walking in from the edge finds the first line whatever the
- *  geometry, and stops well before the body's content area so a document with no
- *  running content answers nothing rather than capturing a body line. */
-function probeRunningBand(page, band) {
-  if (!doc) return null;
-  const x = Math.round(page.wTwip / 2);
-  // A generous fraction of the page, which covers ordinary and large margins
-  // without reaching the middle of the sheet.
-  const span = Math.round(page.hTwip * 0.2);
-  const STEP = 40; // ~0.7mm; fine enough to land inside a single line box
-  for (let d = 0; d <= span; d += STEP) {
-    const y = band === "header" ? d : page.hTwip - d;
-    const hit = doc.runningHitTest(page.pageNumber, x, y);
-    if (!hit) continue;
-    const found = { band: hit.band, node: hit.node, offset: hit.offset };
-    hit.free?.();
-    if (found.band === band) return found;
-  }
-  return null;
-}
-
-/** Enters header/footer editing at `position`, an ordinary caret position that
- *  happens to live in running content. */
-function enterRunningEdit(band, node, offset, page) {
-  setRunningContext(band, page);
-  objectSelection = null;
-  tableRange.clear();
-  selection = { anchor: { node, offset }, focus: { node, offset } };
-  pagesEl.dataset.runningEdit = band;
-  document.body.classList.add("running-edit");
-  hideRunningMarker();
-  drawRunningBands(band);
-  setStatus(`Editing the ${band} — press Esc to return to the document`);
-  focusEditorSurface();
-  drawSelection();
-  updateToolbar();
-}
-
-/** Records which page's band is open, on the host AND in the engine.
- *
- *  Running content is ONE body drawn on every page, so a caret in it has a
- *  placement per page and "where is this caret" is unanswerable without naming
- *  one. The engine holds the context so every geometry answer uses it; keeping
- *  it only here is what put the caret on page 1's header while the user was
- *  editing page 3's and scrolled the view there. */
-function setRunningContext(band, page) {
-  runningEditBand = band;
-  runningEditPage = page?.pageNumber ?? runningEditPage ?? 1;
-  pagesEl.dataset.runningEdit = band;
-  doc?.setEditContext(band, runningEditPage);
-}
-
-/** Marks the band being edited on every page: a dashed boundary at the edge of
- *  the running area plus a small label, the way Word and LibreOffice show it.
- *
- *  This replaced dimming the canvas. The header is painted INTO the page raster,
- *  so dimming the page washed out the content being edited and greyed the whole
- *  sheet — the cue has to sit beside the band, not over it. */
-function drawRunningBands(band) {
-  clearRunningBands();
-  for (const page of materializedPages()) {
-    // Per PAGE, because the band belongs to the page's own section: a document
-    // that turns landscape at page 5 has different margins there, and one
-    // document-level band height drew the boundary in the wrong place on every
-    // page of that section.
-    const bands = runningBandsOf(page);
-    if (!bands) continue;
-    const { sy } = scaleOf(page);
-    const el = document.createElement("div");
-    el.className = `running-band${band === "footer" ? " is-footer" : ""}`;
-    if (band === "header") {
-      el.style.top = "0px";
-      el.style.height = `${Math.round(bands.top * sy)}px`;
-    } else {
-      el.style.bottom = "0px";
-      el.style.height = `${Math.round(bands.bottom * sy)}px`;
-    }
-    const label = document.createElement("span");
-    label.className = "running-band-label";
-    label.textContent = runningBandLabel(band, bands);
-    el.appendChild(label);
-    page.wrap.appendChild(el);
-  }
-}
-
-/** The band's label, which in Word NAMES THE SECTION once a document has more
- *  than one ("Header -Section 2-") and says when the band is inherited ("Same as
- *  Previous").
- *
- *  Without it two pages showing different headers looked identical, so a user
- *  editing one section's header and seeing another section's pages not change had
- *  nothing on screen to explain why — the reported confusion. */
-function runningBandLabel(band, bands) {
-  const name = band === "header" ? "Header" : "Footer";
-  if (!bands || (bands.sectionCount ?? 1) <= 1) return name;
-  const linked = band === "header" ? bands.headerLinked : bands.footerLinked;
-  return `${name} -Section ${bands.section}-${linked ? " · Same as Previous" : ""}`;
-}
-
-function clearRunningBands() {
-  for (const el of pagesEl.querySelectorAll(".running-band")) el.remove();
-}
-
-/** Leaves header/footer editing. The caret stays where it is rather than
- *  jumping: Word and Docs both leave the insertion point alone and simply end
- *  the context, and a caret that teleports on Esc loses the user's place. */
-function exitRunningEdit() {
-  if (!runningEditBand) return false;
-  runningEditBand = null;
-  runningEditPage = null;
-  doc?.setEditContext(undefined, undefined);
-  delete pagesEl.dataset.runningEdit;
-  document.body.classList.remove("running-edit");
-  clearRunningBands();
-  setStatus("");
-  drawSelection();
-  updateToolbar();
-  return true;
-}
-
-/** The page the user is looking at: the one covering the middle of the viewport,
- *  or the nearest page when the midpoint is in a sheet gap. Entering a header
- *  from the ribbon or the palette must act on THAT page — `pages[0]` sent the
- *  caret to page one and scrolled the view off whatever the user was working on. */
-function pageInView() {
-  if (!pages.length) return null;
-  const viewport = document.getElementById("viewport");
-  if (!viewport) return pages[0];
-  const middle = viewport.getBoundingClientRect().top + viewport.clientHeight / 2;
-  let nearest = pages[0];
-  let nearestDistance = Number.POSITIVE_INFINITY;
-  for (const page of materializedPages()) {
-    const rect = page.wrap.getBoundingClientRect();
-    if (rect.top <= middle && rect.bottom >= middle) return page;
-    const distance = rect.bottom < middle ? middle - rect.bottom : rect.top - middle;
-    if (distance < nearestDistance) {
-      nearest = page;
-      nearestDistance = distance;
-    }
-  }
-  return nearest;
-}
-
-/** Re-project a repeated running-content caret onto the page now in view.
- *
- * The selection's model node/offset and owning story do not change. Only the
- * page copy used for geometry changes, through the engine's edit-context API.
- * Throttling to one animation frame keeps wheel/touch scrolling bounded and
- * prevents overlay churn for every raw scroll event. */
-function syncRunningContextToViewport() {
-  runningContextScrollFrame = 0;
-  if (!runningEditBand || !selection) return;
-  const visiblePage = pageInView();
-  if (!visiblePage || visiblePage.pageNumber === runningEditPage) return;
-  // Different-first/even/odd sections can put a different running story on the
-  // visible page. Ask the engine whether the current model focus is actually
-  // placed there before changing projection; scrolling must never retarget the
-  // selection into an unrelated header/footer body.
-  let projected = [];
-  try {
-    doc.setEditContext(runningEditBand, visiblePage.pageNumber);
-    projected = doc.caretRect(selection.focus.node, selection.focus.offset);
-  } catch {
-    return;
-  } finally {
-    doc.setEditContext(runningEditBand, runningEditPage);
-  }
-  if (projected.length < 5 || projected[0] !== visiblePage.pageNumber) return;
-  breakTypingSession();
-  setRunningContext(runningEditBand, visiblePage);
-  drawSelection();
-}
-
-viewportEl.addEventListener(
-  "scroll",
-  () => {
-    if (!runningEditBand || runningContextScrollFrame) return;
-    runningContextScrollFrame = requestAnimationFrame(syncRunningContextToViewport);
-  },
-  { passive: true },
-);
-
-/** Puts the caret in a page's header or footer, entering the context. Used by
- *  the double-click in the band and by the Insert menu / palette commands —
- *  a double-click alone is invisible to anyone who has not been told about it,
- *  and an ABSENT header has nothing to double-click on (docs/85 §8d). */
-function editRunningContent(band, page = pageInView()) {
-  if (!doc || !page) return;
-  const hit = probeRunningBand(page, band);
-  if (hit) {
-    enterRunningEdit(hit.band, hit.node, hit.offset, page);
-    return;
-  }
-  // Geometry can miss an existing story when its content is outside the
-  // narrow probe band. Resolve the model's existing body before considering
-  // creation; creating here would relink the section and orphan the real
-  // header/footer. Asked about THIS page, so the body is the one this page
-  // shows — resolving it document-wide sent the edit into the first section's
-  // header while the user was looking at a later, differently-oriented one.
-  const existing = doc.runningContentCaret?.(band, page.pageNumber);
-  if (existing) {
-    const position = { node: existing.node, offset: existing.offset };
-    existing.free?.();
-    enterRunningEdit(band, position.node, position.offset, page);
-    return;
-  }
-  // Nothing placed in that band: make one. Word and Docs both create the
-  // header the moment you ask to edit a document that has none, rather than
-  // refusing — the ask IS the intent. One undoable action creates the body and
-  // links the section to it, and the caret it returns is the new body's first
-  // (empty) paragraph.
-  void createRunningContent(band, page);
-}
-
-/** Changes a floating object's text-wrap mode (docs/85 §5.3), as one undoable op.
- *  Blocked fail-closed in Suggesting/Viewing mode by `runEdit`'s gate. */
-function setObjectWrap(mode) {
-  const state = arrangeState();
-  if (!state || !wrapAvailability(state.read).available) return;
-  const plan = wrapPlan(mode, state.read, state.wrap);
-  // An empty plan means the object is already in that mode: a chip that
-  // re-asserts the current choice must not fill the undo stack.
-  if (plan.length === 0) return;
-  // ONE engine action (`docs/109` OL-04): as two calls only the second
-  // result's pages were repainted and the text did not reflow.
-  runEdit(() => runWrapPlan(doc, state.root, plan), { gate: true });
-}
-
-/** Deletes the selected object as one undoable action (docs/85 §4). Mirrors the
- *  wrap op's apply path: `runEdit(..., { gate:true })` is the single fail-closed
- *  gate (read-only in Viewing, untracked-blocked in Suggesting). The object
- *  selection is dropped inside the thunk — which `runEdit` only runs once the gate
- *  passes — so `applyEditResult` repaints with the plain text caret the
- *  `EditResult` points at (the object's former surrounding-text anchor). */
-function deleteSelectedObject() {
-  if (!objectSelection || objectSelection.mode !== "selected" || !objectSelection.canDelete) return;
-  const root = objectSelection.ref.root;
-  // A member of a group is deleted ALONE, as in Word; sending it to the root
-  // deleted everything grouped with it (HF-214).
-  const member = insideGroupSelection() ? objectSelection.node : null;
-  runEdit(
-    () => {
-      const res = member ? doc.deleteGroupMember(member) : doc.deleteObject(root);
-      objectSelection = null;
-      clearObjectStatus();
-      return res;
-    },
-    { gate: true },
-  );
-}
-
-// ---- Object alt text + crop dialogs -----------------------------------------
-// Reuse the shared `.dialog-overlay`/`.dialog-card` system (as the bookmark
-// manager does). The node is captured on open so the dialog stays bound to one
-// object even though `objectSelection` remains live behind the modal overlay.
-const altTextDialog = document.getElementById("altTextDialog");
-const altTextInput = document.getElementById("altTextInput");
-const altTextForm = document.getElementById("altTextForm");
-const altTextNote = document.getElementById("altTextNote");
-const altTextClose = document.getElementById("altTextClose");
-const altTextCancel = document.getElementById("altTextCancel");
-const ALT_TEXT_HINT = "Leave empty to remove the alt text. Enter applies; Shift+Enter adds a line.";
-/** The object a currently-open object dialog is editing. The dialog stays bound
- *  to it even though `objectSelection` keeps moving behind the modal. */
-let objectDialogNode = null;
-
-/** True (after surfacing the standard read-only/untracked message) if an object
- *  edit must not apply in the current review mode. Object edits are fail-closed
- *  in Suggesting (untracked) and read-only in Viewing — the same gate `runEdit`
- *  applies for delete/wrap; the dialogs pre-check it so they can close cleanly. */
-function objectEditBlocked() {
-  return blockMutationInViewing() || blockUntrackedInSuggesting();
-}
-
-function setAltTextNote(message, isError) {
-  altTextNote.textContent = message || ALT_TEXT_HINT;
-  altTextNote.classList.toggle("error", !!isError && !!message);
-}
-
-const altTextModal = altTextDialog
-  ? registerModal(altTextDialog, {
-      initialFocus: () => altTextInput,
-      fallbackFocus: () => pagesEl,
-      onOpen: () => altTextInput.select(),
-      onClose: () => {
-        objectDialogNode = null;
-      },
-    })
-  : null;
-
-function openAltTextDialog() {
-  if (!doc || !objectSelection?.canAltText || !altTextModal) return;
-  objectDialogNode = objectSelection.node;
-  // Prefill the current alt text so the user refines it rather than blind-
-  // overwriting (Word/Docs both show the existing description).
-  altTextInput.value = doc.objectDescr(objectSelection.node) ?? "";
-  setAltTextNote("", false);
-  altTextModal.open();
-}
-
-function closeAltTextDialog() {
-  altTextModal?.close();
-}
-
-/** Applies the alt text as one undoable action. The engine rejects an
- *  over-length description; that is shown inline (its raw error name is internal
- *  vocabulary) rather than as the toolbar's generic status. Empty input sends
- *  `null`, which clears the alt text. */
-function applyAltText() {
-  if (!doc || !objectDialogNode) return;
-  const text = altTextInput.value.trim();
-  if (objectEditBlocked()) {
-    closeAltTextDialog();
-    return;
-  }
-  let res;
-  try {
-    res = doc.setObjectDescr(objectDialogNode, text || null);
-  } catch (err) {
-    console.warn("setObjectDescr ignored:", err?.message ?? err);
-    setAltTextNote("That description is too long. Try a shorter one.", true);
-    altTextInput.focus();
-    return;
-  }
-  applyEditResult(res).then(() => {
-    closeAltTextDialog();
-    setStatus(text ? "Alt text updated" : "Alt text removed");
-  });
-}
-
-if (altTextDialog) {
-  altTextForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    applyAltText();
-  });
-  altTextInput.addEventListener("input", () => {
-    if (altTextNote.classList.contains("error")) setAltTextNote("", false);
-  });
-  altTextInput.addEventListener("keydown", (event) => {
-    // Enter applies; Shift+Enter inserts a newline (multi-line descriptions).
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      applyAltText();
-    }
-  });
-  altTextClose.addEventListener("click", () => closeAltTextDialog());
-  altTextCancel.addEventListener("click", () => closeAltTextDialog());
-}
-
-// Threshold (twips) beyond which a float body drag counts as a move, not a click.
-const MOVE_THRESHOLD_TWIP = 40;
-
-/** Begins a floating-object move drag (docs/85 §5.3): previews an outline that
- *  follows the pointer; the model is untouched until release. */
-// How close a dragged edge comes before the page pulls it onto a line, in CSS
-// pixels — converted to twips at the CURRENT zoom, so the pull is the same
-// distance under the finger at 50% as at 200%.
-const SNAP_TOLERANCE_PX = 7;
-
-/** The alignment lines `page` offers, and the snap radius in that page's twips.
- *  Called ONCE per gesture (at pointer-down), never per pointer move: it asks
- *  the engine for the page's ruler geometry, and a drag that re-asked would be
- *  paying an engine call per sample for an answer that cannot change. */
-function snapContextFor(page) {
-  let targets;
-  try {
-    const g = doc.pageRulerGeometry(page.pageNumber - 1);
-    targets = pageSnapTargets({
-      widthTwip: g.widthTwip,
-      heightTwip: page.hTwip,
-      marginStartTwip: g.marginStartTwip,
-      marginEndTwip: g.marginEndTwip,
-    });
-    g.free?.();
-  } catch {
-    return null; // no geometry, no guides — the drag is simply free
-  }
-  const { sx } = scaleOf(page);
-  return { targets, tolerance: sx > 0 ? SNAP_TOLERANCE_PX / sx : 0 };
-}
-
-/** Draws (or hides) the alignment guides for a live drag, on the drag's page. */
-function paintSnapGuides(drag, guides) {
-  drag.guideEls = paintGuides(drag.page.overlay, drag.guideEls, guides, scaleOf(drag.page));
-}
-
-/** Removes a gesture's guides. */
-function clearSnapGuides(drag) {
-  clearGuides(drag?.guideEls);
-  if (drag) drag.guideEls = null;
-}
-
-function startObjectMove(event, page, node) {
-  if (!doc || !objectSelection?.canMove || objectSelection.node !== node) return;
-  if (reviewMode === "viewing" || reviewMode === "suggesting") {
-    // Selection still happened; a move is simply not offered in these modes.
-    return;
-  }
-  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
-  if (rect.length < 5) return;
-  const [, x, y, w, h] = rect;
-  const preview = document.createElement("div");
-  preview.className = "object-resize-preview";
-  const { sx, sy } = scaleOf(page);
-  preview.style.left = `${x * sx}px`;
-  preview.style.top = `${y * sy}px`;
-  preview.style.width = `${w * sx}px`;
-  preview.style.height = `${h * sy}px`;
-  page.overlay.appendChild(preview);
-  objectMoveDrag = {
-    node,
-    root: objectSelection.ref.root,
-    // Set only for a shape INSIDE a group, which moves within its group
-    // instead of moving the group. `commitObjectMove` branches on it.
-    child: insideGroupSelection() ? node : null,
-    page,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    startX: x,
-    startY: y,
-    startW: w,
-    startH: h,
-    lastX: x,
-    lastY: y,
-    moved: false,
-    preview,
-    snap: snapContextFor(page),
-    guideEls: null,
-  };
-  // The move gesture takes the pointer the way the resize gesture already does:
-  // a touch drag otherwise never became a move at all (the browser had already
-  // committed to scrolling by the time `updateObjectMove` ran), and a mouse drag
-  // died the moment the pointer left the sheet.
-  event.preventDefault();
-  page.overlay?.setPointerCapture?.(event.pointerId);
-}
-
-/** Updates the move preview from the pointer delta (page-local twips), pulled
- *  onto the page's alignment lines when an edge or the centre comes close. */
-function updateObjectMove(event) {
-  if (!objectMoveDrag) return;
-  const drag = objectMoveDrag;
-  const { sx, sy } = scaleOf(drag.page);
-  const dxTwip = Math.round((event.clientX - drag.startClientX) / sx);
-  const dyTwip = Math.round((event.clientY - drag.startClientY) / sy);
-  let x = Math.max(0, drag.startX + dxTwip);
-  let y = Math.max(0, drag.startY + dyTwip);
-  // Alt is the Word/Docs escape hatch: hold it and the page stops pulling, so a
-  // deliberate 2mm-off-centre placement is still reachable.
-  if (drag.snap && !event.altKey) {
-    const snapped = snapBox({ x, y, w: drag.startW, h: drag.startH }, drag.snap.targets, drag.snap.tolerance);
-    x = snapped.x;
-    y = snapped.y;
-    paintSnapGuides(drag, snapped.guides);
-  } else if (drag.guideEls) {
-    paintSnapGuides(drag, []);
-  }
-  drag.lastX = x;
-  drag.lastY = y;
-  if (Math.abs(dxTwip) + Math.abs(dyTwip) > MOVE_THRESHOLD_TWIP) drag.moved = true;
-  drag.preview.style.left = `${x * sx}px`;
-  drag.preview.style.top = `${y * sy}px`;
-  event.preventDefault();
-}
-
-/** Commits (or cancels) a float move on release: one `SetAnchor` to the new
- *  absolute page position (page-local twips → EMU). Returns whether a drag was
- *  active. A bare click (no movement) commits nothing — it was a select. */
-function finishObjectMove(event) {
-  if (!objectMoveDrag) return false;
-  const drag = objectMoveDrag;
-  objectMoveDrag = null;
-  drag.preview.remove();
-  clearSnapGuides(drag);
-  event.preventDefault();
-  if (drag.moved) {
-    runEdit(() => commitObjectMove(drag), { gate: true });
-  } else {
-    drawSelection();
-  }
-  return true;
-}
-
-/** Nudges the selected floating object one `objectNudge` step (`object_keys.mjs`
- *  owns which key means which step), as a single `SetAnchor` op (gated in
- *  Viewing/Suggesting like a drag-move). */
-function nudgeSelectedObject({ dx, dy, step }) {
-  if (!doc || !objectSelection?.canMove) return;
-  const subject = objectSelection.node;
-  const root = objectSelection.ref.root;
-  const rect = doc.objectRect(subject); // [page, x, y, w, h] twips
-  if (rect.length < 5) return;
-  if (insideGroupSelection()) {
-    runEdit(
-      () => doc.moveGroupChildBy(subject, dx * step * EMU_PER_TWIP, dy * step * EMU_PER_TWIP),
-      { gate: true },
-    );
-    return;
-  }
-  const nx = Math.max(0, rect[1] + dx * step);
-  const ny = Math.max(0, rect[2] + dy * step);
-  runEdit(() => doc.setObjectAnchorPosition(root, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
-    gate: true,
-  });
-}
-
-/** Whether the selection is a shape INSIDE a group, which moves within the
- *  group rather than moving the group. */
-function insideGroupSelection() {
-  return traversalRoot(objectSelection?.ref) !== null;
-}
-
-/** Commits a finished drag.
- *
- *  A shape inside a group moves by a DELTA in its own parent's space;
- *  everything else sets an absolute page position. Using the absolute call for
- *  both is what made dragging a grouped shape move the whole group
- *  (`docs/109` HF-173) — the object being dragged was the child and the object
- *  being moved was its root. */
-function commitObjectMove(drag) {
-  if (drag.child) {
-    return doc.moveGroupChildBy(
-      drag.child,
-      (drag.lastX - drag.startX) * EMU_PER_TWIP,
-      (drag.lastY - drag.startY) * EMU_PER_TWIP,
-    );
-  }
-  return doc.setObjectAnchorPosition(
-    drag.root,
-    drag.lastX * EMU_PER_TWIP,
-    drag.lastY * EMU_PER_TWIP,
-  );
-}
-
-/** Aborts an in-progress float move, discarding the preview (Escape / cancel). */
-function cancelObjectMove() {
-  if (!objectMoveDrag) return;
-  objectMoveDrag.preview.remove();
-  clearSnapGuides(objectMoveDrag);
-  objectMoveDrag = null;
-  drawSelection();
-}
-
-/** Enters a container object's edit mode (docs/85 §4.3). A leaf object (image)
- *  has no edit mode — its primary context action is a later image slice. Placing
- *  a caret *inside* a text box's flowed body is the P1G-OBJ-TEXTBOX slice; here
- *  the grammar transitions state and the surrounding-text caret is shown. */
-function enterObjectEditMode(at = null) {
-  if (!objectSelection) return;
-  if (objectSelection.kind === "group" && descendSelectedGroup()) return;
-  if (!objectSelection.canEditText) {
-    const label = OBJECT_LABELS[objectSelection.kind] ?? "Object";
-    const hint = objectSelection.canResize ? " — drag its handles to resize" : "";
-    setStatus(`${label} selected${hint}`, "", { timeout: 3000 });
-    return;
-  }
-  objectSelection = { ...objectSelection, mode: "editing" };
-  // Put the caret IN the box. Edit mode used to be a state flag and nothing
-  // else: the border changed, and there was no caret and nowhere for a keystroke
-  // to go, so "entering" a text box did not let you type in it. The box's
-  // content is ordinary block content in the same id space, so this is an
-  // ordinary caret position once the geometry can be resolved.
-  // Prefer the point the user actually clicked; fall back to probing the box
-  // when entry came from the keyboard (Enter on a selected box), which has no
-  // point of its own.
-  const caret = at ?? caretInsideObject(objectSelection.node);
-  if (caret) {
-    selection = { anchor: caret, focus: caret };
-    setStatus("Editing the text box — press Esc to select it, Esc again to leave");
-  } else {
-    setStatus("This text box has no editable content yet", "error");
-  }
-  drawSelection();
-  updateToolbar();
-}
-
-/** A caret position inside object `node`'s text, found by probing its own
- *  rectangle — the engine resolves a point to text-box content, and the object's
- *  placed rect is the one region guaranteed to be inside it. */
-function caretInsideObject(node) {
-  const modelCaret = doc?.textBoxCaret?.(node);
-  if (modelCaret) {
-    const at = { node: modelCaret.node, offset: modelCaret.offset };
-    modelCaret.free?.();
-    return at;
-  }
-  const flat = doc?.objectRect(node);
-  if (!flat || flat.length < 5) return null;
-  const [pageNumber, x, y, w, h] = flat;
-  // Probe down the box's own left-to-middle band; the first line of content is
-  // near the top, but vertical anchoring can push it down.
-  for (let dy = 4; dy < h; dy += Math.max(20, Math.round(h / 12))) {
-    const hit = doc.textBoxHitTest(pageNumber, Math.round(x + Math.min(w / 2, 200)), Math.round(y + dy));
-    if (!hit) continue;
-    const at = { node: hit.node, offset: hit.offset };
-    hit.free?.();
-    return at;
-  }
-  return null;
-}
-
-/** Paints a clickable target over each checklist item's checkbox marker (docs/67
- *  — checklist authoring). The checkbox glyph itself is baked into the page raster
- *  by the layout engine; this overlay is the *model-as-truth* click target
- *  (`doc.checklistMarkers()` gives each marker's engine rect + node + state) that
- *  toggles the item's checked state via one edit op, then re-renders. Like the
- *  review markers it never mutates the canvas; unlike them it carries its own
- *  handler (the checkbox is a control, not passive text). Gated through
- *  `runNodeEdit` so it is blocked in Viewing and Suggesting, consistent with the
- *  other list edits. */
-function paintChecklistMarkers() {
-  if (!doc) return;
-  let markers = [];
-  try { markers = JSON.parse(doc.checklistMarkers()) ?? []; } catch { markers = []; }
-  for (const marker of markers) {
-    const el = place([marker.page, marker.x, marker.y, marker.w, marker.h], "checklist-marker");
-    if (!el) continue;
-    el.classList.toggle("is-checked", !!marker.checked);
-    el.dataset.checklistNode = marker.node;
-    el.setAttribute("role", "checkbox");
-    el.setAttribute("aria-checked", String(!!marker.checked));
-    el.setAttribute("aria-label", marker.checked ? "Checked item" : "Unchecked item");
-    el.title = marker.checked ? "Checked — click to uncheck" : "Unchecked — click to check";
-    el.addEventListener("pointerdown", (event) => {
-      // Own the gesture: toggle the item instead of placing a caret in the gutter.
-      event.preventDefault();
-      event.stopPropagation();
-      // Put the caret at the item so the mutation path has a selection and typing
-      // continues in that item afterward; then toggle (gated for Viewing/Suggesting).
-      selection = {
-        anchor: { node: marker.node, offset: 0 },
-        focus: { node: marker.node, offset: 0 },
-      };
-      // Checklist creation already provisions the symbol fallback that covers
-      // both the checked and unchecked glyphs. Starting another asynchronous
-      // coverage/render pass here races the edit repaint (and, when the edit is
-      // blocked, can erase its read-only feedback), so the toggle uses only the
-      // synchronous dirty-page repaint owned by `runNodeEdit`.
-      runNodeEdit(() => doc.toggleChecklistItem(marker.node));
-      focusEditorSurface();
-    });
-  }
-}
-
-/** Paints the caret or highlight for `sel` from engine geometry. */
-function paintSelection({ anchor, focus }) {
-  // A container with no `caret` region paints neither. The insertion point still
-  // EXISTS — the engine has to have one — it is just not shown or movable here.
-  if (!chromeShows("caret")) return;
-  // Keep the editable proxy on the caret so an IME candidate window and the iOS
-  // autocorrect bar anchor where the user is actually typing (docs/105 UX-001).
-  positionEditorTextInput(focus);
-  const collapsed = anchor.node === focus.node && anchor.offset === focus.offset;
-  if (!collapsed) {
-    const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
-    if (rects.length >= 5) {
-      for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), "highlight");
-      return;
-    }
-    // No visible rects (e.g. a tiny drag within one caret slot) → fall to caret.
-  }
-  // The load-time insertion point is real — every Insert command acts on it —
-  // but it is not yet the user's caret, and the editor surface it belongs to
-  // does not have focus, so keystrokes would go nowhere. Painting a blinking
-  // cursor there would be a lie; it appears the moment `#pages` takes focus.
-  if (collapsed && caretIsImplicit()) return;
-  place(doc.caretRect(focus.node, focus.offset), "caret");
-}
-
-/** The live IME composition overlay element, or `null` when no composition
- *  is in progress. Kept across `compositionupdate` calls so its text can be
- *  updated in place instead of recreated every keystroke. */
-let imePreeditEl = null;
-
-/** Shows the IME live-preedit overlay at a caret anchor: the in-progress
- * composition text the browser has not yet committed. Never touches the
- * document — `compositionend` still owns the actual insertion
- * (`commitComposedText`) — this only makes the intermediate state visible
- * (docs/67-EDITOR-UX-GAP-ANALYSIS.md, "IME live preedit"). */
-function showImePreedit(node, offset, text) {
-  hideImePreedit();
-  const flat = doc?.caretRect(node, offset) ?? [];
-  if (flat.length < 5) return;
-  const [pageNumber, x, y, , h] = flat;
-  const page = pages[pageNumber - 1];
-  if (!page?.overlay) return;
-  const { sx, sy } = scaleOf(page);
-  const el = document.createElement("div");
-  el.className = "ime-preedit";
-  el.style.left = `${x * sx}px`;
-  el.style.top = `${y * sy}px`;
-  el.style.height = `${h * sy}px`;
-  el.textContent = text;
-  page.overlay.appendChild(el);
-  imePreeditEl = el;
-}
-
-/** Updates the live-preedit overlay's text (a `compositionupdate` tick). */
-function updateImePreedit(text) {
-  if (imePreeditEl) imePreeditEl.textContent = text;
-}
-
-/** Removes the live-preedit overlay, if shown. */
-function hideImePreedit() {
-  imePreeditEl?.remove();
-  imePreeditEl = null;
-}
-
+const {
+  cancelObjectMove, clearSnapGuides, enterObjectEditMode, finishObjectMove, insideGroupSelection,
+  nudgeSelectedObject, objectEditBlocked, openAltTextDialog, paintSnapGuides, snapContextFor,
+  startObjectMove, updateObjectMove,
+} = createObjectMoves(ed);
+const {
+  hideImePreedit, navigateToAnchor, paintChecklistMarkers, paintSelection, showImePreedit,
+  updateImePreedit,
+} = createOverlayPaint(ed);
 /** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page,
  *  converting twips → CSS px with that page's live scale. */
 function place(flat, kind) {
@@ -5659,679 +3572,10 @@ function place(flat, kind) {
   page.overlay.appendChild(el);
   return el;
 }
-
-/** Navigates to an internal-link target and makes the target page/caret visible. */
-function navigateToAnchor(node, offset, pageNumber) {
-  if (!node) return;
-  pendingFormat = null;
-  selection = {
-    anchor: { node, offset },
-    focus: { node, offset },
-  };
-  drawSelection();
-  focusEditorSurface();
-  scrollCaretIntoView("center");
-}
-
-// -- Contents entries that were never hyperlinked -----------------------------
-// `toc_navigation.mjs` carries the finding, the measured evidence and the rule;
-// the navigator holds the two revision-keyed caches that keep a click O(1).
-const tocNavigator = createTocNavigator({ doc: () => doc, revision: documentVersion });
-
-/** The heading the contents entry at `node` names, or null. */
-const tocEntryTargetAt = (node, offset = null) => tocNavigator.targetAt(node, offset);
-
-/** Follows the contents entry at `node`, if it is one. Returns whether it did. */
-function followTocEntry(node, offset = null) {
-  const target = tocEntryTargetAt(node, offset);
-  if (!target) return false;
-  navigateToAnchor(target.node, 0, 0);
-  setStatus(t("toc.jumpedTo", { heading: target.label }));
-  return true;
-}
-
-/** Copies a WASM-owned link hit into an ordinary JS value, then frees it. */
-function linkAt(page, event) {
-  if (!doc) return false;
-  const { x, y } = pointToTwip(page, event);
-  const hit = doc.linkAt(page.pageNumber, x, y);
-  if (!hit) return null;
-  const link = {
-    kind: hit.kind,
-    url: hit.url,
-    anchor: hit.anchor,
-    tooltip: hit.tooltip,
-    startNode: hit.startNode,
-    startOffset: hit.startOffset,
-    endNode: hit.endNode,
-    endOffset: hit.endOffset,
-    targetNode: hit.targetNode,
-    targetOffset: hit.targetOffset,
-    targetPage: hit.targetPage,
-  };
-  hit.free();
-  return link;
-}
-
-/** Clears the visible chip without changing the document selection. */
-function hideLinkChip() {
-  linkChipShownBy = null;
-  activeLink = null;
-  linkChip.hidden = true;
-}
-
-/** The hover router (`docs/109` HF-179), so the pointer shape says what the
- *  thing under it will do. This is only the live state it reads. */
-/** The review-mode flags the pointer paths gate on, in one place: `editsBlocked`
- *  is Viewing (or read-only), `geometryBlocked` is anything but Editing, because
- *  a structural change has no tracked-change representation. */
-const pointerModeState = () => ({
-  editsBlocked: reviewMode === "viewing" || !!readOnlyReason,
-  geometryBlocked: reviewMode !== "editing" || !!readOnlyReason,
-});
-
-// The table chrome layer (`docs/141` D-1). It owns every pointer, keyboard and
-// touch gesture on a table BOUNDARY; `main.js` only routes events into it.
-const tableChrome = createTableChrome({
-  doc: () => doc,
-  pointToTwip,
-  scaleOf,
-  state: pointerModeState,
-  runEdit: (fn, options) => runEdit(fn, options),
-  status: (text, kind) => setStatus(text, kind),
-  t,
-  repaint: () => drawSelection(),
-});
-
-// The table GUTTER (`docs/141` D-2). It owns the strips beside the table, the
-// hover insert discs and the drag that selects several rows or columns; it reads
-// the SAME memoised page chrome the boundary layer does, so a hover still makes
-// no engine call.
-const tableGutter = createTableGutter({
-  doc: () => doc,
-  chromeOf: (page) => tableChrome.chromeOf(page),
-  pointToTwip,
-  scaleOf,
-  pageFromClientPoint,
-  pages: () => pages,
-  state: pointerModeState,
-  range: tableRange,
-  runEdit: (fn, options) => runEdit(fn, options),
-  status: (text, kind) => setStatus(text, kind),
-  t,
-  repaint: () => drawSelection(),
-  repaintOverlay: () => paintOverlayLayer(),
-});
-
-const pointerHover = createPointerHover({
-  doc: () => doc,
-  pages: () => pages,
-  materializedPages,
-  pointToTwip,
-  linkAt,
-  tocEntryAt: (node, offset) => !!tocEntryTargetAt(node, offset),
-  pointInsideObject,
-  objectCapabilities,
-  tableBoundaryAt: (page, event) => tableChrome.targetKind(page, event),
-  tableGutterAt: (page, event) => tableGutter.targetKind(page, event),
-  state: () => ({
-    formatPainting: !!formatPainter,
-    ...pointerModeState(),
-    inRunningStory: !!runningEditBand,
-    insideObjectNode: objectSelection?.mode === "editing" ? objectSelection.node : null,
-    resizeDrag: objectResize.record(),
-    cropDrag: objectCropSession?.handleDrag ?? null,
-    moveDrag: objectMoveDrag ?? (objectTextDrag.dragging() || null),
-    tableDrag: tableChrome.dragKind(),
-    tableStripDrag: tableGutter.dragKind(),
-    textDrag: dragging,
-  }),
-});
-
-/** Shows a bounded link chip and selects the exact authored model range, making
- * the target discoverable without hijacking drag or Shift-selection behavior. */
-function showLinkChipAt(page, event) {
-  const link = linkAt(page, event);
-  if (!link) {
-    hideLinkChip();
-    return false;
-  }
-  // Selecting the link's own text is what a click on TEXT does. A click on a
-  // linked OBJECT has already selected the object, and replacing that with a
-  // text range would drop the handles the same gesture just put up.
-  selection = {
-    anchor: { node: link.startNode, offset: link.startOffset },
-    focus: { node: link.endNode, offset: link.endOffset },
-  };
-  drawSelection();
-  return showLinkChip(link, event);
-}
-
-/** The pointer event that opened the chip, so the light-dismiss listener below
- *  does not close it on the very event that asked for it.
- *
- *  A link on TEXT is offered on pointer-UP, after the dismiss listener has run
- *  on the matching pointer-down, so it never collided. A link on an OBJECT is
- *  resolved during pointer-DOWN (selecting it is a pointer-down gesture), so the
- *  chip opened and the same event closed it — which looked exactly like the
- *  engine not reporting the link. */
-let linkChipShownBy = null;
-
-/** Renders the chip for a link already resolved, leaving the selection alone. */
-function showLinkChip(link, event) {
-  activeLink = link;
-  linkChipShownBy = event;
-  pendingFormat = null;
-
-  const internal = link.kind === "internal";
-  const resolved = !internal || (!!link.targetNode && !!link.targetPage);
-  const target = internal ? `#${link.anchor}` : link.url;
-  linkChipKind.textContent =
-    link.tooltip || (internal ? "Document bookmark" : "External link");
-  linkChipTarget.textContent = target;
-  linkChipTarget.title = target;
-linkChipAction.textContent = internal ? (resolved ? "Jump" : "Missing") : "Open";
-linkChipAction.disabled = !resolved;
-linkChipEdit.hidden = internal;
-linkChipRemove.hidden = internal;
-  linkChip.hidden = false;
-
-  const width = linkChip.offsetWidth;
-  const height = linkChip.offsetHeight;
-  const left = Math.max(12, Math.min(event.clientX - 18, window.innerWidth - width - 12));
-  let top = event.clientY + 14;
-  if (top + height > window.innerHeight - 12) top = event.clientY - height - 14;
-  linkChip.style.left = `${Math.round(left)}px`;
-  linkChip.style.top = `${Math.max(12, Math.round(top))}px`;
-  return true;
-}
-
-
-
-/** Activates a previously queried authored link. The runtime resolves
- * geometry/bookmarks; this host owns the external-scheme allowlist and browser
- * navigation. */
-function activateLink(link) {
-  if (!link) return false;
-  hideLinkChip();
-
-  if (link.kind === "internal") {
-    if (!link.targetNode || !link.targetPage) {
-      setStatus(`Bookmark “${link.anchor}” was not found`, "error");
-      return true;
-    }
-    navigateToAnchor(link.targetNode, link.targetOffset, link.targetPage);
-    setStatus(t("toc.jumpedTo", { heading: tocNavigator.headingAt(link.targetNode) ?? link.anchor }));
-    return true;
-  }
-
-  followExternalTarget(link.url, setStatus);
-  return true;
-}
-
-/** Touch selection — the long press, the two handles, the loupe and the caret
- *  drag (`105` UX-018, `148` §9 item 2). Every tunable and the whole gesture
- *  live in the module; this is all the shell owes it. */
-const touchSelection = createTouchSelection({
-  view: window,
-  surface: pagesEl,
-  mount: document.body,
-  makeEl: (tag) => document.createElement(tag),
-  enabled: () => !!doc && chromeShows("caret"),
-  pageAt: (x, y) => pageFromClientPoint(x, y),
-  scaleOf,
-  anchorAt,
-  caretRect: (at) => doc.caretRect(at.node, at.offset),
-  wordAt: (node, offset) => doc.wordAt(node, offset),
-  selection: () => selection,
-  setSelection: (next) => void (selection = next),
-  draw: drawSelection,
-  focus: focusEditorSurface,
-  cancelGesture: resetPointerGesture,
-});
-
-function onPointerDown(page, event) {
-  if (event.button !== 0) return;
-  // No caret region: a press neither places an insertion point nor starts a
-  // drag-selection. Scrolling and zooming are not gestures on the document.
-  // This precedes the shape gate deliberately — a container offered no caret is
-  // the page and nothing else, so it must not begin drawing one either.
-  if (!chromeShows("caret")) return;
-  // An armed shape owns the gesture: this press is the first corner of the
-  // rectangle being drawn, not a caret placement.
-  if (shapeDrawMode.tryBeginDraw(page, event)) return;
-  // A pointerdown that reaches the page during a crop (a crop handle's own
-  // pointerdown stops propagation) is a click-away → commit the crop, exactly as
-  // Word/Docs do. This click is consumed by the commit; the next click interacts.
-  if (objectCropSession) {
-    event.preventDefault();
-    commitCrop();
-    return;
-  }
-  focusEditorSurface();
-  hideLinkChip();
-  pointerHover.clear();
-  pointerGesture = null;
-  // Object selection (docs/85 §3.1) takes precedence over a text caret: a click
-  // on a drawing/image/text box selects it as a unit and shows its handles.
-  const { x, y } = pointToTwip(page, event);
-  // An object you are INSIDE is a text surface, not a target. Selecting it as a
-  // unit here meant that while editing a text box, a click in its own empty
-  // space dropped you from editing back to "selected" — the box stopped being
-  // something you were typing in and became something you had picked up.
-  const editingHere =
-    objectSelection?.mode === "editing" &&
-    pointInsideObject(objectSelection.node, page, x, y);
-  const object = editingHere ? null : doc.objectAt(page.pageNumber, x, y);
-  // A SECOND click inside a group selects the shape under the pointer, the way
-  // Word and PowerPoint do: the first click picks the group up as a unit, the
-  // next one reaches into it.
-  //
-  // Without this a group was a wall. `objectAt` deliberately answers with the
-  // group root — correct for the first click — and nothing ever asked a
-  // different question, so clicking a shape inside a group selected the group,
-  // every time, however many times you clicked. The only way in was Tab (and
-  // only since #574) or a double-click, which skips selection entirely and
-  // drops straight into typing. On the owner's Medical form, whose drawings are
-  // one group of four, that is the whole of "they're all grouped and I can't
-  // edit them".
-  const descended = object ? descendIntoSelectedGroup(object, page, x, y, event) : null;
-  if (descended) {
-    object.free?.();
-    // On the owner's Medical form the link is on the CHILD — four of them, none
-    // on the group — so without this the document that motivated the feature is
-    // the one where it never appears.
-    const childLink = linkAt(page, event);
-    if (childLink) showLinkChip(childLink, event);
-    event.preventDefault();
-    return;
-  }
-  if (object) {
-    const node = object.node;
-    const kind = object.kind;
-    const anchored = object.anchored;
-    const descriptor = {
-      ...objectCapabilities(object),
-      ...objectReference(object, node),
-    };
-    object.free?.();
-    // A caret at the nearest text slot is the object's surrounding-text anchor
-    // (for the two-step Escape); fall back to the current caret.
-    const anchor = anchorAt(page, event) || selection?.focus || null;
-    // Ctrl/⌘+click ADDS to the selection instead of replacing it — Word,
-    // PowerPoint and Docs all build a multi-object selection this way, and it is
-    // the only way to reach Group with more than one object. The primary
-    // selection stays the object clicked first; the modifier click keeps it and
-    // records the new one alongside.
-    if ((event.metaKey || event.ctrlKey) && objectSelection?.mode === "selected"
-        && objectSelection.ref.root !== descriptor.root) {
-      objectArrange.toggleMember(descriptor);
-      setStatus(t("object.addedToSelection"));
-      drawSelection();
-      event.preventDefault();
-      return;
-    }
-    objectArrange.clearMembers();
-    selectObject(node, kind, anchor, anchored, descriptor);
-    // A linked picture offers its target as linked text does (`linkAt` answers
-    // for both), but AFTER selection, so the handles stay and the chip is an
-    // addition. The pointer stays `move`: `pointer_cursor.mjs` `object-movable`
-    // records why, and ONLYOFFICE and Word agree.
-    const objectLink = linkAt(page, event);
-    if (objectLink) showLinkChip(objectLink, event);
-    // The same gesture that selects an object drags it (a bare click commits
-    // nothing): a floating one anywhere on the page, an in-line one to another
-    // place in the text (UX-OB-02), and any other says why it cannot.
-    if (descriptor.canMove) startObjectMove(event, page, node);
-    else if (!objectTextDrag.arm(event, page, objectSelection)) refusedObjectDrag.arm(event, objectTextIo.refusal({ ...descriptor, anchored }));
-    event.preventDefault();
-    return;
-  }
-  // A click that is not on an object deselects any selected object and proceeds
-  // with ordinary text hit-testing. The chrome has to go with it: clearing the
-  // variable alone left the handles, the context bar and `data-object-mode` on
-  // screen, so a text box the user had clicked away from still looked — and to
-  // anything reading the state, still was — the thing being edited.
-  // ...unless the click is a caret placement INSIDE the object being edited, in
-  // which case there is nothing to deselect: the object is the surface, not the
-  // target. Clearing it here dropped the user out of the box on every click in
-  // its own empty space.
-  // A press on a table BOUNDARY is a resize, not a caret placement — and it works
-  // on any table on the page, not only the one the caret is in, which is the whole
-  // of `docs/141` D-1. Placed after the object path because an object drawn over a
-  // table is still the thing under the pointer (the same order
-  // `pointer_cursor.mjs` records), and before the caret path because the caret is
-  // what this gesture replaces.
-  // A press in the GUTTER beside the table selects a row or a column, or inserts
-  // one at the `+` disc's boundary. BEFORE the boundary layer, because the two
-  // zones overlap in a thin band and the gutter is the one the point is really
-  // inside: a boundary zone reaches ±5px OUTSIDE the table's box, so without
-  // this the disc on the table's bottom edge was stolen by a row resize unless
-  // you aimed past the first 5px of the strip.
-  if (tableGutter.tryBeginDrag(page, event)) return;
-  if (tableChrome.tryBeginDrag(page, event)) return;
-  // A TOUCH tap inside a table arms 24px boundary pills, because hover — the
-  // affordance every branch above depends on — does not exist on touch. The first
-  // `pointerType` read in the product (TBL-18).
-  tableChrome.noteTouch(page, event);
-  const wasSelected = objectSelection !== null;
-  if (!editingHere) {
-    objectSelection = null;
-    clearObjectStatus();
-    if (wasSelected) {
-      updateObjectSelectionState();
-      updateObjectContextBar();
-    }
-  }
-  // Which STORY the caret is in before the click resolves. `anchorAt` may leave a
-  // header, footer or text box on the way to answering — that is the deliberate
-  // way out of running content — and when it does, the existing selection anchor
-  // belongs to a story the new focus does not.
-  const storyBefore = currentStoryKey();
-  const anchor = anchorAt(page, event);
-  if (!anchor) {
-    updateObjectSelectionState();
-    updateObjectContextBar();
-    return;
-  }
-  // A click on a FORM CHECKBOX ticks it rather than placing a caret beside a
-  // glyph. Word and ONLYOFFICE both do this (`docs/118` §2), and it is the
-  // difference between the owner's Medical Incident Report Form being a form
-  // and being a picture of one: eight controls, none of them tickable.
-  if (toggleFormCheckboxAt(anchor.node, anchor.offset)) {
-    event.preventDefault();
-    return;
-  }
-  pendingFormat = null; // a click moves the caret → disarm typing format
-  verticalGoal.clear(); // …and puts the caret in a column of its own choosing
-  // …but a click INSIDE the accent fill of the row/column/table you just selected
-  // keeps that selection (`docs/141` TBL-05). Every left-click cleared it, so a
-  // user who selected a row and then clicked it to "confirm" lost it silently and
-  // Merge cells went grey again. Google Docs keeps a cell block until you click
-  // OUTSIDE it or start typing; the `contextmenu` handler already asks this exact
-  // question through the same helper.
-  //
-  // O(1) when there is no table selection — the store returns on `!selection`
-  // before it queries the engine — so the ordinary click path gains no document
-  // walk (`docs/107` §4).
-  if (!tableRange.containsClientPoint(event.clientX, event.clientY)) tableRange.clear();
-  dragging = true;
-  pointerGesture = {
-    page,
-    clientX: event.clientX,
-    clientY: event.clientY,
-    lastClientX: event.clientX,
-    lastClientY: event.clientY,
-    moved: false,
-    shift: event.shiftKey,
-    // A drag cannot construct a range across WordprocessingML stories. Retain
-    // the surface that owned pointer-down so pointer-move can clip at its edge
-    // instead of reusing click-away behavior and silently entering the body.
-    runningBand: runningEditBand,
-    objectNode: editingHere ? objectSelection.node : null,
-    // The cell the press landed in, so a drag that leaves it becomes a CELL range
-    // instead of a text range (`docs/141` D-3). One `inTable` per press, and the
-    // drag re-asks only when the paragraph under the pointer changes.
-    cellAnchor: doc.inTable(anchor.node) ? anchor.node : "",
-    lastCellProbe: "",
-    cellRange: false,
-  };
-  // Shift+Click extends the current selection to the click (keeps the anchor) —
-  // but only WITHIN one story. A range cannot span WordprocessingML stories, and
-  // shift-clicking from an open header into the body used to build exactly that:
-  // the anchor stayed in the header while the focus landed in the body, which
-  // painted 422 highlight rectangles across every page of the document and then
-  // made the editor swallow every keystroke, because no edit can apply to a range
-  // whose ends live in different stories.
-  //
-  // `updateDragSelection` already clips a DRAG at the story edge; the click path
-  // never got the same rule. Crossing stories with Shift is treated as a plain
-  // click, which is what both Word and Docs do.
-  const crossedStory = currentStoryKey() !== storyBefore;
-  selection =
-    event.shiftKey && selection && !crossedStory
-      ? { anchor: selection.anchor, focus: anchor }
-      : { anchor, focus: anchor };
-  // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
-  // for a comment the click landed inside, without altering the caret/range
-  // hit-testing just computed above.
-  syncActiveReviewCommentToCaret(anchor);
-  drawSelection();
-  if (pointerDragSelects(event)) startSelectionAutoScroll(); // never under a finger
-  event.preventDefault();
-}
-
-function onPointerMove(page, event) {
-  if (objectTextDrag.active()) return; // the window listener drives it, once per event
-  if (objectMoveDrag) {
-    updateObjectMove(event);
-    return;
-  }
-  if (objectRotate.active()) {
-    objectRotate.update(event);
-    return;
-  }
-  if (objectResize.active()) {
-    objectResize.update(event);
-    return;
-  }
-  if (tableChrome.dragging()) {
-    tableChrome.moveDrag(event);
-    return;
-  }
-  if (tableGutter.dragging()) {
-    tableGutter.moveDrag(event);
-    return;
-  }
-  if (dragging && event.buttons === 0) {
-    resetPointerGesture();
-    return;
-  }
-  if (!dragging) {
-    // FIRST and unthrottled: a few dozen comparisons over the memoised page
-    // chrome, no engine call, and a repaint only when the armed band changes.
-    tableGutter.hover(page, event);
-    pointerHover.schedule(page, event);
-    return;
-  }
-  updateDragSelection(event);
-}
-
-function updateDragSelection(event) {
-  if (!dragging || !pointerGesture || !selection || !pointerDragSelects(event)) return;
-  pointerGesture.lastClientX = event.clientX;
-  pointerGesture.lastClientY = event.clientY;
-  if (
-    pointerGesture &&
-    Math.hypot(
-      event.clientX - pointerGesture.clientX,
-      event.clientY - pointerGesture.clientY,
-    ) > 4
-  ) {
-    pointerGesture.moved = true;
-  }
-  const page = pageFromClientPoint(event.clientX, event.clientY);
-  if (!page) return;
-  const { x, y } = pointToTwip(page, event);
-  // Click-away is an entry/exit gesture; crossing a boundary while the button
-  // is already down is not. Keep the last valid endpoint when the pointer leaves
-  // the text-box story that owned pointer-down.
-  if (
-    pointerGesture.objectNode &&
-    !pointInsideObject(pointerGesture.objectNode, page, x, y)
-  ) {
-    return;
-  }
-  // `anchorAt` deliberately exits running-content editing for an ordinary body
-  // click. Do not call that mutating path until the moving point is proven to be
-  // in the same running story as pointer-down. Holding the last valid endpoint
-  // clips the range at the story boundary and keeps the model selection valid.
-  if (pointerGesture.runningBand) {
-    const hit = doc.resolveClick(page.pageNumber, x, y);
-    if (!hit) return;
-    const sameStory = hit.band === pointerGesture.runningBand && !!hit.node;
-    hit.free?.();
-    if (!sameStory) return;
-  }
-  const focus = anchorAt(page, event);
-  if (!focus) return;
-  // A drag that crosses a CELL boundary selects the rectangle, the way Docs and
-  // Word both do; one that stays inside a cell is ordinary text selection. Every
-  // other drag supersedes a row/column/table selection, which is why the clear
-  // lives here rather than in the "has moved" branch above: pointer-down inside
-  // the fill keeps the selection (`docs/141` TBL-05), and the moment the gesture
-  // turns into a drag it is no longer a confirming click.
-  if (tableRange.dragTo(pointerGesture.cellAnchor, focus.node, pointerGesture)) return syncSelectionToCellRange();
-  tableRange.clear();
-  selection = { anchor: selection.anchor, focus };
-  drawSelection();
-}
-
-/** Follows the caret/selection to the cell rectangle the store now holds — the
- *  one line both the drag and Shift+Arrow need afterwards, so Copy and the
- *  toolbar see a range inside the selected cells rather than a stale caret. */
-function syncSelectionToCellRange() {
-  const range = tableRange.get();
-  if (!range) return;
-  selection = {
-    anchor: { node: range.anchorNode, offset: 0 },
-    focus: { node: range.focusNode, offset: 0 },
-  };
-  drawSelection();
-}
-
-function startSelectionAutoScroll() {
-  if (selectionAutoScrollFrame) return;
-  const tick = () => {
-    selectionAutoScrollFrame = 0;
-    if (!dragging || !pointerGesture) return;
-    // Both axes (`edge_scroll.mjs`, shared with the in-text object drag).
-    const { dx, dy } = edgeScrollStep(viewportEl.getBoundingClientRect(), pointerGesture.lastClientX, pointerGesture.lastClientY);
-    if (dy !== 0 || dx !== 0) {
-      const beforeTop = viewportEl.scrollTop;
-      const beforeLeft = viewportEl.scrollLeft;
-      if (dy !== 0) viewportEl.scrollTop = Math.max(0, beforeTop + dy);
-      if (dx !== 0) viewportEl.scrollLeft = Math.max(0, beforeLeft + dx);
-      if (viewportEl.scrollTop !== beforeTop || viewportEl.scrollLeft !== beforeLeft) {
-        updateDragSelection(clientPointEvent(pointerGesture.lastClientX, pointerGesture.lastClientY));
-      }
-    }
-
-    selectionAutoScrollFrame = requestAnimationFrame(tick);
-  };
-  selectionAutoScrollFrame = requestAnimationFrame(tick);
-}
-
-function onPointerUp(event) {
-  document.body.style.cursor = ""; // the gesture no longer owns the cursor
-  refusedObjectDrag.end();
-  if (objectTextDrag.finish(event)) return;
-  if (shapeDrawMode.finish()) return;
-  if (finishObjectMove(event)) return;
-  if (objectRotate.finish(event)) return;
-  if (objectResize.finish(event)) return;
-  if (tableChrome.finishDrag(event)) return;
-  if (tableGutter.finishDrag(event)) return;
-  const gesture = pointerGesture;
-  resetPointerGesture();
-  // Format painter: this pointer gesture landed on the document, so consume it as
-  // the paint target (a drag's range, or the word under a bare click) instead of
-  // the normal caret/link-chip behavior.
-  if (formatPainter && gesture) {
-    void paintFormatFromGesture(gesture, event);
-    return;
-  }
-  if (
-    gesture &&
-    !gesture.shift &&
-    !gesture.moved &&
-    Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
-  ) {
-    const link = linkAt(gesture.page, event);
-    if (link?.kind === "internal" && link.targetNode && link.targetPage) {
-      activateLink(link);
-    } else if (!link && followTocEntry(selection?.focus?.node, selection?.focus?.offset)) {
-      // A contents entry whose field carried no `\h`, so there is no authored
-      // link to follow. The caret is already on the entry — this click placed it
-      // — so the paragraph is known without a second hit-test.
-    } else {
-      showLinkChipAt(gesture.page, event);
-    }
-  }
-}
-
-function selectionText() {
-  if (!selection) return;
-  const { anchor, focus } = selection;
-  return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
-}
-
-/** The selection as clipboard HTML: the exact `copyRichRuns` JSON embedded as a leading comment (a
- * lossless internal round-trip marker) plus a visible rendering built from the same runs and the
- * block outline (headings, lists, tables: what an external app sees, TA-12). `null` if nothing. */
-function selectionRichHtml() {
-  if (!selection) return null;
-  const { anchor, focus } = selection;
-  const runsJson = doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset);
-  const runs = JSON.parse(runsJson);
-  const outline = JSON.parse(doc.copyBlockOutline(anchor.node, anchor.offset, focus.node, focus.offset));
-  // When the selection spans block structure the flat runs flatten — a table or
-  // a list — carry a structured payload for internal OpenDoc-to-OpenDoc paste
-  // (`{ blocks, runs }`: the flat runs ride along so a Suggesting-mode paste, or
-  // a structured paste the engine declines, still has the rich-run fallback).
-  const structured = doc.copyStructured(anchor.node, anchor.offset, focus.node, focus.offset);
-  if (structured) {
-    const blocks = JSON.parse(structured).blocks;
-    return embedMarker(JSON.stringify({ blocks, runs })) + runsToHtml(runs, outline);
-  }
-  if (!runs.length) return null;
-  return embedMarker(runsJson) + runsToHtml(runs, outline);
-}
-
-async function copySelection(event = null) {
-  const text = selectionText();
-  if (!text) return;
-  const html = selectionRichHtml();
-  if (event?.clipboardData) {
-    event.preventDefault();
-    event.clipboardData.setData("text/plain", text);
-    if (html) event.clipboardData.setData("text/html", html);
-    const n = text.length;
-    setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
-    return true;
-  }
-  try {
-    if (html && window.ClipboardItem) {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          "text/plain": new Blob([text], { type: "text/plain" }),
-          "text/html": new Blob([html], { type: "text/html" }),
-        }),
-      ]);
-    } else {
-      await navigator.clipboard.writeText(text);
-    }
-    const n = text.length;
-    setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
-    return true;
-  } catch (err) {
-    console.warn("clipboard write failed:", err);
-    setStatus("Clipboard write was blocked by the browser", "err");
-    return false;
-  }
-}
-
-// Delegated pointer handling: resolve which page the event is over.
-function pageFromEvent(event) {
-  const wrap = event.target.closest?.(".page-wrap");
-  if (!wrap) return null;
-  // The sheet's OWN page number, not its position among the sheets: the nth
-  // sheet is the nth page only while the reader is at the top of the document,
-  // so indexing by position hit-tests a scrolled-to click on the wrong page.
-  const idx = pageIndexOfWrap(wrap);
-  return pages[idx] ?? null;
-}
-
+const {
+  copySelection, cycleReviewMode, followTocEntry, hideLinkChip, linkAt, pageFromEvent, pointerHover,
+  syncSelectionToCellRange, tableChrome, tableGutter, tocEntryTargetAt, touchSelection,
+} = createPointer(ed);
 function pageFromClientPoint(clientX, clientY) {
   const target = document.elementFromPoint(clientX, clientY);
   const direct = target ? pageFromEvent({ target }) : null;
@@ -6356,271 +3600,6 @@ function pageFromClientPoint(clientX, clientY) {
   }
   return best;
 }
-pagesEl.addEventListener("pointerdown", (e) => {
-  // Only a hit inside a page places the caret: a gap click must not jump into the nearest fragment.
-  const page = pageFromEvent(e);
-  if (page) onPointerDown(page, e);
-});
-installViewportFocusGuard({ viewport: viewportEl, pages: pagesEl, lastSheet: () => pages[pages.length - 1]?.wrap, focus: focusEditorSurface, caretToEnd: (extend) => doc && navToPosition(doc.lastPosition(), extend) });
-// Focus is the moment the load-time insertion point stops being implicit: the
-// surface can now receive typing (`#pages` is tabindex="0"), so the blinking
-// caret is finally honest. This covers keyboard entry (Tab) as much as clicks,
-// and every `focusEditorSurface()` a command ends with — which is why an insert
-// run from the ribbon leaves a visible caret after the thing it inserted.
-/** Promotes the load-time insertion point to a real caret. Until the editing
- *  surface has focus the caret is implicit and deliberately unpainted — a
- *  blinking cursor you cannot type into is a lie (see `implicitCaretAt`).
- *
- *  Bound to BOTH focusable parts of the surface. It used to hang off `#pages`
- *  alone, which silently stopped firing when the editable proxy took over focus
- *  (docs/105 UX-001): the caret then stayed implicit forever and nothing was
- *  painted, which broke every test that reads `.overlay .caret`. */
-function promoteImplicitCaret() {
-  if (!implicitCaretAt) return;
-  implicitCaretAt = null;
-  if (doc) drawSelection();
-}
-
-pagesEl.addEventListener("focus", promoteImplicitCaret);
-if (editorTextInputEl) editorTextInputEl.addEventListener("focus", promoteImplicitCaret);
-pagesEl.addEventListener("pointermove", (e) => {
-  const page = pageFromEvent(e);
-  if (page && !dragging) onPointerMove(page, e);
-  // The header/footer marker follows the pointer into a margin band.
-  if (!dragging) updateRunningMarker(page, e);
-});
-pagesEl.addEventListener("pointerleave", () => hideRunningMarker());
-window.addEventListener("pointermove", (e) => {
-  // A gesture in flight owns the cursor wherever the pointer goes, including
-  // off the sheet it started on — so the router runs here too, not only over
-  // `#pages`. It short-circuits on the drag kind and asks the engine nothing.
-  if (pointerHover.dragKind()) pointerHover.schedule(null, e);
-  if (refusedObjectDrag.move(e)) return; // a drag of an object that cannot move says why
-  if (objectTextDrag.move(e)) return; // an in-line object follows the drop caret (UX-OB-02)
-  if (shapeDrawMode.dragging()) {
-    shapeDrawMode.update(e);
-    return;
-  }
-  if (objectMoveDrag) {
-    updateObjectMove(e);
-    return;
-  }
-  if (objectRotate.active()) {
-    objectRotate.update(e);
-    return;
-  }
-  if (objectResize.active()) {
-    objectResize.update(e);
-    return;
-  }
-  if (tableChrome.dragging()) {
-    tableChrome.moveDrag(e);
-    return;
-  }
-  if (tableGutter.dragging()) {
-    tableGutter.moveDrag(e);
-    return;
-  }
-  if (dragging) {
-    if (e.buttons === 0) resetPointerGesture();
-    else updateDragSelection(e);
-  }
-});
-pagesEl.addEventListener("pointerleave", (e) => {
-  pointerHover.clear();
-  // The strips are hover chrome: leaving the sheet takes them down, or they sit
-  // beside a table the pointer is nowhere near. A TOUCH pointer leaves the moment
-  // the finger lifts, so honouring it there would undo the tap that armed them.
-  if (e.pointerType !== "touch" && tableGutter.clear()) paintOverlayLayer();
-});
-pagesEl.addEventListener("dblclick", (e) => {
-  const page = pageFromEvent(e);
-  if (!page) return;
-  // Double-click on an object enters its edit mode (container) or selects it
-  // (leaf) — docs/85 §4.3; otherwise it selects the word under the caret.
-  const { x, y } = pointToTwip(page, e);
-  // An object you are INSIDE is a text surface, not a target — the same rule
-  // pointer-down already applies. Without it, double-clicking a word inside a
-  // text box you are editing re-selected the BOX and never reached word
-  // selection, so the word was never selected and the next keystroke inserted
-  // instead of replacing.
-  const editingHere =
-    objectSelection?.mode === "editing" &&
-    pointInsideObject(objectSelection.node, page, x, y);
-  const object = editingHere ? null : doc?.objectAt(page.pageNumber, x, y);
-  if (object) {
-    let node = object.node;
-    let kind = object.kind;
-    let anchored = object.anchored;
-    let descriptor = {
-      ...objectCapabilities(object),
-      ...objectReference(object, node),
-    };
-    // Initial hit testing selects a true multi-child group as one unit. A
-    // double-click is the explicit descent gesture: ask the engine which leaf
-    // owns this painted point and retain its root for structural commands.
-    if (kind === "group") {
-      const descendant = doc.objectDescendantAt(descriptor.root, page.pageNumber, x, y);
-      if (descendant) {
-        node = descendant.node;
-        kind = descendant.kind;
-        anchored = descendant.anchored;
-        descriptor = {
-          ...objectCapabilities(descendant),
-          ...objectReference(descendant, node),
-        };
-        descendant.free?.();
-      }
-    }
-    object.free?.();
-    focusEditorSurface();
-    if (!objectSelection || objectSelection.node !== node) {
-      selectObject(
-        node,
-        kind,
-        anchorAt(page, e) || selection?.focus || null,
-        anchored,
-        descriptor,
-      );
-    }
-    // A picture has no flowed body to put a caret in, so "enter the object"
-    // means what it means in Google Docs: double-click an image and you are
-    // cropping it. The direct-manipulation crop chrome was already right; only
-    // its doorway was missing, so crop was reachable solely by finding the Crop
-    // button. A second double-click applies it, as the button turns into Apply.
-    if (objectSelection?.kind === "chart" && chartSurface.openData(objectSelection.node)) return e.preventDefault();
-    if (objectSelection?.canCrop && !objectSelection.canEditText) {
-      enterCropMode();
-      e.preventDefault();
-      return;
-    }
-    // A shape with no text body yet: double-click GIVES it one and puts the
-    // caret inside, which is exactly what Word and Docs do. The engine keeps
-    // the preset, its guides, its fill and its outline — a star stays a star.
-    if (objectSelection?.kind === "shape" && !objectSelection.canEditText) {
-      e.preventDefault();
-      void objectArrange.addText().then((added) => {
-        // `addTextToShape` returns the new body's caret, and `refreshObject-
-        // Capabilities` has by then re-read `canEditText`. Entering the object
-        // is what makes the next keystroke go INTO the shape: while an object
-        // is merely "selected" a printable key has nowhere to land.
-        if (added) enterObjectEditMode(selection ? { ...selection.focus } : null);
-      });
-      return;
-    }
-    let clicked = null;
-    const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
-    if (inBox) {
-      clicked = { node: inBox.node, offset: inBox.offset };
-      inBox.free?.();
-    }
-    enterObjectEditMode(clicked);
-    e.preventDefault();
-    return;
-  }
-  // A double-click in the header/footer band enters that context — the gesture
-  // every reference editor uses (docs/85 §10.2). Decided from the BAND GEOMETRY,
-  // not from whether running content happens to exist: a document with no header
-  // has nothing to hit-test, so keying off a hit meant double-clicking the top
-  // margin fell through to word-selection and grabbed a word out of the BODY —
-  // the opposite of what the gesture asks for.
-  // Entering the band is what a double-click means from OUTSIDE it. Once you are
-  // already editing that band, the same gesture means what it means everywhere
-  // else — select the word — and re-entering the context you are already in
-  // selected nothing at all. Triple-click at the identical pixel already worked,
-  // which is what showed the hit-testing was fine and only this routing was not.
-  const bandAtPoint = runningBandAt(page, y);
-  if (bandAtPoint && !(bandAtPoint === runningEditBand && page.pageNumber === runningEditPage)) {
-    e.preventDefault();
-    void editRunningContent(bandAtPoint, page);
-    return;
-  }
-  touchSelection.selectWord(page, e); // the SAME routine the long press uses
-});
-// Triple-click selects the paragraph (the click's `detail` is the click count).
-pagesEl.addEventListener("click", (e) => {
-  if (e.detail !== 3) return;
-  const page = pageFromEvent(e);
-  if (!page) return;
-  const a = anchorAt(page, e);
-  if (!a) return;
-  focusEditorSurface();
-  selection = {
-    anchor: { node: a.node, offset: 0 },
-    focus: { node: a.node, offset: doc.paragraphLength(a.node) },
-  };
-  drawSelection();
-});
-window.addEventListener("pointerup", onPointerUp);
-/** Every pointer gesture the document owns, dropped. The four events below mean
- *  one thing — the pointer is gone and nothing will finish it — and were four
- *  copies of one list, so the touch machine would have been added to three of
- *  them and forgotten in the fourth. One list, named once. */
-function abortPointerGestures() {
-  cancelObjectMove();
-  objectTextDrag.cancel();
-  objectResize.cancel();
-  objectRotate.cancel();
-  tableChrome.cancelDrag();
-  tableGutter.cancelDrag();
-  touchSelection.cancel();
-  resetPointerGesture();
-}
-window.addEventListener("pointercancel", abortPointerGestures);
-window.addEventListener("lostpointercapture", abortPointerGestures);
-window.addEventListener("blur", abortPointerGestures);
-document.addEventListener("visibilitychange", () => document.hidden && abortPointerGestures());
-
-linkChip.addEventListener("mousedown", (event) => {
-  // Keep the model selection visible while the host control receives the click.
-  event.preventDefault();
-});
-linkChipAction.addEventListener("click", () => activateLink(activeLink));
-linkChipEdit.addEventListener("click", () => {
-  if (!activeLink || !selection || activeLink.startNode !== activeLink.endNode) return;
-  const link = activeLink;
-  const text = doc.copyText(link.startNode, link.startOffset, link.endNode, link.endOffset);
-  hideLinkChip(); // the model range stays selected; the dialog owns it now
-  openLinkDialog({ node: link.startNode, start: link.startOffset, end: link.endOffset, link, text });
-});
-linkChipRemove.addEventListener("click", () => {
-  if (!activeLink || !selection || activeLink.startNode !== activeLink.endNode) return;
-  runToolbarEdit(() => doc.removeHyperlink(activeLink.startNode, activeLink.startOffset, activeLink.endOffset));
-  hideLinkChip();
-});
-document.addEventListener("pointerdown", (event) => {
-  if (event === linkChipShownBy) return; // this event is what opened it
-  if (!linkChip.hidden && !linkChip.contains(event.target)) hideLinkChip();
-});
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    hideLinkChip();
-    closeReviewPopover();
-    closeReviewInlineCard();
-  }
-});
-// Dismiss the inline accept/reject card on any pointerdown outside it and its
-// originating marker (the card's own buttons stopPropagation, so they are not
-// treated as "outside").
-document.addEventListener("pointerdown", (event) => {
-  if (!reviewInlineCard) return;
-  if (reviewInlineCard.contains(event.target)) return;
-  if (event.target.closest?.("[data-review-revision-id]")) return;
-  closeReviewInlineCard();
-});
-/** Editing → Suggesting → Viewing → Editing, for keyboard access to all three
- *  (REVIEW-GAP-014). Google Docs cycles its three modes from one chord too; Word
- *  has no equivalent, so this is Docs' grammar rather than an invention. It is a
- *  named command rather than an inline keydown branch so that the chord is
- *  advertised on every surface (`109` UX-007). */
-function cycleReviewMode() {
-  setReviewMode(
-    reviewMode === "editing" ? "suggesting" : reviewMode === "suggesting" ? "viewing" : "editing",
-  );
-}
-viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
-window.addEventListener("resize", hideLinkChip);
-
 const {
   buildContextCommands, caretTableColumn, contextAt, decideContextRevision, editorContextMenu,
   objectContextAtEvent, objectContextMenuHost, plainTableInfo, reviewContextAt, selectTableContext,

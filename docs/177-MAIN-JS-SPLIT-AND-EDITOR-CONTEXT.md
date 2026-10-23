@@ -67,14 +67,22 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
 | `editor_format_painter.mjs` | `createFormatPainter` | Format painter, font size, indents, line break, checklist toggle | 348 |
 | `editor_formatting.mjs` | `createFormatting` | Formatting toolbar state: run format, font and underline faces, toggles, table styles | 299 |
+| `editor_header_footer.mjs` | `createHeaderFooter` | Header and footer editing: running bands, markers, notes | 478 |
 | `editor_keyboard.mjs` | `createKeyboard` | The editor keydown dispatch | 538 |
 | `editor_link_dialog.mjs` | `createLinkDialog` | Insert / edit link dialog | 218 |
 | `editor_menu_render.mjs` | `createMenuRender` | Menu rendering: the root context menu and submenu flyouts | 335 |
+| `editor_object_moves.mjs` | `createObjectMoves` | Alt text, moving and nudging objects, snap guides, object text | 377 |
+| `editor_objects.mjs` | `createObjects` | Objects: selection, crop, resize, rotate, arrange, inspector, groups | 564 |
 | `editor_outline.mjs` | `createOutline` | The Outline panel and the flanking-panel toggles | 81 |
+| `editor_overlay_paint.mjs` | `createOverlayPaint` | Checklist markers, selection highlight, IME pre-edit (place stays in main.js) | 124 |
+| `editor_paint.mjs` | `createPaint` | Page virtualization and painting (renderAll stays in main.js) | 232 |
 | `editor_palette.mjs` | `createPalette` | Command palette and `editorCommands()`, the registry of editor actions | 652 |
 | `editor_palette_ui.mjs` | `createPaletteUi` | The palette's surface: filtered list, row selection, run by row or id, its keyboard | 222 |
+| `editor_pointer.mjs` | `createPointer` | Pointer input, links and the link chip, table chrome, hover, touch, drag selection, copy | 948 |
+| `editor_proofing.mjs` | `createProofing` | Proofing chrome, the overlay layer and drawSelection | 191 |
 | `editor_review_decisions.mjs` | `createReviewDecisions` | Review decisions: inline accept/reject card, Next/Previous over comments and changes, decisions at the caret | 539 |
 | `editor_save.mjs` | `createSave` | Save and export | 53 |
+| `editor_selection.mjs` | `createSelection` | Selection overlays, anchors, review markers, point-to-twip (scaleOf stays in main.js) | 341 |
 | `editor_selection_commands.mjs` | `createSelectionCommands` | Caret to a position, Page Up / Page Down, Select all | 97 |
 | `editor_selection_toolbar.mjs` | `createSelectionToolbar` | The floating selection toolbar | 73 |
 | `editor_settings.mjs` | `createSettings` | Settings dialog: theme, accent, reviewer identity, autosave and proofing switches; localisation start | 205 |
@@ -82,7 +90,7 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 | `editor_zoom.mjs` | `createZoom` | Zoom: editable %, Fit width / Fit page, Ctrl+scroll (setZoom stays in main.js) | 120 |
 
-`main.js`: 16,030 lines when the split began, 9,332 now. The domain modules hold 7,547.
+`main.js`: 16,030 lines when the split began, 6,311 now. The domain modules hold 10,802.
 
 ## 4. What is left for HF-109
 

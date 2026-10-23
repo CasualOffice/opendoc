@@ -388,6 +388,7 @@ documentProtection
 docx
 dpi
 draggable
+drawSelection
 drawingml
 dropdown
 dropdowns

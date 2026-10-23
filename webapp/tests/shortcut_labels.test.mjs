@@ -15,6 +15,8 @@
 // `tests/e2e/shortcut-labels.spec.mjs`, which loads the editor with a Windows
 // navigator and sweeps the rendered DOM.
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 
@@ -223,6 +225,6 @@ test("the boot sweep is actually wired up", () => {
   // Evidence rule: a guard that only checks the source of a helper proves the
   // helper exists, not that anything calls it. The e2e spec proves the effect;
   // this catches the call being deleted with a one-line diff.
-  const main = read(new URL("main.js", SRC));
-  assert.match(main, /localizeShortcutGlyphs\(document\.body, EDITOR_KEYBOARD_PLATFORM\)/);
+  const main = editorSource(fileURLToPath(new URL("../src/", import.meta.url))); // main.js and its domain modules (docs/177)
+  assert.match(main, /localizeShortcutGlyphs\(document\.body, (?:ed\.)?EDITOR_KEYBOARD_PLATFORM\)/);
 });
