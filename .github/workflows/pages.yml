@@ -65,7 +65,7 @@ jobs:
           restore-keys: pages-wasm-${{ runner.os }}-
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
         with:
           tool: wasm-pack
 
