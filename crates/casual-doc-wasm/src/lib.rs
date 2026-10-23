@@ -195,6 +195,10 @@ mod references;
 // command — and because its complexity contract needs stating in one place.
 mod toc;
 
+// What each copied paragraph IS (heading, list item, table cell), so the
+// clipboard's HTML keeps structure (`docs/174` TA-12).
+mod clipboard_outline;
+
 // Version diff (`docs/140` H3). Its own module for the same reason, and because
 // it touches nothing in the live session: it takes two checkpoints' bytes and
 // returns a sidecar, which is exactly what makes it movable into a Worker later
@@ -4123,9 +4127,17 @@ impl WasmDocument {
     ) -> Result<BlockNode, String> {
         let exhausted = || "id space exhausted".to_string();
         match block {
-            ExternalBlock::Paragraph { runs, list } => {
+            ExternalBlock::Paragraph {
+                runs,
+                list,
+                heading,
+            } => {
                 let inlines = self.external_run_inlines(runs)?;
                 let mut properties = ParagraphProperties::default();
+                // `<h1>`..`<h6>` → `Heading 1`..`Heading 6` (`docs/174` TA-11).
+                if let Some(level) = heading {
+                    properties.style_ref = Some(self.pasted_heading_style(*level, install)?);
+                }
                 if let Some(list) = list {
                     let (instance, mut ops) = self.ensure_list(list.ordered)?;
                     install.append(&mut ops);
@@ -18745,6 +18757,10 @@ enum ExternalBlock {
         runs: Vec<ClipboardRun>,
         #[serde(default)]
         list: Option<ExternalList>,
+        /// `1..=6` for a pasted `<h1>`..`<h6>`: the paragraph takes that heading
+        /// style (`clipboard_outline::pasted_heading_style`).
+        #[serde(default)]
+        heading: Option<u8>,
     },
     Table {
         #[serde(default)]
