@@ -104,6 +104,17 @@ nor Undo. Identity comes from the relay, not from the opaque sender payload. Lab
 currently show participant numbers, not host display names. Presence is ephemeral and
 may briefly be behind concurrent document frames; it is never durable history.
 
+The people in a room are also shown at the right end of the header, immediately before
+Share (`109` HF-330): one chip per participant in their caret colour, this tab's first,
+four chips and then a count, and at the phone rung one button with a count. The list
+comes from the roster's membership (`participants`), not from caret geometry, so a
+participant whose caret is not laid out yet is still listed. A chip's accessible name and
+tooltip say the number stands in for a name this host does not share; pressing it scrolls
+to that caret. Joins and leaves go to the strip's own polite live region, batched to at
+most one sentence per 2 s, and a reconnect re-settles quietly. What a participant looks
+like is one function, `participantDisplay` (`presence_strip.mjs`), the seam `175` §14
+fixes, read by both the strip and the caret label.
+
 ## The reader's own caret, Undo, and the sync indicator
 
 Added 2026-10-22 (ADR-069, `109` HF-310, HF-311, HF-313), after two real browsers through
