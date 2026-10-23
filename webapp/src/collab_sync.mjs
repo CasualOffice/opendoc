@@ -117,7 +117,7 @@ export function createSyncIndicator({ transport, document: getDocument, status, 
       const text = t(state.key, { seconds: state.seconds ?? 0 });
       el.hidden = false;
       el.dataset.state = state.name;
-      if (text !== shown) { el.textContent = text; shown = text; }
+      if (text !== shown) { el.textContent = text; el.title = text; shown = text; }
       // The status line hears about the states a reader must not miss, once each,
       // and once more when the trouble is over — so "Connection lost" does not
       // outlive the reconnection that ended it.

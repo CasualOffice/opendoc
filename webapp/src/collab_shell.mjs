@@ -5,6 +5,7 @@ import { createRecovery } from "./collab_recovery.mjs";
 import { createSyncIndicator } from "./collab_sync.mjs";
 import { createShare, shareLink, sharedDocument } from "./share_flow.mjs";
 import { createShareChrome } from "./share_chrome.mjs";
+import { createPresenceStrip } from "./presence_strip.mjs";
 import { createRecoveryDownloader } from "./recovery_chrome.mjs";
 import { refusalAnnouncement } from "./session_access.mjs";
 
@@ -12,8 +13,27 @@ import { refusalAnnouncement } from "./session_access.mjs";
 export function createCollaborationShell({ root, getDocument, getTransport, setTransport,
   getSelection, getSettings, getName, hostConfig, paintOverlay, receiveAccess, arrival,
   repaintRecovered, edited, setSelection, status, t }) {
+  // The right end of the header's document row: state chips, then the people in the
+  // room, then Share (`docs/109` HF-330) — the order Google Docs, Word on the web and
+  // ONLYOFFICE share. Built hidden; it names nothing until a room opens, so no label
+  // is read before the catalogue has landed (SKILL §11).
+  const headerEnd = root.getElementById("documentState").parentElement;
+  const strip = createPresenceStrip({ root, parent: headerEnd, t, status, goTo: locateParticipant });
   const remotePresence = createPresence({ newRoster, document: getDocument,
-    transport: getTransport, selection: getSelection, paint: paintOverlay, t });
+    transport: getTransport, selection: getSelection, paint: paintOverlay, t,
+    roster: (room) => { strip.show(Boolean(room)); if (room) strip.update(room); } });
+  /** Scrolls the document to a participant's painted caret and marks it briefly.
+   *  False when there is none painted (not laid out yet, or no caret sent yet), which
+   *  the strip says out loud rather than doing nothing. O(painted carets). */
+  function locateParticipant(client) {
+    const caret = root.querySelector(`.remote-caret[data-participant="${Number(client)}"]`);
+    if (!caret) return false;
+    caret.scrollIntoView({ block: "center", inline: "nearest" });
+    caret.classList.remove("is-located");
+    void caret.offsetWidth; // restart the mark if the same chip is pressed twice
+    caret.classList.add("is-located");
+    return true;
+  }
   const sync = createSyncIndicator({ transport: getTransport, document: getDocument, status, t });
 
   function currentSharedLink() {
@@ -112,8 +132,12 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
       shareChrome.reflect();
     },
   });
-  const shareChrome = createShareChrome({ root, parent: root.getElementById("docTitle").parentElement,
+  const shareChrome = createShareChrome({ root, parent: headerEnd,
     share: () => shareDocument(), available: () => share.available(), t });
+  // `main.js` calls `chrome.reflect()` whenever the toolbar reflects, which is also
+  // when a language arrives; the strip's labels ride the same call.
+  const shareReflect = shareChrome.reflect;
+  shareChrome.reflect = () => { shareReflect(); strip.reflect(); };
   shareChrome.bind();
   shareChrome.reflect();
   function shareDocument() { return share.share().finally(() => shareChrome.reflect()); }
@@ -171,7 +195,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
     for (const key of ["room", "document", "revision"]) url.searchParams.delete(key);
     window.history.replaceState(null, "", url);
   }
-  return { presence: remotePresence, recovery, share, chrome: shareChrome, start: startCollaboration, commands, loadStartup, beforeReplace,
+  return { presence: remotePresence, strip, recovery, share, chrome: shareChrome, start: startCollaboration, commands, loadStartup, beforeReplace,
     /** Why Restore must not run now, or "". A restore replaces this tab's document
      *  wholesale, so in a shared room it would fork it — this reader's copy goes back and
      *  everybody else's stays — and leave the room without a word (ADR-068, `docs/109`
