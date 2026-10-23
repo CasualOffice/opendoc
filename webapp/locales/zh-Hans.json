@@ -1681,6 +1681,7 @@
   "settingsPanel.checkSpellingAsYou": "键入时检查拼写",
   "settingsPanel.checkingHappensBrowserDictionary": "检查在本浏览器中进行：词典只从本站点下载一次，你的文本绝不会发送到任何地方。你添加的词语仅存储在本浏览器中，目前只能通过清除本站点数据来移除。",
   "settingsPanel.autoCorrect": "自动更正",
+  "settingsPanel.identitySetByHost": "你的姓名由你打开此文档所用的应用程序设置",
   "settingsPanel.smartQuotes": "智能引号",
   "settingsPanel.smartQuotesDetail": "键入时将直引号替换为弯引号。",
   "settingsPanel.automaticLists": "自动项目符号和编号列表",

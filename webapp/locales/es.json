@@ -1683,6 +1683,7 @@
   "settingsPanel.checkSpellingAsYou": "Revisar ortografía al escribir",
   "settingsPanel.checkingHappensBrowserDictionary": "La revisión se realiza en este navegador: el diccionario se descarga una vez desde este sitio y su texto nunca se envía a ninguna parte. Las palabras que añada se guardan solo en este navegador y, por ahora, solo pueden quitarse borrando los datos de este sitio.",
   "settingsPanel.autoCorrect": "Autocorrección",
+  "settingsPanel.identitySetByHost": "Tu nombre lo establece la aplicación en la que abriste esto",
   "settingsPanel.smartQuotes": "Comillas tipográficas",
   "settingsPanel.smartQuotesDetail": "Las comillas rectas se vuelven curvas mientras escribes.",
   "settingsPanel.automaticLists": "Listas con viñetas y numeradas automáticas",

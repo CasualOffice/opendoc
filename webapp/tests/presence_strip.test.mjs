@@ -136,7 +136,11 @@ test("presence reports the roster's members, without this tab, to the strip", ()
     selection: () => null, paint() {}, t, roster: (room) => reports.push(room) });
   presence.open(true);
   presence.frame(new Uint8Array([1]));
-  assert.deepEqual(reports.at(-1), { self: 1, others: [0, 3], reconnected: false });
+  assert.deepEqual(reports.at(-1), {
+    self: { client: 1, attested: false },
+    others: [{ client: 0, attested: false }, { client: 3, attested: false }],
+    reconnected: false,
+  });
   presence.open(false);
   assert.equal(reports.at(-1), null, "leaving the room withdraws the strip");
 });

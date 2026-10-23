@@ -1684,6 +1684,7 @@
   "settingsPanel.checkSpellingAsYou": "Перевіряти правопис під час введення",
   "settingsPanel.checkingHappensBrowserDictionary": "Перевірка відбувається в цьому браузері: словник завантажується з цього сайту один раз, а ваш текст нікуди не надсилається. Додані вами слова зберігаються лише в цьому браузері й наразі видаляються тільки очищенням даних сайту.",
   "settingsPanel.autoCorrect": "Автовиправлення",
+  "settingsPanel.identitySetByHost": "Ваше ім’я задає застосунок, у якому ви це відкрили",
   "settingsPanel.smartQuotes": "Типографські лапки",
   "settingsPanel.smartQuotesDetail": "Прямі лапки під час введення замінюються типографськими.",
   "settingsPanel.automaticLists": "Автоматичні марковані й нумеровані списки",

@@ -97,6 +97,10 @@ export const REQUIREMENTS = Object.freeze([
  *    threw                the command raised; the message is the exception's
  *    bad-request          the envelope or the arguments were not the contract's
  *    timeout              the transport gave up waiting (client side only)
+ *    identity-invalid     `identify` was handed an identity outside the `docs/175`
+ *                         §3 bounds; the refusal's `field` names which part
+ *    identity-fixed       `identify` came a second time, or after a room was
+ *                         joined: an identity is decided once per mount (§3.2)
  */
 export const REFUSAL_CODES = Object.freeze([
   "unknown-command",
@@ -106,6 +110,8 @@ export const REFUSAL_CODES = Object.freeze([
   "threw",
   "bad-request",
   "timeout",
+  "identity-invalid",
+  "identity-fixed",
 ]);
 
 /** Every event a host can hear, and the exact fields its detail carries.
@@ -163,10 +169,11 @@ export const PROTOCOL = Object.freeze({
   version: 1,
   /** Envelope kinds, one per direction of travel. */
   kinds: Object.freeze(["request", "result", "event"]),
-  /** What a host may ask for. Deliberately four, and deliberately the same four
-   *  the in-process session exposes as methods — `describe`, `execute`, `query`,
-   *  `ping` — so neither transport has a verb the other lacks. */
-  requests: Object.freeze(["describe", "execute", "query", "ping"]),
+  /** What a host may ask for, and deliberately the same verbs the in-process
+   *  session exposes as methods — `describe`, `execute`, `query`, `ping` and
+   *  `identify` (`docs/175` §3.2, once per mount) — so neither transport has a
+   *  verb the other lacks. */
+  requests: Object.freeze(["describe", "execute", "query", "ping", "identify"]),
 });
 
 /** A command whose id is a literal: `{ id, requires, args }`.
@@ -882,4 +889,163 @@ export function declaredRequirements() {
   for (const row of COMMAND_CONTRACT) if (row.requires !== null) used.add(row.requires);
   for (const row of COMMAND_FAMILIES) if (row.requires !== null) used.add(row.requires);
   return Object.freeze([...used].sort());
+}
+
+// ---- Host identity (`docs/175` §3, ADR-070) ---------------------------------
+//
+// The FOURTH host input. Not a capability (it neither narrows nor widens), not a
+// region, and not a preference (a visitor must not be able to overwrite it). One
+// shape for every transport — the element's `identity` attribute and property,
+// `session.identify` over `postMessage` and in process, and ONLYOFFICE's
+// `editorConfig.user` lowered by `host_options.mjs` — and ONE validator, this one,
+// so a bound cannot be enforced on one transport and forgotten on another.
+//
+// BOUNDS ARE REFUSALS, NOT TRUNCATIONS (`docs/152` §2b): a name of 256 bytes is
+// refused naming `identity.name`, never cut to 255. Cutting would put a name on
+// every comment the person writes that is not the name the host gave.
+
+/** The `docs/175` §3 and §4.4 bounds. Bytes are UTF-8 bytes; initials are
+ *  graphemes, because "8 characters" of a Devanagari or emoji name is not 8 code
+ *  units. Exported so a guard drives each one rather than restating it. */
+export const IDENTITY_BOUNDS = Object.freeze({
+  idBytes: 128,
+  nameBytes: 255,
+  initialsGraphemes: 8,
+  avatarUrlBytes: 1024,
+  persistBytes: 255,
+});
+
+/** The fields a version-1 identity may carry. `group` is RESERVED: ONLYOFFICE's
+ *  `user.group` exists only for review and comment groups, which this contract does
+ *  not build, so a supplied one is reported `not-honoured` rather than refused. */
+const IDENTITY_FIELDS = Object.freeze(["id", "name", "initials", "color", "avatar", "persist", "group"]);
+
+const utf8Length = (text) => new TextEncoder().encode(text).length;
+
+function graphemeCount(text) {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    let count = 0;
+    for (const _ of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) count += 1;
+    return count;
+  }
+  return [...text].length;
+}
+
+/** A bounded, non-blank string, or null. Never trimmed or cut: the value a host
+ *  gave is the value that is used, or it is refused. */
+function boundedText(value, maxBytes) {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const bytes = utf8Length(value);
+  return bytes >= 1 && bytes <= maxBytes ? value : null;
+}
+
+/** `https:` only, or a small `data:image/{png,jpeg,webp}` that fetches nothing.
+ *  No `http:`, no `javascript:`, no credentials in the URL (`docs/175` §4.4). */
+function avatarUrlAllowed(url) {
+  if (typeof url !== "string" || url === "" || utf8Length(url) > IDENTITY_BOUNDS.avatarUrlBytes) return false;
+  if (/^data:image\/(png|jpeg|webp)[;,]/i.test(url)) return true;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === "https:" && parsed.username === "" && parsed.password === "";
+}
+
+/**
+ * Validates a host identity (`docs/175` §3). THE one validator every transport
+ * calls.
+ *
+ * Returns `{ ok: true, identity, notes }` — `identity` frozen, holding only the
+ * version-1 fields that were given, `notes` saying what was not honoured — or
+ * `{ ok: false, refusal }`, a refusal coded `identity-invalid` whose `field`
+ * names the part that broke a bound (`identity.name`, `identity.avatar.url`, …).
+ *
+ * Accepts the object or its JSON text, because the element's attribute is text.
+ * The message is developer-facing English, like `host_options.mjs`'s notes, and
+ * never repeats the VALUE: an identity is personal data and a refusal ends up in
+ * consoles and host logs (`docs/175` §8.3).
+ *
+ * Complexity: O(size of the identity), which the bounds cap at a few KiB.
+ *
+ * @param {unknown} raw
+ * @returns {{ok: true, identity: Readonly<object>, notes: readonly object[]} |
+ *           {ok: false, refusal: Readonly<{code: string, command: string, requires: null, message: string, field: string}>}}
+ */
+export function validateHostIdentity(raw) {
+  let source = raw;
+  if (typeof raw === "string") {
+    try {
+      source = JSON.parse(raw);
+    } catch {
+      source = null;
+    }
+  }
+  const refuse = (field, message) =>
+    Object.freeze({
+      ok: false,
+      refusal: Object.freeze({ code: "identity-invalid", command: "identify", requires: null, message, field }),
+    });
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return refuse("identity", "An identity is an object with at least `id` and `name`.");
+  }
+  const notes = [];
+  const identity = {};
+  const id = boundedText(source.id, IDENTITY_BOUNDS.idBytes);
+  if (id === null) return refuse("identity.id", `\`id\` must be a non-blank string of 1 to ${IDENTITY_BOUNDS.idBytes} bytes.`);
+  identity.id = id;
+  const name = boundedText(source.name, IDENTITY_BOUNDS.nameBytes);
+  if (name === null) return refuse("identity.name", `\`name\` must be a non-blank string of 1 to ${IDENTITY_BOUNDS.nameBytes} bytes.`);
+  identity.name = name;
+  if (source.initials !== undefined && source.initials !== null) {
+    const initials = source.initials;
+    if (typeof initials !== "string" || initials.trim() === "" || graphemeCount(initials) > IDENTITY_BOUNDS.initialsGraphemes) {
+      return refuse("identity.initials", `\`initials\` must be 1 to ${IDENTITY_BOUNDS.initialsGraphemes} characters.`);
+    }
+    identity.initials = initials;
+  }
+  if (source.color !== undefined && source.color !== null) {
+    if (typeof source.color !== "string" || !/^#[0-9a-f]{6}$/i.test(source.color)) {
+      return refuse("identity.color", "`color` must be \"#rrggbb\".");
+    }
+    identity.color = source.color.toLowerCase();
+  }
+  if (source.avatar !== undefined) {
+    if (source.avatar === null) identity.avatar = null;
+    else if (typeof source.avatar !== "object" || Array.isArray(source.avatar)) {
+      return refuse("identity.avatar", "`avatar` must be `{ url }` or null.");
+    } else if (!avatarUrlAllowed(source.avatar.url)) {
+      return refuse(
+        "identity.avatar.url",
+        `\`avatar.url\` must be an https: URL without credentials, or a data:image/{png,jpeg,webp} URL, of at most ${IDENTITY_BOUNDS.avatarUrlBytes} bytes.`,
+      );
+    } else identity.avatar = Object.freeze({ url: source.avatar.url });
+  }
+  if (source.persist !== undefined && source.persist !== null) {
+    if (typeof source.persist !== "object" || Array.isArray(source.persist)) {
+      return refuse("identity.persist", "`persist` must be `{ providerId, userId }`.");
+    }
+    const providerId = boundedText(source.persist.providerId, IDENTITY_BOUNDS.persistBytes);
+    if (providerId === null) return refuse("identity.persist.providerId", `\`persist.providerId\` must be 1 to ${IDENTITY_BOUNDS.persistBytes} bytes.`);
+    const userId = boundedText(source.persist.userId, IDENTITY_BOUNDS.persistBytes);
+    if (userId === null) return refuse("identity.persist.userId", `\`persist.userId\` must be 1 to ${IDENTITY_BOUNDS.persistBytes} bytes.`);
+    identity.persist = Object.freeze({ providerId, userId });
+  }
+  if (source.group !== undefined) {
+    notes.push(
+      Object.freeze({
+        option: "identity.group",
+        code: "not-honoured",
+        message: "Reserved: review and comment groups are not built, so a group changes nothing.",
+      }),
+    );
+  }
+  for (const key of Object.keys(source)) {
+    if (IDENTITY_FIELDS.includes(key)) continue;
+    notes.push(
+      Object.freeze({ option: `identity.${key}`, code: "unknown", message: "Not a field of a version-1 identity; ignored." }),
+    );
+  }
+  return Object.freeze({ ok: true, identity: Object.freeze(identity), notes: Object.freeze(notes) });
 }

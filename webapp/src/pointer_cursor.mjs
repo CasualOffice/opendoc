@@ -280,6 +280,16 @@ export const CURSOR_TARGETS = [
     why: "Same eight axes as resize; crop differs in what moves, not in which way it moves.",
   },
   {
+    id: "remote-caret-claim",
+    cursor: "help",
+    owner: "css",
+    selector: ".remote-caret > span.is-unverified",
+    gesture: "Pointing at another person's caret flag whose name is only claimed",
+    why:
+      "The flag takes the pointer only so its tooltip can say the name is unverified " +
+      "(`docs/175` §4.2); `help` promises exactly that and nothing more — no drag, no click.",
+  },
+  {
     id: "table-column-handle",
     cursor: "col-resize",
     owner: "css",

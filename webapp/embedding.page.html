@@ -196,7 +196,7 @@
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
           <span data-claim="package-file-count">12</span> files,
-          <span data-claim="package-unpacked-kb">215 kB</span> unpacked,
+          <span data-claim="package-unpacked-kb">233 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b data-i18n="site.embedding.nothingPublishesRegistryYet">Nothing publishes it to a registry yet</b>, so today a host installs
           the tarball <code data-i18n="site.embedding.npmPack">npm pack</code> produces from a checkout. The
@@ -268,7 +268,7 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
 
         <h2 id="mount" class="doc-h2" data-i18n="site.embedding.mount">Mount it</h2>
         <p class="doc-body" data-i18n="site.embedding.elementTakes">
-          The element takes <span data-claim="attribute-count">8</span>
+          The element takes <span data-claim="attribute-count">10</span>
           attributes. <code>mode</code> names a role; <code>can</code> and
           <code>chrome</code> narrow it, per capability and per region, so the role
           never has to be the unit of what a host can express; <code>prefs</code>
@@ -769,9 +769,9 @@ docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal</code>
           <span data-claim="command-count">215</span> commands by name and
           <span data-claim="family-count">11</span> families of value commands,
           <span data-claim="event-count">7</span> events,
-          <span data-claim="refusal-code-count">7</span> refusal codes and
-          <span data-claim="verb-count">4</span> verbs
-          (<code data-claim="verbs">describe execute query ping</code>).
+          <span data-claim="refusal-code-count">9</span> refusal codes and
+          <span data-claim="verb-count">5</span> verbs
+          (<code data-claim="verbs">describe execute query ping identify</code>).
         </p>
         <p class="doc-body" data-i18n="site.embedding.bothTransportsBuiltOne">
           Both transports are built from one schema,
@@ -921,6 +921,16 @@ async function runCommand(panel, transport, id) {
             <div class="disp-name"><code>timeout</code></div>
             <div class="disp-cell" data-i18n="site.refusal.timeout.meaning">The transport gave up waiting for an answer.</div>
             <div class="disp-cell" data-i18n="site.refusal.timeout.decidedBy">the transport</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>identity-invalid</code></div>
+            <div class="disp-cell" data-i18n="site.refusal.identity-invalid.meaning">`identify` was handed an identity outside the docs/175 bounds; `field` names the part. Nothing was used.</div>
+            <div class="disp-cell" data-i18n="site.refusal.identity-invalid.decidedBy">the contract</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>identity-fixed</code></div>
+            <div class="disp-cell" data-i18n="site.refusal.identity-fixed.meaning">`identify` came a second time, or after a shared room was joined. An identity is decided once per mount; remount to change it.</div>
+            <div class="disp-cell" data-i18n="site.refusal.identity-fixed.decidedBy">the session</div>
           </div>
         </div>
         <!-- @end refusal-table -->
@@ -1478,7 +1488,7 @@ brand.json was refused:
           </li>
           <li>
             <b data-i18n="site.embedding.noWayHandYour">No way to hand it your document.</b> The element's
-            <span data-claim="attribute-count">8</span> attributes configure what
+            <span data-claim="attribute-count">10</span> attributes configure what
             the editor <em>is</em> — the role, the two withhold lists, the opening
             positions, a competitor's configuration block, the editor's language,
             where the editor lives and the frame's accessible name — and none of

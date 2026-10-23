@@ -1683,6 +1683,7 @@
   "settingsPanel.checkSpellingAsYou": "Controlla ortografia durante la digitazione",
   "settingsPanel.checkingHappensBrowserDictionary": "Il controllo avviene in questo browser: il dizionario viene scaricato una volta da questo sito e il tuo testo non viene mai inviato altrove. Le parole aggiunte sono memorizzate solo in questo browser e al momento si possono rimuovere solo cancellando i dati del sito.",
   "settingsPanel.autoCorrect": "Correzione automatica",
+  "settingsPanel.identitySetByHost": "Il tuo nome è impostato dall’applicazione in cui hai aperto questo documento",
   "settingsPanel.smartQuotes": "Virgolette tipografiche",
   "settingsPanel.smartQuotesDetail": "Le virgolette dritte diventano tipografiche mentre scrivi.",
   "settingsPanel.automaticLists": "Elenchi puntati e numerati automatici",

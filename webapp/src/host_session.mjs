@@ -46,6 +46,7 @@ import {
   commandContract,
 } from "./host_contract.mjs";
 import { announcementRegion } from "./status_policy.mjs";
+import { hostIdentity } from "./host_identity.mjs";
 
 /** A frozen ok result. `revision` is the handle a host correlates against the
  *  `change` event; `null` when the engine could not report one. */
@@ -79,6 +80,8 @@ const no = (id, code, message, extra = {}) =>
  * @param {() => boolean} [io.dirty] whether there is unsaved work.
  * @param {() => object|null} [io.selection] a compact selection descriptor.
  * @param {() => object} [io.document] name and format of the open document.
+ * @param {(identity: unknown) => object} [io.identify] accepts the host identity
+ *   once (`docs/175` §3.2); the page's own holder unless a test hands one in.
  */
 export function createHostSession({
   capabilities,
@@ -88,6 +91,7 @@ export function createHostSession({
   dirty = () => false,
   selection = () => null,
   document: documentInfo = () => ({}),
+  identify = (identity) => hostIdentity.identify(identity),
 }) {
   /** event name -> listeners. One Set per event so an `off` is O(1). */
   const listeners = new Map(HOST_EVENT_NAMES.map((name) => [name, new Set()]));
@@ -196,6 +200,33 @@ export function createHostSession({
      *  Complexity: O(registry), as `describe`. */
     query(id) {
       return describeCommand(String(id ?? ""), descriptors());
+    },
+
+    /** Who this editor's person is (`docs/175` §3, ADR-070), said once.
+     *
+     *  Accepted a single time and never after a shared room was joined; a second
+     *  call is refused `identity-fixed`, and an identity outside the §3 bounds
+     *  `identity-invalid` with the `field` that broke one. A refusal is a VALUE
+     *  and is announced, as `execute`'s are, so a listening host and an awaiting
+     *  host learn the same thing. The identity itself is never echoed back, put
+     *  in an event or logged: it is personal data, and the host already has it.
+     *
+     *  Complexity: O(identity size), once per mount. */
+    identify(identity) {
+      let result;
+      try {
+        result = identify(identity);
+      } catch (err) {
+        result = Object.freeze({
+          ok: false,
+          refusal: Object.freeze({ code: "threw", command: "identify", requires: null, message: String(err?.message ?? err) }),
+        });
+      }
+      if (!result.ok) {
+        const { code, command, requires, message } = result.refusal;
+        emit("refusal", { code, command, requires, message });
+      }
+      return result;
     },
 
     /** Liveness, and the cheapest possible one: no registry build. */

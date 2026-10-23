@@ -469,6 +469,10 @@
           <label data-i18n="settingsPanel.initials" class="dialog-field">Initials<input id="authorInitials" type="text" maxlength="8" placeholder="Auto" autocomplete="off" /></label>
         </div>
         <p data-i18n="settingsPanel.attributedCommentsTrackedChanges" class="settings-note">Attributed on comments and tracked changes you create. This is the only identity source — the engine never invents an author.</p>
+        <!-- Shown, and named by both fields' aria-describedby, only when the host
+             supplied an identity (docs/175 §3.1): the fields are then disabled,
+             and a disabled control says why (SKILL §10). -->
+        <p data-i18n="settingsPanel.identitySetByHost" id="authorIdentityReason" class="settings-note" hidden>Your name is set by the application you opened this in</p>
       </div>
       <!-- Autosave. The retention posture D-1 required be written down before
            any document bytes were kept on-device is stated HERE, next to the

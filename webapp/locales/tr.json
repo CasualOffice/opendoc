@@ -1682,6 +1682,7 @@
   "settingsPanel.checkSpellingAsYou": "Yazarken yazımı denetle",
   "settingsPanel.checkingHappensBrowserDictionary": "Denetim bu tarayıcıda yapılır: sözlük bu siteden bir kez indirilir ve metniniz hiçbir yere gönderilmez. Eklediğiniz sözcükler yalnızca bu tarayıcıda saklanır ve şu an yalnızca bu sitenin verileri temizlenerek kaldırılabilir.",
   "settingsPanel.autoCorrect": "Otomatik Düzelt",
+  "settingsPanel.identitySetByHost": "Adınız, bunu açtığınız uygulama tarafından belirlenir",
   "settingsPanel.smartQuotes": "Akıllı tırnaklar",
   "settingsPanel.smartQuotesDetail": "Düz tırnaklar yazarken kıvrık tırnaklara dönüşür.",
   "settingsPanel.automaticLists": "Otomatik madde işaretli ve numaralı listeler",

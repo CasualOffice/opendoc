@@ -1681,6 +1681,7 @@
   "settingsPanel.checkSpellingAsYou": "Kiểm tra chính tả khi gõ",
   "settingsPanel.checkingHappensBrowserDictionary": "Việc kiểm tra diễn ra trong trình duyệt này: từ điển được tải một lần từ trang này và văn bản của bạn không bao giờ được gửi đi đâu. Các từ bạn thêm chỉ lưu trong trình duyệt này và hiện chỉ có thể xóa bằng cách xóa dữ liệu của trang.",
   "settingsPanel.autoCorrect": "Tự động sửa",
+  "settingsPanel.identitySetByHost": "Tên của bạn do ứng dụng mà bạn dùng để mở tài liệu này đặt",
   "settingsPanel.smartQuotes": "Dấu ngoặc kép thông minh",
   "settingsPanel.smartQuotesDetail": "Dấu ngoặc thẳng thành dấu ngoặc cong khi bạn gõ.",
   "settingsPanel.automaticLists": "Danh sách dấu đầu dòng và đánh số tự động",

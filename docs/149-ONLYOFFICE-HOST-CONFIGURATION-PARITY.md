@@ -87,12 +87,13 @@ as the place to ask, rather than being honoured or dropped.
 <!-- @generated option-tally -->
 | Verdict | Options | What it means |
 | --- | --- | --- |
-| Have it | 42 | lowered onto one of our three axes, and the resolved container really changes |
+| Have it | 44 | lowered onto one of our three axes, and the resolved container really changes |
 | Have it, differently | 8 | honoured in part; the note says what is different and why |
 | Refused by design | 0 | it would GRANT something, and a host list may only narrow — reported, naming `mode` |
-| Gap — work named | 41 | the editor has no such state or surface yet; the note names the work |
+| Gap — work named | 38 | the editor has no such state or surface yet; the note names the work |
 | Declined | 21 | deliberately not wanted, with the argument |
 | Another product | 9 | belongs to spreadsheets, presentations or PDF forms (`SKILL` §1) |
+| Reserved | 1 | accepted and reported, but reserved for a feature that is not built; it changes nothing |
 | **Total enumerated** | **121** | every leaf of their `permissions`, `editorConfig` and `customization` |
 <!-- @end option-tally -->
 
@@ -123,10 +124,10 @@ the note gives the reason.
 | `permissions.userInfoGroups` | — | Gap — work named | Presence is not shipped, so there is no user list to filter. |
 | `editorConfig.mode` | `mode` | Have it | Their two values become one of 8 names; "view" is `readonly`. |
 | `editorConfig.lang` | `lang` | Have it | — |
-| `editorConfig.user.name` | `prefs={"user":…}` | Have it | Signs this visitor's comments and tracked changes. |
-| `editorConfig.user.id` | — | Gap — work named | A stable identity matters when there are several; it lands with collaboration. |
-| `editorConfig.user.group` | — | Gap — work named | Only meaningful with `reviewGroups`/`commentGroups`, which need identity. |
-| `editorConfig.user.image` | — | Gap — work named | No avatar surface: presence is not shipped. |
+| `editorConfig.user.name` | `identity.name` | Have it | The host identity's name (docs/175 §3): it signs this person's comments and tracked changes, and the visitor cannot change it in Settings. |
+| `editorConfig.user.id` | `identity.id` | Have it | Opaque and pseudonymous: it identifies the person to a shared room and is never written into the file. |
+| `editorConfig.user.group` | — | Reserved | Reserved: only meaningful with `reviewGroups`/`commentGroups`, which are not built. |
+| `editorConfig.user.image` | `identity.avatar.url` | Have it | Never fetched unless the host consents with avatars="fetch" (docs/175 §8.1); initials otherwise. |
 | `editorConfig.region` | — | Gap — work named | Number and date formatting follow the document; there is no per-host override yet. |
 | `editorConfig.coEditing` | — | Gap — work named | Co-editing is designed (ADR-033, OT over transactions) and not shipped. |
 | `editorConfig.canCoAuthoring` | — | Gap — work named | Same as `coEditing`. |

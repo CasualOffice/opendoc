@@ -7,6 +7,7 @@ import { createNamePrompt } from "./name_dialog.mjs";
 import { createVersionHistory } from "./version_panel.mjs";
 import { registerModal } from "./modal.mjs";
 import { t } from "./i18n.mjs";
+import { authorNameFor } from "./host_identity.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -113,7 +114,7 @@ export function createVersions(ed) {
       // `init()`, and `engineVersion()` on an uninstantiated wasm module throws
       // `__wbindgen_add_to_stack_pointer` of undefined and kills boot outright.
       engine: ed.doc ? engineVersion() : "",
-      actor: ed.settings.authorName.trim(),
+      actor: authorNameFor(ed.settings),
       hasDocument: Boolean(ed.doc),
     }),
     settings: () => ed.settings,

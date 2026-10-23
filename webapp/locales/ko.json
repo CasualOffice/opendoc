@@ -1681,6 +1681,7 @@
   "settingsPanel.checkSpellingAsYou": "입력할 때 맞춤법 검사",
   "settingsPanel.checkingHappensBrowserDictionary": "검사는 이 브라우저에서 이루어집니다. 사전은 이 사이트에서 한 번만 내려받으며 텍스트는 어디에도 전송되지 않습니다. 추가한 단어는 이 브라우저에만 저장되며, 현재는 이 사이트의 데이터를 지워야만 제거할 수 있습니다.",
   "settingsPanel.autoCorrect": "자동 고침",
+  "settingsPanel.identitySetByHost": "이름은 이 문서를 연 애플리케이션에서 설정합니다",
   "settingsPanel.smartQuotes": "스마트 따옴표",
   "settingsPanel.smartQuotesDetail": "입력할 때 곧은 따옴표를 둥근 따옴표로 바꿉니다.",
   "settingsPanel.automaticLists": "자동 글머리 기호 및 번호 매기기 목록",

@@ -93,6 +93,7 @@ export function attachHostBridge({ session, view }) {
     if (type === "execute") return session.execute(message.id, message.args ?? []);
     if (type === "query") return session.query(message.id);
     if (type === "describe") return session.describe();
+    if (type === "identify") return session.identify(message.identity);
     return session.ping();
   }
 
@@ -165,11 +166,11 @@ export function attachHostBridge({ session, view }) {
       });
       return;
     }
-    // `execute` already answers with `{ok, refusal}`; `describe`, `query` and
-    // `ping` answer with a value. Both shapes go back as one envelope so a host
-    // has one thing to unwrap.
+    // `execute` and `identify` already answer with `{ok, refusal}`; `describe`,
+    // `query` and `ping` answer with a value. Both shapes go back as one envelope
+    // so a host has one thing to unwrap.
     const envelope =
-      message.type === "execute"
+      message.type === "execute" || message.type === "identify"
         ? { kind: "result", rid: message.rid, ...value }
         : { kind: "result", rid: message.rid, ok: true, value };
     post(source, event.origin, envelope);

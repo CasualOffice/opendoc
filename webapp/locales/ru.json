@@ -1684,6 +1684,7 @@
   "settingsPanel.checkSpellingAsYou": "Проверять орфографию при вводе",
   "settingsPanel.checkingHappensBrowserDictionary": "Проверка выполняется в этом браузере: словарь загружается с этого сайта один раз, а ваш текст никуда не отправляется. Добавленные вами слова хранятся только в этом браузере, и сейчас их можно удалить только очисткой данных сайта.",
   "settingsPanel.autoCorrect": "Автозамена",
+  "settingsPanel.identitySetByHost": "Ваше имя задаёт приложение, в котором вы это открыли",
   "settingsPanel.smartQuotes": "Типографские кавычки",
   "settingsPanel.smartQuotesDetail": "Прямые кавычки при вводе заменяются типографскими.",
   "settingsPanel.automaticLists": "Автоматические маркированные и нумерованные списки",

@@ -12,6 +12,7 @@ import { registerPopover } from "./popover_manager.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { setPaneRenderer, showSettingsPane } from "./file_pane.mjs";
 import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
+import { activeAuthor, hostIdentity, reflectAuthorIdentity } from "./host_identity.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -31,12 +32,27 @@ export function createSettings(ed) {
   // paint was never resolved before it.
   const ACCENT_PIN = brandAccent(document.documentElement);
 
+  const authorIdentityReason = document.getElementById("authorIdentityReason");
+
+  /** Who is writing, onto the engine: the host identity when there is one (it is
+   *  then the ONLY identity, `docs/175` §3.1), else the Settings name, else "You". */
   function applyActiveAuthorToDocument() {
     if (!ed.doc) return;
-    const name = ed.settings.authorName.trim() || "You";
-    const initials = ed.settings.authorInitials.trim() || undefined;
-    ed.doc.setActiveAuthor(name, initials, undefined);
+    const who = activeAuthor(ed.settings);
+    ed.doc.setActiveAuthor(who.name, who.initials, who.id);
+    // `people.xml` presenceInfo is OPT-IN (§6.2): only a host's `persist` puts an
+    // id into a saved file, and without it nothing is called at all.
+    if (who.persist && typeof ed.doc.setAuthorPersistence === "function") {
+      ed.doc.setAuthorPersistence(who.persist.providerId, who.persist.userId);
+    }
   }
+  /** The two author fields: the visitor's, or the host's and disabled with why. */
+  function reflectAuthorFields() {
+    reflectAuthorIdentity({ nameInput: authorNameInput, initialsInput: authorInitialsInput,
+      reason: authorIdentityReason, settings: ed.settings });
+  }
+  // A host identity arrives by message after boot (`docs/175` §3.2).
+  hostIdentity.onChange(() => applySettings());
 
   /** Applies the current settings to the document root + reflects them in the panel. */
   function applySettings() {
@@ -58,8 +74,7 @@ export function createSettings(ed) {
       pin: ACCENT_PIN,
       reason: t("branding.themeSetByHost"),
     });
-    authorNameInput.value = ed.settings.authorName;
-    authorInitialsInput.value = ed.settings.authorInitials;
+    reflectAuthorFields();
     if (ed.autosaveToggle) {
       ed.autosaveToggle.checked = ed.settings.autosave !== false;
       // A control that cannot do anything says why, rather than sitting there
@@ -198,6 +213,8 @@ export function createSettings(ed) {
       // locale-shaped values, and the View entry's disabled reason is a sentence —
       // so this panel is one of the surfaces a relabel has to reach.
       ed.versionHistory.reflect();
+      // The disabled fields' title is the reason's sentence, which just relabelled.
+      reflectAuthorFields();
     },
   });
 
