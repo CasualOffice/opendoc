@@ -75,7 +75,8 @@ test("a narrow window spends nothing on rail captions, and loses no destination 
   // and the old assertions failed because a withheld tile measures 0.
   //
   // The guarantee has three parts and none of them names a width:
-  //   1. the rail carries its words where there is room for them;
+  //   1. the rail is glyphs wherever it is painted (HF-331 dropped the
+  //      captions at every width; they used to show where there was room);
   //   2. where there is not, it costs the same in every language, because it
   //      has stopped being made of words — a caption-sized tile is 66px in
   //      English, 86px in Russian and 111px in Brazilian Portuguese;
@@ -96,10 +97,12 @@ test("a narrow window spends nothing on rail captions, and loses no destination 
     await page.goto(`/editor.html?lang=${tag}`);
     await page.waitForSelector("#railOutline");
 
-    // (1) Wide: the rail carries its words. This is what proves the shed is a
-    // decision about space rather than a caption somebody deleted.
+    // (1) Wide: since HF-331 the rail is glyphs at every width, as Docs' and
+    // Word's are (`rail-icon-only.spec.mjs` holds the desktop bound), so a
+    // wide window carries no caption either and its destinations are named.
     const wide = await railMetrics(page);
-    expect(wide.tiles.every((tile) => tile.captionShown)).toBe(true);
+    expect(wide.tiles.some((tile) => tile.captionShown)).toBe(false);
+    expect(wide.tiles.every((tile) => tile.name.trim() !== "")).toBe(true);
 
     // (2) The rung where the rail is painted and its space is contested: the
     // review column in the margin, which is the surviving caption-shed rule
@@ -160,70 +163,6 @@ test("a narrow window spends nothing on rail captions, and loses no destination 
   // And it really did cost something at a desktop width — otherwise this whole
   // test would be asserting that a caption nobody has is still missing.
   expect(RAIL).toHaveLength(4);
-});
-
-// The caption shed is about SPACE, so it has to ask whether there is any
-// (HF-265 D6).
-//
-// The rule that sheds them — `:root:has(#viewport.has-review-sidebar:not(
-// .review-sheet)) .rail-btn > span:not(.ms)` — carried NO width condition,
-// while its own comment justified itself "at 860px with the column in the
-// margin". So opening Comments took the four captions away at every width:
-// measured at 1920x1080, where the window has 1113px to spare after the rail,
-// the document and the column, `#railOutline`'s caption went `display: block`
-// to `display: none` and the rail went 78px to 64px.
-//
-// The test above covers the two rungs that were right — wide with no column,
-// and 860 with one. This is the third combination, the one nothing asked about,
-// and it is a pair: the captions stay where there is room, and they still go
-// where there is not. Asserting only the first half would pass on a rule that
-// had been deleted outright, which is the opposite defect.
-test("opening Comments on a wide screen does not take the rail's captions", async ({ page }) => {
-  /** Which rail tiles are showing their caption, by id — every tile the rail
-   *  has, not a hardcoded four: the rail carries five destinations (Compare is
-   *  the fifth) and a list of names fails for the wrong reason when it gains a
-   *  sixth. */
-  const captionsShown = () =>
-    page.evaluate(() =>
-      Object.fromEntries(
-        [...document.querySelectorAll(".rail-btn")].map((tile) => {
-          const caption = tile.querySelector("span:not(.ms)");
-          return [
-            tile.id,
-            caption ? getComputedStyle(caption).display !== "none" : false,
-          ];
-        }),
-      ),
-    );
-  const hidden = (shown) => Object.keys(shown).filter((id) => !shown[id]);
-  const visible = (shown) => Object.keys(shown).filter((id) => shown[id]);
-
-  // A big desktop. The complaint is not about a narrow window — it is about a
-  // rule that behaves as though every window were narrow.
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  await gotoEditor(page);
-  expect(
-    hidden(await captionsShown()),
-    "the captions are there before Comments opens",
-  ).toEqual([]);
-
-  await page.locator("#railReview").click();
-  await expect(page.locator("#reviewSidebar")).toBeVisible();
-  expect(
-    hidden(await captionsShown()),
-    "the review column is in the margin of a 1920px window with room to spare, so " +
-      "nothing has been contested and the rail keeps its words",
-  ).toEqual([]);
-
-  // And the shed still happens where the room really has run out. Same state,
-  // one viewport narrower than the rung the rule is written for.
-  await page.setViewportSize({ width: 860, height: 1080 });
-  await expect(page.locator("#reviewSidebar")).toBeVisible();
-  expect(
-    visible(await captionsShown()),
-    "at 860 with the column in the margin, a caption-sized tile comes straight off " +
-      "the page — so the shed must still happen",
-  ).toEqual([]);
 });
 
 test("a status toast never covers the footer action of an open drawer", async ({ page }) => {
