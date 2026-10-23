@@ -1,0 +1,36 @@
+{
+  "schema": 3,
+  "fonts": [
+    "Caladea-Regular"
+  ],
+  "pages": [
+    {
+      "sizeTwips": [
+        11906,
+        16838
+      ],
+      "contentBboxTwips": [
+        1442,
+        1440,
+        10802,
+        4180
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    },
+    {
+      "sizeTwips": [
+        15840,
+        12240
+      ],
+      "contentBboxTwips": [
+        1082,
+        720,
+        14476,
+        2588
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    }
+  ]
+}

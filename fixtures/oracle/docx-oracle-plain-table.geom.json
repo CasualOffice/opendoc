@@ -1,0 +1,22 @@
+{
+  "schema": 3,
+  "fonts": [
+    "Carlito"
+  ],
+  "pages": [
+    {
+      "sizeTwips": [
+        12240,
+        15840
+      ],
+      "contentBboxTwips": [
+        1442,
+        1396,
+        10510,
+        7913
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    }
+  ]
+}

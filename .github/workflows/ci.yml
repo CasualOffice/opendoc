@@ -86,6 +86,13 @@ jobs:
       # `.github/workflows/oracle-geometry.yml` job.
       - name: Oracle geometry gate (docs/94 H2, FID-P-01)
         run: cargo test -p casual-doc-render --test oracle_geometry --all-features --locked
+      # The per-fixture deltas, on the run's summary page. The report is the
+      # committed fixtures/oracle/REPORT.md, which the step above has just
+      # refused if it is stale, so what is published is what was gated.
+      - name: Publish the oracle delta report
+        if: always()
+        shell: bash
+        run: cat fixtures/oracle/REPORT.md >> "$GITHUB_STEP_SUMMARY"
       - name: Run workspace tests
         shell: bash
         run: |

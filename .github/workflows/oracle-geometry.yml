@@ -144,6 +144,14 @@ jobs:
             [docx-real-producer-rich]="fixtures/corpus/real-producer-rich.docx"
             [docx-real-producer-table-list]="fixtures/corpus/real-producer-table-list.docx"
             [docx-real-producer-table-merges]="fixtures/corpus/real-producer-table-merges.docx"
+            # Self-generated, one layout family each
+            # (fixtures/tools/make_oracle_fixtures.py).
+            [docx-oracle-alignment-indent]="fixtures/generated/oracle-alignment-indent.docx"
+            [docx-oracle-line-spacing]="fixtures/generated/oracle-line-spacing.docx"
+            [docx-oracle-font-families]="fixtures/generated/oracle-font-families.docx"
+            [docx-oracle-multipage-flow]="fixtures/generated/oracle-multipage-flow.docx"
+            [docx-oracle-sections-tabs]="fixtures/generated/oracle-sections-tabs.docx"
+            [docx-oracle-plain-table]="fixtures/generated/oracle-plain-table.docx"
           )
           for id in "${!FIXTURES[@]}"; do
             echo "== $id =="

@@ -1,0 +1,50 @@
+{
+  "schema": 3,
+  "fonts": [
+    "LiberationSans"
+  ],
+  "pages": [
+    {
+      "sizeTwips": [
+        11906,
+        16838
+      ],
+      "contentBboxTwips": [
+        1136,
+        1134,
+        10767,
+        15696
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    },
+    {
+      "sizeTwips": [
+        11906,
+        16838
+      ],
+      "contentBboxTwips": [
+        1136,
+        1134,
+        10763,
+        2804
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    },
+    {
+      "sizeTwips": [
+        11906,
+        16838
+      ],
+      "contentBboxTwips": [
+        1136,
+        1134,
+        10707,
+        4642
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    }
+  ]
+}
