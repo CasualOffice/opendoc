@@ -613,6 +613,8 @@ export const APP_MENU_SECTIONS = {
       "tools.spellCheck",
       "tools.grammarCheck",
       "tools.smartQuotes",
+      "tools.autoFormatLists",
+      "tools.autocorrect",
       "tools.languages",
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
