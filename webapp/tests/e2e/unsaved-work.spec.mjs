@@ -143,6 +143,34 @@ test("a file the engine rejects leaves the open document alive and editable", as
   await expect(page.locator("#a11yDocument")).toContainText("stillalive");
 });
 
+// HF-381: the other half of the case above. An open that fails AFTER the new
+// document parsed — once the previous one has been freed — must not tell the
+// user the previous document "is still here": it is not. The failure is created
+// rather than waited for: the title field throws when the open writes the new
+// name into it, a step that comes after the previous document is freed.
+test("an open that fails after the swap does not claim the old document survived", async ({
+  page,
+}) => {
+  await gotoEditor(page);
+  await page.evaluate(() => {
+    Object.defineProperty(document.getElementById("docTitle"), "value", {
+      configurable: true,
+      get: () => "",
+      set: () => {
+        throw new Error("late failure (test)");
+      },
+    });
+  });
+  await page.locator("#file").setInputFiles({
+    name: "late.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("late"),
+  });
+  await expect(page.locator("#status")).toContainText(/could not open late\.txt: late failure/i);
+  await expect(page.locator("#status")).toContainText(/already closed/i);
+  await expect(page.locator("#status")).not.toContainText(/still here/i);
+});
+
 // The unload guard closes the "close the tab" half of HF-002. This is the other
 // half: Open replaced a dirty document with no prompt at all, on both the file
 // picker and the drag-and-drop path. Both are routed through one confirm, so
