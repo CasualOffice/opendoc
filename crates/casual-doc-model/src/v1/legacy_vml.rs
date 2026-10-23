@@ -86,6 +86,7 @@ pub fn legacy_vml_fingerprint(members: &[&InlineNode]) -> String {
 }
 
 fn strip_text_box_blocks(node: &mut InlineNode) {
+    // container-set: a VML member is a TextBox or a Group only; the other four containers never hold a pict member, so this walk deliberately names just those two.
     match node {
         InlineNode::TextBox(text_box) => text_box.blocks = Vec::<BlockNode>::new(),
         InlineNode::Group(group) => strip_children(&mut group.children),
@@ -118,6 +119,7 @@ pub fn legacy_vml_text_box_blocks<'a>(
             _ => None,
         })
     }
+    // container-set: VML members are TextBox or Group only (the other four containers are never pict members), so only those two are searched.
     members.iter().find_map(|node| match node {
         InlineNode::TextBox(text_box) if text_box.id == id => Some(text_box.blocks.as_slice()),
         InlineNode::Group(group) => in_children(&group.children, id),
