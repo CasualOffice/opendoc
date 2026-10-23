@@ -59,50 +59,64 @@
 // it separates, because a flat ±5px zone ate most of an 18px row and stole
 // ordinary clicks. The inside reach here is the same shape of risk and takes the
 // same clamp: `INSIDE_PX` is capped at `MAX_BAND_SHARE` of the leading band, so
-// the rest of the first cell always places a caret, at every row height. The `+`
-// insert discs are centred on a boundary but live *inside the strip* for the
-// same reason — `docs/141` §4.2.1 requires it and it is what keeps the
-// affordance free.
+// the rest of the first cell always places a caret, at every row height.
+//
+// ## Two lanes, each a 24px target, never over text (HF-341..HF-344)
+//
+// Outward from the leading border the gutter is two LANES, each one target
+// thick: the select strip (`TARGET_PX` across, `INSIDE_PX` of it past the
+// border) and, beyond it, the insert lane where the `+` discs sit on the
+// boundaries. A disc used to sit INSIDE the strip and respond over a zone
+// clamped to a fifth of the band (7px on a default row) while painting 16px,
+// so a press on its lower half selected the row instead (`docs/171` §7 item 3).
+// In its own lane a disc can be the full target without taking anything from
+// the strip, and **the painted disc is its own hit box**: while one is shown,
+// its box answers first (`opts.sticky`), so every pixel it paints inserts.
+//
+// The lanes live in FREE SPACE, measured by layout: `clearBefore` (the margin
+// beside the rows) and `clearAbove` (the gap up to the line of text above), from
+// `tableChromeOnPage`. A lane that does not fit is not drawn: the column strip
+// used to reach 14px up over the paragraph above, so hovering that line offered
+// a column selection and a press there took it (item 6). Where only the strip
+// fits, the discs share it, but only on a boundary whose neighbouring bands are
+// at least two targets long, so the strip keeps a full target of every band.
+// Where not even the strip fits, it shrinks to the free space and the border.
+// Nothing here is drawn over a line of text, ever; the menu, the context menu
+// and the palette carry every gesture a lane that does not fit would have.
 
-/** The gutter strip's thickness, in CSS px. Docs' own strip measures about 12;
- *  `docs/141` §4.2.1 sets the floor at 12. 14 gives the `+` disc room to sit
- *  inside the strip without touching the table's border. */
-export const STRIP_PX = 14;
+/** A pointer target for a mouse or a pen, in CSS px: WCAG 2.5.8 Target Size
+ *  (Minimum). Each lane is this thick and each disc this big (HF-341, HF-342). */
+export const TARGET_PX = 24;
 
-/** How far the zone reaches INSIDE the table's leading border, in CSS px.
+/** The same for a coarse pointer (a finger): 44px, WCAG 2.5.5 and the platform
+ *  guidelines. A finger has no hover, so this is what a tap has to land in. */
+export const COARSE_TARGET_PX = 44;
+
+/** How far the strip reaches INSIDE the table's leading border, in CSS px.
  *
  *  ONLYOFFICE's own number: `private_CheckHitInBorder` takes its radius from
  *  `GetMMPerDot(3)` and its column-selection override reaches
- *  `Y <= Y_cell_start + nRadius` — three pixels into the first row. Ours applies
+ *  `Y <= Y_cell_start + nRadius`, three pixels into the first row. Ours applies
  *  it to both axes, because our leading borders carry no resize gesture to keep
  *  reachable from just inside, which is the only reason ONLYOFFICE's row
  *  override stops at `X <= X_cell_start`.
  *
  *  Three pixels is inside the cell's own left margin (a default cell inset is
  *  108 twips, about 7px at 100%), so no glyph is ever covered by the zone; and
- *  {@link stripRect} clamps it against the leading band besides. */
+ *  {@link gutterLanes} clamps it against the leading band besides. The boundary
+ *  zones start this far in, so the two never contest a pixel. */
 export const INSIDE_PX = 3;
 
-/** The strip's thickness under a finger, in CSS px — WCAG 2.5.8 Target Size
- *  (Minimum) is 24x24. Widening the strip is free in a way widening a BOUNDARY
- *  zone was not: the strip is outside the table, so a 24px strip still steals no
- *  part of any cell. The other half of 2.5.8 — the band's extent along the strip
- *  — is the row's own height and is not ours to set; a short row is reached by
- *  the menu, the palette and the context menu, which is why every gesture here
- *  has a command twin. */
-export const TOUCH_STRIP_PX = 24;
+/** The target size for a pointer type: a finger gets the coarse size, a mouse
+ *  and a pen the fine one. Complexity O(1). */
+export function targetPxFor(pointerType) {
+  return pointerType === "touch" ? COARSE_TARGET_PX : TARGET_PX;
+}
 
-/** Half the `+` insert disc, in CSS px. A 16px disc (`docs/141` §4.2.1). */
-export const INSERT_TARGET_PX = 16;
-
-/** The largest share of a band the insert zone may take from either side.
+/** The largest share of a band the inside reach may take.
  *
  *  The same rule and the same number as `table_chrome_zones.mjs`' boundary
- *  clamp, for the same reason: the zone is a PIXEL distance and a row is not. A
- *  flat ±8px insert zone on an 18px row would leave no part of the strip that
- *  selects the row, so the affordance that inserts would have eaten the
- *  affordance that selects. At 0.2 the middle 60% of even the shortest band's
- *  strip segment always selects that band. */
+ *  clamp, for the same reason: the reach is a PIXEL distance and a row is not. */
 const MAX_BAND_SHARE = 0.2;
 
 /**
@@ -138,52 +152,81 @@ export function tableBands(table, axis) {
   }
   return out;
 }
-
 /**
- * The grab zone for one axis of one table, in page-local twips: from `outside`
- * before the table's leading border to `inside` past it.
+ * The gutter's lanes for one axis of one table, in page-local twips.
  *
- * The zone straddles the border because the border **is** the affordance
- * (ONLYOFFICE's `Border = -1` overrides, quoted at the top of this file). The
- * outside half is clamped to the page's own edge — a table indented to 0 has no
- * room beside it, and a zone drawn at a negative coordinate would be painted off
- * the sheet where nothing could ever hit it — and the inside half is clamped to
- * `MAX_BAND_SHARE` of the band it reaches INTO, which is the leading band of the
- * **other** axis: the row zone reaches sideways into the first COLUMN, and the
- * column zone reaches down into the first ROW. Clamping each against its own
- * axis would have measured the wrong thing entirely — a 3px reach down into an
- * 18px first row is the case that matters, and the first column's width has
- * nothing to say about it.
+ * `target` is one target's size in twips (the lane's thickness across the axis
+ * and a disc's length along it); `inside` is the reach past the border. Returns
+ * `{ strip, insert, shared }`: `strip` is the select lane, `insert` the disc
+ * lane beyond it or `null`, and `shared` says the discs live in the strip
+ * because only the strip fits. Where not even a full strip fits, the strip
+ * shrinks to the free space plus the border (`short: true`, no discs) rather
+ * than reaching over text.
  *
- * **A table flush against the sheet's edge still gets a zone**, which the old
- * outside-only strip could not: the inside half survives the clamp to 0. That
- * was a real gap — a table indented to the margin had no pointer affordance at
- * all and fell back to the menu.
+ * The free space is `clearBefore` for the row axis and `clearAbove` for the
+ * column axis, from layout. A payload without them (an older engine) falls back
+ * to the distance to the sheet's edge, which is what it used to assume.
  *
- * A zone thinner than `minimum` is reported as `null`.
+ * The inside reach is clamped to a fifth of the band it reaches INTO, which is
+ * the leading band of the OTHER axis: the row zone reaches sideways into the
+ * first column, the column zone down into the first row.
+ *
+ * Complexity: O(1) beyond {@link tableBands}.
  *
  * @param {object} table one `tableChromeOnPage` table
  * @param {"row"|"column"} axis
- * @param {number} outside twips before the leading border
- * @param {number} inside twips past it
- * @param {number} minimum the narrowest zone worth reporting, twips
+ * @param {number} target one target, twips
+ * @param {number} inside the reach past the border, twips
+ * @returns {{strip:object, insert:object|null, shared:boolean, short?:boolean}|null}
+ */
+export function gutterLanes(table, axis, target, inside = 0) {
+  if (!table || !(target > 0)) return null;
+  const row = axis === "row";
+  const reachInto = (band) => {
+    const leading = tableBands(table, band)[0]?.extent;
+    return Number.isFinite(leading) && leading > 0 ? Math.min(inside, leading * MAX_BAND_SHARE) : inside;
+  };
+  const reach = reachInto(row ? "column" : "row");
+  // The column lanes start where the row strip's inside reach ends, so the two
+  // strips never share the corner pixel where the leading borders meet.
+  const corner = row ? 0 : reachInto("column");
+  const border = row ? table.x : table.y;
+  const free = Math.max(0, (row ? table.clearBefore : table.clearAbove) ?? border);
+  const stripOut = target - reach;
+  const across = (lo, hi) =>
+    row
+      ? { x: lo, y: table.y, w: hi - lo, h: table.h }
+      : { x: table.x + corner, y: lo, w: table.w - corner, h: hi - lo };
+  // Not room for a full target: the strip SHRINKS to the free space and the
+  // border itself rather than reaching over the text. Directly under a
+  // paragraph that is the border and its inside reach, which is ONLYOFFICE's
+  // whole target there; the menu and the palette carry the rest. Its discs stay
+  // while the strip is at least the 16px the disc used to be (a heading's
+  // spacing-after, measured at 19px), and are as thick as the strip, so a disc
+  // is never drawn bigger than the box it answers over.
+  if (free < stripOut) {
+    if (free + reach <= 0) return null;
+    const strip = across(border - free, border + reach);
+    return { strip, insert: null, shared: free + reach >= (target * 2) / 3, short: true };
+  }
+  const strip = across(border - stripOut, border + reach);
+  const fits = free >= stripOut + target;
+  const insert = fits ? across(border - stripOut - target, border - stripOut) : null;
+  return { strip, insert, shared: !fits };
+}
+
+/**
+ * The strip's own rectangle (the select lane), or `null` when it does not fit.
+ * Complexity O(1).
+ *
+ * @param {object} table
+ * @param {"row"|"column"} axis
+ * @param {number} target one target, twips
+ * @param {number} inside the reach past the border, twips
  * @returns {{x:number,y:number,w:number,h:number}|null}
  */
-export function stripRect(table, axis, outside, inside = 0, minimum = 0) {
-  if (!table) return null;
-  // The band the inside reach eats into is on the OTHER axis: a row zone reaches
-  // into the first column, a column zone into the first row.
-  const leading = tableBands(table, axis === "row" ? "column" : "row")[0]?.extent;
-  const reach =
-    Number.isFinite(leading) && leading > 0 ? Math.min(inside, leading * MAX_BAND_SHARE) : inside;
-  if (axis === "row") {
-    const x = Math.max(0, table.x - outside);
-    const w = table.x - x + reach;
-    return w > minimum ? { x, y: table.y, w, h: table.h } : null;
-  }
-  const y = Math.max(0, table.y - outside);
-  const h = table.y - y + reach;
-  return h > minimum ? { x: table.x, y, w: table.w, h } : null;
+export function stripRect(table, axis, target, inside = 0) {
+  return gutterLanes(table, axis, target, inside)?.strip ?? null;
 }
 
 /**
@@ -236,82 +279,105 @@ export function dropBoundaryAt(bands, along) {
 export function moveTargetIndex(from, boundary) {
   return boundary > from ? boundary - 1 : boundary;
 }
-
 /** Whether `v` lies in `[lo, hi)`. Half-open so two adjacent bands never both
  *  claim the point on their shared boundary. */
 function inBand(v, lo, hi) {
   return v >= lo && v < hi;
 }
 
-/** The insert zone's half-width at boundary `k`, reduced so it cannot swallow
- *  either band it sits between. Complexity O(1). */
-function insertTolerance(bands, k, tol) {
-  const before = bands[k - 1]?.extent;
-  const after = bands[k]?.extent;
-  const shorter = Math.min(before ?? Infinity, after ?? Infinity);
-  if (!Number.isFinite(shorter) || shorter <= 0) return tol;
-  return Math.min(tol, shorter * MAX_BAND_SHARE);
+/** Whether the page-local point lies in `rect`, half-open. */
+function inRect(rect, x, y) {
+  return !!rect && x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+/** Boundary `k` of a band list: `bands.length + 1` of them, leading edge first. */
+function boundaryAtIndex(bands, k) {
+  return k === bands.length ? bands[k - 1].end : bands[k].start;
+}
+
+/** The insert target at boundary `k`, with its disc box: one target long,
+ *  centred on the boundary, and as thick as the lane it sits in. */
+function insertTarget(table, axis, bands, k, lane, target, strip) {
+  const at = boundaryAtIndex(bands, k);
+  const after = k > 0;
+  const band = after ? bands[k - 1] : bands[0];
+  const half = target / 2;
+  const disc =
+    axis === "row"
+      ? { x: lane.x, y: at - half, w: lane.w, h: target }
+      : { x: at - half, y: lane.y, w: target, h: lane.h };
+  return { kind: "insert", axis, table, index: k, band, anchor: band.anchor, after, at, strip, disc };
 }
 
 /**
  * The gutter target under the page-local point `(x, y)`, or `null`.
  *
- * Coordinates and every tolerance are twips. `opts` carries the zone's reach
- * per axis — `stripX`/`stripY` outside the leading border and `insideX`/
- * `insideY` past it (a PIXEL distance divided by the page's scale by the caller,
- * so a zoomed-out page does not get a zone ten times as wide in document space)
- * — and the insert disc's half-width per axis.
+ * Coordinates and every size are twips. `opts` carries one target's size per
+ * axis (`targetX` across the row gutter, `targetY` across the column gutter: a
+ * PIXEL size divided by the page's scale by the caller, so a zoomed-out page
+ * does not get a zone ten times as wide in document space), the inside reach
+ * (`insideX`/`insideY`), and `sticky`: the disc painted right now, as
+ * `{ table, axis, index, disc }`. **The painted disc answers first**, over its
+ * whole box, so what is drawn is what responds (HF-341).
  *
- * An **insert** target beats a **strip** target, because it is the smaller zone
- * drawn inside the larger one and a user aiming at a disc has aimed at it.
+ * In the insert lane a point resolves to the NEAREST boundary within half a
+ * target: one disc, never two. In a shared strip a disc arms only on a boundary
+ * whose neighbouring bands are each at least two targets long, so selecting a
+ * band always keeps a full target of it.
  *
- * Complexity: O(bands on the page) — a few dozen comparisons, no document read.
+ * Complexity: O(bands on the page), a few dozen comparisons, no document read.
  *
  * @param {Array} tables the page's `tableChromeOnPage` tables
  * @param {number} x page-local twips
  * @param {number} y page-local twips
- * @param {{stripX:number, stripY:number, insideX:number, insideY:number,
- *          insertX:number, insertY:number}} opts
- * @returns {object|null} `{ kind, axis, table, index, band, anchor, after, rect }`
+ * @param {{targetX:number, targetY:number, insideX?:number, insideY?:number,
+ *          sticky?:object|null}} opts
+ * @returns {object|null} `{ kind, axis, table, index, band, anchor, after, at, strip, disc? }`
  */
 export function gutterAt(tables, x, y, opts) {
+  const sticky = opts.sticky;
+  if (sticky && inRect(sticky.disc, x, y)) {
+    const table = (tables ?? []).find((t) => t.node === sticky.table);
+    const bands = table ? tableBands(table, sticky.axis) : [];
+    const target = sticky.axis === "row" ? opts.targetX : opts.targetY;
+    const inside = (sticky.axis === "row" ? opts.insideX : opts.insideY) ?? 0;
+    const lanes = table ? gutterLanes(table, sticky.axis, target, inside) : null;
+    if (lanes && bands.length && sticky.index <= bands.length) {
+      const hit = insertTarget(table, sticky.axis, bands, sticky.index, sticky.disc, target, lanes.strip);
+      hit.disc = sticky.disc;
+      return hit;
+    }
+  }
   for (const table of tables ?? []) {
     for (const axis of ["row", "column"]) {
-      const across = axis === "row" ? x : y;
-      const along = axis === "row" ? y : x;
-      const thickness = axis === "row" ? opts.stripX : opts.stripY;
-      const inside = (axis === "row" ? opts.insideX : opts.insideY) ?? 0;
-      const strip = stripRect(table, axis, thickness, inside);
-      if (!strip) continue;
-      const lo = axis === "row" ? strip.x : strip.y;
-      const hi = lo + (axis === "row" ? strip.w : strip.h);
-      // The table's own leading border is INSIDE this zone now, which is the
-      // whole of the owner's correction and is ONLYOFFICE's `X <= X_cell_start`.
-      // Still half-open at the far end, so the first pixel that belongs to the
-      // caret belongs to it unambiguously.
-      if (across < lo || across >= hi) continue;
+      const row = axis === "row";
+      const across = row ? x : y;
+      const along = row ? y : x;
+      const target = row ? opts.targetX : opts.targetY;
+      const lanes = gutterLanes(table, axis, target, (row ? opts.insideX : opts.insideY) ?? 0);
+      if (!lanes) continue;
       const bands = tableBands(table, axis);
       if (!bands.length) continue;
+      const { strip, insert } = lanes;
+      const lo = (rect) => (row ? rect.x : rect.y);
+      const hi = (rect) => lo(rect) + (row ? rect.w : rect.h);
+      // The nearest boundary to the pointer along the axis, and whether the
+      // pointer is within half a target of it.
+      let k = 0;
+      for (let i = 1; i <= bands.length; i++) {
+        const closer = Math.abs(along - boundaryAtIndex(bands, i));
+        if (closer < Math.abs(along - boundaryAtIndex(bands, k))) k = i;
+      }
+      const near = Math.abs(along - boundaryAtIndex(bands, k)) <= target / 2;
+      if (insert && across >= lo(insert) && across < hi(insert)) {
+        if (near) return insertTarget(table, axis, bands, k, insert, target, strip);
+        continue;
+      }
+      if (across < lo(strip) || across >= hi(strip)) continue;
       if (along < bands[0].start || along > bands[bands.length - 1].end) continue;
-      const insertTol = axis === "row" ? opts.insertY : opts.insertX;
-      // Boundary k sits before band k; boundary bands.length is the trailing
-      // edge. Insert BEFORE band k, i.e. after band k-1.
-      for (let k = 0; k <= bands.length; k++) {
-        const at = k === bands.length ? bands[k - 1].end : bands[k].start;
-        if (Math.abs(along - at) > insertTolerance(bands, k, insertTol)) continue;
-        const after = k > 0;
-        const band = after ? bands[k - 1] : bands[0];
-        return {
-          kind: "insert",
-          axis,
-          table,
-          index: k,
-          band,
-          anchor: band.anchor,
-          after,
-          at,
-          strip,
-        };
+      if (lanes.shared && near) {
+        const shortest = Math.min(bands[k - 1]?.extent ?? Infinity, bands[k]?.extent ?? Infinity);
+        if (shortest >= 2 * target) return insertTarget(table, axis, bands, k, strip, target, strip);
       }
       const band = bands.find((b) => inBand(along, b.start, b.end)) ?? bands[bands.length - 1];
       return {

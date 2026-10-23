@@ -1,8 +1,9 @@
 # 171 — Merged table cells: one grid map, and the table chrome around it
 
-Status: §1–§6 built on `tables/merged-cells-and-chrome` (row HF-340). §7 (table chrome
-gaps) and §8 (grips and the table move handle) are the design for the next PR on this lane;
-nothing in them is built yet, except where a line says so.
+Status: §1–§6 built on `tables/merged-cells-and-chrome` (row HF-340, #858). §7's ranked
+chrome defects 3–8 are fixed on `tables/chrome-targets` (rows HF-341..HF-346, §7.1); §7.2
+lists what that work found and left open (HF-347..HF-349). §8 (grips and the table move
+handle) is not built.
 
 The owner's words: *"for table our current approach fails in case of merged cells"*, and the
 hover and selection action menus *"need to be seriously looked into"*.
@@ -225,20 +226,73 @@ Defects in OUR chrome below that standard, ranked:
 2. **Wrong boundary numbering on merged tables.** `table_chrome_on_page` numbered column
    boundaries by CELL index. **Fixed here** (§3).
 3. **The "+" disc paints 16 px but responds over 7 px** (`insertTolerance`,
-   `table_gutter_zones.mjs`). Pressing the painted lower half selects the row instead. Fix:
-   hit-test the disc's own box, 24 px.
+   `table_gutter_zones.mjs`). Pressing the painted lower half selects the row instead.
+   **Fixed (HF-341).**
 4. **Targets under 24 px for a mouse or pen** (WCAG 2.5.8): the strip (17 px), the disc,
-   and both boundary zones. The touch paths already reach 24 px. Fix: use the 24 px paths
-   for `pointerType === "pen"` and coarse pointers too.
+   and both boundary zones. **Fixed (HF-342)**, with the limits in §7.2.
 5. **The row strip arms only after the pointer has entered the table**, so it is invisible
-   on approach from the margin, where no text lives. Fix: arm on a pointer level with a
-   row, within the strip's reach.
-6. **The column strip overlaps the paragraph line above** (14 px reach). Fix: clamp the
-   outside reach to the gap above the table, from layout.
-7. **Stale hover after a wheel scroll**: no pointermove fires, so the band stays lit. Fix:
-   re-run the hover from the scroll handler with the last pointer position.
-8. **Structural edits from the menu say nothing**: only the disc path announces. Fix:
-   announce `table.rowInserted` and its siblings from the command runners.
+   on approach from the margin, where no text lives. **Fixed (HF-343).**
+6. **The column strip overlaps the paragraph line above** (14 px reach). **Fixed (HF-344).**
+7. **Stale hover after a wheel scroll**: no pointermove fires, so the band stays lit.
+   **Fixed (HF-345)**, and after a zoom.
+8. **Structural edits from the menu say nothing**: only the disc path announces. **Fixed
+   (HF-346)**, from the band, the Table menu, the context menu and the palette.
+
+### 7.1 How 3–8 were fixed
+
+The named pattern is the **hit-target lane** (a gutter of fixed-size targets beside the
+content, as a spreadsheet's header strip or an editor's line-number gutter), with **hover
+hysteresis** for the disc: the target that is painted is the target that answers.
+
+- **Two lanes, each one target thick** (`table_gutter_zones.mjs` `gutterLanes`). Outward
+  from the leading border: the select strip (24 px, 3 px of it past the border) and the
+  insert lane (24 px) where the `+` discs sit on the boundaries. A finger gets 44 px for
+  both. A point in the insert lane resolves to the nearest boundary within half a target.
+- **The painted disc is its own hit box.** While a disc is shown its box answers first
+  (`gutterAt`'s `sticky`), so on a 19 px row, where the next boundary is nearer than this
+  disc's centre over part of its box, every painted pixel still inserts here.
+- **The lanes live in free space measured by layout.** `tableChromeOnPage` now reports
+  `clearAbove` and `clearBefore` per table (`hittest.rs` `clearance`, O(lines on the
+  page)): the gap up to the nearest line box above the table over its width, and to the
+  nearest line box beside it. A lane that does not fit is not drawn there. Where only the
+  strip fits, discs share it on boundaries whose neighbouring bands are two targets long.
+  Where not even the strip fits, it shrinks to the free space and the border: it never
+  covers a line.
+- **Arming on approach** is safe because of that: the row strip and its disc show as the
+  pointer comes in from the margin, before it enters the table.
+- **Boundary zones are ±12 px** (24 px), still clamped to a fifth of the shorter band so the
+  middle 60 % of every cell places the caret, and they start where the strip's inside
+  reach ends, so no pixel arms both a strip and a resize (unit-tested over a grid). The
+  caret table's resting column grip is exactly the armed zone's width.
+- **Scroll and zoom** re-place the hover from the last pointer position: a capture-phase
+  `scroll` listener in the gutter module, and a scale check in its paint.
+- **Announcements** come from one table, `TABLE_EDIT_ANNOUNCEMENTS` in `table_band.mjs`,
+  read by the band, the command tree and the merge button, after the edit lands and never
+  on a refusal. Nine new sentences, in all 19 catalogues.
+
+Guards: `table-chrome-targets.spec.mjs` (six specs, each seen red under a mutation of the
+code it guards; the commit lists them), `table_gutter_zones.test.mjs` (lanes, the sticky
+disc, no text cover, no contested pixel), `table_commands.test.mjs` (every structural
+command announces, and says nothing when refused), and
+`chrome_reports_the_free_space_above_and_before_a_table` in `casual-doc-layout`.
+
+### 7.2 Found and left open
+
+- **HF-347: RTL tables keep the gutter on the left.** A `w:bidiVisual` table is laid out
+  mirrored, so its leading edge is on the right, where Word puts the row selection. The
+  lanes still measure free space on the left, so they cover nothing; they are on the
+  trailing side. Needs the table's direction in the chrome payload.
+- **HF-348: the column strip is under 24 px below an ordinary paragraph.** The free space
+  above a table is the paragraph's spacing after plus the table's: 19 px measured under a
+  heading, and 8 pt (about 11 px) under Word's default Normal paragraph. The strip shrinks to that rather than covering the
+  line, and below 16 px it carries no `+` discs; column insert is then on the menu, the
+  context menu, the palette and the band. Word draws its column `+` over the text above;
+  we will not. A flip below the table, or a column handle inside the top border on hover,
+  is the open design question.
+- **HF-349: boundary zones on short rows stay under 24 px, and the touch pills are 24, not
+  44.** A row border's zone is a fifth of a 19 px row either side (about 7 px), because 24
+  there would take the whole row from the caret; Alt+Shift+Arrow and the menu size a row
+  without aiming. The touch pills (`table_chrome.mjs` `TOUCH_PILL_PX`) predate this work.
 
 ## 8. Grips and the table move handle
 
@@ -292,4 +346,4 @@ shared grip contract in `docs/172`.
 - **`split_table_cell_counts` keeps its own span arithmetic** for splitting into counts. It
   refuses every case the grid map would answer differently.
 - **Sort and formulas on merged tables** still refuse, with their existing reasons.
-- **§7 items 3–8 and §8** are the next PR on this lane.
+- **§8** is the next PR on this lane; §7.2 lists what the chrome work left open.

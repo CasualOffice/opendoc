@@ -269,7 +269,7 @@ import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
-import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
+import { announceTableEdit, bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { createTableGridPicker } from "./table_grid_picker.mjs";
 import { createRegionCycle } from "./region_focus.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
@@ -6864,9 +6864,8 @@ function openContextLink(link) {
 const TABLE_COMMAND_HOST = {
   doc: () => doc,
   tableSelection: () => tableRange.descriptor(),
-  clearTableSelection: () => {
-    tableRange.clear();
-  },
+  clearTableSelection: () => tableRange.clear(),
+  status: (text) => setStatus(text),
   plainTableInfo,
   runEdit: (thunk, options) => runEdit(thunk, options),
   selectTableContext,
@@ -10609,11 +10608,10 @@ bindTableBand({
   getDoc: () => doc,
   getSelection: () => selection,
   runEdit,
-  clearTableSelection: () => {
-    tableRange.clear();
-  },
+  clearTableSelection: () => tableRange.clear(),
   selectTableContext,
   caretTableColumn,
+  status: (text) => setStatus(text),
 });
 
 onButton(mergeCellsBtn, async () => {
@@ -10627,7 +10625,7 @@ onButton(mergeCellsBtn, async () => {
   // shapes a mode string could name, so an arbitrary drag merges (TBL-17).
   const range = tableRange.get();
   if (!selection || !doc || !range) return;
-  await runEdit(() => doc.mergeTableCellRange(range.anchorNode, range.focusNode), { gate: true });
+  await announceTableEdit(runEdit(() => doc.mergeTableCellRange(range.anchorNode, range.focusNode), { gate: true }), "merge", setStatus);
   tableRange.clear();
   updateToolbar();
 });

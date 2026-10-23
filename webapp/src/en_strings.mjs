@@ -1225,6 +1225,18 @@ export const EN_STRINGS = Object.freeze({
   "table.insertColumnHere": "Insert a column here",
   "table.rowInserted": "Row inserted",
   "table.columnInserted": "Column inserted",
+  // What every OTHER structural table edit says once it lands, from the band,
+  // the Table menu, the context menu and the palette alike (HF-346,
+  // `table_band.mjs` `TABLE_EDIT_ANNOUNCEMENTS`). They used to run in silence.
+  "table.rowDeleted": "Row deleted",
+  "table.columnDeleted": "Column deleted",
+  "table.tableDeleted": "Table deleted",
+  "table.rowsDistributed": "Rows distributed evenly",
+  "table.columnsDistributed": "Columns distributed evenly",
+  "table.sortedAscending": "Table sorted ascending",
+  "table.sortedDescending": "Table sorted descending",
+  "table.cellsMerged": "Cells merged",
+  "table.cellsUnmerged": "Cells unmerged",
   // ---- Drawing: the shapes gallery, wrap, position, arrange, rotate --------
   // The whole arrange surface, localised in one block because it ships as one
   // capability: a shape you can draw, place, wrap text around, stack, group and
