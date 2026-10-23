@@ -1,6 +1,6 @@
 # 177 — Splitting `main.js`: feature modules over one editor context
 
-**Status:** In progress, 2026-10-24. **Row:** `docs/109` HF-380 (progresses HF-085 and
+**Status:** Split done 2026-10-24; the mount (§4) is open. **Row:** `docs/109` HF-380 (progresses HF-085 and
 HF-109). **Guard:** `webapp/tests/module_seams.test.mjs`.
 
 ---
@@ -49,6 +49,41 @@ Rules the split keeps:
 - **String debt moves, it is not forgiven.** `no_unrouted_strings.test.mjs` gives each
   domain module its measured count, and lowers `main.js` by the same amount.
 
+### 2.1 The boot-order trap, and what stays in `main.js` because of it
+
+A top-level `function` is hoisted: anything can read it from the first line of boot.
+Moved into a factory, it becomes a `const` that exists only after `createX(ed)` has
+run. Three kinds of boot code read a function before its domain is created, and each
+one stopped the editor booting during the split:
+
+1. **Main code that hands a function out as a value**, such as `runEdit` passed to the
+   proofing chrome, or `stepZoom` passed to `createViewZoom`.
+2. **An earlier factory's top level reading `ed.x`**, such as the context menu reading
+   `applyShapeFill` while it is being created.
+3. **A callback that runs while `main.js` is suspended at a top-level `await`**. One
+   example is the ribbon overflow's `requestAnimationFrame` calling
+   `syncRibbonTabStops`. No static scan sees this kind.
+
+The extraction scans for the first two (main's eager statements, plus every factory
+created earlier, through its eager `ed.` reads and the local functions it calls at
+creation). A function either scan finds stays in `main.js`. A boot probe catches the
+third: page errors on `?fixture=rich` and on the plain editor. The probe runs after
+every step. The functions that stay for this reason are `runEdit`,
+`blockMutationInViewing`, `documentVersion`, `renderAll`, `scaleOf`, `place`,
+`pageFromClientPoint`, `selEndpoints`, `runToolbarEdit`, `updateToolbar`,
+`populateStyles`, `runNodeEdit`, `setZoom`, `setZoomMode`, `stepZoom`,
+`applyShapeFill`, `applyShapeOutline`, and ribbon keyboard navigation. A `let` that
+`main.js` still reads stays in `main.js` too, declared just before the factory call so
+the factory never meets it uninitialised.
+
+### 2.2 What `main.js` holds now
+
+`main.js` now holds the imports, the generated `ed` block, the editor's shared state (`doc`,
+`pages`, `selection`, the review and object state), the core helpers every domain
+calls (status, focus, chrome refresh), the functions §2.1 keeps, and the
+composition itself: one `createX(ed)` call per domain, in boot order, then `boot()`
+and the host contract.
+
 ## 3. Module map
 
 Sizes are `wc -l` at the commit that last touched the row.
@@ -56,12 +91,14 @@ Sizes are `wc -l` at the commit that last touched the row.
 | Module | Factory | Domain | Lines |
 |---|---|---|---|
 | `editor_caret_nav.mjs` | `createCaretNav` | Caret navigation: the vertical goal column and `navCaret` | 90 |
+| `editor_chrome_modes.mjs` | `createChromeModes` | Compact toolbar vs ribbon, persisted, with the phone override | 76 |
 | `editor_clipboard.mjs` | `createClipboard` | Cut, paste (plain, rich, tracked, HTML), Paste as text, Paste options | 525 |
 | `editor_command_surfaces.mjs` | `createCommandSurfaces` | Insert, Layout, References and Review command surfaces | 361 |
 | `editor_context_menu.mjs` | `createContextMenu` | The context-aware editor menu: what a right-click offers | 643 |
 | `editor_dialogs.mjs` | `createDialogs` | Shortcuts reference, About, bookmarks, Insert field / picture, captions and cross-references, Symbol / Emoji | 470 |
 | `editor_dirty.mjs` | `createDirtyTracking` | Unsaved-work tracking: saved and current revisions, the dirty answer | 134 |
 | `editor_doc_tools.mjs` | `createDocTools` | Formatting marks, measurement units, access chrome, protection, Compare | 99 |
+| `editor_document_settings.mjs` | `createDocumentSettings` | Document properties, page setup, header and footer settings | 72 |
 | `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
 | `editor_edit_pipeline.mjs` | `createEditPipeline` | The edit choke point: `runEdit`, `applyEditResult`, typing sessions, mode gates | 202 |
 | `editor_file_open.mjs` | `createFileOpen` | Boot, demo presets, a blank document, `openBytes`, and the header rename | 420 |
@@ -104,11 +141,25 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 | `editor_zoom.mjs` | `createZoom` | Zoom: editable %, Fit width / Fit page, Ctrl+scroll (setZoom stays in main.js) | 120 |
 
-`main.js`: 16,030 lines when the split began, 3,090 now. The domain modules hold 14,411.
+`main.js`: 16,030 lines when the split began, 2,975 now. The domain modules hold 14,559.
 
 ## 4. What is left for HF-109
 
-The factories make the seam, not the mount. Each one still looks its DOM up by fixed id
-inside `document`, and `main.js` still runs at import. The next step is to give `ed` a
-`root` and have the factories look up `ed.root.querySelector(…)`, then wrap the
-composition root in `mountEditor(root, options)`. Recorded as open in HF-380.
+The split creates the seam. It does not create the mount. Three things still stand
+between this code and `mountEditor(root, options)`:
+
+1. **Ids are looked up in `document`.** Every factory, and `main.js`'s own chrome
+   constants, call `document.getElementById(…)`. The fix is mechanical: give `ed` a
+   `root`, and have every lookup go through `ed.root`. One editor per page stays
+   correct, and two editors stop colliding on ids.
+2. **The composition runs at import.** `main.js`'s top level is the composition. To
+   mount, it must become the body of an exported `mountEditor(root, options)`. The
+   module-level `let` state then becomes that function's locals, and `ed` already
+   names every binding that has to cross into a module. This is also when §2.1's
+   kept functions can move: inside one function the boot order is explicit and can be
+   rearranged, which a module's top level cannot.
+3. **There is no unmount.** Listeners on `document` and `window` (the keydown
+   dispatch, scroll, resize) need an `AbortController` per mount, so that unmounting
+   removes them.
+
+Recorded as open in HF-380 and HF-109.

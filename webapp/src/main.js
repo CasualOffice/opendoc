@@ -15,8 +15,6 @@ import { createPagesPanel } from "./pages_panel.mjs";
 import {
   reflectReviewSurface,
 } from "./ribbon_surface.mjs";
-import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
-import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
 import { previewPx } from "./style_picker.mjs";
@@ -26,15 +24,13 @@ import { createCompatibilityFindings } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
-import { createCompactToolbar } from "./compact_toolbar.mjs";
-import { createPropertiesDialog } from "./document_metadata.mjs";
 import {
   buildPageBand,
   pageBandPitch,
 } from "./page_scroll.mjs";
 import { keyboardPlatform } from "./keyboard.mjs";
 import { chordTitle } from "./keymap.mjs";
-import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { modalIsOpen, registerModal } from "./modal.mjs";
 import { objectBarPosition } from "./object_guides.mjs";
 // Own lines (anti-conflict): the two direct-manipulation geometry gestures.
 import { positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
@@ -44,9 +40,8 @@ import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs"
 import { localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
-import { bindRadioGroup } from "./radio_group.mjs";
 import { onButton } from "./popover_manager.mjs";
-import { reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
+import { reflectOpenPopovers } from "./popover_manager.mjs";
 import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
@@ -93,7 +88,7 @@ import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { createRegionCycle } from "./region_focus.mjs";
-import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
+import { loadPrefObject, savePrefObject } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
 import { createFind } from "./editor_find.mjs";
@@ -144,6 +139,8 @@ import { createReviewMargin } from "./editor_review_margin.mjs";
 import { createFonts } from "./editor_fonts.mjs";
 import { createCommandSurfaces } from "./editor_command_surfaces.mjs";
 import { createScroll } from "./editor_scroll.mjs";
+import { createDocumentSettings } from "./editor_document_settings.mjs";
+import { createChromeModes } from "./editor_chrome_modes.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -206,6 +203,7 @@ const ed = {
   get bandTopInScroller() { return bandTopInScroller; },
   get blockMutationInViewing() { return blockMutationInViewing; },
   get blockUntrackedInSuggesting() { return blockUntrackedInSuggesting; },
+  get blockedFromPageSetup() { return blockedFromPageSetup; },
   get bookmarkManager() { return bookmarkManager; },
   get breakTypingSession() { return breakTypingSession; },
   get buildAccessibilityTree() { return buildAccessibilityTree; },
@@ -247,7 +245,7 @@ const ed = {
   get commentQuotes() { return commentQuotes; },
   get commitComposedText() { return commitComposedText; },
   get commitCrop() { return commitCrop; },
-  get compactToolbarUi() { return compactToolbarUi; },
+  get compactToolbarUi() { return compactToolbarUi; }, set compactToolbarUi(v) { compactToolbarUi = v; },
   get comparePanel() { return comparePanel; },
   get compatFindings() { return compatFindings; },
   get composingText() { return composingText; }, set composingText(v) { composingText = v; },
@@ -335,6 +333,7 @@ const ed = {
   get fontState() { return fontState; }, set fontState(v) { fontState = v; },
   get formatPainter() { return formatPainter; }, set formatPainter(v) { formatPainter = v; },
   get formatPainterBtn() { return formatPainterBtn; },
+  get formatToggleCache() { return formatToggleCache; },
   get formattingMarks() { return formattingMarks; },
   get grammarCheckToggle() { return grammarCheckToggle; },
   get growFontBtn() { return growFontBtn; },
@@ -493,6 +492,7 @@ const ed = {
   get paintSelection() { return paintSelection; },
   get paintSnapGuides() { return paintSnapGuides; },
   get paraBordersMixed() { return paraBordersMixed; },
+  get paraControls() { return paraControls; },
   get paraLineSpacing() { return paraLineSpacing; },
   get paraOptsBtn() { return paraOptsBtn; },
   get paraPanelAlign() { return paraPanelAlign; },
@@ -515,6 +515,7 @@ const ed = {
   get pgBreakBefore() { return pgBreakBefore; },
   get pgKeepLines() { return pgKeepLines; },
   get pgKeepNext() { return pgKeepNext; },
+  get phoneChrome() { return phoneChrome; },
   get pictureReplace() { return pictureReplace; },
   get place() { return place; },
   get plainTableInfo() { return plainTableInfo; },
@@ -631,12 +632,14 @@ const ed = {
   get ribbonSurfaceReason() { return ribbonSurfaceReason; },
   get ribbonViewCollapsed() { return ribbonViewCollapsed; }, set ribbonViewCollapsed(v) { ribbonViewCollapsed = v; },
   get rulerView() { return rulerView; },
+  get runControls() { return runControls; },
   get runEdit() { return runEdit; },
   get runNodeEdit() { return runNodeEdit; },
   get runToolbarEdit() { return runToolbarEdit; },
   get runningBandAt() { return runningBandAt; },
   get runningEditBand() { return runningEditBand; }, set runningEditBand(v) { runningEditBand = v; },
   get runningEditPage() { return runningEditPage; }, set runningEditPage(v) { runningEditPage = v; },
+  get runningEditPageOrView() { return runningEditPageOrView; },
   get saveBtn() { return saveBtn; },
   get saveDocument() { return saveDocument; },
   get saveFormatEl() { return saveFormatEl; },
@@ -2942,63 +2945,7 @@ let versionPreviewHome = null;
  *  action, one point in the timeline. */
 let activatingRestore = false;
 const { applyActiveAuthorToDocument, toggleSettings } = createSettings(ed);
-// ---- Document properties (docProps/core.xml — title, author, subject, …) ----
-// The whole dialog is `document_metadata.mjs`: the six editable fields, the
-// seventeen read-only `docProps` cells beside them, and the one transaction Apply
-// runs. Splitting one dialog across two files would have been worse than moving
-// it whole, and the File page shows the same element as a pane.
-const propertiesUi = createPropertiesDialog({ registerModal, getDoc: () => doc, runEdit });
-
-// Chrome that must never survive into a modal's foreground (docs/104 HF-089):
-// a pinned tracked-change card used to paint above the scrim with live
-// Accept/Reject buttons, so a change could be accepted while a blocking dialog
-// was supposedly in control. The z-index ladder now puts modals on top, and
-// this hook makes the floating review chrome go away entirely — one place,
-// rather than teaching every dialog's open path about every popover.
-setModalHooks({
-  firstOpen: () => {
-    closeReviewPopover();
-    closeReviewInlineCard();
-    closeAppMenu();
-  },
-});
-
-// ---- Page setup, line numbers, watermark -----------------------------------
-// Word's Layout ▸ Page Setup group, in `page_setup.mjs`: the geometry dialog, the
-// Line Numbers popover and the Watermark dialog, which share one answer to
-// "which section is the caret in". None of the three is decided here any more.
-const pageSetup = createPageSetup({
-  getDoc: () => doc,
-  // The same inventory the Home band's font menu offers, so the watermark's Font
-  // list cannot name a face no other control here can.
-  fontInventory,
-  selectionNode: () => selection?.focus?.node ?? "",
-  selectionEndpoints: selEndpoints,
-  runEdit,
-  registerModal,
-  registerPopover,
-  // Word's *Measurement units* setting governs exactly this dialog, so the
-  // preference arrives as a dependency rather than being read from a global.
-  measure: measurement,
-});
-
-// ---- Header and footer settings --------------------------------------------
-// The band distances, the two running-content variants and the section's page
-// numbering, in `header_footer_settings.mjs`: ONLYOFFICE's own grouping of the
-// four (`view/HeaderFooterTab.js` L63-87). The two variant toggles moved there
-// from here, so the checkbox faces in the dialog and the button faces on the
-// Insert band are one implementation rather than two that can disagree.
-const headerFooterSettings = createHeaderFooterSettings({
-  getDoc: () => doc,
-  selectionNode: () => selection?.focus?.node ?? "",
-  runningPage: runningEditPageOrView,
-  runEdit,
-  applyEditResult,
-  blockedFromMutating: blockedFromPageSetup,
-  setStatus,
-  registerModal,
-});
-
+const { headerFooterSettings, pageSetup, propertiesUi } = createDocumentSettings(ed);
 fileEl.disabled = true;
 if (openBtn) openBtn.disabled = true;
 // No document is open yet, so every document-scoped control starts disabled.
@@ -3007,69 +2954,7 @@ if (openBtn) openBtn.disabled = true;
 updateToolbar();
 boot();
 
-// ---- Chrome modes: compact vs ribbon (owner prototype) ---------------------
-//
-// Two mutually exclusive toolbars. The ribbon is the Word-shaped tabbed chrome;
-// compact is the Docs-shaped single dense bar. The bar's layout table, its
-// grouping and its fold live in `compact_toolbar.mjs` (HF-085: new logic goes
-// in a module); what stays here is the mode switch and the dependency bag.
-const CHROME_MODE_PREF = "opendoc.chromeMode";
-let chromeMode = readPref(CHROME_MODE_PREF, "ribbon") === "compact" ? "compact" : "ribbon";
-
-compactToolbarUi = createCompactToolbar({
-  host: document.getElementById("compactToolbar"),
-  editorCommands,
-  onButton,
-  registerPopover,
-  runControls,
-  paraControls,
-  formatToggleCache,
-  localizeShortcut: (text) => localizeShortcutText(text, EDITOR_KEYBOARD_PLATFORM),
-  // Which roster the bar draws. A phone gets Docs' row over two named sheets
-  // (`PHONE_TOOLBAR`) instead of the desktop's thirteen groups over a fold whose
-  // membership changes with the window width — see `compact_toolbar.mjs`.
-  // Resolved at render time, not captured, so crossing the rung switches it.
-  isPhone: () => phoneChrome.isPhone(),
-});
-
-/** Switches chrome. Mutually exclusive by construction — `body` carries exactly
- *  one mode class — and the caret is never disturbed, because neither chrome
- *  owns the editing surface. */
-function setChromeMode(mode, { persist = true, announce = true } = {}) {
-  chromeMode = mode === "compact" ? "compact" : "ribbon";
-  // A phone has room for one navigation axis and the ribbon is not it (docs/148
-  // §5). The preference is untouched, so growing back past the rung restores it.
-  const compact = chromeMode === "compact" || phoneChrome.isPhone();
-  // The File PAGE is ribbon chrome: compact mode hides the whole ribbon, so
-  // switching modes with it open would leave `.file-page-open` set over a page
-  // nobody can see or leave. Compact mode answers File with a dropdown instead.
-  if (compact) closeFilePage();
-  document.body.classList.toggle("compact-mode", compact);
-  document.body.classList.toggle("ribbon-mode", !compact);
-  // The toolbar IS the chrome — the wrapper it used to sit in was a second
-  // nested box, which is what read as a doubled outline on both sides and the
-  // bottom.
-  const bar = document.getElementById("compactToolbar");
-  if (bar) bar.hidden = !compact;
-  chromeModeGroup?.reflect(chromeMode);
-  // With no document open the registry holds only `noDoc` commands, so the bar
-  // would render nearly empty; it is rebuilt on `doc-loaded`. Rendering here
-  // anyway keeps the adopted controls in place so the bar is never a bare strip.
-  if (compact) compactToolbarUi.render();
-  else compactToolbarUi.release();
-  if (persist) writePref(CHROME_MODE_PREF, chromeMode);
-  if (announce) setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
-}
-
-const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
-  attr: "data-chrome-mode",
-  onSelect: (mode) => setChromeMode(mode),
-});
-setChromeMode(chromeMode, { persist: false });
-// Silently: nobody asked to cross the rung, so a toast on every rotation would
-// be a notification about the window rather than about the document.
-phoneChrome.onPhoneChange(() => setChromeMode(chromeMode, { persist: false, announce: false }));
-
+createChromeModes(ed);
 // ---- The host contract: one session, two transports (`docs/126` phase 2) ----
 // `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT
 // SAME OBJECT behind `postMessage`, so the two can never answer differently.
