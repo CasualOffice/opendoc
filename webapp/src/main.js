@@ -165,6 +165,7 @@ import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
+import { createAutoCorrect } from "./autocorrect.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { createFindSession } from "./find_session.mjs"; // TA-03/TA-04: the anchor typing refines from, and the all-match highlight
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
@@ -7985,7 +7986,7 @@ const REVIEW_SURFACE = [
   // meaningful and already supported.
   { command: "tools.spellCheck", buttons: () => [reviewSpellCheckBtn], requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
   { command: "tools.grammarCheck", buttons: () => [reviewGrammarCheckBtn], requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
-  { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => smartQuotesEnabled, run: () => setSmartQuotes(!smartQuotesEnabled) },
+  { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => autoCorrect.enabled("smartQuotes"), run: () => autoCorrect.toggle("smartQuotes") },
   { command: "tools.languages", buttons: () => [reviewProofLanguagesBtn], requires: "always", run: () => proofing.openLanguages() },
   // Restrict Editing (ADR-052, ADR-059). Declared HERE rather than beside the
   // button for the reason this table gives twice over: one owner for `disabled`,
@@ -11820,7 +11821,9 @@ function editorCommands(context = { surface: "palette" }) {
       disabledReason: "Select text to comment on",
       run: () => openReviewComposer(),
     },
-    { id: "tools.smartQuotes", label: `Smart quotes: ${smartQuotesEnabled ? "on" : "off"}`, group: "Tools", kw: "smart curly typographic quotes apostrophe straight autocorrect", noDoc: true, run: () => setSmartQuotes(!smartQuotesEnabled) },
+    { id: "tools.smartQuotes", label: autoCorrect.label("smartQuotes"), group: "Tools", kw: "smart curly typographic quotes apostrophe straight autocorrect", noDoc: true, run: () => autoCorrect.toggle("smartQuotes") },
+    { id: "tools.autoFormatLists", label: autoCorrect.label("lists"), group: "Tools", kw: "automatic lists bullet numbered autoformat as you type 1. dash asterisk", noDoc: true, run: () => autoCorrect.toggle("lists") },
+    { id: "tools.autocorrect", label: autoCorrect.label("autocorrect"), group: "Tools", kw: "autocorrect correct typos dash em en copyright trademark registered capitalise capitalize sentence", noDoc: true, run: () => autoCorrect.toggle("autocorrect") },
     // Reads as a switch, the shape `tools.smartQuotes` already uses, so the menu
     // row and the palette row both say which state it is in rather than being an
     // action with an unknown effect. Never disabled: off has to be reversible
@@ -14188,34 +14191,21 @@ document.addEventListener("compositionend", async (e) => {
   await commitComposedText(e.data || "");
 });
 
-// ---- Smart quotes -----------------------------------------------------------
-// Word and Docs both replace the typewriter quotes as you type: `"` becomes “ or
-// ” and `'` becomes ‘ or ’, chosen from what precedes the caret. Documents from
-// either product therefore arrive full of curly quotes, and typing into one used
-// to introduce straight quotes beside them — visibly different glyphs in the same
-// sentence.
-//
-// The decision is purely local: a quote OPENS at the start of a paragraph or
-// after whitespace or an opening bracket, and CLOSES otherwise. Closing is the
-// right default for the ambiguous case because that is what makes "don't" and
-// "it's" correct, which is far more common in prose than a leading elision.
-//
-// Read through `copyText` of the single position before the caret rather than
-// any cached text, so it is the engine's own content that decides — including
-// after an undo, a paste, or a caret move the editor did not originate.
-const SMART_QUOTE_PREF = "opendoc.smartQuotes";
-let smartQuotesEnabled = readPref(SMART_QUOTE_PREF) !== "off";
-
-function setSmartQuotes(enabled) {
-  smartQuotesEnabled = enabled;
-  writePref(SMART_QUOTE_PREF, enabled ? "on" : "off");
-  setStatus(enabled ? "Smart quotes on" : "Smart quotes off");
-  // Both proofing switches now have a Review-band face, and a switch that does
-  // not move when you flip it is worse than no switch. `updateToolbar` is this
-  // file's one "state changed, re-reflect every surface" call, so the reflection
-  // stays in one place rather than gaining a second copy here.
-  updateToolbar();
-}
+// ---- AutoCorrect: smart quotes, automatic lists, corrections (`autocorrect.mjs`) --
+// The quote decision is `smartQuoteForTyped` (text_rules.mjs); the list and
+// correction rules are `input_rules.mjs`; each conversion is its own undo step.
+const autoCorrect = createAutoCorrect({
+  readPref,
+  writePref,
+  t,
+  getDoc: () => doc,
+  getSelection: () => selection,
+  editing: () => reviewMode === "editing",
+  runEdit: (thunk) => runEdit(thunk),
+  setStatus: (text) => setStatus(text),
+  reflect: () => updateToolbar(),
+  toggles: Object.fromEntries([["smartQuotes", "smartQuotesToggle"], ["lists", "autoFormatListsToggle"], ["autocorrect", "autocorrectToggle"]].map(([key, id]) => [key, document.getElementById(id)])),
+});
 
 /** Adds a word and SAYS whether it was stored. A personal dictionary that
  *  silently failed to persist is indistinguishable from one that worked until
@@ -14638,7 +14628,7 @@ document.addEventListener("keydown", async (e) => {
     const quoteNode = range ? (anchor.offset <= focus.offset ? anchor.node : focus.node) : focus.node;
     const quoteOffset = range ? Math.min(anchor.offset, focus.offset) : focus.offset;
     const typed = smartQuoteForTyped(key, {
-      enabled: smartQuotesEnabled,
+      enabled: autoCorrect.enabled("smartQuotes"),
       offset: quoteOffset,
       readPrefix: () => doc.copyText(quoteNode, 0, quoteNode, quoteOffset),
     });
@@ -14744,6 +14734,7 @@ document.addEventListener("keydown", async (e) => {
         { typing: true },
       );
     }
+    if (!range) await autoCorrect.afterTyped(typed); // a list marker or a correction, as its own undo step (TA-05/06)
   }
 });
 

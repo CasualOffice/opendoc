@@ -30,11 +30,13 @@ test("Enter at the end of a heading starts a body paragraph", async ({ page, con
 
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
-  await page.keyboard.type("body text");
+  // Capitalised as typed, so AutoCorrect's sentence capitalisation (TA-06) has
+  // nothing to change: this test is about the paragraph style alone.
+  await page.keyboard.type("Body text");
 
   // Polled: the typed text arrives asynchronously, and reading the projection
   // straight after `type` intermittently caught it a keystroke short.
-  await expect.poll(async () => (await blocks(page))[1]).toBe("P:body text");
+  await expect.poll(async () => (await blocks(page))[1]).toBe("P:Body text");
   expect((await blocks(page))[0]).toMatch(/^H1:/); // the heading itself is untouched
 
   expect(consoleErrors).toEqual([]);

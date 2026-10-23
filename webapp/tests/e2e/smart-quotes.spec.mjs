@@ -56,11 +56,13 @@ test("an apostrophe inside a word closes, so contractions are correct", async ({
 
 test("a quote after whitespace or a bracket opens", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
-  await typeInFreshParagraph(page, 'said "yes" and ("no")');
+  // Starts with a capital so AutoCorrect's sentence capitalisation (TA-06) has
+  // nothing to do: this test is about the quotes alone.
+  await typeInFreshParagraph(page, 'He said "yes" and ("no")');
 
   await expect
     .poll(() => paragraphText(page, "said"))
-    .toBe("said “yes” and (“no”)");
+    .toBe("He said “yes” and (“no”)");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -79,8 +81,8 @@ test("smart quotes can be turned off, and then a straight quote stays straight",
   await row.click();
   await expect(page.locator("#status")).toContainText("Smart quotes off");
 
-  await typeInFreshParagraph(page, 'const x = "y"');
-  await expect.poll(() => paragraphText(page, "const x")).toBe('const x = "y"');
+  await typeInFreshParagraph(page, 'Code: const x = "y"');
+  await expect.poll(() => paragraphText(page, "const x")).toBe('Code: const x = "y"');
 
   // The preference survives a reload — a setting that resets is not a setting.
   await page.reload();

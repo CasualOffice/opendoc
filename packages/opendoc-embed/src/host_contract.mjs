@@ -542,6 +542,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("tools.languages", null),
   exact("tools.grammarCheck", null),
   exact("tools.smartQuotes", null),
+  // The AutoCorrect switches (TA-05/06): preferences, not document state.
+  exact("tools.autoFormatLists", null),
+  exact("tools.autocorrect", null),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts
