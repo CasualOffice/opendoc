@@ -3311,7 +3311,7 @@
       "title": "Reply to a comment",
       "ours": {
         "anchor": {
-          "file": "webapp/src/main.js",
+          "file": "webapp/src/editor_review_margin.mjs",
           "literal": "replyToComment"
         }
       },
@@ -4648,7 +4648,7 @@
       "title": "Open a local file with no server",
       "ours": {
         "anchor": {
-          "file": "webapp/src/main.js",
+          "file": "webapp/src/editor_file_open.mjs",
           "literal": "casual_doc_wasm"
         }
       },
