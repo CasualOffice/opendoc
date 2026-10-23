@@ -42,6 +42,12 @@ Rules the split keeps:
   `// editor-context:end` lists exactly the names the modules reach. A test asserts that
   every `ed.name` a module reads has a getter and every one it writes has a setter.
 - **One way.** No module imports `main.js`; modules reach each other only through `ed`.
+- **Checks read all of it.** A check that reads the editor page's code to say what it
+  does (the capabilities the chrome consults, `build-embed-docs.mjs`) reads
+  `webapp/tools/editor_sources.mjs`'s `editorSource()`: `main.js` plus every
+  `editor_*.mjs`. A domain leaving `main.js` must not shrink what such a check covers.
+- **String debt moves, it is not forgiven.** `no_unrouted_strings.test.mjs` gives each
+  domain module its measured count, and lowers `main.js` by the same amount.
 
 ## 3. Module map
 
@@ -49,9 +55,12 @@ Sizes are `wc -l` at the commit that last touched the row.
 
 | Module | Factory | Domain | Lines |
 |---|---|---|---|
+| `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
+| `editor_settings.mjs` | `createSettings` | Settings dialog: theme, accent, reviewer identity, autosave and proofing switches; localisation start | 205 |
+| `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 
-`main.js`: 16,030 lines when the split began, 15,744 now. The domain modules hold 318.
+`main.js`: 16,030 lines when the split began, 14,859 now. The domain modules hold 1,311.
 
 ## 4. What is left for HF-109
 

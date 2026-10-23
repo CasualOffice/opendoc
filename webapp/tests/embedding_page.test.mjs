@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 
 import {
   CAPABILITIES,
@@ -347,7 +348,7 @@ test("the attack the page describes is the one the spec performs", () => {
 });
 
 test("the chrome table names only capabilities the editor page really consults", () => {
-  const main = read(join(WEBAPP, "src", "main.js"));
+  const main = editorSource(join(WEBAPP, "src"));
   const consulted = new Set(
     [...main.matchAll(/(?:HOST_CAPS|hostCapabilities\(\))\.has\("([a-z]+)"\)/g)].map((m) => m[1]),
   );
@@ -457,7 +458,7 @@ test("everything under 'does not do yet' is still not done", () => {
   // nothing in the editor page consults a capability in order to drop a surface.
   assert.equal(editingModeFor(resolveCapabilities({ mode: "preview" })), "viewing");
   assert.equal(editingModeFor(resolveCapabilities({ mode: "readonly" })), "viewing");
-  const main = read(join(WEBAPP, "src", "main.js"));
+  const main = editorSource(join(WEBAPP, "src"));
   const consulted = new Set(
     [...main.matchAll(/(?:HOST_CAPS|hostCapabilities\(\))\.has\("([a-z]+)"\)/g)].map((m) => m[1]),
   );
