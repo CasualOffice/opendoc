@@ -317,3 +317,41 @@ test("every catalogue key is answered by all nineteen locales, in their own word
   assert.deepEqual(gaps, []);
   assert.deepEqual(copies, [], "a translated catalogue answered with the English sentence");
 });
+
+test("every legacy VML element reads as words, and drawn VML is listed as shown approximately", () => {
+  // The owner's document listed 86 VML items under "kept in the file, not shown
+  // or editable", by their XML names (`109` HF-390, HF-394). Every name the
+  // engine can report from inside a `w:pict` is catalogued, in the body, a
+  // header and a footer alike, and none falls back to "Other content".
+  const VML = [
+    "group", "rect", "roundrect", "oval", "line", "polyline", "curve", "arc", "shape",
+    "shapetype", "textbox", "fill", "stroke", "path", "wrap", "imagedata", "image",
+    "textpath", "shadow", "extrusion", "skew", "lock", "callout", "formulas", "f",
+    "handles", "h",
+  ];
+  for (const part of ["word/document.xml", "word/header1.xml", "word/footer1.xml"]) {
+    const unnamed = VML.filter((feature) => !describeFinding(finding(feature, 1, part)).known);
+    assert.deepEqual(unnamed, [], `${part}: these fell through to the fallback`);
+    for (const feature of VML) {
+      const text = words(finding(feature, 1, part));
+      assert.notEqual(text, "Other content or formatting", feature);
+      assert.notEqual(text, feature);
+    }
+  }
+  assert.equal(words(finding("rect", 18, "word/document.xml")), "Rectangle in the older Word format (VML)");
+  assert.equal(words(finding("group", 4, "word/document.xml")), "Group of shapes in the older Word format (VML)");
+  assert.equal(words(finding("wrap", 24, "word/document.xml")), "Text wrapping around a shape, in the older Word format");
+  assert.equal(words(finding("textbox", 8, "word/document.xml")), "Text box in the older Word format (VML)");
+  assert.equal(where(finding("textbox", 4, "word/header1.xml")), "in a header");
+  // A save that had to write an edited VML shape as DrawingML says so in words.
+  assert.equal(
+    words(finding("docx.export.vml.regenerated", 1, "word/document.xml", "degraded", "not_retained")),
+    "Shape saved in the newer drawing format because it was edited",
+  );
+  // What the engine now reports for a drawn VML shape lands under "shown
+  // approximately", not "kept, not shown".
+  const report = JSON.stringify({
+    entries: [finding("rect", 18, "word/document.xml", "degraded", "preserved")],
+  });
+  assert.deepEqual(groupFindings(report).map((group) => group.id), ["approximated"]);
+});

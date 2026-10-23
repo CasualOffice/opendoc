@@ -2634,7 +2634,11 @@ impl BodyParser<'_> {
                 if self.vml_shapetype_depth > 0 {
                     self.vml_shapetype_depth += 1;
                 } else if local == b"shapetype" {
+                    // The definition itself is still named, so a pict that drew
+                    // nothing (or a watermark, which is lifted) reports it as it
+                    // always did; a drawn pict drops it in `report_vml_names`.
                     self.vml_shapetype_depth = 1;
+                    self.pending_vml_names.push(local.to_vec());
                 } else {
                     self.pending_vml_names.push(local.to_vec());
                 }
@@ -6689,6 +6693,7 @@ impl BodyParser<'_> {
     /// drawn VML is "shown approximately" and, when its source is carried,
     /// preserved on every save; VML that drew nothing stays "kept, not shown"
     /// (`docs/109` HF-394).
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn commit_pict(&mut self) -> Result<(), ImportError> {
         let raw = self.pending_pict_xml.take();
         let names = std::mem::take(&mut self.pending_vml_names);
@@ -6798,6 +6803,7 @@ impl BodyParser<'_> {
     /// names outside those holes is an image the projection itself references —
     /// the writer declares exactly those, so nothing the source names can
     /// dangle. Otherwise `None`, and the projection is all a save writes.
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn prepare_vml_retention(&self, xml: &str, segments: &[Segment]) -> Option<RetainedVml> {
         let prepared = crate::vml_retain::prepare_source(xml, |prefix| {
             self.prefix_uri(prefix).map(<[u8]>::to_vec)
@@ -6833,6 +6839,7 @@ impl BodyParser<'_> {
     /// * A lifted watermark: unchanged from before this row; the watermark
     ///   itself is the modelled object.
     /// * Nothing drawn: each name is reported as it always was.
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn report_vml_names(
         &mut self,
         names: &[Vec<u8>],
@@ -6848,7 +6855,10 @@ impl BodyParser<'_> {
         }
         let retained_bytes = retained.map(|source| source.pieces.iter().map(String::len).sum());
         for name in names {
-            if matches!(name.as_slice(), b"formulas" | b"f" | b"handles" | b"h") {
+            if matches!(
+                name.as_slice(),
+                b"shapetype" | b"formulas" | b"f" | b"handles" | b"h"
+            ) {
                 continue;
             }
             self.reporter
@@ -6883,6 +6893,7 @@ impl BodyParser<'_> {
     /// group's child space is its own box with an identity transform: a
     /// child's offset is its absolute position less the group's. Nested groups
     /// are flattened into the outer one, which paints identically.
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn vml_group_segment(
         &mut self,
         pict: &VmlPict,
@@ -7025,6 +7036,7 @@ impl BodyParser<'_> {
     /// drawing/text-box [`Segment`]. Returns `None` when an image relationship is
     /// unresolved or when no deferred text-box blocks can be paired with a
     /// parsed `v:textbox`.
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn vml_segment(&mut self, drawing: &VmlDrawing) -> Result<Option<Segment>, ImportError> {
         // A horizontal rule (`v:rect@o:hr="t"`, Word's "Insert → Horizontal Line"):
         // a full-content-width filled line on its paragraph's own line, regardless
@@ -7166,6 +7178,7 @@ impl BodyParser<'_> {
     /// (`crate::vml_path`) as a custom geometry, else the preset its shapetype's
     /// `o:spt` names, else the bounding-box OUTLINE (filling an unknown path's
     /// box would blacken a frame that is only a border).
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn vml_shape_children(
         &mut self,
         drawing: &VmlDrawing,
@@ -9004,6 +9017,7 @@ impl BodyParser<'_> {
 
     /// Assigns ids in document order (an opening tag before its children) and
     /// builds the inline node. A hyperlink's own id precedes its children's.
+    #[inline(never)] // cold: once per w:pict, kept out of its callers (wasm size, docs/109 HF-396)
     fn extend_inline(
         &mut self,
         segment: Segment,

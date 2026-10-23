@@ -4448,3 +4448,58 @@ nothing a reader downloads. There is no native artefact for Java, Python or .NET
 the minimum Java version, whether the headless SDK needs the transaction log, the viewer's
 default formats, the native platform matrix, Node, and whether a `<opendoc-viewer>` element
 is ever in scope.
+
+## ADR-072 — Legacy VML is normalised into the DrawingML model, and kept as VML until an edit changes it
+
+**Status:** Accepted, 2026-10-24. **Rows:** `docs/109` HF-390..HF-395.
+
+**Context.** Word still writes VML (`w:pict`) for text boxes and shapes, as the
+`mc:Fallback` of a DrawingML choice and, from older Word and PDF-to-Word converters, on its
+own. The owner's document listed 86 VML items as "kept in the file, not shown or editable";
+most were in fact drawn, but the report called them unshown, groups fell apart into loose
+floats with their text drained inline, and a `v:shape` was its bounding box. And every edited
+save rewrote every VML shape as DrawingML, dropping what the model does not hold.
+
+**Decision.**
+
+1. **Normalise, do not render twice.** VML is translated at import into the typed DrawingML
+   model — `WordprocessingGroup`, `GroupShape` with a custom geometry, `GroupPicture`,
+   `TextBox`/`GroupTextBox` — which the one renderer already draws. This is what LibreOffice
+   (`oox/source/vml`) and ONLYOFFICE do. A second, VML-specific renderer would double every
+   later fix. The VML path language and `v:f` formulas are evaluated at import into literal
+   geometry (`casual-doc-import` `vml_path`); a construct the translation cannot express is
+   refused and keeps a stated fallback rather than being guessed.
+2. **Copy-on-write retention.** The pict's source is kept beside its projection
+   (`Definitions::legacy_vml`, a side table keyed by the first projected node) with a
+   fingerprint of the projection. A save writes the source while the projection is unchanged
+   and the projection, as DrawingML, once an edit has changed it, naming that in the export
+   report (`docx.export.vml.regenerated`, degraded, not retained). Writing DrawingML for an
+   edited shape is chosen over writing VML back from the model: the model holds no VML-only
+   detail to write, so "VML from the model" would be a lossy VML, and Word reads DrawingML
+   natively.
+3. **Text-box content is never part of the kept source.** The source is stored split at each
+   `w:txbxContent`, and the writer fills each hole with the box's current blocks. Inside a
+   text box are style, numbering, bookmark and relationship ids the writer regenerates;
+   spliced in verbatim they would dangle. It also means typing in a VML text box keeps it VML.
+4. **The kept source is self-contained.** Every namespace prefix it uses is declared on its
+   `w:pict`, and a pict that names a relationship the regenerated part would not declare (an
+   image its projection does not draw, a control) is not kept — its projection is all a save
+   writes, and its findings say so.
+5. **Findings tell what happened.** VML inside a pict is reported when the pict closes: drawn
+   VML is `degraded` (shown approximately) and preserved — on the semantic path too, under a
+   ledger record of its own, because its source is in the model; VML that drew nothing stays
+   `omitted`; a `v:shapetype` and its formulas, handles and locks are a consumed definition.
+
+**Rejected.**
+
+- A VML renderer beside the DrawingML one: two drawing paths for one picture.
+- Keeping the whole pict, text-box content included, verbatim: its ids would dangle after any
+  regenerating save.
+- Keeping a clone of the projection to compare against: duplicate node ids in the snapshot and
+  twice the memory, for an equality a fingerprint answers.
+- Re-emitting VML from the model after an edit: the model has none of the VML-only detail.
+
+**Not done.** The run properties of the run that carried the pict are not kept (a `w:noProof`
+or `w:position` on it is regenerated as nothing); `ae`/`al` path forms, `h*` extensions,
+polyline/curve/arc point lists, shadows, extrusion, skew and pattern fills are not drawn
+(`webapp/src/fidelity.js` enumerates them).

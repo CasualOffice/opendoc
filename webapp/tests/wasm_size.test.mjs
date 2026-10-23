@@ -81,11 +81,22 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // with all optimization settings retained. Keep about 130 KiB of headroom rather
 // than making CI byte-exact; the code ceiling remains below even the smaller
 // #805 opt-level-3 measurement (12,376,042 B). The non-stub floor is unchanged.
-const MAX_TOTAL_BYTES = 26_000_000;
+// `docs/109` HF-390..HF-396 (legacy VML normalised into the DrawingML model,
+// ADR-072), measured both sides with `build.sh`'s settings on 2026-10-24:
+// `main` at c7395504 (#869) is 25,961,105 B with a 12,049,343 B code section;
+// with the VML work (#870 and its follow-up) 26,102,679 B with 12,188,963 B —
+// +141,574 B, +139,620 B of it code (0.55%): the path and formula evaluator,
+// the group/shape/picture translation, the retained-source side table through
+// the model's derived impls, and the writer's verbatim path. Marking the
+// once-per-pict functions `#[inline(never)]` recovered only 1,518 B, so this
+// is the engine growing, decided and recorded. About 130 KiB of headroom is
+// kept on both, and the code ceiling stays below the opt-level-3 measurement
+// (12,376,042 B) so a dropped `z` still fails.
+const MAX_TOTAL_BYTES = 26_240_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19. opt-level 3 measured 12,376,042 B on the smaller #805 engine, so
  *  a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 12_100_000;
+const MAX_CODE_BYTES = 12_320_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

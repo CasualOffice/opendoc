@@ -6784,6 +6784,7 @@ fn push_embedded_part(
 /// node is written by [`write_inline`].
 ///
 /// O(nodes), plus one fingerprint per retained drawing's first member.
+#[inline(never)] // five call sites; one copy (wasm size, docs/109 HF-396)
 fn write_inlines(
     w: &mut Writer<Cursor<Vec<u8>>>,
     inlines: &[InlineNode],
