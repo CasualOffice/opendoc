@@ -97,6 +97,13 @@ pub struct WasmRoster {
     pub(crate) sender: casual_doc_transaction::presence::PresenceSender,
     mapped_head: Option<casual_doc_transaction::RevisionId>,
     mapped_epoch: Option<u32>,
+    /// Who is present and what they look like (`docs/175` §4.3): the `Welcome` list, then the
+    /// joins and leaves the relay announces. Dies with the handle, like the carets.
+    /// Already in the chrome's shape: the facade (`collab.rs`) converts the wire's rows, so
+    /// this module never names the protocol beyond `ClientId`.
+    pub(crate) present: std::collections::BTreeMap<u64, crate::collab::JsParticipant>,
+    /// This replica's own participant number, from its `Welcome` or `Resumed`.
+    pub(crate) me: Option<u64>,
 }
 
 /// An empty roster, for a host that has just joined a room.
@@ -114,6 +121,7 @@ impl WasmRoster {
     /// Clears transient membership and resends the current position after reconnect.
     pub fn clear(&mut self) {
         self.roster = Roster::new();
+        self.present.clear();
         self.sender.rejoined();
     }
 
@@ -227,22 +235,48 @@ impl WasmRoster {
     /// ones it wants to draw.
     ///
     /// Complexity: O(participants), capped at [`max_participants`].
+    ///
+    /// Since `docs/175` §4.3 the list is **everyone present**, not only everyone who has sent a
+    /// caret: the relay's participant list joins the caret roster, and each row carries
+    /// `profile` (`{id, name, initials?, color?, avatarUrl?}`, when anybody named the person)
+    /// and `attested` (whether the host vouched for it). A participant present but caretless has
+    /// no `clock` or `payloadBytes`. This replica is included; [`me`](Self::me) says which row
+    /// it is.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn participants(&self) -> String {
-        let rows: Vec<String> = self
-            .roster
-            .participants()
-            .map(|held| {
-                format!(
-                    "{{\"client\":{},\"clock\":{},\"payloadBytes\":{}}}",
-                    held.client.get(),
-                    held.clock.get(),
-                    held.payload.len(),
+        let mut rows: std::collections::BTreeMap<u64, serde_json::Value> = self
+            .present
+            .iter()
+            .map(|(client, participant)| {
+                (
+                    *client,
+                    serde_json::to_value(participant).unwrap_or(serde_json::Value::Null),
                 )
             })
             .collect();
-        format!("[{}]", rows.join(","))
+        for held in self.roster.participants() {
+            let row = rows.entry(held.client.get()).or_insert_with(
+                || serde_json::json!({ "client": held.client.get(), "attested": false }),
+            );
+            if let Some(row) = row.as_object_mut() {
+                row.insert("clock".to_owned(), held.clock.get().into());
+                row.insert("payloadBytes".to_owned(), held.payload.len().into());
+            }
+        }
+        let rows: Vec<_> = rows.into_values().collect();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned())
+    }
+
+    /// This replica's own row of [`participants`](Self::participants) as JSON
+    /// (`{client, profile?, attested}`), or `null` before the room has welcomed it.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn me(&self) -> String {
+        self.me
+            .and_then(|client| self.present.get(&client))
+            .and_then(|participant| serde_json::to_string(participant).ok())
+            .unwrap_or_else(|| "null".to_owned())
     }
 
     /// One participant's payload, exactly as it arrived, or `undefined` if that
@@ -443,7 +477,11 @@ mod tests {
                 .map(String::as_str)
                 .collect();
             keys.sort_unstable();
-            assert_eq!(keys, ["client", "clock", "payloadBytes"]);
+            // `attested` joined the row with the participant list (`docs/175` §4.3): a
+            // participant known only by their caret was named by nobody, so it is `false`, and
+            // there is no `profile` to invent.
+            assert_eq!(keys, ["attested", "client", "clock", "payloadBytes"]);
+            assert_eq!(row["attested"], serde_json::Value::Bool(false));
             assert_eq!(row["payloadBytes"].as_i64(), Some(2));
         }
     }

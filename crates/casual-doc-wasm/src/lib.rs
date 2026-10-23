@@ -198,6 +198,11 @@ mod pdf_fonts_tests;
 #[path = "forms_protection_tests.rs"]
 mod forms_protection_tests;
 
+// Host identity: the room's stamp, the roster's profiles, DOCX authorship (`docs/175`, HF-360).
+#[cfg(test)]
+#[path = "identity_tests.rs"]
+mod identity_tests;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -777,19 +782,21 @@ struct ActiveAuthor {
     name: String,
     initials: String,
     id: Option<String>,
+    /// The host's opt-in `people.xml` presence pair (`docs/175` §6.2): written into a saved
+    /// file only when the host supplied `identity.persist`. Never on the wire.
+    persist: Option<casual_doc_model::v1::PresenceInfo>,
 }
 
 /// Derives initials from up to the first two whitespace-separated words of a
 /// display name (e.g. "Ada Lovelace" -> "AL"), used when a host supplies a
 /// name without initials. Matches the fallback the demo webapp used before
 /// this seam existed, so behavior is unchanged for hosts that only set a name.
+///
+/// One derivation for the whole engine (`casual_doc_edit::authorship::derive_initials`), so a
+/// comment this replica authors and the copy every other replica conforms carry the same
+/// initials.
 fn derive_initials(name: &str) -> String {
-    name.split_whitespace()
-        .filter(|part| !part.is_empty())
-        .take(2)
-        .filter_map(|part| part.chars().next())
-        .flat_map(char::to_uppercase)
-        .collect()
+    casual_doc_edit::authorship::derive_initials(name)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -11151,11 +11158,78 @@ impl WasmDocument {
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| derive_initials(name));
+        // The presence pair belongs to a person, so it survives re-setting the same name and is
+        // dropped with a different one: a renamed author must not inherit somebody's user id.
+        let persist = self
+            .active_author
+            .take()
+            .filter(|previous| previous.name == name)
+            .and_then(|previous| previous.persist);
         self.active_author = Some(ActiveAuthor {
             name: name.to_owned(),
             initials,
             id,
+            persist,
         });
+        Ok(())
+    }
+
+    /// Opts the active author in to `word/people.xml` presence info (`docs/175` §6.2): with a
+    /// provider and a user id, a saved DOCX names this author's `w15:person` with
+    /// `w15:presenceInfo w15:providerId w15:userId`, which is how Word itself links a signed-in
+    /// author to an account. Both empty, or either absent, opts out again.
+    ///
+    /// **Without this call no id of any kind enters a saved file** — the `68` §1 guarantee,
+    /// kept as the default. The host decides, because the file can leave the organisation.
+    ///
+    /// # Errors
+    ///
+    /// No active author to attach it to, or a value over its 255-byte bound (a refusal naming
+    /// the field, `identity-invalid`, never a truncation).
+    #[wasm_bindgen(js_name = setAuthorPersistence)]
+    pub fn set_author_persistence(
+        &mut self,
+        provider_id: Option<String>,
+        user_id: Option<String>,
+    ) -> Result<(), JsValue> {
+        self.set_author_persistence_inner(provider_id, user_id)
+            .map_err(to_js)
+    }
+
+    fn set_author_persistence_inner(
+        &mut self,
+        provider_id: Option<String>,
+        user_id: Option<String>,
+    ) -> Result<(), String> {
+        let pair = match (provider_id, user_id) {
+            (Some(provider_id), Some(user_id))
+                if !provider_id.trim().is_empty() && !user_id.trim().is_empty() =>
+            {
+                for (field, value) in [
+                    ("persist.providerId", &provider_id),
+                    ("persist.userId", &user_id),
+                ] {
+                    if value.len() > 255 {
+                        return Err(casual_doc_edit::refusal::marked(
+                            "identity-invalid",
+                            &format!("The identity the host supplied has an unusable {field}."),
+                        ));
+                    }
+                }
+                Some(casual_doc_model::v1::PresenceInfo {
+                    provider_id,
+                    user_id,
+                })
+            }
+            _ => None,
+        };
+        let Some(author) = self.active_author.as_mut() else {
+            return Err(casual_doc_edit::refusal::marked(
+                "identity-invalid",
+                "Set the author's name before what may be saved about them.",
+            ));
+        };
+        author.persist = pair;
         Ok(())
     }
 
@@ -11181,13 +11255,25 @@ impl WasmDocument {
     /// an explicit `Some` (including an explicit empty string, which existing
     /// validation rejects) always wins, otherwise the active author's name is
     /// used when set.
+    ///
+    /// **In a shared room whose relay named this participant, the room's name wins over both**
+    /// (`docs/175` §5.2): it is the name the relay attaches to this replica's work and every
+    /// other replica conforms to, so authoring under anything else would only be rewritten on
+    /// every other screen. Authoring under it makes this replica's optimistic state already what
+    /// everybody else computes.
     fn resolve_author(&self, author: Option<String>) -> Option<String> {
+        if let Some((name, _, _)) = self.room_author() {
+            return Some(name);
+        }
         author.or_else(|| self.active_author.as_ref().map(|a| a.name.clone()))
     }
 
     /// Resolves an explicit per-call initials value the same way
     /// [`Self::resolve_author`] resolves the author name.
     fn resolve_initials(&self, initials: Option<String>) -> Option<String> {
+        if let Some((_, initials, _)) = self.room_author() {
+            return Some(initials);
+        }
         initials.or_else(|| self.active_author.as_ref().map(|a| a.initials.clone()))
     }
 
@@ -13867,10 +13953,71 @@ impl WasmDocument {
     /// modeled content and edits are written; unmodeled opaque parts from the
     /// original import are not carried through in this first cut (a follow-up wires
     /// `write_document_with_retained_parts`).
+    ///
+    /// Authorship is written as Word writes it (`docs/175` §6): `w:author`, `w:initials` and
+    /// `w:date` on each comment, `w:author` and `w:date` on each tracked change. When the host
+    /// opted in with `setAuthorPersistence`, the active author also gets a `word/people.xml`
+    /// `w15:person` with `w15:presenceInfo`; without it, no id of any kind is written.
     #[wasm_bindgen(js_name = exportDocx)]
     pub fn export_docx(&self) -> Result<Vec<u8>, JsValue> {
-        write_document(&self.document, self.resources.as_map())
+        let document = self.with_persisted_author().map_err(to_js)?;
+        write_document(&document, self.resources.as_map())
             .map_err(|e| to_js(format!("export failed: {e:?}")))
+    }
+
+    /// The document to save, with the active author's `people.xml` entry when the host opted
+    /// in (`docs/175` §6.2) and the author has authored something here.
+    ///
+    /// Borrowed unchanged on the common path (no opt-in, or nothing authored); one document
+    /// clone otherwise, at save time only. O(comments + revisions) to decide.
+    ///
+    /// An existing entry for the same name with a **different** presence is a name collision
+    /// (two people, one display name — `people.xml` joins by name): the existing entry is kept,
+    /// and the save is refused with `identity-name-collision` rather than silently attributing
+    /// one person's work to the other's account. The host disambiguates; it knows who they are.
+    fn with_persisted_author(&self) -> Result<std::borrow::Cow<'_, Document>, String> {
+        use std::borrow::Cow;
+        let Some(author) = self.active_author.as_ref() else {
+            return Ok(Cow::Borrowed(&self.document));
+        };
+        let Some(presence) = author.persist.as_ref() else {
+            return Ok(Cow::Borrowed(&self.document));
+        };
+        let people = &self.document.definitions().people;
+        if let Some(existing) = people.iter().find(|person| person.author == author.name) {
+            return match &existing.presence {
+                Some(held) if held == presence => Ok(Cow::Borrowed(&self.document)),
+                Some(_) => Err(casual_doc_edit::refusal::marked(
+                    "identity-name-collision",
+                    "Two different people share this author name in the document, so Word could \
+                     not tell their changes apart. Ask the application you opened this in to give \
+                     them different names.",
+                )),
+                None => Ok(Cow::Borrowed(&self.document)),
+            };
+        }
+        let authored_comment = self
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .any(|(_, comment)| comment.author.as_deref() == Some(author.name.as_str()));
+        let authored = authored_comment
+            || build_review_revision_summaries(&self.document)
+                .iter()
+                .any(|revision| revision.author.as_deref() == Some(author.name.as_str()));
+        if !authored {
+            return Ok(Cow::Borrowed(&self.document));
+        }
+        let mut document = self.document.clone();
+        document
+            .definitions_mut()
+            .people
+            .push(casual_doc_model::v1::Person {
+                author: author.name.clone(),
+                presence: Some(presence.clone()),
+            });
+        Ok(Cow::Owned(document))
     }
 
     /// Moves this replica's minting into the space a relay's participant number implies.
@@ -15255,7 +15402,21 @@ impl WasmDocument {
         self.next_transaction = self.next_transaction.saturating_add(1);
         // Removing content that CONTAINS a chart also removes the chart's projection —
         // the referential cascade below. See `cascade_chart_projections`.
-        let ops = self.cascade_chart_projections(ops);
+        let mut ops = self.cascade_chart_projections(ops);
+        // The author's own replica conforms at commit (`docs/175` §5.2), with the stamp the
+        // relay will attach and against the document as it stands: the same function every
+        // other replica runs on the arrival, so this replica's optimistic state is already what
+        // they compute and nothing rolls back. Outside a room nobody stamps, and nothing runs.
+        if let Some((name, initials, space)) = self.room_author() {
+            let stamp = casual_doc_edit::authorship::Stamp {
+                name: &name,
+                initials: &initials,
+                space,
+            };
+            for op in &mut ops {
+                casual_doc_edit::authorship::conform(&self.document, op, &stamp);
+            }
+        }
         // The identity spaces are reserved HERE, once, from this replica's own generator, and
         // travel with the transaction. Everything downstream — `apply`, the log, an undo, a
         // remote replica replaying this step — works from them, which is what makes the same

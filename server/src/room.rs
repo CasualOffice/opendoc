@@ -121,7 +121,23 @@ impl Room {
         message: &ClientMessage,
         granted: Capabilities,
     ) -> Result<ServerMessage, RoomError> {
-        let (answer, admitted) = self.session.join(message, granted);
+        self.join_as(message, granted, None)
+    }
+
+    /// [`Room::join`], recording the author stamp the boundary decided (`docs/175` §4): the
+    /// verified grant's profile, or an open room's claimed one. Journalled inside the admission,
+    /// so a crash cannot change whose name this participant's later chunks carry.
+    ///
+    /// # Errors
+    ///
+    /// As [`Room::join`].
+    pub fn join_as(
+        &mut self,
+        message: &ClientMessage,
+        granted: Capabilities,
+        author: Option<casual_doc_transaction::protocol::Profile>,
+    ) -> Result<ServerMessage, RoomError> {
+        let (answer, admitted) = self.session.join_as(message, granted, author);
         if let Some(admission) = admitted {
             self.journal.append_admission(&admission)?;
         }

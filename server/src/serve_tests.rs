@@ -268,6 +268,7 @@ impl Peer {
         // recognised on its second. `Join::resume`'s own doc comment said "when this is a
         // reconnect" and cost this lane a debugging cycle; it now says what the code does.
         let join = ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: identity.clone(),
             grant: None,
@@ -397,6 +398,9 @@ impl Peer {
             | ServerMessage::Resumed { .. }
             | ServerMessage::Awareness { .. }
             | ServerMessage::Departed { .. }
+            // Who is present is the chrome's roster, not session state.
+            | ServerMessage::ParticipantJoined(_)
+            | ServerMessage::ParticipantLeft { .. }
             // A rights change is not something a `ClientSession` has state for: it governs what
             // the CHROME offers, and the authority stays the relay's own copy. Returned to the
             // caller like every other message, so a guard can assert on it.

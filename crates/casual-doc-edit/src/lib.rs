@@ -142,6 +142,11 @@ pub mod protection;
 // `RUSTDOCFLAGS="-D warnings" cargo doc`.
 pub mod access;
 
+// Who wrote a comment or a tracked change, decided by the order rather than by the sender
+// (`docs/175` §5, ADR-070): the deterministic function every replica runs on an arrival, and
+// the author's own replica runs at commit. A plain comment for the reason `access` carries one.
+pub mod authorship;
+
 pub use mint::{Mint, MintedIds};
 
 // The inline container set, declared once (`docs/109` HF-212). An `InlineNode` can

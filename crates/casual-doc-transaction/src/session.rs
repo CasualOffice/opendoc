@@ -77,6 +77,8 @@ use crate::protocol::{
     Outcome, PROTOCOL_VERSION, Refusal, Resume, ResumeKey, Revision, Seq, ServerMessage,
     Submission,
 };
+// Its own line, for the parallel-lane import rule (a sorted block conflicts on every addition).
+use crate::protocol::Profile;
 use crate::transform::{
     ANCHOR_UNRESOLVED, BlockIndex, BlockPlacement, Change, Rebase, Side, Tombstone, TransformError,
     transform_declared,
@@ -251,6 +253,10 @@ pub struct ClientSession {
     /// must still map its caret through *everything* since the last one — a map that was
     /// dropped is a caret that is silently stale, which is the defect this exists to end.
     caret_map: crate::PositionMap,
+    /// The profile the relay attaches to this participant's own arrivals (`docs/175` §5.2),
+    /// from the last `Welcome` or `Resumed`. The facade authors under it, so this replica's
+    /// optimistic comments and changes are already what everybody else conforms them to.
+    me: Option<Profile>,
 }
 
 impl ClientSession {
@@ -306,6 +312,10 @@ impl ClientSession {
             // session: it governs a rights SURFACE and nothing a client session does with the
             // order. Named rather than globbed so a future field cannot slip past unread.
             participants: _,
+            // Who is present is the chrome's (read through the facade's roster); the session
+            // keeps only its own stamp.
+            participants_present: _,
+            ref me,
         } = *message
         else {
             return Err(SessionError::OutOfOrder);
@@ -316,6 +326,7 @@ impl ClientSession {
                 client: PROTOCOL_VERSION,
             });
         }
+        let me = me.clone();
         let document_space = wire::document_space(document);
         let space = wire::space_of(document_space, client).ok_or(SessionError::NoIdSpace)?;
         log.settle(log.head());
@@ -332,6 +343,7 @@ impl ClientSession {
             desynced: false,
             stopped: None,
             caret_map: crate::PositionMap::default(),
+            me,
         })
     }
 
@@ -381,6 +393,8 @@ impl ClientSession {
             capabilities,
             // See `ClientSession::joined`.
             participants: _,
+            participants_present: _,
+            ref me,
         } = *message
         else {
             return Err(SessionError::OutOfOrder);
@@ -399,6 +413,8 @@ impl ClientSession {
         // own copy must only narrow is a different rule in a different place — the facade's
         // `adoptParticipantCapabilities` — because here the relay is the one speaking.
         self.capabilities = capabilities;
+        // Re-derived from the grant presented on this reconnect, like the capabilities.
+        self.me.clone_from(me);
         if !missed.is_empty() {
             self.awaiting = Some(revision);
         }
@@ -415,6 +431,13 @@ impl ClientSession {
     #[must_use]
     pub const fn id_space(&self) -> IdSpace {
         self.space
+    }
+
+    /// The profile the relay attaches to this participant's arrivals, or `None` in a room where
+    /// nobody named this participant. See [`ServerMessage::Welcome`]'s `me`.
+    #[must_use]
+    pub const fn me(&self) -> Option<&Profile> {
+        self.me.as_ref()
     }
 
     /// What the relay said this participant may do.
@@ -687,6 +710,7 @@ impl ClientSession {
                     revision: arrival.revision,
                     client: arrival.client,
                     operations: vec![operation.clone()],
+                    author: arrival.author.clone(),
                 };
                 match self.receive(&step, document, ids, log) {
                     Ok(received) => {
@@ -732,7 +756,12 @@ impl ClientSession {
                 carried.mints,
                 carried.intents,
                 log,
-                carried.operations,
+                conformed(
+                    document,
+                    carried.operations,
+                    arrival.author.as_ref(),
+                    sender,
+                ),
             )?;
             log.settle(revision);
             self.revision = self.revision.max(arrival.revision);
@@ -889,6 +918,12 @@ impl ClientSession {
         // The arrival's image at the horizon *is* the arrival — `images[0]` is `remote`
         // before any transform — so it lands under the spaces its sender declared, and not
         // under spaces of this replica's own. That is the whole point of carrying them.
+        // Conformed HERE, at the horizon, which is the ordered state every replica shares: a
+        // comment this replica deleted in unordered work of its own must still read as "held"
+        // when deciding whose it is, or two replicas would stamp it differently.
+        let sender =
+            wire::space_of(self.document_space, arrival.client).ok_or(SessionError::NoIdSpace)?;
+        let at_horizon = conformed(document, at_horizon, arrival.author.as_ref(), sender);
         let ordered_at = apply_remote(document, remote_mints, remote_intents, log, at_horizon)?;
         log.settle(ordered_at);
         if let Some(commit) = log.commits().last() {
@@ -1016,6 +1051,36 @@ struct Carried {
 ///
 /// Labelled from the engine's own step vocabulary so a host never has to invent a name for
 /// somebody else's edit, and given a group of its own so a user's Undo can never reach it.
+/// `operations` with the authorship they carry conformed to the relay's stamp, against
+/// `document` as the ordered state stands before them — `docs/175` §5.2, ADR-070.
+///
+/// Every operation is conformed against the same pre-arrival document, so a chunk that names one
+/// comment twice settles it the same way both times. `None` for the stamp is an arrival nobody
+/// named, which keeps what it carries.
+///
+/// O(the paragraphs and comments the operations carry); see
+/// `casual_doc_edit::authorship::conform`.
+fn conformed(
+    document: &Document,
+    mut operations: Vec<Operation>,
+    author: Option<&Profile>,
+    sender: IdSpace,
+) -> Vec<Operation> {
+    let Some(author) = author else {
+        return operations;
+    };
+    let initials = author.initials_or_derived();
+    let stamp = casual_doc_edit::authorship::Stamp {
+        name: &author.name,
+        initials: &initials,
+        space: sender,
+    };
+    for operation in &mut operations {
+        casual_doc_edit::authorship::conform(document, operation, &stamp);
+    }
+    operations
+}
+
 fn apply_remote(
     document: &mut Document,
     mints: Vec<Mint>,
@@ -1138,6 +1203,11 @@ pub struct Ordered {
     pub client: ClientId,
     /// What they wrote, untouched.
     pub operations: Vec<WireOperation>,
+    /// Who the order says wrote it: the profile the participant was admitted with, without its
+    /// avatar. Journalled, because a late joiner replays this entry and must stamp it the same
+    /// way (`docs/175` §4.5). Defaulted so an entry written before identity existed decodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<Profile>,
 }
 
 /// Everything an accepted join changed in a [`ServerSession`] — the durable half of an
@@ -1160,6 +1230,10 @@ pub struct Admission {
     client: ClientId,
     capabilities: Capabilities,
     resume: Option<(ResumeKey, Identity)>,
+    /// The author stamp this participant's chunks will carry. Defaulted so an admission
+    /// journalled before identity existed still decodes, as a participant nobody named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    author: Option<Profile>,
 }
 
 impl Admission {
@@ -1187,6 +1261,12 @@ impl Admission {
     #[must_use]
     pub const fn resume(&self) -> Option<&(ResumeKey, Identity)> {
         self.resume.as_ref()
+    }
+
+    /// The author stamp this participant's chunks carry from this admission on.
+    #[must_use]
+    pub const fn author(&self) -> Option<&Profile> {
+        self.author.as_ref()
     }
 }
 
@@ -1225,6 +1305,10 @@ pub struct SessionState {
     /// and it is self-healing on the next reconnect.
     #[serde(default)]
     ceiling: BTreeMap<ClientId, Capabilities>,
+    /// Each admitted participant's author stamp. Defaulted for a checkpoint written before
+    /// identity existed: such a participant is unnamed until their next join records one.
+    #[serde(default)]
+    authors: BTreeMap<ClientId, Profile>,
     next_client: u64,
     retain: usize,
 }
@@ -1267,6 +1351,11 @@ pub struct ServerSession {
     /// checkpoint costs.
     #[serde(default)]
     ceiling: BTreeMap<ClientId, Capabilities>,
+    /// Each admitted participant's author stamp (`docs/175` §5.2): what [`ServerSession::commit`]
+    /// attaches to their chunks. Written by an admission and only by an admission, like
+    /// `ceiling`, so a crash cannot change whose name a later chunk carries.
+    #[serde(default)]
+    authors: BTreeMap<ClientId, Profile>,
     next_client: u64,
     retain: usize,
 }
@@ -1298,6 +1387,7 @@ impl ServerSession {
             resumes: BTreeMap::new(),
             granted: BTreeMap::new(),
             ceiling: BTreeMap::new(),
+            authors: BTreeMap::new(),
             next_client: 0,
             retain: retain.max(1),
         }
@@ -1319,6 +1409,7 @@ impl ServerSession {
                 resumes: self.resumes.clone(),
                 granted: self.granted.clone(),
                 ceiling: self.ceiling.clone(),
+                authors: self.authors.clone(),
                 next_client: self.next_client,
                 retain: self.retain,
             },
@@ -1347,6 +1438,7 @@ impl ServerSession {
             resumes: state.resumes,
             granted: state.granted,
             ceiling: state.ceiling,
+            authors: state.authors,
             next_client: state.next_client,
             retain: state.retain,
         }
@@ -1427,6 +1519,26 @@ impl ServerSession {
         message: &ClientMessage,
         granted: Capabilities,
     ) -> (ServerMessage, Option<Admission>) {
+        self.join_as(message, granted, None)
+    }
+
+    /// [`ServerSession::join`], with the author stamp the boundary decided for this participant
+    /// (`docs/175` §4): the grant's profile in a granted room, the claimed one in an open room,
+    /// `None` for a participant nobody named.
+    ///
+    /// The stamp is an **argument** for the reason `granted` is one: this state machine cannot
+    /// verify a grant, and the profile is one of the things a verified grant says. It is
+    /// recorded in the [`Admission`], so a crash cannot change whose name a later chunk
+    /// carries, and every chunk this participant commits is stamped with it
+    /// ([`Ordered::author`]). The avatar is dropped first: it is presentation, and it stays in
+    /// the relay's memory only (`docs/175` §4.5).
+    pub fn join_as(
+        &mut self,
+        message: &ClientMessage,
+        granted: Capabilities,
+        author: Option<Profile>,
+    ) -> (ServerMessage, Option<Admission>) {
+        let author = author.map(|profile| profile.stamp());
         let ClientMessage::Join(Join {
             protocol,
             identity,
@@ -1434,6 +1546,9 @@ impl ServerSession {
             // crate holds neither; the boundary verified it and the answer arrived as
             // `granted`. Named rather than globbed so a future field cannot slip past unread.
             grant: _,
+            // Read by the boundary, which alone knows whether this room honours a claim; what
+            // it decided arrives as `author`.
+            profile: _,
             resume,
         }) = message
         else {
@@ -1470,6 +1585,7 @@ impl ServerSession {
                             revision: entry.revision,
                             client: entry.client,
                             operations: entry.operations.clone(),
+                            author: entry.author.clone(),
                         })
                         .collect()
                 });
@@ -1477,7 +1593,12 @@ impl ServerSession {
                     // A resumed join re-records the admission, because the grant is re-verified
                     // and may have been narrowed since. Writing the old one back is exactly the
                     // revocation hole `143` §10 names.
-                    let admission = self.admit(client, granted, Some((key.clone(), identity)));
+                    let admission = self.admit(
+                        client,
+                        granted,
+                        Some((key.clone(), identity)),
+                        author.clone(),
+                    );
                     return (
                         ServerMessage::Resumed {
                             protocol: PROTOCOL_VERSION,
@@ -1490,6 +1611,8 @@ impl ServerSession {
                             // for every participant it has ever admitted and has no way to tell
                             // which of them are still here.
                             participants: Vec::new(),
+                            participants_present: Vec::new(),
+                            me: author,
                         },
                         Some(admission),
                     );
@@ -1515,6 +1638,7 @@ impl ServerSession {
                     revision: entry.revision,
                     client: entry.client,
                     operations: entry.operations.clone(),
+                    author: entry.author.clone(),
                 })
                 .collect::<Vec<_>>()
         }) else {
@@ -1537,6 +1661,7 @@ impl ServerSession {
             resume
                 .as_ref()
                 .map(|Resume { key, .. }| (key.clone(), identity)),
+            author.clone(),
         );
         (
             ServerMessage::Welcome {
@@ -1548,6 +1673,8 @@ impl ServerSession {
                 capabilities: granted,
                 // See `ServerMessage::Resumed`'s own empty list, just above.
                 participants: Vec::new(),
+                participants_present: Vec::new(),
+                me: author,
             },
             Some(admission),
         )
@@ -1562,12 +1689,14 @@ impl ServerSession {
         client: ClientId,
         capabilities: Capabilities,
         resume: Option<(ResumeKey, &Identity)>,
+        author: Option<Profile>,
     ) -> Admission {
         let resume = resume.map(|(key, identity)| (key, identity.clone()));
         let admission = Admission {
             client,
             capabilities,
             resume,
+            author,
         };
         self.apply_admission(&admission);
         admission
@@ -1611,6 +1740,23 @@ impl ServerSession {
             self.resumes
                 .insert(key.clone(), (admission.client, identity.clone()));
         }
+        // Overwritten by every admission, like the grant: a reconnect re-reads who the host
+        // says this is, and an admission naming nobody clears a stale name rather than
+        // inheriting it.
+        match &admission.author {
+            Some(author) => {
+                self.authors.insert(admission.client, author.clone());
+            }
+            None => {
+                self.authors.remove(&admission.client);
+            }
+        }
+    }
+
+    /// The author stamp `client`'s chunks carry, or `None` for a participant nobody named.
+    #[must_use]
+    pub fn author_for(&self, client: ClientId) -> Option<&Profile> {
+        self.authors.get(&client)
     }
 
     /// What `client` was admitted with, or `None` if this session never admitted it.
@@ -1791,6 +1937,9 @@ impl ServerSession {
             revision,
             client: submission.client,
             operations: submission.operations.clone(),
+            // Attached here, from the admission, and never read off the submission — which has
+            // no field to put one in (`docs/175` §5.2).
+            author: self.authors.get(&submission.client).cloned(),
         });
         self.accepted
             .insert(submission.client, (submission.seq, revision));
@@ -1810,3 +1959,7 @@ mod tests;
 #[cfg(test)]
 #[path = "coediting_tests.rs"]
 mod coediting_tests;
+
+#[cfg(test)]
+#[path = "identity_tests.rs"]
+mod identity_tests;

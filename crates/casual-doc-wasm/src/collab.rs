@@ -77,6 +77,8 @@ use casual_doc_transaction::protocol::{
     ClientId, ClientMessage, Identity, Join, Member, PROTOCOL_VERSION, Refusal, Resume, ResumeKey,
     Revision, ServerMessage,
 };
+// Their own line, for the parallel-lane import rule.
+use casual_doc_transaction::protocol::{GrantToken, Participant, Profile};
 use casual_doc_transaction::session::ClientSession;
 use wasm_bindgen::prelude::*;
 
@@ -136,6 +138,10 @@ struct Outcome {
     /// alone.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     members: Vec<Membership>,
+    /// The profile the relay will attach to this participant's own work, on a `welcome` or a
+    /// `resumed` (`docs/175` §5.2) — what this replica now authors under.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    me: Option<JsProfile>,
     /// Whether the document changed, so the host re-rasters.
     document_changed: bool,
     /// The host-visible view epoch, after any re-pagination this caused.
@@ -165,6 +171,83 @@ struct Membership {
     /// offered one the relay refuses is the dead control at a distance — it looks live, and the
     /// refusal arrives from the network.
     ceiling: Vec<String>,
+}
+
+/// A [`Profile`] as the chrome reads and writes it: the field names of `docs/175` §14
+/// (`avatarUrl`, camel case), so the strip's `participantDisplay` takes it as it comes.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct JsProfile {
+    id: String,
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    initials: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    avatar_url: Option<String>,
+}
+
+impl From<&Profile> for JsProfile {
+    fn from(profile: &Profile) -> Self {
+        Self {
+            id: profile.id.clone(),
+            name: profile.name.clone(),
+            initials: profile.initials.clone(),
+            color: profile.color.clone(),
+            avatar_url: profile.avatar_url.clone(),
+        }
+    }
+}
+
+/// One participant present in the room, as the chrome's roster reads it.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct JsParticipant {
+    client: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<JsProfile>,
+    attested: bool,
+}
+
+impl From<&Participant> for JsParticipant {
+    fn from(participant: &Participant) -> Self {
+        Self {
+            client: participant.client.get(),
+            profile: participant.profile.as_ref().map(JsProfile::from),
+            attested: participant.attested,
+        }
+    }
+}
+
+/// A claimed profile from the host's JSON, checked against `docs/175` §4.4's bounds.
+///
+/// A bound is a refusal naming the field (`identity-invalid`), never a truncation: a name cut
+/// short is a different name.
+fn parse_profile(json: &str) -> Result<Profile, String> {
+    let js: JsProfile = serde_json::from_str(json).map_err(|_| {
+        marked(
+            "identity-invalid",
+            "The identity the host supplied is not an object with an id and a name.",
+        )
+    })?;
+    let profile = Profile {
+        id: js.id,
+        name: js.name,
+        initials: js.initials,
+        color: js.color,
+        avatar_url: js.avatar_url,
+    };
+    profile.check().map_err(|field| {
+        marked(
+            "identity-invalid",
+            &format!(
+                "The identity the host supplied has an unusable {}.",
+                field.name()
+            ),
+        )
+    })?;
+    Ok(profile)
 }
 
 impl Outcome {
@@ -234,11 +317,18 @@ impl WasmDocument {
     /// acknowledged is gone with no refusal naming the loss. So this takes the key
     /// unconditionally and the caller cannot forget it.
     ///
+    /// `grant` is the host-signed JWT the host's provider handed out **for this join**
+    /// (`docs/175` §3.3): carried and never read, stored or logged here. `profile` is a JSON
+    /// `{"id","name","initials"?,"color"?,"avatarUrl"?}` the participant **claims**; a room that
+    /// requires a grant ignores it and shows the grant's, and an open room shows it marked
+    /// unverified with its colour and avatar dropped.
+    ///
     /// # Errors
     ///
-    /// An empty identity, or a resume key over its 128-character bound. Refused rather than
-    /// trimmed: both are the host's values and a silently altered identity is a participant
-    /// nobody can match.
+    /// An empty identity, a resume key over its 128-character bound, a grant over its 8 KiB
+    /// bound, or a profile that is not JSON of that shape or breaks a bound (the field is named,
+    /// `identity-invalid`). Refused rather than trimmed: these are the host's values, and a
+    /// silently altered identity is a participant nobody can match.
     ///
     /// O(1).
     #[wasm_bindgen(js_name = collabJoinFrame)]
@@ -247,9 +337,17 @@ impl WasmDocument {
         identity: &str,
         resume_key: &str,
         revision: f64,
+        grant: Option<String>,
+        profile: Option<String>,
     ) -> Result<Vec<u8>, JsValue> {
-        self.collab_join_frame_inner(identity, resume_key, revision)
-            .map_err(to_js)
+        self.collab_join_frame_inner(
+            identity,
+            resume_key,
+            revision,
+            grant.as_deref(),
+            profile.as_deref(),
+        )
+        .map_err(to_js)
     }
 
     /// Feeds one frame from the relay to the session, and applies whatever it carried.
@@ -636,6 +734,19 @@ fn first_paragraph_in(block: &casual_doc_model::v1::BlockNode) -> Option<casual_
 }
 
 impl WasmDocument {
+    /// The name, initials and id space the relay attaches to this replica's work, in a room
+    /// that named this participant (`docs/175` §5.2) — `None` standalone, or in a room where
+    /// nobody did. The facade's one answer, so the editor never reaches the session for it.
+    pub(crate) fn room_author(&self) -> Option<(String, String, casual_doc_model::IdSpace)> {
+        let session = self.session.as_ref()?;
+        let me = session.me()?;
+        Some((
+            me.name.clone(),
+            me.initials_or_derived(),
+            session.id_space(),
+        ))
+    }
+
     fn collab_recover_inner(&mut self, snapshot: &[u8], revision: f64) -> Result<String, String> {
         if !revision.is_finite()
             || revision < 0.0
@@ -705,7 +816,22 @@ impl WasmDocument {
         identity: &str,
         resume_key: &str,
         revision: f64,
+        grant: Option<&str>,
+        profile: Option<&str>,
     ) -> Result<Vec<u8>, String> {
+        let grant = match grant.filter(|grant| !grant.is_empty()) {
+            Some(grant) => Some(GrantToken::new(grant.as_bytes().to_vec()).ok_or_else(|| {
+                marked(
+                    "session.grant-unusable",
+                    "The credential the host supplied for this shared session is too large.",
+                )
+            })?),
+            None => None,
+        };
+        let profile = match profile.filter(|profile| !profile.is_empty()) {
+            Some(profile) => Some(parse_profile(profile)?),
+            None => None,
+        };
         let identity = Identity::new(identity).ok_or_else(|| {
             marked(
                 "session.no-identity",
@@ -737,9 +863,10 @@ impl WasmDocument {
         Ok(encode_frame(&ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION,
             identity,
-            // No grant: this engine never verifies one and never invents one. ADR-060 —
-            // the host signs, the boundary verifies, the engine enforces what came back.
-            grant: None,
+            // Carried, never verified and never invented here. ADR-060 — the host signs, the
+            // boundary verifies, the engine enforces what came back.
+            grant,
+            profile,
             resume: Some(Resume { key, revision: at }),
         })))
     }
@@ -771,7 +898,7 @@ impl WasmDocument {
     }
 
     /// See [`WasmDocument::collab_receive_frame`].
-    fn collab_receive_frame_inner(&mut self, frame: &[u8]) -> Result<String, String> {
+    pub(crate) fn collab_receive_frame_inner(&mut self, frame: &[u8]) -> Result<String, String> {
         let message: ServerMessage = decode_frame(frame).map_err(|error| malformed(&error))?;
         let outcome = match self.collab_apply_message(&message) {
             Ok(outcome) => outcome,
@@ -806,6 +933,7 @@ impl WasmDocument {
                 missed,
                 capabilities,
                 participants,
+                me,
                 ..
             } => {
                 if self.session.is_some() && self.log.unordered_commits() > 0 {
@@ -848,6 +976,7 @@ impl WasmDocument {
                 outcome.participant = Some(client.get());
                 outcome.capabilities = Some(self.participant_capabilities());
                 outcome.members = membership(participants);
+                outcome.me = me.as_ref().map(JsProfile::from);
                 outcome.revision = revision.get();
                 outcome.view_revision = self.revision;
                 outcome.page_count = self.page_count();
@@ -859,6 +988,7 @@ impl WasmDocument {
                 missed,
                 capabilities,
                 participants,
+                me,
                 ..
             } => {
                 let Some(session) = self.session.as_mut() else {
@@ -896,6 +1026,7 @@ impl WasmDocument {
                 outcome.participant = Some(client.get());
                 outcome.capabilities = Some(self.participant_capabilities());
                 outcome.members = membership(participants);
+                outcome.me = me.as_ref().map(JsProfile::from);
                 outcome.revision = revision.get();
                 outcome.missed = Some(missed.len());
                 outcome.replayed = Some(replayed);
@@ -997,6 +1128,20 @@ impl WasmDocument {
             }
             ServerMessage::Awareness { client, .. } => {
                 let mut outcome = Outcome::of("awareness");
+                outcome.about = Some(client.get());
+                outcome.view_revision = self.revision;
+                Ok(outcome)
+            }
+            // Who is present is the roster's (`WasmRoster`, which reads the same frame); the
+            // document session only tells the host that the room changed, so it repaints.
+            ServerMessage::ParticipantJoined(participant) => {
+                let mut outcome = Outcome::of("participantJoined");
+                outcome.about = Some(participant.client.get());
+                outcome.view_revision = self.revision;
+                Ok(outcome)
+            }
+            ServerMessage::ParticipantLeft { client } => {
+                let mut outcome = Outcome::of("participantLeft");
                 outcome.about = Some(client.get());
                 outcome.view_revision = self.revision;
                 Ok(outcome)
@@ -1193,7 +1338,31 @@ impl crate::presence::WasmRoster {
             ServerMessage::Departed { client } => {
                 self.roster.forget(client);
             }
-            ServerMessage::Welcome { .. } | ServerMessage::Resumed { .. } => self.clear(),
+            ServerMessage::Welcome {
+                client,
+                participants_present,
+                ..
+            }
+            | ServerMessage::Resumed {
+                client,
+                participants_present,
+                ..
+            } => {
+                self.clear();
+                self.me = Some(client.get());
+                self.present = participants_present
+                    .iter()
+                    .map(|participant| (participant.client.get(), JsParticipant::from(participant)))
+                    .collect();
+            }
+            ServerMessage::ParticipantJoined(participant) => {
+                self.present
+                    .insert(participant.client.get(), JsParticipant::from(&participant));
+            }
+            ServerMessage::ParticipantLeft { client } => {
+                self.present.remove(&client.get());
+                self.roster.forget(client);
+            }
             _ => {}
         }
         Ok(())

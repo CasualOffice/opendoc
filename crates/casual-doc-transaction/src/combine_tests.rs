@@ -471,6 +471,7 @@ fn offline_combine_agrees_with_the_live_session_path() {
     for who in ["ada", "grace"] {
         let (answer, _) = server.join(
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new(who).expect("an identity"),
                 grant: None,
@@ -492,6 +493,8 @@ fn offline_combine_agrees_with_the_live_session_path() {
     let mut ada = ClientSession::joined(
         &ada_document,
         &ServerMessage::Welcome {
+            me: None,
+            participants_present: Vec::new(),
             base_revision: None,
             missed: Vec::new(),
             protocol: PROTOCOL_VERSION,
@@ -524,6 +527,8 @@ fn offline_combine_agrees_with_the_live_session_path() {
     let mut grace = ClientSession::joined(
         &grace_document,
         &ServerMessage::Welcome {
+            me: None,
+            participants_present: Vec::new(),
             base_revision: None,
             missed: Vec::new(),
             protocol: PROTOCOL_VERSION,
@@ -560,6 +565,7 @@ fn offline_combine_agrees_with_the_live_session_path() {
         .acknowledge(submission.seq, revision, &mut grace_log)
         .expect("the acknowledgement lands");
     let arrival = crate::protocol::Arrival {
+        author: None,
         revision,
         client: submission.client,
         operations: submission.operations,

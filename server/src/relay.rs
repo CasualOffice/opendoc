@@ -18,6 +18,7 @@
 //! ADR-058 give the reasons separately; together they mean a chunk cannot be acknowledged before
 //! it is durable, and two participants cannot be told about the order in two different orders.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use casual_doc_edit::access::{Capabilities, refuse_if_not_permitted};
@@ -28,7 +29,11 @@ use casual_doc_transaction::protocol::{
     Arrival, ClientId, ClientMessage, Member, Outcome, Refusal, ServerMessage,
 };
 
+// Their own lines, for the parallel-lane import rule.
+use casual_doc_transaction::protocol::Participant;
+
 use crate::access::Access;
+use crate::access::JoinRefusal;
 use crate::fanout::Participants;
 use crate::room::{Room, RoomError};
 
@@ -72,6 +77,10 @@ pub struct Relay<W> {
     /// replayed. It shares the room's lock so one message is handled at a time, not its
     /// durability.
     roster: Roster,
+    /// Who is in the room and what they look like (`docs/175` §4.3). **Memory only**, like the
+    /// roster: a profile is dropped with its connection and never journalled — what the journal
+    /// keeps is the author stamp, without the avatar, inside each admission.
+    present: BTreeMap<ClientId, Participant>,
 }
 
 impl<W: Write> Relay<W> {
@@ -87,6 +96,7 @@ impl<W: Write> Relay<W> {
             access,
             participants: Participants::new(),
             roster: Roster::new(),
+            present: BTreeMap::new(),
         }
     }
 
@@ -136,17 +146,26 @@ impl<W: Write> Relay<W> {
                 // failure is `NotAuthorised` and **terminal**: a client that retries an
                 // unauthorised join loops for ever, which is exactly what
                 // `Refusal::is_terminal` already says about this code.
-                let granted = match self.access.capabilities(join.grant.as_ref()) {
-                    Ok(granted) => granted,
-                    Err(_) => {
+                //
+                // The policy also says WHO this is (`docs/175` §4): under a grant, the grant's
+                // subject must be the join's identity — an impersonation attempt is refused here,
+                // before anything is journalled — and the grant's profile is the one everybody
+                // sees. In an open room the claimed profile is honoured, unverified.
+                let admitted = match self.access.admit(join) {
+                    Ok(admitted) => admitted,
+                    Err(refusal) => {
                         return Ok(Handled {
                             answer: Some(ServerMessage::Stopped {
-                                reason: Refusal::NotAuthorised,
+                                reason: match refusal {
+                                    JoinRefusal::Profile(_) => Refusal::Malformed,
+                                    _ => Refusal::NotAuthorised,
+                                },
                             }),
                             ..Handled::default()
                         });
                     }
                 };
+                let granted = admitted.capabilities;
                 // The room's occupancy ceiling, consulted **after** the grant and **before**
                 // the order hears about this connection — `152` §2c.
                 //
@@ -182,26 +201,47 @@ impl<W: Write> Relay<W> {
                 // must not admit".
                 // Two statements rather than one: `with_membership` reads the room and `join`
                 // mutates it, so nesting the call borrows it both ways at once.
-                let admitted = self.room.join(message, granted)?;
-                let answer = self.with_membership(admitted, granted);
-                let mut handled = Handled {
-                    answer: Some(answer.clone()),
-                    ..Handled::default()
-                };
+                let answer = self
+                    .room
+                    .join_as(message, granted, admitted.profile.clone())?;
+                let answer = self.with_membership(answer, granted);
                 // The participant set is keyed by the id the relay just assigned — the same id a
                 // resume hands back, which is why `joined` replaces rather than refuses.
-                if let ServerMessage::Welcome { client, .. }
-                | ServerMessage::Resumed { client, .. } = answer
-                {
+                let joined = match &answer {
+                    ServerMessage::Welcome { client, .. }
+                    | ServerMessage::Resumed { client, .. } => Some(*client),
+                    _ => None,
+                };
+                let mut handled = Handled::default();
+                let answer = match joined {
                     // The grant itself is recorded by the session, on every accepted join,
                     // resumed or not — so a resume re-verifies it and reconnecting cannot
                     // restore a right the room revoked (`143` §10). This relay keeps **no second
                     // copy**: one table, durable, and `commit` reads the same one.
-                    if let Some(writer) = writer.take() {
-                        handled.joined_as = Some(client);
-                        self.participants.joined(client, writer);
+                    Some(client) if writer.is_some() => {
+                        if let Some(writer) = writer.take() {
+                            handled.joined_as = Some(client);
+                            self.participants.joined(client, writer);
+                        }
+                        // Who is here, in memory only (`docs/175` §4.5): the full profile, the
+                        // avatar included when it is attested, dropped with the connection.
+                        let attested = admitted.attested && admitted.profile.is_some();
+                        let arrived = Participant {
+                            client,
+                            profile: admitted.profile,
+                            attested,
+                        };
+                        self.present.insert(client, arrived.clone());
+                        // Everybody already here hears who arrived. Snapshot then deltas: the
+                        // joiner gets the whole list on its own answer, below.
+                        let bytes = encode_frame(&ServerMessage::ParticipantJoined(arrived));
+                        let unreachable = self.participants.fan_out(client, &bytes);
+                        handled.evicted = self.evict_unreachable(unreachable);
+                        self.with_presence(answer)
                     }
-                }
+                    _ => answer,
+                };
+                handled.answer = Some(answer);
                 Ok(handled)
             }
             ClientMessage::Submit(submission) => {
@@ -267,6 +307,9 @@ impl<W: Write> Relay<W> {
                             revision,
                             client: submission.client,
                             operations: submission.operations.clone(),
+                            // The order attaches who wrote it, from the admission — the
+                            // submission has nowhere to say (`docs/175` §5.2).
+                            author: self.room.session().author_for(submission.client).cloned(),
                         }));
                         let unreachable = self.participants.fan_out(submission.client, &bytes);
                         let evicted = self.evict_unreachable(unreachable);
@@ -444,41 +487,59 @@ impl<W: Write> Relay<W> {
                 })
             })
             .collect();
-        match answer {
-            ServerMessage::Welcome {
-                protocol,
-                client,
-                revision,
-                base_revision,
-                missed,
-                capabilities,
-                ..
-            } => ServerMessage::Welcome {
-                base_revision,
-                missed,
-                protocol,
-                client,
-                revision,
-                capabilities,
-                participants: members,
-            },
-            ServerMessage::Resumed {
-                protocol,
-                client,
-                revision,
-                missed,
-                capabilities,
-                ..
-            } => ServerMessage::Resumed {
-                protocol,
-                client,
-                revision,
-                missed,
-                capabilities,
-                participants: members,
-            },
-            other => other,
+        let mut answer = answer;
+        if let ServerMessage::Welcome { participants, .. }
+        | ServerMessage::Resumed { participants, .. } = &mut answer
+        {
+            *participants = members;
         }
+        answer
+    }
+
+    /// Fills a `Welcome`'s or a `Resumed`'s list of who is present — for **every** joiner,
+    /// because who is here is not policy (`docs/175` §4.3).
+    ///
+    /// The joiner is in the list too, with the profile everybody else was just told about, so
+    /// one list paints the strip: the stamp in `me` carries no avatar (it is what gets journalled),
+    /// and the joiner's own chip may show one.
+    ///
+    /// O(connected participants), once per join.
+    fn with_presence(&self, answer: ServerMessage) -> ServerMessage {
+        let mut answer = answer;
+        if let ServerMessage::Welcome {
+            participants_present,
+            ..
+        }
+        | ServerMessage::Resumed {
+            participants_present,
+            ..
+        } = &mut answer
+        {
+            *participants_present = self
+                .participants
+                .connected()
+                .map(|client| {
+                    self.present.get(&client).cloned().unwrap_or(Participant {
+                        client,
+                        profile: None,
+                        attested: false,
+                    })
+                })
+                .collect();
+        }
+        answer
+    }
+
+    /// Tells everybody still here that `client` left, and forgets what they looked like.
+    ///
+    /// Sent on **every** exit path, unlike [`ServerMessage::Departed`], which forgets a caret and
+    /// so only goes out for a participant who had one. Returns who could not be told.
+    fn announce_left(&mut self, client: ClientId) -> Vec<ClientId> {
+        if self.present.remove(&client).is_none() {
+            return Vec::new();
+        }
+        let bytes = encode_frame(&ServerMessage::ParticipantLeft { client });
+        self.participants.fan_out(client, &bytes)
     }
 
     /// Removes every participant the fan-out could not reach, and tells the rest they are gone.
@@ -534,6 +595,7 @@ impl<W: Write> Relay<W> {
                 continue;
             }
             evicted.push(client);
+            pending.extend(self.announce_left(client));
             if self.roster.forget(client) {
                 let bytes = encode_frame(&ServerMessage::Departed { client });
                 // An announcement that itself fails identifies ANOTHER unreachable participant,
@@ -561,14 +623,19 @@ impl<W: Write> Relay<W> {
         // `next_client` a durable floor (ADR-058) — so there is no next holder of this number to
         // inherit anything, and the only connection that may submit as it is one whose own join
         // has just re-verified and overwritten the entry.
+        let mut unreachable = self.announce_left(client);
         if self.roster.forget(client) {
             let bytes = encode_frame(&ServerMessage::Departed { client });
-            return self.participants.fan_out(client, &bytes);
+            unreachable.extend(self.participants.fan_out(client, &bytes));
         }
-        Vec::new()
+        unreachable
     }
 }
 
 #[cfg(test)]
 #[path = "relay_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "relay_identity_tests.rs"]
+mod identity_tests;

@@ -104,6 +104,7 @@ fn admit(server: &mut ServerSession, count: u64) -> Vec<ClientId> {
         .map(|number| {
             let (answer, _) = server.join(
                 &ClientMessage::Join(Join {
+                    profile: None,
                     protocol: PROTOCOL_VERSION,
                     identity: Identity::new(format!("participant-{number}")).expect("an identity"),
                     grant: None,
@@ -126,6 +127,7 @@ impl Replica {
     fn join(document: &Document, server: &mut ServerSession, key: &str, who: &str) -> Self {
         let (message, _) = server.join(
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new(who).expect("an identity"),
                 grant: None,
@@ -210,6 +212,7 @@ impl Replica {
                         .acknowledge(submission.seq, revision, &mut self.log)
                         .expect("the acknowledgement lands");
                     fanned.push(crate::protocol::Arrival {
+                        author: None,
                         revision,
                         client: submission.client,
                         operations: submission.operations,
@@ -330,6 +333,8 @@ fn a_protocol_mismatch_stops_the_session_and_is_never_retried() {
     let error = ClientSession::joined(
         &document,
         &ServerMessage::Welcome {
+            me: None,
+            participants_present: Vec::new(),
             base_revision: None,
             missed: Vec::new(),
             protocol: PROTOCOL_VERSION + 1,
@@ -367,6 +372,7 @@ fn a_relay_answers_a_version_mismatch_with_a_stop_and_not_a_refusal() {
     let mut server = ServerSession::default();
     let (answer, _) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION + 7,
             identity: Identity::new("ada").expect("an identity"),
             grant: None,
@@ -529,6 +535,7 @@ fn an_identity_minted_in_the_document_s_own_space_is_refused() {
     };
 
     let arrival = crate::protocol::Arrival {
+        author: None,
         revision: Revision::new(1),
         client: ClientId::new(0),
         operations: vec![WireOperation::of(
@@ -569,6 +576,7 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
     let mut server = ServerSession::default();
     let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
     let arrival = crate::protocol::Arrival {
+        author: None,
         revision: Revision::new(1),
         client: ClientId::new(0),
         operations: vec![WireOperation::of(
@@ -739,6 +747,7 @@ fn an_operation_that_under_declares_what_it_introduces_is_refused() {
     let liar = WireOperation::forged(honest.operation().clone(), honest.mint(), Vec::new());
 
     let arrival = crate::protocol::Arrival {
+        author: None,
         revision: Revision::new(1),
         client: ClientId::new(0),
         operations: vec![liar],
@@ -787,6 +796,7 @@ fn an_identity_minted_in_the_offline_space_is_refused_from_a_session() {
     let offline = IdSpace::local(wire::document_space(&document));
     let minted = IdGenerator::new(offline.get()).next_id().expect("id");
     let arrival = crate::protocol::Arrival {
+        author: None,
         revision: Revision::new(1),
         client: ClientId::new(0),
         operations: vec![WireOperation::of(
@@ -1705,6 +1715,7 @@ fn a_resumed_participant_keeps_its_number_and_its_chunk_counter() {
 
     let (answer, _) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
             grant: None,
@@ -1742,6 +1753,7 @@ fn a_resume_key_presented_by_a_different_identity_is_not_honoured() {
     let ada = Replica::join(&document, &mut server, "shared-key", "ada");
     let (answer, _) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("mallory").expect("an identity"),
             grant: None,
@@ -1793,6 +1805,7 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
 
     server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
             grant: None,
@@ -1805,6 +1818,7 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
     );
     let (answer, _) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
             grant: None,
@@ -1960,6 +1974,7 @@ fn contend(writers: usize, edits: usize) -> Contention {
                             .acknowledge(submission.seq, revision, log)
                             .expect("the acknowledgement lands");
                         let arrival = crate::protocol::Arrival {
+                            author: None,
                             revision,
                             client: submission.client,
                             operations: submission.operations.clone(),
@@ -2213,6 +2228,7 @@ fn work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operatio
     let mut server = ServerSession::default();
     let (message, _) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
             grant: None,
@@ -2393,10 +2409,12 @@ fn a_new_wire_enum_variant_is_a_protocol_version_decision() {
     // Counted at version 5, which the bump itself is the record of: `ClientMessage::SetAccess`,
     // `ServerMessage::AccessChanged` and `Refusal::AccessChangeRefused` are three new tags, the
     // reasoning sits in `PROTOCOL_VERSION`'s own doc comment beside versions 2, 3 and 4, and the
-    // constant moved before these numbers did.
+    // constant moved before these numbers did. Recounted at version 7: `ParticipantJoined` and
+    // `ParticipantLeft` are two new `ServerMessage` tags (`docs/175` §4.3), and the constant
+    // moved from 6 to 7 with the reasoning beside the earlier versions first.
     for (declaration, counted_at_this_version) in [
         ("pub enum ClientMessage {", 5),
-        ("pub enum ServerMessage {", 9),
+        ("pub enum ServerMessage {", 11),
         ("pub enum Refusal {", 11),
     ] {
         let found = declared_variants(source, declaration);
@@ -2446,6 +2464,7 @@ fn a_new_wire_enum_variant_is_a_protocol_version_decision() {
 fn admit_as(server: &mut ServerSession, who: &str, granted: Capabilities) -> ClientId {
     let (answer, admission) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new(who).expect("an identity"),
             grant: None,
@@ -2547,6 +2566,7 @@ fn a_demoted_participant_s_reconnect_re_reads_the_host_s_grant_and_not_the_room_
     let resume_key = ResumeKey::new("grace-tab").expect("a key");
     let (answer, _) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("grace").expect("an identity"),
             grant: None,
@@ -2569,6 +2589,7 @@ fn a_demoted_participant_s_reconnect_re_reads_the_host_s_grant_and_not_the_room_
     // The same tab reconnects, and the host verifies the same grant again.
     let (resumed, admission) = server.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("grace").expect("an identity"),
             grant: None,

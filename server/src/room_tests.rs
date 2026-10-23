@@ -59,6 +59,7 @@ fn a_chunk_is_durable_before_the_room_says_it_is_ordered() {
     let ServerMessage::Welcome { client, .. } = room
         .join(
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("ada").expect("an identity"),
                 grant: None,

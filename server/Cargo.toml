@@ -27,6 +27,13 @@ path = "src/main.rs"
 casual-doc-edit.workspace = true
 casual-doc-transaction.workspace = true
 serde.workspace = true
+# The grant is a JWT (owner decision 2026-10-23, `docs/175` §12 Q6), signed by the host with an
+# asymmetric key so the relay holds only the public half. EdDSA over Ed25519 (RFC 8037): one
+# algorithm, no parameters to negotiate, and no RSA padding or ECDSA nonce to get wrong. Only the
+# relay links these; nothing under `crates/` does, so no embedder's bundle carries them.
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+serde_json.workspace = true
 
 [dev-dependencies]
 # The journal's guards drive a real relay through real chunks: a durability test that builds its

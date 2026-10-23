@@ -49,6 +49,7 @@ pub mod transport;
 pub mod websocket;
 
 pub use access::{Access, GrantRefusal, GrantVerifier};
+pub use access::{Admitted, JoinRefusal, JwtVerifier, Verified, role_capabilities};
 pub use fanout::Participants;
 pub use journal::{Journal, JournalError, Recovered};
 pub use relay::{Handled, Relay};

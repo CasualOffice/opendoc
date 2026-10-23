@@ -40,6 +40,7 @@ fn scratch(name: &str) -> std::path::PathBuf {
 fn joined(session: &mut ServerSession, who: &str) -> ClientId {
     let (answer, _) = session.join(
         &ClientMessage::Join(Join {
+            profile: None,
             protocol: PROTOCOL_VERSION,
             identity: Identity::new(who).expect("an identity"),
             grant: None,
@@ -457,6 +458,7 @@ fn welcomed(room: &mut Room, who: &str, resume: Option<Resume>) -> ClientId {
     let answer = room
         .join(
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new(who).expect("an identity"),
                 grant: None,
@@ -545,6 +547,7 @@ fn a_client_whose_work_was_acknowledged_can_still_resume_after_a_crash() {
     let answer = room
         .join(
             &ClientMessage::Join(Join {
+                profile: None,
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new("ada").expect("an identity"),
                 grant: None,
