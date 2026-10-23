@@ -57,6 +57,7 @@ Sizes are `wc -l` at the commit that last touched the row.
 |---|---|---|---|
 | `editor_caret_nav.mjs` | `createCaretNav` | Caret navigation: the vertical goal column and `navCaret` | 90 |
 | `editor_clipboard.mjs` | `createClipboard` | Cut, paste (plain, rich, tracked, HTML), Paste as text, Paste options | 525 |
+| `editor_context_menu.mjs` | `createContextMenu` | The context-aware editor menu: what a right-click offers | 643 |
 | `editor_dialogs.mjs` | `createDialogs` | Shortcuts reference, About, bookmarks, Insert field / picture, captions and cross-references, Symbol / Emoji | 470 |
 | `editor_dirty.mjs` | `createDirtyTracking` | Unsaved-work tracking: saved and current revisions, the dirty answer | 134 |
 | `editor_drafts.mjs` | `createDrafts` | Autosave drafts, crash recovery and the recovery offer | 642 |
@@ -64,8 +65,12 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_file_open.mjs` | `createFileOpen` | Boot, demo presets, a blank document, `openBytes`, and the header rename | 420 |
 | `editor_file_pick.mjs` | `createFilePick` | Opening a picked or dropped file: size ceiling and handleFile | 67 |
 | `editor_find.mjs` | `createFind` | Find and replace panel, match scan, Replace / Replace all, the Find session | 318 |
+| `editor_format_painter.mjs` | `createFormatPainter` | Format painter, font size, indents, line break, checklist toggle | 348 |
+| `editor_formatting.mjs` | `createFormatting` | Formatting toolbar state: run format, font and underline faces, toggles, table styles | 299 |
 | `editor_keyboard.mjs` | `createKeyboard` | The editor keydown dispatch | 538 |
 | `editor_link_dialog.mjs` | `createLinkDialog` | Insert / edit link dialog | 218 |
+| `editor_menu_render.mjs` | `createMenuRender` | Menu rendering: the root context menu and submenu flyouts | 335 |
+| `editor_outline.mjs` | `createOutline` | The Outline panel and the flanking-panel toggles | 81 |
 | `editor_palette.mjs` | `createPalette` | Command palette and `editorCommands()`, the registry of editor actions | 652 |
 | `editor_palette_ui.mjs` | `createPaletteUi` | The palette's surface: filtered list, row selection, run by row or id, its keyboard | 222 |
 | `editor_review_decisions.mjs` | `createReviewDecisions` | Review decisions: inline accept/reject card, Next/Previous over comments and changes, decisions at the caret | 539 |
@@ -77,7 +82,7 @@ Sizes are `wc -l` at the commit that last touched the row.
 | `editor_versions.mjs` | `createVersions` | Version history: name prompt, read-only preview, timeline wiring | 146 |
 | `editor_zoom.mjs` | `createZoom` | Zoom: editable %, Fit width / Fit page, Ctrl+scroll (setZoom stays in main.js) | 120 |
 
-`main.js`: 16,030 lines when the split began, 10,867 now. The domain modules hold 5,841.
+`main.js`: 16,030 lines when the split began, 9,332 now. The domain modules hold 7,547.
 
 ## 4. What is left for HF-109
 

@@ -41,18 +41,15 @@ import {
   ribbonSurfaceEnabled as surfaceEnabled,
   ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
-import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { capabilityRefusal, createRefusedDrag, readCapabilityReasons } from "./object_refusal.mjs";
 import { createKeyboardObjectMove, createObjectTextDrag } from "./object_text_move.mjs";
 import { edgeScrollStep } from "./edge_scroll.mjs";
 import { canChangePicture } from "./picture_replace.mjs";
-import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
 import { wireListGallery } from "./list_gallery_wiring.mjs";
-import { spellingContextCommands } from "./spell_check.mjs";
 import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
@@ -79,13 +76,7 @@ import {
   formatInfo,
 } from "./format_io.mjs";
 import { formatShortcut, keyboardPlatform } from "./keyboard.mjs";
-import { chordTitle, shortcutForCommand } from "./keymap.mjs";
-import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
-import {
-  focusMenuIndex,
-  menuItemAt,
-  renderMenuLevel as renderMenuLevelRows,
-} from "./menu_render.mjs";
+import { chordTitle } from "./keymap.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object_crop_chrome.mjs";
 import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles } from "./object_guides.mjs";
@@ -96,7 +87,7 @@ import { arrangeSurfaceRows, createObjectArrangeCommands } from "./object_arrang
 import { createObjectBar } from "./object_bar.mjs";
 import { renderShapeMenu } from "./shape_format_menu.mjs";
 import { createObjectInspector } from "./object_inspector.mjs";
-import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, runWrapPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
+import { POSITION_PRESETS, ROTATE_CHOICES, Z_ORDER_CHOICES, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, runWrapPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
 import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
 import { SHAPE_PRESETS } from "./shape_catalogue.mjs";
 import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
@@ -116,7 +107,7 @@ import {
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
-import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./popover_manager.mjs";
+import { closeAllPopovers, onButton, openPopover } from "./popover_manager.mjs";
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
@@ -213,8 +204,6 @@ import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { createTableRange } from "./table_range.mjs";
 import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
-import { createReflowChrome } from "./reflow_chrome.mjs";
-import { createFoldChrome } from "./fold_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createFontAdvanced } from "./font_advanced.mjs";
 import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
@@ -224,7 +213,6 @@ import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { announceTableEdit, bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { createTableGridPicker } from "./table_grid_picker.mjs";
 import { createRegionCycle } from "./region_focus.mjs";
-import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
@@ -250,6 +238,11 @@ import { createZoom } from "./editor_zoom.mjs";
 import { createTextInput } from "./editor_text_input.mjs";
 import { createKeyboard } from "./editor_keyboard.mjs";
 import { createFilePick } from "./editor_file_pick.mjs";
+import { createContextMenu } from "./editor_context_menu.mjs";
+import { createMenuRender } from "./editor_menu_render.mjs";
+import { createFormatting } from "./editor_formatting.mjs";
+import { createFormatPainter } from "./editor_format_painter.mjs";
+import { createOutline } from "./editor_outline.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -261,12 +254,16 @@ const ed = {
   get HOST_CAPS() { return HOST_CAPS; },
   get HOST_CHROME() { return HOST_CHROME; },
   get HOST_MODE() { return HOST_MODE; },
+  get INSERT_SURFACE() { return INSERT_SURFACE; },
   get LAYOUT_SURFACE() { return LAYOUT_SURFACE; },
   get NO_TABLE_STYLE() { return NO_TABLE_STYLE; },
+  get OBJECT_CAPABILITY_KEYS() { return OBJECT_CAPABILITY_KEYS; },
   get REFERENCE_SURFACE() { return REFERENCE_SURFACE; },
+  get REVIEW_SURFACE() { return REVIEW_SURFACE; },
   get REVIEW_TEXTLESS_KINDS() { return REVIEW_TEXTLESS_KINDS; },
   get SESSION() { return SESSION; },
   get SETTINGS_SURFACE() { return SETTINGS_SURFACE; },
+  get SHAPE_MENU_COLORS() { return SHAPE_MENU_COLORS; },
   get TYPING_PAUSE_MS() { return TYPING_PAUSE_MS; },
   get UNDERLINE_STYLE_LABELS() { return UNDERLINE_STYLE_LABELS; },
   get ZOOM_MAX() { return ZOOM_MAX; },
@@ -276,8 +273,10 @@ const ed = {
   get activeLink() { return activeLink; },
   get activeReviewCommentId() { return activeReviewCommentId; }, set activeReviewCommentId(v) { activeReviewCommentId = v; },
   get activeReviewItemId() { return activeReviewItemId; }, set activeReviewItemId(v) { activeReviewItemId = v; },
+  get addWordToDictionary() { return addWordToDictionary; },
   get adjustIndentCommand() { return adjustIndentCommand; },
   get adoptDraftDocument() { return adoptDraftDocument; },
+  get alignBtns() { return alignBtns; },
   get anchorAt() { return anchorAt; },
   get announceReview() { return announceReview; },
   get applyActiveAuthorToDocument() { return applyActiveAuthorToDocument; },
@@ -286,9 +285,13 @@ const ed = {
   get applyFontFamily() { return applyFontFamily; },
   get applyFontSize() { return applyFontSize; },
   get applyListFormatCommand() { return applyListFormatCommand; },
+  get applyShapeFill() { return applyShapeFill; },
+  get applyShapeOutline() { return applyShapeOutline; },
   get applyUnderlineStyle() { return applyUnderlineStyle; },
   get armBackgroundMeasure() { return armBackgroundMeasure; },
   get armFormatPainter() { return armFormatPainter; },
+  get armOrApplyRun() { return armOrApplyRun; },
+  get arrangeState() { return arrangeState; },
   get autoCorrect() { return autoCorrect; },
   get autosaveToggle() { return autosaveToggle; },
   get backgroundMeasure() { return backgroundMeasure; }, set backgroundMeasure(v) { backgroundMeasure = v; },
@@ -298,11 +301,16 @@ const ed = {
   get breakTypingSession() { return breakTypingSession; },
   get buildAccessibilityTree() { return buildAccessibilityTree; },
   get buildCommands() { return buildCommands; },
+  get buildContextCommands() { return buildContextCommands; },
   get buildOutline() { return buildOutline; },
   get bulletGalleryMenu() { return bulletGalleryMenu; },
+  get bulletListBtn() { return bulletListBtn; },
   get cancelCrop() { return cancelCrop; },
   get cancelObjectMove() { return cancelObjectMove; },
   get caretIsImplicit() { return caretIsImplicit; },
+  get chartSurface() { return chartSurface; },
+  get checkListBtn() { return checkListBtn; },
+  get chromeShows() { return chromeShows; },
   get clearAllDrafts() { return clearAllDrafts; },
   get clearFindParagraphCache() { return clearFindParagraphCache; },
   get clearFormattingBtn() { return clearFormattingBtn; },
@@ -326,14 +334,21 @@ const ed = {
   get computeFitZoom() { return computeFitZoom; },
   get confirmDiscardIfEdited() { return confirmDiscardIfEdited; },
   get confirmModal() { return confirmModal; },
+  get containerCanEdit() { return containerCanEdit; },
   get contextAt() { return contextAt; },
+  get contextMenuReturnFocus() { return contextMenuReturnFocus; }, set contextMenuReturnFocus(v) { contextMenuReturnFocus = v; },
+  get continueListBtn() { return continueListBtn; },
   get copySelection() { return copySelection; },
   get createStyleFromSelection() { return createStyleFromSelection; },
   get cropKeyIo() { return cropKeyIo; },
+  get currentFontFamily() { return currentFontFamily; }, set currentFontFamily(v) { currentFontFamily = v; },
   get currentName() { return currentName; }, set currentName(v) { currentName = v; },
   get currentParagraphStyleName() { return currentParagraphStyleName; },
   get currentRevision() { return currentRevision; }, set currentRevision(v) { currentRevision = v; },
   get currentSourceFormat() { return currentSourceFormat; }, set currentSourceFormat(v) { currentSourceFormat = v; },
+  get currentUnderlineColor() { return currentUnderlineColor; }, set currentUnderlineColor(v) { currentUnderlineColor = v; },
+  get currentUnderlineMixed() { return currentUnderlineMixed; }, set currentUnderlineMixed(v) { currentUnderlineMixed = v; },
+  get currentUnderlineStyle() { return currentUnderlineStyle; }, set currentUnderlineStyle(v) { currentUnderlineStyle = v; },
   get cut() { return cut; },
   get cycleReviewMode() { return cycleReviewMode; },
   get decideAllReviewChanges() { return decideAllReviewChanges; },
@@ -358,34 +373,45 @@ const ed = {
   get editRunningContent() { return editRunningContent; },
   get editSelectionLink() { return editSelectionLink; },
   get editorCommands() { return editorCommands; },
+  get editorContextMenu() { return editorContextMenu; },
   get editorSurfaceHasFocus() { return editorSurfaceHasFocus; },
   get editorTextInputEl() { return editorTextInputEl; },
   get editorTextInputEvent() { return editorTextInputEvent; },
   get ensureGlyphCoverage() { return ensureGlyphCoverage; },
+  get enterCropMode() { return enterCropMode; },
   get enterObjectEditMode() { return enterObjectEditMode; },
   get eventTargetsEditor() { return eventTargetsEditor; },
   get exitRunningEdit() { return exitRunningEdit; },
   get exportDocumentAs() { return exportDocumentAs; },
   get fileEl() { return fileEl; },
+  get fmtButtons() { return fmtButtons; },
   get focusEditorSurface() { return focusEditorSurface; },
+  get focusReviewComment() { return focusReviewComment; },
   get foldView() { return foldView; },
+  get followTocEntry() { return followTocEntry; },
   get fontAdvanced() { return fontAdvanced; },
   get fontFamilyBtn() { return fontFamilyBtn; },
+  get fontFamilyLabel() { return fontFamilyLabel; },
   get fontInventory() { return fontInventory; },
   get fontSizeSel() { return fontSizeSel; },
   get fontState() { return fontState; }, set fontState(v) { fontState = v; },
+  get formatPainter() { return formatPainter; }, set formatPainter(v) { formatPainter = v; },
+  get formatPainterBtn() { return formatPainterBtn; },
   get formattingMarks() { return formattingMarks; },
   get grammarCheckToggle() { return grammarCheckToggle; },
   get handOverDraftBeforeOpen() { return handOverDraftBeforeOpen; },
   get handleFile() { return handleFile; },
   get hasRange() { return hasRange; },
   get headerFooterSettings() { return headerFooterSettings; },
+  get hexToRgb() { return hexToRgb; },
   get hideImePreedit() { return hideImePreedit; },
   get hideLinkChip() { return hideLinkChip; },
   get hidePasteOptions() { return hidePasteOptions; },
   get highlightPopover() { return highlightPopover; },
   get hostSession() { return hostSession; },
   get implicitCaretAt() { return implicitCaretAt; }, set implicitCaretAt(v) { implicitCaretAt = v; },
+  get indentDecBtn() { return indentDecBtn; },
+  get indentIncBtn() { return indentIncBtn; },
   get insertChartWithData() { return insertChartWithData; },
   get insertCommandEnabled() { return insertCommandEnabled; },
   get insertFieldAtCaret() { return insertFieldAtCaret; },
@@ -396,13 +422,16 @@ const ed = {
   get insertTableBtn() { return insertTableBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
+  get keyboardLevelIndex() { return keyboardLevelIndex; }, set keyboardLevelIndex(v) { keyboardLevelIndex = v; },
   get keyboardObjectMove() { return keyboardObjectMove; },
   get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
   get leaveSharedDocument() { return leaveSharedDocument; },
+  get linkAt() { return linkAt; },
   get listAdvanced() { return listAdvanced; },
   get loadSharedStartup() { return loadSharedStartup; },
   get markDocumentSaved() { return markDocumentSaved; },
   get measurement() { return measurement; },
+  get menuLevels() { return menuLevels; }, set menuLevels(v) { menuLevels = v; },
   get navByViewport() { return navByViewport; },
   get navCaret() { return navCaret; },
   get navToPosition() { return navToPosition; },
@@ -412,16 +441,21 @@ const ed = {
   get noteDraftDirty() { return noteDraftDirty; },
   get nudgeSelectedObject() { return nudgeSelectedObject; },
   get numberGalleryMenu() { return numberGalleryMenu; },
+  get numberedListBtn() { return numberedListBtn; },
+  get objectArrange() { return objectArrange; },
   get objectCapabilities() { return objectCapabilities; },
+  get objectContextAtEvent() { return objectContextAtEvent; },
   get objectContextMenuHost() { return objectContextMenuHost; },
   get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
   get objectMoveDrag() { return objectMoveDrag; },
   get objectPresence() { return objectPresence; },
+  get objectReference() { return objectReference; },
   get objectResize() { return objectResize; },
   get objectRotate() { return objectRotate; },
   get objectSelection() { return objectSelection; }, set objectSelection(v) { objectSelection = v; },
   get objectTextDrag() { return objectTextDrag; },
+  get openAltTextDialog() { return openAltTextDialog; },
   get openBookmarkManager() { return openBookmarkManager; },
   get openBtn() { return openBtn; },
   get openBytes() { return openBytes; },
@@ -429,13 +463,19 @@ const ed = {
   get openEmojiPicker() { return openEmojiPicker; },
   get openFieldDialog() { return openFieldDialog; },
   get openFind() { return openFind; },
+  get openLinkDialog() { return openLinkDialog; },
   get openReviewComposer() { return openReviewComposer; },
   get openShapeGallery() { return openShapeGallery; },
   get openSymbolPicker() { return openSymbolPicker; },
+  get outlineBody() { return outlineBody; },
+  get outlineClose() { return outlineClose; },
+  get outlinePanel() { return outlinePanel; },
   get pageFromClientPoint() { return pageFromClientPoint; },
+  get pageFromEvent() { return pageFromEvent; },
   get pageSetup() { return pageSetup; },
   get pages() { return pages; },
   get pagesEl() { return pagesEl; },
+  get pagesPanel() { return pagesPanel; },
   get pagesPanelView() { return pagesPanelView; },
   get paintOverlayLayer() { return paintOverlayLayer; },
   get paintPagesInView() { return paintPagesInView; },
@@ -446,8 +486,11 @@ const ed = {
   get pasteRichRunsJson() { return pasteRichRunsJson; },
   get pasteText() { return pasteText; },
   get pendingFormat() { return pendingFormat; }, set pendingFormat(v) { pendingFormat = v; },
+  get pictureReplace() { return pictureReplace; },
   get place() { return place; },
   get plainTableInfo() { return plainTableInfo; },
+  get pointInsideObject() { return pointInsideObject; },
+  get pointToTwip() { return pointToTwip; },
   get pointerHover() { return pointerHover; },
   get populateStyles() { return populateStyles; },
   get populateTableStyles() { return populateTableStyles; },
@@ -464,6 +507,7 @@ const ed = {
   get reanchorPageOverlays() { return reanchorPageOverlays; },
   get redlineOf() { return redlineOf; },
   get referenceCommands() { return referenceCommands; },
+  get referenceObjectMenuRows() { return referenceObjectMenuRows; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
   get reflowView() { return reflowView; },
   get refreshDraftOffers() { return refreshDraftOffers; },
@@ -471,8 +515,11 @@ const ed = {
   get remotePresence() { return remotePresence; },
   get renderAll() { return renderAll; },
   get renderFilePage() { return renderFilePage; },
+  get renderStylesGallery() { return renderStylesGallery; },
   get repaintPage() { return repaintPage; },
+  get replaceMisspelling() { return replaceMisspelling; },
   get resetDirtyTracking() { return resetDirtyTracking; },
+  get restartListBtn() { return restartListBtn; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
   get reviewAcceptAll() { return reviewAcceptAll; },
   get reviewBtn() { return reviewBtn; },
@@ -523,9 +570,11 @@ const ed = {
   get selectRibbonTab() { return selectRibbonTab; },
   get selectedObjectContext() { return selectedObjectContext; },
   get selection() { return selection; }, set selection(v) { selection = v; },
+  get selectionContainsClientPoint() { return selectionContainsClientPoint; },
   get setDocumentState() { return setDocumentState; },
   get setDraftStatus() { return setDraftStatus; },
   get setGrammarCheckEnabled() { return setGrammarCheckEnabled; },
+  get setObjectWrap() { return setObjectWrap; },
   get setReviewMode() { return setReviewMode; },
   get setRibbonCollapsed() { return setRibbonCollapsed; },
   get setSpellCheckEnabled() { return setSpellCheckEnabled; },
@@ -534,6 +583,7 @@ const ed = {
   get setZoomMode() { return setZoomMode; },
   get settings() { return settings; }, set settings(v) { settings = v; },
   get settingsBtn() { return settingsBtn; },
+  get shapeDrawMode() { return shapeDrawMode; },
   get sharedRestoreRefusal() { return sharedRestoreRefusal; },
   get showChange() { return showChange; },
   get showDraftRecovery() { return showDraftRecovery; },
@@ -549,32 +599,47 @@ const ed = {
   get stepFontSize() { return stepFontSize; },
   get stepZoom() { return stepZoom; },
   get styleAdvanced() { return styleAdvanced; },
+  get stylesMenu() { return stylesMenu; },
+  get stylesMenuInput() { return stylesMenuInput; },
+  get stylesTrigger() { return stylesTrigger; },
   get subBtn() { return subBtn; },
   get suggestAcrossParagraphs() { return suggestAcrossParagraphs; },
   get suggestingBannerEdit() { return suggestingBannerEdit; },
   get superBtn() { return superBtn; },
   get syncActiveReviewCommentToCaret() { return syncActiveReviewCommentToCaret; },
   get syncSelectionToCellRange() { return syncSelectionToCellRange; },
+  get syncStylesGalleryActive() { return syncStylesGalleryActive; },
   get tabStopsDialog() { return tabStopsDialog; },
+  get tableBtn() { return tableBtn; },
+  get tableChrome() { return tableChrome; },
+  get tableGutter() { return tableGutter; },
   get tableRange() { return tableRange; },
+  get tableStyleBtn() { return tableStyleBtn; },
+  get tableStyleMenu() { return tableStyleMenu; },
+  get tableStylePopover() { return tableStylePopover; }, set tableStylePopover(v) { tableStylePopover = v; },
   get tableToolCommands() { return tableToolCommands; },
   get takeDraftSnapshot() { return takeDraftSnapshot; },
   get textColorPopover() { return textColorPopover; },
   get tocCommands() { return tocCommands; },
+  get tocEntryTargetAt() { return tocEntryTargetAt; },
   get toggleAbout() { return toggleAbout; },
   get toggleChecklistCommand() { return toggleChecklistCommand; },
   get toggleFormCheckboxAt() { return toggleFormCheckboxAt; },
   get toggleFormat() { return toggleFormat; },
+  get toggleObjectInspector() { return toggleObjectInspector; },
   get toggleOutline() { return toggleOutline; },
   get toggleParagraphProperties() { return toggleParagraphProperties; },
   get toggleReview() { return toggleReview; },
   get toggleShortcutsReference() { return toggleShortcutsReference; },
   get toggleShowChanges() { return toggleShowChanges; },
+  get toggleSplitCellDialog() { return toggleSplitCellDialog; },
+  get toggleTableProperties() { return toggleTableProperties; },
   get touchSelection() { return touchSelection; },
   get traverseObjects() { return traverseObjects; },
   get typingSession() { return typingSession; }, set typingSession(v) { typingSession = v; },
   get typingSessionActive() { return typingSessionActive; }, set typingSessionActive(v) { typingSessionActive = v; },
   get typingSessionForKey() { return typingSessionForKey; },
+  get underlineMenuBtn() { return underlineMenuBtn; },
   get updateImePreedit() { return updateImePreedit; },
   get updateObjectContextBar() { return updateObjectContextBar; },
   get updateObjectSelectionState() { return updateObjectSelectionState; },
@@ -6556,15 +6621,11 @@ function cycleReviewMode() {
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
 window.addEventListener("resize", hideLinkChip);
 
-// ---- Context-aware editor menu ---------------------------------------------
-// One surface serves prose, links, review ranges, lists, and tables. Commands
-// call the same transaction-backed actions as the ribbon and palette.
-const editorContextMenu = document.createElement("div");
-editorContextMenu.className = "context-menu editor-context-menu";
-editorContextMenu.hidden = true;
-editorContextMenu.setAttribute("role", "menu");
-editorContextMenu.setAttribute("aria-label", "Editor commands");
-document.body.appendChild(editorContextMenu);
+const {
+  buildContextCommands, caretTableColumn, contextAt, decideContextRevision, editorContextMenu,
+  objectContextAtEvent, objectContextMenuHost, plainTableInfo, reviewContextAt, selectTableContext,
+  selectionContainsClientPoint, tableToolCommands,
+} = createContextMenu(ed);
 // Open menus form a stack: index 0 is the root context menu, deeper indexes are
 // nested submenu flyouts. `keyboardLevelIndex` marks which level the arrow keys
 // currently drive; hovering a submenu opens a deeper level visually without
@@ -6572,938 +6633,7 @@ document.body.appendChild(editorContextMenu);
 let menuLevels = [];
 let keyboardLevelIndex = 0;
 let contextMenuReturnFocus = null;
-
-function selectionContainsClientPoint(clientX, clientY) {
-  if (!doc || !hasRange()) return false;
-  const rects = doc.selectionRects(
-    selection.anchor.node,
-    selection.anchor.offset,
-    selection.focus.node,
-    selection.focus.offset,
-  );
-  for (let i = 0; i + 4 < rects.length; i += 5) {
-    const [pageNumber, x, y, width, height] = rects.slice(i, i + 5);
-    const page = pages[pageNumber - 1];
-    if (!page) continue;
-    const { rect, sx, sy } = scaleOf(page);
-    if (
-      clientX >= rect.left + x * sx &&
-      clientX <= rect.left + (x + width) * sx &&
-      clientY >= rect.top + y * sy &&
-      clientY <= rect.top + (y + height) * sy
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-
-function anchorInsideRange(anchor, range) {
-  return (
-    anchor &&
-    range &&
-    range.startNode === anchor.node &&
-    range.endNode === anchor.node &&
-    anchor.offset >= range.startOffset &&
-    anchor.offset <= range.endOffset
-  );
-}
-
-function reviewContextAt(anchor) {
-  if (!doc || !anchor) return { comment: null, revision: null };
-  const summary = readReviewData(doc);
-  const comment = (summary.comments ?? []).find((item) =>
-    item.anchor?.node === anchor.node &&
-    anchor.offset >= (Number(item.anchor.start) || 0) &&
-    anchor.offset <= (Number(item.anchor.end) || Number(item.anchor.start) || 0),
-  ) ?? null;
-  // The most specific revision at the caret wins. A paragraph formatting change
-  // spans its whole paragraph and lists first, so a plain `find` resolved a caret
-  // inside an inline insertion to the paragraph change instead, and Accept at the
-  // caret decided the wrong suggestion (docs/108). Inline revisions first, then
-  // the paragraph mark, then the paragraph formatting change.
-  const specificity = (item) =>
-    item.kind === "paragraph_format" ? 2 : item.kind?.startsWith("paragraph_mark_") ? 1 : 0;
-  const revision = (summary.revisions ?? [])
-    .filter((item) => anchorInsideRange(anchor, revisionRange(item)))
-    .sort((a, b) => specificity(a) - specificity(b))[0] ?? null;
-  return { comment, revision };
-}
-
-function plainTableInfo(node) {
-  if (!doc?.inTable(node)) return null;
-  const info = doc.tableInfo(node);
-  const value = info?.found ? {
-    found: true,
-    regular: info.regular,
-    merged: info.merged,
-    rowHeightRule: info.rowHeightRule,
-    table: info.table,
-    column: info.column,
-  } : null;
-  info?.free();
-  return value;
-}
-
-// 0-based index of the column containing the caret, or -1 when the node is not
-// inside a table. Used so table sort keys off the caret's own column (Docs/Word
-// standard) rather than always the first column.
-function caretTableColumn(node) {
-  if (!doc?.inTable(node)) return -1;
-  const info = doc.tableInfo(node);
-  const column = info?.found ? info.column : -1;
-  info?.free();
-  return column;
-}
-
-function contextAt(anchor, link = null) {
-  const review = reviewContextAt(anchor);
-  return {
-    surface: "context",
-    anchor,
-    link,
-    comment: review.comment,
-    revision: review.revision,
-    table: plainTableInfo(anchor.node),
-    listKind: doc.listStyleAt(anchor.node),
-    hasRange: hasRange(),
-    misspelling: spellChecker.misspellingAt(anchor),
-    sameParagraphRange:
-      hasRange() && selection.anchor.node === selection.focus.node,
-    suggesting: reviewMode === "suggesting",
-  };
-}
-
-function decideContextRevision(revision, accept) {
-  if (!revision) return;
-  return runEdit(() =>
-    revision.movePair?.fromStart && revision.movePair?.toStart
-      ? doc.decideMovePair(
-        revision.movePair.fromStart,
-        revision.movePair.toStart,
-        accept,
-      )
-      : revision.groupId
-        ? doc.decideRevisionGroup(revision.groupId, accept)
-        : doc.decideRevision(revision.id, accept),
-  );
-}
-
-/** Selects a whole row, column or table around `node` — the command twin of a
- *  click on the gutter strip. The endpoints come from the engine's own anchor
- *  list, so the menu route and the pointer route build the same rectangle
- *  (`table_range.mjs`). A mode the table cannot express — a column of a merged
- *  table — refuses with the catalogue's sentence instead of painting nothing. */
-function selectTableContext(node, mode) {
-  const refusal = tableRange.selectMode(node, mode);
-  drawSelection();
-  if (refusal) setStatus(t(refusal), "warn");
-  else tableRange.announce();
-  focusEditorSurface();
-}
-
-function editContextLink(link) {
-  if (!link || link.startNode !== link.endNode) return;
-  selection = {
-    anchor: { node: link.startNode, offset: link.startOffset },
-    focus: { node: link.endNode, offset: link.endOffset },
-  };
-  drawSelection();
-  const text = doc.copyText(link.startNode, link.startOffset, link.endNode, link.endOffset);
-  openLinkDialog({ node: link.startNode, start: link.startOffset, end: link.endOffset, link, text });
-}
-
-function removeContextLink(link) {
-  if (!link || link.startNode !== link.endNode) return;
-  selection = {
-    anchor: { node: link.startNode, offset: link.startOffset },
-    focus: { node: link.endNode, offset: link.endOffset },
-  };
-  drawSelection();
-  runToolbarEdit(() =>
-    doc.removeHyperlink(link.startNode, link.startOffset, link.endOffset),
-  );
-}
-
-function openContextLink(link) {
-  if (!link) return;
-  if (link.url) {
-    followExternalTarget(link.url, setStatus);
-    return;
-  }
-  if (link.targetNode != null) {
-    selection = {
-      anchor: { node: link.targetNode, offset: link.targetOffset ?? 0 },
-      focus: { node: link.targetNode, offset: link.targetOffset ?? 0 },
-    };
-    drawSelection();
-    scrollCaretIntoView("center");
-    focusEditorSurface();
-  }
-}
-
-// Builds the right-click menu as a short, grouped, contextual set. Primary
-// actions (clipboard, link, comment, review decisions) stay at the top level;
-// the long tail (text styling, list/indent, table row/column operations) is
-// tucked into submenus so no single target dumps a 30-row list. Every entry
-// still routes through the same transaction-backed actions as the ribbon and
-// command palette, so availability and mutation gates never drift.
-// The table command tree (`table_commands.mjs`, which says why it is shared by the menu
-// and the palette) gets the editor's bindings here, each read at CALL time.
-const TABLE_COMMAND_HOST = {
-  doc: () => doc,
-  tableSelection: () => tableRange.descriptor(),
-  clearTableSelection: () => tableRange.clear(),
-  status: (text) => setStatus(text),
-  plainTableInfo,
-  runEdit: (thunk, options) => runEdit(thunk, options),
-  selectTableContext,
-  openSplitCellDialog: () => toggleSplitCellDialog(true),
-  // `focus` names a control INSIDE the popover to land on, which is how
-  // `table.borderStyle` reaches the line-style pen from the Table menu and the
-  // palette without a second copy of the control: the same shape `layout.indent`
-  // uses to reach the indent field. Focus is taken after the click, because the
-  // popover is hidden until then and `.focus()` on a hidden element is a no-op.
-  openCellFormat: (focus) => {
-    selectRibbonTab("table");
-    tableBtn.click();
-    if (focus) document.getElementById(focus)?.focus();
-  },
-  openTableProperties: () => toggleTableProperties(true),
-  stepTableBand: (axis, sign) => tableChrome.stepCaretBand(selection?.focus?.node, pages, axis, sign),
-  moveTableBand: (axis, sign) => tableGutter.moveBand(selection?.focus?.node, axis, sign),
-};
-
-const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
-
-function buildContextCommands(context) {
-  // Right-clicking a selected drawing/image/text box shows OBJECT commands, not
-  // the paragraph-text menu (docs/85 §4.1; Word/Google Docs image menu). The
-  // object was already selected by the handler that resolved this context.
-  if (context.surface === "object") return buildObjectContextCommands(context, objectContextMenuHost);
-  const registry = new Map(editorCommands(context).map((command) => [command.id, command]));
-  const pick = (id, extra = {}) => {
-    const base = registry.get(id);
-    return base ? { ...base, ...extra } : null;
-  };
-  const structuralEnabled = !context.suggesting;
-  const structuralReason = structuralEnabled
-    ? ""
-    : "This structural change cannot be tracked in Suggesting mode";
-  const inTable = !!context.table;
-  const commands = [];
-
-  // 0 — Spelling, ABOVE the clipboard block. Word and Docs both put the
-  // suggestions first because that is the reason the user right-clicked a
-  // squiggled word; anything else at the top makes them read past it. The rows
-  // themselves are declared in `spell_check.mjs` so the "no suggestions" case
-  // cannot be dropped on the way here.
-  if (context.misspelling) {
-    commands.push(
-      ...spellingContextCommands(
-        context.misspelling,
-        spellChecker.suggestions(context.misspelling),
-        {
-          replace: replaceMisspelling,
-          ignoreOnce: (flagged) => spellChecker.ignoreOnce(flagged),
-          ignoreAll: (word) => spellChecker.ignoreAll(word),
-          ignoreRule: (rule) => spellChecker.ignoreRule(rule),
-          addToDictionary: (word) => void addWordToDictionary(word),
-        },
-        reviewMode === "viewing"
-          ? "Switch to Editing mode to correct the spelling"
-          : "",
-      ),
-    );
-  }
-
-  // 1 — The universal primary actions: history, then clipboard, in the order
-  // every text field on the platform offers them.
-  //
-  // Membership is READ from the command's own `contextMenu: true` declaration
-  // rather than hand-picked here. Seven commands declared the flag and this
-  // function looked at none of them, so "Paste without formatting" — a top-five
-  // action in both Word and Docs — and "Select all" were declared for the
-  // right-click menu and absent from it (docs/104 HF-076). A capability that is
-  // reachable from one surface only is this repo's recurring defect; the cure is
-  // one declaration feeding every surface instead of three hand-wired copies.
-  const CONTEXT_MENU_ICONS = { "edit.cut": "cut", "edit.copy": "copy", "edit.paste": "paste" };
-  commands.push(
-    ...[...registry.values()]
-      .filter((command) => command.contextMenu)
-      .map((command) => ({
-        ...command,
-        icon: CONTEXT_MENU_ICONS[command.id],
-        // The palette's own grouping decides the divider: "Edit" (undo/redo)
-        // and "Clipboard" become two blocks, as in the platform's text menus.
-        group: command.group === "Clipboard" ? "clipboard" : "history",
-      })),
-  );
-
-  // 2 — Review decisions: only over a tracked change, kept near the top since
-  // they are the most specific thing a right-click can land on.
-  if (context.revision) {
-    commands.push(
-      {
-        id: "review.accept",
-        label: "Accept suggestion",
-        group: "review",
-        icon: "accept",
-        run: () => decideContextRevision(context.revision, true),
-      },
-      {
-        id: "review.reject",
-        label: "Reject suggestion",
-        group: "review",
-        icon: "reject",
-        danger: true,
-        run: () => decideContextRevision(context.revision, false),
-      },
-    );
-  }
-
-  // Annotations (link + comment) — contextual to the text/selection under the
-  // pointer. Assembled here, placed after the primary group for prose and after
-  // the table tools inside a cell.
-  const annotate = [];
-  // A contents entry the author's field never hyperlinked. Beside Open link
-  // because it IS Open link for that case, reached by the same gesture — a
-  // right-click on the entry. O(1); see `toc_navigation.mjs`.
-  if (!context.link && tocEntryTargetAt(selection?.focus?.node)) {
-    annotate.push({
-      id: "reference.goToHeading",
-      label: "Go to the heading this entry names",
-      group: "annotate",
-      icon: "linkOpen",
-      run: () => void followTocEntry(selection?.focus?.node),
-    });
-  }
-  if (context.link) {
-    const linkReason = context.suggesting
-      ? "Link changes cannot be tracked in Suggesting mode"
-      : "";
-    if (context.link.url || context.link.targetNode != null) {
-      annotate.push({
-        id: "link.open",
-        label: "Open link",
-        group: "annotate",
-        icon: "linkOpen",
-        run: () => openContextLink(context.link),
-      });
-    }
-    annotate.push(
-      {
-        id: "link.edit",
-        label: "Edit link…",
-        group: "annotate",
-        icon: "link",
-        enabled: !context.suggesting,
-        disabledReason: linkReason,
-        run: () => editContextLink(context.link),
-      },
-      {
-        id: "link.remove",
-        label: "Remove link",
-        group: "annotate",
-        enabled: !context.suggesting,
-        disabledReason: linkReason,
-        run: () => removeContextLink(context.link),
-      },
-    );
-  } else {
-    annotate.push({
-      id: "link.add",
-      label: "Add link…",
-      group: "annotate",
-      icon: "link",
-      // The same capability as `insert.link` under the annotate surface's own id,
-      // so it reads its chord from the one table rather than restating it.
-      shortcut: shortcutForCommand("insert.link", EDITOR_KEYBOARD_PLATFORM),
-      enabled: context.sameParagraphRange && !context.suggesting,
-      disabledReason: context.suggesting
-        ? "Link changes cannot be tracked in Suggesting mode"
-        : context.hasRange
-          ? "Links must stay within one paragraph"
-          : t("insert.reason.linkNeedsText"),
-      run: () => editSelectionLink(),
-    });
-  }
-  if (context.comment) {
-    annotate.push({
-      id: "comment.open",
-      label: "Open comment",
-      group: "annotate",
-      icon: "comment",
-      run: () => focusReviewComment(context.comment),
-    });
-  } else {
-    annotate.push({
-      id: "comment.add",
-      label: "Add comment",
-      group: "annotate",
-      icon: "comment",
-      shortcut: shortcutForCommand("review.comment", EDITOR_KEYBOARD_PLATFORM),
-      enabled: context.hasRange,
-      disabledReason: "Select text to add a comment",
-      run: () => openReviewComposer(),
-    });
-  }
-
-  // Text styling, list/indentation, and the paragraph dialog. Shared building
-  // blocks: on prose they are three top-level rows; inside a table cell they
-  // collapse into a single trailing "Format ▸" submenu so the table actions
-  // lead and the cell menu stays compact.
-  const formatSubmenu = [
-    pick("format.bold", { group: "style" }),
-    pick("format.italic", { group: "style" }),
-    pick("format.underline", { group: "style" }),
-    pick("format.strike", { group: "style" }),
-    pick("format.superscript", { group: "script" }),
-    pick("format.subscript", { group: "script" }),
-    pick("format.clear", { group: "clear" }),
-  ].filter(Boolean);
-  const listSubmenu = [
-    {
-      id: "paragraph.bullets",
-      label: context.listKind === "bullet" ? "Remove bullets" : "Bulleted list",
-      group: "list",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet"), { paragraphLevel: true }),
-    },
-    {
-      id: "paragraph.numbering",
-      label: context.listKind === "numbered" ? "Remove numbering" : "Numbered list",
-      group: "list",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered"), { paragraphLevel: true }),
-    },
-    {
-      // The engine has had checklists as long as the ribbon button has, but the
-      // list submenu offered only Bulleted and Numbered — a user browsing the
-      // menus concluded the editor had none (docs/104 HF-076).
-      id: "paragraph.list.checklist",
-      label: context.listKind === "checklist" ? "Remove checklist" : "Checklist",
-      group: "list",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => toggleChecklistCommand(),
-    },
-    {
-      id: "paragraph.restart",
-      label: "Restart numbering",
-      group: "list",
-      visible: context.listKind === "numbered",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => runNodeEdit(() => doc.restartList(context.anchor.node)),
-    },
-    {
-      id: "paragraph.continue",
-      label: "Continue numbering",
-      group: "list",
-      visible: context.listKind === "numbered" && doc.canContinueList(context.anchor.node),
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => runNodeEdit(() => doc.continueList(context.anchor.node)),
-    },
-    {
-      id: "paragraph.indent.increase",
-      label: t("panelHome.increaseIndent.label"),
-      group: "indent",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => adjustIndentCommand(360),
-    },
-    {
-      id: "paragraph.indent.decrease",
-      label: t("panelHome.decreaseIndent.label"),
-      group: "indent",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => adjustIndentCommand(-360),
-    },
-  ];
-  const paragraphProperties = {
-    id: "paragraph.properties",
-    label: "Paragraph properties…",
-    enabled: structuralEnabled,
-    disabledReason: structuralReason,
-    run: () => toggleParagraphProperties(true),
-  };
-
-  // A container that may NEVER change the document gets reading rows only: copy,
-  // select all, search, and the two ways of following a link. Not the editing menu
-  // greyed out — "never, for you" is composition and is silent (`docs/126`) — and
-  // the owner's report was exactly this: a read-only container still offering a
-  // table's structure commands and an image's properties. The review MODE is the
-  // other question, and still says "not right now" with a reason.
-  if (!containerCanEdit) {
-    return [
-      ...commands.filter((row) => row.id === "edit.copy" || row.id === "edit.selectAll"),
-      pick("edit.find", { group: "clipboard" }),
-      ...annotate.filter((row) => row.id === "link.open" || row.id === "reference.goToHeading"),
-    ].filter(Boolean);
-  }
-
-  if (!inTable) {
-    // Prose menu: annotations, then the text-arrangement rows.
-    commands.push(...annotate);
-    commands.push({
-      id: "format.menu",
-      label: "Format text",
-      group: "arrange",
-      icon: "format",
-      submenu: formatSubmenu,
-    });
-    commands.push({
-      id: "paragraph.list",
-      label: "List & indentation",
-      group: "arrange",
-      icon: "list",
-      submenu: listSubmenu,
-    });
-    commands.push({ ...paragraphProperties, group: "arrange", icon: "paragraph" });
-    return commands.filter(Boolean);
-  }
-
-  // Insert caption, on the TABLE menu as well as the picture menu: a table is
-  // the second thing Word captions, and right-clicking it is how a reader
-  // reaches it (`DocumentHolderExt.js:46`).
-  commands.push(...referenceObjectMenuRows());
-
-  // 3 — Table cell: lead with the table tools (Insert / Delete / Merge / Split,
-  // then Select / Autofit & sort, then the property dialogs), matching Word's
-  // and Google Docs' table menus. The generic text-format rows are demoted to a
-  // single trailing "Format ▸" submenu.
-  commands.push(...tableToolCommands(context));
-
-  // Annotations sit below the table tools, then the demoted text-format submenu.
-  commands.push(...annotate);
-  commands.push({
-    id: "format.menu",
-    label: "Format",
-    group: "format",
-    icon: "format",
-    submenu: [
-      ...formatSubmenu.map((entry) => ({ ...entry, group: "type" })),
-      ...listSubmenu.map((entry) => ({ ...entry, group: "list" })),
-      { ...paragraphProperties, group: "para" },
-    ],
-  });
-  return commands.filter(Boolean);
-}
-
-// The object right-click menu's ROWS are `object_context_menu.mjs`; this is the
-// application state and the verbs it needs. Extracted to pay for the captions
-// work under the line ratchet, and to give 156 lines of menu policy its first
-// test (`tests/object_context_menu.test.mjs`).
-const objectContextMenuHost = {
-  reviewMode: () => reviewMode,
-  readOnlyReason: () => readOnlyReason,
-  wrapModes: () => WRAP_CHOICES.map((choice) => [choice.value, t(choice.key)]),
-  positionPresets: () => POSITION_PRESETS.map((preset) => [preset.id, t(preset.key), preset]),
-  zOrderChoices: () => Z_ORDER_CHOICES.map((choice) => [choice.value, t(choice.key)]),
-  rotateChoices: () => ROTATE_CHOICES.map((choice) => [choice.value, t(choice.key)]),
-  text: (key) => t(key),
-  // ONE gather per menu build. `objectPosition` and `objectTransform` are each
-  // O(document) with a single walk, so asking them once here — rather than once
-  // per row, of which there are twenty-odd — is the difference between a menu
-  // that opens in constant work and one that does not.
-  arrangeState: () => {
-    const state = arrangeState();
-    if (!state) return null;
-    const wrappable = wrapAvailability(state.read);
-    const positionable = positionAvailability(state.read);
-    return {
-      wrappable: { available: wrappable.available, reason: wrappable.reasonKey ? t(wrappable.reasonKey) : "" },
-      positionable: {
-        available: positionable.available,
-        reason: positionable.reasonKey ? t(positionable.reasonKey) : "",
-      },
-      stackable: objectArrange.zOrderAvailability(state),
-      groupable: objectArrange.groupability(),
-      rotatable: !!state.transform,
-    };
-  },
-  activeWrap: () => {
-    const state = arrangeState();
-    return state ? activeWrapChoice(state.read, state.wrap) : null;
-  },
-  applyPosition: (preset) => objectArrange.applyPosition(preset),
-  setZOrder: (value) => objectArrange.setZOrder(value),
-  group: () => void objectArrange.group(),
-  ungroup: () => void objectArrange.ungroup(),
-  rotate: (value) => objectArrange.rotate(value),
-  addText: () => void objectArrange.addText(),
-  shapeColors: () => SHAPE_MENU_COLORS,
-  objectWrap: (root) => doc.objectWrap(root),
-  documentRows: () => referenceObjectMenuRows(),
-  setObjectWrap,
-  openAltText: () => openAltTextDialog(),
-  chartCommands: () => chartSurface.commandsFor(),
-  applyShapeFill,
-  applyShapeOutline,
-  enterCrop: () => enterCropMode(),
-  changePicture: () => pictureReplace.choose(),
-  openProperties: () => toggleObjectInspector(true),
-  deleteObject: () => deleteSelectedObject(),
-  moveInText: () => keyboardObjectMove.begin(false),
-};
-
-// Resolves a pointer event to an OBJECT context (or null). Prefers a fresh
-// object hit-test at the point; falls back to the already-selected object when
-// the click lands on it (e.g. on a resize handle the hit-test skips). The
-// caller selects the object before showing the menu.
-function objectContextAtEvent(page, event) {
-  const { x, y } = pointToTwip(page, event);
-  let object = doc.objectAt(page.pageNumber, x, y);
-  // A right-click on the selected MEMBER of a group is about that member. The
-  // fresh hit answers with the group's root, which put the GROUP's menu — no
-  // alt text, no crop, no border — over the picture just selected (HF-214).
-  const selectedHere = objectSelection?.mode === "selected" && pointInsideObject(objectSelection.node, page, x, y);
-  if (object && selectedHere && object.root === objectSelection.ref.root) object = void object.free?.();
-  if (object) {
-    const capabilities = objectCapabilities(object);
-    const ref = objectReference(object, object.node);
-    const ctx = {
-      surface: "object",
-      node: object.node,
-      ref,
-      kind: object.kind,
-      anchored: object.anchored,
-      ...capabilities,
-    };
-    object.free?.();
-    return ctx;
-  }
-  // No fresh hit (or the selected member's), and the point is inside the
-  // selected object's box: the menu is about what is selected.
-  return selectedHere ? selectedObjectContext() : null;
-}
-
-// ---- Menu rendering engine (root context menu + nested submenu flyouts) -----
-function activeMenuLevel() {
-  return menuLevels[keyboardLevelIndex] ?? null;
-}
-
-// Removes every open level deeper than `depth`, releasing submenu DOM nodes and
-// resetting the parent's expanded state.
-function closeMenuLevelsAbove(depth) {
-  while (menuLevels.length > depth + 1) {
-    const level = menuLevels.pop();
-    level.parentButton?.setAttribute("aria-expanded", "false");
-    if (level.el !== editorContextMenu) level.el.remove();
-  }
-  if (keyboardLevelIndex > menuLevels.length - 1) {
-    keyboardLevelIndex = Math.max(0, menuLevels.length - 1);
-  }
-}
-
-// The row renderer lives in menu_render.mjs and owns no state; these hooks are
-// the only way it reaches the open level stack.
-const MENU_ROW_HOOKS = {
-  shortcutText: formatShortcut,
-  onHover(depth, index, button, entry, hasSub) {
-    const level = menuLevels[depth];
-    if (!level) return;
-    keyboardLevelIndex = depth;
-    focusMenuIndex(level, index, false);
-    if (hasSub) openSubmenu(depth, button, entry);
-    else closeMenuLevelsAbove(depth);
-  },
-  onActivate(depth, button, entry, hasSub) {
-    if (hasSub) openSubmenu(depth, button, entry, true);
-    else runMenuEntry(entry);
-  },
-};
-
-function renderMenuLevel(el, entries, depth) {
-  renderMenuLevelRows(el, entries, depth, MENU_ROW_HOOKS);
-}
-
-// Opens (or re-focuses) the flyout for a submenu-parent button. Prefers opening
-// to the right of the parent and flips left near the viewport edge.
-function openSubmenu(parentDepth, button, entry, viaKeyboard = false) {
-  const depth = parentDepth + 1;
-  const existing = menuLevels[depth];
-  if (existing && existing.parentButton === button) {
-    if (viaKeyboard) {
-      keyboardLevelIndex = depth;
-      focusMenuIndex(existing, moveMenuIndex(existing.entries, -1, 1));
-    }
-    return;
-  }
-  closeMenuLevelsAbove(parentDepth);
-  button.setAttribute("aria-expanded", "true");
-  const el = document.createElement("div");
-  el.className = "context-menu editor-submenu";
-  el.setAttribute("role", "menu");
-  el.setAttribute("aria-label", entry.label);
-  el.hidden = true;
-  document.body.appendChild(el);
-  const entries = normalizeMenuEntries(entry.submenu);
-  const level = { el, entries, index: -1, parentButton: button };
-  renderMenuLevel(el, entries, depth);
-  el.hidden = false;
-  const rect = button.getBoundingClientRect();
-  const width = el.offsetWidth;
-  const height = el.offsetHeight;
-  let left = rect.right - 4;
-  if (left + width > window.innerWidth - 8) left = rect.left - width + 4;
-  left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
-  let top = Math.max(8, Math.min(rect.top - 5, window.innerHeight - height - 8));
-  el.style.left = `${left}px`;
-  el.style.top = `${top}px`;
-  menuLevels[depth] = level;
-  if (viaKeyboard) {
-    keyboardLevelIndex = depth;
-    focusMenuIndex(level, moveMenuIndex(entries, -1, 1));
-  }
-}
-
-function stepToParentLevel() {
-  const parentDepth = keyboardLevelIndex - 1;
-  const parent = menuLevels[parentDepth];
-  closeMenuLevelsAbove(parentDepth);
-  keyboardLevelIndex = parentDepth;
-  if (parent) {
-    focusMenuIndex(
-      parent,
-      parent.index >= 0 ? parent.index : moveMenuIndex(parent.entries, -1, 1),
-    );
-  }
-}
-
-function hideContextMenu({ restoreFocus = false } = {}) {
-  if (editorContextMenu.hidden && menuLevels.length === 0) return;
-  for (const level of menuLevels) {
-    if (level.el === editorContextMenu) level.el.replaceChildren();
-    else level.el.remove();
-  }
-  menuLevels = [];
-  keyboardLevelIndex = 0;
-  editorContextMenu.hidden = true;
-  if (restoreFocus) {
-    const target = contextMenuReturnFocus?.isConnected ? contextMenuReturnFocus : pagesEl;
-    target.focus({ preventScroll: true });
-  }
-  contextMenuReturnFocus = null;
-}
-
-function runMenuEntry(entry) {
-  if (!entry || entry.separator || entry.enabled === false || entry.submenu) return;
-  hideContextMenu({ restoreFocus: true });
-  entry.run();
-}
-
-function showContextMenu(clientX, clientY, context) {
-  hideContextMenu();
-  contextMenuReturnFocus =
-    document.activeElement instanceof HTMLElement ? document.activeElement : pagesEl;
-  const entries = normalizeMenuEntries(context.commands ?? buildContextCommands(context));
-  if (entries.length === 0) {
-    contextMenuReturnFocus = null;
-    if (context.surface === "object") {
-      const label = (OBJECT_LABELS[context.kind] ?? "Object").toLowerCase();
-      setStatus(`No editable properties are available for this nested ${label} yet`);
-    }
-    return false;
-  }
-  editorContextMenu.hidden = false;
-  renderMenuLevel(editorContextMenu, entries, 0);
-  const position = clampContextMenuPosition(
-    clientX,
-    clientY,
-    editorContextMenu.offsetWidth,
-    editorContextMenu.offsetHeight,
-    window.innerWidth,
-    window.innerHeight,
-  );
-  editorContextMenu.style.left = `${position.left}px`;
-  editorContextMenu.style.top = `${position.top}px`;
-  menuLevels = [{ el: editorContextMenu, entries, index: -1, parentButton: null }];
-  keyboardLevelIndex = 0;
-  focusMenuIndex(menuLevels[0], moveMenuIndex(entries, -1, 1));
-  return true;
-}
-
-function keyboardContextMenuPoint() {
-  if (!selection || !doc) return null;
-  const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
-  if (flat.length < 5) return null;
-  const [pageNumber, x, y, width, height] = flat;
-  const page = pages[pageNumber - 1];
-  if (!page) return null;
-  const { rect, sx, sy } = scaleOf(page);
-  return {
-    x: rect.left + (x + width) * sx,
-    y: rect.top + (y + height) * sy,
-    page,
-  };
-}
-
-pagesEl.addEventListener("contextmenu", (event) => {
-  // No menu region, no menu — and no `preventDefault` either, so a container that
-  // is a picture gives the visitor the browser's own menu instead of nothing.
-  if (!chromeShows("context")) return;
-  const page = pageFromEvent(event);
-  if (!page || !doc) return;
-  // Object hit-test takes precedence (docs/85 §3.1): right-clicking a drawing /
-  // image / text box selects it as a unit and shows its OBJECT menu, not the
-  // paragraph-text menu.
-  // …and only where this container selects objects: without the `objects` region
-  // a right-click on an image is a right-click on the TEXT under it, not a
-  // gateway to alt text, crop and properties (what the owner saw in read-only).
-  const objectContext = chromeShows("objects") ? objectContextAtEvent(page, event) : null;
-  if (objectContext) {
-    event.preventDefault();
-    selectObject(
-      objectContext.node,
-      objectContext.kind,
-      anchorAt(page, event) || selection?.focus || null,
-      objectContext.anchored,
-      objectContext,
-    );
-    showContextMenu(event.clientX, event.clientY, objectContext);
-    return;
-  }
-  const anchor = anchorAt(page, event);
-  if (!anchor) return;
-  event.preventDefault();
-  const preserveSelection = selectionContainsClientPoint(
-    event.clientX,
-    event.clientY,
-  ) || tableRange.containsClientPoint(event.clientX, event.clientY);
-  if (!preserveSelection) {
-    selection = { anchor, focus: anchor };
-    tableRange.clear();
-    drawSelection();
-  }
-  showContextMenu(
-    event.clientX,
-    event.clientY,
-    contextAt(anchor, linkAt(page, event)),
-  );
-});
-
-document.addEventListener("pointerdown", (event) => {
-  if (editorContextMenu.hidden) return;
-  if (menuLevels.some((level) => level.el.contains(event.target))) return;
-  hideContextMenu();
-});
-document.addEventListener("keydown", (event) => {
-  if (!editorContextMenu.hidden) {
-    const level = activeMenuLevel();
-    if (!level) return;
-    const entry = level.entries[level.index];
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (keyboardLevelIndex > 0) stepToParentLevel();
-      else hideContextMenu({ restoreFocus: true });
-    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      closeMenuLevelsAbove(keyboardLevelIndex);
-      focusMenuIndex(
-        level,
-        moveMenuIndex(level.entries, level.index, event.key === "ArrowDown" ? 1 : -1),
-      );
-    } else if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      closeMenuLevelsAbove(keyboardLevelIndex);
-      focusMenuIndex(
-        level,
-        moveMenuIndex(level.entries, level.index, event.key === "Home" ? "first" : "last"),
-      );
-    } else if (event.key === "ArrowRight") {
-      if (entry && entry.submenu && entry.enabled !== false) {
-        event.preventDefault();
-        openSubmenu(keyboardLevelIndex, menuItemAt(level, level.index), entry, true);
-      }
-    } else if (event.key === "ArrowLeft") {
-      if (keyboardLevelIndex > 0) {
-        event.preventDefault();
-        stepToParentLevel();
-      }
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      if (entry && entry.submenu) {
-        openSubmenu(keyboardLevelIndex, menuItemAt(level, level.index), entry, true);
-      } else {
-        runMenuEntry(entry);
-      }
-    }
-    return;
-  }
-  if (
-    doc &&
-    eventTargetsEditor(event) &&
-    ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu")
-  ) {
-    // A selected object opens its OBJECT menu, anchored to the object's top-left
-    // (matching how the object context bar is positioned).
-    if (objectSelection && objectSelection.mode === "selected") {
-      const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
-      const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
-      if (!page) return;
-      event.preventDefault();
-      const { rect: pageRect, sx, sy } = scaleOf(page);
-      showContextMenu(pageRect.left + rect[1] * sx, pageRect.top + rect[2] * sy, {
-        surface: "object",
-        node: objectSelection.node,
-        ref: objectSelection.ref,
-        kind: objectSelection.kind,
-        anchored: objectSelection.anchored,
-        ...Object.fromEntries(
-          OBJECT_CAPABILITY_KEYS.map((key) => [key, objectSelection[key] === true]),
-        ),
-      });
-      return;
-    }
-    if (!selection) return;
-    const point = keyboardContextMenuPoint();
-    if (!point) return;
-    event.preventDefault();
-    const anchor = selection.focus;
-    const link = linkAt(
-      point.page,
-      clientPointEvent(point.x, Math.max(point.y - 1, 0)),
-    );
-    showContextMenu(point.x, point.y, contextAt(anchor, link));
-  }
-});
-viewportEl.addEventListener("scroll", () => hideContextMenu(), { passive: true });
-window.addEventListener("resize", () => hideContextMenu());
-
-// The engine seam for reflow is one setter; everything the shell owes it, and
-// why each number is that number, is `reflow_chrome.mjs` (`docs/151` §6).
-// `openOutline` is a request the view makes and this file arbitrates.
-const reflowView = createReflowChrome({
-  button: document.getElementById("viewReflowBtn"),
-  viewport: viewportEl,
-  getDoc: () => doc,
-  unavailableReason: () => readOnlyReason,
-  onChanged: () => renderAll(), redraw: () => drawSelection(),
-  openOutline: () => void (outlinePanel.hidden && reviewSidebar.hidden && toggleOutline()),
-  setStatus,
-});
-
-// Folding (ADR-049): the engine calls, the command rows and the margin chevron
-// are `fold_chrome.mjs`; the decisions are `fold_view.mjs`. `getPages`/`scaleOf`
-// are the pair the ruler and touch selection already take, for the same reason.
-const foldView = createFoldChrome({
-  getDoc: () => doc,
-  caretNode: () => selection?.focus?.node ?? "",
-  getPages: () => pages,
-  outlineOpen: () => !outlinePanel.hidden,
-  surfaceSlackPx: reflowView.surfaceSlackPx,
-  scaleOf,
-  onChanged: () => renderAll().then(() => scheduleChromeRefresh({ stats: true, outline: true })),
-  setStatus,
-});
-
+const { foldView, reflowView, showContextMenu } = createMenuRender(ed);
 // ---- Horizontal ruler ---------------------------------------------------------
 // The strip itself lives in `ruler.mjs`. It is bound to the live `doc`,
 // `selection`, `pages` and `pageBandModel` through getters rather than values,
@@ -8139,40 +7269,17 @@ async function runEdit(thunk, { typing = false, gate = false, keepView = false, 
   return true;
 }
 const { navCaret, verticalGoal } = createCaretNav(ed);
-// ---- Formatting toolbar (run + paragraph properties) -------------------------
-
+const {
+  NO_TABLE_STYLE, UNDERLINE_STYLE_LABELS, caretFormatState, editSelectionLink, formatToggleButtons,
+  formatToggleCache, hexToRgb, populateTableStyles, reflectFontFamily, reflectUnderlineControl,
+  selectionFormat, suggestAcrossParagraphs, toggleFormat,
+} = createFormatting(ed);
 /** The current selection endpoints as `[sNode, sOff, eNode, eOff]`, or null. */
 function selEndpoints() {
   if (!selection) return null;
   const { anchor, focus } = selection;
   return [anchor.node, anchor.offset, focus.node, focus.offset];
 }
-
-/** Runs a toolbar edit thunk `(sNode, sOff, eNode, eOff) => EditResult`,
- *  preserving the selection (formatting does not collapse it) and repainting
- *  only the dirty pages. */
-/** A cross-paragraph edit while Suggesting, tracked (docs/108 phase 2).
- *
- *  `text` replaces the range; omit it for a plain deletion. The engine writes the
- *  shape Word writes: the covered text struck, every paragraph mark in the range
- *  except the last one suggested deleted, and the later paragraphs given the first
- *  one's shape with a `w:pPrChange` holding their own — so accepting leaves one
- *  paragraph and rejecting restores them all. One undo step.
- *
- *  Returns false, having said why, when the engine refuses (a range that would
- *  cross a table, or another reviewer's paragraph break in the way). */
-async function suggestAcrossParagraphs(start, end, text) {
-  try {
-    await runEdit(() => text == null
-      ? doc.suggestDeleteRange(start.node, start.offset, end.node, end.offset, undefined, new Date().toISOString())
-      : doc.suggestReplaceRange(start.node, start.offset, end.node, end.offset, text, undefined, new Date().toISOString()));
-    return true;
-  } catch (error) {
-    setStatus(String(error?.message ?? error), "error");
-    return false;
-  }
-}
-
 async function runToolbarEdit(thunk, { allowInSuggesting = false, paragraphLevel = false } = {}) {
   if (blockMutationInViewing()) return;
   breakTypingSession();
@@ -8199,144 +7306,19 @@ async function runToolbarEdit(thunk, { allowInSuggesting = false, paragraphLevel
   }
   scheduleChromeRefresh({ outline: true });
 }
-
-/** The uniform run-format state over the selection, or null if not a range. */
-function selectionFormat() {
-  if (!doc || !hasRange()) return null;
-  const [sn, so, en, eo] = selEndpoints();
-  const f = doc.selectionFormat(sn, so, en, eo);
-  const state = {
-    bold: f.bold,
-    italic: f.italic,
-    underline: f.underline,
-    strike: f.strike,
-    boldState: f.boldState,
-    italicState: f.italicState,
-    underlineState: f.underlineState,
-    strikeState: f.strikeState,
-  };
-  f.free();
-  return state;
-}
-
-/** The run format the collapsed caret inherits (what new typing would carry). */
-function caretFormatState() {
-  if (!doc || !selection) return { bold: false, italic: false, underline: false, strike: false };
-  const f = doc.caretFormat(selection.focus.node, selection.focus.offset);
-  const state = {
-    bold: f.bold,
-    italic: f.italic,
-    underline: f.underline,
-    strike: f.strike,
-    boldState: f.boldState,
-    italicState: f.italicState,
-    underlineState: f.underlineState,
-    strikeState: f.strikeState,
-  };
-  f.free();
-  return state;
-}
-
 /** Reflects an authored font family without restricting imported documents to
  * the toolbar's starter list. The temporary option is presentation-only: the
  * renderer's physical substitution/fallback family is never written back as the
  * document's requested font. */
 let currentFontFamily = "";
-function reflectFontFamily(family) {
-  currentFontFamily = family || "";
-  fontFamilyLabel.textContent = family || "Font";
-  fontFamilyLabel.style.fontFamily = family ? `"${family}", system-ui, sans-serif` : "";
-  fontFamilyBtn.classList.toggle("is-placeholder", !family);
-  fontFamilyBtn.title = family ? `Font: ${family}` : "Font";
-}
-
-const UNDERLINE_STYLE_LABELS = new Map([
-  ["none", "None"],
-  ["single", "Single"],
-  ["double", "Double"],
-  ["thick", "Thick"],
-  ["dotted", "Dotted"],
-  ["dashed", "Dashed"],
-  ["dotDash", "Dot-dash"],
-  ["wavy", "Wavy"],
-  ["words", "Words only"],
-]);
 let currentUnderlineStyle = "single";
 let currentUnderlineColor = "";
 let currentUnderlineMixed = false;
-
-/** Reflect the effective typed underline without writing renderer fallback data
- *  back into the document. Empty color is the model's automatic/text-color state. */
-function reflectUnderlineControl(style, color, mixed = false) {
-  const canonical = style || "single";
-  currentUnderlineStyle = canonical;
-  currentUnderlineColor = color || "";
-  currentUnderlineMixed = mixed;
-  fmtButtons.underline.dataset.underlineStyle = canonical;
-  fmtButtons.underline.style.setProperty("--underline-color", color || "currentColor");
-  underlineMenuBtn.closest(".underline-split")?.classList.toggle("is-mixed", mixed);
-  underlineMenuBtn.title = mixed
-    ? "Underline style and color: Mixed"
-    : `Underline: ${UNDERLINE_STYLE_LABELS.get(canonical) || canonical}${color ? ` · ${color.toUpperCase()}` : " · Automatic color"}`;
-}
-
-/** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
- *  formats the selection; at a collapsed caret it arms the format for typing
- *  (premium editors: press Bold, then type — the text comes out bold). */
-function toggleFormat(prop) {
-  if (!hasRange()) {
-    // Arm/disarm at the caret: flip the effective current value (pending overrides
-    // the caret's inherited format), and reflect it in the toolbar.
-    const current = pendingFormat?.[prop] ?? caretFormatState()[prop];
-    pendingFormat = { ...(pendingFormat || {}), [prop]: !current };
-    updateToolbar();
-    return;
-  }
-  const state = selectionFormat();
-  if (!state) return;
-  const patch = {
-    [prop]: !state[prop],
-  };
-  armOrApplyRun(patch, () =>
-    runToolbarEdit((sn, so, en, eo) => doc.formatSelection(
-      sn,
-      so,
-      en,
-      eo,
-      prop === "bold" ? !state.bold : undefined,
-      prop === "italic" ? !state.italic : undefined,
-      prop === "underline" ? !state.underline : undefined,
-      prop === "strike" ? !state.strike : undefined,
-    )),
-  );
-}
-
-/** "#rrggbb" → [r, g, b]. */
-function hexToRgb(hex) {
-  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-}
-
-/** Every control that toggles run format `key`, on any surface. The ribbon
- *  button is the one held by id; anything else declares itself with `data-fmt`,
- *  so a new surface inherits the state sync by existing rather than by being
- *  added to a list here. Cached because `updateToolbar` runs on every repaint
- *  and the set is fixed markup. */
-const formatToggleCache = new Map();
 /** The compact bar, assigned once its dependencies exist (bottom of the file).
  *  Declared here because `updateToolbar` runs before that point and reflecting
  *  alignment into an uninitialised `const` would be a temporal-dead-zone throw
  *  rather than a no-op. */
 let compactToolbarUi = null;
-function formatToggleButtons(key) {
-  let buttons = formatToggleCache.get(key);
-  if (!buttons) {
-    buttons = [...new Set([fmtButtons[key], ...document.querySelectorAll(`[data-fmt="${key}"]`)])]
-      .filter(Boolean);
-    formatToggleCache.set(key, buttons);
-  }
-  return buttons;
-}
-
 /** Reflects the selection in the toolbar: active states + which controls are
  *  enabled (run controls need a text range; paragraph controls need a caret). */
 function updateToolbar() { fontAdvanced.reflect();
@@ -8596,7 +7578,6 @@ for (const entry of INSERT_SURFACE) {
   }
   if (!outlinePanel.hidden) reflectOutlineSelection();
 }
-
 /** Republishes the open document's styles. Paragraph properties ▸ Style gets the
  *  COMPLETE list — it plays the part of Word's Styles pane, and with the palette's
  *  `Style: <name>` rows it is what keeps every style in the stylesheet reachable now
@@ -8614,132 +7595,12 @@ function populateStyles() {
   buildStylesGallery(styles);
   scheduleRibbonOverflow();
 }
-
-/** One literal for one meaning: the chooser's clear row, and the palette's. */
-const NO_TABLE_STYLE = "No table style";
-
-function populateTableStyles() {
-  tableStyleMenu.replaceChildren();
-  const clear = document.createElement("button");
-  clear.type = "button";
-  clear.className = "table-style-choice table-style-clear";
-  clear.dataset.tableStyle = "";
-  clear.textContent = NO_TABLE_STYLE;
-  tableStyleMenu.appendChild(clear);
-  for (const style of doc?.listTableStyles?.() || []) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "table-style-choice";
-    button.dataset.tableStyle = style;
-    button.innerHTML = `<span class="table-style-swatch" aria-hidden="true"><i></i><i></i><i></i></span><span>${escapeHtml(style)}</span>`;
-    tableStyleMenu.appendChild(button);
-  }
-}
 let tableStylePopover;
-tableStyleMenu.addEventListener("click", (event) => {
-  const choice = event.target.closest("[data-table-style]");
-  if (!choice || !selection || !doc) return;
-  closePopover(tableStylePopover);
-  runEdit(() => doc.applyTableStyle(selection.focus.node, choice.dataset.tableStyle), { gate: true });
-});
-
-/** Wires a chrome control to `handler` — the seam 44 command call sites and
- *  every popover trigger go through.
- *
- *  The mousedown listener exists ONLY for its preventDefault: that is what stops
- *  the button taking focus and collapsing the document selection the command is
- *  about to act on. The command itself runs on `click`, i.e. on mouse-UP over
- *  the control, which is what makes a mis-press abortable — press "Clear direct
- *  formatting" or "Delete row", drag off the button, release, and nothing
- *  happens, exactly as in Word and Docs. Running it from mousedown, as this used
- *  to, gave the user no way out of a slip (WCAG 2.5.2 Pointer Cancellation,
- *  Level A — docs/104 HF-069).
- *
- *  A keyboard activation arrives as a `click` with `detail === 0` and no
- *  preceding mouse event, so both routes are the same one listener. */
-/** Opens the Insert link dialog for the selected same-paragraph text (⌘K, the
- * ribbon Link button, and the command palette). The dialog owns the external
- * URL / bookmark / ScreenTip entry and applies through the same gated
- * setHyperlink path the raw prompt used. */
-function editSelectionLink() {
-  if (!doc || !selection || !hasRange()) return;
-  const { anchor, focus } = selection;
-  if (anchor.node !== focus.node) {
-    setStatus("Links must stay within one paragraph", "error");
-    return;
-  }
-  const start = Math.min(anchor.offset, focus.offset);
-  const end = Math.max(anchor.offset, focus.offset);
-  const text = doc.copyText(anchor.node, start, anchor.node, end);
-  openLinkDialog({ node: anchor.node, start, end, text });
-}
-
-// Every Insert ribbon button runs the very command its menu row and palette
-// entry run — one implementation behind three surfaces, wired through the shared
-// `onButton` seam so pointer activation never steals the selection. Insert table
-// is the exception: it has no direct action, it opens the row × column grid
-// popover, and is wired by `registerPopover` where that popover is built.
-// Every Review ribbon button runs the very command its menu row and palette
-// entry run, through the shared `onButton` seam, and carries its command id so
-// the ribbon's membership is readable from the DOM for the parity test.
-for (const entry of REVIEW_SURFACE) {
-  for (const button of entry.buttons()) {
-    if (!button) continue;
-    // `ownsClick` as on the Layout table: the module that renders the surface binds
-    // the click, and a second handler would run a toggle twice — i.e. not at all.
-    if (!entry.ownsClick) onButton(button, entry.run);
-    button.dataset.command = entry.command;
-  }
-}
-
-for (const entry of INSERT_SURFACE) {
-  for (const button of entry.buttons) {
-    if (entry.activate) onButton(button, entry.activate);
-    // Stamp the command id onto the button so the ribbon's membership is readable
-    // from the DOM. `insert-surface.spec.mjs` compares this set against the Insert
-    // menu's own `data-command` ids, which is what actually catches the drift this
-    // table is meant to prevent: a command added to the menu and the palette but
-    // never given a ribbon button — exactly how Picture shipped unreachable.
-    button.dataset.command = entry.command;
-  }
-}
-
-// Layout and References, wired the same way. The `missing` rows get NO handler:
-// the button stays disabled for the life of the build, so a click can never be
-// dispatched, and wiring a run that cannot work would be the dead control the
-// house rule forbids.
-for (const entry of [...LAYOUT_SURFACE, ...REFERENCE_SURFACE]) {
-  for (const button of entry.buttons()) {
-    if (!button) continue;
-    button.dataset.command = entry.command;
-    // Fallback for a control with no i18n key. Captured at BOOT, before a
-    // catalogue exists, so always English — hence `authoredTitle`'s preference.
-    button.dataset.enabledTitle = button.title;
-    if (entry.run && !entry.ownsClick) onButton(button, entry.run);
-  }
-}
-for (const key of ["bold", "italic", "underline", "strike"]) {
-  onButton(fmtButtons[key], () => toggleFormat(key));
-}
-onButton(clearFormattingBtn, () => {
-  if (!hasRange()) {
-    // A caret is not a range, so there is nothing to clear — but the control is
-    // enabled (the caret IS a selection), so returning in silence made Clear
-    // formatting a dead control on every surface that runs it: the ribbon
-    // button, the Format menu row, the palette and the compact bar all end up
-    // here. It refuses out loud instead, the same way the suggesting-mode
-    // branch below already does.
-    setStatus("Select the text whose formatting you want to clear", "error");
-    return;
-  }
-  if (reviewMode === "suggesting") {
-    setStatus("Clear formatting is not tracked; switch to Editing to apply it", "error");
-    return;
-  }
-  runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
-});
-
-// ---- Format painter (Word/Docs "copy formatting → paint onto target") -------
+const {
+  TWIPS_PER_POINT, adjustIndentCommand, applyFontSize, armFormatPainter, armOrApplyRun,
+  disarmFormatPainter, insertLineBreakAtSelection, paintFormatFromGesture, stylesPopover,
+  toggleChecklistCommand,
+} = createFormatPainter(ed);
 // Single click captures the caret/selection's formatting and arms a one-shot
 // paint; the next document click (expanded to the clicked word) or drag receives
 // it, then it disarms. Double-click the brush locks it (sticky) so successive
@@ -8747,337 +7608,6 @@ onButton(clearFormattingBtn, () => {
 // is applied through the very same engine ops the toolbar's own Bold/color/…
 // controls use, so painted formatting is indistinguishable from hand-applied.
 let formatPainter = null; // { fmt, sticky } while armed, else null
-
-/** Snapshots the current selection/caret's run + paragraph formatting into a
- *  plain patch. Mixed run properties (and automatic/theme colors) are left out
- *  so painting never forces a single value onto a genuinely mixed source. */
-function captureFormatForPainter() {
-  if (!doc || !selection) return null;
-  const range = hasRange();
-  const [sn, so, en, eo] = selEndpoints();
-  const f = range
-    ? doc.selectionFormat(sn, so, en, eo)
-    : doc.caretFormat(selection.focus.node, selection.focus.offset);
-  const fmt = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
-  f.free();
-  const rs = range
-    ? doc.selectionRunStyle(sn, so, en, eo)
-    : doc.caretRunStyle(selection.focus.node, selection.focus.offset);
-  if (!rs.sizeMixed && rs.sizePoints) fmt.sizePoints = rs.sizePoints;
-  if (!rs.fontMixed && rs.font) fmt.font = rs.font;
-  if (!rs.colorMixed && rs.color) fmt.color = rs.color; // skip automatic/theme (empty)
-  if (!rs.highlightMixed && rs.highlight) fmt.highlight = rs.highlight; // includes "none"
-  if (!rs.verticalAlignMixed && rs.verticalAlign) fmt.vertAlign = rs.verticalAlign;
-  if (fmt.underline && !rs.underlineStyleMixed && rs.underlineStyle) {
-    fmt.underlineStyle = rs.underlineStyle;
-  }
-  if (fmt.underline && !rs.underlineColorMixed) fmt.underlineColor = rs.underlineColor;
-  rs.free();
-  // Paragraph formatting reachable through absolute getter/setter pairs. Indent
-  // and paragraph spacing lack absolute copy ops today (relative-only), so they
-  // are intentionally not painted (tracked as a follow-up).
-  const node = selection.focus.node;
-  fmt.align = doc.alignmentAt(node, selection.focus.offset);
-  const style = doc.paragraphStyleAt(node);
-  if (style) fmt.paraStyle = style;
-  const line = doc.lineSpacingAt(node);
-  if (line) fmt.lineSpacing = line;
-  return fmt;
-}
-
-/** Applies the captured format to the current range via the same edit ops the
- *  toolbar uses. Returns whether anything was applied. */
-async function applyPaintedFormat() {
-  const fmt = formatPainter?.fmt;
-  if (!fmt || !doc || !hasRange()) return false;
-  if (blockMutationInViewing()) return false;
-  if (reviewMode === "suggesting") {
-    setStatus("Format painter isn't tracked yet; switch to Editing to paint formatting", "error");
-    return false;
-  }
-  // Paragraph style first, so painted direct formatting overrides the style.
-  if (fmt.paraStyle) await runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, fmt.paraStyle), { paragraphLevel: true });
-  await runToolbarEdit((a, b, c, d) =>
-    doc.formatSelection(a, b, c, d, fmt.bold, fmt.italic, fmt.underline, fmt.strike),
-  );
-  if (fmt.underlineStyle) {
-    await runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, fmt.underlineStyle));
-  }
-  if (fmt.underlineColor != null) {
-    await runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, fmt.underlineColor));
-  }
-  if (fmt.sizePoints != null) await runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, fmt.sizePoints));
-  if (fmt.font) await runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, fmt.font));
-  if (fmt.color) {
-    const [r, g, b] = hexToRgb(fmt.color);
-    await runToolbarEdit((a, x, c, d) => doc.setTextColor(a, x, c, d, r, g, b));
-  }
-  if (fmt.highlight) await runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, fmt.highlight));
-  if (fmt.vertAlign) await runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, fmt.vertAlign));
-  if (fmt.align) await runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, fmt.align), { paragraphLevel: true });
-  if (fmt.lineSpacing) await runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, fmt.lineSpacing), { paragraphLevel: true });
-  updateToolbar();
-  return true;
-}
-
-/** Reflects the painter's armed / sticky state on the toolbar button and body
- *  (the body flag drives the paintbrush cursor affordance over the pages). */
-function reflectFormatPainter() {
-  const armed = !!formatPainter;
-  formatPainterBtn.setAttribute("aria-pressed", String(armed));
-  formatPainterBtn.classList.toggle("is-sticky", !!formatPainter?.sticky);
-  document.body.classList.toggle("is-format-painting", armed);
-}
-
-function armFormatPainter(sticky) {
-  if (!doc || !selection) {
-    setStatus("Place the caret in text to copy its formatting", "error");
-    return;
-  }
-  const fmt = captureFormatForPainter();
-  if (!fmt) {
-    setStatus("Place the caret in text to copy its formatting", "error");
-    return;
-  }
-  formatPainter = { fmt, sticky: !!sticky };
-  reflectFormatPainter();
-  setStatus(
-    sticky
-      ? "Format painter locked — paint successive selections; Esc or click the brush to stop"
-      : "Format painter — click a word or drag over text to paint the copied formatting",
-  );
-}
-
-function disarmFormatPainter(reason) {
-  if (!formatPainter) return;
-  formatPainter = null;
-  reflectFormatPainter();
-  if (reason) setStatus(reason);
-}
-
-/** Consumes a document pointer gesture as a paint target: a drag's range, or the
- *  word under a bare click. Disarms afterward unless the painter is locked. */
-async function paintFormatFromGesture(gesture, event) {
-  if (!hasRange()) {
-    const page = gesture?.page || pageFromClientPoint(event.clientX, event.clientY);
-    if (page) touchSelection.selectWord(page, event);
-  }
-  const painted = hasRange() ? await applyPaintedFormat() : false;
-  if (!formatPainter?.sticky) disarmFormatPainter();
-  else if (painted) setStatus("Painted — keep painting or press Esc to stop");
-}
-
-// Preserve the model selection on mousedown (like every other toolbar control),
-// then arm/lock/cancel on click. `detail` distinguishes single vs double click:
-// double-click locks sticky mode, a single click on an armed brush cancels it.
-formatPainterBtn.addEventListener("mousedown", (e) => e.preventDefault());
-formatPainterBtn.addEventListener("click", (e) => {
-  e.preventDefault();
-  if (formatPainterBtn.disabled) return;
-  if (e.detail >= 2) {
-    armFormatPainter(true);
-    return;
-  }
-  if (formatPainter) {
-    disarmFormatPainter("Format painter off");
-    return;
-  }
-  armFormatPainter(false);
-});
-
-// Escape cancels the painter before any other Escape handler (menu/selection),
-// so a stray Escape always makes the brush the first thing it puts down.
-document.addEventListener(
-  "keydown",
-  (e) => {
-    if (e.key !== "Escape") return;
-    // An armed shape is a MODE, and a mode you cannot leave is the worst kind.
-    // Ahead of the painter and of every selection handler, for the same reason
-    // the painter is ahead of them: a stray Escape should put the tool down.
-    if (shapeDrawMode.armedToken()) {
-      e.preventDefault();
-      e.stopPropagation();
-      shapeDrawMode.disarm(true);
-      return;
-    }
-    if (formatPainter) {
-      e.preventDefault();
-      e.stopPropagation();
-      disarmFormatPainter("Format painter off");
-    }
-  },
-  true,
-);
-
-function suggestRunFormat(patch) {
-  return runToolbarEdit((sn, so, en, eo) => {
-    if (sn !== en) throw new Error("Tracked formatting requires one paragraph");
-    return doc.suggestFormat(
-      sn,
-      Math.min(so, eo),
-      Math.max(so, eo),
-      patch.bold,
-      patch.italic,
-      patch.underline,
-      patch.strike,
-      patch.sizeHalfPoints,
-      patch.color,
-      patch.highlight,
-      patch.vertAlign,
-      patch.font,
-      undefined,
-      new Date().toISOString(),
-    );
-  }, { allowInSuggesting: true });
-}
-/** A run-format control: apply to a range, or arm into `pendingFormat` at a caret
- *  (so the next typed text carries it — same model as the B/I/U/S toggles). */
-function armOrApplyRun(patch, applyFn) {
-  if (hasRange()) {
-    if (reviewMode === "suggesting") suggestRunFormat(patch);
-    else applyFn();
-  } else if (selection) {
-    pendingFormat = { ...(pendingFormat || {}), ...patch };
-    updateToolbar();
-  }
-}
-onButton(superBtn, () => {
-  const value = superBtn.getAttribute("aria-pressed") === "true" ? "baseline" : "super";
-  armOrApplyRun({ vertAlign: value }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, value)),
-  );
-});
-onButton(subBtn, () => {
-  const value = subBtn.getAttribute("aria-pressed") === "true" ? "baseline" : "sub";
-  armOrApplyRun({ vertAlign: value }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, value)),
-  );
-});
-for (const [key, btn] of Object.entries(alignBtns)) {
-  onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key), { paragraphLevel: true }));
-}
-/** Word-style indent commands: list items change numbering level, while ordinary
- * paragraphs retain the existing 0.25in paragraph-indent behavior. */
-function adjustIndentCommand(delta) {
-  if (!selection || !doc) return;
-  const listKind = doc.listStyleAt(selection.focus.node);
-  runToolbarEdit((a, b, c, d) =>
-    listKind
-      ? doc.adjustListLevel(a, b, c, d, delta > 0 ? 1 : -1)
-      : doc.adjustIndent(a, b, c, d, delta), { paragraphLevel: true });
-}
-onButton(indentDecBtn, () => adjustIndentCommand(-360));
-onButton(indentIncBtn, () => adjustIndentCommand(360));
-onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet"), { paragraphLevel: true }));
-onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered"), { paragraphLevel: true }));
-/** Toggles the caret's paragraphs into (or out of) a checklist. Shared by the
- *  ribbon button and the `paragraph.list.checklist` command, so the two cannot
- *  diverge — the command used not to exist at all, which left the checklist
- *  reachable only by finding one button on the Home tab. */
-function toggleChecklistCommand() {
-  runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "checklist"), { paragraphLevel: true });
-  // A brand-new checklist introduces the `☐` marker glyph; fetch its covering
-  // symbol font (once) so it renders instead of a .notdef box, then re-render.
-  void ensureGlyphCoverage("checklist");
-}
-onButton(checkListBtn, toggleChecklistCommand);
-onButton(restartListBtn, () => {
-  if (selection && doc) runNodeEdit(() => doc.restartList(selection.focus.node));
-});
-onButton(continueListBtn, () => {
-  if (selection && doc) runNodeEdit(() => doc.continueList(selection.focus.node));
-});
-
-/** Inserts a SOFT line break at the caret — the Shift+Enter gesture.
- *
- * The text stays in one paragraph and so keeps its list membership, style,
- * numbering and spacing. Extracted from the Enter handler so `insert.lineBreak`
- * runs exactly this and not a second, quietly different version of it: the
- * gesture was keyboard-only, which is the same one-surface defect docs/104 keeps
- * recording. */
-async function insertLineBreakAtSelection() {
-  if (!doc || !selection) return;
-  if (reviewMode === "suggesting") {
-    setStatus("Line breaks cannot be tracked yet; switch to Editing to insert one", "error");
-    return;
-  }
-  // A non-collapsed selection is replaced first, exactly as typing a character
-  // would — otherwise the break lands beside text the user meant to overwrite.
-  if (hasRange()) {
-    const { anchor, focus } = selection;
-    const ok = await runEdit(() =>
-      doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset),
-    );
-    if (!ok || !selection) return;
-  }
-  const at = selection.focus;
-  await runEdit(() => doc.insertLineBreak(at.node, at.offset));
-}
-
-/** Applies an exact point size, or reports why it cannot.
- *
- * Shared by the ribbon's size field and by the `format.size` command, so a
- * caller asking for 14pt goes through the same validation the typed value does
- * instead of a second, quietly different rule. `report` is off for callers with
- * no field to attach a validation bubble to. */
-function applyFontSize(points, { report = true } = {}) {
-  const pt = Number(points);
-  const valid = Number.isFinite(pt) && pt >= 1 && pt <= 1638 && Number.isInteger(pt * 2);
-  if (report) {
-    fontSizeSel.setCustomValidity(
-      valid ? "" : "Enter a font size from 1 to 1638 pt in 0.5 pt steps.",
-    );
-  }
-  if (!valid) {
-    if (report) {
-      fontSizeSel.reportValidity();
-      updateToolbar();
-    }
-    return false;
-  }
-  armOrApplyRun({ sizeHalfPoints: Math.round(pt * 2) }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt)),
-  );
-  return true;
-}
-
-fontSizeSel.addEventListener("change", () => {
-  if (fontSizeSel.value.trim() === "") {
-    fontSizeSel.setCustomValidity("Enter a font size from 1 to 1638 pt in 0.5 pt steps.");
-    fontSizeSel.reportValidity();
-    updateToolbar();
-    return;
-  }
-  applyFontSize(fontSizeSel.value);
-});
-// Toolbar popovers are `popover_manager.mjs`: anchoring, one-at-a-time, light
-// dismiss, Escape and focus return, for the ribbon's menus and the footer's
-// alike. The manager does not know what a selection is; this is the one thing
-// it asks the editor, so a menu that would act on the caret does not open when
-// there is no caret to act on.
-configurePopovers({ documentReady: () => !!selection || !!objectSelection });
-const TWIPS_PER_POINT = 20;
-tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
-
-// The Styles control: ONE trigger showing the caret's style, opening a SHORT list —
-// Google Docs' shape exactly (docs/115). Not a native `<select>`, because the reason
-// the list is worth opening is that each row is drawn in the style it applies, and an
-// OS popup renders every row in the system font. Not a card gallery either: a gallery
-// spends band width on options nobody is choosing right now and never says, unopened,
-// which style you are in.
-//
-// Still no "More styles" ▾: that listed every style in the document, which is the
-// deleted 14-entry select's long list reached through a side door. The full
-// stylesheet stays off the band — command palette, Paragraph properties (docs/115 §5).
-stylesMenuInput.addEventListener("input", () => renderStylesGallery());
-const stylesPopover = registerPopover(stylesTrigger, stylesMenu, () => {
-  // Rebuild on open rather than on every caret move: the suggested set depends
-  // on the caret's style, and the menu is not on screen while the caret moves.
-  stylesMenuInput.value = "";
-  renderStylesGallery();
-  syncStylesGalleryActive();
-});
-
 // -- Font family menu, color/highlight pickers, grow/shrink, change case -------
 // (Q1/Q2/Q5) Real dropdown swatch pickers replace the raw OS color input and
 // the native highlight <select>; a searchable font menu replaces the native
@@ -10322,74 +8852,9 @@ function buildAccessibilityTree() {
   renderAccessibilityMirror(doc, selection?.focus?.node ?? "", tableRange.gridRect(), (control) => runEdit(() => doc.toggleFormCheckbox(control)));
 }
 
-// ---- Outline panel (heading tree → scroll-to) -------------------------------
-// The rows themselves are `outline_panel.mjs`; what is left here is the two
-// pieces of editor state it needs and the caret move a row performs.
-/** Rebuilds the outline list from the document's headings (no-op when hidden). */
-function buildOutline() {
-  if (!doc || outlinePanel.hidden) return;
-  foldView.sync();
-  renderOutline(outlineBody, doc.documentOutline(), {
-    emptyText: t("outline.noHeadings"),
-    onPick: navigateToNode,
-    activeNode: selection?.focus?.node ?? "",
-    ...foldView.outlineOptions(),
-  });
-}
-
-/** Keeps the outline's active row synchronized with the model-backed caret. */
-function reflectOutlineSelection() {
-  reflectOutlineActive(outlineBody, selection?.focus?.node ?? "");
-}
-
-/** Places the caret at the start of `node` and scrolls it into view. */
-function navigateToNode(node) {
-  if (!doc) return;
-  // Picking an outline row IS placing the caret, so the caret must be painted
-  // even when the target is the first heading — the one node that happens to
-  // sit exactly where the load-time insertion point was seeded.
-  implicitCaretAt = null;
-  selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
-  drawSelection();
-  scrollCaretIntoView("center");
-}
-
-/** Re-anchors everything positioned against PAGE geometry. Every flanking panel
- *  changes the canvas WIDTH, which re-centres the sheet, and the review markers
- *  and fold chevron are positioned against where the sheet WAS. `toggleReview`
- *  re-rendered the markers and `toggleOutline` did not, so opening and closing
- *  the outline left comment icons inside the page instead of beside it. */
-function reanchorPageOverlays() {
-  scheduleReviewMarginRender();
-  if (doc) drawSelection();
-}
-
-/** Closes one flanking panel AND the rail tile that owns it — one control, so
- *  one statement of the rule. Three sites spelled this out (the review gutter,
- *  `toggleOutline`, the Pages navigator's `onExclusive`) and a panel closed
- *  without its tile leaves a rail button pressed over a panel that is gone. */
-function closeFlankingPanel(panel, rail) {
-  if (!panel || panel.hidden) return;
-  panel.hidden = true;
-  rail?.setAttribute("aria-pressed", "false");
-}
-
-function toggleOutline() {
-  outlinePanel.hidden = !outlinePanel.hidden;
-  // Outline (left) and the review sidebar (right) are mutually exclusive so the
-  // canvas is never squeezed from both sides at once. Opening the outline closes
-  // the review sidebar; the reverse is enforced in renderReviewMarginItems.
-  if (!outlinePanel.hidden && !reviewSidebar.hidden) toggleReview(false);
-  if (!outlinePanel.hidden) closeFlankingPanel(pagesPanel, railPages);
-  railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
-  buildOutline();
-  reanchorPageOverlays();
-}
-railOutline.addEventListener("click", toggleOutline);
-outlineClose.addEventListener("click", toggleOutline);
-
-/** The Pages navigator. Its behaviour lives in `pages_panel.mjs` (HF-085): six
- *  closures in this file were the only description of what `view.pages` does. */
+const {
+  buildOutline, closeFlankingPanel, reanchorPageOverlays, reflectOutlineSelection, toggleOutline,
+} = createOutline(ed);
 const pagesPanelView = createPagesPanel({
   panel: pagesPanel,
   body: pagesBody,
