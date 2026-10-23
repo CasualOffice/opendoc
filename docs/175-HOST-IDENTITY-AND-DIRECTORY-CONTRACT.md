@@ -1,6 +1,6 @@
 # 175 — Host identity and directory: who is here, who wrote this, who can be mentioned
 
-**Status:** Design accepted 2026-10-23 (owner decisions in §12). **Built by HF-360 (PR #881)
+**Status:** Design accepted 2026-10-23 (owner decisions in §12). **Built by HF-360 (PRs #881 and #883)
 except §7 (the @mention directory, `docs/109` HF-361) and §11 (shared version history,
 HF-362)**, whose seams are kept. §15 records where the build differs from this text and why.
 **Decides:** ADR-070, **identity is attested by the host and attached at the order. A
