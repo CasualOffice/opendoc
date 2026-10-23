@@ -254,20 +254,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "casual-doc-viewer"
-version = "0.0.1"
-dependencies = [
- "casual-doc-import",
- "casual-doc-io",
- "casual-doc-layout",
- "casual-doc-model",
- "casual-doc-ooxml",
- "casual-doc-pdf",
- "casual-doc-render",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "casual-doc-wasm"
 version = "0.0.1"
 dependencies = [
@@ -863,6 +849,22 @@ dependencies = [
  "casual-doc-layout",
  "casual-doc-ooxml",
  "casual-doc-render",
+]
+
+[[package]]
+name = "opendoc-viewer"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-import",
+ "casual-doc-io",
+ "casual-doc-layout",
+ "casual-doc-model",
+ "casual-doc-ooxml",
+ "casual-doc-pdf",
+ "casual-doc-render",
+ "serde_json",
+ "wasm-bindgen",
+ "zip",
 ]
 
 [[package]]

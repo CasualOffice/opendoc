@@ -2,7 +2,7 @@
 //! measures for the native cut (size, peak memory, time to first page).
 //!
 //! ```sh
-//! cargo run -p casual-doc-viewer --release --example convert -- in.docx out-dir [--pdf]
+//! cargo run -p opendoc-viewer --release --example convert -- in.docx out-dir [--pdf]
 //! ```
 //!
 //! Writes `page-N.png` (96 dpi) for every page and, with `--pdf` (feature `pdf`),
@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bytes = std::fs::read(&input)?;
     let started = Instant::now();
-    let doc = casual_doc_viewer::ViewerDocument::open(&bytes)?;
+    let doc = opendoc_viewer::ViewerDocument::open(&bytes)?;
     let opened = started.elapsed();
     for index in 0..doc.page_count() {
         let png = doc.render_page_png(index, 96.0)?;

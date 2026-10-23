@@ -195,6 +195,18 @@ impl FontRegistry {
             .filter_map(|&c| char::from_u32(c))
             .collect()
     }
+
+    /// Forgets the recorded coverage gap, so the next layout pass reports only
+    /// what IT could not draw. A batch host calls this before re-laying out
+    /// after registering faces; otherwise a gap a new face closed would still
+    /// be reported. O(gap size).
+    pub fn clear_missing_coverage(&self) {
+        self.inner
+            .lock()
+            .expect("font registry mutex poisoned")
+            .missing
+            .clear();
+    }
 }
 
 impl fmt::Debug for FontRegistry {
