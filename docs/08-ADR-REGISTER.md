@@ -4511,7 +4511,7 @@ report.
 
 **Open.** `docs/178` §13 Q1–Q12.
 
-## ADR-074 — The engine worker is an actor that hands back summaries; the editable document and its layout stay on the main thread and become lazy first
+## ADR-073 — The engine worker is an actor that hands back summaries; the editable document and its layout stay on the main thread and become lazy first
 
 **Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-13.
 **Design and measurements:** `docs/180`. **Builds on:** `56` (threading model), `113` and

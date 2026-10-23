@@ -1,6 +1,6 @@
 # 180 — Worker threading: what blocks the main thread, and what a worker can take
 
-**Status:** Measured and designed 2026-10-24. **Decides:** ADR-074 (proposed). **Row:**
+**Status:** Measured and designed 2026-10-24. **Decides:** ADR-073 (proposed). **Row:**
 `docs/109` RM-13. **Builds on:** `56` (editor shell and render architecture, its threading
 section), `113` (windowed layout), `116` (the main-thread budget audit and its §7 open-path
 design), `107` §4 (the editing budgets), ADR-033 (collaboration is OT). **Artifacts:**
@@ -181,7 +181,7 @@ that is the main thread.
   `Worker` is missing, construction throws, or no ready message arrives before a deadline. An
   engine worker uses the same transport shape, and not a second mechanism.
 
-## 4. The design (ADR-074)
+## 4. The design (ADR-073)
 
 **Pattern: an actor with a command queue.** The worker is a single-threaded mailbox that owns a
 second engine instance. The main thread posts commands, each with a request id and a document
