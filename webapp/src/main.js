@@ -4,134 +4,61 @@
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
-import { open, beginVersionDiff, defaultDiffSlice } from "../pkg/casual_doc_wasm.js";
 // The measurement layer's five free functions. FREE, not methods on a document,
 // because a unit preference belongs to the person and governs dialogs that open
 // with nothing loaded — which is also why they are handed to
 // `measurement_units.mjs` rather than reached for there (that module stays
 // browser-free and engine-free, so its policy is answerable in node).
-import {
-  decimalSeparatorForLanguage,
-  defaultMeasurementUnit,
-  formatMeasurement,
-  measurementUnits,
-  parseMeasurement,
-} from "../pkg/casual_doc_wasm.js";
-import {
-  NAMED_WEB_FONT_FACES,
-  SCRIPT_FALLBACK_FONTS,
-  fallbackKeysFor,
-  fetchSharedFontBytes,
-  packFontBytes,
-} from "./web_fonts.mjs";
-import { escapeHtml } from "./text_rules.mjs";
-import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
-import { bindComparePanel, buildRedline, comparableBytes } from "./compare_documents.mjs";
-import { EXPORT_COMMANDS } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
-import { createSpacingMenu } from "./spacing_menu.mjs";
-import { objectMenuRows } from "./reference_commands.mjs";
 import {
   reflectReviewSurface,
-  ribbonSurfaceEnabled as surfaceEnabled,
-  ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
-import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
-import { createPageSetup } from "./page_setup.mjs";
 import { createStyleAdvanced } from "./style_advanced.mjs";
 import { createListAdvanced } from "./list_advanced.mjs";
-import { wireListGallery } from "./list_gallery_wiring.mjs";
-import { RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { previewPx } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
-import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
+import { applyPreviewInk } from "./style_preview.mjs";
 import { createCompatibilityFindings } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
-import { createCompactToolbar } from "./compact_toolbar.mjs";
-import { createConfirmDialog } from "./confirm_dialog.mjs";
-import { createPropertiesDialog } from "./document_metadata.mjs";
-import { createNamePrompt } from "./name_dialog.mjs";
 import {
   buildPageBand,
-  docToScroll,
   pageBandPitch,
-  scrollToDoc,
 } from "./page_scroll.mjs";
-import {
-  formatInfo,
-} from "./format_io.mjs";
-import { formatShortcut, keyboardPlatform } from "./keyboard.mjs";
+import { keyboardPlatform } from "./keyboard.mjs";
 import { chordTitle } from "./keymap.mjs";
-import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { modalIsOpen, registerModal } from "./modal.mjs";
 import { objectBarPosition } from "./object_guides.mjs";
 // Own lines (anti-conflict): the two direct-manipulation geometry gestures.
-import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
-import { renderShapeMenu } from "./shape_format_menu.mjs";
-import { POSITION_PRESETS, ROTATE_CHOICES, Z_ORDER_CHOICES, positionAvailability, positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
-import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
-import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
-import { activeLocale, t } from "./i18n.mjs";
+import { positionPayload, readGroupability, rotationPlan } from "./object_arrange.mjs";
+import { t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs";
 import { localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
-import { createFormattingMarks } from "./formatting_marks.mjs";
-import { createMeasurementUnits } from "./measurement_units.mjs";
-import { createDocumentProtection } from "./document_protection.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
-import { bindRadioGroup } from "./radio_group.mjs";
-import { closeAllPopovers, onButton, openPopover } from "./popover_manager.mjs";
-import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
-import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
+import { onButton } from "./popover_manager.mjs";
+import { reflectOpenPopovers } from "./popover_manager.mjs";
 import { createViewZoom, nextZoomStep } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
-import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
-import { createAccessChrome } from "./access_chrome.mjs";
-import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
+import { editingModeFor, hostCapabilities, hostChrome, hostConfig } from "./capabilities.mjs";
 // Own line (anti-conflict): the chart's tab, panel, data dialog and commands.
 import { createCollaborationShell } from "./collab_shell.mjs";
-import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
-import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
-import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { orderedSelectionEnds, sameModelPosition } from "./caret_navigation.mjs";
-import {
-  reviewCardSignature,
-  reviewCommentIsReplyTo,
-  reviewStackHeight,
-  stackReviewCards,
-} from "./review_layout.mjs";
+import { sameModelPosition } from "./caret_navigation.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, createReviewBanners, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
-import { commentEditButton, commentEditor, commentQuoteElement, createCommentEditState, createCommentQuotes } from "./review_comment_card.mjs";
-import { makeMenuHeading, makeSwatchCell, makeSwatchGrid, makeUnderlineStyleOption, renderColorMenu as renderColorMenuChrome } from "./picker_chrome.mjs";
-import {
-  formatReviewDate,
-  reviewAuthorColor,
-  reviewAuthorKey,
-  reviewCardAriaLabel,
-  reviewChangeTypeLabel,
-  reviewCommentTooltip,
-  reviewFormattingDescription,
-  reviewRevisionTooltip,
-} from "./review_labels.mjs";
-import {
-  recaseRichRuns,
-} from "./text_rules.mjs";
+import { createReviewBanners } from "./review_chrome.mjs";
+import { createCommentEditState, createCommentQuotes } from "./review_comment_card.mjs";
 import {
   TWIPS_PER_INCH,
-  inchesToTwips,
-  optionalInchesToTwips,
   round2,
-  signedInchesToTwips,
   twipsToDialogInches,
-  twipsToInchText,
 } from "./units.mjs";
 import {
   documentStateBadge,
@@ -141,45 +68,27 @@ import {
 } from "./status_policy.mjs";
 import { createStatusChannel } from "./status_channel.mjs";
 import {
-  APP_MENU_SECTIONS,
-} from "./command_taxonomy.mjs";
-import { fileMenuSections } from "./command_taxonomy.mjs";
-import {
-  createMenuBar,
-  renderCommandRows,
   renderExportPane,
   renderFilePageInfo,
 } from "./command_menu.mjs";
 import {
-  fileCategoryRowFor,
   showSettingsPane,
   releaseSettingsPanel,
-  renderFilePane,
-  setFilePane,
 } from "./file_pane.mjs";
-import { revealOnSettings } from "./surface_reveal.mjs";
 
 /** Settings' two homes, for `revealOnSettings`. The gear is deliberately NOT
  *  routed through this: it TOGGLES, which is a real difference. */
 const SETTINGS_SURFACE = { showPane: () => showSettingsPane(), openDialog: () => toggleSettings(true) };
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
-import {
-  DOCUMENT_TEMPLATES,
-  templateBytes,
-  templateName,
-  templateThumbnail,
-} from "./blank_document.mjs";
 import { createTableRange } from "./table_range.mjs";
-import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createFontAdvanced } from "./font_advanced.mjs";
 import { createParagraphAdvanced } from "./paragraph_advanced.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
-import { announceTableEdit, bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
-import { createTableGridPicker } from "./table_grid_picker.mjs";
+import { tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { createRegionCycle } from "./region_focus.mjs";
-import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
+import { loadPrefObject, savePrefObject } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
 import { createFind } from "./editor_find.mjs";
@@ -216,6 +125,22 @@ import { createOverlayPaint } from "./editor_overlay_paint.mjs";
 import { createPointer } from "./editor_pointer.mjs";
 import { createSelection } from "./editor_selection.mjs";
 import { createObjects } from "./editor_objects.mjs";
+import { createFontColor } from "./editor_font_color.mjs";
+import { createShapeChrome } from "./editor_shape_chrome.mjs";
+import { createFontMenu } from "./editor_font_menu.mjs";
+import { createShapeGallery } from "./editor_shape_gallery.mjs";
+import { createParagraphInspector } from "./editor_paragraph_inspector.mjs";
+import { createTableFormat } from "./editor_table_format.mjs";
+import { createDocTools } from "./editor_doc_tools.mjs";
+import { createTableProps } from "./editor_table_props.mjs";
+import { createFilePage } from "./editor_file_page.mjs";
+import { createRibbon } from "./editor_ribbon.mjs";
+import { createReviewMargin } from "./editor_review_margin.mjs";
+import { createFonts } from "./editor_fonts.mjs";
+import { createCommandSurfaces } from "./editor_command_surfaces.mjs";
+import { createScroll } from "./editor_scroll.mjs";
+import { createDocumentSettings } from "./editor_document_settings.mjs";
+import { createChromeModes } from "./editor_chrome_modes.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -223,6 +148,7 @@ import { createObjects } from "./editor_objects.mjs";
 const ed = {
   get AUTOSAVE_ALLOWED_HERE() { return AUTOSAVE_ALLOWED_HERE; },
   get BASE_DPI() { return BASE_DPI; },
+  get BREAK_IO() { return BREAK_IO; },
   get EDITOR_KEYBOARD_PLATFORM() { return EDITOR_KEYBOARD_PLATFORM; },
   get HOST_CAPS() { return HOST_CAPS; },
   get HOST_CHROME() { return HOST_CHROME; },
@@ -234,9 +160,11 @@ const ed = {
   get REFERENCE_SURFACE() { return REFERENCE_SURFACE; },
   get REVIEW_SURFACE() { return REVIEW_SURFACE; },
   get REVIEW_TEXTLESS_KINDS() { return REVIEW_TEXTLESS_KINDS; },
+  get REVIEW_WINDOW_OVERSCAN() { return REVIEW_WINDOW_OVERSCAN; },
   get SESSION() { return SESSION; },
   get SETTINGS_SURFACE() { return SETTINGS_SURFACE; },
   get SHAPE_MENU_COLORS() { return SHAPE_MENU_COLORS; },
+  get TWIPS_PER_POINT() { return TWIPS_PER_POINT; },
   get TYPING_PAUSE_MS() { return TYPING_PAUSE_MS; },
   get UNDERLINE_STYLE_LABELS() { return UNDERLINE_STYLE_LABELS; },
   get ZOOM_MAX() { return ZOOM_MAX; },
@@ -257,9 +185,11 @@ const ed = {
   get applyEditResult() { return applyEditResult; },
   get applyFontFamily() { return applyFontFamily; },
   get applyFontSize() { return applyFontSize; },
+  get applyHighlight() { return applyHighlight; },
   get applyListFormatCommand() { return applyListFormatCommand; },
   get applyShapeFill() { return applyShapeFill; },
   get applyShapeOutline() { return applyShapeOutline; },
+  get applyTextColor() { return applyTextColor; },
   get applyUnderlineStyle() { return applyUnderlineStyle; },
   get armBackgroundMeasure() { return armBackgroundMeasure; },
   get armFormatPainter() { return armFormatPainter; },
@@ -273,17 +203,23 @@ const ed = {
   get bandTopInScroller() { return bandTopInScroller; },
   get blockMutationInViewing() { return blockMutationInViewing; },
   get blockUntrackedInSuggesting() { return blockUntrackedInSuggesting; },
+  get blockedFromPageSetup() { return blockedFromPageSetup; },
   get bookmarkManager() { return bookmarkManager; },
   get breakTypingSession() { return breakTypingSession; },
   get buildAccessibilityTree() { return buildAccessibilityTree; },
   get buildCommands() { return buildCommands; },
   get buildContextCommands() { return buildContextCommands; },
   get buildOutline() { return buildOutline; },
+  get buildShortcutsReference() { return buildShortcutsReference; },
   get bulletGalleryMenu() { return bulletGalleryMenu; },
   get bulletListBtn() { return bulletListBtn; },
+  get bulletListMenuBtn() { return bulletListMenuBtn; },
   get cancelCrop() { return cancelCrop; },
   get cancelObjectMove() { return cancelObjectMove; },
   get caretIsImplicit() { return caretIsImplicit; },
+  get caretTableColumn() { return caretTableColumn; },
+  get changeCaseBtn() { return changeCaseBtn; },
+  get changeCaseMenu() { return changeCaseMenu; },
   get chartSurface() { return chartSurface; },
   get checkListBtn() { return checkListBtn; },
   get chromeShows() { return chromeShows; },
@@ -297,6 +233,7 @@ const ed = {
   get climbOutOfGroup() { return climbOutOfGroup; },
   get closeAppMenu() { return closeAppMenu; },
   get closeFilePage() { return closeFilePage; },
+  get closeFlankingPanel() { return closeFlankingPanel; },
   get closeReviewInlineCard() { return closeReviewInlineCard; },
   get closeReviewPopover() { return closeReviewPopover; },
   get cmdInput() { return cmdInput; },
@@ -308,7 +245,7 @@ const ed = {
   get commentQuotes() { return commentQuotes; },
   get commitComposedText() { return commitComposedText; },
   get commitCrop() { return commitCrop; },
-  get compactToolbarUi() { return compactToolbarUi; },
+  get compactToolbarUi() { return compactToolbarUi; }, set compactToolbarUi(v) { compactToolbarUi = v; },
   get comparePanel() { return comparePanel; },
   get compatFindings() { return compatFindings; },
   get composingText() { return composingText; }, set composingText(v) { composingText = v; },
@@ -326,6 +263,7 @@ const ed = {
   get currentFontFamily() { return currentFontFamily; }, set currentFontFamily(v) { currentFontFamily = v; },
   get currentName() { return currentName; }, set currentName(v) { currentName = v; },
   get currentParagraphStyleName() { return currentParagraphStyleName; },
+  get currentReviewTimestamp() { return currentReviewTimestamp; },
   get currentRevision() { return currentRevision; }, set currentRevision(v) { currentRevision = v; },
   get currentSourceFormat() { return currentSourceFormat; }, set currentSourceFormat(v) { currentSourceFormat = v; },
   get currentStoryKey() { return currentStoryKey; },
@@ -341,6 +279,7 @@ const ed = {
   get deleteSelectedObject() { return deleteSelectedObject; },
   get descendIntoSelectedGroup() { return descendIntoSelectedGroup; },
   get descendSelectedGroup() { return descendSelectedGroup; },
+  get disarmFormatPainter() { return disarmFormatPainter; },
   get discardOwnDraft() { return discardOwnDraft; },
   get doc() { return doc; }, set doc(v) { doc = v; },
   get docTitleEl() { return docTitleEl; },
@@ -372,54 +311,108 @@ const ed = {
   get exitRunningEdit() { return exitRunningEdit; },
   get exportDocumentAs() { return exportDocumentAs; },
   get fileEl() { return fileEl; },
+  get filePageBody() { return filePageBody; },
   get findSession() { return findSession; },
   get finishObjectMove() { return finishObjectMove; },
   get fmtButtons() { return fmtButtons; },
   get focusEditorSurface() { return focusEditorSurface; },
   get focusReviewComment() { return focusReviewComment; },
+  get focusReviewRevision() { return focusReviewRevision; },
   get foldView() { return foldView; },
   get followTocEntry() { return followTocEntry; },
   get fontAdvanced() { return fontAdvanced; },
+  get fontCache() { return fontCache; },
   get fontFamilyBtn() { return fontFamilyBtn; },
   get fontFamilyLabel() { return fontFamilyLabel; },
   get fontInventory() { return fontInventory; },
+  get fontMenu() { return fontMenu; },
+  get fontMenuEmpty() { return fontMenuEmpty; },
+  get fontMenuInput() { return fontMenuInput; },
+  get fontMenuList() { return fontMenuList; },
   get fontSizeSel() { return fontSizeSel; },
   get fontState() { return fontState; }, set fontState(v) { fontState = v; },
   get formatPainter() { return formatPainter; }, set formatPainter(v) { formatPainter = v; },
   get formatPainterBtn() { return formatPainterBtn; },
+  get formatToggleCache() { return formatToggleCache; },
   get formattingMarks() { return formattingMarks; },
   get grammarCheckToggle() { return grammarCheckToggle; },
+  get growFontBtn() { return growFontBtn; },
   get handOverDraftBeforeOpen() { return handOverDraftBeforeOpen; },
   get handleFile() { return handleFile; },
   get hasRange() { return hasRange; },
   get headerFooterSettings() { return headerFooterSettings; },
+  get headerFooterSettingsBtn() { return headerFooterSettingsBtn; },
   get hexToRgb() { return hexToRgb; },
   get hideImePreedit() { return hideImePreedit; },
   get hideLinkChip() { return hideLinkChip; },
   get hidePasteOptions() { return hidePasteOptions; },
   get hideRunningMarker() { return hideRunningMarker; },
+  get highlightApplyBtn() { return highlightApplyBtn; },
+  get highlightBar() { return highlightBar; },
+  get highlightCaret() { return highlightCaret; },
+  get highlightMenu() { return highlightMenu; },
   get highlightPopover() { return highlightPopover; },
   get hostSession() { return hostSession; },
   get implicitCaretAt() { return implicitCaretAt; }, set implicitCaretAt(v) { implicitCaretAt = v; },
   get indentDecBtn() { return indentDecBtn; },
   get indentIncBtn() { return indentIncBtn; },
+  get indentLeftInput() { return indentLeftInput; },
+  get indentRightInput() { return indentRightInput; },
+  get indentSpecialByInput() { return indentSpecialByInput; },
+  get indentSpecialSel() { return indentSpecialSel; },
+  get insertBookmarkBtn() { return insertBookmarkBtn; },
+  get insertChartBtn() { return insertChartBtn; },
   get insertChartWithData() { return insertChartWithData; },
   get insertCommandEnabled() { return insertCommandEnabled; },
+  get insertCommentBtn() { return insertCommentBtn; },
+  get insertDateBtn() { return insertDateBtn; },
+  get insertDropCapBtn() { return insertDropCapBtn; },
+  get insertEmojiBtn() { return insertEmojiBtn; },
+  get insertEvenOddVariantBtn() { return insertEvenOddVariantBtn; },
   get insertFieldAtCaret() { return insertFieldAtCaret; },
+  get insertFieldBtn() { return insertFieldBtn; },
+  get insertFirstPageVariantBtn() { return insertFirstPageVariantBtn; },
+  get insertFooterBtn() { return insertFooterBtn; },
+  get insertHeaderBtn() { return insertHeaderBtn; },
   get insertImageFromBlob() { return insertImageFromBlob; },
   get insertImageFromFile() { return insertImageFromFile; },
   get insertLineBreakAtSelection() { return insertLineBreakAtSelection; },
+  get insertLinkBtn() { return insertLinkBtn; },
   get insertNote() { return insertNote; },
+  get insertPageNumberBtn() { return insertPageNumberBtn; },
+  get insertPictureBtn() { return insertPictureBtn; },
+  get insertShapeBtn() { return insertShapeBtn; },
   get insertShapeObject() { return insertShapeObject; },
+  get insertSymbolBtn() { return insertSymbolBtn; },
   get insertTableBtn() { return insertTableBtn; },
+  get insertTableMenu() { return insertTableMenu; },
+  get insertTextBoxBtn() { return insertTextBoxBtn; },
   get insertTextBoxObject() { return insertTextBoxObject; },
   get insideGroupSelection() { return insideGroupSelection; },
   get isInteractiveChromeTarget() { return isInteractiveChromeTarget; },
   get keyboardLevelIndex() { return keyboardLevelIndex; }, set keyboardLevelIndex(v) { keyboardLevelIndex = v; },
   get keyboardObjectMove() { return keyboardObjectMove; },
   get labelledObjectMenuButton() { return labelledObjectMenuButton; },
+  get lastHighlight() { return lastHighlight; }, set lastHighlight(v) { lastHighlight = v; },
+  get lastTextColor() { return lastTextColor; }, set lastTextColor(v) { lastTextColor = v; },
   get lastTypingAt() { return lastTypingAt; }, set lastTypingAt(v) { lastTypingAt = v; },
+  get layoutBringForwardBtn() { return layoutBringForwardBtn; },
+  get layoutColumnsBtn() { return layoutColumnsBtn; },
+  get layoutGroupBtn() { return layoutGroupBtn; },
+  get layoutIndentDecBtn() { return layoutIndentDecBtn; },
+  get layoutIndentFieldsBtn() { return layoutIndentFieldsBtn; },
+  get layoutIndentIncBtn() { return layoutIndentIncBtn; },
+  get layoutMarginsBtn() { return layoutMarginsBtn; },
+  get layoutOrientationBtn() { return layoutOrientationBtn; },
+  get layoutPositionBtn() { return layoutPositionBtn; },
+  get layoutRotateBtn() { return layoutRotateBtn; },
+  get layoutSendBackwardBtn() { return layoutSendBackwardBtn; },
+  get layoutSizeBtn() { return layoutSizeBtn; },
+  get layoutSpacingFieldsBtn() { return layoutSpacingFieldsBtn; },
+  get layoutUngroupBtn() { return layoutUngroupBtn; },
+  get layoutWrapBtn() { return layoutWrapBtn; },
   get leaveSharedDocument() { return leaveSharedDocument; },
+  get lineNumbersBtn() { return lineNumbersBtn; },
   get linkAt() { return linkAt; },
   get linkChip() { return linkChip; },
   get linkChipAction() { return linkChipAction; },
@@ -433,6 +426,7 @@ const ed = {
   get materializedPages() { return materializedPages; },
   get measurement() { return measurement; },
   get menuLevels() { return menuLevels; }, set menuLevels(v) { menuLevels = v; },
+  get mergeCellsBtn() { return mergeCellsBtn; },
   get navByViewport() { return navByViewport; },
   get navCaret() { return navCaret; },
   get navToPosition() { return navToPosition; },
@@ -444,6 +438,7 @@ const ed = {
   get nudgeSelectedObject() { return nudgeSelectedObject; },
   get numberGalleryMenu() { return numberGalleryMenu; },
   get numberedListBtn() { return numberedListBtn; },
+  get numberedListMenuBtn() { return numberedListMenuBtn; },
   get objectArrange() { return objectArrange; },
   get objectArrangeBtn() { return objectArrangeBtn; },
   get objectCapabilities() { return objectCapabilities; },
@@ -451,6 +446,7 @@ const ed = {
   get objectContextMenuHost() { return objectContextMenuHost; },
   get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
+  get objectInspector() { return objectInspector; },
   get objectMoveDrag() { return objectMoveDrag; }, set objectMoveDrag(v) { objectMoveDrag = v; },
   get objectPositionBtn() { return objectPositionBtn; },
   get objectPresence() { return objectPresence; },
@@ -490,11 +486,25 @@ const ed = {
   get paintFormatFromGesture() { return paintFormatFromGesture; },
   get paintObjectCrop() { return paintObjectCrop; },
   get paintOverlayLayer() { return paintOverlayLayer; },
+  get paintPageCanvas() { return paintPageCanvas; },
   get paintPagesInView() { return paintPagesInView; },
   get paintReviewMarkers() { return paintReviewMarkers; },
   get paintSelection() { return paintSelection; },
   get paintSnapGuides() { return paintSnapGuides; },
+  get paraBordersMixed() { return paraBordersMixed; },
+  get paraControls() { return paraControls; },
+  get paraLineSpacing() { return paraLineSpacing; },
+  get paraOptsBtn() { return paraOptsBtn; },
+  get paraPanelAlign() { return paraPanelAlign; },
+  get paraPanelStyle() { return paraPanelStyle; },
+  get paraShade() { return paraShade; },
+  get paraShadeMixed() { return paraShadeMixed; },
+  get paraShadeNone() { return paraShadeNone; },
+  get paraSpaceAfter() { return paraSpaceAfter; },
+  get paraSpaceBefore() { return paraSpaceBefore; },
   get paragraphAdvanced() { return paragraphAdvanced; },
+  get paragraphPropertiesContext() { return paragraphPropertiesContext; },
+  get paragraphPropertiesPanel() { return paragraphPropertiesPanel; },
   get paragraphRevisionRects() { return paragraphRevisionRects; },
   get paste() { return paste; },
   get pasteAsText() { return pasteAsText; },
@@ -502,6 +512,10 @@ const ed = {
   get pasteRichRunsJson() { return pasteRichRunsJson; },
   get pasteText() { return pasteText; },
   get pendingFormat() { return pendingFormat; }, set pendingFormat(v) { pendingFormat = v; },
+  get pgBreakBefore() { return pgBreakBefore; },
+  get pgKeepLines() { return pgKeepLines; },
+  get pgKeepNext() { return pgKeepNext; },
+  get phoneChrome() { return phoneChrome; },
   get pictureReplace() { return pictureReplace; },
   get place() { return place; },
   get plainTableInfo() { return plainTableInfo; },
@@ -523,17 +537,39 @@ const ed = {
   get readOnlyReason() { return readOnlyReason; }, set readOnlyReason(v) { readOnlyReason = v; },
   get readReviewData() { return readReviewData; },
   get reanchorPageOverlays() { return reanchorPageOverlays; },
+  get recentHighlights() { return recentHighlights; },
+  get recentTextColors() { return recentTextColors; },
+  get recordRecent() { return recordRecent; },
   get redlineOf() { return redlineOf; },
+  get refBookmarkBtn() { return refBookmarkBtn; },
+  get refCaptionBtn() { return refCaptionBtn; },
+  get refCrossRefBtn() { return refCrossRefBtn; },
+  get refEndnoteBtn() { return refEndnoteBtn; },
+  get refFieldBtn() { return refFieldBtn; },
+  get refFootnoteBtn() { return refFootnoteBtn; },
+  get refGoToHeadingBtn() { return refGoToHeadingBtn; },
+  get refTocBtn() { return refTocBtn; },
+  get refUpdateCaptionsBtn() { return refUpdateCaptionsBtn; },
+  get refUpdateFieldsBtn() { return refUpdateFieldsBtn; },
   get referenceCommands() { return referenceCommands; },
   get referenceObjectMenuRows() { return referenceObjectMenuRows; },
+  get reflectChrome() { return reflectChrome; },
+  get reflectFontFamily() { return reflectFontFamily; },
+  get reflectHighlightSwatch() { return reflectHighlightSwatch; },
+  get reflectListGallery() { return reflectListGallery; },
+  get reflectReviewBanners() { return reflectReviewBanners; },
+  get reflectShapeFormatState() { return reflectShapeFormatState; },
   get reflectShapeSwatches() { return reflectShapeSwatches; },
   get reflectShowingChangesState() { return reflectShowingChangesState; },
+  get reflectTextColorSwatch() { return reflectTextColorSwatch; },
   get reflowView() { return reflowView; },
   get refreshDraftOffers() { return refreshDraftOffers; },
   get refusedObjectDrag() { return refusedObjectDrag; },
   get regionCycle() { return regionCycle; },
+  get releasePageCanvas() { return releasePageCanvas; },
   get remotePresence() { return remotePresence; },
   get renderAll() { return renderAll; },
+  get renderCommands() { return renderCommands; },
   get renderFilePage() { return renderFilePage; },
   get renderStylesGallery() { return renderStylesGallery; },
   get repaintPage() { return repaintPage; },
@@ -543,40 +579,67 @@ const ed = {
   get restartListBtn() { return restartListBtn; },
   get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
   get reviewAcceptAll() { return reviewAcceptAll; },
-  get reviewAnchorIndex() { return reviewAnchorIndex; },
+  get reviewAcceptAllBtn() { return reviewAcceptAllBtn; },
+  get reviewAcceptBtn() { return reviewAcceptBtn; },
+  get reviewAnchorIndex() { return reviewAnchorIndex; }, set reviewAnchorIndex(v) { reviewAnchorIndex = v; },
   get reviewBtn() { return reviewBtn; },
+  get reviewBulkActions() { return reviewBulkActions; },
   get reviewCardCache() { return reviewCardCache; },
   get reviewClose() { return reviewClose; },
   get reviewColumnStartMemo() { return reviewColumnStartMemo; }, set reviewColumnStartMemo(v) { reviewColumnStartMemo = v; },
   get reviewCommentActions() { return reviewCommentActions; },
+  get reviewCommentBtn() { return reviewCommentBtn; },
   get reviewComposerState() { return reviewComposerState; }, set reviewComposerState(v) { reviewComposerState = v; },
   get reviewContextAt() { return reviewContextAt; },
+  get reviewDeleteBtn() { return reviewDeleteBtn; },
   get reviewDeleteConfirmId() { return reviewDeleteConfirmId; }, set reviewDeleteConfirmId(v) { reviewDeleteConfirmId = v; },
   get reviewFilter() { return reviewFilter; }, set reviewFilter(v) { reviewFilter = v; },
   get reviewFilters() { return reviewFilters; },
+  get reviewGrammarCheckBtn() { return reviewGrammarCheckBtn; },
   get reviewInlineCard() { return reviewInlineCard; }, set reviewInlineCard(v) { reviewInlineCard = v; },
   get reviewLayout() { return reviewLayout; }, set reviewLayout(v) { reviewLayout = v; },
-  get reviewMode() { return reviewMode; },
+  get reviewMarginCommentBtn() { return reviewMarginCommentBtn; },
+  get reviewMarginFrame() { return reviewMarginFrame; }, set reviewMarginFrame(v) { reviewMarginFrame = v; },
+  get reviewMode() { return reviewMode; }, set reviewMode(v) { reviewMode = v; },
   get reviewModeButtons() { return reviewModeButtons; },
+  get reviewMoveEndButton() { return reviewMoveEndButton; },
   get reviewNext() { return reviewNext; },
+  get reviewNextBtn() { return reviewNextBtn; },
+  get reviewPanelBtn() { return reviewPanelBtn; },
+  get reviewPrevBtn() { return reviewPrevBtn; },
   get reviewPrevious() { return reviewPrevious; },
+  get reviewProofLanguagesBtn() { return reviewProofLanguagesBtn; },
   get reviewRangeClientRect() { return reviewRangeClientRect; },
   get reviewRejectAll() { return reviewRejectAll; },
+  get reviewRejectAllBtn() { return reviewRejectAllBtn; },
+  get reviewRejectBtn() { return reviewRejectBtn; },
+  get reviewResolveBtn() { return reviewResolveBtn; },
+  get reviewSheetMode() { return reviewSheetMode; },
+  get reviewShowChangesBtn() { return reviewShowChangesBtn; },
   get reviewSidebar() { return reviewSidebar; },
+  get reviewSidebarBody() { return reviewSidebarBody; },
+  get reviewSidebarHeader() { return reviewSidebarHeader; },
   get reviewSidebarPreference() { return reviewSidebarPreference; }, set reviewSidebarPreference(v) { reviewSidebarPreference = v; },
+  get reviewSmartQuotesBtn() { return reviewSmartQuotesBtn; },
+  get reviewSpellCheckBtn() { return reviewSpellCheckBtn; },
+  get reviewTrackBtn() { return reviewTrackBtn; },
   get reviewTracking() { return reviewTracking; },
+  get reviewWindowFrame() { return reviewWindowFrame; }, set reviewWindowFrame(v) { reviewWindowFrame = v; },
   get revisionRange() { return revisionRange; },
   get revisionUnreadable() { return revisionUnreadable; }, set revisionUnreadable(v) { revisionUnreadable = v; },
+  get ribbonPanels() { return ribbonPanels; },
   get ribbonSurfaceEnabled() { return ribbonSurfaceEnabled; },
   get ribbonSurfaceReason() { return ribbonSurfaceReason; },
-  get ribbonViewCollapsed() { return ribbonViewCollapsed; },
+  get ribbonViewCollapsed() { return ribbonViewCollapsed; }, set ribbonViewCollapsed(v) { ribbonViewCollapsed = v; },
   get rulerView() { return rulerView; },
+  get runControls() { return runControls; },
   get runEdit() { return runEdit; },
   get runNodeEdit() { return runNodeEdit; },
   get runToolbarEdit() { return runToolbarEdit; },
   get runningBandAt() { return runningBandAt; },
   get runningEditBand() { return runningEditBand; }, set runningEditBand(v) { runningEditBand = v; },
   get runningEditPage() { return runningEditPage; }, set runningEditPage(v) { runningEditPage = v; },
+  get runningEditPageOrView() { return runningEditPageOrView; },
   get saveBtn() { return saveBtn; },
   get saveDocument() { return saveDocument; },
   get saveFormatEl() { return saveFormatEl; },
@@ -587,19 +650,28 @@ const ed = {
   get scheduleReviewMarginRender() { return scheduleReviewMarginRender; },
   get scrollCaretIntoView() { return scrollCaretIntoView; },
   get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
+  get scrollModelRectIntoView() { return scrollModelRectIntoView; },
   get scrollOverlayIntoView() { return scrollOverlayIntoView; },
   get scrollReviewSelectionIntoView() { return scrollReviewSelectionIntoView; },
   get searchTrigger() { return searchTrigger; },
   get selComment() { return selComment; },
   get selEndpoints() { return selEndpoints; },
+  get selHighlightBar() { return selHighlightBar; },
+  get selHighlightBtn() { return selHighlightBtn; },
+  get selHighlightMenu() { return selHighlightMenu; },
+  get selTextColorBar() { return selTextColorBar; },
+  get selTextColorBtn() { return selTextColorBtn; },
+  get selTextColorMenu() { return selTextColorMenu; },
   get selectAll() { return selectAll; },
   get selectObject() { return selectObject; },
   get selectRibbonTab() { return selectRibbonTab; },
+  get selectTableContext() { return selectTableContext; },
   get selectedObjectContext() { return selectedObjectContext; },
   get selectedShapeFormat() { return selectedShapeFormat; },
   get selection() { return selection; }, set selection(v) { selection = v; },
   get selectionAutoScrollFrame() { return selectionAutoScrollFrame; }, set selectionAutoScrollFrame(v) { selectionAutoScrollFrame = v; },
   get selectionContainsClientPoint() { return selectionContainsClientPoint; },
+  get selectionModelRect() { return selectionModelRect; },
   get setDocumentState() { return setDocumentState; },
   get setDraftStatus() { return setDraftStatus; },
   get setGrammarCheckEnabled() { return setGrammarCheckEnabled; },
@@ -607,6 +679,7 @@ const ed = {
   get setReviewMode() { return setReviewMode; },
   get setRibbonCollapsed() { return setRibbonCollapsed; },
   get setRunningContext() { return setRunningContext; },
+  get setShowingChanges() { return setShowingChanges; },
   get setSpellCheckEnabled() { return setSpellCheckEnabled; },
   get setStatus() { return setStatus; },
   get setZoom() { return setZoom; },
@@ -622,11 +695,20 @@ const ed = {
   get showDraftRecovery() { return showDraftRecovery; },
   get showImePreedit() { return showImePreedit; },
   get showReviewInlineCard() { return showReviewInlineCard; },
+  get showVersionPreview() { return showVersionPreview; },
   get showingChanges() { return showingChanges; }, set showingChanges(v) { showingChanges = v; },
+  get shrinkFontBtn() { return shrinkFontBtn; },
   get snapContextFor() { return snapContextFor; },
   get spacingMenuControl() { return spacingMenuControl; },
   get spellCheckToggle() { return spellCheckToggle; },
   get spellChecker() { return spellChecker; },
+  get splitCellBtn() { return splitCellBtn; },
+  get splitCellCancel() { return splitCellCancel; },
+  get splitCellClose() { return splitCellClose; },
+  get splitCellColumns() { return splitCellColumns; },
+  get splitCellConfirm() { return splitCellConfirm; },
+  get splitCellDialog() { return splitCellDialog; },
+  get splitCellRows() { return splitCellRows; },
   get startCollaboration() { return startCollaboration; },
   get startDrafts() { return startDrafts; },
   get startObjectMove() { return startObjectMove; },
@@ -637,24 +719,52 @@ const ed = {
   get styleAdvanced() { return styleAdvanced; },
   get stylesMenu() { return stylesMenu; },
   get stylesMenuInput() { return stylesMenuInput; },
+  get stylesPopover() { return stylesPopover; },
   get stylesTrigger() { return stylesTrigger; },
   get subBtn() { return subBtn; },
   get suggestAcrossParagraphs() { return suggestAcrossParagraphs; },
   get suggestingBannerEdit() { return suggestingBannerEdit; },
   get superBtn() { return superBtn; },
   get syncActiveReviewCommentToCaret() { return syncActiveReviewCommentToCaret; },
+  get syncRibbonTabStops() { return syncRibbonTabStops; },
   get syncSelectionToCellRange() { return syncSelectionToCellRange; },
   get syncStylesGalleryActive() { return syncStylesGalleryActive; },
   get tabStopsDialog() { return tabStopsDialog; },
+  get tableAlign() { return tableAlign; },
   get tableBtn() { return tableBtn; },
+  get tableCaption() { return tableCaption; },
+  get tableCellMargin() { return tableCellMargin; },
+  get tableCellSpacing() { return tableCellSpacing; },
   get tableChrome() { return tableChrome; },
+  get tableColumnWidth() { return tableColumnWidth; },
+  get tableColumnWidthNote() { return tableColumnWidthNote; },
+  get tableDescription() { return tableDescription; },
+  get tableFixedLayout() { return tableFixedLayout; },
+  get tableFmtMenu() { return tableFmtMenu; },
+  get tableFormula() { return tableFormula; },
+  get tableFormulaApply() { return tableFormulaApply; },
   get tableGutter() { return tableGutter; },
+  get tableHeaderRow() { return tableHeaderRow; },
+  get tableIndent() { return tableIndent; },
+  get tablePopover() { return tablePopover; },
+  get tablePropertiesBtn() { return tablePropertiesBtn; },
+  get tablePropertiesContext() { return tablePropertiesContext; },
+  get tablePropertiesPanel() { return tablePropertiesPanel; },
   get tableRange() { return tableRange; },
+  get tableRibbon() { return tableRibbon; },
+  get tableRowHeight() { return tableRowHeight; },
+  get tableRowHeightRule() { return tableRowHeightRule; },
   get tableStyleBtn() { return tableStyleBtn; },
   get tableStyleMenu() { return tableStyleMenu; },
   get tableStylePopover() { return tableStylePopover; }, set tableStylePopover(v) { tableStylePopover = v; },
   get tableToolCommands() { return tableToolCommands; },
+  get tableWidth() { return tableWidth; },
   get takeDraftSnapshot() { return takeDraftSnapshot; },
+  get textColorApplyBtn() { return textColorApplyBtn; },
+  get textColorBar() { return textColorBar; },
+  get textColorCaret() { return textColorCaret; },
+  get textColorInput() { return textColorInput; },
+  get textColorMenu() { return textColorMenu; },
   get textColorPopover() { return textColorPopover; },
   get tocCommands() { return tocCommands; },
   get tocEntryTargetAt() { return tocEntryTargetAt; },
@@ -675,6 +785,8 @@ const ed = {
   get typingSession() { return typingSession; }, set typingSession(v) { typingSession = v; },
   get typingSessionActive() { return typingSessionActive; }, set typingSessionActive(v) { typingSessionActive = v; },
   get typingSessionForKey() { return typingSessionForKey; },
+  get underlineColorInput() { return underlineColorInput; },
+  get underlineMenu() { return underlineMenu; },
   get underlineMenuBtn() { return underlineMenuBtn; },
   get updateImePreedit() { return updateImePreedit; },
   get updateObjectContextBar() { return updateObjectContextBar; },
@@ -693,6 +805,7 @@ const ed = {
   get viewZoom() { return viewZoom; },
   get viewingBannerEdit() { return viewingBannerEdit; },
   get viewportEl() { return viewportEl; },
+  get watermarkBtn() { return watermarkBtn; },
   get zoomEl() { return zoomEl; },
   get zoomFactor() { return zoomFactor; },
   get zoomMenu() { return zoomMenu; },
@@ -1014,460 +1127,14 @@ document.querySelector(".ribbon-tabs")?.addEventListener("keydown", (event) => {
   enabled[next].focus();
 });
 
-// --- Compact ↔ ribbon view toggle (collapse/expand the band) -----------------
-const ribbonViewToggle = document.getElementById("ribbonViewToggle");
 let ribbonViewCollapsed = false;
-
-/** Collapses the ribbon to just its tab strip (compact view) or expands it back
- *  to the full band, persisting the choice. */
-function setRibbonCollapsed(collapsed) {
-  ribbonViewCollapsed = collapsed;
-  const ribbon = document.querySelector(".ribbon");
-  ribbon?.classList.toggle("is-collapsed", collapsed);
-  if (ribbonViewToggle) {
-    ribbonViewToggle.setAttribute("aria-expanded", String(!collapsed));
-    ribbonViewToggle.setAttribute(
-      "aria-label",
-      collapsed ? "Expand the ribbon" : "Collapse the ribbon",
-    );
-    ribbonViewToggle.title = collapsed
-      ? "Expand the ribbon"
-      : "Collapse the ribbon (compact view)";
-    const icon = ribbonViewToggle.querySelector(".ms");
-    if (icon) icon.textContent = collapsed ? "keyboard_arrow_down" : "keyboard_arrow_up";
-  }
-  writePref("opendoc.ribbonCollapsed", collapsed ? "1" : "0");
-  if (!collapsed && typeof scheduleRibbonOverflow === "function") scheduleRibbonOverflow();
-}
-
-if (ribbonViewToggle) {
-  ribbonViewToggle.addEventListener("click", () => setRibbonCollapsed(!ribbonViewCollapsed));
-  if (readPref("opendoc.ribbonCollapsed") === "1") setRibbonCollapsed(true);
-}
-
-// --- Home ribbon: Clipboard, Styles gallery, overflow, tooltips (docs/64) ----
-// The Home band mirrors template.png. Every control below maps to a real,
-// working opendoc action; nothing is a placeholder (docs/64 "no dead controls").
-
-const pasteBtn = document.getElementById("pasteBtn");
-const cutBtn = document.getElementById("cutBtn");
-const copyBtn = document.getElementById("copyBtn");
-const replaceBtn = document.getElementById("replaceBtn");
-// Clipboard buttons reuse the exact clipboard actions the command palette and
-// keyboard already invoke (`paste`/`cut`/`copySelection`), so they are never a
-// second code path. Replace opens the same Find & Replace panel on its replace field.
-pasteBtn.addEventListener("click", () => { paste(); });
-cutBtn.addEventListener("click", () => { cut(); });
-copyBtn.addEventListener("click", () => { copySelection(); });
-replaceBtn.addEventListener("click", () => { if (!replaceBtn.disabled) openFind({ replace: true }); });
-
-// The Styles control — the ONE control the band offers for paragraph styles (docs/115).
-// It replaces three: a `#paragraphStyle` select listing every style in the document
-// flat, this strip, and a "▾" popover listing every style again. Word puts a curated
-// Quick Styles gallery in the ribbon and the full list in a pane; Docs offers six named
-// styles and nothing else. So the band offers a SHORT list and the full stylesheet stays
-// reachable off it — the palette's `Style: <name>` rows and Paragraph properties ▸ Style.
-// Import, cascade, layout, render and round-trip are untouched: this is what is offered
-// for AUTHORING, not what is supported.
-const stylesTrigger = document.getElementById("stylesTrigger");
-const stylesTriggerLabel = document.getElementById("stylesTriggerLabel");
-const stylesMenu = document.getElementById("stylesMenu");
-const stylesMenuInput = document.getElementById("stylesMenuInput");
-const stylesMenuList = document.getElementById("stylesMenuList");
-const stylesMenuEmpty = document.getElementById("stylesMenuEmpty");
-
-// Styles the document is USING, offered alongside the recommended ones — otherwise
-// opening a file whose paragraphs use `Quotation` leaves the user unable to see or
-// re-apply it. Word adds in-use styles to its gallery too. This is what the CHROME
-// observed (styles the caret visited, plus ones applied this session), not a document
-// scan: there is no `stylesInUse()` on the engine and walking every paragraph from JS
-// is O(n) in document size, which docs/107 §4 forbids. Pruned on document load.
-const stylesInUse = new Set();
-
-/** The paragraph style at the caret. The deleted select held this; the active card
- *  and `#stylesTrigger`'s label and `data-active-style` hold it now. */
-let activeParagraphStyle = "";
-
-// Up/Down move between the options while the menu is open, matching every other
-// product popover in the band and the WAI-ARIA listbox pattern. Enter and Space
-// activate a focused option natively (they are <button>s). Bound once to the
-// container, so rebuilding the options never stacks duplicate listeners.
-const STYLE_ROVE_STEP = { ArrowDown: 1, ArrowUp: -1 };
-stylesMenu.addEventListener("keydown", (event) => {
-  const options = [...stylesMenuList.querySelectorAll(".style-option")];
-  if (!options.length) return;
-  const at = options.indexOf(document.activeElement);
-  const step = STYLE_ROVE_STEP[event.key];
-  let next;
-  if (step) next = at < 0 ? (step > 0 ? 0 : options.length - 1) : (at + step + options.length) % options.length;
-  else if (event.key === "Home") next = 0;
-  else if (event.key === "End") next = options.length - 1;
-  else return;
-  event.preventDefault();
-  options[next].focus();
-});
-
-/** Builds one option row, drawn IN the style it applies — with a tick on the one
- *  the caret is already in, which is how Docs and every menu-shaped picker says
- *  "you are here". */
-function makeStyleOption(name) {
-  const slug = styleSlug(name);
-  const option = document.createElement("button");
-  option.type = "button";
-  option.className = `menu-item style-option style-option-${slug}`;
-  option.dataset.style = name;
-  option.setAttribute("role", "option");
-  option.setAttribute("aria-selected", "false");
-  const check = document.createElement("span");
-  check.className = "menu-check";
-  check.setAttribute("aria-hidden", "true");
-  option.appendChild(check);
-  const label = document.createElement("span");
-  label.className = "style-option-name";
-  label.textContent = styleDisplayName(name);
-  applyStylePreview(label, name, (style) => doc?.stylePreview?.(style));
-  option.appendChild(label);
-  option.addEventListener("click", () => {
-    runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
-    closePopover(stylesPopover);
-    // Back to the document, as Word and Docs do after a style pick and as
-    // `chooseFont` already does.
-    focusEditorSurface();
-  });
-  return option;
-}
-
-/** What `listStyles()` last reported, and `RECOMMENDED_STYLES` ∩ that — both resolved
- *  once per registry change, not per caret move: `offeredStyles` is on the
- *  per-keystroke path, and matching 15 names case-insensitively against every defined
- *  style there would be O(15n) a keystroke. */
-let definedStyles = new Set();
-let recommendedHere = [];
-
-/** The suggested group, narrowed to WHERE THE CARET IS. The rule itself is
- *  `offeredStyleNames`; this is only the question "where are we". */
-function offeredStyles() {
-  return offeredStyleNames({
-    recommended: recommendedHere,
-    inUse: stylesInUse,
-    defined: definedStyles,
-    active: activeParagraphStyle,
-    contexts: caretContexts(caretStyleContext()),
-  });
-}
-
-/** The caret's surroundings, as the style list cares about them. Every signal
- *  is one the toolbar already reads on the same refresh, so this adds no
- *  per-keystroke engine work. */
-function caretStyleContext() {
-  const node = selection?.focus?.node;
-  if (!doc || !node) return {};
-  let story = "body";
-  if (runningEditBand === "header" || runningEditBand === "footer") story = runningEditBand;
-  let inTable = false;
-  let listKind = "";
-  try {
-    inTable = doc.inTable(node);
-    listKind = doc.listStyleAt(node) || "";
-  } catch {
-    // A node the engine no longer has (mid-edit) is not a context; the
-    // general list is still correct, just not narrowed.
-  }
-  return { story, inTable, listKind };
-}
-
-/** Rebuilds the option rows, but only when the offered set actually changed. This is
- *  on the per-keystroke path (`updateToolbar` runs on every caret move and the offered
- *  set depends on the caret's style), so rebuilding unconditionally would re-resolve a
- *  preview per option per keystroke — and would tear the menu out from under a pointer
- *  while it is open. */
-function renderStylesGallery() {
-  const { suggested, rest } = styleMenuGroups({
-    suggested: offeredStyles(),
-    defined: definedStyles,
-    query: stylesMenuInput.value,
-  });
-  stylesMenuList.replaceChildren();
-  // The split is the point: "what you probably want here" and "what this
-  // document has" mean different things, and Word's Styles pane makes the
-  // same one with its Recommended / All filter.
-  if (suggested.length && rest.length) {
-    stylesMenuList.appendChild(makeMenuHeading("Suggested"));
-  }
-  for (const name of suggested) stylesMenuList.appendChild(makeStyleOption(name));
-  if (rest.length) {
-    if (suggested.length) stylesMenuList.appendChild(makeMenuHeading("All styles"));
-    for (const name of rest) stylesMenuList.appendChild(makeStyleOption(name));
-  }
-  stylesMenuEmpty.hidden = suggested.length + rest.length > 0;
-}
-
-/** Rebuilds the menu for a (re)loaded document or a changed style registry. The
- *  full stylesheet is NOT put on the band (docs/115 §5). */
-function buildStylesGallery(styles) {
-  definedStyles = new Set(styles);
-  // Matched case-insensitively, so `body text` from an ODT package still counts.
-  const byName = new Map(styles.map((s) => [s.toLowerCase(), s]));
-  recommendedHere = RECOMMENDED_STYLES.map((s) => byName.get(s.toLowerCase())).filter(Boolean);
-  // A style remembered from the previous document is not in use in this one, and a
-  // name that no longer exists cannot be applied.
-  for (const name of [...stylesInUse]) if (!definedStyles.has(name)) stylesInUse.delete(name);
-  // Force the rebuild `renderStylesGallery` skips when the offered NAMES are
-  // unchanged: "Update <style> to match selection" changes a DEFINITION, not a name,
-  // and the rows would keep previewing the old one. `ribbon-home` caught that.
-  stylesMenuInput.value = "";
-  stylesMenuList.replaceChildren();
-  renderStylesGallery();
-  syncStylesGalleryActive();
-}
-
-/** Puts the caret's style on the trigger, ticks it in the menu, and publishes it
- *  on the control so the chrome has one answer to "what style is the caret in".
- *
- *  The trigger's LABEL is the whole of what the deleted 14-entry select
- *  contributed that the card gallery did not: a control that says, without being
- *  opened, which style you are in. Docs does exactly this. */
-function syncStylesGalleryActive() {
-  const active = activeParagraphStyle;
-  stylesTrigger.dataset.activeStyle = active;
-  // A style outside the offered six is still shown on the trigger — it is what
-  // the caret is in, and a control reporting something else is worse than one
-  // reporting a style it cannot re-offer. `offeredStyles` gives it a slot anyway.
-  stylesTriggerLabel.textContent = styleDisplayName(active || "Normal");
-  stylesTrigger.classList.toggle("is-placeholder", !active);
-  stylesTrigger.setAttribute(
-    "aria-label",
-    active ? `Paragraph style: ${styleDisplayName(active)}` : "Paragraph style",
-  );
-  for (const option of stylesMenuList.querySelectorAll(".style-option")) {
-    const selected = option.dataset.style === active;
-    option.setAttribute("aria-selected", String(selected));
-    option.classList.toggle("is-selected", selected);
-  }
-  // The band owns exactly one Tab stop across everything it holds. Re-assert that
-  // after the control publishes its own, or the band grows a second one on every
-  // caret move — which is precisely how it came to have three.
-  syncRibbonTabStops();
-}
-
-/** Records the style at the caret and keeps the offered set in step. A style the caret
- *  visits is one the document is using, so it joins `stylesInUse` and stays offered
- *  after the caret leaves. */
-function reflectParagraphStyle(name) {
-  activeParagraphStyle = name || "";
-  if (activeParagraphStyle) stylesInUse.add(activeParagraphStyle);
-  renderStylesGallery();
-  syncStylesGalleryActive();
-}
-
-// --- Named-style edits: update-from-selection and create-from-selection ------
-// Word's two core Styles verbs, both routed through the same engine op
-// (`SetStyleDefinition`): "Update <Style> to match selection" mutates the style
-// definition so every paragraph using it reflows; "Create a style" adds a new
-// paragraph style (based on the current one) and applies it. Both rebuild the
-// gallery previews and dropdowns from the (now changed) style registry.
-// Both name cards go through ONE contract (`name_dialog.mjs`): the staged-result
-// dance that keeps Escape from leaving the promise pending is subtle enough that
-// a second copy of it is a second place for that bug to live.
-const styleNamePrompt = createNamePrompt({
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  ids: {
-    dialog: "styleNameDialog",
-    input: "styleNameInput",
-    confirm: "styleNameConfirm",
-    cancel: "styleNameCancel",
-    close: "styleNameClose",
-  },
-});
-
-/** Opens the create-style dialog and resolves to the entered name, or null if
- *  cancelled. */
-function promptStyleName() {
-  return styleNamePrompt.prompt("");
-}
-
-// ---- Confirmation ----------------------------------------------------------
-// The application's single yes/no question, in `confirm_dialog.mjs`. Why it is
-// never `window.confirm`, and why the answer is staged rather than resolved
-// directly, are both recorded there.
-const confirmDialogUi = createConfirmDialog({ registerModal, fallbackFocus: () => pagesEl });
-const confirmModal = (options) => confirmDialogUi.ask(options);
-
-/** Gate for anything that replaces the open document. Returns true when it is
- *  safe to proceed. Reads `documentIsDirty()` — the engine revision watermark,
- *  which fails dirty — so this and the beforeunload guard can never disagree
- *  about whether work would be lost (docs/104 T-14: one dirty signal, one
- *  reader). */
-async function confirmDiscardIfEdited() {
-  if (!documentIsDirty()) return true;
-  return confirmModal({
-    title: "Discard unsaved changes?",
-    message: `Opening another file replaces “${currentName || "this document"}”. Your edits have not been saved and there is no copy of them anywhere else.`,
-    confirmLabel: "Discard and open",
-    cancelLabel: "Keep editing",
-    note: "Save the .docx first to keep your work.",
-    icon: "warning",
-  });
-}
-
-/** The paragraph style applied at the caret, or "" when none — the target of
- *  "Update to match selection" and the base for a new style. */
-function currentParagraphStyleName() {
-  if (!doc || !selection) return "";
-  try {
-    return doc.paragraphStyleAt(selection.focus.node) || "";
-  } catch {
-    return "";
-  }
-}
-
-/** Redefines paragraph style `name` to match the selection (Word's "Update
- *  <Style> to Match Selection"). Every paragraph using it reflows. */
-async function updateStyleFromSelection(name) {
-  if (!doc || !name) return;
-  await runToolbarEdit((a, b, c, d) => doc.updateStyleFromSelection(a, b, c, d, name));
-  populateStyles();
-  updateToolbar();
-  setStatus(`Updated “${styleDisplayName(name)}” to match the selection`);
-}
-
-/** Creates a new paragraph style from the selection and applies it (Word's
- *  "Create a Style"). Prompts for the name; refuses duplicates via the engine. */
-async function createStyleFromSelection() {
-  if (!doc || !selection) return;
-  const name = await promptStyleName();
-  if (!name) return;
-  const exists = doc.listStyles().some((s) => s.toLowerCase() === name.toLowerCase());
-  if (exists) {
-    setStatus(`A style named “${name}” already exists`, "error");
-    return;
-  }
-  await runToolbarEdit((a, b, c, d) => doc.createStyleFromSelection(a, b, c, d, name));
-  populateStyles();
-  updateToolbar();
-  setStatus(`Created style “${name}”`);
-}
-
-// --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
-const ribbonBodyEl = document.querySelector(".ribbon-body");
-const ribbonOverflowBtn = document.getElementById("ribbonOverflowBtn");
-const ribbonOverflowMenu = document.getElementById("ribbonOverflowMenu");
-// Canonical group order per panel, captured before any group is relocated.
-const ribbonPanelGroups = new Map(
-  ribbonPanels.map((p) => [p, [...p.querySelectorAll(":scope > .rgroup")]]),
-);
-
-function closeRibbonOverflow({ restoreFocus = false } = {}) {
-  if (!ribbonOverflowMenu) return;
-  ribbonOverflowMenu.hidden = true;
-  ribbonOverflowBtn?.setAttribute("aria-expanded", "false");
-  if (restoreFocus) ribbonOverflowBtn?.focus();
-}
-
-/** Reflows the active ribbon panel: groups that don't fit move into the "⋯"
- *  overflow menu so the ribbon never shows a horizontal scrollbar. */
-function updateRibbonOverflow() {
-  if (!ribbonBodyEl || !ribbonOverflowBtn || !ribbonOverflowMenu) return;
-  closeRibbonOverflow();
-  // Restore every group to its home panel in canonical order before measuring.
-  for (const [panel, groups] of ribbonPanelGroups) {
-    for (const group of groups) panel.appendChild(group);
-  }
-  ribbonOverflowMenu.replaceChildren();
-  ribbonOverflowBtn.hidden = true;
-  const active = ribbonPanels.find((p) => !p.hidden);
-  if (!active) return;
-  const groups = ribbonPanelGroups.get(active) || [];
-  const style = getComputedStyle(active);
-  const avail =
-    active.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  // An unmeasurable band is not a narrow band. If the panel is display:none or
-  // zero-width (mode switch mid-flight, ribbon collapsed, first paint), every
-  // unpinned group would "not fit" and be exiled to the overflow menu on no
-  // evidence at all. Leave the inline composition alone and wait to be called
-  // again once there is a width to measure against.
-  if (!(avail > 0)) return;
-  const widths = new Map(groups.map((group) => [group, group.offsetWidth]));
-  const total = groups.reduce((sum, group) => sum + widths.get(group), 0);
-  if (total <= avail + 0.5) return; // everything fits — no overflow control
-  // Reserve room for the ⋯ button. Clipboard, Editing, and Mode are persistent
-  // anchors; relocate the other groups from right to left until the inline set
-  // fits. Mode can fall back to the footer at very small widths.
-  const moved = groupsToOverflow({
-    groups,
-    widthOf: (group) => widths.get(group),
-    avail,
-    reserve: 44,
-    isPinned: (group) => group.hasAttribute("data-ribbon-pinned"),
-    isLastResort: (group) => group.dataset.group === "clipboard",
-  });
-  for (const group of groups) if (moved.includes(group)) ribbonOverflowMenu.appendChild(group);
-  ribbonOverflowBtn.hidden = false;
-}
-
-let ribbonOverflowFrame = 0;
-function scheduleRibbonOverflow() {
-  cancelAnimationFrame(ribbonOverflowFrame);
-  ribbonOverflowFrame = requestAnimationFrame(() => {
-    updateRibbonOverflow();
-    syncRibbonTabStops();
-  });
-}
-
-if (ribbonOverflowBtn && ribbonOverflowMenu) {
-  // The menu is fixed-positioned and lives on <body> so the ribbon's
-  // `overflow:hidden` never clips the dropdown.
-  document.body.appendChild(ribbonOverflowMenu);
-  const positionOverflowMenu = () => {
-    const rect = ribbonOverflowBtn.getBoundingClientRect();
-    const mw = ribbonOverflowMenu.offsetWidth;
-    const left = Math.max(6, Math.min(rect.right - mw, window.innerWidth - mw - 6));
-    const top = Math.round(rect.bottom + 4);
-    ribbonOverflowMenu.style.left = `${Math.round(left)}px`;
-    ribbonOverflowMenu.style.top = `${top}px`;
-    ribbonOverflowMenu.style.maxHeight = `${Math.max(120, window.innerHeight - top - 6)}px`;
-  };
-  ribbonOverflowBtn.addEventListener("click", () => {
-    const open = ribbonOverflowMenu.hidden;
-    ribbonOverflowMenu.hidden = !open;
-    ribbonOverflowBtn.setAttribute("aria-expanded", String(open));
-    if (open) {
-      positionOverflowMenu();
-      requestAnimationFrame(() => {
-        ribbonOverflowMenu.querySelector(
-          'button:not(:disabled), select:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
-        )?.focus();
-      });
-    }
-  });
-  document.addEventListener("pointerdown", (e) => {
-    if (ribbonOverflowMenu.hidden) return;
-    if (e.target.closest("#ribbonOverflowMenu, #ribbonOverflowBtn")) return;
-    closeRibbonOverflow();
-  });
-  ribbonOverflowMenu.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    event.stopPropagation();
-    closeRibbonOverflow({ restoreFocus: true });
-  });
-  if (typeof ResizeObserver === "function" && ribbonBodyEl) {
-    new ResizeObserver(scheduleRibbonOverflow).observe(ribbonBodyEl);
-  } else {
-    window.addEventListener("resize", scheduleRibbonOverflow);
-  }
-  // The band is measured in whatever face is available at first paint. Until
-  // Inter arrives that is a fallback with wider metrics, so the groups measure
-  // wider than they will ever actually be drawn — enough, on a 1280px Home
-  // band with about 55px of slack, to exile Styles to the overflow menu. The
-  // ResizeObserver above cannot save us: `.ribbon-body` stays exactly as wide
-  // as the viewport, so swapping the face resizes the GROUPS without ever
-  // resizing the observed element, and the wrong decision stood permanently.
-  // Re-decide when the real metrics are in.
-  if (document.fonts?.ready) document.fonts.ready.then(scheduleRibbonOverflow).catch(() => {});
-}
-
+const {
+  buildStylesGallery, confirmDiscardIfEdited, confirmModal, copyBtn, createStyleFromSelection,
+  currentParagraphStyleName, cutBtn, pasteBtn, reflectParagraphStyle, renderStylesGallery,
+  replaceBtn, ribbonBodyEl, ribbonOverflowBtn, ribbonOverflowMenu, scheduleRibbonOverflow,
+  setRibbonCollapsed, stylesMenu, stylesMenuInput, stylesTrigger, syncStylesGalleryActive,
+  updateRibbonOverflow, updateStyleFromSelection,
+} = createRibbon(ed);
 // --- Ribbon keyboard navigation (WAI-ARIA toolbar pattern) -------------------
 // The band is ONE Tab stop; Left/Right/Home/End move between its controls. It
 // used to be roughly forty-five stops on Home alone, so anyone driving the
@@ -1812,1002 +1479,14 @@ const REVIEW_TEXTLESS_KINDS = new Set([
  *  lines" bar — because the change applies to the paragraph, not to a span of
  *  its text. Returns flat `[page, x, y, w, h]` rects in twips, like the engine's
  *  own rect calls. */
-function paragraphRevisionRects(revision) {
-  const { node, start, end } = revision.anchor ?? {};
-  if (!node) return [];
-  const caret = () => doc.caretRect(node, Number(end) || 0);
-  if (revision.kind !== "paragraph_format") {
-    const at = caret();
-    if (at.length < 5) return [];
-    // A glyph-wide box starting at the caret, so the pilcrow has room to show.
-    return [at[0], at[1], at[2], Math.max(at[4] * 0.6, 120), at[4]];
-  }
-  const lines = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
-  const pagesSeen = new Map();
-  const include = (page, x, y, h) => {
-    const box = pagesSeen.get(page) ?? { left: x, top: y, bottom: y + h };
-    box.left = Math.min(box.left, x);
-    box.top = Math.min(box.top, y);
-    box.bottom = Math.max(box.bottom, y + h);
-    pagesSeen.set(page, box);
-  };
-  for (let i = 0; i + 4 < lines.length; i += 5) include(lines[i], lines[i + 1], lines[i + 2], lines[i + 4]);
-  if (!pagesSeen.size) {
-    // An empty paragraph selects nothing; its caret still has a line box.
-    const at = caret();
-    if (at.length >= 5) include(at[0], at[1], at[2], at[4]);
-  }
-  // The bar belongs in the page margin, beside the text column, wherever the
-  // paragraph's own text happens to sit. Anchoring it to the text's left edge put
-  // it mid-page for any centred or right-aligned paragraph — the very paragraphs a
-  // formatting change most often touches. The margin is the paragraph's own
-  // section's, because a document can change margins between sections.
-  const BAR_OFFSET = 200; // twips out from the text column
-  const BAR_WIDTH = 40;
-  const columnStart = paragraphColumnStart(node);
-  const flat = [];
-  for (const [page, box] of pagesSeen) {
-    const edge = Number.isFinite(columnStart) ? columnStart : box.left;
-    flat.push(page, Math.max(edge - BAR_OFFSET, 0), box.top, BAR_WIDTH, box.bottom - box.top);
-  }
-  return flat;
-}
-
 // Per-paint memo for `paragraphColumnStart`: `pageSetupSections` walks every
 // paragraph, and a heavily reviewed document can carry a formatting change on
 // most of them. Reset at the start of each marker paint.
 let reviewColumnStartMemo = new Map();
-
-/** The text column's start edge (twips from the page edge) for the section that
- *  owns `node`, or NaN when the engine cannot say. */
-function paragraphColumnStart(node) {
-  if (reviewColumnStartMemo.has(node)) return reviewColumnStartMemo.get(node);
-  let start = Number.NaN;
-  try {
-    const raw = doc.pageSetupSections(node);
-    const list = raw === "null" ? null : JSON.parse(raw);
-    const section = list?.sections?.find((item) => item.section === list.current) ?? list?.sections?.[0];
-    start = Number(section?.pageMargins?.startTwips);
-  } catch {
-    start = Number.NaN;
-  }
-  reviewColumnStartMemo.set(node, start);
-  return start;
-}
-
-// Enable the three-state mode control (Editing / Suggesting / Viewing) once a
-// document is loaded (its per-button pressed state is owned by setReviewMode),
-// and reflect the review-sidebar workflow controls' availability: Next/Previous
-// and Accept-all/Reject-all need at least one tracked change, and bulk decisions
-// are hidden in read-only Viewing mode (REVIEW-GAP-018).
-function updateReviewControls() {
-  // A document the engine will not let anyone edit cannot offer Editing or
-  // Suggesting: the buttons are disabled WITH the reason, not left live. And the
-  // banner's "Switch to editing" is withdrawn rather than disabled — an offer
-  // that can never be taken is a dead control. Ahead of the `doc` guard: a
-  // container's grant is knowable with no document open.
-  reflectReviewModeAccess({
-    buttons: reviewModeButtons,
-    bannerEdit: viewingBannerEdit,
-    capabilities: HOST_CAPS,
-    readOnlyReason,
-    withheldReason: t("capability.embedded"),
-    participant: SESSION.modeAuthority,
-  });
-  if (!doc) return;
-  let count = 0;
-  try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
-  if (reviewPrevious) reviewPrevious.disabled = count === 0;
-  if (reviewNext) reviewNext.disabled = count === 0;
-  const canDecide = count > 0 && reviewMode !== "viewing";
-  if (reviewAcceptAll) reviewAcceptAll.disabled = !canDecide;
-  if (reviewRejectAll) reviewRejectAll.disabled = !canDecide;
-  if (reviewBulkActions) reviewBulkActions.hidden = reviewMode === "viewing";
-}
-
-/** The three review modes (docs/68 §"Suggesting mode"): `editing` applies
- *  edits directly, `suggesting` records them as tracked revisions, and
- *  `viewing` is fully read-only — no Operation reaches apply. Any unrecognized
- *  value falls back to `editing`. */
-function setReviewMode(mode, { restoreFocus = true } = {}) {
-  const previous = reviewMode;
-  // A read-only document has one mode. Asked for another — by a shortcut, the
-  // palette, or a stale click — it stays where it is and says why.
-  if (readOnlyReason && mode !== "viewing") {
-    setStatus(readOnlyReason, "error");
-    mode = "viewing";
-  }
-  reviewMode =
-    mode === "suggesting" ? "suggesting" : mode === "viewing" ? "viewing" : "editing";
-  // The banners announce a MODE, so they show only where a mode can change: in a
-  // container granted neither `edit` nor `comment` the mode IS the container, and
-  // composition is silent (`docs/126`).
-  reflectReviewBanners(containerCanEdit ? reviewMode : "", readOnlyReason);
-  // The banner's "Switch to editing" offer is `updateReviewControls`'s, below,
-  // so the segments and the banner cannot disagree about whether editing is possible.
-  reflectChrome(); // every edge — `readOnlyReason`, a preview's two, and the MODE
-  for (const button of reviewModeButtons) {
-    button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
-  }
-  // Announce a genuine user mode change (not the load-time reset to Editing).
-  if (reviewMode !== previous) {
-    announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
-    disarmFormatPainter(); // a mode change disarms the painter (its apply path may differ)
-  }
-  // Entering Suggesting auto-enables the markup view so a reviewer immediately
-  // sees struck deletions + author-colored insertions (Word/Docs behavior, Q1).
-  // Leaving Suggesting keeps whatever the reader last chose — the toggle stays
-  // manual in Editing/Viewing. `setShowingChanges` is idempotent and re-renders
-  // only on a real change, so this is a no-op when markup is already shown.
-  if (reviewMode === "suggesting" && !showingChanges) {
-    void setShowingChanges(true);
-  }
-  reviewTracking.apply({ doc, mode: reviewMode, byUser: restoreFocus && !hostSession?.executing, caret: selection?.focus, runEdit }); // HF-131; HF-283: a host's switch is not the reader's
-  updateReviewControls();
-  drawSelection();
-  // Toolbar controls must not retain focus after changing mode: clipboard,
-  // typing, and deletion events are deliberately accepted only while the
-  // canvas editor owns focus. `restoreFocus: false` is for callers where the mode
-  // change is not the user's gesture at all — opening a document, a demo preset,
-  // entering and leaving a version preview — because those arrive while the user
-  // is working somewhere else (the version TIMELINE above all, which is how a
-  // preview is left again); moving focus out from under them there is not a
-  // safety measure, it is losing their place.
-  if (restoreFocus) focusEditorSurface();
-}
-
-function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
-  let rects = doc?.selectionRects(startNode, startOffset, endNode, endOffset) ?? [];
-  if (rects.length < 5 && startNode === endNode && startOffset === endOffset) {
-    rects = doc?.caretRect(startNode, startOffset) ?? [];
-  }
-  if (rects.length < 5) return null;
-  const [pageNumber, x, y, width, height] = rects;
-  const page = pages[pageNumber - 1];
-  if (!page) return null;
-  const { rect: canvasRect, sx, sy } = scaleOf(page);
-  return {
-    pageNumber,
-    left: canvasRect.left + x * sx,
-    right: canvasRect.left + (x + width) * sx,
-    top: canvasRect.top + y * sy,
-    bottom: canvasRect.top + (y + height) * sy,
-    pageRight: canvasRect.right,
-  };
-}
-
-function revisionRange(revision) {
-  if (revision?.anchor?.node) {
-    return {
-      startNode: revision.anchor.node,
-      startOffset: Number(revision.anchor.start) || 0,
-      endNode: revision.anchor.node,
-      endOffset: Number(revision.anchor.end) || Number(revision.anchor.start) || 0,
-    };
-  }
-  const text = String(revision?.text || "");
-  if (!doc || !text) return null;
-  const first = doc.firstPosition();
-  const match = doc.findText(text, first.node, first.offset, true, false);
-  first.free();
-  if (!match.found) { match.free(); return null; }
-  const range = {
-    startNode: match.startNode,
-    startOffset: match.startOffset,
-    endNode: match.endNode,
-    endOffset: match.endOffset,
-  };
-  match.free();
-  return range;
-}
-
-/** The right-margin comment affordance (`review_chrome.mjs`). Placed against the
- *  caret's line — or a selection's FIRST line, endpoints put in document order
- *  so a backwards drag still anchors where the selection starts. A collapsed
- *  selection falls through to `caretRect`, which is what keeps the button on the
- *  page while nothing is selected: dimmed, since `review.comment` needs a
- *  range. */
-const commentAffordance = createCommentAffordance({
-  button: reviewMarginCommentBtn,
-  viewport: viewportEl,
-  rect: () => {
-    if (!doc || !selection) return null;
-    const [start, end] = orderedSelectionEnds(selection, doc);
-    return reviewRangeClientRect(start.node, start.offset, end.node, end.offset);
-  },
-});
-
-function scheduleReviewMarginRender() {
-  if (reviewMarginFrame) return;
-  reviewMarginFrame = requestAnimationFrame(() => {
-    reviewMarginFrame = 0;
-    renderReviewMarginItems();
-  });
-}
-
-/** The in-place editor for `comment` when it is the one being edited (RC-11), else `null`. */
-function commentEditorFor(comment, kind) {
-  const draft = commentEdit.draftFor(comment.id);
-  if (draft === null) return null;
-  const done = () => { commentEdit.end(); scheduleReviewMarginRender(); focusEditorSurface(); };
-  const editor = commentEditor({ text: draft, kind, t, onInput: (text) => commentEdit.update(comment.id, text), onCancel: done,
-    onSave: async (text) => {
-      await runEdit(() => doc.updateComment(comment.id, text), { keepView: true });
-      announceReview(t(kind === "reply" ? "reviewCard.replyUpdated" : "reviewCard.commentUpdated"));
-      done();
-    } });
-  requestAnimationFrame(() => { if (editor.root.isConnected && document.activeElement !== editor.field) editor.focus(); });
-  return editor.root;
-}
-function renderReviewMarginItems() {
-  reviewSidebarBody.replaceChildren();
-  if (!doc || !pages.length) {
-    reviewSidebar.hidden = true;
-    commentAffordance.sync(false);
-    viewportEl.classList.remove("has-review-sidebar");
-    reviewLayout = [];
-    reviewCardCache.clear();
-    return;
-  }
-  const summary = readReviewData(doc);
-  const items = [];
-  const comments = summary.comments ?? [];
-  updateReviewControls();
-  for (const comment of comments) {
-    if (!comment.anchor?.node) continue;
-    // Open / Resolved / All comment filter (REVIEW-GAP-018/019). A reply always
-    // follows its root's visibility so a thread is never half-shown: match on the
-    // root comment's resolved state when this is a reply.
-    if (reviewFilter !== "all") {
-      const root = comment.parentParaId
-        ? comments.find((c) => c.paraId === comment.parentParaId) ?? comment
-        : comment;
-      const resolved = !!root.resolved;
-      if (reviewFilter === "resolved" ? !resolved : resolved) continue;
-    }
-    const rect = reviewRangeClientRect(comment.anchor.node, Number(comment.anchor.start) || 0, comment.anchor.node, Number(comment.anchor.end) || 0);
-    if (rect) items.push({ type: "comment", data: comment, rect, quote: commentQuotes.read(doc, comment) });
-  }
-  const revisionItems = [];
-  const groupedRevisions = new Map();
-  const groupedMoves = new Map();
-  for (const revision of summary.revisions ?? []) {
-    if (revision.movePair?.fromStart && revision.movePair?.toStart) {
-      const moveKey = `${revision.movePair.fromStart}:${revision.movePair.toStart}`;
-      const group = groupedMoves.get(moveKey) ?? [];
-      group.push(revision);
-      groupedMoves.set(moveKey, group);
-      continue;
-    }
-    const groupId = String(revision.groupId || "");
-    const groupKind = String(revision.groupKind || "");
-    if (groupId && ["typing", "replacement", "formatting"].includes(groupKind)) {
-      const group = groupedRevisions.get(groupId) ?? [];
-      group.push(revision);
-      groupedRevisions.set(groupId, group);
-    } else {
-      revisionItems.push(revision);
-    }
-  }
-  for (const [groupId, revisions] of groupedRevisions) {
-    const ranges = revisions.map(revisionRange).filter(Boolean);
-    const node = ranges[0]?.startNode;
-    if (!node || ranges.some((range) => range.startNode !== node || range.endNode !== node)) {
-      revisionItems.push(...revisions);
-      continue;
-    }
-    const deletions = revisions.filter((revision) => revision.kind === "deletion");
-    const insertions = revisions.filter((revision) => revision.kind === "insertion");
-    const formatting = revisions.filter((revision) => revision.kind === "formatting");
-    const groupKind = String(revisions[0]?.groupKind || "");
-    const kind = groupKind === "formatting"
-      ? "formatting"
-      : groupKind === "replacement" || deletions.length > 0
-        ? "replacement"
-        : "insertion";
-    revisionItems.push({
-      id: groupId,
-      groupId,
-      kind,
-      author: revisions.find((revision) => revision.author)?.author,
-      date: revisions.find((revision) => revision.date)?.date,
-      text: (kind === "formatting" ? formatting : kind === "insertion" ? insertions : deletions)
-        .map((revision) => String(revision.text || "")).join(""),
-      oldText: deletions.map((revision) => String(revision.text || "")).join(""),
-      newText: insertions.map((revision) => String(revision.text || "")).join(""),
-      formattingDelta: formatting.flatMap((revision) =>
-        Array.isArray(revision.formattingDelta) ? revision.formattingDelta : []),
-      anchor: {
-        node,
-        start: Math.min(...ranges.map((range) => range.startOffset)),
-        end: Math.max(...ranges.map((range) => range.endOffset)),
-      },
-      revisions,
-    });
-  }
-  for (const [moveKey, revisions] of groupedMoves) {
-    const source = revisions.filter((revision) => revision.kind === "move_from");
-    const destination = revisions.filter((revision) => revision.kind === "move_to");
-    const ranges = revisions.map(revisionRange).filter(Boolean);
-    if (!source.length || !destination.length || ranges.length !== revisions.length) {
-      revisionItems.push(...revisions);
-      continue;
-    }
-    const movePair = revisions[0].movePair;
-    revisionItems.push({
-      id: `move:${moveKey}`,
-      kind: "move",
-      author: revisions.find((revision) => revision.author)?.author,
-      date: revisions.find((revision) => revision.date)?.date,
-      text: destination.map((revision) => String(revision.text || "")).join(""),
-      oldText: source.map((revision) => String(revision.text || "")).join(""),
-      newText: destination.map((revision) => String(revision.text || "")).join(""),
-      anchor: source[0].anchor,
-      destinationAnchor: destination[0].anchor,
-      movePair,
-      ranges,
-      revisions,
-    });
-  }
-  // Tracked changes are not "resolved" — the Resolved filter is comment-only, so
-  // it hides revisions; Open and All show them (REVIEW-GAP-018/019).
-  for (const revision of reviewFilter === "resolved" ? [] : revisionItems) {
-    const ranges = revision.ranges ?? [revisionRange(revision)].filter(Boolean);
-    const positioned = ranges
-      .map((range) => ({
-        range,
-        rect: reviewRangeClientRect(
-          range.startNode,
-          range.startOffset,
-          range.endNode,
-          range.endOffset,
-        ),
-      }))
-      .filter((item) => item.rect)
-      .sort((a, b) => a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top);
-    if (positioned.length) {
-      items.push({
-        type: "revision",
-        data: revision,
-        range: positioned[0].range,
-        rect: positioned[0].rect,
-        ranges: positioned.map((item) => item.range),
-      });
-    }
-  }
-  if (reviewComposerState?.range) {
-    const { start, end } = reviewComposerState.range;
-    const rect = reviewRangeClientRect(start.node, start.offset, end.node, end.offset);
-    if (rect) items.push({ type: "composer", data: reviewComposerState, rect });
-  }
-  items.sort((a, b) => a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top);
-
-  // Suggesting mode reserves the column whether or not a change exists yet.
-  // Keying off `items.length` meant the gutter appeared with the FIRST tracked
-  // change, so the whole page slid 85px sideways the moment a reviewer began
-  // editing — and slid back on Undo. Everything the user was aiming at moved
-  // under the pointer, which is the worst possible moment for the page to jump.
-  const show = reviewSidebarPreference ?? (items.length > 0 || reviewMode === "suggesting");
-  reviewSidebar.hidden = !show;
-  // Mutually exclusive with the outline panel (see toggleOutline): whenever the
-  // review sidebar is shown the outline closes, so the canvas is only ever
-  // inset from one side at a time.
-  if (show) closeFlankingPanel(outlinePanel, railOutline);
-  if (show) closeFlankingPanel(pagesPanel, railPages);
-  // Reserve the comment column's width in the page stack only while the column
-  // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
-  // sits past the comments (never between the canvas and the comments).
-  viewportEl.classList.toggle("has-review-sidebar", show);
-  // HF-088: below `REVIEW_SHEET_MAX_WIDTH` there is no margin to put a column
-  // in — a 320px column over a 390px window leaves the document about 70px and
-  // covers the text it annotates. The column becomes a bottom sheet instead:
-  // the page keeps its full width and the top half of the screen, and the
-  // comments are a scrollable, dismissable list.
-  const sheet = show && reviewSheetMode();
-  viewportEl.classList.toggle("review-sheet", sheet);
-  // The margin's affordance belongs to the margin's EMPTY state: shown exactly
-  // when the column is not. Deliberately NOT also gated on `reviewSheetMode()`
-  // — at the sheet's widths the page is already wider than the window, so
-  // `commentAffordanceSpot` refuses on the geometry first. See its note.
-  // …and only where this container annotates at all: the margin button is
-  // `review.comment`'s second face, and a preview is a picture of a document
-  // rather than a place to say something about one.
-  commentAffordance.sync(!show && HOST_CAPS.has("comment"), bandOffset);
-  reviewBtn.setAttribute("aria-pressed", String(show));
-  railReview.setAttribute("aria-pressed", String(show));
-  if (!show) {
-    reviewLayout = [];
-    return;
-  }
-
-  // The comment layer rides inside `.viewport`'s single scroll context; its body
-  // spans the page-stack height so the transparent margin remains click-to-
-  // deselect and cards are never clipped. No scrollTop sync: one scroll owner.
-  const viewportRect = viewportEl.getBoundingClientRect();
-  reviewSidebarBody.style.height = `${Math.max(pagesEl.scrollHeight, viewportEl.clientHeight)}px`;
-  // Cancel the sticky header's flow height so cards stay pixel-aligned to their
-  // canvas anchors (the header floats above via `position: sticky`). In the
-  // sheet there are no canvas anchors to align to and the header is the sheet's
-  // own title bar, so that offset would hide the first card behind it.
-  if (reviewSidebarHeader) {
-    reviewSidebarBody.style.marginTop = sheet
-      ? "0px"
-      : `-${reviewSidebarHeader.offsetHeight}px`;
-  }
-
-  if (!items.length) {
-    // The sheet is only as tall as its content; the page-height reservation
-    // above is a margin-column idea and would leave the sheet scrolling over
-    // an empty area taller than the phone.
-    if (sheet) reviewSidebarBody.style.height = "auto";
-    const empty = document.createElement("div");
-    empty.className = "review-sidebar-empty";
-    empty.innerHTML = '<span class="ms" aria-hidden="true">chat_bubble_outline</span><br>No comments or suggestions yet.<br>Select text and choose Add comment.';
-    reviewSidebarBody.appendChild(empty);
-    reviewLayout = [];
-    reviewCardCache.clear();
-    return;
-  }
-
-  // Build (or reuse) each item's card, but do not mount them all: compute every
-  // card's stacked document-scroll position once here, then mount only the
-  // viewport window (`mountReviewWindow`). A collapsed card whose content
-  // signature is unchanged is reused from `reviewCardCache` without rebuilding
-  // or re-measuring; the active/expanded card and the composer always rebuild so
-  // their live controls stay fresh (REVIEW-GAP-020).
-  const built = [];
-  reviewAnchorIndex = [];
-  for (const item of items) {
-    const itemId = item.type === "composer" ? "composer" : `${item.type}:${item.data.id}`;
-    const anchor = item.data?.anchor;
-    if (item.type !== "composer" && anchor?.node) {
-      reviewAnchorIndex.push({
-        itemId,
-        type: item.type,
-        dataId: item.data.id,
-        node: anchor.node,
-        start: Number(anchor.start) || 0,
-        end: Number(anchor.end) || Number(anchor.start) || 0,
-      });
-    }
-    const expanded = activeReviewItemId === itemId;
-    const sig = reviewCardSignature(item, comments, {
-      activeItemId: activeReviewItemId,
-      deleteConfirmId: reviewDeleteConfirmId,
-      editingId: commentEdit.id(),
-    });
-    let entry = reviewCardCache.get(itemId);
-    if (entry && entry.sig === sig && item.type !== "composer" && !expanded) {
-      built.push({ itemId, item, entry });
-      continue;
-    }
-    if (item.type === "composer") {
-      const composer = document.createElement("article");
-      composer.className = "review-margin-card review-margin-composer expanded";
-      composer.setAttribute("role", "group");
-      // Through the catalogue: the ribbon's own Add comment button already has
-      // this sentence translated into all eighteen languages, and a second,
-      // English-only spelling of one name is how two surfaces start to disagree.
-      composer.setAttribute("aria-label", t("panelReview.addComment.label"));
-      const textarea = document.createElement("textarea");
-      textarea.rows = 3;
-      textarea.maxLength = 4096;
-      textarea.placeholder = "Add a comment…";
-      textarea.dataset.testid = "review-comment-composer";
-      const actions = document.createElement("div");
-      actions.className = "review-composer-actions";
-      const cancel = reviewCardButton("Cancel", () => { closeReviewPopover(); focusEditorSurface(); });
-      cancel.dataset.testid = "review-comment-cancel";
-      const submit = reviewCardButton("Comment", async () => {
-        const text = textarea.value.trim();
-        if (!text || !reviewComposerState?.range) return;
-        const { start, end } = reviewComposerState.range;
-        const metadata = currentReviewTimestamp();
-        await runEdit(() => doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date), { keepView: true });
-        reviewComposerState = null;
-        reviewSidebarPreference = true;
-        announceReview("Comment added");
-        drawSelection();
-        focusEditorSurface();
-      }, false, "Add comment");
-      submit.dataset.testid = "review-comment-submit";
-      // Enter submits, Shift+Enter is a newline, Esc cancels — the modern
-      // Docs/Word comment interaction, identical to the reply composer (Q5).
-      attachComposerKeys(textarea, {
-        onSubmit: () => submit.click(),
-        onCancel: () => cancel.click(),
-      });
-      autoGrowTextarea(textarea);
-      actions.append(cancel, submit);
-      composer.append(textarea, actions);
-      entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: true };
-      reviewCardCache.set(itemId, entry);
-      built.push({ itemId, item, entry });
-      continue;
-    }
-
-    const card = document.createElement("article");
-    const revisionKind = item.type === "revision" ? ` review-margin-${String(item.data.kind || "change").replaceAll("_", "-")}` : "";
-    card.className = `review-margin-card review-margin-${item.type}${revisionKind}${item.data.resolved ? " resolved" : ""}${expanded ? " expanded" : ""}`;
-    card.tabIndex = 0;
-    card.dataset.reviewItemId = itemId;
-    card.setAttribute("aria-expanded", String(expanded));
-    // A labelled, expandable group so a screen reader announces what the card is
-    // (who, what kind, a text snippet) and its expanded/collapsed state, instead
-    // of a nameless generic article (REVIEW-GAP-023). `group` (not `button`)
-    // because an expanded card contains real action buttons.
-    card.setAttribute("role", "group");
-    card.setAttribute("aria-label", reviewCardAriaLabel(item));
-    const header = document.createElement("div");
-    header.className = "review-margin-card-head";
-    const avatar = document.createElement("span");
-    avatar.className = "review-margin-avatar";
-    const authorName = item.data.author || item.data.initials || "You";
-    avatar.textContent = authorName.trim().slice(0, 1).toUpperCase() || "U";
-    // Per-author color (docs/81 REVIEW-GAP-015): the avatar chip is filled with
-    // the author's stable palette color so the same reviewer is recognizable
-    // across their comments and tracked changes, matching the inline markers.
-    const authorColor = reviewAuthorColor(reviewAuthorKey(item.data));
-    avatar.style.setProperty("--review-author-color", authorColor);
-    // Attribution tooltip on the whole card: author · type · date for a tracked
-    // change, author · state · date for a comment (reuses the native `title`
-    // tooltip pattern used across the editor's chrome).
-    card.title = item.type === "revision"
-      ? reviewRevisionTooltip(item.data)
-      : reviewCommentTooltip(item.data);
-    const title = document.createElement("div");
-    title.className = "review-margin-title";
-    const author = document.createElement("strong");
-    author.textContent = authorName;
-    const meta = document.createElement("small");
-    meta.textContent = item.type === "revision"
-      ? formatReviewDate(item.data.date)
-      : `${item.data.resolved ? "Resolved · " : ""}${formatReviewDate(item.data.date)}`;
-    title.append(author, meta);
-    header.append(avatar, title);
-    if (expanded && item.type === "comment") {
-      header.append(
-        reviewIconButton(item.data.resolved ? "undo" : "check", item.data.resolved ? "Reopen comment" : "Resolve comment", async () => {
-          const resolving = !item.data.resolved;
-          await runEdit(() => doc.setCommentResolved(item.data.id, resolving), { keepView: true });
-          announceReview(resolving ? "Comment resolved" : "Comment reopened");
-          if (resolving) {
-            activeReviewItemId = null;
-            activeReviewCommentId = null;
-            reviewDeleteConfirmId = null;
-            if (item.data.anchor?.node) {
-              const end = Number(item.data.anchor.end) || Number(item.data.anchor.start) || 0;
-              selection = {
-                anchor: { node: item.data.anchor.node, offset: end },
-                focus: { node: item.data.anchor.node, offset: end },
-              };
-            }
-          }
-          drawSelection();
-          focusEditorSurface();
-        }),
-        ...(item.data.resolved ? [] : [commentEditButton(t, () => {
-          commentEdit.begin(item.data.id, item.data.text);
-          scheduleReviewMarginRender();
-        })]),
-        reviewIconButton("more_vert", "More options", () => {
-          reviewDeleteConfirmId = reviewDeleteConfirmId === item.data.id ? null : item.data.id;
-          scheduleReviewMarginRender();
-        }),
-      );
-    }
-    const body = document.createElement("p");
-    body.className = "review-margin-body";
-    if (item.type === "revision") {
-      if (item.data.kind === "replacement") {
-        body.textContent = `Replaced “${item.data.oldText}” with “${item.data.newText}”`;
-      } else if (item.data.kind === "formatting") {
-        const target = item.data.text || item.data.newText || item.data.oldText;
-        const details = reviewFormattingDescription(item.data.formattingDelta);
-        body.textContent = `Changed formatting for “${target}”${details ? `\n${details}` : ""}`;
-      } else if (item.data.kind === "move") {
-        body.textContent = `Moved “${item.data.newText || item.data.oldText}”`;
-      } else if (item.data.kind === "paragraph_format") {
-        const details = reviewFormattingDescription(item.data.formattingDelta);
-        body.textContent = `Formatted paragraph${details ? `\n${details}` : ""}`;
-      } else if (item.data.kind === "paragraph_mark_insertion") {
-        body.textContent = "Added a paragraph break";
-      } else if (item.data.kind === "paragraph_mark_deletion") {
-        // Say what accepting will do: the break goes and the paragraph joins the
-        // next one, which is not obvious from "deleted" alone.
-        body.textContent = "Deleted a paragraph break — accepting joins this paragraph to the next";
-      } else {
-        const verb = item.data.kind === "deletion"
-          ? "Deleted"
-          : item.data.kind === "insertion"
-            ? "Added"
-            : item.data.kind === "move_from"
-              ? "Unpaired move source"
-              : item.data.kind === "move_to"
-                ? "Unpaired move destination"
-                : "Changed";
-        body.textContent = `${verb} “${String(item.data.text || "")}”`;
-      }
-    } else {
-      body.textContent = String(item.data.text || "");
-    }
-    const quote = item.type === "comment" ? commentQuoteElement(item.quote, t) : null;
-    const bodyOrEditor = item.type === "comment" && expanded ? commentEditorFor(item.data, "comment") ?? body : body;
-    const actions = document.createElement("div");
-    actions.className = "review-margin-card-actions";
-    if (item.type === "comment") {
-      if (reviewDeleteConfirmId === item.data.id) {
-        const prompt = document.createElement("span");
-        prompt.textContent = "Delete this thread?";
-        actions.append(
-          prompt,
-          reviewCardButton("Delete", async () => {
-            reviewDeleteConfirmId = null;
-            activeReviewItemId = null;
-            await runEdit(() => doc.deleteComment(item.data.id), { keepView: true });
-            drawSelection();
-            focusEditorSurface();
-          }, true),
-          reviewCardButton("Cancel", () => {
-            reviewDeleteConfirmId = null;
-            scheduleReviewMarginRender();
-          }),
-        );
-      }
-    } else if (!["move_from", "move_to"].includes(item.data.kind) || item.data.movePair) {
-      const changeLabel = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
-      actions.append(
-        reviewCardButton("Accept", async () => {
-          await runEdit(() => item.data.movePair
-            ? doc.decideMovePair(
-              item.data.movePair.fromStart,
-              item.data.movePair.toStart,
-              true,
-            )
-            : item.data.groupId
-              ? doc.decideRevisionGroup(item.data.groupId, true)
-              : doc.decideRevision(item.data.id, true));
-          announceReview(`Accepted ${changeLabel}`);
-          drawSelection();
-          focusEditorSurface();
-        }, false, `Accept this ${changeLabel}`),
-        reviewCardButton("Reject", async () => {
-          await runEdit(() => item.data.movePair
-            ? doc.decideMovePair(
-              item.data.movePair.fromStart,
-              item.data.movePair.toStart,
-              false,
-            )
-            : item.data.groupId
-              ? doc.decideRevisionGroup(item.data.groupId, false)
-              : doc.decideRevision(item.data.id, false));
-          announceReview(`Rejected ${changeLabel}`);
-          drawSelection();
-          focusEditorSurface();
-        }, true, `Reject this ${changeLabel}`),
-      );
-    }
-    const focus = () => {
-      const expanding = activeReviewItemId !== itemId;
-      activeReviewItemId = expanding ? itemId : null;
-      reviewDeleteConfirmId = null;
-      if (item.type === "comment") {
-        if (expanding) {
-          focusReviewComment(item.data, false);
-        } else if (item.data.resolved && item.data.anchor?.node) {
-          activeReviewCommentId = null;
-          const end = Number(item.data.anchor.end) || Number(item.data.anchor.start) || 0;
-          selection = {
-            anchor: { node: item.data.anchor.node, offset: end },
-            focus: { node: item.data.anchor.node, offset: end },
-          };
-          drawSelection();
-        }
-      } else {
-        focusReviewRevision(item.data, false);
-      }
-      scheduleReviewMarginRender();
-    };
-    card.addEventListener("click", (event) => {
-      if (event.target.closest("button, textarea, input, select")) return;
-      focus();
-    });
-    card.addEventListener("keydown", (event) => {
-      // Let inner controls (Accept/Reject, the move source/destination
-      // navigation buttons, composers) handle their own Enter/Space instead
-      // of also toggling the card's expansion — mirrors the click guard above.
-      if (event.target.closest("button, textarea, input, select")) return;
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        focus();
-      }
-    });
-    card.append(header, ...(quote ? [quote] : []), bodyOrEditor);
-    if (item.type === "revision" && item.data.kind === "move") {
-      const path = document.createElement("div");
-      path.className = "review-move-path";
-      const source = reviewMoveEndButton(
-        "From",
-        item.data.anchor,
-        "Original location",
-        "Go to the moved text's original location",
-      );
-      const arrow = document.createElement("span");
-      arrow.className = "ms";
-      arrow.setAttribute("aria-hidden", "true");
-      arrow.textContent = "arrow_forward";
-      const destination = reviewMoveEndButton(
-        "To",
-        item.data.destinationAnchor,
-        "New location",
-        "Go to the moved text's new location",
-      );
-      path.append(source, arrow, destination);
-      card.appendChild(path);
-    }
-    // REVIEW-GAP-012: thread comments that overlap this tracked change beneath
-    // it, read-only, on an expanded revision card. `revisionThread` reports the
-    // overlap; authoring a reply to a change is `addComment` over the change's
-    // own range (unchanged DOCX comment ownership). Only rendered when the
-    // overlap is non-empty, so a change with no related comment adds no chrome.
-    if (item.type === "revision" && expanded && item.data.id) {
-      let related = [];
-      try {
-        related = JSON.parse(doc.revisionThread(item.data.id) || "[]");
-      } catch {
-        related = [];
-      }
-      if (related.length) {
-        const relatedList = document.createElement("div");
-        relatedList.className = "review-margin-revision-comments";
-        const relatedLabel = document.createElement("small");
-        relatedLabel.textContent = "Related comments";
-        relatedList.appendChild(relatedLabel);
-        for (const related_comment of related) {
-          const relatedItem = document.createElement("div");
-          relatedItem.className = "review-margin-revision-comment";
-          const relatedAuthor = document.createElement("strong");
-          relatedAuthor.textContent =
-            related_comment.author || related_comment.initials || "You";
-          const relatedText = document.createElement("p");
-          relatedText.textContent = String(related_comment.text || "");
-          relatedItem.append(relatedAuthor, relatedText);
-          relatedList.appendChild(relatedItem);
-        }
-        card.appendChild(relatedList);
-      }
-    }
-    if (item.type === "comment") {
-      const replies = comments.filter((comment) => reviewCommentIsReplyTo(comment, item.data));
-      if (replies.length) {
-        const thread = document.createElement("div");
-        thread.className = "review-margin-replies";
-        for (const reply of replies) {
-          const replyItem = document.createElement("div");
-          replyItem.className = `review-margin-reply${reply.resolved ? " resolved" : ""}`;
-          const replyHead = document.createElement("div");
-          replyHead.className = "review-margin-reply-head";
-          const replyAuthor = document.createElement("strong");
-          replyAuthor.textContent = reply.author || reply.initials || "You";
-          const replyDate = document.createElement("small");
-          replyDate.textContent = `${reply.resolved ? "Resolved · " : ""}${formatReviewDate(reply.date)}`;
-          replyHead.append(replyAuthor, replyDate);
-          const replyBody = document.createElement("p");
-          replyBody.textContent = String(reply.text || "");
-          replyItem.append(replyHead, (expanded && commentEditorFor(reply, "reply")) || replyBody);
-          // REVIEW-GAP-011: edit or delete this specific reply (not just the
-          // whole thread). Only on an expanded, unresolved parent card, so the
-          // controls stay out of the collapsed/resolved presentation.
-          if (expanded && !item.data.resolved) {
-            const replyActionRow = document.createElement("div");
-            replyActionRow.className = "review-margin-reply-actions";
-            const editReply = reviewCardButton(t("reviewCard.edit"), () => {
-              commentEdit.begin(reply.id, reply.text);
-              scheduleReviewMarginRender();
-            }, false, t("reviewCard.editReply"));
-            const deleteReply = reviewCardButton(
-              "Delete",
-              async () => {
-                await runEdit(() => doc.deleteReply(reply.id));
-                announceReview("Reply deleted");
-                drawSelection();
-                focusEditorSurface();
-              },
-              true,
-              "Delete reply",
-            );
-            replyActionRow.append(editReply, deleteReply);
-            replyItem.appendChild(replyActionRow);
-          }
-          thread.appendChild(replyItem);
-        }
-        card.appendChild(thread);
-      }
-      if (expanded && !item.data.resolved) {
-        // Always-ready multi-line reply composer (Q5): a textarea the user can
-        // type into immediately — no click-to-arm step — matching modern Docs/
-        // Word comment threads. It auto-grows; Enter submits, Shift+Enter is a
-        // newline, Esc clears. The action row surfaces only once the composer
-        // is focused or has text, so a collapsed thread stays dense.
-        const replyComposer = document.createElement("div");
-        replyComposer.className = "review-reply-composer";
-        const textarea = document.createElement("textarea");
-        textarea.rows = 1;
-        textarea.maxLength = 4096;
-        textarea.placeholder = "Reply…";
-        textarea.dataset.testid = "review-reply-composer";
-        textarea.setAttribute("aria-label", "Reply to this comment");
-        const replyActions = document.createElement("div");
-        replyActions.className = "review-composer-actions";
-        const resize = autoGrowTextarea(textarea);
-        const clear = () => {
-          textarea.value = "";
-          resize();
-          syncActions();
-        };
-        const submit = reviewCardButton("Reply", async () => {
-          const text = textarea.value.trim();
-          if (!text) return;
-          const metadata = currentReviewTimestamp();
-          await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date), { keepView: true });
-          announceReview("Reply added");
-          drawSelection();
-          focusEditorSurface();
-        }, false, "Send reply");
-        const cancel = reviewCardButton("Cancel", () => {
-          clear();
-          focusEditorSurface();
-        });
-        replyActions.append(cancel, submit);
-        const syncActions = () => {
-          const active = document.activeElement === textarea || textarea.value.trim().length > 0;
-          replyActions.hidden = !active;
-        };
-        syncActions();
-        textarea.addEventListener("pointerdown", (event) => event.stopPropagation());
-        textarea.addEventListener("input", syncActions);
-        textarea.addEventListener("focus", syncActions);
-        textarea.addEventListener("blur", () => requestAnimationFrame(syncActions));
-        attachComposerKeys(textarea, {
-          onSubmit: () => submit.click(),
-          onCancel: () => cancel.click(),
-        });
-        replyComposer.append(textarea, replyActions);
-        card.appendChild(replyComposer);
-      }
-    }
-    if (actions.childElementCount) card.appendChild(actions);
-    entry = { el: card, sig, height: 0, measured: false };
-    reviewCardCache.set(itemId, entry);
-    built.push({ itemId, item, entry });
-  }
-
-  // Measure only the freshly built cards, batched: mount them all off-view, read
-  // every height (one layout for all reads, since no DOM mutation interleaves),
-  // then detach them. Reused cards keep their cached measured height, so a large
-  // review set is not re-measured on every edit.
-  const toMeasure = built.filter(({ entry }) => !entry.measured);
-  for (const { entry } of toMeasure) {
-    entry.el.style.top = "-99999px";
-    reviewSidebarBody.appendChild(entry.el);
-  }
-  for (const { entry } of toMeasure) {
-    entry.height = entry.el.offsetHeight;
-    entry.measured = true;
-  }
-  for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
-
-  // Position pass. `stackReviewCards` owns the arithmetic for both shapes: the
-  // anchored margin column, and the narrow-width bottom sheet where cards are a
-  // plain list (HF-088). Anchors are still computed for the margin shape in
-  // document-scroll coordinates, from each item's on-canvas marker.
-  const seen = new Set();
-  // BAND coordinates, not scroll coordinates. `bandOffset` moves on every
-  // scroll once a document is compressed (`page_scroll.mjs`), so an anchor
-  // stored in scroll coordinates drifts from its marker by (scale - 1) × the
-  // distance scrolled; subtracting it here and adding it back at mount time
-  // pins the card. At scale 1 the offset is 0 and nothing changes.
-  const anchorY = built.map(
-    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop - bandOffset,
-  );
-  const heights = built.map(({ entry }) => entry.height);
-  const tops = stackReviewCards({
-    anchorY,
-    heights,
-    activeIndex: activeReviewItemId
-      ? built.findIndex((b) => b.itemId === activeReviewItemId)
-      : -1,
-    sheet,
-  });
-  const layout = built.map(({ itemId, entry }, i) => {
-    seen.add(itemId);
-    return { itemId, top: tops[i], entry };
-  });
-  // In the sheet the card body is the scrolled content, so it must be exactly as
-  // tall as the stack; in the margin it spans the page stack (set above).
-  if (sheet) {
-    reviewSidebarBody.style.height = `${Math.round(reviewStackHeight(tops, heights))}px`;
-  }
-  // Drop cache entries (and their retained DOM) for items no longer present.
-  for (const key of [...reviewCardCache.keys()]) {
-    if (!seen.has(key)) reviewCardCache.delete(key);
-  }
-  reviewLayout = layout;
-  mountReviewWindow();
-}
-
-/** Mounts only the cards whose precomputed position falls inside (or within
- *  `REVIEW_WINDOW_OVERSCAN` of) the viewport, and detaches the rest. Runs after
- *  a full render and on every scroll frame; it never re-parses the review
- *  payload, recomputes geometry, or rebuilds a card — it only attaches/detaches
- *  retained DOM by comparing cached positions to the current scroll band. This
- *  is what keeps the mounted card count bounded regardless of review size
- *  (REVIEW-GAP-020). */
-function mountReviewWindow() {
-  if (reviewSidebar.hidden) return;
-  // Whichever element owns the scroll owns the window: the viewport in the
-  // margin shape, the sheet itself when the sheet is the scroller (HF-088).
-  const scroller = reviewSheetMode() ? reviewSidebar : viewportEl;
-  const scrollTop = scroller.scrollTop;
-  // Stored in band coordinates; the live offset converts them back. Here
-  // rather than in the layout pass because this runs on every scroll frame.
-  // The bottom sheet scrolls itself and is never the compressed band, so its
-  // offset is 0 — taking it unconditionally keeps one expression for both.
-  const offset = reviewSheetMode() ? 0 : bandOffset;
-  const bandTop = scrollTop - offset - REVIEW_WINDOW_OVERSCAN;
-  const bandBottom = scrollTop - offset + scroller.clientHeight + REVIEW_WINDOW_OVERSCAN;
-  for (const { itemId, top, entry } of reviewLayout) {
-    // The composer and the active/expanded card are always kept mounted: they
-    // own live focus/controls the user is interacting with.
-    const force = itemId === "composer" || itemId === activeReviewItemId;
-    const visible = force || (top + entry.height >= bandTop && top <= bandBottom);
-    const mounted = entry.el.parentNode === reviewSidebarBody;
-    if (visible) {
-      entry.el.style.top = `${Math.round(top + offset)}px`;
-      if (!mounted) reviewSidebarBody.appendChild(entry.el);
-      if (entry.needsFocus && entry.focusTextarea) {
-        entry.needsFocus = false;
-        const textarea = entry.focusTextarea;
-        requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
-      }
-    } else if (mounted) {
-      reviewSidebarBody.removeChild(entry.el);
-    }
-  }
-}
-
-/** rAF-debounced `mountReviewWindow` for the scroll path: re-windowing is cheap
- *  (no parse/geometry/rebuild), but coalescing to one call per frame keeps a
- *  fast scroll from doing redundant DOM work. */
-function scheduleReviewWindow() {
-  if (reviewWindowFrame) return;
-  reviewWindowFrame = requestAnimationFrame(() => {
-    reviewWindowFrame = 0;
-    commentAffordance.ride(bandOffset);
-    mountReviewWindow();
-  });
-}
-
-// One scroll owner: the comment layer lives inside `.viewport` and rides its
-// scroll context natively, so cards stay pinned to their anchored text without
-// any scroll-sync or per-frame re-render (that eliminates the momentum drift and
-// the between-canvas scrollbar). Cards are positioned in document-scroll
-// coordinates; only content edits and resizes recompute those positions. On a
-// plain scroll we only re-window the already-computed layout (mount the cards
-// entering the viewport, detach those leaving it) — no re-parse, no geometry,
-// no rebuild — so a document with hundreds of comments scrolls with a bounded,
-// viewport-sized number of mounted cards (REVIEW-GAP-020).
-viewportEl.addEventListener("scroll", scheduleReviewWindow, { passive: true });
-// In the sheet the cards ride the sheet's own scroll instead (HF-088).
-reviewSidebar.addEventListener("scroll", scheduleReviewWindow, { passive: true });
-reviewSidebarBody.addEventListener("click", (event) => {
-  if (event.target !== reviewSidebarBody || !activeReviewItemId) return;
-  activeReviewItemId = null;
-  activeReviewCommentId = null;
-  reviewDeleteConfirmId = null;
-  drawSelection();
-});
-window.addEventListener("resize", scheduleReviewMarginRender);
+const {
+  paragraphRevisionRects, reviewRangeClientRect, revisionRange, scheduleReviewMarginRender,
+  setReviewMode, updateReviewControls,
+} = createReviewMargin(ed);
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -3304,88 +1983,8 @@ const { boot, newBlankDocument, openBytes } = createFileOpen(ed);
 // then fetch only the script fallbacks this document's uncovered code points
 // require. Network failures do not block opening: the target-bundled
 // metric-compatible faces remain available.
-async function provisionFonts(name, target = doc, state = fontState) {
-  if (!target || state.retired) return [];
-  const warnings = [];
-  statusChannel.progress(`Fetching web fonts for ${name}…`);
-
-  const named = await Promise.allSettled(
-    NAMED_WEB_FONT_FACES.map((face) => fetchSharedFontBytes(face.url, fontCache)),
-  );
-  const namedBytes = named
-    .filter((result) => result.status === "fulfilled")
-    .map((result) => result.value);
-  if (namedBytes.length > 0 && !state.retired) {
-    const packed = packFontBytes(namedBytes);
-    target.registerFonts(packed.bytes, packed.lengths);
-  }
-  // The WASM shaper now holds the authoritative copy of these faces, so release
-  // the JS byte cache (~9 MB) rather than double-holding it for the tab's life.
-  // A subsequent document re-fetches + re-registers from the CDN as usual.
-  for (const face of NAMED_WEB_FONT_FACES) fontCache.delete(face.url);
-  for (const [index, result] of named.entries()) {
-    if (result.status === "rejected") {
-      const face = NAMED_WEB_FONT_FACES[index];
-      console.warn(`font ${face.family} (${face.url}) failed:`, result.reason);
-      warnings.push(face.family);
-    }
-  }
-
-  warnings.push(...(await provisionMissingFallbacks(name, target, state)));
-  return warnings;
-}
-
 let fontState = { provisionedFallbackKeys: new Set(), inFlightFallbackKeys: new Set(), retired: false };
-
-/** Fetches and registers any script fallback fonts the document now needs but
- *  hasn't got yet (`doc.missingCoverage()` → buckets), skipping ones already
- *  provisioned. Used both on open and after an edit that introduces new glyphs
- *  (e.g. a checklist's `☐`/`☒` markers), so newly-added symbols render instead of
- *  tofu. Returns the keys that failed to load. */
-async function provisionMissingFallbacks(label, target = doc, state = fontState) {
-  const warnings = [];
-  if (!target || state.retired) return warnings;
-  const { provisionedFallbackKeys, inFlightFallbackKeys } = state;
-  const missing = target.missingCoverage();
-  const keys = fallbackKeysFor(missing).filter(
-    (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
-  );
-  if (keys.length === 0) return warnings;
-  if (doc === target) statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
-  for (const key of keys) inFlightFallbackKeys.add(key);
-  for (const key of keys) {
-    const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
-    try {
-      const bytes = await fetchSharedFontBytes(url, fontCache);
-      if (!state.retired) {
-        target.registerFallbackFont(bytes, scripts); // registers + re-paginates
-        provisionedFallbackKeys.add(key);
-      }
-      // WASM holds the authoritative copy now; drop the JS cache entry so the
-      // fallback bytes are not double-held for the session (see registerFonts).
-      fontCache.delete(url);
-    } catch (err) {
-      console.warn(`font ${key} (${url}) failed:`, err);
-      if (doc === target) setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
-      warnings.push(key);
-    } finally {
-      inFlightFallbackKeys.delete(key);
-    }
-  }
-  return warnings;
-}
-
-/** Ensures any glyphs a just-applied edit introduced (e.g. checklist checkbox
- *  markers) have a covering font, then re-renders if one was fetched. */
-async function ensureGlyphCoverage(label, target = doc, state = fontState) {
-  if (versionPreviewHome) return;
-  const before = state.provisionedFallbackKeys.size;
-  await provisionMissingFallbacks(label, target, state);
-  if (doc === target && state.provisionedFallbackKeys.size !== before) {
-    await renderAll();
-  }
-}
-
+const { ensureGlyphCoverage, provisionFonts } = createFonts(ed);
 const {
   materializedPages, pageIndexOfWrap, paintPageCanvas, paintPagesInView, releasePageCanvas,
   updatePageWindow, virtualPageRect,
@@ -3673,499 +2272,14 @@ function hasRange() {
   );
 }
 
-// ---- Insert surface: one declaration per Insert command ---------------------
-// The Insert ribbon tab, the Insert app menu, and the command palette are three
-// faces of the SAME command set. Their membership used to be authored three
-// times — hand-written HTML buttons, an id list in APP_MENU_SECTIONS, and
-// bespoke `someBtn.disabled = …` lines in `updateToolbar` — with nothing
-// reconciling them, and they drifted: Picture, Symbol, Emoji, Bookmark and Field
-// shipped to the menu and the palette while the ribbon still showed only Table
-// and Link, so a user looking at the Insert tab could not insert a picture at
-// all. This table is the single declaration the ribbon is built from: each row
-// names the command it mirrors, the button that renders it, what the command
-// genuinely requires, and how the button activates it.
-// It unifies enablement and activation, not membership: the buttons are still
-// authored in editor.html and the menu roster is still its own id list, so a new
-// command CAN still reach one surface and miss another. What closes that gap is
-// the test — each row stamps its command id onto its button, and
-// `insert-surface.spec.mjs` asserts the ribbon's id set equals the Insert menu's,
-// so the omission that shipped Picture unreachable now fails CI instead.
-//
-// `buttons` is a LIST because one command can legitimately have more than one
-// ribbon face: Word shows Bookmark on both Insert ▸ Links and References ▸
-// Navigation, and Insert field on both Insert ▸ Text and References ▸ Fields.
-// Declaring the faces here keeps enablement and activation single-sourced —
-// a second `someBtn.disabled = …` line written next to the new tab is exactly
-// how the Insert ribbon drifted out of sync with its menu the first time.
-const INSERT_SURFACE = [
-  // "doc" is Word's rule: an open document has an insertion point, so the
-  // command is live the moment a document loads (see `implicitCaretAt`).
-  // Viewing/Suggesting are deliberately NOT expressed here — every run path
-  // already fails closed through `blockMutationInViewing` /
-  // `blockUntrackedInSuggesting`, which tells the user WHY the insert did not
-  // happen. A greyed button would only say "no".
-  { command: "insert.table", buttons: [insertTableBtn], requires: "doc", activate: null },
-  { command: "insert.image", buttons: [insertPictureBtn], requires: "doc", activate: () => insertImageFromFile() },
-  // Link is the one Insert command that genuinely needs a range: it hyperlinks
-  // selected text. A cross-paragraph range still enables the button and is
-  // answered by `editSelectionLink`'s "Links must stay within one paragraph",
-  // which is more useful than a silently dead control.
-  // The gallery popover registers its own toggle on this button (like the list
-  // galleries), so wiring `activate` here too would open it on mousedown and
-  // immediately close it again.
-  { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
-  { command: "insert.chart", buttons: [insertChartBtn], requires: "doc", activate: () => void insertChartWithData() },
-  { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
-  { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
-  { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
-  { command: "insert.field", buttons: [insertFieldBtn, refFieldBtn], requires: "doc", activate: () => openFieldDialog() },
-  // Page number and Date are the two field kinds the competition puts on the
-  // Insert TAB rather than behind a generic field picker: Word's Insert tab has
-  // Page Number in its Header & Footer group and Date & Time in its Text group,
-  // and ONLYOFFICE's Insert tab has both as their own buttons (their groups 5
-  // and 6). Here they were one level deeper — Insert ▸ Field, then a row in the
-  // picker — which is a reachability gap, not a missing capability.
-  //
-  // They are the SAME commands the palette already registers per kind
-  // (`insert.field.<kind>`, generated from FIELD_KINDS) running the SAME
-  // `insertFieldAtCaret`, so there is no second insert path to keep in step:
-  // this table supplies the enablement and the click, exactly as it does for the
-  // picker's own button. The other four kinds (number of pages, time, file name,
-  // author) stay in the picker, where Word and ONLYOFFICE also keep them.
-  { command: "insert.field.page", buttons: [insertPageNumberBtn], requires: "doc", activate: () => insertFieldAtCaret("page") },
-  { command: "insert.field.date", buttons: [insertDateBtn], requires: "doc", activate: () => insertFieldAtCaret("date") },
-  { command: "insert.dropCap", buttons: [insertDropCapBtn], requires: "doc", activate: () => dropCapDialog.open() },
-  // Notes live on References only, as they do in Word. The app-menu row and the
-  // palette entry are untouched, so the command keeps three surfaces.
-  { command: "insert.footnote", buttons: [refFootnoteBtn], requires: "doc", activate: () => insertNote("footnote") },
-  { command: "insert.endnote", buttons: [refEndnoteBtn], requires: "doc", activate: () => insertNote("endnote") },
-  { command: "insert.header", buttons: [insertHeaderBtn], requires: "doc", activate: () => editRunningContent("header") },
-  { command: "insert.footer", buttons: [insertFooterBtn], requires: "doc", activate: () => editRunningContent("footer") },
-  { command: "insert.symbol", buttons: [insertSymbolBtn], requires: "doc", activate: () => openSymbolPicker() },
-  { command: "insert.emoji", buttons: [insertEmojiBtn], requires: "doc", activate: () => openEmojiPicker() },
-];
-
-// ---- Layout and References surfaces ----------------------------------------
-// The same seam as INSERT_SURFACE/REVIEW_SURFACE, for the two tabs the ribbon
-// did not have (docs/105 UX-010, and the IA half of OO-001/OO-005). Each row is
-// one command: the palette entry, the ribbon button, and the enablement rule all
-// read from this table, so there is nowhere to write a second opinion.
-//
-// `requires` values:
-//   "doc"      — an open document is the only precondition.
-//   "caret"    — a paragraph to act on (the caret, wherever it is).
-//   "object"   — a selected image, shape or text box.
-//   "missing"  — the command is REAL as a user intention but has no engine
-//                operation behind it. It ships permanently disabled carrying the
-//                reason, because a control that silently does nothing is the one
-//                thing docs/63 forbids outright, and hiding it would make the
-//                gap invisible to the person deciding what to build next.
-const BREAK_IO = { doc: () => doc, caret: () => selection?.focus ?? null, runEdit: (thunk, options) => runEdit(thunk, options), setStatus: (text) => setStatus(text) };
-const LAYOUT_SURFACE = [
-  // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
-  // into the same section geometry; each one opens the dialog with its own
-  // fieldset focused rather than pretending to be a separate dialog.
-  { command: "layout.margins", label: "Page margins", kw: "margins page setup top bottom left right gutter", buttons: () => [layoutMarginsBtn], requires: "doc", run: () => pageSetup.open(true, "margins") },
-  { command: "layout.orientation", label: "Page orientation", kw: "orientation portrait landscape rotate page setup", buttons: () => [layoutOrientationBtn], requires: "doc", run: () => pageSetup.open(true, "orientation") },
-  { command: "layout.size", label: "Page size", kw: "size paper a4 letter legal width height page setup", buttons: () => [layoutSizeBtn], requires: "doc", run: () => pageSetup.open(true, "size") },
-  { command: "layout.columns", label: "Text columns", kw: "columns newspaper two three spacing separator page setup", buttons: () => [layoutColumnsBtn], requires: "doc", run: () => pageSetup.open(true, "columns") },
-  // The button's click is the popover's own (`registerPopover`), so this row
-  // declares `ownsClick` and contributes only the command id, the enablement
-  // rule and the palette row — the same split INSERT_SURFACE spells `activate:
-  // null` for `insert.table`. Without it the wiring below would attach a handler
-  // that re-clicks the button the popover manager is already listening on.
-  { command: "layout.lineNumbers", label: "Line numbers", kw: "line numbers numbering margin legal pleading count suppress", buttons: () => [lineNumbersBtn], requires: "doc", ownsClick: true, run: () => pageSetup.openLineNumbers() },
-  // Watermark. NOT `ownsClick`: this one opens a modal the module registers
-  // itself, so the click belongs to this table's own wiring — the popover
-  // manager is not involved, and `page_setup.mjs` deliberately binds no listener
-  // of its own to the button.
-  { command: "layout.watermark", label: "Watermark", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [watermarkBtn], requires: "doc", run: () => pageSetup.openWatermark(true) },
-  // Paragraph: the existing relative nudges, plus the two fieldsets of the
-  // paragraph-properties panel that hold the absolute indent and spacing values.
-  // The ribbon deliberately does NOT carry its own numeric fields: the panel
-  // reflects engine state and applies through the gated edit path, and a second
-  // pair of inputs would be a second answer to "what is this paragraph's indent".
-  { command: "paragraph.indent.decrease", buttons: () => [layoutIndentDecBtn], requires: "caret", run: () => adjustIndentCommand(-360) },
-  { command: "paragraph.indent.increase", buttons: () => [layoutIndentIncBtn], requires: "caret", run: () => adjustIndentCommand(360) },
-  { command: "layout.indent", label: "Indentation…", kw: "indent left right first line hanging exact fields paragraph", buttons: () => [layoutIndentFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => indentLeftInput) },
-  { command: "layout.spacing", label: "Paragraph spacing…", kw: "spacing line before after leading paragraph fields", buttons: () => [layoutSpacingFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => paraLineSpacing) },
-  // Arrange: the object inspector's own wrap and geometry sections, reached from
-  // a durable affordance instead of only the floating bar that appears on hover.
-  // The two running-content variants. No `label`/`kw`: `editorCommands` already
-  // declares both rows (their labels read as switches — "Different first page:
-  // on"), and a second declaration here would put two rows for one command in
-  // the palette. What they needed was a RIBBON FACE: they were reachable from
-  // the Insert menu and the palette only, so a chrome with no menu bar left them
-  // palette-only. `pressed` is what makes the button say which way the switch is
-  // set, the way the Review toggles do.
-  { command: "layout.firstPageVariant", buttons: () => [insertFirstPageVariantBtn], requires: "doc", pressed: () => headerFooterSettings.variantState().firstPage, run: () => headerFooterSettings.toggleVariant("firstPage") },
-  { command: "layout.evenOddVariant", buttons: () => [insertEvenOddVariantBtn], requires: "doc", pressed: () => headerFooterSettings.variantState().evenOdd, run: () => headerFooterSettings.toggleVariant("evenOdd") },
-  // Header and footer settings. No `label`/`kw` for the same reason as the two
-  // above: `editorCommands` declares the palette row, and a second declaration
-  // here would put two rows for one command in the palette.
-  { command: "layout.headerFooterSettings", buttons: () => [headerFooterSettingsBtn], requires: "doc", run: () => headerFooterSettings.open(true) },
-  { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
-  { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
-  ...breakSurfaceRows(BREAK_IO),
-  ...arrangeSurfaceRows(objectArrange, {
-    bringForward: () => layoutBringForwardBtn,
-    sendBackward: () => layoutSendBackwardBtn,
-    group: () => layoutGroupBtn,
-    ungroup: () => layoutUngroupBtn,
-    rotate: () => layoutRotateBtn,
-    inLine: () => setObjectWrap("inline"),
-  }),
-];
-
-const REFERENCE_SURFACE = [
-  {
-    command: "reference.tableOfContents",
-    label: "Table of contents",
-    kw: "table of contents toc outline headings index navigation",
-    buttons: () => [refTocBtn],
-    // Body-only, and for the engine's own reason: `insertTableOfContents`
-    // refuses a caret outside the body, as Word does.
-    requires: "bodyCaret",
-    run: () => tocCommands.insert.open(),
-  },
-  // The keyboard half of following a contents entry. The pointer half is a plain
-  // click on the entry, and `contextMenu: true` puts the same row on the
-  // right-click menu, so the capability is reachable from three surfaces and from
-  // none of them only.
-  {
-    command: "reference.goToHeading",
-    label: "Go to the heading this entry names",
-    kw: "toc table of contents entry heading navigate go to jump follow outline",
-    buttons: () => [refGoToHeadingBtn],
-    requires: "tocEntry",
-    // NOT `contextMenu: true` — that flag puts a row on the OBJECT and table
-    // right-click menus, and a contents entry is text. Its right-click row is
-    // built with the other text rows, beside Open link, which is the same
-    // capability for the case where the author's field did hyperlink it.
-    run: () => void followTocEntry(selection?.focus?.node),
-  },
-  // Word's Captions group. A caption attaches to the caret's block — which is
-  // also the block that holds a selected picture or table, since selecting an
-  // object puts the caret at its anchor — and a cross-reference is inserted at
-  // the caret. `contextMenu: true` is what puts Insert caption on the object and
-  // table right-click menus, the way ONLYOFFICE does
-  // (`DocumentHolderExt.js:46`), from this one declaration.
-  {
-    command: "reference.caption",
-    // English, like every other row here: these labels are read at import, before
-    // a catalogue exists, so `t()` would put the KEY in the palette. The
-    // context-menu row is built on demand and does route through the catalogue.
-    label: "Insert caption",
-    kw: "caption figure table equation label numbering sequence seq chapter",
-    buttons: () => [refCaptionBtn],
-    requires: "bodyCaret",
-    contextMenu: true,
-    run: () => referenceCommands.caption.open(),
-  },
-  {
-    command: "reference.crossReference",
-    label: "Cross-reference",
-    kw: "cross reference ref heading bookmark figure numbered item caption footnote endnote",
-    buttons: () => [refCrossRefBtn],
-    requires: "caret",
-    run: () => referenceCommands.crossReference.open(),
-  },
-  // Word recomputes fields on print, on F9 and on open; ours are not recomputed
-  // on a Backspace, deliberately, because renumbering there would make a keystroke
-  // O(document). So the product has to OFFER the fix, or "dirty rather than
-  // silently stale" is just "stale".
-  {
-    command: "reference.updateCaptionNumbers",
-    label: "Update caption numbers",
-    kw: "update caption numbers renumber stale seq figure table refresh fix",
-    buttons: () => [refUpdateCaptionsBtn],
-    requires: "staleCaptions",
-    run: () => void referenceCommands.numbering.update(),
-  },
-  // Word's Update Table, and its two-radio dialog. The id stays
-  // `reference.updateFields` because it is a published host-contract id; what
-  // changed is that it now runs something. The two MODES are commands of their
-  // own, so neither is reachable only from inside a modal — the same
-  // >=2-surface rule the rest of this table follows.
-  { command: "reference.updateFields", label: "Update table of contents", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [refUpdateFieldsBtn], requires: "tocField", run: () => tocCommands.update.open() },
-  { command: "reference.updateToc.pageNumbers", label: "Update table of contents: page numbers only", kw: "toc contents update page numbers only repaginate refresh", buttons: () => [], requires: "tocField", run: () => void tocCommands.update.run("pageNumbers") },
-  { command: "reference.updateToc.entire", label: "Update table of contents: entire table", kw: "toc contents update entire rebuild regenerate headings refresh", buttons: () => [], requires: "tocField", run: () => void tocCommands.update.run("entire") },
-];
-
-/** The object/table right-click rows the References surface declares — see
- *  `objectMenuRows`, which is where the rule and its citations live. */
-const referenceObjectMenuRows = () =>
-  objectMenuRows(REFERENCE_SURFACE, ribbonSurfaceEnabled, ribbonSurfaceReason);
-
-/** The O(1) state the two surface rules read. `tocEntryTargetAt` returns
- *  immediately unless the document holds a TOC field and the heading index
- *  behind it is built once per revision; the two counts are caches. Nothing
- *  here walks the document, because this runs on every keystroke. */
-function ribbonSurfaceState(entry) {
-  return {
-    hasDoc: !!doc,
-    objectSelected: !!(objectSelection && objectSelection.mode === "selected"),
-    hasCaret: !!selection,
-    inRunningStory: !!runningEditBand,
-    staleCaptions: referenceCommands.numbering.count,
-    tocFields: tocCommands.fields.count,
-    onTocEntry:
-      entry.requires === "tocEntry" && !!selection && !!tocEntryTargetAt(selection.focus.node),
-  };
-}
-
-const ribbonSurfaceEnabled = (entry) => surfaceEnabled(entry, ribbonSurfaceState(entry));
-const ribbonSurfaceReason = (entry) => surfaceReason(entry, ribbonSurfaceState(entry));
-
-/** Opens the object inspector focused on one control — Layout ▸ Wrap text lands
- *  on the wrap control, not on the panel's first field. `object_inspector.mjs`. */
-const openObjectInspectorAt = (selector) => objectInspector.openAt(selector);
-
-/** The one enablement rule for an Insert command, shared by its ribbon button,
- *  its app-menu row, and its palette entry. `context.hasRange` lets a surface
- *  that already computed the selection state (the context menu) pass it in. */
-// ---- Review surface: one declaration per Review command ---------------------
-// Word's Review tab — Tracking, Changes, Comments. Every command below already
-// existed and was reachable ONLY from the command palette, or from buttons
-// living inside the review sidebar, which exist only while that sidebar is open.
-// So a user with a document full of tracked changes had no durable affordance
-// for accepting one. Each row names the command its buttons run and whether the
-// button is a toggle, and `review-surface.spec.mjs` asserts the ribbon's id set
-// equals the Review menu's, so a command cannot reach one surface and miss the
-// other.
-//
-// `buttons`, plural, and the same shape LAYOUT_SURFACE/REFERENCE_SURFACE
-// already use — one command can have more than one face. `review.comment` has
-// two: the Review band's button and the right-margin affordance beside the
-// selection. They are declared together on purpose. A margin button wired up on
-// its own would be a second way to open the comment composer, free to drift
-// from the first in what it runs and in when it is available, which is the
-// command-surface defect class this table exists to prevent (`105` UX-004).
-//
-// Enablement is deliberately just "a document is open": the commands
-// themselves report why nothing happened (no change at the cursor, none left to
-// accept), which is more use than a button that is silently dead.
-const reviewCommentActions = createReviewCommentActions({ runEdit, getDoc: () => doc, commentId: () => activeReviewCommentId, announce: (m) => announceReview(m), afterChange: () => drawSelection() });
-const REVIEW_SURFACE = [
-  { command: "review.mode.suggesting", buttons: () => [reviewTrackBtn], run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"), pressed: () => reviewMode === "suggesting" },
-  { command: "view.showChanges", buttons: () => [reviewShowChangesBtn], run: () => toggleShowChanges(), pressed: () => showingChanges },
-  { command: "review.previous", buttons: () => [reviewPrevBtn], run: () => navigateReview(-1) },
-  { command: "review.next", buttons: () => [reviewNextBtn], run: () => navigateReview(1) },
-  { command: "review.acceptNext", buttons: () => [reviewAcceptBtn], run: () => decideReviewAndAdvance(true) },
-  { command: "review.rejectNext", buttons: () => [reviewRejectBtn], run: () => decideReviewAndAdvance(false) },
-  { command: "review.acceptAll", buttons: () => [reviewAcceptAllBtn], run: () => void decideAllReviewChanges(true) },
-  { command: "review.rejectAll", buttons: () => [reviewRejectAllBtn], run: () => void decideAllReviewChanges(false) },
-  // Three faces, and the third is on the INSERT band: ONLYOFFICE carries Comment
-  // on both Insert and Collaboration, and Word's Insert tab has a Comments group
-  // of its own. Commenting was already in this editor's Insert MENU (Google
-  // Docs files it at Insert ▸ Comment, which is where `command_taxonomy.mjs`
-  // took it from) but had no Insert BAND button, so in the ribbon chrome — which
-  // has no menu bar (docs/122) — the Insert tab could not reach it at all.
-  // Declared here rather than beside the new button for the reason the comment
-  // above gives: a second wiring is free to drift in what it runs and in when it
-  // is available.
-  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", reasonKey: "review.comment.needsRange", run: () => openReviewComposer() },
-  // `requires: "comment"` — the caret is inside a commented range. Word and
-  // ONLYOFFICE both target that comment rather than a sidebar selection, so a
-  // reviewer never has to open a panel to resolve what they are reading.
-  { command: "review.comment.resolve", buttons: () => [reviewResolveBtn], requires: "comment", run: () => void reviewCommentActions.resolve() },
-  { command: "review.comment.delete", buttons: () => [reviewDeleteBtn], requires: "comment", run: () => void reviewCommentActions.remove() },
-  { command: "review.toggle", buttons: () => [reviewPanelBtn], run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
-  // TWO faces, one command. This table owns their DISABLED state;
-  // `compare_documents.mjs` owns the clicks and the pressed states, hence
-  // `ownsClick`. Listing one face only shipped the rail entry dead (`105` UX-004).
-  { command: "review.compare", buttons: () => [document.getElementById("reviewCompareBtn"), document.getElementById("railCompare")].filter(Boolean), requires: "doc", reasonKey: "compare.needsDocument", ownsClick: true, run: () => comparePanel.open() },
-  // Proofing. Both switches were the whole content of a `Tools` menu, which is
-  // one top-level name for two toggles — and one of the two names that scrolled
-  // off the end of the menu bar (`109` HF-097). Word's Review tab opens with a
-  // Proofing group, so that is where they go now that the ribbon is the only
-  // navigation axis in this chrome. `requires: "always"`: both are `noDoc`
-  // commands — they are preferences, and switching one with no document open is
-  // meaningful and already supported.
-  { command: "tools.spellCheck", buttons: () => [reviewSpellCheckBtn], requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
-  { command: "tools.grammarCheck", buttons: () => [reviewGrammarCheckBtn], requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
-  { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => autoCorrect.enabled("smartQuotes"), run: () => autoCorrect.toggle("smartQuotes") },
-  { command: "tools.languages", buttons: () => [reviewProofLanguagesBtn], requires: "always", run: () => proofing.openLanguages() },
-  // Restrict Editing (ADR-052, ADR-059). Declared HERE rather than beside the
-  // button for the reason this table gives twice over: one owner for `disabled`,
-  // for the reason it carries while disabled, and for the pressed state. The
-  // module owns the dialog and the engine call and nothing about the button, so
-  // the two cannot disagree about whether a restriction is in force.
-  //
-  // `pressed` reads the ENGINE, not what the dialog last asked for — ONLYOFFICE's
-  // Protect button is a state too — so a document that arrives protected shows the
-  // button pressed before anyone opens anything.
-  { command: "review.restrictEditing", buttons: () => [document.getElementById("reviewProtectBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", pressed: () => documentProtection.isActive(), run: () => documentProtection.open() },
-  // Manage access. `requires: "doc"` because there is nothing to manage access TO
-  // without one; whether the button is PRESENT at all is `accessChrome.reflect`'s
-  // answer and not this table's, because absence is a permission decision and
-  // this table only knows about enablement. Same group as Restrict Editing, which
-  // is Word's own grouping of the two authority questions.
-  { command: "review.manageAccess", buttons: () => [document.getElementById("reviewManageAccessBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => accessChrome.open() },
-];
-
-function insertCommandEnabled(commandId, context = {}) {
-  const entry = INSERT_SURFACE.find((candidate) => candidate.command === commandId);
-  if (!entry || !doc) return false;
-  if (entry.requires === "range") return !!(context.hasRange ?? hasRange());
-  return true;
-}
-
-/** Re-raster a single page after an edit — the incremental repaint that keeps
- *  editing latency to one page, not the whole document. If the page is on screen
- *  it is re-rendered in place; if it is virtualized off-screen, its stale canvas
- *  is dropped so it re-renders fresh (from current model state) when scrolled in. */
-function repaintPage(i) {
-  const page = pages[i];
-  if (!page) return;
-  releasePageCanvas(page);
-  if (page.visible) paintPageCanvas(page, i);
-}
-
-/** Scroll to a rectangle the ENGINE reported — `[page, x, y, w, h]` in twips —
- *  rather than to a DOM node that may not exist.
- *
- *  A find match 20,000 pages away, a comment anchor, a caret after a jump: none
- *  has an overlay element until its page is materialized, and its page is not
- *  materialized until something scrolls there. Model geometry plus the band's
- *  arithmetic answers "where is that, in scroll coordinates" without either.
- *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
-/** Breathing room between a revealed caret and the edge it was revealed past;
- *  flush lasts one frame and the next repaint puts it back outside. */
-const SCROLL_INTO_VIEW_MARGIN = 8;
-
-function scrollModelRectIntoView(flat, block = "nearest") {
-  if (!pageBandModel || !flat || flat.length < 5) return false;
-  const [pageNumber, , y, , h] = flat;
-  const page = pages[pageNumber - 1];
-  if (!page) return false;
-  const { sy } = scaleOf(page);
-  const top = pageBandModel.tops[pageNumber - 1] + y * sy;
-  const bottom = top + Math.max(1, h * sy);
-  const viewportHeight = viewportEl.clientHeight;
-  const { docY } = scrollToDoc(pageBandModel, viewportHeight, viewportEl.scrollTop - bandTopInScroller);
-  let wanted = docY;
-  const margin = SCROLL_INTO_VIEW_MARGIN; // as the overlay path, in doc space
-  if (block === "center") wanted = top + (bottom - top) / 2 - viewportHeight / 2;
-  else if (top < docY) wanted = top - margin;
-  else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight + margin;
-  else return false;
-  const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, Math.max(0, wanted));
-  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
-  // Synchronously, not on the scroll event: the caller is about to look for the
-  // marker it just asked to be shown, and an event a frame later would hand it
-  // an empty page.
-  updatePageWindow();
-  paintPagesInView();
-  return true;
-}
-
-/** The engine rectangle the caret or selection occupies, or null. */
-function selectionModelRect() {
-  if (!doc || !selection) return null;
-  const { anchor, focus } = selection;
-  if (anchor.node !== focus.node || anchor.offset !== focus.offset) {
-    const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
-    if (rects.length >= 5) return rects.slice(0, 5);
-  }
-  const caret = doc.caretRect(focus.node, focus.offset);
-  return caret.length >= 5 ? caret.slice(0, 5) : null;
-}
-
-/** Scroll one engine-derived overlay marker in the editor viewport (not an
- * arbitrary page ancestor). The selection is painted before this runs, so its
- * DOM rectangle is only a projection of model geometry, never a source of
- * document state. */
-function scrollOverlayIntoView(marker, block = "nearest") {
-  if (!marker) return;
-  scrollMarkerIntoViewX(marker); // sideways first: it moves nothing vertically (TA-10)
-  const target = scrollTargetFor({
-    marker: marker.getBoundingClientRect(),
-    viewport: viewportEl.getBoundingClientRect(),
-    current: viewportEl.scrollTop,
-    max: Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight),
-    scale: pageBandModel?.scale ?? 1,
-    block,
-    margin: SCROLL_INTO_VIEW_MARGIN,
-  });
-  if (target !== null) viewportEl.scrollTo({ top: target, behavior: "auto" });
-}
-
-/** Follows a marker sideways when zoom makes the page wider than the window
- *  (`docs/174` TA-10; Word and Docs do). Every scroll-into-view path ends here,
- *  the model path included once it has painted the marker. */
-function scrollMarkerIntoViewX(marker) {
-  if (!marker || viewportEl.scrollWidth <= viewportEl.clientWidth) return;
-  const { left } = viewportEl.getBoundingClientRect();
-  const max = viewportEl.scrollWidth - viewportEl.clientWidth;
-  const viewport = { left, right: left + viewportEl.clientWidth };
-  const target = scrollLeftFor({ marker: marker.getBoundingClientRect(), viewport, current: viewportEl.scrollLeft, max, margin: SCROLL_INTO_VIEW_MARGIN });
-  if (target !== null) viewportEl.scrollLeft = target;
-}
-
-/** Scroll the caret in the editor viewport. Navigation callers can request a
- * centered target so headings/anchors retain useful reading room. */
-function scrollCaretIntoView(block = "nearest") {
-  const marker = pagesEl.querySelector(".overlay .caret");
-  // Two cases take the model path. No marker: the caret's page has no sheet,
-  // which is where a 25,556-page document spends most of its time. And a
-  // COMPRESSED band: a target computed from a screen delta is only as exact as
-  // the compression factor it is divided by, and near the ends of the scroll
-  // range it is not exact at all — measured 57 px short at the bottom of a
-  // 3,300-page document, which is a caret just off screen after an arrow key.
-  // Document space has no such error: `docToScroll` is the exact inverse of
-  // the mapping that placed the page.
-  if (!marker || pageBandModel?.scale > 1) {
-    if (scrollModelRectIntoView(selectionModelRect(), block)) paintOverlayLayer();
-    return scrollMarkerIntoViewX(pagesEl.querySelector(".overlay .caret"));
-  }
-  scrollOverlayIntoView(marker, block);
-}
-
-/** Bring the current review selection's OWN on-canvas marker just into view when
- *  focusing a comment/change from the sidebar or Next/Previous. A review target
- *  is a range, so it paints a highlight (not a caret) — scrolling only `.caret`
- *  did nothing, leaving an off-screen item unreachable. And a "center" scroll
- *  overshot: for a clustered paragraph it recentred on the whole selection and
- *  pushed the very item the reviewer picked out of the viewport. "nearest" fixes
- *  both — an already-visible marker never moves (no overshoot), and an off-screen
- *  one is revealed by the minimum scroll to its own rect, not the paragraph's. */
-function scrollReviewSelectionIntoView() {
-  // Prefer the ACTIVE review item's own marker: in a clustered paragraph several
-  // items paint highlights, and `.highlight` in DOM order can belong to an
-  // earlier item — scrolling to it lands on the paragraph top, not the item the
-  // reviewer selected. The active marker (painted from the item resolved in
-  // `syncActiveReviewCommentToCaret`) is unambiguous; fall back to the selection
-  // highlight, then the caret.
-  const marker =
-    pagesEl.querySelector(".overlay .review-comment-marker-active, .overlay .review-revision-marker-active")
-    || pagesEl.querySelector(".overlay .highlight")
-    || pagesEl.querySelector(".overlay .caret");
-  if (!marker || pageBandModel?.scale > 1) {
-    if (scrollModelRectIntoView(selectionModelRect(), "nearest")) paintOverlayLayer();
-    return;
-  }
-  scrollOverlayIntoView(marker, "nearest");
-}
-
-/** Find selects a real range, so paintSelection deliberately emits highlights
- * and no caret. Scroll its first rectangle into view; querying only `.caret`
- * made Previous/Next update the selection on an off-screen page without moving
- * the canvas. */
-function scrollFindMatchIntoView() {
-  const marker = pagesEl.querySelector(".overlay .highlight");
-  // A match found on a page the reader is nowhere near has no highlight to
-  // scroll to until its page exists. This is the guard `find-far-page` covers:
-  // Find used to update the selection on an off-screen page and leave the
-  // canvas exactly where it was.
-  if (!marker || pageBandModel?.scale > 1) {
-    if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer();
-    return scrollMarkerIntoViewX(pagesEl.querySelector(".overlay .highlight"));
-  }
-  scrollOverlayIntoView(marker, "center");
-}
-
+const {
+  BREAK_IO, INSERT_SURFACE, LAYOUT_SURFACE, REFERENCE_SURFACE, REVIEW_SURFACE, insertCommandEnabled,
+  referenceObjectMenuRows, reviewCommentActions, ribbonSurfaceEnabled, ribbonSurfaceReason,
+} = createCommandSurfaces(ed);
+const {
+  repaintPage, scrollCaretIntoView, scrollFindMatchIntoView, scrollModelRectIntoView,
+  scrollOverlayIntoView, scrollReviewSelectionIntoView, selectionModelRect,
+} = createScroll(ed);
 const {
   documentIsDirty, markDocumentSaved, noteDocumentEdited, resetDirtyTracking,
 } = createDirtyTracking(ed);
@@ -4587,435 +2701,16 @@ const {
 // is applied through the very same engine ops the toolbar's own Bold/color/…
 // controls use, so painted formatting is indistinguishable from hand-applied.
 let formatPainter = null; // { fmt, sticky } while armed, else null
-// -- Font family menu, color/highlight pickers, grow/shrink, change case -------
-// (Q1/Q2/Q5) Real dropdown swatch pickers replace the raw OS color input and
-// the native highlight <select>; a searchable font menu replaces the native
-// font <select>; A⁺/A⁻ step the standard sizes; a Change case menu transforms
-// the selection through the existing rich-run copy/paste ops (no new engine op).
-
-// The swatch vocabularies themselves live in `palettes.mjs`: literal data plus
-// one lookup, with the engine-parity guard that keeps the highlight list from
-// falling behind `HighlightColor`.
-
-// Session-remembered recently-used swatches (most-recent first, deduped, capped).
-const recentTextColors = [];
-const recentHighlights = [];
-const recentUnderlineColors = [];
-function recordRecent(list, value) {
-  const i = list.indexOf(value);
-  if (i !== -1) list.splice(i, 1);
-  list.unshift(value);
-  if (list.length > 10) list.length = 10;
-}
-
+const {
+  applyUnderlineStyle, highlightPopover, recentHighlights, recentTextColors, recordRecent,
+  reflectHighlightSwatch, reflectTextColorSwatch, textColorPopover,
+} = createFontColor(ed);
 let lastTextColor = "#000000";
 let lastHighlight = "yellow";
-
-/** Reflect the current text color onto the "A" underline bar (and remember it as
- *  the color the split-button's apply half reapplies). */
-function reflectTextColorSwatch(hex) {
-  if (hex) lastTextColor = hex;
-  textColorBar.style.background = lastTextColor;
-  if (selTextColorBar) selTextColorBar.style.background = lastTextColor;
-}
-/** Reflect the current highlight onto the highlighter bar (transparent for none). */
-function reflectHighlightSwatch(name) {
-  if (name && name !== "none") lastHighlight = name;
-  const hex = name === "none" ? null : highlightHex(name || lastHighlight);
-  highlightBar.style.background = hex || "transparent";
-  highlightBar.classList.toggle("is-none", !hex);
-  if (selHighlightBar) {
-    selHighlightBar.style.background = hex || "transparent";
-    selHighlightBar.classList.toggle("is-none", !hex);
-  }
-}
-
-/** (Re)renders a color picker menu, marking the active swatch and refreshing the
- *  recently-used row. Called on each open via the popover's reflect hook. The
- *  menu's SHAPE is `picker_chrome.mjs`; what is here is the two vocabularies and
- *  the session state that decide which swatch is lit. */
-function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highlightMenu) {
-  const isText = kind === "text";
-  const active = isText ? lastTextColor.toLowerCase() : lastHighlight;
-  renderColorMenuChrome(menu, {
-    kind,
-    swatches: isText ? TEXT_STANDARD_COLORS : HIGHLIGHT_COLORS.map((c) => c.name),
-    recents: isText ? recentTextColors : recentHighlights,
-    colorOf: (v) => (isText ? v : highlightHex(v) ?? "#000000"),
-    labelOf: (v) => (isText ? v.toUpperCase() : HIGHLIGHT_LABEL.get(v) ?? v),
-    matches: (v) => (isText ? v.toLowerCase() === active : v === active),
-  });
-}
-
-/** Builds the combined underline style/color menu from canonical engine tokens.
- *  The explicit Automatic row maps to `Some(None)` in the edit delta. */
-function renderUnderlineMenu() {
-  underlineMenu.replaceChildren();
-  underlineMenu.appendChild(makeMenuHeading("Underline style"));
-  const styleGroup = document.createElement("div");
-  styleGroup.setAttribute("role", "radiogroup");
-  styleGroup.setAttribute("aria-label", "Underline style");
-  for (const [style, label] of UNDERLINE_STYLE_LABELS) {
-    styleGroup.appendChild(makeUnderlineStyleOption(style, label));
-  }
-  underlineMenu.appendChild(styleGroup);
-  // The menu is rebuilt on every open, so the group is bound per render. It is a
-  // real radio group — one of the eleven underline styles is always the current
-  // one — and it now gets the same single Tab stop and arrow behaviour as every
-  // other segmented control instead of eleven Tab stops and dead arrows.
-  bindRadioGroup(styleGroup, {
-    attr: "data-underline-style",
-    onSelect: (style) => applyUnderlineStyle(style),
-  }).reflect(currentUnderlineMixed ? null : currentUnderlineStyle);
-
-  underlineMenu.appendChild(makeMenuHeading("Underline color"));
-  const automatic = document.createElement("button");
-  automatic.type = "button";
-  automatic.className = "color-row-action";
-  automatic.dataset.underlineAuto = "1";
-  automatic.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic (text color)</span>';
-  automatic.classList.toggle("is-active", !currentUnderlineMixed && !currentUnderlineColor);
-  underlineMenu.appendChild(automatic);
-  underlineMenu.appendChild(makeSwatchGrid(
-    TEXT_STANDARD_COLORS.map((hex) =>
-      makeSwatchCell(
-        "text",
-        hex,
-        hex,
-        `Underline ${hex.toUpperCase()}`,
-        !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
-      )),
-  ));
-  if (recentUnderlineColors.length) {
-    underlineMenu.appendChild(makeMenuHeading("Recent"));
-    underlineMenu.appendChild(makeSwatchGrid(
-      recentUnderlineColors.map((hex) =>
-        makeSwatchCell(
-          "text",
-          hex,
-          hex,
-          `Underline ${hex.toUpperCase()}`,
-          !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
-        )),
-    ));
-  }
-  const more = document.createElement("button");
-  more.type = "button";
-  more.className = "color-row-action color-more";
-  more.dataset.underlineMore = "1";
-  more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
-  underlineMenu.appendChild(more);
-}
-
-const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
-const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
-const underlinePopover = registerPopover(underlineMenuBtn, underlineMenu, renderUnderlineMenu);
-
-function underlineEditBlockedByReview() {
-  if (reviewMode !== "suggesting") return false;
-  setStatus(
-    "Underline style and color are not tracked yet; switch to Editing to apply them",
-    "error",
-  );
-  return true;
-}
-
-function applyUnderlineStyle(style) {
-  if (underlineEditBlockedByReview()) return;
-  const patch = style === "none"
-    ? { underline: false, underlineStyle: "single", underlineColor: "" }
-    : { underline: true, underlineStyle: style };
-  armOrApplyRun(patch, () =>
-    runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, style)),
-  );
-}
-
-function applyUnderlineColor(color) {
-  if (underlineEditBlockedByReview()) return;
-  const patch = color ? { underline: true, underlineColor: color } : { underlineColor: "" };
-  armOrApplyRun(patch, () =>
-    runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, color)),
-  );
-}
-
-underlineMenu.addEventListener("click", (e) => {
-  // The style radio group applies the pick itself (so the arrow keys work, which
-  // is the whole of `109` UX-021); what a POINTER pick adds is dismissal.
-  if (e.target.closest("[data-underline-style]")) {
-    closePopover(underlinePopover);
-    focusEditorSurface();
-    return;
-  }
-  if (e.target.closest("[data-underline-more]")) {
-    underlineColorInput.value = currentUnderlineColor || "#000000";
-    underlineColorInput.click();
-    return;
-  }
-  const colorCell = e.target.closest("[data-color], [data-underline-auto]");
-  if (!colorCell) return;
-  const color = colorCell.dataset.underlineAuto ? "" : colorCell.dataset.color;
-  applyUnderlineColor(color);
-  if (color) recordRecent(recentUnderlineColors, color);
-  closePopover(underlinePopover);
-  focusEditorSurface();
-});
-underlineColorInput.addEventListener("change", () => {
-  const color = underlineColorInput.value;
-  applyUnderlineColor(color);
-  recordRecent(recentUnderlineColors, color);
-  closePopover(underlinePopover);
-  focusEditorSurface();
-});
-
-// One text-color menu-click handler, shared by the ribbon menu and the floating
-// selection-toolbar menu. `popover` is the popover to close after applying; the
-// apply goes through the same `applyTextColor` path (one undoable action, gated
-// in Viewing/Suggesting). (mousedown is preventDefault'd by the popover manager,
-// so the document selection survives the pointer press.)
-function handleTextColorMenuClick(e, popover) {
-  if (e.target.closest("[data-more]")) {
-    textColorInput.value = lastTextColor;
-    textColorInput.click(); // opens the OS color input as the custom fallback
-    return;
-  }
-  const cell = e.target.closest("[data-color], [data-auto]");
-  if (!cell) return;
-  const hex = cell.dataset.auto ? "#000000" : cell.dataset.color;
-  applyTextColor(hex);
-  lastTextColor = hex;
-  if (!cell.dataset.auto) recordRecent(recentTextColors, hex);
-  reflectTextColorSwatch(hex);
-  closePopover(popover);
-  focusEditorSurface();
-}
-function handleHighlightMenuClick(e, popover) {
-  const cell = e.target.closest("[data-highlight]");
-  if (!cell) return;
-  const name = cell.dataset.highlight;
-  applyHighlight(name);
-  if (name !== "none") {
-    lastHighlight = name;
-    recordRecent(recentHighlights, name);
-  }
-  reflectHighlightSwatch(name);
-  closePopover(popover);
-  focusEditorSurface();
-}
-
-textColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, textColorPopover));
-// "More colors…" custom fallback commits when the OS picker closes.
-textColorInput.addEventListener("change", () => {
-  const hex = textColorInput.value;
-  applyTextColor(hex);
-  lastTextColor = hex;
-  recordRecent(recentTextColors, hex);
-  reflectTextColorSwatch(hex);
-});
-
-highlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, highlightPopover));
-
-// Floating selection-toolbar pickers: same renderer, same apply path, popovers
-// anchored to the floating buttons so they open next to the selection. Registered
-// after the ribbon popovers so the ribbon behavior is untouched.
-const selTextColorPopover = registerPopover(selTextColorBtn, selTextColorMenu, () =>
-  renderColorMenu("text", selTextColorMenu),
-);
-const selHighlightPopover = registerPopover(selHighlightBtn, selHighlightMenu, () =>
-  renderColorMenu("highlight", selHighlightMenu),
-);
-selTextColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, selTextColorPopover));
-selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, selHighlightPopover));
-
-// --- Shape Fill / Shape Outline (Word's Shape Format tab) --------------------
-// A drawing was renderable, selectable, movable and resizable but had no way to
-// change what it LOOKS like: the model carried `fill` and `stroke` and nothing
-// could write either. These are the two controls Word's Shape Format tab is
-// built around, on the same palette as the text pickers.
-
-/** What the context bar calls each kind of object. A shape used to read
- *  "Image", which also handed it a Crop button it has no source rectangle for. */
-
-const EMU_PER_POINT = 12700;
-/** The short palette the right-click submenu offers; the bar's picker has the
- *  full grid. A menu is a list, so it gets the colors people actually reach for. */
-const SHAPE_MENU_COLORS = ["#000000", "#ffffff", "#ff0000", "#ff9900", "#ffff00", "#00ff00", "#4a86e8", "#9900ff"];
-/** Word's Shape Outline > Weight list, in points. */
-const OUTLINE_WEIGHTS = [0.25, 0.5, 1, 1.5, 2.25, 3, 4.5, 6];
-
-const shapeFillMenu = document.getElementById("shapeFillMenu");
-const shapeOutlineMenu = document.getElementById("shapeOutlineMenu");
-
-/** The selected shape's current fill/outline, or an empty record when there is
- *  no shape selected. Read from the model, never remembered from the last
- *  apply — the swatch must describe THIS shape. */
-function selectedShapeFormat() {
-  // A picture has the outline half — its border (HF-254) — read the same way.
-  if (!doc || !objectSelection || (!objectSelection.canFill && !objectSelection.canStroke)) return {};
-  try {
-    return doc.shapeFormat(objectSelection.node) ?? {};
-  } catch {
-    return {};
-  }
-}
-
-/** Paints each bar button's underline bar with the shape's own color (or the
- *  none-hatch when it has none), so the control reads before it is opened. */
-function reflectShapeSwatches() {
-  reflectShapeFormatState();
-  const format = selectedShapeFormat();
-  for (const [btn, color] of [
-    [shapeFillBtn, format.fill],
-    [shapeOutlineBtn, format.outline],
-  ]) {
-    const bar = btn.querySelector(".color-apply-bar");
-    if (!bar) continue;
-    bar.style.background = color || "transparent";
-    bar.classList.toggle("is-none", !color);
-  }
-}
-
-/** A bar button carrying a color bar, matching the ribbon's split controls. */
-function makeShapeBarButton(icon, label, title) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "object-bar-btn object-bar-color";
-  btn.title = title;
-  btn.setAttribute("aria-label", title);
-  btn.setAttribute("aria-haspopup", "dialog");
-  btn.setAttribute("aria-expanded", "false");
-  btn.innerHTML =
-    `<span class="ms" aria-hidden="true">${icon}</span><span>${label}</span>` +
-    `<span class="color-apply-bar" aria-hidden="true"></span>`;
-  // The other bar buttons cancel `pointerdown` to keep the selection, but these
-  // open popovers, and cancelling pointerdown suppresses the compatibility
-  // `mousedown` the popover manager opens on — the button would do nothing at
-  // all. `onButton` cancels that mousedown itself, preserving the selection.
-  return btn;
-}
-
-const shapeFillBtn = makeShapeBarButton("format_color_fill", "Fill", "Shape fill");
-const shapeOutlineBtn = makeShapeBarButton("border_color", "Outline", "Shape outline");
-
-/** Word's Shape Fill / Shape Outline menus. `shape_format_menu.mjs`. */
-const shapeMenuHost = {
-  menu: (kind) => (kind === "fill" ? shapeFillMenu : shapeOutlineMenu),
-  format: () => selectedShapeFormat(),
-  heading: (text) => makeMenuHeading(text),
-  swatchGrid: (cells) => makeSwatchGrid(cells),
-  swatchCell: (...args) => makeSwatchCell(...args),
-  colors: () => TEXT_STANDARD_COLORS,
-  weights: () => OUTLINE_WEIGHTS,
-  emuPerPoint: EMU_PER_POINT,
-};
-
-const shapeFillPopover = registerPopover(shapeFillBtn, shapeFillMenu, () => renderShapeMenu("fill", shapeMenuHost));
-const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, () =>
-  renderShapeMenu("outline", shapeMenuHost),
-);
-
-// ---- The object chip's Arrange controls ------------------------------------
-// Three popovers on the chip a selected object carries: Word's Position gallery,
-// its Arrange menu (stacking + Group/Ungroup) and its Rotate menu. Registered
-// here rather than beside the commands because `registerPopover` and the
-// `popovers` list it appends to are declared further down the file.
-
-/** A chip button that OPENS a popover. Unlike the chip's action buttons it must
- *  NOT cancel `pointerdown`: cancelling it suppresses the compatibility
- *  `mousedown` the popover manager opens on, and the button would do nothing at
- *  all — the same trap `makeShapeBarButton` documents. */
-function makeObjectMenuButton(icon, labelKey, menuId) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  // Icon-only, like Word's own Arrange group and Docs' image chip. The chip is
-  // already the densest control in the product and these three would have added
-  // ~150px of text to a bar that sits OVER the object when there is no room
-  // above it. The name is on the tooltip AND on the accessible name.
-  btn.className = "object-bar-btn object-bar-icon";
-  btn.setAttribute("aria-haspopup", "menu");
-  btn.setAttribute("aria-expanded", "false");
-  btn.setAttribute("aria-controls", menuId);
-  const glyph = document.createElement("span");
-  glyph.className = "ms";
-  glyph.setAttribute("aria-hidden", "true");
-  glyph.textContent = icon;
-  btn.appendChild(glyph);
-  btn.dataset.objectMenu = menuId;
-  btn.dataset.labelKey = labelKey;
-  return labelledObjectMenuButton(btn);
-}
-
-/** Re-reads a chip menu button's name from the catalogue.
- *
- *  These buttons are built ONCE, at import, when no catalogue is loaded — so a
- *  name baked in there is the KEY, in every language including English. Reading
- *  it on every bar render is also what makes a locale switch reach them. */
-function labelledObjectMenuButton(btn) {
-  const label = t(btn.dataset.labelKey);
-  btn.title = label;
-  btn.setAttribute("aria-label", label);
-  return btn;
-}
-
-const objectPositionMenu = document.getElementById("objectPositionMenu");
-const objectArrangeMenu = document.getElementById("objectArrangeMenu");
-const objectRotateMenu = document.getElementById("objectRotateMenu");
-const objectPositionBtn = makeObjectMenuButton("open_with", "object.position", "objectPositionMenu");
-const objectArrangeBtn = makeObjectMenuButton("layers", "object.arrange", "objectArrangeMenu");
-const objectRotateBtn = makeObjectMenuButton("rotate_right", "object.rotate", "objectRotateMenu");
-
-const objectPositionPopover = registerPopover(objectPositionBtn, objectPositionMenu, () => {
-  const state = arrangeState();
-  const availability = positionAvailability(state?.read ?? { object: false });
-  renderPositionGallery(objectPositionMenu, {
-    presets: POSITION_PRESETS,
-    t,
-    activeId: null,
-    reason: availability.available ? null : t(availability.reasonKey),
-    onPick: (preset) => {
-      closePopover(objectPositionPopover);
-      objectArrange.applyPosition(preset);
-    },
-  });
-});
-const objectArrangePopover = registerPopover(objectArrangeBtn, objectArrangeMenu, () => {
-  const verdict = objectArrange.groupability();
-  renderArrangeMenu(objectArrangeMenu, {
-    t,
-    zChoices: Z_ORDER_CHOICES,
-    zOrder: objectArrange.zOrderAvailability(arrangeState()),
-    group: { enabled: verdict.can, reason: verdict.reason },
-    ungroup: {
-      enabled: objectSelection?.kind === "group",
-      reason: t("object.ungroup.notAGroup"),
-    },
-    onZOrder: (order) => {
-      closePopover(objectArrangePopover);
-      objectArrange.setZOrder(order);
-    },
-    onGroup: () => {
-      closePopover(objectArrangePopover);
-      void objectArrange.group();
-    },
-    onUngroup: () => {
-      closePopover(objectArrangePopover);
-      void objectArrange.ungroup();
-    },
-  });
-});
-const objectRotatePopover = registerPopover(objectRotateBtn, objectRotateMenu, () => {
-  const state = arrangeState();
-  renderRotateMenu(objectRotateMenu, {
-    t,
-    choices: ROTATE_CHOICES,
-    enabled: !!state?.transform,
-    reason: t("object.rotate.unsupported"),
-    onPick: (value) => {
-      closePopover(objectRotatePopover);
-      objectArrange.rotate(value);
-    },
-  });
-});
-
+const {
+  SHAPE_MENU_COLORS, labelledObjectMenuButton, objectArrangeBtn, objectPositionBtn, objectRotateBtn,
+  reflectShapeSwatches, selectedShapeFormat, shapeFillBtn, shapeOutlineBtn,
+} = createShapeChrome(ed);
 /** Applies a fill to the selected shape (`null` clears it). One undoable action,
  *  through the same gate every object edit uses. */
 function applyShapeFill(hex) {
@@ -5024,7 +2719,6 @@ function applyShapeFill(hex) {
   runEdit(() => doc.setShapeFill(node, hex ?? undefined), { gate: true });
   reflectShapeSwatches();
 }
-
 /** Applies an outline color and/or weight. Setting a weight on an unoutlined
  *  shape gives it Word's default black outline, so the weight is never a no-op. */
 function applyShapeOutline({ color, widthEmu }) {
@@ -5038,452 +2732,12 @@ function applyShapeOutline({ color, widthEmu }) {
   });
   reflectShapeSwatches();
 }
-
-function handleShapeMenuClick(event, kind, popover) {
-  const none = event.target.closest("[data-shape-none]");
-  const cell = event.target.closest("[data-shape-color]");
-  const weight = event.target.closest("[data-shape-weight]");
-  if (!none && !cell && !weight) return;
-  if (kind === "fill") {
-    applyShapeFill(none ? null : cell.dataset.shapeColor);
-  } else if (none) {
-    applyShapeOutline({ color: null });
-  } else if (weight) {
-    applyShapeOutline({ widthEmu: Number(weight.dataset.shapeWeight) });
-  } else {
-    applyShapeOutline({ color: cell.dataset.shapeColor });
-  }
-  closePopover(popover);
-}
-
-shapeFillMenu.addEventListener("click", (e) => handleShapeMenuClick(e, "fill", shapeFillPopover));
-shapeOutlineMenu.addEventListener("click", (e) =>
-  handleShapeMenuClick(e, "outline", shapeOutlinePopover),
-);
-
-// Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
-onButton(textColorApplyBtn, () => {
-  applyTextColor(lastTextColor);
-  recordRecent(recentTextColors, lastTextColor);
-});
-onButton(highlightApplyBtn, () => {
-  applyHighlight(lastHighlight);
-  recordRecent(recentHighlights, lastHighlight);
-});
-reflectTextColorSwatch(lastTextColor);
-reflectHighlightSwatch(lastHighlight);
-
-// ---- Font family menu (Q2): searchable, own-typeface, recently-used group ----
-// No font-enumeration API is exposed to the webapp, so this is a curated common
-// list (the registry seam populates faces for rendering; this list is the menu
-// inventory). The caret's actual family is always included so an imported font
-// stays selectable/visible even when it is not in the list.
-const COMMON_FONTS = [
-  "Arial", "Calibri", "Cambria", "Comic Sans MS", "Consolas", "Courier New",
-  "Georgia", "Helvetica", "Lato", "Montserrat", "Noto Sans", "Noto Serif",
-  "Open Sans", "Roboto", "Segoe UI", "Tahoma", "Times New Roman",
-  "Trebuchet MS", "Verdana",
-];
-const recentFonts = [];
-let fontMenuActiveIndex = -1;
-
-function fontInventory() {
-  const all = new Set(COMMON_FONTS);
-  if (currentFontFamily) all.add(currentFontFamily);
-  return [...all].sort((a, b) => a.localeCompare(b));
-}
-
-/** (Re)renders the font list filtered by the search box; recently-used first,
- *  then the alphabetical inventory, each name shown in its own typeface. */
-function renderFontMenu() {
-  const query = fontMenuInput.value.trim().toLowerCase();
-  const match = (name) => name.toLowerCase().includes(query);
-  const recent = recentFonts.filter(match);
-  const inventory = fontInventory().filter((name) => match(name) && !recent.includes(name));
-  fontMenuList.replaceChildren();
-
-  const addRow = (name, group) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "font-menu-item";
-    row.setAttribute("role", "option");
-    row.dataset.font = name;
-    row.style.fontFamily = `"${name}", system-ui, sans-serif`;
-    row.setAttribute("aria-selected", String(name === currentFontFamily));
-    if (name === currentFontFamily) row.classList.add("is-current");
-    row.innerHTML = `<span class="font-menu-check ms" aria-hidden="true">check</span><span class="font-menu-name">${escapeHtml(name)}</span>`;
-    fontMenuList.appendChild(row);
-    if (group) row.dataset.group = group;
-  };
-
-  if (recent.length) {
-    const h = makeMenuHeading("Recently used");
-    fontMenuList.appendChild(h);
-    for (const name of recent) addRow(name, "recent");
-    fontMenuList.appendChild(makeMenuHeading("All fonts"));
-  }
-  for (const name of inventory) addRow(name);
-
-  const rows = fontMenuList.querySelectorAll(".font-menu-item");
-  fontMenuEmpty.hidden = rows.length > 0;
-  // Default the active row to the current font (or the first row).
-  fontMenuActiveIndex = [...rows].findIndex((r) => r.dataset.font === currentFontFamily);
-  if (fontMenuActiveIndex < 0 && rows.length) fontMenuActiveIndex = 0;
-  paintFontActive();
-}
-function paintFontActive() {
-  const rows = fontMenuList.querySelectorAll(".font-menu-item");
-  rows.forEach((row, i) => row.classList.toggle("is-active", i === fontMenuActiveIndex));
-  rows[fontMenuActiveIndex]?.scrollIntoView({ block: "nearest" });
-}
-function chooseFont(name) {
-  applyFontFamily(name);
-  reflectFontFamily(name);
-  recordRecent(recentFonts, name);
-  closePopover(fontPopover);
-  focusEditorSurface();
-}
-
-const fontPopover = registerPopover(fontFamilyBtn, fontMenu, () => {
-  fontMenuInput.value = "";
-  renderFontMenu();
-  requestAnimationFrame(() => fontMenuInput.focus());
-});
-fontMenuInput.addEventListener("input", renderFontMenu);
-fontMenuInput.addEventListener("keydown", (e) => {
-  const rows = fontMenuList.querySelectorAll(".font-menu-item");
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    fontMenuActiveIndex = Math.min(rows.length - 1, fontMenuActiveIndex + 1);
-    paintFontActive();
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    fontMenuActiveIndex = Math.max(0, fontMenuActiveIndex - 1);
-    paintFontActive();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const row = rows[fontMenuActiveIndex];
-    if (row) chooseFont(row.dataset.font);
-  }
-});
-fontMenuList.addEventListener("click", (e) => {
-  const row = e.target.closest(".font-menu-item");
-  if (row) chooseFont(row.dataset.font);
-});
-
-// ---- Grow / shrink font (Q5) -------------------------------------------------
-// The ladder and the step rule are `nextFontSizeStep` in `style_picker.mjs`,
-// beside `previewPx`: both are point sizes, and the epsilon and the past-the-end
-// behaviour are exactly the parts that want a unit test rather than a browser.
-function currentFontPt() {
-  const v = Number(fontSizeSel.value);
-  if (Number.isFinite(v) && v >= 1) return v;
-  if (pendingFormat?.sizeHalfPoints != null) return pendingFormat.sizeHalfPoints / 2;
-  return 11;
-}
-function stepFontSize(dir) {
-  const next = nextFontSizeStep(currentFontPt(), dir);
-  armOrApplyRun({ sizeHalfPoints: Math.round(next * 2) }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, next)),
-  );
-}
-onButton(growFontBtn, () => stepFontSize(1));
-onButton(shrinkFontBtn, () => stepFontSize(-1));
-
-// ---- Change case (Q5): transform selected text, preserving per-run format ----
-// The cross-run re-slicing rule is `recaseRichRuns` in `text_rules.mjs`, with
-// the two formatting boundaries that make it hard; what is left here is reading
-// the runs out of the engine and writing them back.
-async function applyChangeCase(mode) {
-  if (!doc || !hasRange()) return;
-  const { anchor, focus } = selection;
-  let runs;
-  try {
-    runs = JSON.parse(doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset));
-  } catch {
-    return;
-  }
-  if (!Array.isArray(runs) || !runs.length) return;
-  await pasteRichRunsJson(JSON.stringify(recaseRichRuns(runs, mode)));
-}
-const changeCasePopover = registerPopover(changeCaseBtn, changeCaseMenu, () => {});
-changeCaseMenu.addEventListener("click", (e) => {
-  const item = e.target.closest("[data-case]");
-  if (!item) return;
-  closePopover(changeCasePopover);
-  void applyChangeCase(item.dataset.case);
-});
-
-// -- List marker-format galleries (bullet glyph / number format) ---------------
-// The bullet and numbered buttons carry a ▾ split that opens a small gallery of
-// marker choices; picking one retargets the caret's list through the gated
-// `setListFormat` path (one undo; blocked in Viewing/Suggesting like the sibling
-// restart/continue list ops). The main button keeps its plain on/off toggle.
-/** Mark the gallery cell matching the caret's current list marker as checked. */
-function reflectListGallery(menu) {
-  const current = doc && selection ? doc.listFormatAt(selection.focus.node) : "";
-  for (const cell of menu.querySelectorAll(".list-gallery-cell")) {
-    cell.setAttribute("aria-checked", String(cell.dataset.spec === current));
-  }
-}
-// --- Insert ▸ Shapes gallery -------------------------------------------------
-const shapeGalleryMenu = document.getElementById("shapeGalleryMenu");
-
-/** The gallery cells, in keyboard order, and where each visual row starts —
- *  rebuilt on every open because the catalogue is fixed but the DOM is not. */
-let shapeGalleryCells = [];
-const SHAPE_GALLERY_COLUMNS = 6;
-
-/** Renders Word's grouped shape gallery: every preset the engine models, under
- *  the headings Word files them under. `shape_gallery.mjs` owns the DOM. */
-function paintShapeGallery() {
-  shapeGalleryCells = renderShapeGallery(shapeGalleryMenu, {
-    t,
-    onPick: (token) => {
-      closePopover(shapeGalleryPopover);
-      // Word ARMS the pointer here rather than inserting: the next gesture on
-      // the page decides where the shape goes and how big it is. A click
-      // without a drag still places the default size, so the gallery works for
-      // someone who has never been told about the drag.
-      shapeDrawMode.arm(token);
-      focusEditorSurface();
-    },
-  });
-  shapeGalleryMenu.style.setProperty("--shape-gallery-columns", String(SHAPE_GALLERY_COLUMNS));
-}
-
-const shapeGalleryPopover = registerPopover(insertShapeBtn, shapeGalleryMenu, paintShapeGallery);
-
-/** Opens the gallery, wherever the command came from (ribbon button or palette). */
-function openShapeGallery() {
-  if (!doc) return;
-  if (shapeGalleryMenu.hidden) openPopover(shapeGalleryPopover);
-  queueMicrotask(() => shapeGalleryCells[0]?.focus());
-}
-
-// Arrow keys walk the grid, which is what makes 22 icon cells operable without a
-// pointer. The rule is `nextGalleryIndex`; this is the focus half.
-shapeGalleryMenu.addEventListener("keydown", (event) => {
-  const index = shapeGalleryCells.indexOf(document.activeElement);
-  const next = nextGalleryIndex(
-    event.key,
-    index,
-    galleryRowStarts(SHAPE_GALLERY_COLUMNS),
-    shapeGalleryCells.length,
-  );
-  if (next < 0) return;
-  event.preventDefault();
-  shapeGalleryCells[next]?.focus();
-});
-
-const bulletGalleryPopover = registerPopover(bulletListMenuBtn, bulletGalleryMenu, () =>
-  reflectListGallery(bulletGalleryMenu),
-);
-const numberGalleryPopover = registerPopover(numberedListMenuBtn, numberGalleryMenu, () =>
-  reflectListGallery(numberGalleryMenu),
-);
-/** Applies a list-marker spec ("bullet:•", "numbered:decimal", …) to the caret's
- *  list. Shared by the gallery cells and by the `paragraph.listFormat.*`
- *  commands, which are generated from the very same cells. */
-function applyListFormatCommand(spec) {
-  if (!selection || !doc) return;
-  const applied = runNodeEdit(() => doc.setListFormat(selection.focus.node, spec));
-  // A newly chosen bullet glyph may need its covering symbol font fetched
-  // (once) so it renders instead of a .notdef box, then re-render.
-  if (applied && spec.startsWith("bullet:")) void ensureGlyphCoverage("list marker");
-}
-for (const [menu, popover] of [[bulletGalleryMenu, bulletGalleryPopover], [numberGalleryMenu, numberGalleryPopover]]) {
-  wireListGallery(menu, popover, { canApply: () => !!selection && !!doc, closePopover, apply: applyListFormatCommand });
-}
-
-// -- Line & paragraph spacing --------------------------------------------------
-// Wiring lives in `spacing_menu.mjs`; the competitive reference and the reason
-// an inherited line spacing reads back as "from the style" are recorded there.
-const spacingMenuControl = createSpacingMenu({
-  doc: () => doc,
-  focusNode: () => selection?.focus?.node ?? null,
-  runToolbarEdit,
-  registerPopover,
-  onButton,
-  t,
-});
-
-// -- Paragraph properties inspector ------------------------------------------
-/** An inches field's value → twips (≥ 0); "" or non-numeric → 0. */
-function inchTwips(input) {
-  return inchesToTwips(input.value);
-}
-
-/** An inches field's value → signed twips; blank/non-numeric → 0. */
-function setMixedCheckbox(input, state) {
-  input.indeterminate = state === 2;
-  input.checked = state === 1;
-}
-
-function reflectParagraphProperties() {
-  if (!doc || !selection) return;
-  const [startNode, startOffset, endNode, endOffset] = selEndpoints();
-  paragraphAdvanced.reflect();
-  listAdvanced.reflect();
-  styleAdvanced.reflect();
-  const state = doc.selectionParagraphState(startNode, startOffset, endNode, endOffset);
-  paragraphPropertiesContext.textContent =
-    state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
-
-  paraPanelStyle.options[0].textContent = state.styleMixed ? "Mixed" : "Style";
-  if (document.activeElement !== paraPanelStyle) {
-    paraPanelStyle.value = state.styleMixed ? "" : state.style;
-  }
-  for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
-    button.setAttribute(
-      "aria-pressed",
-      state.alignmentMixed ? "mixed" : String(button.dataset.palign === state.alignment),
-    );
-  }
-
-  if (document.activeElement !== indentLeftInput) {
-    indentLeftInput.placeholder = state.startMixed ? "Mixed" : "";
-    indentLeftInput.value = state.startMixed ? "" : twipsToInchText(state.startTwip);
-  }
-  if (document.activeElement !== indentRightInput) {
-    indentRightInput.placeholder = state.endMixed ? "Mixed" : "";
-    indentRightInput.value = state.endMixed ? "" : twipsToInchText(state.endTwip);
-  }
-  if (![indentSpecialByInput, indentSpecialSel].includes(document.activeElement)) {
-    if (state.firstLineMixed || state.hangingMixed) {
-      indentSpecialSel.value = "";
-      indentSpecialByInput.value = "";
-      indentSpecialByInput.placeholder = "Mixed";
-    } else if (state.firstLineTwip > 0) {
-      indentSpecialSel.value = "first";
-      indentSpecialByInput.value = twipsToInchText(state.firstLineTwip);
-      indentSpecialByInput.placeholder = "";
-    } else if (state.hangingTwip > 0) {
-      indentSpecialSel.value = "hanging";
-      indentSpecialByInput.value = twipsToInchText(state.hangingTwip);
-      indentSpecialByInput.placeholder = "";
-    } else {
-      indentSpecialSel.value = "none";
-      indentSpecialByInput.value = "";
-      indentSpecialByInput.placeholder = "";
-    }
-  }
-
-  if (document.activeElement !== paraLineSpacing) {
-    paraLineSpacing.value = state.lineMixed ? "" : String(state.linePercent || "");
-  }
-  if (document.activeElement !== paraSpaceBefore) {
-    paraSpaceBefore.placeholder = state.beforeMixed ? "Mixed" : "";
-    paraSpaceBefore.value =
-      state.beforeMixed || state.beforeTwip < 0
-        ? ""
-        : String(Math.round(state.beforeTwip / TWIPS_PER_POINT));
-  }
-  if (document.activeElement !== paraSpaceAfter) {
-    paraSpaceAfter.placeholder = state.afterMixed ? "Mixed" : "";
-    paraSpaceAfter.value =
-      state.afterMixed || state.afterTwip < 0
-        ? ""
-        : String(Math.round(state.afterTwip / TWIPS_PER_POINT));
-  }
-
-  setMixedCheckbox(pgKeepNext, state.keepNextState);
-  setMixedCheckbox(pgKeepLines, state.keepLinesState);
-  setMixedCheckbox(pgBreakBefore, state.pageBreakBeforeState);
-  paraShadeMixed.hidden = !state.shadingMixed;
-  paraShadeNone.setAttribute(
-    "aria-pressed",
-    state.shadingMixed ? "mixed" : String(state.shading < 0),
-  );
-  if (!state.shadingMixed && state.shading >= 0 && document.activeElement !== paraShade) {
-    paraShade.value = `#${state.shading.toString(16).padStart(6, "0")}`;
-  }
-  paraBordersMixed.hidden = !state.bordersMixed;
-  const bit = { top: 1, bottom: 2, left: 4, right: 8 };
-  for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
-    const k = b.dataset.border;
-    const on =
-      k === "box"
-        ? state.borderEdges === 0b1111
-        : k === "none"
-          ? state.borderEdges === 0
-          : (state.borderEdges & bit[k]) !== 0;
-    b.setAttribute("aria-pressed", state.bordersMixed ? "mixed" : String(on));
-  }
-  state.free();
-}
-
-// `focusTarget` lets Layout ▸ Indent and Layout ▸ Spacing land on the fieldset
-// the user asked for. The panel owns the real indent/spacing values — the ribbon
-// deliberately holds no second copy of them — so the deep link is what makes the
-// ribbon button honest about what it does.
-function toggleParagraphProperties(open, focusTarget = null) {
-  const show = open ?? paragraphPropertiesPanel.hidden;
-  if (show && (!doc || !selection)) return;
-  const returnFocus =
-    !show && paragraphPropertiesPanel.contains(document.activeElement);
-  paragraphPropertiesPanel.hidden = !show;
-  paraOptsBtn.setAttribute("aria-expanded", String(show));
-  if (show) {
-    toggleTableProperties(false);
-    closeAllPopovers();
-    reflectParagraphProperties();
-    queueMicrotask(() => (focusTarget?.() ?? paraPanelStyle).focus());
-  } else if (returnFocus) {
-    paraOptsBtn.focus({ preventScroll: true });
-  }
-}
-
-paraOptsBtn.addEventListener("click", (event) => {
-  event.stopPropagation();
-  toggleParagraphProperties();
-});
-document.getElementById("paragraphPropertiesClose").addEventListener("click", () =>
-  toggleParagraphProperties(false),
-);
-document.addEventListener("keydown", (event) => {
-  if (
-    event.key === "Escape" &&
-    !paragraphPropertiesPanel.hidden &&
-    (document.activeElement === paraOptsBtn ||
-      paragraphPropertiesPanel.contains(document.activeElement))
-  ) {
-    event.preventDefault();
-    toggleParagraphProperties(false);
-  }
-});
-
-paraPanelStyle.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) =>
-    doc.setParagraphStyle(a, b, c, d, paraPanelStyle.value), { paragraphLevel: true }),
-);
-for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
-  onButton(button, () =>
-    runToolbarEdit((a, b, c, d) =>
-      doc.setAlignment(a, b, c, d, button.dataset.palign), { paragraphLevel: true }),
-  );
-}
-paraLineSpacing.addEventListener("change", () => {
-  if (!paraLineSpacing.value) return;
-  runToolbarEdit((a, b, c, d) =>
-    doc.setLineSpacing(a, b, c, d, Number(paraLineSpacing.value)), { paragraphLevel: true });
-});
-/** A points field's value → twips (≥ 0); "" clears the paragraph's own value so
- *  the style decides again, which is what `-1` means to the engine. */
-function applySpace(input, setter) {
-  const raw = input.value.trim();
-  if (raw !== "" && !Number.isFinite(Number(raw))) return;
-  const twips = raw === "" ? -1 : Math.max(0, Math.round(Number(raw) * TWIPS_PER_POINT));
-  runToolbarEdit((a, b, c, d) => setter(a, b, c, d, twips));
-}
-paraSpaceBefore.addEventListener("change", () =>
-  applySpace(paraSpaceBefore, (a, b, c, d, twips) => doc.setSpaceBefore(a, b, c, d, twips)),
-);
-paraSpaceAfter.addEventListener("change", () =>
-  applySpace(paraSpaceAfter, (a, b, c, d, twips) => doc.setSpaceAfter(a, b, c, d, twips)),
-);
-
-// -- Table & cell formatting (a single-node edit: applies to the caret's cell) --
+const { applyChangeCase, fontInventory, reflectListGallery, stepFontSize } = createFontMenu(ed);
+const { applyListFormatCommand, openShapeGallery, spacingMenuControl } = createShapeGallery(ed);
+const {
+  applyHighlight, applyTextColor, reflectParagraphProperties, toggleParagraphProperties,
+} = createParagraphInspector(ed);
+const { tablePopover } = createTableFormat(ed);
 /** Runs a `(node) => EditResult` edit on the caret's node, preserving the selection
  *  and repainting only the dirty pages (rebuild on a page-count change). Every
  *  current caller is a table/list structural mutation with no tracked-revision
@@ -5518,315 +2772,13 @@ function runNodeEdit(thunk) {
   scheduleChromeRefresh({ outline: true });
   return true;
 }
-
-// The cell-format popover and the split-cell dialog are `table_cell_chrome.mjs`;
-// what stays here is the editor state they need. `formatRange` is the one line
-// that removed the old *"put the caret in the cell to format it"* refusal: the
-// caret's own node passed twice is a one-cell range, so one path serves both.
-const cellFormatMenu = bindCellFormatMenu({
-  menu: tableFmtMenu,
-  shade: document.getElementById("cellShade"),
-  shadeNone: document.getElementById("cellShadeNone"),
-  vAlign: document.getElementById("cellVAlign"),
-  cellBorderColor: document.getElementById("cellBorderColor"),
-  tableBorderColor: document.getElementById("tableBorderColor"),
-  borderWeight: document.getElementById("borderWeight"),
-  borderStyle: document.getElementById("borderStyle"),
-  doc: () => doc,
-  caretNode: () => (selection && doc ? selection.focus.node : ""),
-  formatRange: (apply) =>
-    selection && doc ? tableRange.formatRange(apply, selection.focus.node) : false,
-  runNodeEdit,
-  onButton,
-  bindRadioGroup,
-  hexToRgb,
-});
-const tablePopover = registerPopover(tableBtn, tableFmtMenu, () => cellFormatMenu.reflect());
-bindBreaksMenu(BREAK_IO);
-
-// ---- Four engine capabilities that had no control at all --------------------
-// Each of these was reachable from the engine in one call and from the product in
-// none (`SKILL` §9 rule 4). What stays here is the editor state they need; every
-// decision — the competitor shape, the labels, the refusals, the command rows —
-// lives with its own control.
-//
-// `repaint` for the marks is the page WINDOW, not the document: turning marks on
-// is a repaint and never a repagination, so re-rastering what is on screen is the
-// whole of the chrome's duty and it is O(window) rather than O(document).
-const formattingMarks = createFormattingMarks({
-  getDoc: () => doc,
-  repaint: () => {
-    for (let i = pageWindow.first; i <= pageWindow.last; i++) repaintPage(i);
-  },
-  setStatus,
-});
-const measurement = createMeasurementUnits({
-  engine: {
-    measurementUnits,
-    defaultMeasurementUnit,
-    decimalSeparatorForLanguage,
-    parseMeasurement,
-    formatMeasurement,
-  },
-  select: document.getElementById("measurementUnitSelect"),
-  locale: () => activeLocale(),
-  // The browser's tag, because it carries a REGION: the first-run default is
-  // inches only for the US and Canada, and the UI locale is a language choice
-  // that is usually just "en".
-  region: () => navigator.language || activeLocale(),
-  onChanged: () => pageSetup.reflectUnits(),
-  setStatus,
-  openChooser: () => {
-    revealOnSettings(SETTINGS_SURFACE, document.getElementById("measurementUnitSelect"), {
-      group: ".settings-section",
-    });
-  },
-});
-/** "Who may do what", in one handle — `access_chrome.mjs`, which composes the
- *  rights dialog and the persistent access indicator over the same four
- *  authorities. One call here rather than two modules wired separately, because a
- *  permission resolved at two call sites is a permission two call sites can
- *  disagree about. Constructed after `documentProtection` because it reads that
- *  module's state, which is the DOCUMENT's own authority. */
-const accessChrome = createAccessChrome({
-  getDoc: () => doc,
-  getTransport: () => collab,
-  getGrant: () => SESSION.grant,
-  getProtection: () => documentProtection.state(),
-  getCapabilities: () => HOST_CAPS,
-  getReadOnlyReason: () => readOnlyReason,
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  setStatus,
-  t: (key, values) => t(key, values),
-});
-const documentProtection = createDocumentProtection({
-  getDoc: () => doc,
-  runEdit,
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  bindRadioGroup,
-  setStatus,
-  participantRefusal: () => SESSION.refusalFor("review.restrictEditing"),
-  onChanged: () => updateToolbar(),
-});
-// Review ▸ Compare's seams (ADR-061, ADR-065), inline because this module has no
-// mount seam (`109` HF-085); `landed` is also the capability test for "Keep".
-const yieldFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-const redlineOf = (io) => buildRedline({ ...io, engine: { begin: beginVersionDiff, slice: defaultDiffSlice, open }, yieldToHost: yieldFrame });
-/** Takes the reader to one change on a redline (ADR-065): the selection and the scroll, focus left on the control they stepped with. */
-const showChange = (a) => { selection = { anchor: { node: a.node, offset: Number(a.start) || 0 }, focus: { node: a.node, offset: Number(a.end) || Number(a.start) || 0 } }; drawSelection(); if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer(); };
-const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), redline: redlineOf, showView: (view) => (view ? showVersionPreview(view, { markup: true, reason: t("compare.viewReadOnly") }) : showVersionPreview(null)), beforeView: () => versionHistory.closePreview(), yieldToHost: yieldFrame, setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); }, navigate: showChange });
-
-// The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
-// Its Select handler used to be a second copy of `selectTableContext`.
-bindTableBand({
-  root: tableRibbon,
-  onButton,
-  getDoc: () => doc,
-  getSelection: () => selection,
-  runEdit,
-  clearTableSelection: () => tableRange.clear(),
-  selectTableContext,
-  caretTableColumn,
-  status: (text) => setStatus(text),
-});
-
-onButton(mergeCellsBtn, async () => {
-  // The "select something first" branch that used to be here was UNREACHABLE —
-  // the button is disabled whenever fewer than two cells are selected — and it
-  // carried a second, divergent copy of the menu's own sentence. The band's
-  // disabled reason is now that one sentence, from the catalogue (`docs/141`
-  // TBL-03, TBL-05).
-  //
-  // `mergeTableCellRange` takes the RECTANGLE, not one of the three degenerate
-  // shapes a mode string could name, so an arbitrary drag merges (TBL-17).
-  const range = tableRange.get();
-  if (!selection || !doc || !range) return;
-  await announceTableEdit(runEdit(() => doc.mergeTableCellRange(range.anchorNode, range.focusNode), { gate: true }), "merge", setStatus);
-  tableRange.clear();
-  updateToolbar();
-});
-
-const splitCellDialogView = bindSplitCellDialog({
-  dialog: splitCellDialog,
-  rows: splitCellRows,
-  columns: splitCellColumns,
-  open: splitCellBtn,
-  close: splitCellClose,
-  cancel: splitCellCancel,
-  confirm: splitCellConfirm,
-  fallbackFocus: () => pagesEl,
-  registerModal,
-  onButton,
-  runEdit: (fn, options) => runEdit(fn, options),
-  doc: () => doc,
-  caretNode: () => (selection && doc ? selection.focus.node : ""),
-  afterSplit: () => {
-    tableRange.clear();
-    updateToolbar();
-  },
-});
-const toggleSplitCellDialog = (open) => splitCellDialogView.toggle(open);
-
-// -- Table properties inspector ----------------------------------------------
-let tablePropertiesCurrent = null;
-let tablePropertiesNode = null;
-
-/** An optional inches field's value → twips, or -1 for "leave it unset". */
-function updateTableRowHeightField() {
-  const automatic = tableRowHeightRule.value === "auto";
-  tableRowHeight.disabled = automatic;
-  tableRowHeight.required = !automatic;
-  if (automatic) tableRowHeight.setCustomValidity("");
-}
-
-function reflectTableProperties(node = selection?.focus.node) {
-  if (!doc || node == null) return false;
-  const info = doc.tableInfo(node);
-  if (!info.found) {
-    info.free();
-    return false;
-  }
-
-  tablePropertiesNode = node;
-  tablePropertiesContext.textContent = tableContextLabel(info);
-  tableCaption.value = info.caption || "";
-  tableDescription.value = info.description || "";
-  tableHeaderRow.checked = info.headerRow;
-  tableFixedLayout.checked = info.fixedLayout;
-  tableColumnWidth.disabled = false; // a merged table sizes its grid columns too (docs/171)
-  tableColumnWidth.value = twipsToDialogInches(info.columnWidthTwips);
-  tableColumnWidthNote.textContent = "Sets the width of the current column.";
-  tableWidth.value = twipsToDialogInches(info.tableWidthTwips);
-  tableIndent.value = twipsToDialogInches(info.tableIndentTwips);
-  tableRowHeight.value = twipsToDialogInches(info.rowHeightTwips);
-  tableRowHeightRule.value = info.rowHeightRule || "auto";
-  tableCellMargin.value = twipsToDialogInches(info.cellMarginTwips);
-  tableCellSpacing.value = twipsToDialogInches(info.cellSpacingTwips);
-  tableAlignGroup.reflect(info.alignment);
-  updateTableRowHeightField();
-
-  tablePropertiesCurrent = {
-    alignment: info.alignment,
-    tableWidthTwips: optionalInchesToTwips(tableWidth.value),
-    tableIndentTwips: signedInchesToTwips(tableIndent.value),
-    fixedLayout: info.fixedLayout,
-    headerRow: info.headerRow,
-    columnWidthTwips: optionalInchesToTwips(tableColumnWidth.value),
-    rowHeightTwips:
-      tableRowHeightRule.value === "auto" ? -1 : optionalInchesToTwips(tableRowHeight.value),
-    rowHeightRule: info.rowHeightRule || "auto",
-    cellMarginTwips: optionalInchesToTwips(tableCellMargin.value),
-    cellSpacingTwips: optionalInchesToTwips(tableCellSpacing.value),
-    caption: tableCaption.value,
-    description: tableDescription.value,
-  };
-  info.free();
-  return true;
-}
-
-function toggleTableProperties(open) {
-  const show = open ?? tablePropertiesPanel.hidden;
-  if (show && !reflectTableProperties()) return;
-  const returnFocus = !show && tablePropertiesPanel.contains(document.activeElement);
-  tablePropertiesPanel.hidden = !show;
-  tablePropertiesBtn.setAttribute("aria-expanded", String(show));
-  if (show) {
-    toggleParagraphProperties(false);
-    closePopover(tablePopover);
-    queueMicrotask(() =>
-      tableAlignGroup.focusSelected(),
-    );
-  } else if (returnFocus) {
-    tablePropertiesBtn.focus({ preventScroll: true });
-  }
-}
-
-tablePropertiesBtn.addEventListener("click", (event) => {
-  event.stopPropagation();
-  toggleTableProperties();
-});
-tableFormulaApply.addEventListener("click", () => {
-  if (!selection || !doc || !tableFormula.value.trim()) return;
-  runNodeEdit((node) => doc.calculateTableFormula(node, tableFormula.value));
-});
-document.getElementById("tablePropertiesClose").addEventListener("click", () => toggleTableProperties(false));
-const tableAlignGroup = bindRadioGroup(tableAlign, {
-  attr: "data-talign",
-  onSelect: () => commitTableProperties(),
-});
-tablePropertiesPanel.addEventListener("change", (event) => {
-  if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) {
-    return;
-  }
-  if (event.target === tableRowHeightRule) updateTableRowHeightField();
-  commitTableProperties();
-});
-
-/** The form's live fields, named once so the patch builder is a pure function of
- *  its bag rather than of this file's eighteen consts. */
-const TABLE_PROPERTIES_FORM = { width: tableWidth, indent: tableIndent, columnWidth: tableColumnWidth, rowHeight: tableRowHeight, rowHeightRule: tableRowHeightRule, cellMargin: tableCellMargin, cellSpacing: tableCellSpacing, fixedLayout: tableFixedLayout, headerRow: tableHeaderRow, caption: tableCaption, description: tableDescription };
-/** Validation and the CHANGED-only diff live in `table_properties_patch.mjs`,
- *  where a test can reach them — `main.js` has no exports, so the diff that
- *  decides whether eleven untouched properties are re-asserted was unreachable
- *  from node. */
-function tablePropertiesPatch() {
-  return tablePatch(TABLE_PROPERTIES_FORM, { alignment: tableAlignGroup.value() ?? "left", current: tablePropertiesCurrent, inchesToTwips: optionalInchesToTwips, signedInchesToTwips, rowHeightRequired: "Enter a row height or choose Auto." });
-}
-
-function commitTableProperties() {
-  if (!doc || !tablePropertiesCurrent || !tablePropertiesNode) return;
-  const patch = tablePropertiesPatch();
-  if (!patch) return;
-  if (Object.keys(patch).length === 0) {
-    return;
-  }
-  const applied = runNodeEdit(() =>
-    doc.applyTableProperties(tablePropertiesNode, JSON.stringify(patch)),
-  );
-  if (applied) {
-    const activeNode =
-      selection && doc.inTable(selection.focus.node) ? selection.focus.node : null;
-    if (activeNode == null) toggleTableProperties(false);
-    else reflectTableProperties(activeNode);
-    setStatus("Table properties updated");
-  }
-}
-document.addEventListener("keydown", (event) => {
-  if (
-    tablePropertiesPanel.hidden ||
-    (document.activeElement !== tablePropertiesBtn &&
-      !tablePropertiesPanel.contains(document.activeElement))
-  ) {
-    return;
-  }
-  if (event.key === "Escape") {
-    event.preventDefault();
-    toggleTableProperties(false);
-  }
-});
-
-// -- Insert table: the size grid (`table_grid_picker.mjs`) --------------------
-createTableGridPicker({
-  picker: document.getElementById("gridPicker"),
-  label: document.getElementById("gridLabel"),
-  button: insertTableBtn,
-  menu: insertTableMenu,
-  registerPopover,
-  closePopover,
-  blocked: () => blockMutationInViewing(),
-  insert: async (rows, columns) => {
-    if (!selection || !doc) return false;
-    await runEdit(() => doc.insertTable(selection.focus.node, rows, columns), { gate: true });
-    return true;
-  },
-  focusEditor: focusEditorSurface,
-});
-
-/** Rebuilds the off-screen accessibility mirror for the caret's part of the
- *  document. The projection lives in `a11y_mirror.mjs`; what stays here is the
- *  editor state it needs and the gated toggle a mirror checkbox runs (HF-178). */
+const {
+  accessChrome, comparePanel, documentProtection, formattingMarks, measurement, redlineOf,
+  showChange,
+} = createDocTools(ed);
+const {
+  reflectTableProperties, toggleSplitCellDialog, toggleTableProperties,
+} = createTableProps(ed);
 function buildAccessibilityTree() {
   renderAccessibilityMirror(doc, selection?.focus?.node ?? "", tableRange.gridRect(), (control) => runEdit(() => doc.toggleFormCheckbox(control)));
 }
@@ -5909,132 +2861,7 @@ const {
 // same grouped/move-aware decision path as the sidebar and context menu.
 let reviewInlineCard = null;
 const { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger } = createPalette(ed);
-// ---- One navigation axis: the compact menu bar and the ribbon's File page ---
-// The editor used to show TWO navigation systems at once — this menu bar and the
-// ribbon tab strip — so a command's home was a guess between two places (`109`
-// UX-014). Each chrome now has exactly one axis (docs/122):
-//
-//   compact mode  the menu bar IS the axis; File is a dropdown, as in Google
-//                 Docs and Drive. `style.css` hides the bar in ribbon mode.
-//   ribbon mode   the tab strip is the axis; File is its first tab and opens a
-//                 PAGE, as in ONLYOFFICE (`app/view/Toolbar.js:182`, the only
-//                 tab declared `haspanel: false`).
-//
-// Both read `FILE_SURFACE` and both render through `command_menu.mjs`, so the
-// two File rosters cannot drift and neither can invent its own gating: the rows
-// come from the same `editorCommands()` descriptors the palette and the context
-// menu use.
-const appMenuBar = document.getElementById("appMenuBar");
-const appMenuPopover = document.getElementById("appMenuPopover");
-const menuRegistry = () =>
-  new Map(
-    editorCommands({ surface: "menu", hasRange: hasRange() }).map((command) => [command.id, command]),
-  );
-const appMenu = createMenuBar({
-  bar: appMenuBar,
-  popover: appMenuPopover,
-  sectionsFor: (name) => APP_MENU_SECTIONS[name] ?? [],
-  registry: menuRegistry,
-  formatShortcut,
-});
-const closeAppMenu = (options) => appMenu.close(options);
-
-// The File page. Same rows, rendered as headed groups instead of a dropdown,
-// because a full-window route has the room to say what a group is and a dropdown
-// does not. Rebuilt on every open rather than kept in sync — the same reason the
-// compact toolbar is — so a row can never hold a stale `enabled`.
-function renderFilePage() {
-  if (!filePageBody) return 0;
-  renderFilePane({
-    menuRegistry,
-    exportRows: EXPORT_COMMANDS,
-    formatInfoOf: formatInfo,
-    closeFilePage,
-    templates: DOCUMENT_TEMPLATES,
-    templateThumbnailFor: templateThumbnail,
-    onTemplate: async (id) => {
-      closeFilePage();
-      if (!(await confirmDiscardIfEdited())) return;
-      await openBytes(templateBytes(id), templateName(id));
-    },
-    // What each panel's dialog does on open, so the pane shows the same thing.
-    prepare: (pane) => {
-      if (pane === "shortcuts") buildShortcutsReference();
-      if (pane === "commands") {
-        // The palette renders its rows from the live registry when it opens;
-        // shown as a pane nothing had asked it to, so it came up as an empty
-        // search box. Same call, and the query starts clean.
-        const input = document.getElementById("cmdInput");
-        if (input) input.value = "";
-        renderCommands("");
-        // You came to this pane to type a command name. Both entry points —
-        // opening the File tab on this pane, and selecting it in the rail —
-        // are moments the person chose it, so taking the keyboard cannot
-        // interrupt anything they were doing.
-        input?.focus();
-      }
-      if (pane === "about") toggleAbout.stampVersion?.(); else if (pane === "pageSetup") pageSetup.reflect?.();
-      if (pane === "properties") propertiesUi.fill();
-    },
-  });
-  // The rail lists every File command, but three kinds of them are rendered as
-  // a CATEGORY row that opens a pane instead of a row that runs: the six export
-  // formats collapse into one `Export`, and the rows that used to open a dialog
-  // over the page — Settings, Document properties, the Help rows, New — open
-  // panes. The owner asked for exactly this — "basically in this view replace
-  // dialogs with this space", and for export, "one export on left and right
-  // list of them with icons, like in onlyoffice".
-  //
-  // `fileMenuSections()` itself is untouched, so the compact chrome's File
-  // DROPDOWN — which has no pane to open — still runs all of them directly, and
-  // each category row records the ids it stands in for so the two surfaces can
-  // be proved to offer the same roster.
-  const count = renderCommandRows(
-    filePageBody,
-    fileMenuSections(),
-    menuRegistry(),
-    {
-      itemClass: "file-page-item",
-      headings: true,
-      formatShortcut,
-      rowFor: (id, ids) =>
-        fileCategoryRowFor(id, ids, {
-          itemClass: "file-page-item",
-          onSelect: (pane) => {
-            setFilePane(pane);
-            renderFilePage();
-          },
-        }),
-      onRun: (command) => {
-        // Every File row returns to the document first, which is what a dropdown
-        // does implicitly by closing and what ONLYOFFICE's page does through its
-        // own "Back to Document". One rule, no exception list: Settings and the
-        // Help rows open dialogs, and a modal over a full-window page is two
-        // layers of chrome between the user and the document they came for.
-        //
-        // Through `closeFilePage` rather than `selectRibbonTab` alone, because
-        // the row the click landed on is about to be hidden: without moving the
-        // keyboard somewhere real first, focus falls to <body> and a dialog
-        // opened from here has nowhere to hand it back to on Escape — the
-        // HF-062 failure, where the editor looked frozen after a dialog closed.
-        closeFilePage();
-        command.run();
-      },
-    },
-  );
-  return count;
-}
-
-
-{
-  const back = document.getElementById("filePageBack");
-  if (back) onButton(back, () => closeFilePage());
-}
-
-function buildCommands() {
-  return editorCommands({ surface: "palette" });
-}
-
+const { buildCommands, closeAppMenu, renderFilePage } = createFilePage(ed);
 const {
   bookmarkManager, buildShortcutsReference, dropCapDialog, insertFieldAtCaret, insertImageFromBlob,
   insertImageFromFile, insertShapeObject, insertTextBoxObject, openBookmarkManager, openEmojiPicker,
@@ -6047,51 +2874,6 @@ const { openCmd, renderCommands } = createPaletteUi(ed);
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
-indentLeftInput.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) => doc.setLeftIndent(a, b, c, d, inchTwips(indentLeftInput)), { paragraphLevel: true }),
-);
-indentRightInput.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) => doc.setRightIndent(a, b, c, d, inchTwips(indentRightInput)), { paragraphLevel: true }),
-);
-function applyIndentSpecial() {
-  const by = inchTwips(indentSpecialByInput);
-  const kind = indentSpecialSel.value;
-  const twips = kind === "first" ? by : kind === "hanging" ? -by : 0;
-  runToolbarEdit((a, b, c, d) => doc.setFirstLineIndent(a, b, c, d, twips), { paragraphLevel: true });
-}
-indentSpecialSel.addEventListener("change", applyIndentSpecial);
-indentSpecialByInput.addEventListener("change", applyIndentSpecial);
-
-paraShade.addEventListener("change", () => {
-  const [r, g, b] = hexToRgb(paraShade.value);
-  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false), { paragraphLevel: true });
-});
-onButton(paraShadeNone, () =>
-  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, 0, 0, 0, true), { paragraphLevel: true }),
-);
-for (const [box, setter] of [
-  [pgKeepNext, (a, b, c, d, on) => doc.setKeepWithNext(a, b, c, d, on)],
-  [pgKeepLines, (a, b, c, d, on) => doc.setKeepLinesTogether(a, b, c, d, on)],
-  [pgBreakBefore, (a, b, c, d, on) => doc.setPageBreakBefore(a, b, c, d, on)],
-]) {
-  box.addEventListener("change", () =>
-    runToolbarEdit((a, b, c, d) => setter(a, b, c, d, box.checked)),
-  );
-}
-/** Apply a text color (hex `#rrggbb`) to the range or arm it at the caret. */
-function applyTextColor(hex) {
-  const [r, g, b] = hexToRgb(hex);
-  armOrApplyRun({ color: hex }, () =>
-    runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
-  );
-}
-/** Apply a named OOXML highlight (or "none") to the range or arm it at the caret. */
-function applyHighlight(name) {
-  armOrApplyRun({ highlight: name }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
-  );
-}
-
 const { positionSelToolbar } = createSelectionToolbar(ed);
 function applyFontFamily(family) {
   if (!family) return;
@@ -6163,63 +2945,7 @@ let versionPreviewHome = null;
  *  action, one point in the timeline. */
 let activatingRestore = false;
 const { applyActiveAuthorToDocument, toggleSettings } = createSettings(ed);
-// ---- Document properties (docProps/core.xml — title, author, subject, …) ----
-// The whole dialog is `document_metadata.mjs`: the six editable fields, the
-// seventeen read-only `docProps` cells beside them, and the one transaction Apply
-// runs. Splitting one dialog across two files would have been worse than moving
-// it whole, and the File page shows the same element as a pane.
-const propertiesUi = createPropertiesDialog({ registerModal, getDoc: () => doc, runEdit });
-
-// Chrome that must never survive into a modal's foreground (docs/104 HF-089):
-// a pinned tracked-change card used to paint above the scrim with live
-// Accept/Reject buttons, so a change could be accepted while a blocking dialog
-// was supposedly in control. The z-index ladder now puts modals on top, and
-// this hook makes the floating review chrome go away entirely — one place,
-// rather than teaching every dialog's open path about every popover.
-setModalHooks({
-  firstOpen: () => {
-    closeReviewPopover();
-    closeReviewInlineCard();
-    closeAppMenu();
-  },
-});
-
-// ---- Page setup, line numbers, watermark -----------------------------------
-// Word's Layout ▸ Page Setup group, in `page_setup.mjs`: the geometry dialog, the
-// Line Numbers popover and the Watermark dialog, which share one answer to
-// "which section is the caret in". None of the three is decided here any more.
-const pageSetup = createPageSetup({
-  getDoc: () => doc,
-  // The same inventory the Home band's font menu offers, so the watermark's Font
-  // list cannot name a face no other control here can.
-  fontInventory,
-  selectionNode: () => selection?.focus?.node ?? "",
-  selectionEndpoints: selEndpoints,
-  runEdit,
-  registerModal,
-  registerPopover,
-  // Word's *Measurement units* setting governs exactly this dialog, so the
-  // preference arrives as a dependency rather than being read from a global.
-  measure: measurement,
-});
-
-// ---- Header and footer settings --------------------------------------------
-// The band distances, the two running-content variants and the section's page
-// numbering, in `header_footer_settings.mjs`: ONLYOFFICE's own grouping of the
-// four (`view/HeaderFooterTab.js` L63-87). The two variant toggles moved there
-// from here, so the checkbox faces in the dialog and the button faces on the
-// Insert band are one implementation rather than two that can disagree.
-const headerFooterSettings = createHeaderFooterSettings({
-  getDoc: () => doc,
-  selectionNode: () => selection?.focus?.node ?? "",
-  runningPage: runningEditPageOrView,
-  runEdit,
-  applyEditResult,
-  blockedFromMutating: blockedFromPageSetup,
-  setStatus,
-  registerModal,
-});
-
+const { headerFooterSettings, pageSetup, propertiesUi } = createDocumentSettings(ed);
 fileEl.disabled = true;
 if (openBtn) openBtn.disabled = true;
 // No document is open yet, so every document-scoped control starts disabled.
@@ -6228,69 +2954,7 @@ if (openBtn) openBtn.disabled = true;
 updateToolbar();
 boot();
 
-// ---- Chrome modes: compact vs ribbon (owner prototype) ---------------------
-//
-// Two mutually exclusive toolbars. The ribbon is the Word-shaped tabbed chrome;
-// compact is the Docs-shaped single dense bar. The bar's layout table, its
-// grouping and its fold live in `compact_toolbar.mjs` (HF-085: new logic goes
-// in a module); what stays here is the mode switch and the dependency bag.
-const CHROME_MODE_PREF = "opendoc.chromeMode";
-let chromeMode = readPref(CHROME_MODE_PREF, "ribbon") === "compact" ? "compact" : "ribbon";
-
-compactToolbarUi = createCompactToolbar({
-  host: document.getElementById("compactToolbar"),
-  editorCommands,
-  onButton,
-  registerPopover,
-  runControls,
-  paraControls,
-  formatToggleCache,
-  localizeShortcut: (text) => localizeShortcutText(text, EDITOR_KEYBOARD_PLATFORM),
-  // Which roster the bar draws. A phone gets Docs' row over two named sheets
-  // (`PHONE_TOOLBAR`) instead of the desktop's thirteen groups over a fold whose
-  // membership changes with the window width — see `compact_toolbar.mjs`.
-  // Resolved at render time, not captured, so crossing the rung switches it.
-  isPhone: () => phoneChrome.isPhone(),
-});
-
-/** Switches chrome. Mutually exclusive by construction — `body` carries exactly
- *  one mode class — and the caret is never disturbed, because neither chrome
- *  owns the editing surface. */
-function setChromeMode(mode, { persist = true, announce = true } = {}) {
-  chromeMode = mode === "compact" ? "compact" : "ribbon";
-  // A phone has room for one navigation axis and the ribbon is not it (docs/148
-  // §5). The preference is untouched, so growing back past the rung restores it.
-  const compact = chromeMode === "compact" || phoneChrome.isPhone();
-  // The File PAGE is ribbon chrome: compact mode hides the whole ribbon, so
-  // switching modes with it open would leave `.file-page-open` set over a page
-  // nobody can see or leave. Compact mode answers File with a dropdown instead.
-  if (compact) closeFilePage();
-  document.body.classList.toggle("compact-mode", compact);
-  document.body.classList.toggle("ribbon-mode", !compact);
-  // The toolbar IS the chrome — the wrapper it used to sit in was a second
-  // nested box, which is what read as a doubled outline on both sides and the
-  // bottom.
-  const bar = document.getElementById("compactToolbar");
-  if (bar) bar.hidden = !compact;
-  chromeModeGroup?.reflect(chromeMode);
-  // With no document open the registry holds only `noDoc` commands, so the bar
-  // would render nearly empty; it is rebuilt on `doc-loaded`. Rendering here
-  // anyway keeps the adopted controls in place so the bar is never a bare strip.
-  if (compact) compactToolbarUi.render();
-  else compactToolbarUi.release();
-  if (persist) writePref(CHROME_MODE_PREF, chromeMode);
-  if (announce) setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
-}
-
-const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
-  attr: "data-chrome-mode",
-  onSelect: (mode) => setChromeMode(mode),
-});
-setChromeMode(chromeMode, { persist: false });
-// Silently: nobody asked to cross the rung, so a toast on every rotation would
-// be a notification about the window rather than about the document.
-phoneChrome.onPhoneChange(() => setChromeMode(chromeMode, { persist: false, announce: false }));
-
+createChromeModes(ed);
 // ---- The host contract: one session, two transports (`docs/126` phase 2) ----
 // `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT
 // SAME OBJECT behind `postMessage`, so the two can never answer differently.
