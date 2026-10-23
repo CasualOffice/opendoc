@@ -8822,10 +8822,12 @@ body.is-format-painting .page-wrap * {
   font-weight: 550;
 }
 
+/* 24px wide at most; `paintCaretColumnHandles` sets the exact width, which is
+   the zone a press arms (HF-342). The visible line stays 2px at its centre. */
 .overlay .table-col-resize-handle {
   position: absolute;
-  width: 10px;
-  margin-left: -5px;
+  width: 24px;
+  margin-left: -12px;
   min-height: 18px;
   cursor: col-resize;
   pointer-events: auto;
@@ -8835,7 +8837,7 @@ body.is-format-painting .page-wrap * {
 .overlay .table-col-resize-handle::after {
   content: "";
   position: absolute;
-  inset: 0 4px;
+  inset: 0 calc(50% - 1px);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   opacity: 0;
 }
@@ -9069,7 +9071,9 @@ body.is-format-painting .page-wrap * {
   transform: translateX(-1px);
 }
 
-/* A 16px disc centred on the boundary, inside the strip. Solid accent on the
+/* A 24px disc centred on the boundary, in the insert lane beyond the strip
+   (44px under a finger). The element's box is exactly the box a press inserts
+   over (HF-341): it used to paint 16px and respond over 7. Solid accent on the
    surface colour is the pairing the AA contrast sweep already covers, and the
    glyph is a plain `+` rather than an icon font so it needs no ligature and no
    translation. */
@@ -9082,12 +9086,16 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1;
   color: var(--surface);
   background: var(--accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 85%, transparent);
+}
+
+.overlay .table-insert-target[data-coarse] {
+  font-size: 24px;
 }
 
 /* Checklist checkbox click target (docs/67 — checklist authoring). The checkbox

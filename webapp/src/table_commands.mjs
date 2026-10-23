@@ -17,6 +17,7 @@
 // assert that unmerge calls `splitMergedCell` with ONE argument — the whole of
 // TBL-02 — without a browser.
 import { t } from "./i18n.mjs";
+import { announceTableEdit } from "./table_band.mjs";
 
 /**
  * The table command tree for `context`.
@@ -73,33 +74,35 @@ export function tableToolCommands(context, host) {
             ? options.disabledReason
             : "",
     danger: options.danger,
-    run,
+    // `say` names the sentence the edit announces once it lands (HF-346), from
+    // the one table the band reads too.
+    run: options.say ? () => announceTableEdit(run(), options.say, host.status) : run,
   });
 
   const insertSubmenu = [
     tableMutation("table.insert.rowAbove", "Row above",
       () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
-      { group: "row" }),
+      { say: "insert-row-above", group: "row" }),
     tableMutation("table.insert.rowBelow", "Row below",
       () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
-      { group: "row" }),
+      { say: "insert-row-below", group: "row" }),
     tableMutation("table.insert.columnLeft", "Column left",
       () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
-      { group: "col" }),
+      { say: "insert-column-left", group: "col" }),
     tableMutation("table.insert.columnRight", "Column right",
       () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
-      { group: "col" }),
+      { say: "insert-column-right", group: "col" }),
   ];
   const deleteSubmenu = [
     tableMutation("table.delete.row", "Delete row",
       () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
-      { danger: true, group: "cell" }),
+      { danger: true, say: "delete-row", group: "cell" }),
     tableMutation("table.delete.column", "Delete column",
       () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
-      { danger: true, group: "cell" }),
+      { danger: true, say: "delete-column", group: "cell" }),
     tableMutation("table.delete.table", "Delete table",
       () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
-      { danger: true, group: "table" }),
+      { danger: true, say: "delete-table", group: "table" }),
   ];
   const selectSubmenu = [
     {
@@ -145,19 +148,20 @@ export function tableToolCommands(context, host) {
     tableMutation("table.distribute.rows", "Distribute rows",
       () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
       {
+        say: "rows",
         group: "distribute",
         enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
         disabledReason: t("table.reason.rowHeights"),
       }),
     tableMutation("table.distribute.columns", "Distribute columns",
       () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
-      { group: "distribute" }),
+      { say: "columns", group: "distribute" }),
     tableMutation("table.sort.ascending", "Sort ascending",
       () => runEdit(() => doc.sortTable(context.anchor.node, "ascending", context.table?.column ?? -1), { gate: true }),
-      { regular: true, group: "sort" }),
+      { regular: true, say: "ascending", group: "sort" }),
     tableMutation("table.sort.descending", "Sort descending",
       () => runEdit(() => doc.sortTable(context.anchor.node, "descending", context.table?.column ?? -1), { gate: true }),
-      { regular: true, group: "sort" }),
+      { regular: true, say: "descending", group: "sort" }),
     // The KEYBOARD half of the table chrome layer's resize gestures (`docs/141`
     // D-1 §4.1.6). They are commands rather than a keydown branch because
     // `keymap.mjs` binds command IDS and nothing else: a chord that does not name
@@ -204,12 +208,14 @@ export function tableToolCommands(context, host) {
     // drag at all.
     tableMutation("table.merge", "Merge cells",
       async () => {
-        await runEdit(() =>
+        const landed = await runEdit(() =>
           doc.mergeTableCellRange(tableSelection.anchorNode, tableSelection.focusNode),
         { gate: true });
         host.clearTableSelection();
+        return landed;
       },
       {
+        say: "merge",
         group: "table",
         enabled: mergeReady,
         disabledReason: t("table.reason.mergeSelection"),
@@ -234,6 +240,7 @@ export function tableToolCommands(context, host) {
     tableMutation("table.unmerge", "Unmerge cells",
       () => runEdit(() => doc.splitMergedCell(context.anchor.node), { gate: true }),
       {
+        say: "unmerge",
         group: "table",
         enabled: context.table.merged === true,
         disabledReason: t("table.reason.cellNotMerged"),

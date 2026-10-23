@@ -44,30 +44,27 @@
 //   * **hover** — the band under the pointer: the same line, clearly darker;
 //   * **selected** — that band: `--accent`, opaque.
 //
-// The GRAB ZONE is unchanged in size and still reaches `STRIP_PX` (14) /
-// `TOUCH_STRIP_PX` (24) outside the table; it now also reaches `INSIDE_PX` past
-// the border so that the border itself is inside the target rather than one
-// pixel outside it. Drawn 3px, targeted 14–24px: the same split the resize grips
-// make at 9px drawn inside 24px hit.
+// The GRAB ZONE is a 24px lane (44 under a finger) that reaches `INSIDE_PX`
+// past the border, so the border itself is inside the target, and a second lane
+// beyond it holds the `+` discs (`table_gutter_zones.mjs` has the geometry).
+// Drawn 3px, targeted 24px.
 //
-// ## What is painted, and when — and why the table has to be ENTERED first
+// ## What is painted, and when
 //
-// Only the ONE table the pointer is over, only while it is over it, and only
-// the segment of the strip the pointer is in. `docs/141` §4.4 rule 2: no
-// resting chrome, one armed overlay child per gesture, never a handle per
-// boundary at rest. The DOM is rebuilt only when the armed key changes — the
-// table, the axis, the band, whether a `+` is armed — so travelling along a
-// strip inside one band costs no DOM work at all.
+// Only the ONE table the pointer is over or approaching, only while it is
+// there, and only the segment of the strip the pointer is in. `docs/141` §4.4
+// rule 2: no resting chrome, one armed overlay child per gesture, never a
+// handle per boundary at rest. The DOM is rebuilt only when the armed key
+// changes (the table, the axis, the band, whether a `+` is armed), so
+// travelling along a strip inside one band costs no DOM work at all.
 //
-// The gutter ARMS by the pointer entering the table, and only then does the
-// strip beside it become a target. That is Docs' behaviour and it is not
-// cosmetic: the column strip is a 14px band directly above the table, and a
-// paragraph frequently sits in it. Arming on proximity alone made hovering the
-// line above a table report a column strip — and a press there would have
-// selected a column instead of placing the caret in that paragraph, which is the
-// exact failure the boundary zones had to be clamped for on the other axis. The
-// pointer-cursor sweep caught it: a form checkbox one line above a table stopped
-// being a control.
+// The gutter ARMS ON APPROACH (HF-343). It used to arm only once the pointer
+// had entered the table, because the column strip reached 14px up over the
+// paragraph above, and arming on proximity made that line select a column (a
+// form checkbox one line above a table stopped being a control). The lanes now
+// live only in space `tableChromeOnPage` reports free of text (`clearAbove`,
+// `clearBefore`), so nothing a lane covers is ever a line, and the row strip
+// shows itself as the pointer comes in from the margin, as Word's does.
 //
 // ## Drag-to-REORDER (`docs/141` §4.2.3)
 //
@@ -104,15 +101,13 @@
 // A per-move `tableInfo` would be the quadratic the chrome layer removed.
 
 import {
-  STRIP_PX,
-  TOUCH_STRIP_PX,
   INSIDE_PX,
-  INSERT_TARGET_PX,
   armTableGutter,
   dropBoundaryAt,
   moveTargetIndex,
   stripRect,
   tableBands,
+  targetPxFor,
 } from "./table_gutter_zones.mjs";
 
 /** The highlight's thickness in CSS px, centred on the table's own border.
@@ -162,34 +157,94 @@ export function createTableGutter(host) {
    *  `tableChromeOnPage` walk — the per-hover engine call this whole layer is
    *  built to avoid. */
   let owned = [];
+  /** The last pointer position the hover saw, `{ clientX, clientY,
+   *  pointerType }`, so a scroll or a zoom can re-place the hover where the
+   *  pointer now is. No pointer event fires when the page moves under a still
+   *  pointer, so without this a wheel scroll left the band lit beside a row the
+   *  pointer had left (HF-345, `docs/171` §7 item 7). */
+  let last = null;
 
-  /** The strip thickness and insert tolerance for one event, in page-local
-   *  twips. A PIXEL distance divided by the page's scale, so a zoomed-out page
-   *  does not get a strip ten times as wide in document space.
+  /** The target size and inside reach for one pointer type, in page-local
+   *  twips, plus the disc painted right now. A PIXEL size divided by the page's
+   *  scale, so a zoomed-out page does not get a lane ten times as wide in
+   *  document space.
    *
-   *  A finger gets the 24px strip unconditionally, where the BOUNDARY zones had
-   *  to wait to be armed by a tap. The difference is that a strip lies outside
-   *  the table: 24px there takes nothing from any cell, so it cannot swallow the
-   *  arming tap the way an enlarged boundary zone did (`docs/141` TBL-18). */
-  function optsOf(page, event) {
+   *  24px for a mouse and a pen, 44px for a finger (HF-341, HF-342): the lanes
+   *  lie outside the table, in space layout reports free, so neither size takes
+   *  anything from a cell or from a line of text. */
+  function optsOf(page, pointerType) {
     const { sx, sy } = host.scaleOf(page);
-    const strip = event?.pointerType === "touch" ? TOUCH_STRIP_PX : STRIP_PX;
-    const insert = INSERT_TARGET_PX / 2;
+    const px = targetPxFor(pointerType);
     return {
-      stripX: strip / (sx || 1),
-      stripY: strip / (sy || 1),
+      targetX: px / (sx || 1),
+      targetY: px / (sy || 1),
       insideX: INSIDE_PX / (sx || 1),
       insideY: INSIDE_PX / (sy || 1),
-      insertX: insert / (sx || 1),
-      insertY: insert / (sy || 1),
+      sticky: stickyDisc(page),
     };
+  }
+
+  /** The disc painted right now on `page`, as `gutterAt`'s `sticky`: what is
+   *  drawn answers first, over its whole box (HF-341). */
+  function stickyDisc(page) {
+    const target = armed?.target;
+    if (target?.kind !== "insert" || !target.disc) return null;
+    if (armed.page?.pageNumber !== page?.pageNumber) return null;
+    return { table: armed.tableNode, axis: target.axis, index: target.index, disc: target.disc };
   }
 
   /** The armed gutter target under an event, plus any refusal key. */
   function probe(page, event) {
     if (!page) return { target: null, refusal: "" };
     const { x, y } = host.pointToTwip(page, event);
-    return armTableGutter(host.chromeOf(page), x, y, optsOf(page, event), host.state());
+    return armTableGutter(
+      host.chromeOf(page),
+      x,
+      y,
+      optsOf(page, event?.pointerType),
+      host.state(),
+    );
+  }
+
+  /** What the hover arms for a pointer at `event` on `page`: the record `paint`
+   *  draws from, or `null`. Pure apart from reading the memoised chrome.
+   *
+   *  ANY table's gutter arms, not only one the pointer has already entered
+   *  (HF-343). Arming used to wait for the pointer to enter the table, because
+   *  the column strip then reached up over the line above it and arming on
+   *  approach made that line select a column. The lanes now live only in space
+   *  layout reports free of text, so approach is safe, and the row strip shows
+   *  itself as the pointer comes in from the margin, as Word's and Docs' do. */
+  function resolve(page, event) {
+    const inside = tableUnder(page, event);
+    const found = probe(page, event).target;
+    // A target belonging to a DIFFERENT table from the one the pointer is in is
+    // dropped, or a nested table would arm one table and paint another's band.
+    const target = !inside || inside.node === found?.table.node ? found : null;
+    const tableNode = inside?.node ?? target?.table.node ?? "";
+    if (!tableNode) return null;
+    const coarse = event?.pointerType === "touch";
+    const key = `${keyOf(page?.pageNumber, tableNode, target)}${coarse ? "/t" : ""}`;
+    return { key, page, tableNode, target, touch: coarse, sx: host.scaleOf(page).sx };
+  }
+
+  /** Re-places the hover where the pointer now is, after the page moved under
+   *  it (a scroll) or changed scale (a zoom). A pointer that is no longer over
+   *  any sheet clears it. Returns whether anything changed. */
+  function replace() {
+    if (!armed || drag || !last) return false;
+    const page = host.pageFromClientPoint(last.clientX, last.clientY);
+    const rect = page ? host.scaleOf(page).rect : null;
+    const over =
+      rect &&
+      last.clientX >= rect.left &&
+      last.clientX <= rect.right &&
+      last.clientY >= rect.top &&
+      last.clientY <= rect.bottom;
+    const next = over ? resolve(page, last) : null;
+    if ((next?.key ?? "") === armed.key && next?.sx === armed.sx) return false;
+    armed = next;
+    return true;
   }
 
   /** The table whose own box contains the point, or `null`. This is what ARMS
@@ -258,7 +313,7 @@ export function createTableGutter(host) {
     return el;
   }
 
-  return {
+  const layer = {
     /** Forgets what the pointer was over. The overlay repaint destroys the
      *  children anyway; this is what stops them being drawn again. */
     clear() {
@@ -328,23 +383,22 @@ export function createTableGutter(host) {
      * unless the armed band changed.
      */
     hover(page, event) {
-      const inside = tableUnder(page, event);
-      const found = armedTargetAt(page, event);
-      // Being inside the table's box no longer means being off the gutter: the
-      // zone reaches a clamped hair PAST the leading border, because the border
-      // is the affordance. This line used to read `inside ? null : …`, which
-      // cancelled exactly the new part of the zone and left the border lighting
-      // up only from the outside. A target belonging to a DIFFERENT table from
-      // the one the pointer is in is still dropped, or a nested table would arm
-      // one table and paint another's band.
-      const target = !inside || inside.node === found?.table.node ? found : null;
-      const tableNode = inside?.node ?? target?.table.node ?? "";
-      const touch = event?.pointerType === "touch";
-      const key = `${keyOf(page?.pageNumber, tableNode, target)}${touch ? "/t" : ""}`;
-      if (key === (armed?.key ?? "")) return !!target;
-      armed = tableNode ? { key, page, tableNode, target, touch } : null;
+      if (event) {
+        last = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
+      }
+      const next = page ? resolve(page, event) : null;
+      if ((next?.key ?? "") === (armed?.key ?? "")) return !!armed?.target;
+      armed = next;
       this.paint(host.pages());
-      return !!target;
+      return !!next?.target;
+    },
+
+    /** The scroll and zoom hook: re-places the hover under a pointer the page
+     *  moved beneath, and repaints only when what is armed changed (HF-345). */
+    refresh() {
+      if (!replace()) return false;
+      this.paint(host.pages());
+      return true;
     },
 
     /**
@@ -492,6 +546,11 @@ export function createTableGutter(host) {
       for (const el of owned) el.remove();
       owned = [];
       if (!armed) return;
+      // A zoom repaints through here with the pointer still: the armed record
+      // was resolved at the old scale, so re-resolve it at the new one.
+      const scaled = pages[armed.page.pageNumber - 1];
+      if (scaled && host.scaleOf(scaled).sx !== armed.sx) replace();
+      if (!armed) return;
       const page = pages[armed.page.pageNumber - 1];
       if (!page?.overlay) return;
       const { target } = armed;
@@ -506,7 +565,8 @@ export function createTableGutter(host) {
       // The column strip is omitted on a merged table, where a column selection
       // refuses — a painted strip that refuses on click is a dead control.
       const thickness = defaultThickness(page);
-      /** The zone rect for one axis at the resting reach, or `null`. */
+      /** The select lane for one axis, or `null` where it does not fit in the
+       *  free space beside the table: hidden rather than drawn over text. */
       const zoneOf = (axis) =>
         stripRect(
           table,
@@ -576,24 +636,25 @@ export function createTableGutter(host) {
         }
         return;
       }
-      const at = target.at;
-      const size = discSize();
-      // Centred on the OUTSIDE half of the zone, so the disc stays off the first
-      // cell's text the way it did when the whole zone was outside.
-      const outsideW = rowAxis ? table.x * sx - strip.x * sx : table.y * sy - strip.y * sy;
-      const disc = child(
-        page,
-        "table-insert-target",
-        rowAxis ? strip.x * sx + (outsideW - size) / 2 : at * sx - size / 2,
-        rowAxis ? at * sy - size / 2 : strip.y * sy + (outsideW - size) / 2,
-        size,
-        size,
-      );
+      // The disc IS its hit box: painted at exactly the rectangle `gutterAt`
+      // answers for while it is shown (HF-341). It used to paint 16px and
+      // respond over 7.
+      const box = target.disc;
+      if (!box) return;
+      const disc = child(page, "table-insert-target", box.x * sx, box.y * sy, box.w * sx, box.h * sy);
+      if (armed.touch) disc.dataset.coarse = "1";
       disc.dataset.insert = target.axis;
       disc.textContent = "+";
       disc.title = host.t(rowAxis ? "table.insertRowHere" : "table.insertColumnHere");
     },
   };
+
+  // A wheel or keyboard scroll moves the page under a still pointer and fires
+  // no pointer event, so the hover is re-placed from here. Capture on `window`
+  // because `scroll` does not bubble: this hears the viewport without `main.js`
+  // handing it over. The listener is O(1) until something is armed.
+  globalThis.addEventListener?.("scroll", () => layer.refresh(), { capture: true, passive: true });
+  return layer;
 
   /** The grid coordinates of the cell holding `node`, or `null`.
    *
@@ -812,25 +873,18 @@ export function createTableGutter(host) {
     return target && target.table.node === armed.tableNode ? target : null;
   }
 
-  /** The strip thickness for the resting paint, in page-local twips. The paint
+  /** The lane thickness for the resting paint, in page-local twips. The paint
    *  has no pointer event of its own, so the armed record carries whether a
-   *  finger put it there — and a finger gets the 24px strip WCAG 2.5.8 asks for,
-   *  which costs no cell area because the strip is outside the table. */
+   *  finger put it there. */
   function defaultThickness(page) {
     const { sx, sy } = host.scaleOf(page);
-    const px = armed?.touch ? TOUCH_STRIP_PX : STRIP_PX;
+    const px = targetPxFor(armed?.touch ? "touch" : "mouse");
     return {
       x: px / (sx || 1),
       y: px / (sy || 1),
       insideX: INSIDE_PX / (sx || 1),
       insideY: INSIDE_PX / (sy || 1),
     };
-  }
-
-  /** The insert disc's diameter in CSS px — 24 under a finger, for the same
-   *  reason and at the same cost. */
-  function discSize() {
-    return armed?.touch ? TOUCH_STRIP_PX : INSERT_TARGET_PX;
   }
 
   /** Inserts at the boundary the disc sits on, then says so.

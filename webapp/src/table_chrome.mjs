@@ -43,15 +43,19 @@
 // at rest (`docs/141` §4.4 rule 2).
 
 import { armTableBoundary } from "./table_chrome_zones.mjs";
+import { INSIDE_PX, TARGET_PX } from "./table_gutter_zones.mjs";
 
-/** Hit tolerance about a boundary, in CSS px — so ±5px, a 10px zone.
+/** Hit tolerance about a boundary, in CSS px: ±12px, a 24px zone for a mouse
+ *  or a pen, WCAG 2.5.8 (HF-342). It was ±5px, a 10px zone.
  *
- *  Kept at what the column handle already shipped (`.table-col-resize-handle` is
- *  10px wide with a -5px margin) rather than narrowed to ONLYOFFICE's ±3px
- *  (`CTable.prototype.private_CheckHitInBorder`, `nRadius = GetMMPerDot(3)`).
- *  A more forgiving zone is one of the few places we lead them and there is no
- *  reason to give it up. */
-export const BOUNDARY_TOLERANCE_PX = 5;
+ *  ONLYOFFICE's is ±3px (`CTable.prototype.private_CheckHitInBorder`,
+ *  `nRadius = GetMMPerDot(3)`). The 24px is not free, and it is not taken from
+ *  the text: `table_chrome_zones.mjs` still clamps the zone to a fifth of the
+ *  shorter band either side, so the middle 60% of every cell places the caret.
+ *  A 100px column border gets the full 24px; an 18px row border keeps about 7,
+ *  because 24 there would be most of the row. Alt+Shift+Arrow and the Table menu
+ *  size a short row without aiming at all. */
+export const BOUNDARY_TOLERANCE_PX = TARGET_PX / 2;
 
 /** Touch target size for a boundary pill, in CSS px — WCAG 2.5.8 Target Size
  *  (Minimum) is 24x24. Hover does not exist on touch, so the affordance has to
@@ -139,7 +143,7 @@ export function createTableChrome(host) {
     const armed = !!touchTable && touchTable.pageNumber === page?.pageNumber;
     const px =
       event?.pointerType === "touch" && armed ? TOUCH_PILL_PX / 2 : BOUNDARY_TOLERANCE_PX;
-    return { x, y, tolX: px / (sx || 1), tolY: px / (sy || 1) };
+    return { x, y, tolX: px / (sx || 1), tolY: px / (sy || 1), inset: INSIDE_PX / (sx || 1) };
   }
 
   return {
@@ -170,8 +174,8 @@ export function createTableChrome(host) {
     /** The armed boundary under a pointer event, plus the reason when a boundary
      *  is there and the mode will not allow it. `{ boundary, refusal }`. */
     at(page, event) {
-      const { x, y, tolX, tolY } = probeOf(page, event);
-      return armTableBoundary(chromeOf(page), x, y, tolX, tolY, host.state());
+      const { x, y, tolX, tolY, inset } = probeOf(page, event);
+      return armTableBoundary(chromeOf(page), x, y, tolX, tolY, host.state(), inset);
     },
 
     /** What `pointer_cursor.mjs` should be told about this point: `"row"`,
@@ -422,11 +426,20 @@ export function createTableChrome(host) {
       );
       if (!table) return;
       const { sx, sy } = host.scaleOf(page);
-      for (const edge of table.colEdges ?? []) {
+      const edges = table.colEdges ?? [];
+      for (const [index, edge] of edges.entries()) {
         if (edge.outer) continue;
         const el = document.createElement("div");
         el.className = "table-col-resize-handle";
         el.dataset.col = String(edge.i);
+        // The grip is exactly as wide as the zone a press arms (HF-342): 24px
+        // where both columns allow it, and the same fifth-of-a-band clamp
+        // `boundaryAt` applies where they do not, so the cursor it shows never
+        // promises a resize over pixels that place the caret.
+        const shorter = Math.min(edge.width, edges[index + 1]?.width ?? Infinity);
+        const half = Math.min(BOUNDARY_TOLERANCE_PX, shorter * 0.2 * sx);
+        el.style.width = `${half * 2}px`;
+        el.style.marginLeft = `${-half}px`;
         el.style.left = `${edge.x * sx}px`;
         el.style.top = `${edge.y * sy}px`;
         el.style.height = `${edge.h * sy}px`;

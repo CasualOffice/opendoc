@@ -17,14 +17,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  COARSE_TARGET_PX,
   INSIDE_PX,
-  STRIP_PX,
+  TARGET_PX,
   armTableGutter,
   dropBoundaryAt,
   gutterAt,
+  gutterLanes,
   moveTargetIndex,
   stripRect,
   tableBands,
+  targetPxFor,
 } from "../src/table_gutter_zones.mjs";
 import { boundaryAt } from "../src/table_chrome_zones.mjs";
 
@@ -67,13 +70,13 @@ function chromeTable({ rows = 3, cols = 2, rowH = 288, colW = 1440, x = 1440, y 
 
 /** The tolerances a 100%-zoom page gives: twips per CSS px is 15. */
 const OPTS = {
-  stripX: STRIP_PX * 15,
-  stripY: STRIP_PX * 15,
+  targetX: TARGET_PX * 15,
+  targetY: TARGET_PX * 15,
   insideX: INSIDE_PX * 15,
   insideY: INSIDE_PX * 15,
-  insertX: 8 * 15,
-  insertY: 8 * 15,
 };
+/** One target, in twips at 100%. */
+const T = TARGET_PX * 15;
 
 test("the zone reaches the table's own leading border, and stops a hair past it", () => {
   // The owner's correction: the BORDER is the affordance, not a bar beside it.
@@ -139,13 +142,13 @@ test("no leading border is a resize boundary, and a resize is reachable the mome
   const crossing = table.y + 288;
   assert.equal(boundaryAt([table], table.x, crossing, tol, tol)?.kind, "row");
   assert.equal(gutterAt([table], table.x, crossing, OPTS)?.axis, "row");
-  const zone = stripRect(table, "row", STRIP_PX * 15, INSIDE_PX * 15);
+  const zone = stripRect(table, "row", T, INSIDE_PX * 15);
   assert.equal(gutterAt([table], zone.x + zone.w, crossing, OPTS), null);
   assert.equal(boundaryAt([table], zone.x + zone.w, crossing, tol, tol)?.kind, "row");
   // The same on the other axis: a column boundary crossing the top border.
   const colCross = table.x + 1440;
   assert.equal(gutterAt([table], colCross, table.y, OPTS)?.axis, "column");
-  const colZone = stripRect(table, "column", STRIP_PX * 15, INSIDE_PX * 15);
+  const colZone = stripRect(table, "column", T, INSIDE_PX * 15);
   assert.equal(boundaryAt([table], colCross, colZone.y + colZone.h, tol, tol)?.kind, "column");
 
   // …and the TRAILING outer edges still belong to the resize, as they do in
@@ -162,7 +165,7 @@ test("the inside reach is clamped against the band it reaches INTO, not its own"
   // it — clamping it against the first column's width would measure the wrong
   // dimension and let a 3px reach swallow a 10-twip row whole.
   const shortRows = chromeTable({ rows: 3, rowH: 10 });
-  const colZone = stripRect(shortRows, "column", STRIP_PX * 15, INSIDE_PX * 15);
+  const colZone = stripRect(shortRows, "column", T, INSIDE_PX * 15);
   assert.ok(
     colZone.y + colZone.h <= shortRows.y + 10 * 0.2 + 0.001,
     "the column zone must not reach past a fifth of the first row",
@@ -170,7 +173,7 @@ test("the inside reach is clamped against the band it reaches INTO, not its own"
 
   // And the row zone's own clamp, against a narrow first column.
   const narrowCols = chromeTable({ cols: 2, colW: 100 });
-  const rowZone = stripRect(narrowCols, "row", STRIP_PX * 15, INSIDE_PX * 15);
+  const rowZone = stripRect(narrowCols, "row", T, INSIDE_PX * 15);
   assert.ok(
     rowZone.x + rowZone.w <= narrowCols.x + 100 * 0.2 + 0.001,
     "the row zone must not reach past a fifth of the first column",
@@ -180,17 +183,19 @@ test("the inside reach is clamped against the band it reaches INTO, not its own"
 });
 
 test("a table flush against the sheet's edge keeps a target, on its own border", () => {
-  // The case the outside-only strip could not serve: a table indented to the
-  // margin had no room beside it, so `stripRect` returned null and the only way
-  // to select a row was the menu. The border is still there, so the zone is too.
+  // A table indented to the sheet's edge has no free space beside it, so the
+  // strip shrinks to the border and its inside reach: still a target, and still
+  // nothing drawn off the sheet or over anything.
   const flush = chromeTable({ x: 0, y: 0 });
   for (const axis of ["row", "column"]) {
-    assert.ok(stripRect(flush, axis, STRIP_PX * 15, INSIDE_PX * 15, 0), `${axis} zone`);
+    const lanes = gutterLanes(flush, axis, T, INSIDE_PX * 15);
+    assert.ok(lanes?.strip, `${axis} zone`);
+    assert.equal(lanes.short, true, `${axis}: no room for a full target`);
+    assert.equal(lanes.insert, null, `${axis}: and no discs`);
   }
   assert.equal(gutterAt([flush], 0, 144, OPTS)?.axis, "row");
   assert.equal(gutterAt([flush], 720, 0, OPTS)?.axis, "column");
-  // Nothing is drawn off the sheet: the zone starts at the page's own edge.
-  assert.equal(stripRect(flush, "row", STRIP_PX * 15, INSIDE_PX * 15).x, 0);
+  assert.equal(stripRect(flush, "row", T, INSIDE_PX * 15).x, 0);
 });
 
 test("the row strip resolves the band the pointer is beside", () => {
@@ -216,47 +221,108 @@ test("the column strip resolves the band the pointer is above", () => {
   }
 });
 
-test("the + zone sits ON a boundary and never swallows the band it borders", () => {
-  // An 18px row — the height a default table paints at — is 270 twips, so a flat
-  // ±120-twip insert zone would claim the whole strip segment and the row could
-  // never be SELECTED from the gutter at all. That is the same failure a flat
-  // ±5px boundary zone already caused on the other axis.
+test("the + disc has its own lane, so the strip selects every pixel of every band", () => {
+  // An 18px row (270 twips). The disc used to share the strip and respond over
+  // a fifth of the band, 7px, while painting 16 (HF-341). Now it lives in the
+  // lane beyond the strip, a full target, and the strip keeps every band whole.
   const table = chromeTable({ rows: 3, rowH: 270 });
-  const boundary = table.y + 270; // between rows 0 and 1
-  const onIt = gutterAt([table], table.x - 30, boundary, OPTS);
+  const lanes = gutterLanes(table, "row", T, INSIDE_PX * 15);
+  assert.ok(lanes.insert, "a 96px margin holds both lanes");
+  const inStrip = lanes.strip.x + lanes.strip.w / 2;
+  const inLane = lanes.insert.x + lanes.insert.w / 2;
+  for (let y = table.y; y < table.y + table.h; y += 15) {
+    const hit = gutterAt([table], inStrip, y, OPTS);
+    assert.equal(hit?.kind, "strip", `the strip at y=${y} must select, not insert`);
+    assert.equal(hit.index, Math.floor((y - table.y) / 270));
+  }
+  // In the lane, the NEAREST boundary within half a target, and its disc box.
+  const boundary = table.y + 270;
+  const onIt = gutterAt([table], inLane, boundary + 100, OPTS);
   assert.equal(onIt?.kind, "insert");
   assert.equal(onIt.index, 1, "boundary 1 inserts before row 1");
   assert.equal(onIt.after, true);
-  assert.equal(onIt.anchor, "r0", "…which is `insertRow(row 0, below)`");
-
-  // …and the MIDDLE HALF of every band's strip segment still selects that band.
-  // This is the guarantee, stated as a proportion rather than as a distance,
-  // because the zone is a pixel measure and a row is not: at 8px flat the middle
-  // of an 18px row is 1px from being claimed by the disc.
-  for (let i = 0; i < 3; i++) {
-    for (const share of [0.25, 0.35, 0.5, 0.65, 0.75]) {
-      const at = table.y + i * 270 + 270 * share;
-      const hit = gutterAt([table], table.x - 30, at, OPTS);
-      assert.equal(
-        hit?.kind,
-        "strip",
-        `${(share * 100).toFixed(0)}% down row ${i}'s strip must still SELECT row ${i}`,
-      );
-      assert.equal(hit.index, i);
-    }
-  }
-  // And the leading boundary inserts BEFORE the first row, which is the one
-  // position `insertRow(anchor, after)` cannot express with `after`.
-  const leading = gutterAt([table], table.x - 30, table.y, OPTS);
+  assert.equal(onIt.anchor, "r0", "which is `insertRow(row 0, below)`");
+  assert.deepEqual(onIt.disc, { x: lanes.insert.x, y: boundary - T / 2, w: T, h: T });
+  const leading = gutterAt([table], inLane, table.y - 30, OPTS);
   assert.equal(leading?.kind, "insert");
   assert.equal(leading.after, false);
   assert.equal(leading.anchor, "r0");
 });
 
+test("the painted disc is its own hit box: every pixel it paints inserts at it", () => {
+  // The defect: painted 16px, live over 7. The guarantee: while a disc is
+  // shown, its whole box answers for it, even where a neighbouring boundary is
+  // nearer (rows here are shorter than a target).
+  const table = chromeTable({ rows: 4, rowH: 270 });
+  const lane = gutterLanes(table, "row", T, INSIDE_PX * 15).insert;
+  const shown = gutterAt([table], lane.x + 10, table.y + 2 * 270, OPTS);
+  assert.equal(shown.index, 2);
+  const sticky = { table: table.node, axis: "row", index: 2, disc: shown.disc };
+  for (let y = shown.disc.y; y < shown.disc.y + shown.disc.h; y += 15) {
+    for (let x = shown.disc.x; x < shown.disc.x + shown.disc.w; x += 30) {
+      const hit = gutterAt([table], x, y, { ...OPTS, sticky });
+      assert.equal(hit?.kind, "insert", `(${x}, ${y}) is painted disc`);
+      assert.equal(hit.index, 2, `(${x}, ${y}) must insert at the disc it is on`);
+    }
+  }
+  // Without the sticky disc the same corner resolves to the nearer boundary,
+  // which is what made the painted box and the live box disagree.
+  const corner = gutterAt([table], shown.disc.x + 10, shown.disc.y + 5, OPTS);
+  assert.equal(corner.index, 1);
+});
+
+test("every lane and disc is a full target where the free space allows it, 44px under a finger", () => {
+  const table = chromeTable({ rows: 3, rowH: 270, cols: 3, colW: 1440 });
+  for (const axis of ["row", "column"]) {
+    const { strip, insert } = gutterLanes(table, axis, T, INSIDE_PX * 15);
+    assert.equal(axis === "row" ? strip.w : strip.h, T, `${axis} strip is one target thick`);
+    assert.equal(axis === "row" ? insert.w : insert.h, T, `${axis} disc lane is one target thick`);
+  }
+  assert.equal(targetPxFor("mouse"), 24);
+  assert.equal(targetPxFor("pen"), 24);
+  assert.equal(targetPxFor("touch"), COARSE_TARGET_PX);
+  assert.equal(COARSE_TARGET_PX, 44);
+});
+
+test("no lane reaches over a line of text: it fits the free space or shrinks", () => {
+  // `clearAbove` is the gap layout measured up to the line above (HF-344). The
+  // column strip used to reach 14px up whatever was there.
+  for (const gapPx of [0, 4, 10, 21, 30, 60]) {
+    const table = { ...chromeTable({ cols: 3 }), clearAbove: gapPx * 15, clearBefore: gapPx * 15 };
+    for (const axis of ["row", "column"]) {
+      const lanes = gutterLanes(table, axis, T, INSIDE_PX * 15);
+      const free = gapPx * 15;
+      for (const rect of [lanes?.strip, lanes?.insert].filter(Boolean)) {
+        const start = axis === "row" ? rect.x : rect.y;
+        const border = axis === "row" ? table.x : table.y;
+        assert.ok(start >= border - free, `${axis} lane at a ${gapPx}px gap starts ${(border - start) / 15}px out`);
+      }
+    }
+    // And the line above is still the line: nothing arms there.
+    assert.equal(gutterAt([table], table.x + 720, table.y - gapPx * 15 - 15, OPTS), null);
+  }
+});
+
+test("no pixel is both a gutter target and a boundary target", () => {
+  // Two targets contesting one pixel is the overlap WCAG 2.5.8 counts against
+  // both (HF-342). The boundary zones now start where the strip's inside reach
+  // ends, and the corner where the leading borders meet belongs to one strip.
+  const table = chromeTable({ rows: 3, rowH: 600, cols: 3, colW: 1440 });
+  const tol = 12 * 15;
+  const inset = INSIDE_PX * 15;
+  let both = 0;
+  for (let x = table.x - 50 * 15; x < table.x + table.w + 20 * 15; x += 15) {
+    for (let y = table.y - 50 * 15; y < table.y + table.h + 20 * 15; y += 15) {
+      if (gutterAt([table], x, y, OPTS) && boundaryAt([table], x, y, tol, tol, inset)) both++;
+    }
+  }
+  assert.equal(both, 0, `${both} points armed a gutter target AND a resize`);
+});
+
 test("the review mode decides what ARMS, not what fails on release", () => {
   const table = chromeTable();
   const strip = [table.x - 30, table.y + 144];
-  const boundary = [table.x - 30, table.y + 288];
+  const boundary = [table.x - T - 60, table.y + 288]; // in the disc lane, beyond the strip
 
   // Editing: everything arms.
   assert.equal(armTableGutter([table], ...strip, OPTS, {}).target?.kind, "strip");

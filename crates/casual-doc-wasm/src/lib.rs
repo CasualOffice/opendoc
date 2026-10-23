@@ -9041,6 +9041,8 @@ impl WasmDocument {
                     y: table.rect.origin.y.raw(),
                     w: table.rect.size.width.raw(),
                     h: table.rect.size.height.raw(),
+                    clear_above: table.clear_above.raw(),
+                    clear_before: table.clear_before.raw(),
                     col_edges: table
                         .column_edges
                         .iter()
@@ -29158,6 +29160,14 @@ struct ChromeTableJson {
     y: i32,
     w: i32,
     h: i32,
+    /// Free twips above the table before the nearest line of text, or the sheet
+    /// edge (`TableChrome::clear_above`). The column strip lives here.
+    #[serde(rename = "clearAbove")]
+    clear_above: i32,
+    /// Free twips before the table's left border, level with its rows
+    /// (`TableChrome::clear_before`). The row strip lives here.
+    #[serde(rename = "clearBefore")]
+    clear_before: i32,
     #[serde(rename = "colEdges")]
     col_edges: Vec<ChromeEdgeJson>,
     #[serde(rename = "rowEdges")]
