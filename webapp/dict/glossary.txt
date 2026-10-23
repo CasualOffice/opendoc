@@ -621,6 +621,7 @@ selectable
 serde
 serializer
 shaper
+shapetype
 shippable
 skia
 skrifa

@@ -290,6 +290,7 @@ mod tests {
             ),
             SourceFile::new("v1/ids.rs", include_str!("ids.rs")),
             SourceFile::new("v1/intern.rs", include_str!("intern.rs")),
+            SourceFile::new("v1/legacy_vml.rs", include_str!("legacy_vml.rs")),
             SourceFile::new("v1/locate.rs", include_str!("locate.rs")),
             SourceFile::new("v1/metadata.rs", include_str!("metadata.rs")),
             SourceFile::new("v1/migration.rs", include_str!("migration.rs")),
