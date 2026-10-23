@@ -2,6 +2,8 @@
 //! padding and alignment as the page resolves them.
 
 use casual_doc_layout::paint_values::{cell_margins, table_cell_borders, table_cell_layers};
+// Separate `use` line to minimize import-block merge conflicts.
+use casual_doc_layout::paint_values::resolved_table_properties;
 use casual_doc_model::v1::{
     BorderEdge, CellVerticalAlignment, HeightRule, Table, TableWidth, TextDirection, VerticalMerge,
     WidthType,
@@ -28,11 +30,13 @@ impl Writer<'_> {
             ));
         }
         let layers = table_cell_layers(table, &self.cascade);
+        // The table's `w:tblPr` over its style's, as the page resolves it (HF-402).
+        let resolved = resolved_table_properties(table, &self.cascade);
         let borders = table_cell_borders(table, &layers);
         let columns = grid_columns(table);
 
         let mut css = Declarations::default();
-        let properties = &table.properties;
+        let properties = &resolved;
         if let Some(width) = properties.width.as_ref().and_then(width_css) {
             css.set("width", width);
         }
@@ -159,7 +163,7 @@ impl Writer<'_> {
                 if let Some(fill) = self.palette.cell_fill(table, cell, layer) {
                     cell_css.set("background-color", hex(fill));
                 }
-                let margins = cell_margins(&cell.properties, &table.properties);
+                let margins = cell_margins(&cell.properties, layer, &resolved);
                 for (property, value) in [
                     ("padding-top", margins.top.raw()),
                     ("padding-bottom", margins.bottom.raw()),

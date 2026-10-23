@@ -697,7 +697,12 @@ pub(crate) fn parse_table_width(element: &BytesStart<'_>) -> Option<TableWidth> 
         Some("nil") => WidthType::Nil,
         Some(_) => return None,
     };
-    let raw = attribute_value(element, b"w").and_then(|value| value.parse::<i32>().ok());
+    // A `pct` width is fiftieths of a percent (or `50%`, which this does not
+    // read); only a `dxa` width is a twips measure.
+    let raw = match width_type {
+        WidthType::Dxa => twips_attr(element, b"w"),
+        _ => attribute_value(element, b"w").and_then(|value| value.parse::<i32>().ok()),
+    };
     let value = match width_type {
         WidthType::Dxa => raw?.clamp(0, 31_680),
         WidthType::Pct => raw?.clamp(0, 5_000),
@@ -750,10 +755,69 @@ pub(crate) fn is_true(value: Option<&str>) -> bool {
     !matches!(value, Some("0") | Some("false") | Some("off"))
 }
 
+/// Reads a twips measurement the way Word does, not only the way the schema
+/// spells it.
+///
+/// ECMA-376 types these attributes `ST_TwipsMeasure` / `ST_SignedTwipsMeasure`
+/// (and `ST_MeasurementOrPercent` for a `dxa` width): an integer count of
+/// twentieths of a point, or — Transitional §22.9.2.15 — a universal measure
+/// with a unit (`1.5in`, `12pt`, `2.54cm`, `10mm`, `1pc`, `1pi`). Google Docs
+/// writes the integer with a decimal tail (`w:w="108.0"`, and
+/// `w:right="49.26666666666695"` for an indent), and Word opens those files
+/// with the values applied. A strict `parse::<i32>()` refused every one of
+/// them: a table style's cell margins and indent were reported as lost
+/// (HF-402), and a fractional paragraph indent vanished without a finding at
+/// all (HF-404).
+///
+/// So: an optional sign, digits with an optional fractional part, and an
+/// optional unit. A fractional twip rounds half away from zero, which is the
+/// nearest representable twip. Exponents, `inf`/`nan`, hex and anything else
+/// stay refused, so the caller still reports what it cannot read. A value
+/// outside `i32` is refused rather than wrapped.
+///
+/// `O(len)` in the attribute's length.
+pub(crate) fn twips_measure(raw: &str) -> Option<i32> {
+    let raw = raw.trim();
+    if let Ok(value) = raw.parse::<i32>() {
+        return Some(value);
+    }
+    let (number, twips_per_unit) = [
+        ("mm", 1440.0 / 25.4),
+        ("cm", 1440.0 / 2.54),
+        ("in", 1440.0),
+        ("pt", 20.0),
+        ("pc", 240.0),
+        ("pi", 240.0),
+    ]
+    .iter()
+    .find_map(|(unit, factor)| raw.strip_suffix(unit).map(|number| (number, *factor)))
+    .unwrap_or((raw, 1.0));
+    let digits = number.strip_prefix(['-', '+']).unwrap_or(number);
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let well_formed = !(whole.is_empty() && fraction.is_empty())
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && digits.len() <= 32;
+    if !well_formed {
+        return None;
+    }
+    let value = number.parse::<f64>().ok()? * twips_per_unit;
+    let rounded = value.round();
+    if !rounded.is_finite() || rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation)] // bounded to the i32 range just above
+    Some(rounded as i32)
+}
+
+/// [`twips_measure`] of one attribute of `element`.
+pub(crate) fn twips_attr(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
+    attribute_value(element, name).and_then(|raw| twips_measure(&raw))
+}
+
 fn indent_attr(element: &BytesStart<'_>, names: &[&[u8]]) -> Option<i32> {
     for name in names {
-        if let Some(value) = attribute_value(element, name).and_then(|raw| raw.parse::<i32>().ok())
-        {
+        if let Some(value) = twips_attr(element, name) {
             return (-31_680..=31_680).contains(&value).then_some(value);
         }
     }
@@ -761,9 +825,7 @@ fn indent_attr(element: &BytesStart<'_>, names: &[&[u8]]) -> Option<i32> {
 }
 
 fn spacing_twips(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
-    attribute_value(element, name)
-        .and_then(|raw| raw.parse::<i32>().ok())
-        .filter(|value| (0..=31_680).contains(value))
+    twips_attr(element, name).filter(|value| (0..=31_680).contains(value))
 }
 
 /// Parses the line-spacing attributes of a `w:spacing` element into the model's
@@ -974,6 +1036,44 @@ pub(crate) fn parse_border_edge(element: &BytesStart<'_>) -> Option<BorderEdge> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HF-402: the twips spellings real producers write, and the ones that must
+    /// still be refused so the caller reports them.
+    #[test]
+    fn twips_measures_read_decimal_tails_and_units_and_refuse_the_rest() {
+        assert_eq!(twips_measure("108"), Some(108));
+        assert_eq!(twips_measure("108.0"), Some(108), "Google Docs");
+        assert_eq!(twips_measure("-135.0"), Some(-135));
+        assert_eq!(twips_measure("49.26666666666695"), Some(49));
+        assert_eq!(
+            twips_measure("230.5"),
+            Some(231),
+            "half rounds away from zero"
+        );
+        assert_eq!(twips_measure("-0.5"), Some(-1));
+        assert_eq!(twips_measure("1in"), Some(1440));
+        assert_eq!(twips_measure("12pt"), Some(240));
+        assert_eq!(twips_measure("2.54cm"), Some(1440));
+        assert_eq!(twips_measure("1pc"), Some(240));
+        for refused in [
+            "",
+            ".",
+            "-",
+            "1e3",
+            "inf",
+            "NaN",
+            "0x10",
+            "12px",
+            "1.2.3",
+            "99999999999",
+        ] {
+            assert_eq!(
+                twips_measure(refused),
+                None,
+                "{refused:?} is not a twips measure"
+            );
+        }
+    }
 
     /// `<w:jc w:val="…"/>` as the parser sees it.
     fn jc(value: &str) -> BytesStart<'static> {

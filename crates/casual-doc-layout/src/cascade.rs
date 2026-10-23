@@ -21,9 +21,9 @@
 //! but the resolver never trusts that).
 
 use casual_doc_model::v1::{
-    CnfStyle, DocumentDefaults, FontRef, FontScheme, Indentation, ParagraphProperties, RgbColor,
-    RunProperties, Spacing, Style, StyleId, StyleKind, TableBorders, TableLook, TableStyleRegion,
-    ThemeFontRef,
+    CellMargins, CnfStyle, DocumentDefaults, FontRef, FontScheme, Indentation, ParagraphProperties,
+    RgbColor, RunProperties, Spacing, Style, StyleId, StyleKind, TableBorders, TableLook,
+    TableStyleRegion, ThemeFontRef,
 };
 use casual_doc_model::v1::{DefinitionMap, Definitions};
 
@@ -43,6 +43,9 @@ pub struct StyleCascade<'a> {
     /// The default paragraph style (`w:style@w:default="1"` of paragraph kind),
     /// applied to a paragraph that names no `pStyle` (Word's implicit `Normal`).
     default_paragraph_style: Option<StyleId>,
+    /// The default table style (`w:style@w:default="1"` of table kind, Word's
+    /// `Normal Table`), applied to a table that names no `w:tblStyle`.
+    default_table_style: Option<StyleId>,
 }
 
 /// The property layer a table style contributes to one cell after `basedOn`,
@@ -64,6 +67,9 @@ pub struct TableStyleLayer {
     pub cell_borders: TableBorders,
     /// The concrete cell fill the style contributes, if any.
     pub shading: Option<RgbColor>,
+    /// The cell margins the style's `w:tcPr/w:tcMar` (base, then the matching
+    /// conditional regions) gives the cell, per edge.
+    pub cell_margins: CellMargins,
 }
 
 impl<'a> StyleCascade<'a> {
@@ -75,11 +81,76 @@ impl<'a> StyleCascade<'a> {
             .iter()
             .find(|(_, style)| style.is_default && style.kind == StyleKind::Paragraph)
             .map(|(id, _)| *id);
+        let default_table_style = definitions
+            .styles
+            .iter()
+            .find(|(_, style)| style.is_default && style.kind == StyleKind::Table)
+            .map(|(id, _)| *id);
         Self {
             styles: &definitions.styles,
             defaults: definitions.document_defaults.as_ref(),
             default_paragraph_style,
+            default_table_style,
         }
+    }
+
+    /// The style actually in effect for a table: its explicit `w:tblStyle`, or
+    /// the document's default table style when it names none (ECMA-376
+    /// §17.7.4.17, `w:default`).
+    #[must_use]
+    pub fn table_style(&self, style_ref: Option<StyleId>) -> Option<StyleId> {
+        style_ref.or(self.default_table_style)
+    }
+
+    /// A table's effective table-level properties: the table style's `w:tblPr`
+    /// (up its `basedOn` chain, root first) overlaid by the table's own direct
+    /// `w:tblPr` — direct formatting wins, then the style, then the defaults the
+    /// consumer applies (ECMA-376 §17.7.6).
+    ///
+    /// The fields resolved are the ones layout places a table by: the indent
+    /// (`w:tblInd`), the default cell margins (`w:tblCellMar`, per edge), the
+    /// cell spacing (`w:tblCellSpacing`), the alignment (`w:jc`), the layout
+    /// algorithm (`w:tblLayout`) and the banding periods
+    /// (`w:tblStyleRowBandSize`/`w:tblStyleColBandSize`). Before HF-402 none of them cascaded: a table
+    /// style's margins and indent were parsed into the model and then never
+    /// read, so every styled table was laid out with Word's built-in 108-twip
+    /// margins and no indent whatever its style said. Borders and shading
+    /// cascade per cell through [`StyleCascade::table_style_layer`]; the
+    /// conditional `w:tblStylePr/w:tblPr` regions are per cell too and are not
+    /// table-level, so they are not consulted here.
+    ///
+    /// `O(style chain)`; the returned value is a copy of `direct` with those
+    /// fields filled.
+    #[must_use]
+    pub fn resolve_table_properties(
+        &self,
+        direct: &casual_doc_model::v1::TableProperties,
+    ) -> casual_doc_model::v1::TableProperties {
+        let mut effective = direct.clone();
+        let mut inherited = casual_doc_model::v1::TableProperties::default();
+        for id in self.style_chain(self.table_style(direct.style_ref)) {
+            let Some(table) = self.styles.get(&id).and_then(|style| style.table.as_ref()) else {
+                continue;
+            };
+            overlay_cell_margins(&mut inherited.cell_margins, &table.cell_margins);
+            inherited.indent_twips = table.indent_twips.or(inherited.indent_twips);
+            inherited.cell_spacing_twips =
+                table.cell_spacing_twips.or(inherited.cell_spacing_twips);
+            inherited.alignment = table.alignment.or(inherited.alignment);
+            inherited.layout = table.layout.or(inherited.layout);
+            inherited.row_band_size = table.row_band_size.or(inherited.row_band_size);
+            inherited.col_band_size = table.col_band_size.or(inherited.col_band_size);
+        }
+        let mut margins = inherited.cell_margins;
+        overlay_cell_margins(&mut margins, &direct.cell_margins);
+        effective.cell_margins = margins;
+        effective.indent_twips = direct.indent_twips.or(inherited.indent_twips);
+        effective.cell_spacing_twips = direct.cell_spacing_twips.or(inherited.cell_spacing_twips);
+        effective.alignment = direct.alignment.or(inherited.alignment);
+        effective.layout = direct.layout.or(inherited.layout);
+        effective.row_band_size = direct.row_band_size.or(inherited.row_band_size);
+        effective.col_band_size = direct.col_band_size.or(inherited.col_band_size);
+        effective
     }
 
     /// The style actually in effect for a paragraph: its explicit `pStyle`, or the
@@ -201,7 +272,7 @@ impl<'a> StyleCascade<'a> {
     ) -> TableStyleLayer {
         let regions = active_table_regions(look, cnf);
         let mut layer = TableStyleLayer::default();
-        for id in self.style_chain(style_ref) {
+        for id in self.style_chain(self.table_style(style_ref)) {
             let Some(style) = self.styles.get(&id) else {
                 continue;
             };
@@ -263,11 +334,21 @@ fn apply_style_properties(
         }
     }
     if let Some(cell) = cell {
+        overlay_cell_margins(&mut layer.cell_margins, &cell.margins);
         overlay_table_borders(&mut layer.cell_borders, &cell.borders);
         if !cell.shading.is_empty() {
             layer.shading = cell.shading.fill;
         }
     }
+}
+
+/// Overlays cell margins per edge, so a style that sets only the left margin
+/// does not erase an inherited top.
+pub(crate) fn overlay_cell_margins(base: &mut CellMargins, over: &CellMargins) {
+    base.top_twips = over.top_twips.or(base.top_twips);
+    base.start_twips = over.start_twips.or(base.start_twips);
+    base.bottom_twips = over.bottom_twips.or(base.bottom_twips);
+    base.end_twips = over.end_twips.or(base.end_twips);
 }
 
 /// Deep-merges a border container so one higher-precedence edge does not erase
