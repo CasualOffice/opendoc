@@ -198,6 +198,11 @@ mod pdf_fonts_tests;
 #[path = "forms_protection_tests.rs"]
 mod forms_protection_tests;
 
+// The save-time `people.xml` projection (`docs/175` §6.2). Its own module because it copies
+// the document and edits the copy, which the facade's no-mutable-definitions rule forbids for
+// the live document and has no reason to forbid for a copy the writer drops.
+mod save_identity;
+
 // Host identity: the room's stamp, the roster's profiles, DOCX authorship (`docs/175`, HF-360).
 #[cfg(test)]
 #[path = "identity_tests.rs"]
@@ -14009,15 +14014,13 @@ impl WasmDocument {
         if !authored {
             return Ok(Cow::Borrowed(&self.document));
         }
-        let mut document = self.document.clone();
-        document
-            .definitions_mut()
-            .people
-            .push(casual_doc_model::v1::Person {
+        Ok(Cow::Owned(save_identity::with_person(
+            &self.document,
+            casual_doc_model::v1::Person {
                 author: author.name.clone(),
                 presence: Some(presence.clone()),
-            });
-        Ok(Cow::Owned(document))
+            },
+        )))
     }
 
     /// Moves this replica's minting into the space a relay's participant number implies.
