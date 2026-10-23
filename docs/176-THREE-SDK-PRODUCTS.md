@@ -454,7 +454,13 @@ wrong, and the Native SDK's render and convert half **is** the viewer cut behind
 - **Viewer formats (Q5): DOCX only by default.** ODT, RTF and TXT are opt-in features, because they add about 3.6 MB today through the format registry's writers.
 - **Java (Q3): both.** The FFM API (JDK 22+) first; a JNI shim for JDK 8-21 later, if customers ask.
 
-**Still open:** Q1 (package names and registry credentials), Q4 (whether Native batch edits need the transaction log), Q6 (native platform list), Q7 (whether Node needs a native addon or WASM is enough) and Q8 (a minimal `<opendoc-viewer>` element).
+- **Package names (Q1), decided 2026-10-23** (each checked free on its registry that day):
+  - npm: `@casualoffice/opendoc-viewer` (Viewer), `@casualoffice/opendoc-editor` (Editor; today's `packages/opendoc-embed` publishes under this name).
+  - crates.io: `opendoc-viewer` (Viewer) and `opendoc` (the Native/headless facade).
+  - PyPI: `opendoc`. Maven: `org.casualoffice:opendoc`. NuGet: `CasualOffice.OpenDoc`.
+  - Reserve every name before the first release, so nobody squats them. Who holds the registry credentials is still for the owner.
+
+**Still open:** Q1 (registry credentials only), Q4 (whether Native batch edits need the transaction log), Q6 (native platform list), Q7 (whether Node needs a native addon or WASM is enough) and Q8 (a minimal `<opendoc-viewer>` element).
 
 ### Original open questions (for reference)
 
