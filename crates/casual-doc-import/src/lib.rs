@@ -57,6 +57,12 @@ mod styles;
 mod tables;
 mod theme;
 mod vml;
+// Own line (anti-conflict): VML path and formula evaluation.
+mod vml_path;
+// Own line (anti-conflict): VML to the DrawingML model.
+mod vml_map;
+// Own line (anti-conflict): VML source retention.
+mod vml_retain;
 mod watermark;
 mod xml_repair;
 
@@ -85,6 +91,11 @@ pub use vml::{
     VmlColor, VmlDrawing, VmlFill, VmlHorizontalAlign, VmlHr, VmlHrAlign, VmlImageEffects,
     VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextAnchor, VmlTextPath, VmlTextbox,
     VmlVerticalAlign, VmlWrap, VmlWrapMode, parse_vml_pict,
+};
+// Own line (anti-conflict): the VML normalisation's grouped parse and geometry.
+pub use vml::{
+    VmlArrow, VmlDash, VmlGeometry, VmlGroupBox, VmlPathCommand, VmlPict, VmlShapetypes,
+    VmlSubpath, VmlWrapSide, parse_vml,
 };
 
 use casual_doc_model::IdGenerator;
@@ -2202,6 +2213,7 @@ pub(crate) fn import_with_named_sources(
         shape_styles: parsed_defs.shape_styles,
         object_names: parsed_defs.object_names,
         form_protection: parsed_defs.form_protection,
+        legacy_vml: parsed_defs.legacy_vml,
         settings,
         people,
     };

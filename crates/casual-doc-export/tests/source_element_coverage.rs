@@ -122,13 +122,6 @@ const EXCEPTIONS: &[(&str, &str)] = &[
          `separator` above.",
     ),
     (
-        "pict",
-        "FID-P-03: a VML `w:pict` is modeled (text box, horizontal rule, picture) \
-         and re-emitted in the writer's single output vocabulary, DrawingML \
-         (`w:drawing`/`wps:wsp`). The construct survives under the modern spelling; \
-         not re-emitting VML is a deliberate choice, not a drop.",
-    ),
-    (
         "fldSimple",
         "FID-P-03: `w:fldSimple` is modeled as a field and re-emitted in the \
          equivalent complex-field form (`w:fldChar` + `w:instrText`), which is the \

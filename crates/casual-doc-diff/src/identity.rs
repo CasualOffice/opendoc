@@ -87,7 +87,10 @@ use crate::projection::{Projector, StoryKey, ValueHashes};
 ///
 /// Scheme 3 (2026-10-09) folds in `formProtection`, each section's `w:formProt`
 /// (`109` FID-AT-06), for the same reason.
-pub const CONTENT_IDENTITY_SCHEMA: u32 = 3;
+///
+/// Scheme 4 (2026-10-24) folds in `legacyVml`, the legacy VML sources carried
+/// beside their projection (`docs/08` ADR-072), for the same reason.
+pub const CONTENT_IDENTITY_SCHEMA: u32 = 4;
 
 /// The `Definitions` fields [`content_digest`] folds in, in the order it folds
 /// them.
@@ -115,6 +118,7 @@ pub const DIGESTED_DEFINITION_FIELDS: &[&str] = &[
     "shapeStyles",
     "objectNames",
     "formProtection",
+    "legacyVml",
     "settings",
     "people",
 ];
@@ -313,6 +317,11 @@ fn hash_definitions(document: &Document, hasher: &mut ContentHasher) {
     field(
         "formProtection",
         values.hash_value(&definitions.form_protection),
+        hasher,
+    );
+    field(
+        "legacyVml",
+        values.hash_value(&definitions.legacy_vml),
         hasher,
     );
     field("settings", values.hash_value(&definitions.settings), hasher);

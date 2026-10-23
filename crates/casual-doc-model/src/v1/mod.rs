@@ -24,6 +24,8 @@ mod document;
 mod geometry_program;
 mod ids;
 mod intern;
+// Own line (anti-conflict): legacy VML retained beside its projection.
+mod legacy_vml;
 // Resolving a paragraph by id in O(1) in document size (`docs/109` HF-184): a bounded,
 // self-validating route cache on the document. Its own module because the interesting
 // part is the argument for why a hint needs no invalidation, and that argument is worth
@@ -48,6 +50,7 @@ pub use document::*;
 pub use geometry_program::*;
 pub use ids::*;
 pub use intern::*;
+pub use legacy_vml::*;
 pub use locate::{reset_route_block_visits, route_block_visits};
 pub use metadata::*;
 pub use migration::*;

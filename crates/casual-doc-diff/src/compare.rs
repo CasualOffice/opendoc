@@ -77,6 +77,7 @@ pub const DEFINITION_FIELDS: &[&str] = &[
     "shapeStyles",
     "objectNames",
     "formProtection",
+    "legacyVml",
     "settings",
     "people",
 ];
@@ -103,6 +104,10 @@ pub const OPAQUE_CONSTRUCTS: &[&str] = &[
     // parse-minted `SectionId`, for the same reason and with the same
     // consequence as `objectNames`.
     "formProtection",
+    // A legacy VML drawing's source (`docs/08` ADR-072) is keyed by its
+    // projection's parse-minted `NodeId` and is verbatim markup, for both
+    // reasons at once.
+    "legacyVml",
     // A chart projection, for both of the reasons this list exists at once. It is
     // keyed by a `ChartId` the parse minted, so two files' projections cannot be
     // paired — the same reason `numbering` and `fieldRanges` are here. And it is a
@@ -480,6 +485,16 @@ pub fn compare_definitions(
         "formProtection",
         &left_definitions.form_protection,
         &right_definitions.form_protection,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // Legacy VML sources: located, not characterised, per `OPAQUE_CONSTRUCTS`
+    // above.
+    compare_field(
+        "legacyVml",
+        &left_definitions.legacy_vml,
+        &right_definitions.legacy_vml,
         DiffFamily::Definition,
         &mut changes,
         findings,
