@@ -145,6 +145,37 @@ fn people_xml_is_written_only_with_the_hosts_persist() {
     assert!(part(&d.export_docx().expect("saves"), "word/people.xml").is_none());
 }
 
+/// The editor's own Save goes through `exportAs`, not `exportDocx`, and writes the same
+/// people.xml: one rule for both paths. Found when the @mention lane traced File ▸ Save.
+#[test]
+fn the_editors_own_save_writes_people_xml_with_persist_too() {
+    let mut d = authored();
+    for mode in ["semantic", "preserve_when_safe"] {
+        let saved = d
+            .export_as_inner(casual_doc_io::formats::DOCX, mode)
+            .expect("saves")
+            .bytes;
+        assert!(
+            part(&saved, "word/people.xml").is_none(),
+            "{mode}: no opt-in, no people.xml"
+        );
+    }
+    d.set_author_persistence_inner(Some("AD".to_owned()), Some("u-ada".to_owned()))
+        .expect("opted in");
+    for mode in ["semantic", "preserve_when_safe"] {
+        let saved = d
+            .export_as_inner(casual_doc_io::formats::DOCX, mode)
+            .expect("saves")
+            .bytes;
+        let people = part(&saved, "word/people.xml").unwrap_or_default();
+        assert!(people.contains(r#"w15:userId="u-ada""#), "{mode}: {people}");
+    }
+    assert!(
+        d.document.definitions().people.is_empty(),
+        "the live document is never changed by a save"
+    );
+}
+
 /// Two people with one display name are one person once saved (`people.xml` joins by name),
 /// so the editor refuses to attribute one's work to the other's account and says so.
 #[test]
@@ -166,4 +197,112 @@ fn a_name_already_in_people_xml_under_another_account_is_refused_not_merged() {
         .with_persisted_author()
         .expect_err("a collision is refused");
     assert!(refused.contains("identity-name-collision"), "{refused}");
+}
+
+/// The comment whose body mentions `needle`, as its first paragraph's inlines.
+fn comment_inlines(d: &WasmDocument, needle: &str) -> Vec<InlineNode> {
+    d.document
+        .definitions()
+        .comments
+        .iter()
+        .find_map(|(_, comment)| match comment.blocks.first() {
+            Some(BlockNode::Paragraph(p)) if format!("{:?}", p.inlines).contains(needle) => {
+                Some(p.inlines.clone())
+            }
+            _ => None,
+        })
+        .expect("the comment")
+}
+
+/// **A mention is a link to the directory entry** (`docs/175` §7.3): the `@Name` span the
+/// composer measured becomes a hyperlink run to the entry's `mailto:`, the rest stays text, and
+/// the saved file carries it as a hyperlink in `comments.xml` with its relationship. Offsets
+/// are UTF-16, so the "é" before the mention (one unit, two bytes) is where a byte-counting
+/// placement would split the name.
+#[test]
+fn a_mention_is_a_hyperlink_run_to_the_entrys_link() {
+    let mut d = document();
+    d.set_active_author("Ada Lovelace", None, None)
+        .expect("author");
+    let node = first_paragraph(&d);
+    d.add_comment_mentioning_inner(
+        &node,
+        0,
+        &node,
+        6,
+        "Café note for @Grace Hopper please",
+        r#"[{"start":14,"end":27,"link":"mailto:grace@example.org"}]"#,
+        None,
+        None,
+        None,
+    )
+    .expect("a comment with a mention");
+    let texts: Vec<String> = comment_inlines(&d, "please")
+        .iter()
+        .map(|inline| match inline {
+            InlineNode::Run(run) => run.text.clone(),
+            InlineNode::Hyperlink(link) => match (&link.target, link.inlines.first()) {
+                (HyperlinkTarget::External(target), Some(InlineNode::Run(run))) => {
+                    format!("[{}]({})", run.text, target.url)
+                }
+                other => panic!("an unexpected link: {other:?}"),
+            },
+            other => panic!("an unexpected inline: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "Café note for ",
+            "[@Grace Hopper](mailto:grace@example.org)",
+            " please"
+        ]
+    );
+    let saved = d.export_docx().expect("saves");
+    let comments = part(&saved, "word/comments.xml").expect("comments.xml");
+    assert!(comments.contains("<w:hyperlink"), "{comments}");
+    let rels = part(&saved, "word/_rels/comments.xml.rels").expect("the comments' relationships");
+    assert!(rels.contains("mailto:grace@example.org"), "{rels}");
+}
+
+/// A mention with no link is text; a mention the editor cannot place exactly is refused.
+#[test]
+fn a_mention_that_cannot_be_placed_exactly_is_refused() {
+    let mut d = document();
+    d.set_active_author("Ada Lovelace", None, None)
+        .expect("author");
+    let node = first_paragraph(&d);
+    d.add_comment_mentioning_inner(
+        &node,
+        0,
+        &node,
+        6,
+        "Hi @Grace",
+        r#"[{"start":3,"end":9}]"#,
+        None,
+        None,
+        None,
+    )
+    .expect("an unlinked mention is text");
+    assert!(
+        comment_inlines(&d, "Grace")
+            .iter()
+            .all(|inline| matches!(inline, InlineNode::Run(_)))
+    );
+    for bad in [
+        r#"[{"start":3,"end":20,"link":"mailto:g@example.org"}]"#,
+        r#"[{"start":5,"end":3}]"#,
+        r#"[{"start":0,"end":5},{"start":3,"end":9}]"#,
+        r#"[{"start":3,"end":9,"link":"javascript:alert(1)"}]"#,
+        r#"[{"start":3,"end":9,"link":"http://example.org"}]"#,
+        "not json",
+    ] {
+        let refused = d
+            .add_comment_mentioning_inner(&node, 0, &node, 6, "Hi @Grace", bad, None, None, None)
+            .expect_err(bad);
+        assert!(
+            refused.contains("comment.mention-unusable"),
+            "{bad}: {refused}"
+        );
+    }
 }

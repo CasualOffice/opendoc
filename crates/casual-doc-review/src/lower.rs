@@ -122,17 +122,137 @@ pub fn paragraph_text(document: &Document, node: NodeId) -> String {
 }
 
 fn comment_body(ids: &mut ReviewIds<'_>, text: &str) -> Result<Vec<BlockNode>, String> {
+    comment_body_mentioning(ids, text, &[])
+}
+
+/// One `@` mention inside a comment's text (`docs/175` §7.3): the span of the text that names
+/// the person, and the link the host's directory gave for them (a `mailto:` or an `https:`
+/// profile page), if any.
+///
+/// Offsets are **UTF-16 code units**, the unit the composer's `selectionStart` reports, so the
+/// chrome passes what the browser measured and nothing is re-counted on its side.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Mention {
+    /// Where the `@Name` span starts.
+    pub start: u32,
+    /// Where it ends (exclusive).
+    pub end: u32,
+    /// The entry's link, or `None` for a mention that is only text.
+    #[serde(default)]
+    pub link: Option<String>,
+}
+
+/// The longest mention link accepted, the model's hyperlink bound.
+const MAX_MENTION_LINK_BYTES: usize = 2048;
+
+/// The comment body: one paragraph whose mention spans are hyperlink runs to their links.
+///
+/// **The shape is the editor's, not a measured Word one.** `docs/175` §12 Q4 asks for Word's
+/// own mention shape to be measured from a Word-authored file before the model is extended;
+/// none is in the corpus. So the model is **not** extended: a mention is the existing
+/// `Hyperlink` inline around the `@Name` run, which every reader already round-trips, and
+/// a mention with no link is plain text. Nothing here freezes a shape the measurement could
+/// contradict. O(text + mentions).
+fn comment_body_mentioning(
+    ids: &mut ReviewIds<'_>,
+    text: &str,
+    mentions: &[Mention],
+) -> Result<Vec<BlockNode>, String> {
     let body_id = ids.node()?;
-    let run_id = ids.node()?;
+    let inlines = mention_inlines(ids, text, mentions)?;
     Ok(vec![BlockNode::Paragraph(Paragraph {
         id: body_id,
         properties: ParagraphProperties::default().into(),
-        inlines: vec![InlineNode::Run(Run {
-            id: run_id,
-            properties: RunProperties::default().into(),
-            text: text.to_owned(),
-        })],
+        inlines,
     })])
+}
+
+/// `text` split into runs, each linked mention wrapped in a hyperlink.
+///
+/// Refused rather than repaired: mentions that overlap, run backwards, fall outside the text,
+/// split a character, or carry a link that is not `https:` or `mailto:` (or is over the
+/// model's bound). A mention the editor cannot place exactly is one it must not guess at.
+fn mention_inlines(
+    ids: &mut ReviewIds<'_>,
+    text: &str,
+    mentions: &[Mention],
+) -> Result<Vec<InlineNode>, String> {
+    use casual_doc_model::v1::{ExternalTarget, Hyperlink, HyperlinkTarget};
+    let refusal = || {
+        refused!(
+            "comment.mention-unusable",
+            "A mention in this comment could not be placed. Type the name again and pick it from the list."
+        )
+        .to_string()
+    };
+    // UTF-16 offset -> byte offset, for every character boundary. O(text).
+    let mut boundaries = Vec::with_capacity(text.len() + 1);
+    let mut units = 0_u32;
+    for (byte, character) in text.char_indices() {
+        boundaries.push((units, byte));
+        units += u32::try_from(character.len_utf16()).unwrap_or(2);
+    }
+    boundaries.push((units, text.len()));
+    let byte_at = |unit: u32| {
+        boundaries
+            .binary_search_by_key(&unit, |(u, _)| *u)
+            .ok()
+            .map(|index| boundaries[index].1)
+    };
+    let mut sorted: Vec<&Mention> = mentions.iter().collect();
+    sorted.sort_by_key(|mention| mention.start);
+    let mut inlines = Vec::new();
+    // `at`: where the text not yet emitted starts. `placed`: where the last mention ended, so
+    // overlap is refused even across an unlinked mention that emitted nothing.
+    let mut at = 0_usize;
+    let mut placed = 0_usize;
+    let run = |ids: &mut ReviewIds<'_>, piece: &str| -> Result<InlineNode, String> {
+        Ok(InlineNode::Run(Run {
+            id: ids.node()?,
+            properties: RunProperties::default().into(),
+            text: piece.to_owned(),
+        }))
+    };
+    for mention in sorted {
+        let (Some(start), Some(end)) = (byte_at(mention.start), byte_at(mention.end)) else {
+            return Err(refusal());
+        };
+        if start >= end || start < placed {
+            return Err(refusal());
+        }
+        placed = end;
+        // A mention with no link is text: it stays inside the surrounding run, because two
+        // adjacent runs with one formatting are not a shape the model keeps.
+        let Some(link) = mention.link.as_deref().filter(|link| !link.is_empty()) else {
+            continue;
+        };
+        if start > at {
+            inlines.push(run(ids, &text[at..start])?);
+        }
+        let named = run(ids, &text[start..end])?;
+        let allowed = (link.starts_with("mailto:") || link.starts_with("https://"))
+            && link.len() <= MAX_MENTION_LINK_BYTES
+            && !link.chars().any(char::is_whitespace);
+        if !allowed {
+            return Err(refusal());
+        }
+        inlines.push(InlineNode::Hyperlink(Box::new(Hyperlink {
+            id: ids.node()?,
+            target: HyperlinkTarget::External(ExternalTarget {
+                url: link.to_owned(),
+                anchor: None,
+            }),
+            tooltip: None,
+            inlines: vec![named],
+            history: true,
+        })));
+        at = end;
+    }
+    if at < text.len() || inlines.is_empty() {
+        inlines.push(run(ids, &text[at..])?);
+    }
+    Ok(inlines)
 }
 
 fn comments_only(document: &Document, comments: DefinitionMap<CommentId, Comment>) -> Lowered {
@@ -163,6 +283,37 @@ pub fn add_comment(
     end_node: &str,
     end: u32,
     text: &str,
+    author: Option<String>,
+    initials: Option<String>,
+    date: Option<String>,
+) -> Result<Lowered, String> {
+    add_comment_mentioning(
+        document,
+        ids,
+        start_node,
+        start,
+        end_node,
+        end,
+        text,
+        &[],
+        author,
+        initials,
+        date,
+    )
+}
+
+/// [`add_comment`], with `@` mentions in the text linked to their directory entries
+/// (`docs/175` §7.3; see [`Mention`]).
+#[allow(clippy::too_many_arguments)]
+pub fn add_comment_mentioning(
+    document: &Document,
+    ids: &mut ReviewIds<'_>,
+    start_node: &str,
+    start: u32,
+    end_node: &str,
+    end: u32,
+    text: &str,
+    mentions: &[Mention],
     author: Option<String>,
     initials: Option<String>,
     date: Option<String>,
@@ -249,6 +400,16 @@ pub fn add_comment(
         }
         (body, Pos::new(end_node, end))
     };
+    // With no mention the body is exactly what it always was, ids included.
+    let inlines = if mentions.is_empty() {
+        vec![InlineNode::Run(Run {
+            id: run_id,
+            properties: RunProperties::default().into(),
+            text: text.to_owned(),
+        })]
+    } else {
+        mention_inlines(ids, text, mentions)?
+    };
     let mut comments = document.definitions().comments.clone();
     let para_id = next_comment_para_id(&comments)?;
     comments.insert(
@@ -257,11 +418,7 @@ pub fn add_comment(
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: body_id,
                 properties: ParagraphProperties::default().into(),
-                inlines: vec![InlineNode::Run(Run {
-                    id: run_id,
-                    properties: RunProperties::default().into(),
-                    text: text.to_owned(),
-                })],
+                inlines,
             })],
             author,
             initials,
@@ -303,6 +460,21 @@ pub fn reply_to_comment(
     initials: Option<String>,
     date: Option<String>,
 ) -> Result<Lowered, String> {
+    reply_mentioning(document, ids, parent, text, &[], author, initials, date)
+}
+
+/// [`reply_to_comment`], with `@` mentions linked (see [`Mention`]).
+#[allow(clippy::too_many_arguments)]
+pub fn reply_mentioning(
+    document: &Document,
+    ids: &mut ReviewIds<'_>,
+    parent: &str,
+    text: &str,
+    mentions: &[Mention],
+    author: Option<String>,
+    initials: Option<String>,
+    date: Option<String>,
+) -> Result<Lowered, String> {
     if text.is_empty() {
         return Err(refused!(
             "comment.reply-text-required",
@@ -326,7 +498,7 @@ pub fn reply_to_comment(
     };
     let para_id = next_comment_para_id(&comments)?;
     let id = CommentId::new(ids.node()?);
-    let blocks = comment_body(ids, text)?;
+    let blocks = comment_body_mentioning(ids, text, mentions)?;
     comments.insert(
         id,
         Comment {

@@ -139,6 +139,16 @@ export const HOST_EVENTS = Object.freeze([
     name: "refusal",
     detail: Object.freeze(["code", "command", "requires", "message"]),
   }),
+  // The directory seam (`docs/175` §7), for a host that serves it over `postMessage`
+  // (`?directory=1`). The editor asks one bounded question — the text after `@`,
+  // and how many answers it will read — and never anything about the document.
+  Object.freeze({ name: "directory-query", detail: Object.freeze(["qid", "query", "limit"]) }),
+  // Sent only once the comment is ORDERED (acknowledged in a room, saved
+  // standalone): a mention that is later lost must not already have e-mailed anyone.
+  Object.freeze({
+    name: "mention",
+    detail: Object.freeze(["qid", "people", "commentId", "excerpt", "room"]),
+  }),
 ]);
 
 /** Event names alone, for validation and for generating a client's surface. */
@@ -173,7 +183,10 @@ export const PROTOCOL = Object.freeze({
    *  session exposes as methods — `describe`, `execute`, `query`, `ping` and
    *  `identify` (`docs/175` §3.2, once per mount) — so neither transport has a
    *  verb the other lacks. */
-  requests: Object.freeze(["describe", "execute", "query", "ping", "identify"]),
+  //  `directory.answer` and `mention.answer` are the host's half of the directory
+  //  seam (`docs/175` §7.2): answers to the editor's `directory-query` and
+  //  `mention` events, correlated by `qid`. One line: `host_parity.rs` reads it as one.
+  requests: Object.freeze(["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer"]),
 });
 
 /** A command whose id is a literal: `{ id, requires, args }`.

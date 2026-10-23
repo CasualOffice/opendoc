@@ -6804,6 +6804,57 @@ body.is-format-painting .page-wrap * {
   gap: 6px;
 }
 
+/* The @mention picker under a comment or reply composer (`docs/175` §7): the
+   presence list's surface and rows, in the composer's own flow so it scrolls
+   with the card rather than floating over the document. */
+.mention-list {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 4px 0;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-popover);
+}
+
+.mention-list[hidden] {
+  display: none;
+}
+
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.mention-option[aria-selected="true"] {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+.mention-initials {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mention-empty {
+  padding: 6px 8px;
+  color: var(--muted);
+}
+
 /* Narrow-window rungs for the comment column. The COLUMN's own geometry is
    overridden here, next to its base rule; the page-stack gutter that pairs with
    each rung lives beside `.viewport.has-review-sidebar .pages` further down,
