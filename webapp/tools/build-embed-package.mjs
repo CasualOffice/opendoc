@@ -55,7 +55,7 @@ const COPIES = Object.freeze({
  *
  *  npm cannot publish a file from outside the package directory — the same
  *  constraint that makes the modules above copies — so a host who runs
- *  `npm install @casualoffice/opendoc-embed` would otherwise receive a
+ *  `npm install @casualoffice/opendoc-editor` would otherwise receive a
  *  `"license": "Apache-2.0"` string and neither the licence nor the attribution
  *  notice it refers to. The identifier says what the terms are; these files ARE
  *  the terms, and the NOTICE is what Apache-2.0 section 4(d) is about. Generated

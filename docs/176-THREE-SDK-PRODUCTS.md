@@ -120,7 +120,7 @@ the Editor.
 
 ### 3.2 Editor SDK, for contrast only
 
-Unchanged: `@casualoffice/opendoc-embed`, the `<opendoc-editor>` element, the host contract
+Unchanged except its npm name: `@casualoffice/opendoc-editor` (built from `packages/opendoc-embed`), the `<opendoc-editor>` element, the host contract
 (ADR-036), white-labelling (ADR-039), roles and presets (`docs/126`). It keeps
 `casual-doc-wasm` and the whole of `docs/05` §5. Nothing in this document moves a byte of it.
 
@@ -343,7 +343,7 @@ Rules:
 
 | Channel | Viewer | Editor | Native |
 | --- | --- | --- | --- |
-| npm | `@casualoffice/opendoc-viewer` (WASM + `.d.ts`, runs in Node too) | `@casualoffice/opendoc-embed` (exists, unpublished) | — |
+| npm | `@casualoffice/opendoc-viewer` (WASM + `.d.ts`, runs in Node too) | `@casualoffice/opendoc-editor`, from `packages/opendoc-embed` (pre-releases, §8.3) | — |
 | crates.io | `opendoc-viewer` | — | `opendoc` (one façade crate; the `casual-doc-*` crates stay internal) |
 | Maven Central | — | — | `org.casualoffice:opendoc`, one jar with per-platform natives |
 | PyPI | — | — | `opendoc`: abi3 wheels for manylinux/musllinux x64 and arm64, macOS universal2, Windows x64 and arm64 |
@@ -458,11 +458,47 @@ wrong, and the Native SDK's render and convert half **is** the viewer cut behind
 | Phase | What a host gets | Exit gate (a host does it, in this repo) |
 | --- | --- | --- |
 | **V0**: this change | `casual-doc-viewer`, measured | The tables in §4, and tests that fail when render or PDF breaks (§11) |
-| **V1**: Viewer SDK | `@casualoffice/opendoc-viewer` on npm; `importReport`, `outline`, `metadata`, `links`, `search` rects; P1, P2, P7; a CI size ceiling for the viewer module | A static page in the repo opens a DOCX and shows every page and a PDF with the package alone; `wasm_size`-style guard on the viewer artefact. **Phase 1 built (§11.1)**: the package, the example page, `outline`, per-page text, the font hook, the size ceiling. Still open: `importReport` (P7), `metadata`, `links`, `search` rects, P1, P2, publishing |
+| **V1**: Viewer SDK | `@casualoffice/opendoc-viewer` on npm; `importReport`, `outline`, `metadata`, `links`, `search` rects; P1, P2, P7; a CI size ceiling for the viewer module | A static page in the repo opens a DOCX and shows every page and a PDF with the package alone; `wasm_size`-style guard on the viewer artefact. **Phase 1 built (§11.1)**: the package, the example page, `outline`, per-page text, the font hook, the size ceiling. Still open: `importReport` (P7), `metadata`, `links`, `search` rects, P1, P2. Publishing is built (§8.3, pre-releases under `next`) |
 | **V2**: server viewer | `opendoc` CLI and crate; deterministic-render golden across Linux and macOS | The same DOCX renders byte-identical PNGs on both CI platforms |
 | **N1**: Native read + convert | C ABI (P4) and Python, Java and .NET packages for open, read view, `import_report`, render, PDF and save-as | One conformance suite of fixtures, run through all four languages, with identical outputs |
 | **N2**: Native modify | `edit` batches over `Operation`; DOCX save with a report | A program in each language creates a document with a heading, a table and a tracked change, saves it, and the reopened file matches |
 | **E**: Editor | Unchanged: `docs/126` and `109` HF-109 | — |
+
+### 8.3 Releasing to npm (pre-releases)
+
+`.github/workflows/npm-publish.yml` publishes `@casualoffice/opendoc-viewer`
+(`packages/opendoc-viewer`) and `@casualoffice/opendoc-editor` (`packages/opendoc-embed`).
+It runs only when dispatched by hand, and only ever publishes a **pre-release** under the
+npm `next` tag; `latest` is never touched, so `npm install <name>` without a version does not
+resolve to a pre-release. `webapp/tests/npm_publish_workflow.test.mjs` asserts each of
+those properties.
+
+Inputs: `package` (`viewer`, `editor` or `both`), `version` (semver **with** a pre-release
+part, for example `0.1.0-alpha.1`; `0.1.0` is refused) and `dry_run` (default `true`).
+
+What a run does, per package: build (the viewer through `packages/opendoc-viewer/build.sh`,
+Rust from `rust-toolchain.toml`, wasm-pack 0.15.0), run the package's own tests, set the
+version with `npm version --no-git-tag-version` in the runner's checkout (the editor also
+regenerates `src/release.mjs`, which reports the installed version), `npm pack --dry-run`,
+then `npm publish --tag next --access public --provenance`, with `--dry-run` when
+`dry_run` is true. The version is never committed: the tree stays at `0.1.0`.
+
+Auth: npm trusted publishing (OIDC) with npm 11.6.2, through the `github-pages`
+environment, which holds the npm credentials. If that environment's secret `NPM_PASSWORD`
+is set (an npm access token), only the publish steps receive it as `NODE_AUTH_TOKEN`. A
+package's **first** publish needs that token, because npm lets a trusted publisher be
+configured only on a package that exists; after it, add the trusted publisher on npmjs.com
+(repository `CasualOffice/opendoc`, workflow `npm-publish.yml`, environment `github-pages`)
+and the token can be removed. A real publish runs from `main` only.
+
+Steps:
+
+1. Dry run from `main`, and read the `npm pack --dry-run` file list in the log:
+   `gh workflow run npm-publish.yml --ref main -f package=both -f version=0.1.0-alpha.1 -f dry_run=true`
+2. Publish: the same command with `-f dry_run=false`.
+3. Check: `npm view @casualoffice/opendoc-viewer dist-tags` shows the version under `next`
+   and no `latest`. A version number can never be reused, even after an unpublish, so the
+   next attempt takes the next pre-release number (`0.1.0-alpha.2`).
 
 ## 9. Risks
 
@@ -489,9 +525,9 @@ wrong, and the Native SDK's render and convert half **is** the viewer cut behind
   - npm: `@casualoffice/opendoc-viewer` (Viewer), `@casualoffice/opendoc-editor` (Editor; today's `packages/opendoc-embed` publishes under this name).
   - crates.io: `opendoc-viewer` (Viewer) and `opendoc` (the Native/headless facade).
   - PyPI: `opendoc`. Maven: `org.casualoffice:opendoc`. NuGet: `CasualOffice.OpenDoc`.
-  - Reserve every name before the first release, so nobody squats them. Who holds the registry credentials is still for the owner.
+  - Reserve every name before the first release, so nobody squats them. The npm credentials live in the repository's `github-pages` environment (owner, 2026-10-24; §8.3); the other registries' credentials are still for the owner.
 
-**Still open:** Q1 (registry credentials only), Q4 (whether Native batch edits need the transaction log), Q6 (native platform list), Q7 (whether Node needs a native addon or WASM is enough) and Q8 (a minimal `<opendoc-viewer>` element).
+**Still open:** Q1 (non-npm registry credentials only), Q4 (whether Native batch edits need the transaction log), Q6 (native platform list), Q7 (whether Node needs a native addon or WASM is enough) and Q8 (a minimal `<opendoc-viewer>` element).
 
 ### Original open questions (for reference)
 

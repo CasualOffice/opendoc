@@ -319,7 +319,7 @@ test("every ADR number is unique, and the register has no gaps", () => {
 // literal install line in the whole of `docs/`. `docs/05` handed them an
 // `import { DocumentEngine } from` it, live on the public site through
 // `build-doc-pages.mjs`. `docs/00` listed it as "the WebAssembly package". The real
-// name, `@casualoffice/opendoc-embed`, appeared in `docs/` ZERO times.
+// name, `@casualoffice/opendoc-editor`, appeared in `docs/` ZERO times.
 //
 // This is `docs/99` §9 in its most expensive form: not a number that drifted, but an
 // instruction a reader follows and cannot complete. It also cost nothing to catch —
@@ -371,7 +371,7 @@ test("every `npm install` in docs names a package that exists", () => {
     .map((f) => readFileSync(join(repoRoot, "docs", f), "utf8"))
     .join("\n");
   assert.ok(
-    allDocs.includes("@casualoffice/opendoc-embed"),
+    allDocs.includes("@casualoffice/opendoc-editor"),
     "the published package name appears nowhere in docs/, so a reader cannot find it",
   );
 });

@@ -130,7 +130,8 @@ cargo run -p casual-doc-render --example render_docx_page -- page.png
 ## Embed it
 
 Put the editor in your page as `<opendoc-editor>` (from
-[`packages/opendoc-embed`](packages/opendoc-embed), not yet published to npm), drive it
+[`packages/opendoc-embed`](packages/opendoc-embed), published to npm as
+`@casualoffice/opendoc-editor`, pre-releases only under the `next` tag), drive it
 in-process through `window.opendoc`, or from another origin through a versioned
 `postMessage` contract with an explicit origin allowlist.
 

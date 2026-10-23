@@ -97,7 +97,7 @@ test("every path the manifest promises exists", () => {
 });
 
 test("the manifest declares what an installable package has to declare", () => {
-  assert.equal(manifest.name, "@casualoffice/opendoc-embed");
+  assert.equal(manifest.name, "@casualoffice/opendoc-editor");
   assert.equal(manifest.type, "module");
   assert.equal(manifest.license, "Apache-2.0");
   assert.ok(manifest.main, "no main: `require`/`import` of the bare name resolves to nothing");
@@ -240,9 +240,9 @@ test("the package packs, installs, and imports — not just claims to", async ()
       probe,
       [
         'import { ROLES, resolveCapabilities, editingModeFor, OpenDocEditorElement }',
-        '  from "@casualoffice/opendoc-embed";',
+        '  from "@casualoffice/opendoc-editor";',
         'import { resolveCapabilities as viaSubpath }',
-        '  from "@casualoffice/opendoc-embed/capabilities";',
+        '  from "@casualoffice/opendoc-editor/capabilities";',
         'const readonly = [...resolveCapabilities({ mode: "readonly" })];',
         "process.stdout.write(",
         "  JSON.stringify({",

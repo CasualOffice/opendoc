@@ -74,7 +74,7 @@ network plane required when people actually collaborate.
 
 | Capability | Current evidence | Honest status |
 | --- | --- | --- |
-| Framework-neutral mount | `@casualoffice/opendoc-embed` and `<opendoc-editor>` | Built; source/tarball installable, not published to npm |
+| Framework-neutral mount | `@casualoffice/opendoc-editor` and `<opendoc-editor>` | Built; source/tarball installable, not published to npm |
 | Isolation | Custom element owns a sandboxed iframe | Built |
 | Same- and cross-origin control | One host schema exposed through direct frame session and correlated `postMessage` client | Built; ADR-036 |
 | Host commands/events | `describe`, `query`, `execute`, `ping`; `ready`, `change`, `selection`, `save`, `export`, `error`, `refusal` | Built |
@@ -631,7 +631,7 @@ execution evidence, not a support claim; doc 18 remains authoritative for suppor
    and behavior, not force one encoding unless interoperability requires it.
 6. Decide whether checkpoints may ever be stored by the reference relay. If yes,
    encryption/key ownership and the public privacy claim need a separate ADR.
-7. Decide registry publication/versioning for `@casualoffice/opendoc-embed` before
+7. Decide registry publication/versioning for `@casualoffice/opendoc-editor` before
    publishing install commands. The repository currently proves tarball contents;
    it does not prove registry availability.
 8. Define provider compatibility and migration guarantees before a durable log is

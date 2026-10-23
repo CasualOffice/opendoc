@@ -1,4 +1,4 @@
-# `@casualoffice/opendoc-embed`
+# `@casualoffice/opendoc-editor`
 
 The framework-free `<opendoc-editor>` custom element, and the capability
 contract it resolves before first paint.
@@ -19,7 +19,7 @@ the only default that would always work is a wildcard, and posting document
 content to a wildcard target is not a decision a library should make for you.
 
 ```js
-import { createHostClient } from "@casualoffice/opendoc-embed/client";
+import { createHostClient } from "@casualoffice/opendoc-editor/client";
 
 const editor = document.querySelector("opendoc-editor");
 const client = createHostClient({
@@ -57,13 +57,19 @@ editing command **before** it reaches the engine, and says so in the result.
 
 ## Install
 
-The package is not published to a registry. Build and install the verified
-repository tarball for evaluation:
+Pre-releases are published to npm under the `next` tag only (`docs/176` §8.3), so
+pin an exact version:
+
+```sh
+npm install @casualoffice/opendoc-editor@next
+```
+
+Or build and install the verified repository tarball:
 
 ```sh
 cd packages/opendoc-embed
 npm pack
-npm install ./casualoffice-opendoc-embed-0.1.0.tgz
+npm install ./casualoffice-opendoc-editor-0.1.0.tgz
 ```
 
 Zero runtime dependencies. Works in React, Vue, Svelte and plain HTML without a
@@ -74,7 +80,7 @@ Framework bindings are deliberately not shipped.
 
 ```html
 <script type="module">
-  import "@casualoffice/opendoc-embed/define";
+  import "@casualoffice/opendoc-editor/define";
 </script>
 
 <opendoc-editor
@@ -93,7 +99,7 @@ only ever **narrow** the role, never widen it, whatever you put in them.
 Or keep the registration explicit:
 
 ```js
-import { defineOpenDocEditor } from "@casualoffice/opendoc-embed";
+import { defineOpenDocEditor } from "@casualoffice/opendoc-editor";
 
 defineOpenDocEditor(); // idempotent; returns whether this call registered it
 ```
@@ -220,5 +226,6 @@ Stated plainly rather than left to be discovered:
   may compose supported chrome regions and build theme/brand assets; runtime
   arbitrary CSS injection is deliberately not a contract.
 - **No framework bindings**, by choice — see above.
-- **Not published.** This package is built and installable from a tarball
-  (`npm pack`); no CI job publishes it to a registry yet.
+- **Pre-releases only.** One manually dispatched workflow (`npm-publish.yml`)
+  publishes pre-release versions under npm's `next` tag; nothing is published
+  under `latest` yet.

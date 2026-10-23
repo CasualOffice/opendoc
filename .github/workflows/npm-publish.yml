@@ -1,0 +1,240 @@
+# Publishes a PRE-RELEASE of the npm packages (docs/176 §8.3).
+#
+#   packages/opendoc-viewer  ->  @casualoffice/opendoc-viewer
+#   packages/opendoc-embed   ->  @casualoffice/opendoc-editor
+#
+# Manual only. Nothing here runs on a push, a pull request or a schedule: a
+# release is a decision, and the owner makes it by dispatching this workflow.
+#
+# What it refuses to do, on purpose:
+#
+#   * publish a non-pre-release version. The input must be semver WITH a
+#     pre-release part (`0.1.0-alpha.1`); `0.1.0` is rejected before anything
+#     builds, so a typo cannot cut a stable release.
+#   * publish under `latest`. Every publish is `--tag next`, so a plain
+#     `npm install @casualoffice/opendoc-viewer` never resolves to a pre-release.
+#   * publish by default. `dry_run` defaults to TRUE and runs
+#     `npm publish --dry-run`; a real publish has to be asked for.
+#   * publish from anything but `main`. Provenance names the commit it was built
+#     from, and a branch commit is not a release anyone reviewed.
+#   * commit the version. It is set at publish time with
+#     `npm version --no-git-tag-version` in the runner's checkout only; the tree
+#     keeps `0.1.0` and the published version lives on npm and in provenance.
+#
+# Auth is npm trusted publishing (OIDC, npm >= 11.5.1) with `--provenance`. The
+# `github-pages` environment carries the npm credentials: when its secret
+# `NPM_PASSWORD` is set (an npm access token), the publish step alone receives it
+# as `NODE_AUTH_TOKEN` through the `.npmrc` that `actions/setup-node` writes. A
+# package's FIRST publish needs that token, because npm only lets a trusted
+# publisher be configured on a package that already exists. The secret is never
+# printed, and no step before the publish can read it — not the Rust build, and
+# not the tests.
+name: npm-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Which package to publish
+        type: choice
+        required: true
+        default: viewer
+        options:
+          - viewer
+          - editor
+          - both
+      version:
+        description: Pre-release semver to publish, for example 0.1.0-alpha.1
+        type: string
+        required: true
+      dry_run:
+        description: Run npm publish --dry-run instead of publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+# One release at a time, and never cancel one half-way through a publish.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish (${{ inputs.package }} ${{ inputs.version }}${{ inputs.dry_run && ', dry run' || '' }})
+    runs-on: ubuntu-24.04
+    environment: github-pages
+    timeout-minutes: 60
+    env:
+      PACKAGE_CHOICE: ${{ inputs.package }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      # A boolean, not the secret: lets the log say which auth path ran.
+      HAS_NPM_TOKEN: ${{ secrets.NPM_PASSWORD != '' }}
+    steps:
+      # Inputs reach the shell through `env`, never through `${{ }}` inside
+      # `run:`, so a crafted version string cannot inject a command.
+      - name: Validate the inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # semver 2.0.0 with a REQUIRED pre-release part and no build metadata.
+          ident='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          pattern="^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-${ident}(\.${ident})*$"
+          if [[ ! "${RELEASE_VERSION}" =~ ${pattern} ]]; then
+            echo "::error::version '${RELEASE_VERSION}' is not a pre-release semver (want e.g. 0.1.0-alpha.1)"
+            exit 1
+          fi
+          case "${PACKAGE_CHOICE}" in
+            viewer | editor | both) ;;
+            *) echo "::error::package must be viewer, editor or both"; exit 1 ;;
+          esac
+          if [[ "${DRY_RUN}" != "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::a real publish runs from main only (this run is on ${GITHUB_REF})"
+            exit 1
+          fi
+          echo "package=${PACKAGE_CHOICE} version=${RELEASE_VERSION} dry_run=${DRY_RUN} ref=${GITHUB_REF}"
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `registry-url` + `scope` make setup-node write an `.npmrc` whose auth line
+      # reads `${NODE_AUTH_TOKEN}` at publish time; the token itself is supplied
+      # to the publish step only.
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          scope: "@casualoffice"
+
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.
+      - name: Install npm with trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global --no-audit --no-fund npm@11.6.2
+          version="$(npm --version)"
+          lowest="$(printf '%s\n%s\n' "11.5.1" "${version}" | sort -V | head -n1)"
+          if [[ "${lowest}" != "11.5.1" ]]; then
+            echo "::error::npm ${version} is older than 11.5.1 and cannot use trusted publishing"
+            exit 1
+          fi
+          echo "npm ${version}"
+
+      # ---- @casualoffice/opendoc-viewer ------------------------------------
+      # rust-toolchain.toml pins Rust and the wasm32 target; rustup honours it on
+      # the first cargo call, so warm it explicitly (as pages.yml does).
+      - name: Set up the Rust toolchain
+        if: inputs.package != 'editor'
+        run: rustup show
+
+      - name: Restore Cargo cache
+        if: inputs.package != 'editor'
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+
+      - name: Install wasm-pack
+        if: inputs.package != 'editor'
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
+
+      - name: Build the viewer package
+        if: inputs.package != 'editor'
+        run: ./packages/opendoc-viewer/build.sh
+
+      - name: Test the viewer package
+        if: inputs.package != 'editor'
+        working-directory: packages/opendoc-viewer
+        run: npm test
+
+      - name: Set the viewer version
+        if: inputs.package != 'editor'
+        working-directory: packages/opendoc-viewer
+        run: npm version "${RELEASE_VERSION}" --no-git-tag-version
+
+      # `files` lists pkg/, which is gitignored: a tarball without the engine
+      # would pack happily and install a package that cannot open a document.
+      - name: Inspect the viewer tarball
+        if: inputs.package != 'editor'
+        working-directory: packages/opendoc-viewer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --dry-run
+          npm pack --dry-run --json > "${RUNNER_TEMP}/viewer-pack.json"
+          for file in pkg/opendoc_viewer_bg.wasm pkg/opendoc_viewer.js; do
+            grep -F "\"path\": \"${file}\"" "${RUNNER_TEMP}/viewer-pack.json" > /dev/null || {
+              echo "::error::the viewer tarball is missing ${file}"
+              exit 1
+            }
+          done
+
+      - name: Publish the viewer package
+        if: inputs.package != 'editor'
+        working-directory: packages/opendoc-viewer
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "auth: trusted publishing (OIDC); access token present: ${HAS_NPM_TOKEN}"
+          args=(--tag next --access public --provenance)
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          npm publish "${args[@]}"
+
+      # ---- @casualoffice/opendoc-editor ------------------------------------
+      # The package's own guards: it is generated from webapp/src and must be
+      # byte-identical to a fresh generation, packs, installs into an empty
+      # project and imports by its bare specifier, and carries the licence files.
+      - name: Test the editor package
+        if: inputs.package != 'viewer'
+        run: >-
+          node --test
+          webapp/tests/embed_package.test.mjs
+          webapp/tests/licence_metadata.test.mjs
+
+      # `src/release.mjs` reports the installed version, generated from the
+      # manifest, so it is regenerated after the bump; the diff must then be
+      # exactly those two files or the generator changed something else.
+      - name: Set the editor version
+        if: inputs.package != 'viewer'
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd packages/opendoc-embed && npm version "${RELEASE_VERSION}" --no-git-tag-version)
+          node webapp/tools/build-embed-package.mjs
+          changed="$(git diff --name-only | sort | tr '\n' ' ')"
+          want="packages/opendoc-embed/package.json packages/opendoc-embed/src/release.mjs "
+          if [[ "${changed}" != "${want}" ]]; then
+            echo "::error::the version bump changed '${changed}', expected '${want}'"
+            exit 1
+          fi
+          grep -F "\"version\": \"${RELEASE_VERSION}\"" packages/opendoc-embed/src/release.mjs
+
+      - name: Inspect the editor tarball
+        if: inputs.package != 'viewer'
+        working-directory: packages/opendoc-embed
+        run: npm pack --dry-run
+
+      - name: Publish the editor package
+        if: inputs.package != 'viewer'
+        working-directory: packages/opendoc-embed
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "auth: trusted publishing (OIDC); access token present: ${HAS_NPM_TOKEN}"
+          args=(--tag next --access public --provenance)
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          npm publish "${args[@]}"

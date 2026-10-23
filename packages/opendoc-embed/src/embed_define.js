@@ -6,7 +6,7 @@
 // is a build failure rather than a divergence nobody notices.
 
 // SPDX-License-Identifier: Apache-2.0
-// The side-effect entry point: `import "@casualoffice/opendoc-embed/define"`
+// The side-effect entry point: `import "@casualoffice/opendoc-editor/define"`
 // and `<opendoc-editor>` works.
 //
 // Separate from the main entry so that one has no side effects and stays
