@@ -38,3 +38,41 @@ export function scrollTargetFor({ marker, viewport, current, max, scale, block, 
   const perScrollPx = scale > 1 ? scale : 1;
   return Math.max(0, Math.min(max, current + delta / perScrollPx));
 }
+
+/** The scroll left to move to, or `null` when the marker is already in view
+ *  horizontally (`docs/174` TA-10).
+ *
+ *  Zoomed past the window's width, the page scrolls sideways, and a caret moved
+ *  to the end of a line has to be followed that way too — Word and Docs both
+ *  do; this rule used to exist only for `scrollTop`. Always "nearest": the
+ *  minimum sideways move, never a recentre, so the reading position is kept.
+ *  The horizontal axis is never compressed (`scale` is the vertical band's), so
+ *  a screen delta is a scroll delta.
+ *
+ *  A marker wider than the viewport aligns its START edge; otherwise the edge
+ *  it is past is brought in, with `margin`.
+ *
+ *  O(1).
+ *
+ *  @param {object} o
+ *  @param {{left: number, right: number}} o.marker    screen rect
+ *  @param {{left: number, right: number}} o.viewport  visible screen box, scrollbar excluded
+ *  @param {number} o.current  the scroller's current `scrollLeft`
+ *  @param {number} o.max      the largest valid `scrollLeft`
+ *  @param {number} o.margin   breathing room when nudging an edge into view
+ *  @returns {number|null}
+ */
+export function scrollLeftFor({ marker, viewport, current, max, margin }) {
+  let delta;
+  if (marker.left < viewport.left) {
+    delta = marker.left - viewport.left - margin;
+  } else if (marker.right > viewport.right) {
+    const tooWide = marker.right - marker.left + 2 * margin > viewport.right - viewport.left;
+    if (tooWide && marker.left <= viewport.right) return null; // its start is already shown
+    delta = tooWide ? marker.left - viewport.left - margin : marker.right - viewport.right + margin;
+  } else {
+    return null;
+  }
+  const target = Math.max(0, Math.min(max, current + delta));
+  return target === current ? null : target;
+}

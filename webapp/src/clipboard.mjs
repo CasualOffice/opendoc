@@ -47,10 +47,12 @@ function styleAttr(run) {
 }
 
 /** Builds a visible HTML fragment from `ClipboardRun[]` (the shape
- * `doc.copyRichRuns` produces). Every paragraph becomes a `<p>`; run
+ * `doc.copyRichRuns` produces). With `outline` (`doc.copyBlockOutline` for the
+ * same range) headings, lists and tables keep their structure; without it every
+ * paragraph becomes a `<p>`. Run
  * formatting nests `<b>/<i>/<u>/<s>/<sup>/<sub>`, a `<span style>` carries
  * color/size/font/highlight, and a `href` wraps the run in `<a>`. */
-export function runsToHtml(runs) {
+export function runsToHtml(runs, outline = null) {
   const paragraphs = [[]];
   for (const run of runs) {
     if (run.paragraphBreak) {
@@ -59,12 +61,92 @@ export function runsToHtml(runs) {
       paragraphs.at(-1).push(run);
     }
   }
-  return paragraphs
-    .map((runsInParagraph) => {
-      const inner = runsInParagraph.map(runToHtml).join("");
-      return `<p>${inner || "<br>"}</p>`;
-    })
-    .join("");
+  const bodies = paragraphs.map((runsInParagraph) => runsInParagraph.map(runToHtml).join("") || "<br>");
+  // The outline is only trusted when it describes exactly these paragraphs; a
+  // mismatch (an older engine, a host that passed none) keeps the flat `<p>`s.
+  if (!Array.isArray(outline) || outline.length !== bodies.length) {
+    return bodies.map((body) => `<p>${body}</p>`).join("");
+  }
+  return structuredHtml(bodies, outline);
+}
+
+/** The deepest list nesting the HTML carries, matching the editor's nine levels. */
+const MAX_LIST_LEVEL = 8;
+
+/** Renders paragraph bodies with the block structure `doc.copyBlockOutline`
+ *  reports (`docs/174` TA-12): `<h1>`–`<h6>` for headings, nested `<ul>`/`<ol>`
+ *  for list items, and a `<table>` for consecutive paragraphs of one table —
+ *  what Word and Google Docs read back as a heading, a list and a table instead
+ *  of flat paragraphs.
+ *
+ *  O(paragraphs): one pass, with a stack of open lists.
+ *
+ *  @param {string[]} bodies  each paragraph's inner HTML
+ *  @param {Array<{heading?: number, list?: {ordered: boolean, level: number}, cell?: {table: string, row: number, col: number}}>} outline
+ */
+function structuredHtml(bodies, outline) {
+  let html = "";
+  /** Open list tags, outermost first: "ul" or "ol". */
+  const lists = [];
+  const closeListsTo = (depth) => {
+    while (lists.length > depth) html += `</li></${lists.pop()}>`;
+  };
+  for (let i = 0; i < bodies.length; i++) {
+    const entry = outline[i] ?? {};
+    if (entry.cell) {
+      closeListsTo(0);
+      // Every following paragraph of the same table, grouped into rows and cells.
+      const table = entry.cell.table;
+      const rows = new Map();
+      let j = i;
+      for (; j < bodies.length && outline[j]?.cell?.table === table; j++) {
+        const { row, col } = outline[j].cell;
+        if (!rows.has(row)) rows.set(row, new Map());
+        const cells = rows.get(row);
+        if (!cells.has(col)) cells.set(col, []);
+        cells.get(col).push(blockHtml(bodies[j], outline[j]));
+      }
+      html += "<table><tbody>";
+      for (const cells of rows.values()) {
+        html += "<tr>";
+        for (const content of cells.values()) html += `<td>${content.join("")}</td>`;
+        html += "</tr>";
+      }
+      html += "</tbody></table>";
+      i = j - 1;
+      continue;
+    }
+    if (entry.list) {
+      const tag = entry.list.ordered ? "ol" : "ul";
+      const depth = Math.min(MAX_LIST_LEVEL, Math.max(0, Number(entry.list.level) || 0)) + 1;
+      closeListsTo(depth);
+      if (lists.length === depth && lists[depth - 1] !== tag) closeListsTo(depth - 1);
+      if (lists.length === depth) html += "</li>";
+      // Deeper than the open lists: open one list per missing level, so a jump
+      // from level 0 to level 2 still nests (Word allows it).
+      while (lists.length < depth) {
+        lists.push(lists.length === depth - 1 ? tag : "ul");
+        html += `<${lists.at(-1)}>`;
+        if (lists.length < depth) html += "<li>";
+      }
+      html += `<li>${bodies[i]}`;
+      continue;
+    }
+    closeListsTo(0);
+    html += blockHtml(bodies[i], entry);
+  }
+  closeListsTo(0);
+  return html;
+}
+
+/** One non-list paragraph: a heading of its level (capped at `<h6>`), else `<p>`. */
+function blockHtml(body, entry) {
+  const level = Number(entry?.heading);
+  if (level >= 1) {
+    const tag = `h${Math.min(6, Math.floor(level))}`;
+    return `<${tag}>${body}</${tag}>`;
+  }
+  return `<p>${body}</p>`;
 }
 
 function runToHtml(run) {
@@ -184,6 +266,13 @@ export function htmlToRuns(root) {
 
 const LIST_TAGS = new Set(["UL", "OL"]);
 
+/** `<h1>`..`<h6>` and the heading level each pastes as (`docs/174` TA-11). */
+const HEADING_TAGS = new Map([["H1", 1], ["H2", 2], ["H3", 3], ["H4", 4], ["H5", 5], ["H6", 6]]);
+
+/** The elements that make a paste STRUCTURED: a wrapper holding one is recursed
+ *  into rather than flattened. */
+const STRUCTURE_SELECTOR = "table, ul, ol, h1, h2, h3, h4, h5, h6";
+
 /** Parses a browser-native DOM (an external app's `text/html` paste) into the
  * `ExternalFragment` the engine's `pasteExternalStructured` consumes — a list of
  * blocks, each a `{ kind: "paragraph", runs, list? }` or `{ kind: "table", rows }`
@@ -199,7 +288,7 @@ export function htmlToStructured(root) {
   // Only reconstruct when there is real structure to preserve; otherwise let the
   // caller fall back to the flat rich-run paste.
   const hasStructure = blocks.some(
-    (b) => b.kind === "table" || (b.kind === "paragraph" && b.list),
+    (b) => b.kind === "table" || (b.kind === "paragraph" && (b.list || b.heading)),
   );
   if (!hasStructure) return null;
   // Drop empty, non-list paragraphs (blank lines between blocks) — an empty list
@@ -242,9 +331,16 @@ function collectStructuredBlocks(root, out) {
       collectListItems(node, tag === "OL", 0, out);
       continue;
     }
-    // A wrapper that itself holds a table/list: recurse so the structure lands in
-    // document order rather than being flattened by `htmlToRuns`.
-    if (node.querySelector && node.querySelector("table, ul, ol")) {
+    // A heading is one paragraph that takes the matching Heading N style. It
+    // used to be flattened into body text with nothing said (TA-11).
+    if (HEADING_TAGS.has(tag)) {
+      const runs = htmlToRuns(node).filter((run) => !run.paragraphBreak && run.text);
+      if (runs.length) out.push({ kind: "paragraph", runs, heading: HEADING_TAGS.get(tag) });
+      continue;
+    }
+    // A wrapper that itself holds a table/list/heading: recurse so the structure
+    // lands in document order rather than being flattened by `htmlToRuns`.
+    if (node.querySelector && node.querySelector(STRUCTURE_SELECTOR)) {
       collectStructuredBlocks(node, out);
       continue;
     }
@@ -288,7 +384,7 @@ function parseStructuredTable(tableEl) {
       let cellBlocks = [];
       // A cell can hold its own nested tables/lists; reuse the block walker so
       // those survive, and fall back to flat paragraphs for plain cell text.
-      if (cellEl.querySelector && cellEl.querySelector("table, ul, ol")) {
+      if (cellEl.querySelector && cellEl.querySelector(STRUCTURE_SELECTOR)) {
         collectStructuredBlocks(cellEl, cellBlocks);
       } else {
         cellBlocks = runsToParagraphBlocks(htmlToRuns(cellEl));
@@ -376,6 +472,14 @@ function applyInlineStyle(format, style) {
   const size = parseFontSize(decls["font-size"]);
   if (size !== undefined) format.sizeHalfPoints = size;
 
+  // The face, from the RAW declaration: `parseDeclarations` lowercases values,
+  // and a font name is case-sensitive to everything that matches it. Kept
+  // whether or not this machine has the face: Word keeps the name and
+  // substitutes at render time, and dropping it would lose it from the saved
+  // file too (TA-11).
+  const family = parseFontFamily(style);
+  if (family) format.font = family;
+
   const color = parseCssColor(decls.color);
   if (color) format.color = color;
   // background-color -> highlight. `w:highlight` is a NAMED enum (yellow, green,
@@ -436,6 +540,26 @@ function parseDeclarations(style) {
     if (prop && value) map[prop] = value;
   }
   return map;
+}
+
+/** CSS generic and system family keywords: never a face a document can name. */
+const GENERIC_FAMILIES = new Set([
+  "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif",
+  "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji", "math", "fangsong",
+  "inherit", "initial", "unset", "revert", "-apple-system", "blinkmacsystemfont",
+]);
+
+/** The first named face in an inline style's `font-family`, quotes removed and
+ *  case kept, or `undefined` when it names only generic families. Word writes
+ *  `font-family:"Calibri",sans-serif`, Docs `font-family:Arial,sans-serif`. */
+function parseFontFamily(style) {
+  const match = /(?:^|;)\s*font-family\s*:\s*([^;]+)/i.exec(style);
+  if (!match) return undefined;
+  for (const raw of match[1].split(",")) {
+    const name = raw.trim().replace(/\s*!important$/i, "").replace(/^["']|["']$/g, "").trim();
+    if (name && name.length <= 64 && !GENERIC_FAMILIES.has(name.toLowerCase())) return name;
+  }
+  return undefined;
 }
 
 /** Converts a CSS `font-size` (pt or px) to the model's `sizeHalfPoints`, or

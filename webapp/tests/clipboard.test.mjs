@@ -54,6 +54,60 @@ test("runsToHtml escapes text and renders an empty paragraph as a line break", (
   assert.equal(html, "<p>&lt;script&gt;</p><p><br></p>");
 });
 
+// TA-12: the outline `doc.copyBlockOutline` reports, one entry per paragraph.
+const para = (...texts) =>
+  texts.flatMap((text, i) => (i ? [{ paragraphBreak: true }, { text }] : [{ text }]));
+
+test("runsToHtml with an outline: headings become h1-h6, capped at h6", () => {
+  const html = runsToHtml(para("Title", "Sub", "Deep", "body"), [{ heading: 1 }, { heading: 2 }, { heading: 9 }, {}]);
+  assert.equal(html, "<h1>Title</h1><h2>Sub</h2><h6>Deep</h6><p>body</p>");
+});
+
+test("runsToHtml with an outline: list items become nested ul/ol, closed properly", () => {
+  const html = runsToHtml(para("a", "b", "b1", "c", "after"), [
+    { list: { ordered: true, level: 0 } },
+    { list: { ordered: true, level: 0 } },
+    { list: { ordered: false, level: 1 } },
+    { list: { ordered: true, level: 0 } },
+    {},
+  ]);
+  assert.equal(html, "<ol><li>a</li><li>b<ul><li>b1</li></ul></li><li>c</li></ol><p>after</p>");
+});
+
+test("runsToHtml with an outline: a change of list kind starts a new list", () => {
+  const html = runsToHtml(para("n", "b"), [
+    { list: { ordered: true, level: 0 } },
+    { list: { ordered: false, level: 0 } },
+  ]);
+  assert.equal(html, "<ol><li>n</li></ol><ul><li>b</li></ul>");
+});
+
+test("runsToHtml with an outline: a skipped level still nests", () => {
+  const html = runsToHtml(para("deep"), [{ list: { ordered: false, level: 2 } }]);
+  assert.equal(html, "<ul><li><ul><li><ul><li>deep</li></ul></li></ul></li></ul>");
+});
+
+test("runsToHtml with an outline: table cells become a table, two tables stay two", () => {
+  const cell = (table, row, col) => ({ cell: { table, row, col } });
+  const html = runsToHtml(para("c1", "c2", "c3", "c3b", "c4", "next"), [
+    cell("t1", 0, 0),
+    cell("t1", 0, 1),
+    cell("t1", 1, 0),
+    cell("t1", 1, 0),
+    cell("t1", 1, 1),
+    cell("t2", 0, 0),
+  ]);
+  assert.equal(
+    html,
+    "<table><tbody><tr><td><p>c1</p></td><td><p>c2</p></td></tr><tr><td><p>c3</p><p>c3b</p></td><td><p>c4</p></td></tr></tbody></table>" +
+      "<table><tbody><tr><td><p>next</p></td></tr></tbody></table>",
+  );
+});
+
+test("runsToHtml ignores an outline that does not describe these paragraphs", () => {
+  assert.equal(runsToHtml(para("a", "b"), [{ heading: 1 }]), "<p>a</p><p>b</p>");
+});
+
 test("runsToHtml carries size/color/highlight/vertAlign", () => {
   const html = runsToHtml([
     { text: "x", sizeHalfPoints: 40, color: "#ff0000", highlight: "yellow", vertAlign: "super" },
@@ -317,4 +371,35 @@ test("a pasted link cannot carry an executable scheme", () => {
     const runs = htmlToRuns(root(el("a", { href: safe }, txt("x"))));
     assert.equal(runs[0].href, safe.trim(), `dropped a safe target: ${safe}`);
   }
+});
+
+// TA-11: external headings and the font face.
+test("a pasted h1-h6 is a heading block, and makes the paste structured", () => {
+  const h2 = el("h2", null, txt("Section"));
+  const p = el("p", null, txt("Body"));
+  for (const node of [h2, p]) node.querySelector = () => null;
+  const structured = htmlToStructured(root(h2, p));
+  assert.ok(structured, "a heading alone is structure worth rebuilding");
+  assert.deepEqual(
+    structured.blocks.map((b) => [b.heading ?? null, b.runs.map((r) => r.text).join("")]),
+    [[2, "Section"], [null, "Body"]],
+  );
+});
+
+test("a wrapper holding a heading is recursed into, in order", () => {
+  const h1 = el("h1", null, txt("Title"));
+  h1.querySelector = () => null;
+  const wrapper = el("div", null, h1);
+  wrapper.querySelector = (selector) => (selector.includes("h1") ? h1 : null);
+  const { blocks } = htmlToStructured(root(wrapper));
+  assert.equal(blocks[0].heading, 1);
+});
+
+test("font-family keeps the first named face, with its case, past quotes and generics", () => {
+  const face = (style) => htmlToRuns(root(el("span", { style }, txt("x"))))[0].font;
+  assert.equal(face('font-family:"Georgia",serif'), "Georgia");
+  assert.equal(face("font-size:11pt;font-family:Arial,sans-serif"), "Arial");
+  assert.equal(face("font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"), "Segoe UI");
+  assert.equal(face("font-family:sans-serif"), undefined);
+  assert.equal(face("color:#000"), undefined);
 });

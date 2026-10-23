@@ -74,3 +74,54 @@ export function pasteLossFamilies(kinds) {
   const wanted = new Set(kinds);
   return FAMILIES.filter((family) => wanted.has(family.key)).map((family) => family.key);
 }
+
+// ── Foreign HTML (`docs/174` TA-11) ──────────────────────────────────────────
+//
+// A paste from another app loses things for a different reason than the five
+// references above: the structure can only be rebuilt at a collapsed caret in an
+// ordinary body paragraph, outside Suggesting (where structural paste has no
+// tracked form), so anywhere else headings, lists and tables arrive as plain
+// paragraphs; and pictures in the HTML are not fetched at all. Both used to
+// happen with nothing said.
+
+/** The structure kinds a flat paste can lose, in the order a sentence names them. */
+const STRUCTURE_FAMILIES = [
+  { key: "heading", label: () => t("paste.flattened.heading") },
+  { key: "list", label: () => t("paste.flattened.list") },
+  { key: "table", label: () => t("paste.flattened.table") },
+];
+
+/**
+ * Which structure kinds an `htmlToStructured` fragment holds, in sentence order.
+ * O(blocks).
+ *
+ * @param {{blocks?: Array<{kind: string, list?: unknown, heading?: unknown}>} | null} fragment
+ * @returns {string[]}
+ */
+export function structureFamilies(fragment) {
+  const found = new Set();
+  for (const block of fragment?.blocks ?? []) {
+    if (block.kind === "table") found.add("table");
+    else if (block.heading) found.add("heading");
+    else if (block.list) found.add("list");
+  }
+  return STRUCTURE_FAMILIES.filter((family) => found.has(family.key)).map((family) => family.key);
+}
+
+/**
+ * The sentence for a foreign-HTML paste that landed without some of what it
+ * carried, or `null` when nothing was lost.
+ *
+ * @param {{flattened?: readonly string[], pictures?: boolean}} loss
+ *   `flattened`: the `structureFamilies` that arrived as plain paragraphs;
+ *   `pictures`: the HTML held pictures, which are not brought across.
+ * @returns {string | null}
+ */
+export function externalPasteLossMessage({ flattened = [], pictures = false } = {}) {
+  const wanted = new Set(flattened);
+  const named = STRUCTURE_FAMILIES.filter((family) => wanted.has(family.key));
+  const sentences = [];
+  if (named.length) sentences.push(t("paste.flattened", { items: list(named.map((family) => family.label())) }));
+  if (pictures) sentences.push(t("paste.dropped.pictures"));
+  return sentences.length ? sentences.join(" ") : null;
+}

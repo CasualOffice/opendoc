@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
-const { pasteLossFamilies, pasteLossMessage } = await import("../src/paste_loss.mjs");
+const { externalPasteLossMessage, pasteLossFamilies, pasteLossMessage, structureFamilies } = await import("../src/paste_loss.mjs");
 const { resetI18n, setCatalogue, setLocale } = await import("../src/i18n.mjs");
 
 const catalogue = (tag) => JSON.parse(readFileSync(join(WEBAPP, "locales", `${tag}.json`), "utf8"));
@@ -87,5 +87,54 @@ test("every shipped locale answers all five families and the frame", () => {
     }
     // The frame must keep its placeholder, or the list of families vanishes.
     assert.ok(entries["paste.loss"].includes("{items}"), `${tag} dropped {items}`);
+  }
+});
+
+// TA-11: foreign HTML.
+test("structureFamilies names what a fragment holds, in sentence order, once each", () => {
+  assert.deepEqual(structureFamilies(null), []);
+  assert.deepEqual(
+    structureFamilies({
+      blocks: [
+        { kind: "table", rows: [] },
+        { kind: "paragraph", runs: [], list: { ordered: false, level: 0 } },
+        { kind: "paragraph", runs: [], heading: 2 },
+        { kind: "paragraph", runs: [], heading: 1 },
+        { kind: "paragraph", runs: [] },
+      ],
+    }),
+    ["heading", "list", "table"],
+  );
+});
+
+test("a foreign paste says nothing when nothing was lost, and names what was", () => {
+  resetI18n();
+  setCatalogue("en", catalogue("en"));
+  setLocale("en");
+  assert.equal(externalPasteLossMessage({}), null);
+  assert.equal(externalPasteLossMessage({ flattened: [], pictures: false }), null);
+  assert.equal(
+    externalPasteLossMessage({ flattened: ["table", "heading"] }),
+    "Pasted, but headings and tables became ordinary paragraphs here.",
+  );
+  assert.equal(externalPasteLossMessage({ pictures: true }), "Pictures in the pasted content were not brought across.");
+});
+
+test("every catalogue words the foreign-paste report, keeping {items}", () => {
+  const keys = [
+    "paste.flattened",
+    "paste.flattened.heading",
+    "paste.flattened.list",
+    "paste.flattened.table",
+    "paste.dropped.pictures",
+  ];
+  const english = catalogue("en");
+  for (const tag of ["ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt-BR", "ru", "tr", "uk", "vi", "zh-Hans", "zh-Hant"]) {
+    const entries = catalogue(tag);
+    for (const key of keys) {
+      assert.equal(typeof entries[key], "string", `${tag} is missing ${key}`);
+      assert.notEqual(entries[key], english[key], `${tag}'s ${key} is still the English string`);
+    }
+    assert.ok(entries["paste.flattened"].includes("{items}"), `${tag} dropped {items}`);
   }
 });

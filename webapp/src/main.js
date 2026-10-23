@@ -164,7 +164,7 @@ import { collabCommands } from "./collab_chrome.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { smallestContaining } from "./review_anchor.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
-import { scrollTargetFor } from "./scroll_into_view.mjs";
+import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { createFindSession } from "./find_session.mjs"; // TA-03/TA-04: the anchor typing refines from, and the all-match highlight
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
@@ -254,7 +254,7 @@ import {
   zipStore,
 } from "./blank_document.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
-import { pasteLossMessage } from "./paste_loss.mjs";
+import { externalPasteLossMessage, pasteLossMessage, structureFamilies } from "./paste_loss.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
@@ -6309,15 +6309,15 @@ function selectionText() {
   return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
 }
 
-/** The selection as clipboard HTML: the exact `copyRichRuns` JSON embedded as
- * a leading comment (a lossless internal round-trip marker) plus a visible
- * rendering built from the same runs (what an external app sees). `null` if
- * there's nothing to copy. */
+/** The selection as clipboard HTML: the exact `copyRichRuns` JSON embedded as a leading comment (a
+ * lossless internal round-trip marker) plus a visible rendering built from the same runs and the
+ * block outline (headings, lists, tables: what an external app sees, TA-12). `null` if nothing. */
 function selectionRichHtml() {
   if (!selection) return null;
   const { anchor, focus } = selection;
   const runsJson = doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset);
   const runs = JSON.parse(runsJson);
+  const outline = JSON.parse(doc.copyBlockOutline(anchor.node, anchor.offset, focus.node, focus.offset));
   // When the selection spans block structure the flat runs flatten — a table or
   // a list — carry a structured payload for internal OpenDoc-to-OpenDoc paste
   // (`{ blocks, runs }`: the flat runs ride along so a Suggesting-mode paste, or
@@ -6325,10 +6325,10 @@ function selectionRichHtml() {
   const structured = doc.copyStructured(anchor.node, anchor.offset, focus.node, focus.offset);
   if (structured) {
     const blocks = JSON.parse(structured).blocks;
-    return embedMarker(JSON.stringify({ blocks, runs })) + runsToHtml(runs);
+    return embedMarker(JSON.stringify({ blocks, runs })) + runsToHtml(runs, outline);
   }
   if (!runs.length) return null;
-  return embedMarker(runsJson) + runsToHtml(runs);
+  return embedMarker(runsJson) + runsToHtml(runs, outline);
 }
 
 async function copySelection(event = null) {
@@ -8085,6 +8085,7 @@ function selectionModelRect() {
  * document state. */
 function scrollOverlayIntoView(marker, block = "nearest") {
   if (!marker) return;
+  scrollMarkerIntoViewX(marker); // sideways first: it moves nothing vertically (TA-10)
   const target = scrollTargetFor({
     marker: marker.getBoundingClientRect(),
     viewport: viewportEl.getBoundingClientRect(),
@@ -8095,6 +8096,18 @@ function scrollOverlayIntoView(marker, block = "nearest") {
     margin: SCROLL_INTO_VIEW_MARGIN,
   });
   if (target !== null) viewportEl.scrollTo({ top: target, behavior: "auto" });
+}
+
+/** Follows a marker sideways when zoom makes the page wider than the window
+ *  (`docs/174` TA-10; Word and Docs do). Every scroll-into-view path ends here,
+ *  the model path included once it has painted the marker. */
+function scrollMarkerIntoViewX(marker) {
+  if (!marker || viewportEl.scrollWidth <= viewportEl.clientWidth) return;
+  const { left } = viewportEl.getBoundingClientRect();
+  const max = viewportEl.scrollWidth - viewportEl.clientWidth;
+  const viewport = { left, right: left + viewportEl.clientWidth };
+  const target = scrollLeftFor({ marker: marker.getBoundingClientRect(), viewport, current: viewportEl.scrollLeft, max, margin: SCROLL_INTO_VIEW_MARGIN });
+  if (target !== null) viewportEl.scrollLeft = target;
 }
 
 /** Scroll the caret in the editor viewport. Navigation callers can request a
@@ -8111,7 +8124,7 @@ function scrollCaretIntoView(block = "nearest") {
   // the mapping that placed the page.
   if (!marker || pageBandModel?.scale > 1) {
     if (scrollModelRectIntoView(selectionModelRect(), block)) paintOverlayLayer();
-    return;
+    return scrollMarkerIntoViewX(pagesEl.querySelector(".overlay .caret"));
   }
   scrollOverlayIntoView(marker, block);
 }
@@ -8154,7 +8167,7 @@ function scrollFindMatchIntoView() {
   // canvas exactly where it was.
   if (!marker || pageBandModel?.scale > 1) {
     if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer();
-    return;
+    return scrollMarkerIntoViewX(pagesEl.querySelector(".overlay .highlight"));
   }
   scrollOverlayIntoView(marker, "center");
 }
@@ -13799,23 +13812,23 @@ async function pasteHtml(html) {
     return true;
   }
   const parsed = new DOMParser().parseFromString(html, "text/html");
-  // An external `<table>` or `<ul>`/`<ol>` pastes as REAL structure (a table, or
-  // bullet/numbered list paragraphs) via `pasteExternalStructured`, as one
-  // undoable action — before the flat rich-run fallback that would flatten it to
-  // text. Suggesting mode has no tracked structural representation (GAP-009), so it
-  // keeps the flat rich path; and a structured insert only lands at a collapsed
-  // body caret — otherwise the engine declines and we fall back below.
-  if (reviewMode !== "suggesting") {
-    const structured = htmlToStructured(parsed.body);
+  // A table, list or heading pastes as REAL structure (one undo step) only at a body caret outside Suggesting
+  // (GAP-009); what the flat fallback flattens, and any picture (never fetched), is SAID (TA-11).
+  const structured = htmlToStructured(parsed.body);
+  const said = (flattened) => {
+    const lost = externalPasteLossMessage({ flattened, pictures: Boolean(parsed.body.querySelector("img")) });
+    if (lost) setStatus(lost, "error");
+    return true;
+  };
+  if (reviewMode !== "suggesting" && structured) {
     const fragment = JSON.stringify(structured);
-    const insert = (a, f) =>
-      doc.pasteExternalStructured(a.node, a.offset, f.node, f.offset, fragment);
-    if (structured && (await runStructuredPaste(insert))) return true;
+    const insert = (a, f) => doc.pasteExternalStructured(a.node, a.offset, f.node, f.offset, fragment);
+    if (await runStructuredPaste(insert)) return said([]);
   }
   const runs = htmlToRuns(parsed.body);
   if (!runs.length) return false;
   await pasteRichRunsJson(JSON.stringify(runs));
-  return true;
+  return said(structureFamilies(structured));
 }
 
 /** Editing-mode paste of whole-block structure (tables and list paragraphs) at

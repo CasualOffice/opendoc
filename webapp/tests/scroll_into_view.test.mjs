@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scrollTargetFor } from "../src/scroll_into_view.mjs";
+import { scrollLeftFor, scrollTargetFor } from "../src/scroll_into_view.mjs";
 
 const viewport = { top: 100, bottom: 500, height: 400 };
 const base = { viewport, current: 1000, max: 5000, scale: 1, block: "nearest", margin: 10 };
@@ -51,4 +51,30 @@ test("the target is clamped into the scroller's real range at both ends", () => 
   assert.equal(scrollTargetFor({ ...base, marker: up }), 0, "never negative");
   const down = { top: 90000, bottom: 90040, height: 40 };
   assert.equal(scrollTargetFor({ ...base, marker: down }), 5000, "never past max");
+});
+
+// TA-10: the horizontal pass. A viewport whose visible box runs 0..1000.
+const across = { viewport: { left: 0, right: 1000 }, current: 500, max: 3000, margin: 8 };
+
+test("horizontally: a caret already in view does not scroll", () => {
+  assert.equal(scrollLeftFor({ ...across, marker: { left: 400, right: 402 } }), null);
+});
+
+test("horizontally: a caret past the right edge scrolls right just enough, with the margin", () => {
+  // The defect: x=2288 in a 1440 window. delta = 1202 - 1000 + 8 = 210.
+  assert.equal(scrollLeftFor({ ...across, marker: { left: 1200, right: 1202 } }), 710);
+});
+
+test("horizontally: a caret past the left edge scrolls left, with the margin", () => {
+  assert.equal(scrollLeftFor({ ...across, marker: { left: -100, right: -98 } }), 392);
+});
+
+test("horizontally: a marker wider than the viewport aligns its start", () => {
+  assert.equal(scrollLeftFor({ ...across, marker: { left: 300, right: 1700 } }), null, "start already in view");
+  assert.equal(scrollLeftFor({ ...across, marker: { left: 1100, right: 2500 } }), 1592);
+});
+
+test("horizontally: clamped to the scroll range, and no move reports null", () => {
+  assert.equal(scrollLeftFor({ ...across, marker: { left: 9000, right: 9002 } }), 3000);
+  assert.equal(scrollLeftFor({ ...across, current: 0, marker: { left: -50, right: -48 } }), null);
 });
