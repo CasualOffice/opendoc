@@ -80,6 +80,13 @@ export function createRuler({
   let geom = null; // { width, marginStart, marginEnd } in twips, for `builtFor`
   let scale = 0; // px per twip at the current zoom
   let builtFor = -1; // the page index `geom` and `scale` describe
+  // ...and the document that index is a page OF (`docs/109` HF-400). A page index
+  // is only meaningful against the layout it was computed for: after an open it
+  // still said "page 13" of a document that was gone, and the fit-zoom asked the
+  // new four-page document for page 13, which failed the whole open.
+  let builtForDoc = null;
+  /** `builtFor` when it describes the document now open, -1 otherwise. */
+  const currentBuiltFor = () => (builtForDoc !== null && builtForDoc === getDoc() ? builtFor : -1);
   const markers = {}; // key -> element
   let tabInsertCode = 0; // the type a new tab stop gets
 
@@ -149,6 +156,7 @@ export function createRuler({
     }
     geom = next;
     builtFor = index;
+    builtForDoc = doc;
     scale = pageWidthPx / geom.width;
     element.style.width = `${pageWidthPx}px`;
 
@@ -234,7 +242,7 @@ export function createRuler({
   function syncToCaret() {
     if (!getDoc() || !getPages().length) return;
     const index = Math.min(caretPageIndex(), getPages().length - 1);
-    if (index !== builtFor) build(index);
+    if (index !== currentBuiltFor()) build(index);
     else updateMarkers();
   }
 
@@ -391,8 +399,9 @@ export function createRuler({
     build,
     syncToCaret,
     updateMarkers,
-    /** The page index the current scale describes; -1 when hidden. For tests and
-     *  for callers that need to know whether a rebuild is pending. */
-    builtForPage: () => builtFor,
+    /** The page index the current scale describes; -1 when hidden, or when it
+     *  was built for a document that is no longer the open one — a stale index
+     *  is discarded rather than handed to a layout it was never a page of. */
+    builtForPage: currentBuiltFor,
   };
 }

@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import {
   ZOOM_ACTIONS,
   ZOOM_STEPS,
+  fitPageIndex,
   fitZoomFactor,
   nextZoomStep,
   parseZoomInput,
@@ -148,4 +149,15 @@ test("the typed zoom value is read as a mode, a factor, or neither", () => {
   for (const bad of ["", "abc", "0", "-50%", null, undefined]) {
     assert.deepEqual(parseZoomInput(bad), {}, `${String(bad)} should be rejected`);
   }
+});
+
+// HF-400: the fit-zoom asked a four-page document for page 13, because the index
+// came from the PREVIOUS document's ruler and was bounded by the previous
+// document's page array. The engine's count is the only bound that holds.
+test("the fit-zoom page is bounded by the engine's page count, not the view's", () => {
+  assert.equal(fitPageIndex(13, 4), 3, "a stale index past the end lands on the last page");
+  assert.equal(fitPageIndex(2, 4), 2, "an index the layout has is kept");
+  assert.equal(fitPageIndex(-1, 4), 0, "no ruler yet means the first page");
+  assert.equal(fitPageIndex(Number.NaN, 4), 0);
+  assert.equal(fitPageIndex(5, 0), 0, "a layout with no pages yet is still asked for page 0, never -1");
 });
