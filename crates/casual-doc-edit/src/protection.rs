@@ -525,7 +525,8 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         // operation moved markers and nothing else.
         Operation::UpdateReviewState { paragraphs, .. } => paragraphs.iter().all(|state| {
             current_inlines(document, state.node).is_some_and(|current| {
-                without_comment_markers(current) == without_comment_markers(&state.inlines)
+                let held = without_comment_markers(current);
+                rejoin_split_runs(without_comment_markers(&state.inlines), &held) == held
             })
         }),
         Operation::InsertText { .. }
@@ -619,7 +620,8 @@ pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
         Operation::SetTrackRevisions { enabled } => *enabled,
         Operation::UpdateReviewState { paragraphs, .. } => paragraphs.iter().all(|state| {
             current_inlines(document, state.node).is_some_and(|current| {
-                before_projection(current) == before_projection(&state.inlines)
+                let held = before_projection(current);
+                rejoin_split_runs(before_projection(&state.inlines), &held) == held
                     && revision_ids(current)
                         .into_iter()
                         .all(|id| revision_ids(&state.inlines).contains(&id))
@@ -807,6 +809,77 @@ fn collect_revision_ids(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
             collect_revision_ids(children, out);
         }
     }
+}
+
+/// `proposed` with every run the split of a held run produced joined back onto
+/// the run before it, so that a mark placed mid-run reads as what it is.
+///
+/// A suggestion or a comment that starts inside a run must split it: the leading
+/// piece keeps the run's id and the trailing pieces are minted fresh, exactly as
+/// `FormatText` does. Compared by full equality, that split looked like an edit,
+/// so a suggester (and a commenter) was refused every mark that did not fall on
+/// an existing run boundary (`docs/109` RM-47, found by the first headless
+/// suggester). Only a run whose id `held` does NOT contain is joined, and only
+/// onto an immediately preceding run with identical properties, so identity is
+/// still compared everywhere it existed before: a held run that comes back
+/// re-minted still differs (the ADR-052 convention `is_review_only` relies on),
+/// and a fresh run with other formatting, or other text, still differs.
+///
+/// O(inlines) plus O(held ids) to index them.
+fn rejoin_split_runs(proposed: Vec<InlineNode>, held: &[InlineNode]) -> Vec<InlineNode> {
+    fn run_ids(inlines: &[InlineNode], out: &mut std::collections::BTreeSet<NodeId>) {
+        for inline in inlines {
+            if let InlineNode::Run(run) = inline {
+                out.insert(run.id);
+            }
+            if let Some(children) = children_of(inline) {
+                run_ids(children, out);
+            }
+        }
+    }
+    fn rejoin(
+        inlines: Vec<InlineNode>,
+        held: &std::collections::BTreeSet<NodeId>,
+    ) -> Vec<InlineNode> {
+        let mut out: Vec<InlineNode> = Vec::with_capacity(inlines.len());
+        for inline in inlines {
+            // container-set: Hyperlink, Field, Revision and Sdt are the four inline
+            // wrappers on this paragraph's axis (`children_of`); TextBox and Group
+            // carry other stories with their own ids and are compared whole.
+            let inline = match inline {
+                InlineNode::Hyperlink(mut node) => {
+                    node.inlines = rejoin(std::mem::take(&mut node.inlines), held);
+                    InlineNode::Hyperlink(node)
+                }
+                InlineNode::Field(mut node) => {
+                    node.inlines = rejoin(std::mem::take(&mut node.inlines), held);
+                    InlineNode::Field(node)
+                }
+                InlineNode::Revision(mut node) => {
+                    node.inlines = rejoin(std::mem::take(&mut node.inlines), held);
+                    InlineNode::Revision(node)
+                }
+                InlineNode::Sdt(mut node) => {
+                    node.inlines = rejoin(std::mem::take(&mut node.inlines), held);
+                    InlineNode::Sdt(node)
+                }
+                other => other,
+            };
+            if let InlineNode::Run(run) = &inline
+                && !held.contains(&run.id)
+                && let Some(InlineNode::Run(previous)) = out.last_mut()
+                && previous.properties == run.properties
+            {
+                previous.text.push_str(&run.text);
+                continue;
+            }
+            out.push(inline);
+        }
+        out
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    run_ids(held, &mut ids);
+    rejoin(proposed, &ids)
 }
 
 /// The inline list nested directly inside `inline`, on the same paragraph's axis.
@@ -1453,6 +1526,40 @@ mod tests {
                  operation's shape would answer both cells the same way"
             );
         }
+
+        // A MARK PLACED MID-RUN splits the run: the leading piece keeps its id and the
+        // tail is minted fresh. That is a suggestion and a comment, not an edit (RM-47).
+        let split_suggestion = review(vec![
+            run(11, "a"),
+            revision(41, RevisionKind::Insertion, vec![run(42, "X")]),
+            run(43, "bc"),
+        ]);
+        assert!(
+            is_tracked_only(&holding(vec![run(11, "abc")]), &split_suggestion),
+            "a suggestion that splits a run was refused as an untracked edit"
+        );
+        let split_comment = review(vec![
+            run(11, "a"),
+            InlineNode::CommentRangeStart(casual_doc_model::v1::CommentRangeStart {
+                id: NodeId::from_parts(1, 60).expect("id"),
+                comment: casual_doc_model::v1::CommentId::new(
+                    NodeId::from_parts(1, 61).expect("id"),
+                ),
+            }),
+            run(43, "bc"),
+        ]);
+        assert!(
+            is_comment_only(&holding(vec![run(11, "abc")]), &split_comment),
+            "a comment anchored mid-run was refused as an edit"
+        );
+        // And the split is the ONLY thing forgiven: a fresh tail with other text is still
+        // an untracked edit.
+        let smuggled = review(vec![
+            run(11, "a"),
+            revision(41, RevisionKind::Insertion, vec![run(42, "X")]),
+            run(43, "bZ"),
+        ]);
+        assert!(!is_tracked_only(&holding(vec![run(11, "abc")]), &smuggled));
 
         // THE SENSITIVITY A READER WILL WONDER ABOUT, named here rather than found later. The
         // projections compare inlines by **full equality, `NodeId` included**, so accepting an

@@ -274,6 +274,7 @@ The editor is a thin shell over a Rust engine that owns everything a document is
 | `casual-doc-pdf` | Real-text vector PDF from the shared display list, with subsetted embedded fonts |
 | `casual-doc-io` | Format identities, capability descriptors, detection, the adapter registry, and the HTML, Markdown and text writers |
 | `casual-doc-edit` | The closed set of editing operations, each returning its inverse |
+| `casual-doc-ai` | The Rust core of `opendoc.ai`: outline, anchored reading, search, retrieval chunks, and closed edit plans that land as tracked suggestions through the editor's own lowering (`docs/178`) |
 | `casual-doc-review` | The one lowering of review commands (tracked suggestions, comments, accept and reject), shared by the editor and native callers (`docs/178`) |
 | `casual-doc-transaction` | Transactions and the ordered revision log — the one mutation path — plus the collaboration session and transform |
 | `casual-doc-selection` | Validated caret, text-range and table-cell-range selection |
@@ -289,7 +290,9 @@ The editor is a thin shell over a Rust engine that owns everything a document is
 `tools/opendoc-fidelity` (geometry and text compared against LibreOffice),
 `tools/opendoc-parity` (derives the [ONLYOFFICE parity
 matrix](docs/153-ONLYOFFICE-CAPABILITY-PARITY-MATRIX.md)), `tools/opendoc-render`
-(batch page renders for visual regression), and `fuzz/` (independently locked
+(batch page renders for visual regression), `tools/opendoc-mcp` (a Model Context Protocol
+server over stdio on `casual-doc-ai`: read-only by default, edits as tracked suggestions,
+an operator path allowlist; `docs/178`), and `fuzz/` (independently locked
 package-reader fuzz targets). The browser editor and the developer site are in
 [`webapp/`](webapp/).
 

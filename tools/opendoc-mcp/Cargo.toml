@@ -1,0 +1,21 @@
+[package]
+name = "opendoc-mcp"
+description = "Model Context Protocol server over stdio for OpenDoc documents: read by anchor, edit as tracked suggestions, render, convert, compare"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+casual-doc-ai.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The conformance test builds a minimal DOCX with a table.
+zip.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/casual-doc-ai",
     "crates/casual-doc-diff",
     "crates/casual-doc-edit",
     "crates/casual-doc-export",
@@ -22,6 +23,7 @@ members = [
     "server",
     "tools/opendoc-benchmark",
     "tools/opendoc-fidelity",
+    "tools/opendoc-mcp",
     "tools/opendoc-parity",
     "tools/opendoc-render",
 ]
@@ -36,6 +38,7 @@ repository = "https://github.com/CasualOffice/opendoc"
 authors = ["CasualOffice contributors"]
 
 [workspace.dependencies]
+casual-doc-ai = { path = "crates/casual-doc-ai", version = "=0.0.1" }
 casual-doc-diff = { path = "crates/casual-doc-diff", version = "=0.0.1" }
 casual-doc-edit = { path = "crates/casual-doc-edit", version = "=0.0.1" }
 casual-doc-export = { path = "crates/casual-doc-export", version = "=0.0.1" }
