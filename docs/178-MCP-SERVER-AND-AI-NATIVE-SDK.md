@@ -737,3 +737,10 @@ Read 2026-10-24. Load-bearing facts were re-read by this lane, not only by the r
 
 Documentation only: this document, ADR-072 (proposed), and `docs/109` RM-47. No code,
 no dependency, no support claim.
+
+## Owner decisions, 2026-10-24
+
+- **First release is M1 + M2 together:** read, search, render, convert and compare, plus tracked suggestions and comments. Moving suggestion editing out of `casual-doc-wasm` into a shared crate is therefore on the critical path.
+- **Direct (untracked) edits only with an explicit grant.** The default is tracked suggestions. A host or operator may grant a session edit rights; those edits are still undoable and loss-checked.
+- **Transport: local stdio first.** Hosted streamable HTTP with OAuth comes later (M3), after the host identity contract (HF-360, JWT grants) is built.
+- **WebMCP (M4): opt-in behind a flag**, off by default, tracking the draft specification.
