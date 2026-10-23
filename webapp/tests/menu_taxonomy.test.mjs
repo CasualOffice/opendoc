@@ -15,6 +15,8 @@
 // this contract — that each row actually renders and runs — is
 // `webapp/tests/e2e/menu-taxonomy.spec.mjs`.
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 
@@ -31,7 +33,8 @@ import {
   menuHomes,
 } from "../src/command_taxonomy.mjs";
 
-const source = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+// `main.js` and the domain modules split out of it (docs/177).
+const source = editorSource(fileURLToPath(new URL("../src/", import.meta.url)));
 // The `table.*` command tree moved to its own module (`docs/141`; the ratchet note
 // in `module_seams.test.mjs`), while `table.style.none` is still declared in
 // `main.js` beside the style chooser that generates the per-document rows. Both
