@@ -102,34 +102,88 @@ test("clicking body text deselects the object", async ({ page, consoleErrors }) 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a selected object swallows text keys, and Delete removes the object (undoable)", async ({
+/** Answers the find bar's status for `query`, and closes the bar again. */
+async function findStatusFor(page, query) {
+  await page.keyboard.press(`${MOD}+f`);
+  await page.locator("#findInput").fill(query);
+  const status = page.locator("#findStatus");
+  await expect(status).not.toHaveText("");
+  const text = await status.textContent();
+  await page.keyboard.press("Escape");
+  return text;
+}
+
+// The decided behaviour (`docs/109` HF-315, HF-370): a text key on a selected
+// INLINE object drops the object selection and types at the caret after it, as
+// a picture just inserted with the caret behind it must keep typing working. It
+// never replaces the picture (Word's choice), and never drops the key silently.
+test("a text key on a selected inline object types through and keeps the object", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
   await clickImage(page);
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
+  const pages = page.locator("#pages");
+  await expect(pages).toHaveAttribute("data-object-mode", "selected");
+  await expect(pages).toHaveAttribute("data-object-kind", "image");
 
-  // Typing does not edit through a selected object (a stale caret is never
-  // mutated); the object stays selected and the typed text is not findable.
   await page.keyboard.type("XYZ");
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
-  await page.keyboard.press(`${MOD}+f`);
-  await page.locator("#findInput").fill("XYZ");
-  await expect(page.locator("#findStatus")).toHaveText("No match");
-  await page.keyboard.press("Escape");
+  await expect(pages).not.toHaveAttribute("data-object-selected", /.*/);
+  expect(await findStatusFor(page, "XYZ"), "the typed text is in the document").not.toBe(
+    "No match",
+  );
 
-  // Delete now removes the still-selected object as one undoable action: the
+  // The picture is still there: typing went beside it, not over it. Typed in
+  // front of it, the text pushes it right along its line by the text's width,
+  // so look for it along that line rather than at the old point.
+  const canvas = page.locator(".page-wrap .page").first();
+  const box = await stableBox(canvas);
+  let found = false;
+  for (let dx = 0; dx <= 120 && !found; dx += 4) {
+    await canvas.click({ position: { x: box.width * IMAGE_POS.fx + dx, y: box.height * IMAGE_POS.fy } });
+    found = (await pages.getAttribute("data-object-kind")) === "image";
+  }
+  expect(found, "the inline picture survived the typing").toBe(true);
+  await expect(pages).toHaveAttribute("data-object-mode", "selected");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a selected floating object swallows text keys, and Delete removes it (undoable)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/editor.html?fixture=float");
+  await page.waitForFunction(() => document.querySelectorAll(".page-wrap").length > 0, null, {
+    timeout: 45_000,
+  });
+  const canvas = page.locator(".page-wrap .page").first();
+  const box = await stableBox(canvas);
+  const clickFloat = () => page.mouse.click(box.x + box.width * 0.14, box.y + box.height * 0.11);
+  await clickFloat();
+  const pages = page.locator("#pages");
+  await expect(pages).toHaveAttribute("data-object-mode", "selected");
+  expect((await pages.getAttribute("data-object-capabilities")) ?? "").toContain("canMove");
+
+  // A floating object has no place in the text to type beside, so a text key
+  // does not edit through it (a stale caret is never mutated): the object stays
+  // selected and the typed text is not findable.
+  await page.keyboard.type("XYZ");
+  await expect(pages).toHaveAttribute("data-object-mode", "selected");
+  expect(await findStatusFor(page, "XYZ")).toBe("No match");
+
+  // Delete removes the still-selected object as one undoable action: the
   // object selection clears and there is something to undo.
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
+  await expect(pages).toHaveAttribute("data-object-mode", "selected");
   await page.keyboard.press("Delete");
   await expect(page.locator("#pages")).not.toHaveAttribute("data-object-mode", /.*/);
   await expect(page.locator("#undoBtn")).toBeEnabled();
 
-  // One Undo restores it; the image is selectable again.
+  // One Undo restores it; the object is selectable again.
   await page.locator("#undoBtn").click();
-  await clickImage(page);
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
+  await clickFloat();
+  await expect(pages).toHaveAttribute("data-object-mode", "selected");
 
   expect(consoleErrors).toEqual([]);
 });
