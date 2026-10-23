@@ -515,7 +515,6 @@ export function createTableGutter(host) {
           axis === "row" ? thickness.insideX : thickness.insideY,
         );
       for (const axis of ["row", "column"]) {
-        if (axis === "column" && !table.regular) continue;
         const rect = zoneOf(axis);
         if (!rect) continue;
         // The hit zone. It paints nothing itself: everything visible below is a

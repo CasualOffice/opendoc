@@ -349,10 +349,6 @@ export function createTableChrome(host) {
         host.status(host.t("table.reason.notTracked"), "warn");
         return true;
       }
-      if (axis === "column" && !band.table.regular) {
-        host.status(host.t("table.reason.merged"), "warn");
-        return true;
-      }
       const step = KEYBOARD_STEP_TWIPS * sign;
       if (axis === "row") {
         const height = Math.max(MIN_BAND_TWIPS, band.edge.height + step);
@@ -424,7 +420,7 @@ export function createTableChrome(host) {
       const table = chromeOf(page).find(
         (t) => x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h,
       );
-      if (!table?.regular) return;
+      if (!table) return;
       const { sx, sy } = host.scaleOf(page);
       for (const edge of table.colEdges ?? []) {
         if (edge.outer) continue;
@@ -475,7 +471,6 @@ export function createTableChrome(host) {
           { tableRow: String(edge.i) },
         );
       }
-      if (!table.regular) return;
       for (const edge of table.colEdges ?? []) {
         if (edge.outer) continue;
         pill(

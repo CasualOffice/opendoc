@@ -50,6 +50,7 @@ mod tests {
             SourceFile::new("references.rs", include_str!("references.rs")),
             SourceFile::new("breaks.rs", include_str!("breaks.rs")),
             SourceFile::new("refusal.rs", include_str!("refusal.rs")),
+            SourceFile::new("table_structure.rs", include_str!("table_structure.rs")),
             SourceFile::new("mint.rs", include_str!("mint.rs")),
             SourceFile::new("protection.rs", include_str!("protection.rs")),
             SourceFile::new("access.rs", include_str!("access.rs")),

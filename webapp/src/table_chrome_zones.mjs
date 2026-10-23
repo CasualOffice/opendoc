@@ -99,8 +99,8 @@ export function armTableBoundary(tables, x, y, tolX, tolY, mode = {}) {
   if (!boundary) return { boundary: null, refusal: "" };
   if (mode.editsBlocked) return { boundary: null, refusal: "" };
   if (mode.geometryBlocked) return { boundary: null, refusal: "table.reason.notTracked" };
-  if (boundary.kind === "column" && !boundary.table.regular) {
-    return { boundary: null, refusal: "table.reason.merged" };
-  }
+  // Every column boundary is draggable on a merged table too (`docs/171`): the
+  // engine moves the line between two grid columns and a merged cell over it
+  // keeps its total width.
   return { boundary, refusal: "" };
 }

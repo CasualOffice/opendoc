@@ -273,6 +273,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(output.join("chart.docx"), package(&chart_entries())?)?;
 
     fs::write(
+        output.join("merged-tables.docx"),
+        package(&entries_with_document(&merged_tables_document()))?,
+    )?;
+
+    fs::write(
         output.join("collapsed-headings.docx"),
         package(&entries_with_document(COLLAPSED_HEADINGS_DOCUMENT))?,
     )?;
@@ -1175,6 +1180,168 @@ fn floating_table_document() -> Vec<u8> {
          </w:body></w:document>",
         row("ITEM", "COST"),
         row("Widget", "12"),
+    )
+    .into_bytes()
+}
+
+/// `merged-tables.docx` — one table per merged-cell family, so every table
+/// operation can be driven against each (`docs/171`).
+///
+/// Every cell's text names the grid rectangle it covers, `r<row>c<col>` for a
+/// plain cell and `r<r0>-<r1>c<c0>-<c1>` for a merged one, so a test finds a cell
+/// by what it should be and can read the post-edit grid back as text. Each table
+/// is preceded by a label paragraph (`H-MERGE`, `V-MERGE`, `COMBINED`, `EDGES`,
+/// `RAGGED`, `NESTED`). The grid is four 1800-twip columns throughout.
+///
+/// - **H-MERGE** — horizontal merges only (`w:gridSpan`), in the middle and at
+///   both edges of a row.
+/// - **V-MERGE** — vertical merges only (`w:vMerge` restart/continue), a 3-row
+///   band in column 1 and a 2-row band in column 3.
+/// - **COMBINED** — a 2x2 block (span plus vMerge) with a horizontal merge above.
+/// - **EDGES** — merges on the first row, first column, last column and last row.
+/// - **RAGGED** — short rows (`w:gridBefore` / `w:gridAfter`).
+/// - **NESTED** — an outer table with a merged top row whose cell holds an inner
+///   table carrying both kinds of merge.
+fn merged_tables_document() -> Vec<u8> {
+    const BORDERS: &str = "<w:tblBorders>\
+         <w:top w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:left w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:bottom w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:right w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:insideH w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:insideV w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         </w:tblBorders>";
+    /// One cell: its text, `w:gridSpan`, and `w:vMerge` (0 none, 1 restart,
+    /// 2 continue). A continuation carries an empty paragraph, as Word writes it.
+    fn cell(text: &str, span: u32, vmerge: u8) -> String {
+        let mut pr = format!("<w:tcW w:w=\"{}\" w:type=\"dxa\"/>", 1_800 * span);
+        if span > 1 {
+            pr.push_str(&format!("<w:gridSpan w:val=\"{span}\"/>"));
+        }
+        match vmerge {
+            1 => pr.push_str("<w:vMerge w:val=\"restart\"/>"),
+            2 => pr.push_str("<w:vMerge/>"),
+            _ => {}
+        }
+        let body = if vmerge == 2 {
+            "<w:p/>".to_owned()
+        } else {
+            format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+        };
+        format!("<w:tc><w:tcPr>{pr}</w:tcPr>{body}</w:tc>")
+    }
+    fn row(cells: &[(String, u32, u8)], before: u32, after: u32) -> String {
+        let mut pr = String::new();
+        if before > 0 {
+            pr.push_str(&format!("<w:gridBefore w:val=\"{before}\"/>"));
+        }
+        if after > 0 {
+            pr.push_str(&format!("<w:gridAfter w:val=\"{after}\"/>"));
+        }
+        let pr = if pr.is_empty() {
+            String::new()
+        } else {
+            format!("<w:trPr>{pr}</w:trPr>")
+        };
+        let cells: String = cells.iter().map(|(t, s, v)| cell(t, *s, *v)).collect();
+        format!("<w:tr>{pr}{cells}</w:tr>")
+    }
+    fn table(columns: usize, rows: &[String]) -> String {
+        let grid: String = "<w:gridCol w:w=\"1800\"/>".repeat(columns);
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/>{BORDERS}\
+             <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+             <w:tblGrid>{grid}</w:tblGrid>{}</w:tbl>",
+            1_800 * columns,
+            rows.concat()
+        )
+    }
+    let label = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let p = |r: usize, c: usize| (format!("r{r}c{c}"), 1u32, 0u8);
+    let s = |t: &str, span: u32, v: u8| (t.to_owned(), span, v);
+
+    let h_merge = table(
+        4,
+        &[
+            row(&[p(0, 0), s("r0c1-2", 2, 0), p(0, 3)], 0, 0),
+            row(&[p(1, 0), p(1, 1), p(1, 2), p(1, 3)], 0, 0),
+            row(&[s("r2c0-1", 2, 0), s("r2c2-3", 2, 0)], 0, 0),
+            row(&[p(3, 0), p(3, 1), p(3, 2), p(3, 3)], 0, 0),
+        ],
+    );
+    let v_merge = table(
+        4,
+        &[
+            row(&[p(0, 0), s("r0-2c1", 1, 1), p(0, 2), p(0, 3)], 0, 0),
+            row(&[p(1, 0), s("", 1, 2), p(1, 2), s("r1-2c3", 1, 1)], 0, 0),
+            row(&[p(2, 0), s("", 1, 2), p(2, 2), s("", 1, 2)], 0, 0),
+            row(&[p(3, 0), p(3, 1), p(3, 2), p(3, 3)], 0, 0),
+        ],
+    );
+    let combined = table(
+        4,
+        &[
+            row(&[s("r0c0-1", 2, 0), p(0, 2), p(0, 3)], 0, 0),
+            row(&[p(1, 0), s("r1-2c1-2", 2, 1), p(1, 3)], 0, 0),
+            row(&[p(2, 0), s("", 2, 2), p(2, 3)], 0, 0),
+            row(&[p(3, 0), p(3, 1), p(3, 2), p(3, 3)], 0, 0),
+        ],
+    );
+    let edges = table(
+        4,
+        &[
+            row(&[s("r0c0-3", 4, 0)], 0, 0),
+            row(
+                &[s("r1-3c0", 1, 1), p(1, 1), p(1, 2), s("r1-2c3", 1, 1)],
+                0,
+                0,
+            ),
+            row(&[s("", 1, 2), p(2, 1), p(2, 2), s("", 1, 2)], 0, 0),
+            row(&[s("", 1, 2), p(3, 1), s("r3c2-3", 2, 0)], 0, 0),
+        ],
+    );
+    let ragged = table(
+        4,
+        &[
+            row(&[p(0, 0), p(0, 1), p(0, 2), p(0, 3)], 0, 0),
+            row(&[p(1, 1), p(1, 2), p(1, 3)], 1, 0),
+            row(&[p(2, 0), p(2, 1), p(2, 2)], 0, 1),
+        ],
+    );
+    let inner = table(
+        3,
+        &[
+            row(&[s("i0c0-1", 2, 0), s("i0-1c2", 1, 1)], 0, 0),
+            row(&[s("i1c0", 1, 0), s("i1c1", 1, 0), s("", 1, 2)], 0, 0),
+            row(&[s("i2c0", 1, 0), s("i2c1", 1, 0), s("i2c2", 1, 0)], 0, 0),
+        ],
+    );
+    let nested = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/>{BORDERS}\
+         <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"6000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/></w:tcPr>\
+         <w:p><w:r><w:t>o0c0-1</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:r><w:t>o1c0</w:t></w:r></w:p>{inner}<w:p/></w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:r><w:t>o1c1</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+    );
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{}{h_merge}{}{v_merge}{}{combined}{}{edges}{}{ragged}{}{nested}\
+         <w:p><w:r><w:t>END</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+         w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>\
+         </w:body></w:document>",
+        label("H-MERGE"),
+        label("V-MERGE"),
+        label("COMBINED"),
+        label("EDGES"),
+        label("RAGGED"),
+        label("NESTED"),
     )
     .into_bytes()
 }

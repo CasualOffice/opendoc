@@ -60,7 +60,7 @@ function stubDoc() {
   };
 }
 
-function build({ regular = true, suggesting = false, tableSelection = null, rowHeightRule = "auto" } = {}) {
+function build({ regular = true, merged = false, suggesting = false, tableSelection = null, rowHeightRule = "auto" } = {}) {
   const doc = stubDoc();
   const host = {
     doc: () => doc,
@@ -78,7 +78,7 @@ function build({ regular = true, suggesting = false, tableSelection = null, rowH
   };
   const context = {
     anchor: { node: "cell-7", offset: 0 },
-    table: { found: true, regular, rowHeightRule, table: "t1", column: 2 },
+    table: { found: true, regular, merged, rowHeightRule, table: "t1", column: 2 },
     suggesting,
   };
   const tree = tableToolCommands(context, host);
@@ -87,10 +87,10 @@ function build({ regular = true, suggesting = false, tableSelection = null, rowH
 }
 
 test("Unmerge calls splitMergedCell with ONE argument — the branch that unmerges", () => {
-  const { doc, row } = build({ regular: false });
+  const { doc, row } = build({ regular: false, merged: true });
   const unmerge = row("table.unmerge");
   assert.ok(unmerge, "there must be a table.unmerge command at all");
-  assert.equal(unmerge.enabled, true, "a table holding a merge must offer Unmerge");
+  assert.equal(unmerge.enabled, true, "a merged cell must offer Unmerge");
 
   unmerge.run();
 
@@ -108,14 +108,16 @@ test("Unmerge calls splitMergedCell with ONE argument — the branch that unmerg
   assert.equal(call[1].length, 1, "arity is the whole point: `undefined` passed explicitly is not None");
 });
 
-test("Unmerge is refused with a reason on a table that has no merge", () => {
-  const { row } = build({ regular: true });
+test("Unmerge is refused with a reason on a cell that is not merged", () => {
+  // Per CELL, from `tableInfo.merged` (`docs/171`): a merged table's ordinary
+  // cells used to offer Unmerge and refuse it at the engine.
+  const { row } = build({ regular: false, merged: false });
   const unmerge = row("table.unmerge");
   assert.equal(unmerge.enabled, false);
   assert.equal(
     unmerge.disabledReason,
-    "This table has no merged cells",
-    "never a dead control: a regular grid says why rather than failing at the engine",
+    "This cell is not merged",
+    "never a dead control: an ordinary cell says why rather than failing at the engine",
   );
 });
 
@@ -135,7 +137,8 @@ test("Split cell… still opens the dialog, and is a different command from Unme
   assert.notEqual(row("table.split").id, row("table.unmerge").id);
 });
 
-test("every column-axis command explains itself on a merged table, in the menu's own words", () => {
+test("column commands work on a merged table; only Sort still explains a merge", () => {
+  // The grid map resolves every column command on a merged table (`docs/171`).
   const { row } = build({ regular: false });
   for (const id of [
     "table.insert.columnLeft",
@@ -143,10 +146,15 @@ test("every column-axis command explains itself on a merged table, in the menu's
     "table.delete.column",
     "table.select.column",
     "table.distribute.columns",
-    "table.sort.ascending",
-    "table.sort.descending",
+    "table.move.columnLeft",
+    "table.move.columnRight",
+    "table.column.grow",
+    "table.column.shrink",
   ]) {
-    assert.equal(row(id).enabled, false, `${id} must be unavailable on a merged table`);
+    assert.notEqual(row(id).enabled, false, `${id} must be available on a merged table`);
+  }
+  for (const id of ["table.sort.ascending", "table.sort.descending"]) {
+    assert.equal(row(id).enabled, false, `${id} still needs a regular grid`);
     assert.equal(
       row(id).disabledReason,
       "Unavailable for merged or spanned tables",

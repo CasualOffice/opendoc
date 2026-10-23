@@ -1825,7 +1825,7 @@
   "table.reason.caretOutsideTable": "Plaats de cursor in een tabel",
   "table.reason.mergeSelection": "Selecteer twee of meer cellen voordat u samenvoegt",
   "table.reason.merged": "Niet beschikbaar voor tabellen met samengevoegde cellen",
-  "table.reason.noMergedCells": "Deze tabel bevat geen samengevoegde cellen",
+  "table.reason.cellNotMerged": "Deze cel is niet samengevoegd",
   "table.reason.notTracked": "Deze structurele wijziging kan niet worden bijgehouden in de modus Suggesties",
   "table.reason.rowHeights": "Rijen hebben een vaste of minimale hoogte nodig voordat ze verdeeld kunnen worden",
   "table.rowAppended": "Rij toegevoegd aan het einde van de tabel",
