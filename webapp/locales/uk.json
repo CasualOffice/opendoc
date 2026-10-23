@@ -1830,7 +1830,7 @@
   "table.reason.caretOutsideTable": "Розташуйте курсор у таблиці",
   "table.reason.mergeSelection": "Виберіть дві або більше комірок перед об’єднанням",
   "table.reason.merged": "Недоступно для таблиць з об’єднаними клітинками",
-  "table.reason.noMergedCells": "У цій таблиці немає об’єднаних клітинок",
+  "table.reason.cellNotMerged": "Ця клітинка не об’єднана",
   "table.reason.notTracked": "Цю структурну зміну не можна відстежити в режимі пропозицій",
   "table.reason.rowHeights": "Перед вирівнюванням рядки повинні мати точну або мінімальну висоту",
   "table.rowAppended": "Рядок додано в кінець таблиці",

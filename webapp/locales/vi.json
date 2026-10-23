@@ -1815,7 +1815,7 @@
   "table.reason.caretOutsideTable": "Đặt con trỏ vào trong một bảng",
   "table.reason.mergeSelection": "Chọn hai ô trở lên trước khi gộp",
   "table.reason.merged": "Không dùng được với bảng có ô đã gộp",
-  "table.reason.noMergedCells": "Bảng này không có ô nào đã gộp",
+  "table.reason.cellNotMerged": "Ô này chưa được gộp",
   "table.reason.notTracked": "Không thể theo dõi thay đổi cấu trúc này ở chế độ Đề xuất",
   "table.reason.rowHeights": "Các hàng cần chiều cao cố định hoặc tối thiểu trước khi phân bố",
   "table.rowAppended": "Đã thêm hàng vào cuối bảng",

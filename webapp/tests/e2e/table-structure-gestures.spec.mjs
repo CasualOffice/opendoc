@@ -143,7 +143,7 @@ test("merging a row and then unmerging it puts the cells back in the document", 
   expect(consoleErrors).toEqual([]);
 });
 
-test("Unmerge is offered but refused, with a reason, on a table that has no merge", async ({
+test("Unmerge is offered but refused, with a reason, on a cell that is not merged", async ({
   page,
 }) => {
   await insertTable(page, 2, 2);
@@ -152,7 +152,7 @@ test("Unmerge is offered but refused, with a reason, on a table that has no merg
   const row = page.locator('.editor-context-menu [data-command-id="table.unmerge"]');
   await expect(row, "never a hidden capability: the row is present").toBeVisible();
   await expect(row, "…and disabled, because there is nothing to unmerge").toBeDisabled();
-  await expect(row).toHaveAttribute("title", "This table has no merged cells");
+  await expect(row).toHaveAttribute("title", "This cell is not merged");
 });
 
 test("Tab in the last cell appends a row and puts the caret in it", async ({

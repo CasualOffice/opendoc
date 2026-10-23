@@ -1830,7 +1830,7 @@
   "table.reason.caretOutsideTable": "Umieść kursor w tabeli",
   "table.reason.mergeSelection": "Zaznacz co najmniej dwie komórki przed scaleniem",
   "table.reason.merged": "Niedostępne w tabelach ze scalonymi komórkami",
-  "table.reason.noMergedCells": "Ta tabela nie ma scalonych komórek",
+  "table.reason.cellNotMerged": "Ta komórka nie jest scalona",
   "table.reason.notTracked": "Tej zmiany struktury nie można śledzić w trybie sugestii",
   "table.reason.rowHeights": "Przed rozłożeniem wiersze muszą mieć stałą lub minimalną wysokość",
   "table.rowAppended": "Dodano wiersz na końcu tabeli",

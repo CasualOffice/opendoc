@@ -1820,7 +1820,7 @@
   "table.reason.caretOutsideTable": "Setzen Sie die Einfügemarke in eine Tabelle",
   "table.reason.mergeSelection": "Wählen Sie zwei oder mehr Zellen aus, bevor Sie sie verbinden",
   "table.reason.merged": "Nicht verfügbar für Tabellen mit verbundenen Zellen",
-  "table.reason.noMergedCells": "Diese Tabelle enthält keine verbundenen Zellen",
+  "table.reason.cellNotMerged": "Diese Zelle ist nicht verbunden",
   "table.reason.notTracked": "Diese strukturelle Änderung kann im Vorschlagsmodus nicht verfolgt werden",
   "table.reason.rowHeights": "Zeilen brauchen eine feste oder minimale Höhe, bevor sie verteilt werden können",
   "table.rowAppended": "Zeile am Ende der Tabelle hinzugefügt",

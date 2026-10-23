@@ -85,10 +85,10 @@ export function tableToolCommands(context, host) {
       { group: "row" }),
     tableMutation("table.insert.columnLeft", "Column left",
       () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
-      { regular: true, group: "col" }),
+      { group: "col" }),
     tableMutation("table.insert.columnRight", "Column right",
       () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
-      { regular: true, group: "col" }),
+      { group: "col" }),
   ];
   const deleteSubmenu = [
     tableMutation("table.delete.row", "Delete row",
@@ -96,7 +96,7 @@ export function tableToolCommands(context, host) {
       { danger: true, group: "cell" }),
     tableMutation("table.delete.column", "Delete column",
       () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
-      { danger: true, regular: true, group: "cell" }),
+      { danger: true, group: "cell" }),
     tableMutation("table.delete.table", "Delete table",
       () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
       { danger: true, group: "table" }),
@@ -112,8 +112,6 @@ export function tableToolCommands(context, host) {
       id: "table.select.column",
       label: "Select column",
       group: "sel",
-      enabled: regular,
-      disabledReason: regular ? "" : columnsReason,
       run: () => host.selectTableContext(context.anchor.node, "column"),
     },
     {
@@ -139,22 +137,21 @@ export function tableToolCommands(context, host) {
     tableMutation("table.move.rowDown", "Move row down",
       () => host.moveTableBand("row", 1), { group: "row" }),
     tableMutation("table.move.columnLeft", "Move column left",
-      () => host.moveTableBand("column", -1), { regular: true, group: "col" }),
+      () => host.moveTableBand("column", -1), { group: "col" }),
     tableMutation("table.move.columnRight", "Move column right",
-      () => host.moveTableBand("column", 1), { regular: true, group: "col" }),
+      () => host.moveTableBand("column", 1), { group: "col" }),
   ];
   const layoutSubmenu = [
     tableMutation("table.distribute.rows", "Distribute rows",
       () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
       {
-        regular: true,
         group: "distribute",
         enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
         disabledReason: t("table.reason.rowHeights"),
       }),
     tableMutation("table.distribute.columns", "Distribute columns",
       () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
-      { regular: true, group: "distribute" }),
+      { group: "distribute" }),
     tableMutation("table.sort.ascending", "Sort ascending",
       () => runEdit(() => doc.sortTable(context.anchor.node, "ascending", context.table?.column ?? -1), { gate: true }),
       { regular: true, group: "sort" }),
@@ -173,10 +170,10 @@ export function tableToolCommands(context, host) {
     // about what "a bit wider" means.
     tableMutation("table.column.grow", "Widen column",
       () => host.stepTableBand("column", 1),
-      { regular: true, group: "size" }),
+      { group: "size" }),
     tableMutation("table.column.shrink", "Narrow column",
       () => host.stepTableBand("column", -1),
-      { regular: true, group: "size" }),
+      { group: "size" }),
     tableMutation("table.row.grow", "Taller row",
       () => host.stepTableBand("row", 1),
       { group: "size" }),
@@ -230,16 +227,16 @@ export function tableToolCommands(context, host) {
     // symmetry — lands in the split path instead. `table_commands.test.mjs`
     // asserts the argument list for that reason and not the return value.
     //
-    // Offered whenever the table is IRREGULAR, i.e. holds a merge somewhere.
-    // `TableInfo` reports no per-cell merge state (TBL-20), so "is THIS cell
-    // merged" is not knowable here without a facade addition; a regular table can
-    // still be refused up front rather than by the engine.
+    // Offered when THIS cell is merged (`tableInfo.merged`, the grid map's
+    // answer, `docs/171`) — from any row of the merged cell, which the engine
+    // now unmerges whole. It used to be offered on every cell of a table holding
+    // any merge and refused per cell afterwards.
     tableMutation("table.unmerge", "Unmerge cells",
       () => runEdit(() => doc.splitMergedCell(context.anchor.node), { gate: true }),
       {
         group: "table",
-        enabled: !regular,
-        disabledReason: t("table.reason.noMergedCells"),
+        enabled: context.table.merged === true,
+        disabledReason: t("table.reason.cellNotMerged"),
       }),
     tableMutation("table.split", "Split cell…",
       () => host.openSplitCellDialog(),

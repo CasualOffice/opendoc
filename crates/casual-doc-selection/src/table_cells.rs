@@ -22,12 +22,11 @@
 //! Per-call cost is stated on each item, because extending a selection happens on
 //! pointer-move (`docs/107` §4).
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{Table, TableRow, VerticalMerge};
+use casual_doc_model::v1::{Table, TableGridMap, TableRow};
 
 /// The grid column a row's `cells[cell_index]` starts at, summing the
 /// `w:gridSpan` of every cell before it. A cell index past the end of the row
@@ -114,69 +113,58 @@ struct TableGrid {
 }
 
 impl TableGrid {
-    /// Reads `table` into slots and merged regions.
+    /// Reads `table` into slots and merged regions, through the ONE grid map
+    /// (`casual_doc_model::v1::TableGridMap`, `docs/171`).
     ///
-    /// The vertical-merge rule: a cell whose `w:vMerge` is `Continue` joins the
-    /// region of the cell that starts at the **same grid column** in the row
-    /// directly above. Any other alignment (an irregular grid, or a `Continue`
-    /// with nothing above it) starts a new region, so a malformed merge degrades
-    /// to unmerged cells rather than to a wrong rectangle.
+    /// This used to carry its own copy of the vertical-merge rule — a
+    /// continuation joined whatever started at the same grid column above, while
+    /// layout requires the same grid RANGE — and its own span arithmetic that
+    /// ignored `w:gridBefore`. Two rules for one question meant a selection
+    /// rectangle that disagreed with the painted cells on exactly the tables this
+    /// module exists for. Now there is one rule, and layout's is it.
     fn build(table: &Table) -> Result<Self, CellSelectionError> {
         if table.rows.is_empty() {
             return Err(CellSelectionError::EmptyTable { table: table.id });
         }
-        let mut rows: Vec<Vec<Slot>> = Vec::with_capacity(table.rows.len());
-        let mut regions: Vec<Region> = Vec::new();
-        let mut columns = 0usize;
-        // Grid column -> region id, for the row above only.
-        let mut above: BTreeMap<usize, usize> = BTreeMap::new();
-        for (r, row) in table.rows.iter().enumerate() {
-            if row.cells.is_empty() {
-                return Err(CellSelectionError::EmptyRow {
-                    table: table.id,
-                    row: r,
-                });
-            }
-            let mut here: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut slots: Vec<Slot> = Vec::with_capacity(row.cells.len());
-            let mut grid_start = 0usize;
-            for cell in &row.cells {
-                let span = span_of(cell.properties.grid_span);
-                let continues = cell.properties.vertical_merge == Some(VerticalMerge::Continue);
-                let footprint = Rect {
-                    first_row: r,
-                    last_row: r,
-                    first_column: grid_start,
-                    last_column: grid_start + span - 1,
-                };
-                let region = match (continues, above.get(&grid_start)) {
-                    (true, Some(&id)) => {
-                        regions[id] = regions[id].union(footprint);
-                        id
-                    }
-                    _ => {
-                        regions.push(footprint);
-                        regions.len() - 1
-                    }
-                };
-                here.insert(grid_start, region);
-                slots.push(Slot {
-                    row: r,
-                    grid_start,
-                    span,
-                    cell: cell.id,
-                    region,
-                });
-                grid_start = grid_start.saturating_add(span);
-            }
-            columns = columns.max(grid_start);
-            rows.push(slots);
-            above = here;
+        if let Some(r) = table.rows.iter().position(|row| row.cells.is_empty()) {
+            return Err(CellSelectionError::EmptyRow {
+                table: table.id,
+                row: r,
+            });
         }
+        let map = TableGridMap::build(table);
+        let rows = table
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(r, row)| {
+                map.row(r)
+                    .iter()
+                    .zip(&row.cells)
+                    .map(|(slot, cell)| Slot {
+                        row: r,
+                        grid_start: slot.first_column,
+                        span: slot.span,
+                        cell: cell.id,
+                        region: slot.region,
+                    })
+                    .collect()
+            })
+            .collect();
+        let regions = map
+            .regions()
+            .iter()
+            .map(|region| Rect {
+                first_row: region.first_row,
+                last_row: region.last_row,
+                first_column: region.first_column,
+                last_column: region.last_column,
+            })
+            .collect();
         Ok(Self {
             rows,
             regions,
-            columns,
+            columns: map.column_count(),
         })
     }
 
@@ -605,6 +593,7 @@ impl Error for CellSelectionError {}
 
 #[cfg(test)]
 mod tests {
+    use casual_doc_model::v1::VerticalMerge;
     use casual_doc_model::v1::{
         BlockNode, Paragraph, ParagraphProperties, Table, TableCell, TableCellProperties, TableRow,
     };

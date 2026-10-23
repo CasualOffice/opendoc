@@ -1825,7 +1825,7 @@
   "table.reason.caretOutsideTable": "Placez le curseur dans un tableau",
   "table.reason.mergeSelection": "Sélectionnez au moins deux cellules avant de fusionner",
   "table.reason.merged": "Indisponible pour les tableaux comportant des cellules fusionnées",
-  "table.reason.noMergedCells": "Ce tableau ne comporte aucune cellule fusionnée",
+  "table.reason.cellNotMerged": "Cette cellule n’est pas fusionnée",
   "table.reason.notTracked": "Cette modification structurelle ne peut pas être suivie en mode Suggestion",
   "table.reason.rowHeights": "Les lignes doivent avoir une hauteur fixe ou minimale avant d’être distribuées",
   "table.rowAppended": "Ligne ajoutée à la fin du tableau",

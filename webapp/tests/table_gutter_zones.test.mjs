@@ -277,14 +277,15 @@ test("the review mode decides what ARMS, not what fails on release", () => {
   assert.equal(armTableGutter([table], ...boundary, OPTS, viewing).refusal, "");
 });
 
-test("a column strip on a merged table refuses with the sentence the product has", () => {
-  // `tableSelectionAnchorNodes(node, "column")` returns nothing for a merged
-  // table, so arming the strip would paint an empty selection. The ROW strip is
-  // unaffected: a row of a merged table is still a row.
+test("a column strip on a merged table arms like any other", () => {
+  // `tableSelectionAnchorNodes(node, "column")` resolves the column through the
+  // engine's grid map, so a merged table selects, inserts and moves columns
+  // (`docs/171`). This strip used to refuse with "table.reason.merged".
   const merged = chromeTable({ regular: false });
   const column = armTableGutter([merged], merged.x + 720, merged.y - 30, OPTS, {});
-  assert.equal(column.target, null);
-  assert.equal(column.refusal, "table.reason.merged");
+  assert.equal(column.target?.kind, "strip");
+  assert.equal(column.target?.axis, "column");
+  assert.equal(column.refusal, "");
   assert.equal(armTableGutter([merged], merged.x - 30, merged.y + 144, OPTS, {}).target?.kind, "strip");
 });
 

@@ -278,6 +278,7 @@ import { BRAND } from "./brand.mjs";
 import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
+import { cellContentsSelection } from "./table_tab.mjs";
 
 
 /** url → fetched or pending font bytes (persists across documents). */
@@ -6745,6 +6746,7 @@ function plainTableInfo(node) {
   const value = info?.found ? {
     found: true,
     regular: info.regular,
+    merged: info.merged,
     rowHeightRule: info.rowHeightRule,
     table: info.table,
     column: info.column,
@@ -6856,15 +6858,8 @@ function openContextLink(link) {
 // tucked into submenus so no single target dumps a 30-row list. Every entry
 // still routes through the same transaction-backed actions as the ribbon and
 // command palette, so availability and mutation gates never drift.
-// The table tools, built from a context the caller supplies. Extracted from the
-// right-click menu so the command palette can offer the SAME rows when the caret
-// is in a table: every structural table command used to exist ONLY on the
-// contextual Table ribbon tab and the right-click menu, so typing "insert row"
-// or "merge cells" into the palette found nothing. Word reaches all of them from
-// Tell Me, and Docs files them under Format ▸ Table.
-// The table command tree lives in `table_commands.mjs`; this is the one place the
-// editor's own bindings are handed to it. Every binding is read at CALL time, so
-// the tree reflects the state the menu is opening over rather than boot state.
+// The table command tree (`table_commands.mjs`, which says why it is shared by the menu
+// and the palette) gets the editor's bindings here, each read at CALL time.
 const TABLE_COMMAND_HOST = {
   doc: () => doc,
   tableSelection: () => tableRange.descriptor(),
@@ -10670,11 +10665,9 @@ function reflectTableProperties(node = selection?.focus.node) {
   tableDescription.value = info.description || "";
   tableHeaderRow.checked = info.headerRow;
   tableFixedLayout.checked = info.fixedLayout;
-  tableColumnWidth.disabled = !info.regular;
+  tableColumnWidth.disabled = false; // a merged table sizes its grid columns too (docs/171)
   tableColumnWidth.value = twipsToDialogInches(info.columnWidthTwips);
-  tableColumnWidthNote.textContent = info.regular
-    ? "Sets the width of the current column."
-    : "Column sizing is unavailable for merged or spanned tables.";
+  tableColumnWidthNote.textContent = "Sets the width of the current column.";
   tableWidth.value = twipsToDialogInches(info.tableWidthTwips);
   tableIndent.value = twipsToDialogInches(info.tableIndentTwips);
   tableRowHeight.value = twipsToDialogInches(info.rowHeightTwips);
@@ -14386,13 +14379,19 @@ document.addEventListener("keydown", async (e) => {
         // `apply_action_caret`), which is exactly where the gesture means to go,
         // so nothing here moves the caret a second time.
         //
-        // This used to be an empty `catch {}`: the only table gesture in the
-        // product that refused with nothing at all — no row, no message, no
-        // console line — which a reader cannot tell from a broken build.
+        // It used to be an empty `catch {}`, refusing with nothing at all.
         if (e.shiftKey) setStatus(t("table.atFirstCell"));
         else if (await runEdit(() => doc.insertRow(from, true), { gate: true })) setStatus(t("table.rowAppended"));
       }
-      if (target) navToPosition(target, false);
+      // Tab SELECTS the destination cell's contents, so typing replaces them (OL-03, docs/171).
+      const cellContents = target && cellContentsSelection(doc, target);
+      if (cellContents) {
+        tableRange.clear();
+        selection = cellContents;
+        drawSelection();
+        focusEditorSurface();
+        scrollCaretIntoView();
+      } else if (target) navToPosition(target, false);
       return;
     }
     if (reviewMode === "suggesting") {

@@ -1129,7 +1129,7 @@ export const EN_STRINGS = Object.freeze({
   // `TableInfo` reports no per-cell merge state (TBL-20) — `regular` is a
   // whole-table boolean. A table with no merge at all can therefore be refused
   // before the engine is asked.
-  "table.reason.noMergedCells": "This table has no merged cells",
+  "table.reason.cellNotMerged": "This cell is not merged",
   // Tab in the last cell appends a row, the way Word and Google Docs do. The
   // caret lands in the new row's first cell, which is a jump worth announcing:
   // the live region is the only channel a reader who cannot see it has.

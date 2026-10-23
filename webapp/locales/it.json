@@ -1825,7 +1825,7 @@
   "table.reason.caretOutsideTable": "Posiziona il cursore in una tabella",
   "table.reason.mergeSelection": "Seleziona due o più celle prima di unirle",
   "table.reason.merged": "Non disponibile per tabelle con celle unite",
-  "table.reason.noMergedCells": "Questa tabella non contiene celle unite",
+  "table.reason.cellNotMerged": "Questa cella non è unita",
   "table.reason.notTracked": "Questa modifica strutturale non può essere registrata in modalità Suggerimenti",
   "table.reason.rowHeights": "Le righe richiedono un’altezza fissa o minima prima della distribuzione",
   "table.rowAppended": "Riga aggiunta alla fine della tabella",

@@ -226,7 +226,7 @@ test("a drop where the row started says so and pushes no undo step", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("a row inside a vertical merge refuses with the reason, naming the row", async ({
+test("a row inside a vertical merge moves with its whole merged band", async ({
   page,
   consoleErrors,
 }) => {
@@ -252,18 +252,19 @@ test("a row inside a vertical merge refuses with the reason, naming the row", as
   await page.locator('[data-tab="table"]').click();
   await page.locator("#mergeCellsBtn").click();
 
-  // Put the caret in the merged run's first row and ask to move it down.
+  // Put the caret in the merged run's first row and ask to move it down. The
+  // unit is the BAND (`docs/171`): both rows of the merged cell move below
+  // Gamma together, where this used to be refused — and nothing is torn.
   await page.mouse.click(a.x, a.y);
   await runPaletteCommand(page, "table.move.rowDown");
 
-  await expect(page.locator("#status")).toContainText("vertically merged");
   await expect(page.locator("#status")).not.toContainText("isn't supported");
-  await expect.poll(() => orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
+  await expect.poll(() => orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Gamma", "Alpha", "Beta"]);
 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a column move on a table with a horizontal merge is refused BEFORE it is offered", async ({
+test("a column move beside a horizontal merge moves the merged band whole", async ({
   page,
   consoleErrors,
 }) => {
@@ -291,21 +292,11 @@ test("a column move on a table with a horizontal merge is refused BEFORE it is o
 
   await page.mouse.click(centre(0, 1).x, centre(0, 1).y);
 
-  // `gridSpan` makes the grid index a drag reports name no cell, so the engine
-  // refuses it by row. The UI refuses EARLIER, which is better and is the rule
-  // this repository keeps: the command is present and disabled CARRYING ITS
-  // REASON, not absent and not silently doing nothing.
-  await openCommandPalette(page);
-  await page.locator("#cmdList .cmd-item").first().waitFor();
-  const move = page.locator('#cmdList .cmd-item[data-command-id="table.move.columnLeft"]');
-  await expect(move).toHaveCount(1);
-  await expect(move).toBeDisabled();
-  await expect(move).toHaveAttribute("title", /merged or spanned/i);
-  await page.keyboard.press("Escape");
-
-  // …and the column strip is not painted on such a table either, so the gesture
-  // cannot be started from the gutter: the document is unchanged either way.
-  await expect.poll(() => orderOf(page, ["A1", "B1", "C1"])).toEqual(["A1", "B1", "C1"]);
+  // The merge in row 2 binds grid columns 0-1 into one BAND (`docs/171`).
+  // Moving column B right moves the band — A and B together, with the merged
+  // cell whole — past C, where this used to be disabled on any merged table.
+  await runPaletteCommand(page, "table.move.columnRight");
+  await expect.poll(() => orderOf(page, ["A1", "B1", "C1"])).toEqual(["C1", "A1", "B1"]);
 
   expect(consoleErrors).toEqual([]);
 });

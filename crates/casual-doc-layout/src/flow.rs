@@ -30,11 +30,13 @@ use casual_doc_model::v1::{
     SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader,
     TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
     TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment, VerticalAnchor, VerticalMerge,
-    VerticalPosition, WrapMode,
+    TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment, VerticalAnchor, VerticalPosition,
+    WrapMode,
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// The one grid map every table rule reads (`docs/171`).
+use casual_doc_model::v1::TableGridMap;
 // Separate `use` line (anti-conflict): a move's double underline in the markup view.
 use casual_doc_model::v1::UnderlineStyle;
 // Separate `use` line (anti-conflict): the note's in-body auto-number mark.
@@ -2342,7 +2344,8 @@ fn flow_table<S: GalleySink + ?Sized>(
         // contain it here — otherwise the row collapses to its (tiny) text height
         // and the anchored object overflows into the next row (issue #359).
         let mut cell_floors: Vec<Twip> = Vec::new();
-        let mut col = 0usize;
+        // A row starts after its `w:gridBefore` columns (`docs/171`).
+        let mut col = row.properties.grid_before.unwrap_or(0) as usize;
         for (index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
             let logical_start = edge(col);
@@ -2797,45 +2800,43 @@ enum VerticalMergeRole {
     Continue,
 }
 
-/// Resolves `w:vMerge` runs by exact half-open grid-column range. A continuation
-/// with no matching active restart is deliberately left ordinary.
+/// Resolves `w:vMerge` runs through the ONE grid map,
+/// `casual_doc_model::v1::TableGridMap` (`docs/171`), whose rule this function
+/// used to state on its own: a continuation joins only a restart (or a joined
+/// continuation) directly above it over exactly the same grid columns. A
+/// continuation with no matching restart is deliberately left ordinary, so its
+/// content stays visible. Now every editing operation reads the same answer
+/// layout paints, and `w:gridBefore` offsets a row's cells here too.
 fn resolve_vertical_merge_roles(table: &Table) -> Vec<Vec<VerticalMergeRole>> {
+    let grid = TableGridMap::build(table);
     let mut roles: Vec<Vec<VerticalMergeRole>> = table
         .rows
         .iter()
         .map(|row| vec![VerticalMergeRole::None; row.cells.len()])
         .collect();
-    let mut active: BTreeMap<(usize, usize), (usize, usize)> = BTreeMap::new();
-
-    for (row_index, row) in table.rows.iter().enumerate() {
-        let mut next = BTreeMap::new();
-        let mut column = 0usize;
-        for (cell_index, cell) in row.cells.iter().enumerate() {
-            let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-            let key = (column, column.saturating_add(span));
-            match cell.properties.vertical_merge {
-                Some(VerticalMerge::Restart) => {
-                    roles[row_index][cell_index] = VerticalMergeRole::Restart {
-                        end_row: row_index,
-                        end_cell: cell_index,
-                    };
-                    next.insert(key, (row_index, cell_index));
-                }
-                Some(VerticalMerge::Continue) => {
-                    if let Some(&(start_row, start_cell)) = active.get(&key) {
-                        roles[row_index][cell_index] = VerticalMergeRole::Continue;
-                        roles[start_row][start_cell] = VerticalMergeRole::Restart {
-                            end_row: row_index,
-                            end_cell: cell_index,
-                        };
-                        next.insert(key, (start_row, start_cell));
-                    }
-                }
-                None => {}
+    for (row_index, row_roles) in roles.iter_mut().enumerate() {
+        for (cell_index, role) in row_roles.iter_mut().enumerate() {
+            let Some(slot) = grid.cell(row_index, cell_index) else {
+                continue;
+            };
+            if slot.continuation {
+                *role = VerticalMergeRole::Continue;
             }
-            column = column.saturating_add(span);
         }
-        active = next;
+    }
+    for region in grid.regions() {
+        if !region.restart {
+            continue;
+        }
+        // The region's last physical cell: the one covering its first column in
+        // its last row.
+        let end_cell = grid
+            .cell_at(region.last_row, region.first_column)
+            .map_or(region.anchor_cell, |slot| slot.cell);
+        roles[region.first_row][region.anchor_cell] = VerticalMergeRole::Restart {
+            end_row: region.last_row,
+            end_cell,
+        };
     }
     roles
 }
@@ -3071,18 +3072,11 @@ fn hash_decoration<H: std::hash::Hasher>(decoration: &crate::text::Decoration, h
 /// so it changes nothing a person authored while bounding what a hostile file can
 /// ask for.
 fn table_column_count(table: &Table) -> usize {
-    let spanned = table
-        .rows
-        .iter()
-        .map(|r| {
-            r.cells
-                .iter()
-                .map(|c| c.properties.grid_span.unwrap_or(1).max(1) as usize)
-                .sum::<usize>()
-        })
-        .max()
-        .unwrap_or(0);
-    table.grid.len().max(spanned).clamp(1, MAX_TABLE_COLUMNS)
+    // The grid map's count: the declared grid, or the widest row including its
+    // `w:gridBefore`/`w:gridAfter` columns (`docs/171`).
+    TableGridMap::build(table)
+        .column_count()
+        .clamp(1, MAX_TABLE_COLUMNS)
 }
 
 /// The ceiling on a table's column count. Far above any authored table; present
@@ -3147,7 +3141,7 @@ fn solve_table_columns(
         .collect();
 
     for (row_index, row) in table.rows.iter().enumerate() {
-        let mut col = 0usize;
+        let mut col = row.properties.grid_before.unwrap_or(0) as usize;
         for (cell_index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
             if !matches!(
@@ -3582,7 +3576,8 @@ fn resolve_cell_borders(
     let own = &effective[row_index][index];
     let left = index.checked_sub(1).map(|i| &effective[row_index][i]);
     let right = effective[row_index].get(index + 1);
-    let (start_col, end_col) = cell_column_range(row, index);
+    let before_of = |r: usize| rows[r].properties.grid_before.unwrap_or(0) as usize;
+    let (start_col, end_col) = cell_column_range(row, index, before_of(row_index));
 
     // Candidate order follows reading order so exact ties keep the first edge:
     // row above before current, current before row below; left before right.
@@ -3591,6 +3586,7 @@ fn resolve_cell_borders(
         push_overlapping_edges(
             &mut top_candidates,
             &above.cells,
+            before_of(row_index - 1),
             &effective[row_index - 1],
             start_col,
             end_col,
@@ -3604,6 +3600,7 @@ fn resolve_cell_borders(
         push_overlapping_edges(
             &mut bottom_candidates,
             &below.cells,
+            before_of(row_index + 1),
             &effective[row_index + 1],
             start_col,
             end_col,
@@ -3623,6 +3620,7 @@ fn resolve_cell_borders(
             resolve_horizontal_segments(
                 own.top.as_ref(),
                 &above.cells,
+                before_of(row_index - 1),
                 &effective[row_index - 1],
                 |borders| borders.bottom.as_ref(),
                 start_col,
@@ -3636,6 +3634,7 @@ fn resolve_cell_borders(
         resolve_horizontal_segments(
             own.bottom.as_ref(),
             &below.cells,
+            before_of(row_index + 1),
             &effective[row_index + 1],
             |borders| borders.top.as_ref(),
             start_col,
@@ -3679,6 +3678,7 @@ fn resolve_separated_cell_borders(
 fn resolve_horizontal_segments<'a>(
     own: Option<&'a BorderEdge>,
     adjacent: &'a [TableCell],
+    adjacent_before: usize,
     adjacent_borders: &'a [TableBorders],
     adjacent_side: impl Fn(&'a TableBorders) -> Option<&'a BorderEdge>,
     start_col: usize,
@@ -3689,7 +3689,7 @@ fn resolve_horizontal_segments<'a>(
 ) -> Vec<ResolvedBorderSegment> {
     let mut breaks = vec![start_col, end_col];
     let mut adjacent_ranges = Vec::new();
-    let mut cell_start = 0usize;
+    let mut cell_start = adjacent_before;
     for (cell, borders) in adjacent.iter().zip(adjacent_borders) {
         let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
         let cell_end = cell_start.saturating_add(span);
@@ -3759,13 +3759,16 @@ fn resolve_horizontal_segments<'a>(
     segments
 }
 
-/// Returns the half-open grid-column range occupied by `row[index]`.
-fn cell_column_range(row: &[TableCell], index: usize) -> (usize, usize) {
-    let start = row
-        .iter()
-        .take(index)
-        .map(|cell| cell.properties.grid_span.unwrap_or(1).max(1) as usize)
-        .sum::<usize>();
+/// Returns the half-open grid-column range occupied by `row[index]`, in a row
+/// whose first cell starts after `before` skipped columns (`w:gridBefore`) —
+/// the same rule `casual_doc_model::v1::TableGridMap` states (`docs/171`).
+fn cell_column_range(row: &[TableCell], index: usize, before: usize) -> (usize, usize) {
+    let start = before
+        + row
+            .iter()
+            .take(index)
+            .map(|cell| cell.properties.grid_span.unwrap_or(1).max(1) as usize)
+            .sum::<usize>();
     let span = row[index].properties.grid_span.unwrap_or(1).max(1) as usize;
     (start, start.saturating_add(span))
 }
@@ -3776,12 +3779,13 @@ fn cell_column_range(row: &[TableCell], index: usize) -> (usize, usize) {
 fn push_overlapping_edges<'a>(
     candidates: &mut Vec<Option<&'a BorderEdge>>,
     row: &'a [TableCell],
+    before: usize,
     borders: &'a [TableBorders],
     start_col: usize,
     end_col: usize,
     side: impl Fn(&'a TableBorders) -> Option<&'a BorderEdge>,
 ) {
-    let mut cell_start = 0usize;
+    let mut cell_start = before;
     for (cell, borders) in row.iter().zip(borders) {
         let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
         let cell_end = cell_start.saturating_add(span);
@@ -8629,6 +8633,7 @@ fn alt_chunk_decor(width: Twip) -> ParagraphDecor {
 mod tests {
     use super::*;
     use crate::shape::ParleyShaper;
+    use casual_doc_model::v1::VerticalMerge;
 
     #[test]
     fn unset_widow_control_resolves_on_by_default() {

@@ -87,6 +87,9 @@ test("Select All and replacement stay inside one table cell", async ({
   await page.keyboard.press("Tab");
   await page.keyboard.type("SECOND");
   await page.keyboard.press("Shift+Tab");
+  // Shift+Tab SELECTS the cell's contents now (OL-03, `docs/171`); collapse it
+  // so Select All starts from a caret, which is what this guards.
+  await page.keyboard.press("ArrowLeft");
 
   await page.keyboard.press(`${MOD}+a`);
   await expect(page.locator("#status")).toHaveText(
@@ -116,6 +119,7 @@ test("a repeated Select All explicitly escalates from cell to document", async (
   await page.keyboard.press("Tab");
   await page.keyboard.type("NEIGHBOR");
   await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("ArrowLeft"); // collapse the Tab selection (OL-03)
 
   await page.keyboard.press(`${MOD}+a`);
   await expect(page.locator("#status")).toContainText("Cell contents selected");

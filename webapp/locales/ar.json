@@ -1840,7 +1840,7 @@
   "table.reason.caretOutsideTable": "ضع مؤشر الكتابة داخل جدول",
   "table.reason.mergeSelection": "حدّد خليتين أو أكثر قبل الدمج",
   "table.reason.merged": "غير متاح للجداول التي تحتوي على خلايا مدمجة أو ممتدة",
-  "table.reason.noMergedCells": "لا يحتوي هذا الجدول على خلايا مدمجة",
+  "table.reason.cellNotMerged": "هذه الخلية غير مدمجة",
   "table.reason.notTracked": "لا يمكن تتبع هذا التغيير الهيكلي في وضع الاقتراحات",
   "table.reason.rowHeights": "يجب تعيين ارتفاع ثابت أو أدنى للصفوف قبل التوزيع",
   "table.rowAppended": "تمت إضافة صف في نهاية الجدول",

@@ -143,7 +143,9 @@ use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
 use casual_doc_selection::{CellRange, TableCellSelection, cell_grid_start};
 // Its own line, not folded into the block above: a shared `use` list is where
 // parallel lanes collide (rustfmt is set to Preserve).
-use casual_doc_selection::{cell_merge, unstraddled_column_boundaries};
+use casual_doc_selection::cell_merge;
+// The one grid map every table operation resolves cells through (`docs/171`).
+use casual_doc_model::v1::TableGridMap;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use wasm_bindgen::Clamped;
@@ -165,6 +167,10 @@ mod inline_move;
 #[cfg(test)]
 #[path = "object_locks_tests.rs"]
 mod object_locks_tests;
+// Every table operation against every merged-cell family (`docs/171`).
+#[cfg(test)]
+#[path = "table_merge_matrix_tests.rs"]
+mod table_merge_matrix_tests;
 
 // An edited save states the current `app.xml` counts (`docs/109` FID-AT-04).
 #[cfg(test)]
@@ -7447,98 +7453,229 @@ impl WasmDocument {
 
     /// Inserts an empty table row above or below the row containing the caret's
     /// paragraph (`below` = after it). The new row mirrors the anchor row's column
-    /// structure (cell count, widths, spans) with empty cells; the caret lands in
-    /// its first cell. Errors if the caret is not inside a table.
+    /// structure (spans, widths, cell formatting) with empty cells, and the caret
+    /// lands in its first cell. Errors if the caret is not inside a table.
+    ///
+    /// **Merged cells** (`docs/171`): a vertically merged cell the new row lands
+    /// inside grows to cover it; one it lands above or below is untouched. The
+    /// row is resolved through `casual_doc_edit::table_structure::insert_row`,
+    /// the one place that rule lives.
     #[wasm_bindgen(js_name = insertRow)]
     pub fn insert_row(&mut self, node: &str, below: bool) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
-        let (table, index, template) = locate_table_row(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        let row = self.empty_row_like(&template).map_err(to_js)?;
-        // Caret rests in the new row's first cell's paragraph.
+        self.insert_row_inner(node, below).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::insert_row`]; plain-text refusals so native guards
+    /// read the same path.
+    fn insert_row_inner(&mut self, node: &str, below: bool) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
+        let (table, index, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let original = find_table(&self.document, table)
+            .ok_or_else(|| "table not found".to_owned())?
+            .clone();
+        let ids = &mut self.edit_ids;
+        let (replacement, at) = casual_doc_edit::table_structure::insert_row(
+            &original,
+            index as usize,
+            below,
+            &mut || ids.next_id().ok(),
+        )?;
+        let row = replacement.rows[at].clone();
         let caret = first_paragraph_of_row(&row).map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        let new_index = if below { index + 1 } else { index };
-        self.apply_action_caret(
+        // One row inserted and nothing else changed is the fine-grained operation
+        // a concurrent edit transforms against; anything more (a degenerate merge
+        // the normalisation repaired) is the whole-table replacement.
+        let mut without = replacement.clone();
+        without.rows.remove(at);
+        let ops = if without == original {
             vec![Operation::InsertRow {
                 table,
-                index: new_index,
+                index: at as u32,
                 row: Box::new(row),
-            }],
-            caret,
-        )
-        .map_err(to_js)
+            }]
+        } else {
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }]
+        };
+        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
     }
 
     /// Deletes the table row containing the caret's paragraph. Refuses to delete a
     /// table's only row (a table's rows are non-empty — delete the table instead).
     /// The caret lands in an adjacent surviving row. Errors if not inside a table.
+    ///
+    /// **Merged cells** (`docs/171`): when the row is the top of a vertically
+    /// merged cell that continues below, the merged cell's content and
+    /// properties move to its first surviving row instead of leaving an orphan
+    /// continuation and losing the text.
     #[wasm_bindgen(js_name = deleteRow)]
     pub fn delete_row(&mut self, node: &str) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
+        self.delete_row_inner(node).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::delete_row`].
+    fn delete_row_inner(&mut self, node: &str) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
         let (table, index, _) = locate_table_row(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        // Caret target: the first paragraph of the row that survives at this spot
-        // (the next row, or the previous one when deleting the last), computed
-        // before the edit removes it.
-        let caret = self
-            .surviving_row_anchor(table, index)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let original = find_table(&self.document, table)
+            .ok_or_else(|| "table not found".to_owned())?
+            .clone();
+        let index = index as usize;
+        let replacement = casual_doc_edit::table_structure::delete_rows(&original, index, index)?;
+        // Caret: the row now at this spot, else the one before it.
+        let target = index.min(replacement.rows.len() - 1);
+        let caret = first_paragraph_of_row(&replacement.rows[target])
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(vec![Operation::DeleteRow { table, index }], caret)
-            .map_err(to_js)
+        let mut expected = original.clone();
+        expected.rows.remove(index);
+        let ops = if expected == replacement {
+            vec![Operation::DeleteRow {
+                table,
+                index: index as u32,
+            }]
+        } else {
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }]
+        };
+        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
     }
 
     /// Inserts an empty column left or right of the caret's cell (`after` = to its
-    /// right) in a **regular** table (no merged cells; grid matches the cell count),
-    /// adding one empty cell to every row and a grid column. The caret stays in the
-    /// same row, moving to the new cell. Errors if the caret is not inside a regular
-    /// table.
+    /// right), adding a grid column. The caret moves to the new cell in its own
+    /// row. Errors if the caret is not inside a table.
+    ///
+    /// **Merged cells** (`docs/171`): the column goes at the caret cell's GRID
+    /// edge, so "right of" a merged cell is right of all of it; a cell in another
+    /// row that straddles that edge grows to cover the new column. A regular
+    /// table still commits the fine-grained `InsertColumn`, which a concurrent
+    /// edit transforms against; a merged one commits the whole-table replacement
+    /// the grid map computed.
     #[wasm_bindgen(js_name = insertColumn)]
     pub fn insert_column(&mut self, node: &str, after: bool) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
-        let (table, col) = locate_table_cell(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        let (_, row_index, _) = locate_table_row(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        let t = find_table(&self.document, table).ok_or_else(|| to_js("table not found".into()))?;
-        let width = t.grid.get(col as usize).and_then(|g| g.width_twips);
-        let cells = self.empty_column_cells(t.rows.len()).map_err(to_js)?;
-        let new_index = if after { col + 1 } else { col };
-        // Caret rests in the new cell of the caret's own row.
-        let caret = cells
-            .get(row_index as usize)
-            .and_then(first_paragraph_of_cell)
-            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(
-            vec![Operation::InsertColumn {
-                table,
-                index: new_index,
-                width,
-                cells,
-            }],
-            caret,
-        )
-        .map_err(to_js)
+        self.insert_column_inner(node, after).map_err(to_js)
     }
 
-    /// Deletes the column containing the caret's cell from a **regular** table
-    /// (refusing a table's only column), removing that cell from every row. The
-    /// caret lands in an adjacent surviving cell of the same row. Errors if the
-    /// caret is not inside a regular table.
+    /// See [`WasmDocument::insert_column`].
+    fn insert_column_inner(&mut self, node: &str, after: bool) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
+        let (table, row_index, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let (_, cell_index) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let original = find_table(&self.document, table)
+            .ok_or_else(|| "table not found".to_owned())?
+            .clone();
+        let grid = TableGridMap::build(&original);
+        let slot = *grid
+            .cell(row_index as usize, cell_index as usize)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let (boundary, beside) = if after {
+            (slot.end_column(), slot.last_column())
+        } else {
+            (slot.first_column, slot.first_column)
+        };
+        let width = original.grid.get(beside).and_then(|g| g.width_twips);
+        if grid.is_regular() {
+            let cells = self.empty_column_cells(original.rows.len())?;
+            let caret = cells
+                .get(row_index as usize)
+                .and_then(first_paragraph_of_cell)
+                .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+            return self.apply_action_caret_as(
+                vec![Operation::InsertColumn {
+                    table,
+                    index: boundary as u32,
+                    width,
+                    cells,
+                }],
+                caret,
+                HistoryKind::TableStructure,
+            );
+        }
+        let ids = &mut self.edit_ids;
+        let replacement = casual_doc_edit::table_structure::insert_column(
+            &original,
+            boundary,
+            width,
+            &mut || ids.next_id().ok(),
+        )?;
+        let new_grid = TableGridMap::build(&replacement);
+        let caret = new_grid
+            .cell_at(row_index as usize, boundary)
+            .and_then(|slot| replacement.rows[slot.row].cells.get(slot.cell))
+            .and_then(first_paragraph_of_cell)
+            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            caret,
+            HistoryKind::TableStructure,
+        )
+    }
+
+    /// Deletes the column(s) the caret's cell covers — for a merged cell, every
+    /// grid column it spans, as Word does — refusing a table's last column. A
+    /// cell in another row that only partly covers them shrinks. The caret lands
+    /// in the cell now at that spot in the caret's row.
     #[wasm_bindgen(js_name = deleteColumn)]
     pub fn delete_column(&mut self, node: &str) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
-        let (table, col) = locate_table_cell(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        let (_, row_index, _) = locate_table_row(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        // Caret target: the cell that survives at this spot in the caret's row (the
-        // next column, or the previous one when deleting the last), read before the
-        // edit removes it.
-        let caret = self
-            .surviving_cell_anchor(table, row_index, col)
+        self.delete_column_inner(node).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::delete_column`].
+    fn delete_column_inner(&mut self, node: &str) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
+        let (table, row_index, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let (_, cell_index) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let original = find_table(&self.document, table)
+            .ok_or_else(|| "table not found".to_owned())?
+            .clone();
+        let grid = TableGridMap::build(&original);
+        let slot = *grid
+            .cell(row_index as usize, cell_index as usize)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let region = *grid.region(slot.region);
+        let replacement = casual_doc_edit::table_structure::delete_columns(
+            &original,
+            region.first_column,
+            region.last_column,
+        )?;
+        // Caret: the cell now at the deleted column's spot in this row, else the
+        // one before it.
+        let new_grid = TableGridMap::build(&replacement);
+        let row = (row_index as usize).min(replacement.rows.len() - 1);
+        let column = region
+            .first_column
+            .min(new_grid.column_count().saturating_sub(1));
+        let caret = new_grid
+            .cell_at(row, column)
+            .or_else(|| new_grid.row(row).last())
+            .and_then(|slot| new_grid.anchor_of(slot.row, slot.cell))
+            .and_then(|(r, c)| replacement.rows[r].cells.get(c))
+            .and_then(first_paragraph_of_cell)
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(vec![Operation::DeleteColumn { table, index: col }], caret)
-            .map_err(to_js)
+        let ops = if grid.is_regular() && region.column_count() == 1 {
+            vec![Operation::DeleteColumn {
+                table,
+                index: region.first_column as u32,
+            }]
+        } else {
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }]
+        };
+        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
     }
 
     /// Deletes the whole table the caret is in (the innermost table for a nested
@@ -7754,12 +7891,18 @@ impl WasmDocument {
             merge_first_column: merge.map_or(col, |m| m.first_column),
             merge_rows: merge.map_or(1, |m| m.rows),
             merge_columns: merge.map_or(1, |m| m.columns),
-            resizable_column_boundaries: unstraddled_column_boundaries(t),
+            // Every internal boundary: a merged cell no longer disarms one (`docs/171`).
+            resizable_column_boundaries: (0..table_column_count(t).saturating_sub(1) as u32)
+                .collect(),
             header_row: t
                 .rows
                 .get(row as usize)
                 .is_some_and(|r| r.properties.header),
-            column_width_twips: active_column_width(t, col as usize).unwrap_or(-1),
+            column_width_twips: active_column_width(
+                t,
+                merge.map_or(col, |m| m.grid_column) as usize,
+            )
+            .unwrap_or(-1),
             table_width_twips: t
                 .properties
                 .width
@@ -7906,27 +8049,13 @@ impl WasmDocument {
 
         if let Some(width) = patch.column_width_twips {
             ensure_optional_twips("column width", width)?;
-            if !table_is_regular(&replacement) {
-                return Err(to_js(refused!(
-                    "table.column-width-merged",
-                    "A column width applies to the whole column, and a merged cell here crosses \
-                     it. Unmerge the cells in this column first."
-                ).into()));
-            }
-            let column = column as usize;
-            let columns = table_column_count(&replacement);
-            if column >= columns {
+            // A GRID column, on any table: a merged cell over it carries the sum
+            // of the columns it spans (`docs/171`), so a merge no longer refuses.
+            let column = grid_column_of(&replacement, row as usize, column as usize);
+            if column >= TableGridMap::build(&replacement).column_count() {
                 return Err(to_js("column is outside the table".into()));
             }
-            if replacement.grid.len() < columns {
-                replacement
-                    .grid
-                    .resize(columns, GridColumn { width_twips: None });
-            }
-            replacement.grid[column].width_twips = (width >= 0).then_some(width);
-            for row in &mut replacement.rows {
-                row.cells[column].properties.width = (width >= 0).then(|| TableWidth::dxa(width));
-            }
+            set_grid_column_width(&mut replacement, column, (width >= 0).then_some(width));
         }
 
         self.apply_action(vec![Operation::ReplaceTable {
@@ -7946,9 +8075,14 @@ impl WasmDocument {
         width_twips: i32,
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
         let (_, col) = locate_table_cell(&self.document, nid)
             .ok_or_else(|| to_js("caret is not inside a table".into()))?;
-        self.set_table_column_width_at(node, col, width_twips)
+        let column = find_table(&self.document, table).map_or(col as usize, |t| {
+            grid_column_of(t, row as usize, col as usize)
+        });
+        self.set_table_column_width_at(node, column as u32, width_twips)
     }
 
     /// Preferred width for a specific regular-table column, or `-1` when unset.
@@ -7980,32 +8114,15 @@ impl WasmDocument {
         let mut replacement = find_table(&self.document, table)
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
-        if !table_is_regular(&replacement) {
-            return Err(to_js(refused!(
-                "table.column-width-merged",
-                "A column width applies to the whole column, and a merged cell here crosses it. \
-                 Unmerge the cells in this column first."
-            ).into()));
-        }
+        // `column` is a GRID column; a merged cell over it carries the sum of the
+        // columns it spans, so a merged table is resized like any other
+        // (`docs/171`), where it used to refuse.
         let col = column as usize;
-        if col >= table_column_count(&replacement) {
+        if col >= TableGridMap::build(&replacement).column_count() {
             return Err(to_js("column is outside the table".into()));
         }
         let width_twips = width_twips.clamp(1, 31_680);
-        let columns = table_column_count(&replacement);
-        if replacement.grid.len() < columns {
-            replacement
-                .grid
-                .resize(columns, GridColumn { width_twips: None });
-        }
-        if let Some(grid_col) = replacement.grid.get_mut(col) {
-            grid_col.width_twips = Some(width_twips);
-        }
-        for row in &mut replacement.rows {
-            if let Some(cell) = row.cells.get_mut(col) {
-                cell.properties.width = Some(TableWidth::dxa(width_twips));
-            }
-        }
+        set_grid_column_width(&mut replacement, col, Some(width_twips));
         self.apply_action_as(
             vec![Operation::ReplaceTable {
                 table,
@@ -8026,16 +8143,8 @@ impl WasmDocument {
         let mut replacement = find_table(&self.document, table)
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
-        if !table_is_regular(&replacement) {
-            return Err(to_js(
-                refused!(
-                    "table.distribute-columns-merged",
-                    "Distribute columns evenly needs a table with no merged cells. Unmerge them \
-                 first."
-                )
-                .into(),
-            ));
-        }
+        // Merged tables distribute too (`docs/171`): the GRID columns are what is
+        // evened out, and each merged cell then carries the sum of its columns.
         let columns = table_column_count(&replacement);
         if columns < 2 {
             return Err(to_js(
@@ -8062,10 +8171,8 @@ impl WasmDocument {
             .resize(columns, GridColumn { width_twips: None });
         for (column, width) in distributed.iter().enumerate() {
             replacement.grid[column].width_twips = Some(*width);
-            for row in &mut replacement.rows {
-                row.cells[column].properties.width = Some(TableWidth::dxa(*width));
-            }
         }
+        casual_doc_edit::table_structure::sync_cell_widths(&mut replacement);
         self.apply_action_as(
             vec![Operation::ReplaceTable {
                 table,
@@ -8087,15 +8194,8 @@ impl WasmDocument {
         let mut replacement = find_table(&self.document, table)
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
-        if !table_is_regular(&replacement) {
-            return Err(to_js(
-                refused!(
-                    "table.distribute-rows-merged",
-                    "Distribute rows evenly needs a table with no merged cells. Unmerge them first."
-                )
-                .into(),
-            ));
-        }
+        // A merge does not stop rows being evened out (`docs/171`): row heights
+        // belong to rows, and a merged cell spans whatever heights its rows get.
         let rows = replacement.rows.len();
         if rows < 2 {
             return Err(to_js(
@@ -8204,31 +8304,24 @@ impl WasmDocument {
         let nid = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
         let (table, _, _) = locate_table_row(&self.document, nid)
             .ok_or_else(|| "caret is not inside a table".to_owned())?;
-        let mut replacement = find_table(&self.document, table)
+        let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let count = replacement.rows.len();
+        let count = original.rows.len();
         let (from, to) = ordered_move_indices("row", from, to, count)?;
-
-        let bound = vertically_bound_rows(&replacement);
-        if bound[from] {
-            return Err(format!(
-                "row {} is part of a vertically merged region; split the merge before moving it",
-                from + 1
-            ));
+        // The unit is the row BAND (`docs/171`): a row inside a vertically merged
+        // cell moves together with every other row of that cell, so a drag on
+        // one row of a merged cell moves the merged cell whole instead of being
+        // refused, and a drop inside another merged cell is refused with a
+        // reason. `to` is the index the dragged row would take if it moved
+        // alone; the band is placed so that its first row lands there.
+        let bands = casual_doc_edit::table_structure::row_bands(&original);
+        let target = casual_doc_edit::table_structure::band_target(&bands, from, to)?;
+        let (replacement, _) =
+            casual_doc_edit::table_structure::move_row_band(&original, from, target)?;
+        if replacement == original {
+            return Err("the rows are already there".to_owned());
         }
-        let moved = replacement.rows.remove(from);
-        if replacement
-            .rows
-            .get(to)
-            .is_some_and(row_has_vertical_continue)
-        {
-            return Err(format!(
-                "moving row {} here would split a vertically merged region",
-                from + 1
-            ));
-        }
-        replacement.rows.insert(to, moved);
 
         self.apply_action_as(
             vec![Operation::ReplaceTable {
@@ -8279,33 +8372,21 @@ impl WasmDocument {
         let nid = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
         let (table, _) = locate_table_cell(&self.document, nid)
             .ok_or_else(|| "caret is not inside a table".to_owned())?;
-        let mut replacement = find_table(&self.document, table)
+        let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let columns = table_column_count(&replacement);
+        let columns = TableGridMap::build(&original).column_count();
         let (from, to) = ordered_move_indices("column", from, to, columns)?;
-
-        for (index, row) in replacement.rows.iter().enumerate() {
-            if row.cells.len() != columns
-                || row
-                    .cells
-                    .iter()
-                    .any(|cell| cell.properties.grid_span.is_some_and(|span| span > 1))
-            {
-                return Err(format!(
-                    "row {} merges cells across columns; split the merge before moving a column",
-                    index + 1
-                ));
-            }
-        }
-
-        if replacement.grid.len() == columns {
-            let moved = replacement.grid.remove(from);
-            replacement.grid.insert(to, moved);
-        }
-        for row in &mut replacement.rows {
-            let moved = row.cells.remove(from);
-            row.cells.insert(to, moved);
+        // The unit is the column BAND (`docs/171`): the grid columns no cell
+        // crosses out of, so a horizontally merged cell moves whole with its
+        // columns instead of the whole table being refused. Indices are GRID
+        // columns; `to` is read as for a single column, as rows read theirs.
+        let bands = casual_doc_edit::table_structure::column_bands(&original);
+        let target = casual_doc_edit::table_structure::band_target(&bands, from, to)?;
+        let (replacement, _) =
+            casual_doc_edit::table_structure::move_column_band(&original, from, target)?;
+        if replacement == original {
+            return Err("the columns are already there".to_owned());
         }
 
         self.apply_action_as(
@@ -8835,21 +8916,32 @@ impl WasmDocument {
         let Some(t) = find_table(&self.document, table) else {
             return Vec::new();
         };
-        if !table_is_regular(t) {
-            return Vec::new();
-        }
-        let cols = table_column_count(t);
+        let grid = TableGridMap::build(t);
+        let cols = grid.column_count();
         if cols < 2 {
             return Vec::new();
         }
         // Painted, because these grips are dragged: a handle resolved against the
         // editing layout sat 147px off the table it belongs to and began a real
         // resize from an edge that is not there.
+        //
+        // Per visible cell, through the grid map (`docs/171`): a handle stands on
+        // the trailing edge of each VISIBLE cell, keyed by the GRID boundary that
+        // edge is, so a merged table has handles exactly where its borders are.
+        // This returned nothing at all for any table with one merge in it.
         let layout = self.painted_snapshot();
         let mut edges: BTreeMap<(u32, usize), (i32, i32, i32)> = BTreeMap::new();
-        for row in &t.rows {
-            for col in 0..cols - 1 {
-                let Some(anchor) = row.cells.get(col).and_then(first_paragraph_of_cell) else {
+        for region in grid.regions() {
+            let col = region.last_column;
+            if col + 1 >= cols {
+                continue;
+            }
+            {
+                let Some(anchor) = t.rows[region.first_row]
+                    .cells
+                    .get(region.anchor_cell)
+                    .and_then(first_paragraph_of_cell)
+                else {
                     continue;
                 };
                 let Some((page, rect)) = layout.cell_rect(anchor) else {
@@ -8926,12 +9018,7 @@ impl WasmDocument {
                     // merge on a continuation page must disarm the same boundary
                     // on page one, or the reader sees a zone that refuses on
                     // release and nothing on screen explaining why.
-                    draggable_columns: model.map_or_else(Vec::new, |table| {
-                        let mut columns = unstraddled_column_boundaries(table);
-                        let outer = table_column_count(table).saturating_sub(1) as u32;
-                        columns.push(outer);
-                        columns
-                    }),
+                    draggable_columns: model.map_or_else(Vec::new, draggable_column_boundaries),
                     rows: table.rows,
                     columns: table.columns,
                     x: table.rect.origin.x.raw(),
@@ -9033,20 +9120,12 @@ impl WasmDocument {
         if col >= columns {
             return Err("column is outside the table".to_owned());
         }
-        // Per BOUNDARY, not per table (`docs/141` TBL-20). A merge makes one
-        // boundary ambiguous — the cell covering both of its sides has no line
-        // there to drag — and says nothing about the other three. Refusing the
-        // whole table disarmed a gesture that works. The table's own trailing
-        // edge is never straddled, so it stays draggable.
-        let draggable = unstraddled_column_boundaries(&replacement);
-        if col + 1 < columns && !draggable.contains(&boundary) {
-            return Err(refused!(
-                "table.column-boundary-straddled",
-                "A merged cell covers both sides of this border, so there is no single \
-                 column to resize. Unmerge it first."
-            )
-            .to_owned());
-        }
+        // Every boundary is draggable, including one a merged cell crosses
+        // (`docs/171`): what moves is the line between two GRID columns, so the
+        // cells that have a border there move it, and a merged cell over it keeps
+        // its total width (it spans both columns) — Google Docs' and ONLYOFFICE's
+        // behaviour. This used to refuse the straddled boundary as ambiguous;
+        // the grid makes it exact.
         let painted = self.painted_column_widths(table);
         let width_of = |index: usize| {
             active_column_width(&replacement, index)
@@ -9071,42 +9150,18 @@ impl WasmDocument {
                 .grid
                 .resize(columns, GridColumn { width_twips: None });
         }
-        let mut touched = Vec::with_capacity(widths.len());
         for (index, width) in widths {
             let width = width.clamp(MIN_COLUMN_TWIPS, 31_680);
             if let Some(grid_col) = replacement.grid.get_mut(index) {
                 grid_col.width_twips = Some(width);
             }
-            touched.push(index);
         }
-        // Each affected cell's `w:tcW` is re-derived from the grid columns it
-        // COVERS, rather than written at `cells[index]`. Cell index is grid column
-        // only until some cell carries `w:gridSpan`, so the old write landed on
-        // the wrong cell in every row below a merge — and a cell spanning two
-        // columns has to carry their sum, not one of them. On a regular table
-        // every span is 1 and this is the previous behaviour exactly.
-        let grid: Vec<Option<i32>> = replacement
-            .grid
-            .iter()
-            .map(|column| column.width_twips)
-            .collect();
-        for row in &mut replacement.rows {
-            let mut start = 0usize;
-            for cell in &mut row.cells {
-                let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-                let covered = start..start + span;
-                start += span;
-                if !touched.iter().any(|index| covered.contains(index)) {
-                    continue;
-                }
-                let total: Option<i32> = grid
-                    .get(covered)
-                    .and_then(|columns| columns.iter().copied().sum::<Option<i32>>());
-                if let Some(total) = total {
-                    cell.properties.width = Some(TableWidth::dxa(total));
-                }
-            }
-        }
+        // Each cell's `w:tcW` is re-derived from the grid columns it COVERS, the
+        // one rule `sync_cell_widths` holds (`docs/171`): a cell spanning two
+        // columns carries their sum, and a cell index is never taken for a grid
+        // column. On a regular table every span is 1 and this is the previous
+        // behaviour exactly.
+        casual_doc_edit::table_structure::sync_cell_widths(&mut replacement);
         self.apply_action_as(
             vec![Operation::ReplaceTable {
                 table,
@@ -9137,62 +9192,108 @@ impl WasmDocument {
         Vec::new()
     }
 
-    /// Merges the active table selection mode (`"row"`, `"column"`, `"table"`) in
-    /// a regular table. Selected-cell content is preserved by moving it into the
-    /// top-left merged cell in row-major order.
+    /// Merges the active table selection mode (`"row"`, `"column"`, `"table"`).
+    /// Selected-cell content is preserved by moving it into the top-left merged
+    /// cell in reading order.
+    ///
+    /// **Merged cells** (`docs/171`): the mode's rectangle is the caret's row (or
+    /// grid column) expanded until it contains every merged cell it touches — the
+    /// same rule a dragged range uses — so a table that already holds a merge
+    /// merges again, which it used to refuse outright.
     #[wasm_bindgen(js_name = mergeTableSelection)]
     pub fn merge_table_selection(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
+        self.merge_table_selection_inner(node, mode).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::merge_table_selection`].
+    fn merge_table_selection_inner(
+        &mut self,
+        node: &str,
+        mode: &str,
+    ) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
         let (table, row, _) = locate_table_row(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
         let (_, col) = locate_table_cell(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
         let original = find_table(&self.document, table)
-            .ok_or_else(|| to_js("table not found".into()))?
+            .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        if !table_is_regular(&original) {
-            return Err(to_js(
-                refused!(
-                    "table.merge-already-merged",
-                    "This table already has merged cells. Unmerge them before merging a new range."
-                )
-                .into(),
-            ));
-        }
-        let rows = original.rows.len();
-        let cols = table_column_count(&original);
-        let (r0, r1, c0, c1) = match mode {
-            "row" => (row as usize, row as usize, 0, cols.saturating_sub(1)),
-            "column" => (0, rows.saturating_sub(1), col as usize, col as usize),
-            "table" => (0, rows.saturating_sub(1), 0, cols.saturating_sub(1)),
-            _ => return Err(to_js("unknown table selection mode".into())),
+        let grid = TableGridMap::build(&original);
+        let here = *grid
+            .cell(row as usize, col as usize)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let last_row = grid.row_count().saturating_sub(1);
+        // The two corner cells of the mode's rectangle; the selection's fixed
+        // point grows it to whole merged cells.
+        let corner = |r: usize, first: bool| -> Option<NodeId> {
+            let cells = grid.row(r);
+            let slot = if first { cells.first() } else { cells.last() }?;
+            Some(original.rows[r].cells[slot.cell].id)
         };
-        if r0 == r1 && c0 == c1 {
-            return Err(to_js(
-                refused!(
-                    "table.merge-too-few-cells",
-                    "Select at least two cells to merge."
-                )
-                .into(),
-            ));
+        let in_column = |r: usize| -> Option<NodeId> {
+            let slot = grid.cell_at(r, here.first_column)?;
+            Some(original.rows[r].cells[slot.cell].id)
+        };
+        let (anchor, focus) = match mode {
+            "row" => (corner(row as usize, true), corner(row as usize, false)),
+            "column" => (
+                (0..=last_row).find_map(in_column),
+                (0..=last_row).rev().find_map(in_column),
+            ),
+            "table" => (corner(0, true), corner(last_row, false)),
+            _ => return Err("unknown table selection mode".to_owned()),
+        };
+        let (anchor, focus) = anchor
+            .zip(focus)
+            .ok_or_else(|| "selection is outside the table".to_owned())?;
+        let range = TableCellSelection::new(table, anchor, focus)
+            .normalised(&original)
+            .map_err(|error| error.to_string())?;
+        self.commit_merge(table, &original, &range, nid)
+    }
+
+    /// Merges a normalised range of `original` and commits it as one undoable
+    /// table edit, the caret in the merged cell. The one tail both merge entry
+    /// points share, so a mode and a dragged range cannot merge differently.
+    fn commit_merge(
+        &mut self,
+        table: NodeId,
+        original: &Table,
+        range: &CellRange,
+        fallback: NodeId,
+    ) -> Result<EditResult, String> {
+        if range.is_single_cell() {
+            return Err(refused!(
+                "table.merge-too-few-cells",
+                "Select at least two cells to merge."
+            )
+            .to_owned());
         }
-        let replacement =
-            merge_regular_table_selection(original, r0, r1, c0, c1, &mut self.edit_ids)
-                .map_err(to_js)?;
-        let caret = replacement
-            .rows
-            .get(r0)
-            .and_then(|r| r.cells.get(c0))
+        let rect = casual_doc_edit::table_structure::GridRect {
+            first_row: range.first_row(),
+            last_row: range.last_row(),
+            first_column: range.first_column(),
+            last_column: range.last_column(),
+        };
+        let ids = &mut self.edit_ids;
+        let (replacement, (r, c)) =
+            casual_doc_edit::table_structure::merge_rect(original, rect, &mut || {
+                ids.next_id().ok()
+            })?;
+        let caret = replacement.rows[r]
+            .cells
+            .get(c)
             .and_then(first_paragraph_of_cell)
-            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(
+            .map_or(Pos::new(fallback, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret_as(
             vec![Operation::ReplaceTable {
                 table,
                 replacement: Box::new(replacement),
             }],
             caret,
+            HistoryKind::TableStructure,
         )
-        .map_err(to_js)
     }
 
     /// The normalised rectangle two cell endpoints describe, as
@@ -9333,38 +9434,11 @@ impl WasmDocument {
             let (table, t, range) = self.cell_range_of(anchor_node, focus_node)?;
             (table, t.clone(), range)
         };
-        if !table_is_regular(&original) {
-            return Err(refused!(
-                "table.merge-already-merged",
-                "This table already has merged cells. Unmerge them before merging a new range."
-            )
-            .to_owned());
-        }
-        if range.is_single_cell() {
-            return Err(refused!(
-                "table.merge-too-few-cells",
-                "Select at least two cells to merge."
-            )
-            .to_owned());
-        }
-        let (r0, r1) = (range.first_row(), range.last_row());
-        let (c0, c1) = (range.first_column(), range.last_column());
-        let replacement =
-            merge_regular_table_selection(original, r0, r1, c0, c1, &mut self.edit_ids)?;
+        // A table that already holds merges merges again (`docs/171`): the range
+        // is already expanded to whole merged cells, which is all `merge_rect`
+        // needs.
         let fallback = node_id_msg(anchor_node)?;
-        let caret = replacement
-            .rows
-            .get(r0)
-            .and_then(|r| r.cells.get(c0))
-            .and_then(first_paragraph_of_cell)
-            .map_or(Pos::new(fallback, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }],
-            caret,
-        )
+        self.commit_merge(table, &original, &range, fallback)
     }
 
     /// Sets or clears the background shading of EVERY cell in the range
@@ -9457,6 +9531,11 @@ impl WasmDocument {
     /// Splits the active merged cell in the current regularized merged table back
     /// into normal cells. The top-left cell keeps the merged content; recreated
     /// cells are empty but valid.
+    ///
+    /// `0, 0` UNMERGES (`docs/171`): from any row of the merged cell, not only
+    /// its top-left — a merged cell is one cell to the reader wherever the caret
+    /// sits in it — through `casual_doc_edit::table_structure::unmerge`. Other
+    /// counts split the cell the caret's merged cell anchors into a grid.
     #[wasm_bindgen(js_name = splitMergedCell)]
     pub fn split_merged_cell(
         &mut self,
@@ -9464,37 +9543,55 @@ impl WasmDocument {
         requested_rows: Option<u32>,
         requested_columns: Option<u32>,
     ) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
+        self.split_merged_cell_inner(node, requested_rows, requested_columns)
+            .map_err(to_js)
+    }
+
+    /// See [`WasmDocument::split_merged_cell`].
+    fn split_merged_cell_inner(
+        &mut self,
+        node: &str,
+        requested_rows: Option<u32>,
+        requested_columns: Option<u32>,
+    ) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
         let (table, row, _) = locate_table_row(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
         let (_, col) = locate_table_cell(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
         let original = find_table(&self.document, table)
-            .ok_or_else(|| to_js("table not found".into()))?
+            .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let replacement = split_table_cell_counts(
-            original,
-            row as usize,
-            col as usize,
+        // A caret in a covered continuation acts on the merged cell above it.
+        let (row, col) = TableGridMap::build(&original)
+            .anchor_of(row as usize, col as usize)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let (rows, columns) = (
             requested_rows.unwrap_or(0) as usize,
             requested_columns.unwrap_or(0) as usize,
-            &mut self.edit_ids,
-        )
-        .map_err(to_js)?;
+        );
+        let replacement = if rows == 0 && columns == 0 {
+            let ids = &mut self.edit_ids;
+            casual_doc_edit::table_structure::unmerge(&original, row, col, &mut || {
+                ids.next_id().ok()
+            })?
+        } else {
+            split_table_cell_counts(original, row, col, rows, columns, &mut self.edit_ids)?
+        };
         let caret = replacement
             .rows
-            .get(row as usize)
-            .and_then(|r| r.cells.get(col as usize))
+            .get(row)
+            .and_then(|r| r.cells.get(col))
             .and_then(first_paragraph_of_cell)
             .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(
+        self.apply_action_caret_as(
             vec![Operation::ReplaceTable {
                 table,
                 replacement: Box::new(replacement),
             }],
             caret,
+            HistoryKind::TableStructure,
         )
-        .map_err(to_js)
     }
 
     /// Sets or clears the background shading fill of the cell containing `node`.
@@ -14553,7 +14650,7 @@ impl WasmDocument {
                     );
                 }
                 BlockNode::Table(table) => {
-                    let rows = table.rows.iter().map(a11y_row_cells).collect::<Vec<_>>();
+                    let rows = a11y_table_rows(table);
                     out.push(A11yBlockJson::Table {
                         rows,
                         header_rows: a11y_header_rows(table),
@@ -17729,51 +17826,6 @@ impl WasmDocument {
         self.checklist_state_of_instance(reference.instance)
     }
 
-    /// Builds an empty row matching `template`'s column structure: one empty
-    /// paragraph per cell, cell properties (width / span / borders) preserved, and
-    /// fresh ids for the row, every cell, and every paragraph (from the edit
-    /// namespace, so they never collide with imported nodes).
-    fn empty_row_like(&mut self, template: &TableRow) -> Result<TableRow, String> {
-        let exhausted = || "id space exhausted".to_string();
-        let mut cells = Vec::with_capacity(template.cells.len());
-        for cell in &template.cells {
-            let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-            let para_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-            cells.push(TableCell {
-                id: cell_id,
-                properties: cell.properties.clone(),
-                blocks: vec![BlockNode::Paragraph(Paragraph {
-                    id: para_id,
-                    properties: ParagraphProperties::default().into(),
-                    inlines: Vec::new(),
-                })],
-            });
-        }
-        let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        Ok(TableRow {
-            id: row_id,
-            properties: template.properties.clone(),
-            cells,
-        })
-    }
-
-    /// The first paragraph of the row that will occupy `index`'s neighbourhood after
-    /// the row at `index` is removed — the next row, or the previous one when the
-    /// last row is deleted — for placing the caret. `None` if the table has one row.
-    fn surviving_row_anchor(&self, table: NodeId, index: u32) -> Option<NodeId> {
-        let t = find_table(&self.document, table)?;
-        if t.rows.len() <= 1 {
-            return None;
-        }
-        let idx = index as usize;
-        let target = if idx + 1 < t.rows.len() {
-            idx + 1
-        } else {
-            idx.saturating_sub(1)
-        };
-        first_paragraph_of_row(t.rows.get(target)?)
-    }
-
     /// `count` empty cells (one per row) for a new column: default cell properties,
     /// a single empty paragraph each, all ids fresh from the edit namespace.
     fn empty_column_cells(&mut self, count: usize) -> Result<Vec<TableCell>, String> {
@@ -17795,25 +17847,15 @@ impl WasmDocument {
         Ok(cells)
     }
 
-    /// The paragraph of the cell that survives at `col`'s spot in `row` after the
-    /// column at `col` is removed — the next column, or the previous one when the
-    /// last column is deleted — for placing the caret. `None` if the row has one cell.
-    fn surviving_cell_anchor(&self, table: NodeId, row: u32, col: u32) -> Option<NodeId> {
-        let t = find_table(&self.document, table)?;
-        let row = t.rows.get(row as usize)?;
-        if row.cells.len() <= 1 {
-            return None;
-        }
-        let idx = col as usize;
-        let target = if idx + 1 < row.cells.len() {
-            idx + 1
-        } else {
-            idx.saturating_sub(1)
-        };
-        first_paragraph_of_cell(row.cells.get(target)?)
-    }
-
-    /// The first paragraph of the adjacent cell in row-major order.
+    /// The first paragraph of the next (or previous) VISIBLE cell in reading
+    /// order — what Tab and Shift+Tab move to.
+    ///
+    /// Resolved through the grid map (`docs/171`): a `w:vMerge` continuation is
+    /// covered by the merged cell above it and is never visited, and a caret that
+    /// somehow sits in one moves on from its merged cell. Stepping by cell index
+    /// used to enter the hidden continuation, where the caret was invisible and
+    /// typing went into a cell nobody can see — Word, Docs and ONLYOFFICE all
+    /// visit a merged cell once.
     fn table_cell_anchor(
         &self,
         table: NodeId,
@@ -17822,32 +17864,10 @@ impl WasmDocument {
         forward: bool,
     ) -> Option<NodeId> {
         let t = find_table(&self.document, table)?;
-        let row_idx = row as usize;
-        let col_idx = col as usize;
-        let target = if forward {
-            let row = t.rows.get(row_idx)?;
-            if col_idx + 1 < row.cells.len() {
-                Some((row_idx, col_idx + 1))
-            } else if row_idx + 1 < t.rows.len() {
-                Some((row_idx + 1, 0))
-            } else {
-                None
-            }
-        } else if col_idx > 0 {
-            Some((row_idx, col_idx - 1))
-        } else if row_idx > 0 {
-            let prev_row = t.rows.get(row_idx - 1)?;
-            prev_row
-                .cells
-                .len()
-                .checked_sub(1)
-                .map(|last| (row_idx - 1, last))
-        } else {
-            None
-        }?;
+        let (r, c) = TableGridMap::build(t).step(row as usize, col as usize, forward)?;
         t.rows
-            .get(target.0)
-            .and_then(|r| r.cells.get(target.1))
+            .get(r)
+            .and_then(|row| row.cells.get(c))
             .and_then(first_paragraph_of_cell)
     }
 
@@ -20859,7 +20879,13 @@ fn a11y_row_cells(row: &casual_doc_model::v1::TableRow) -> Vec<A11yCellJson> {
             if checkboxes.len() == 1 {
                 apply_visible_label(&mut checkboxes[0], &text);
             }
-            A11yCellJson { text, checkboxes }
+            A11yCellJson {
+                text,
+                checkboxes,
+                col_span: 1,
+                row_span: 1,
+                grid_column: 0,
+            }
         })
         .collect();
     let texts = cells
@@ -21017,6 +21043,57 @@ struct A11yCellJson {
     /// The form checkboxes the cell holds, in document order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     checkboxes: Vec<A11yCheckboxJson>,
+    /// Grid columns a merged cell covers (`colspan`), omitted when 1.
+    #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
+    col_span: u32,
+    /// Rows a vertically merged cell covers (`rowspan`), omitted when 1.
+    #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
+    row_span: u32,
+    /// The GRID column the cell starts at — not its index in the row, which
+    /// differs from the grid column the moment a cell spans or a continuation is
+    /// left out (`docs/171`). What a cell selection's rectangle is measured in.
+    #[serde(default)]
+    grid_column: u32,
+}
+
+/// The span of an unmerged cell.
+const fn one_span() -> u32 {
+    1
+}
+
+/// Whether a span is the default one, which the projection leaves out.
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
+const fn is_one_span(span: &u32) -> bool {
+    *span == 1
+}
+
+/// A table's rows as the accessibility mirror announces them: one entry per
+/// VISIBLE cell, with its `colspan`/`rowspan`, through the grid map
+/// (`docs/171`). A `w:vMerge` continuation is covered by the merged cell above
+/// it, so it is not a cell to a reader; it used to be announced as an empty
+/// cell of its own, and a merged cell was announced as one grid cell, so a
+/// screen reader's "row 3, column 2" did not match what was on the page.
+fn a11y_table_rows(table: &Table) -> Vec<Vec<A11yCellJson>> {
+    let grid = TableGridMap::build(table);
+    table
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(r, row)| {
+            a11y_row_cells(row)
+                .into_iter()
+                .zip(grid.row(r))
+                .filter(|(_, slot)| !slot.continuation)
+                .map(|(mut cell, slot)| {
+                    let region = grid.region(slot.region);
+                    cell.col_span = region.column_count() as u32;
+                    cell.row_span = region.row_count() as u32;
+                    cell.grid_column = slot.first_column as u32;
+                    cell
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// One `w14:checkbox` form control, as assistive technology needs it.
@@ -28917,20 +28994,56 @@ fn table_column_count(table: &Table) -> usize {
         .unwrap_or(0)
 }
 
-fn active_column_width(table: &Table, col_index: usize) -> Option<i32> {
+/// The preferred width of GRID column `column`: the grid's own width, else the
+/// width of a one-column cell standing in that column (`docs/171`: a cell index
+/// is not a grid column, so this asks the grid map which cell that is).
+fn active_column_width(table: &Table, column: usize) -> Option<i32> {
     table
         .grid
-        .get(col_index)
+        .get(column)
         .and_then(|col| col.width_twips)
         .or_else(|| {
-            table.rows.iter().find_map(|row| {
-                row.cells
-                    .get(col_index)?
+            let grid = TableGridMap::build(table);
+            (0..grid.row_count()).find_map(|r| {
+                let slot = grid.cell_at(r, column).filter(|slot| slot.span == 1)?;
+                table.rows[r].cells[slot.cell]
                     .properties
                     .width
                     .and_then(|width| width.dxa_twips())
             })
         })
+}
+
+/// Sets grid column `column` of `table` to `width` twips (or clears it with
+/// `None`) and re-derives every covering cell's preferred width from the grid
+/// (`docs/171`). Works on a merged table: a merged cell over the column carries
+/// the sum of the columns it spans, which is what Word writes.
+fn set_grid_column_width(table: &mut Table, column: usize, width: Option<i32>) {
+    let columns = TableGridMap::build(table).column_count();
+    if table.grid.len() < columns {
+        table.grid.resize(columns, GridColumn { width_twips: None });
+    }
+    if let Some(grid_col) = table.grid.get_mut(column) {
+        grid_col.width_twips = width;
+    }
+    casual_doc_edit::table_structure::sync_cell_widths(table);
+    if width.is_none() {
+        let grid = TableGridMap::build(table);
+        for r in 0..grid.row_count() {
+            if let Some(slot) = grid.cell_at(r, column) {
+                table.rows[r].cells[slot.cell].properties.width = None;
+            }
+        }
+    }
+}
+
+/// The grid column the caret's cell starts at — what a column command means by
+/// "this column". `cell_index` is an index into the row, which is a grid column
+/// only until some cell carries `w:gridSpan` (`docs/171`).
+fn grid_column_of(table: &Table, row: usize, cell_index: usize) -> usize {
+    TableGridMap::build(table)
+        .cell(row, cell_index)
+        .map_or(cell_index, |slot| slot.first_column)
 }
 
 fn height_rule_name(rule: HeightRule) -> String {
@@ -29078,90 +29191,55 @@ fn ordered_move_indices(
     Ok((from, to))
 }
 
-/// Whether `row` holds a cell that continues a vertical merge started above it.
-///
-/// **Complexity: O(cells in the row).**
-fn row_has_vertical_continue(row: &TableRow) -> bool {
-    row.cells
-        .iter()
-        .any(|cell| cell.properties.vertical_merge == Some(VerticalMerge::Continue))
-}
-
-/// Per row, whether it participates in a vertical merge run — the `continue`
-/// row itself and the row directly above it, which is the `restart` (or an
-/// earlier `continue`) the run would be torn from.
-///
-/// A lone `restart` with nothing continuing it spans one row, so it is not a
-/// run and is deliberately NOT marked: refusing it would block a legal move for
-/// a marker that merges nothing.
-///
-/// **Complexity: O(rows × cells).**
-fn vertically_bound_rows(table: &Table) -> Vec<bool> {
-    let mut bound = vec![false; table.rows.len()];
-    for index in 0..table.rows.len() {
-        if row_has_vertical_continue(&table.rows[index]) {
-            bound[index] = true;
-            if index > 0 {
-                bound[index - 1] = true;
-            }
-        }
-    }
-    bound
-}
-
+/// Whether `table` has no merged cell and no short row — the ONE definition, the
+/// grid map's (`docs/171`). Only sort and formulas still need it.
 fn table_is_regular(table: &Table) -> bool {
-    let cols = table_column_count(table);
-    if cols == 0 {
-        return false;
-    }
-    table.rows.iter().all(|row| {
-        row.cells.len() == cols
-            && row.cells.iter().all(|cell| {
-                cell.properties.grid_span.is_none_or(|span| span <= 1)
-                    && cell.properties.vertical_merge.is_none()
-            })
-    })
+    TableGridMap::build(table).is_regular()
 }
 
+/// Every internal column boundary of `table`, plus its trailing edge: the
+/// boundaries a column drag may move. All of them, on a merged table too
+/// (`docs/171`): a boundary a merged cell crosses moves the cells that have a
+/// border there, and the merged cell keeps its total width.
+fn draggable_column_boundaries(table: &Table) -> Vec<u32> {
+    let columns = TableGridMap::build(table).column_count();
+    (0..columns as u32).collect()
+}
+
+/// The anchor paragraph of every VISIBLE cell a `"row"`, `"column"` or
+/// `"table"` selection around physical cell (`row_index`, `col_index`) covers,
+/// in reading order, each merged cell once.
+///
+/// Through the grid map (`docs/171`): a row selection includes a merged cell
+/// that crosses the row, and a column selection is the caret cell's GRID
+/// columns, so it works on a merged table — where it used to return nothing at
+/// all, which is why "select column" was disabled the moment a table held one
+/// merge. Word and ONLYOFFICE both select every cell overlapping the column.
 fn table_selection_anchors(
     table: &Table,
     row_index: usize,
     col_index: usize,
     mode: &str,
 ) -> Vec<NodeId> {
-    let mut out = Vec::new();
-    match mode {
-        "row" => {
-            if let Some(row) = table.rows.get(row_index) {
-                for cell in &row.cells {
-                    if let Some(anchor) = first_paragraph_of_cell(cell) {
-                        out.push(anchor);
-                    }
-                }
-            }
+    let grid = TableGridMap::build(table);
+    let regions = match (mode, grid.region_of(row_index, col_index)) {
+        ("row", Some(_)) => grid.regions_in_rows(row_index, row_index),
+        ("column", Some(region)) => {
+            grid.regions_in_columns(region.first_column, region.last_column)
         }
-        "column" => {
-            if table_is_regular(table) {
-                for row in &table.rows {
-                    if let Some(anchor) = row.cells.get(col_index).and_then(first_paragraph_of_cell)
-                    {
-                        out.push(anchor);
-                    }
-                }
-            }
-        }
-        "table" => {
-            for row in &table.rows {
-                for cell in &row.cells {
-                    if let Some(anchor) = first_paragraph_of_cell(cell) {
-                        out.push(anchor);
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    out
+        ("table", _) => (0..grid.regions().len()).collect(),
+        _ => Vec::new(),
+    };
+    regions
+        .into_iter()
+        .filter_map(|index| {
+            let region = grid.region(index);
+            table.rows[region.first_row]
+                .cells
+                .get(region.anchor_cell)
+                .and_then(first_paragraph_of_cell)
+        })
+        .collect()
 }
 
 /// Plain text of the `col`-th cell in `row`, used as a sort key. The index is
@@ -29278,66 +29356,6 @@ fn format_number(value: f64) -> String {
     } else {
         format!("{value:.2}")
     }
-}
-
-fn merge_regular_table_selection(
-    mut table: Table,
-    r0: usize,
-    r1: usize,
-    c0: usize,
-    c1: usize,
-    ids: &mut IdGenerator,
-) -> Result<Table, String> {
-    if !table_is_regular(&table) || r0 > r1 || c0 > c1 || r1 >= table.rows.len() {
-        return Err(refused!(
-            "table.range-not-rectangular",
-            "A cell range has to be a full rectangle of cells, and this selection is not one."
-        )
-        .into());
-    }
-    let cols = table_column_count(&table);
-    if c1 >= cols {
-        return Err("selection is outside the table".into());
-    }
-    let width = c1 - c0 + 1;
-    let height = r1 - r0 + 1;
-    let mut merged_blocks = Vec::new();
-    for row in &table.rows[r0..=r1] {
-        for cell in &row.cells[c0..=c1] {
-            merged_blocks.extend(cell.blocks.clone());
-        }
-    }
-
-    for r in r0..=r1 {
-        let row = table
-            .rows
-            .get_mut(r)
-            .ok_or_else(|| "selection row is outside the table".to_owned())?;
-        if row.cells.len() < c1 + 1 {
-            return Err("selection column is outside the row".into());
-        }
-        row.cells.drain(c0 + 1..=c1);
-        let cell = row
-            .cells
-            .get_mut(c0)
-            .ok_or_else(|| "selection target cell missing".to_owned())?;
-        cell.properties.grid_span = (width > 1).then_some(width as u32);
-        if height > 1 {
-            cell.properties.vertical_merge = Some(if r == r0 {
-                VerticalMerge::Restart
-            } else {
-                VerticalMerge::Continue
-            });
-        } else {
-            cell.properties.vertical_merge = None;
-        }
-        if r == r0 {
-            cell.blocks = merged_blocks.clone();
-        } else {
-            cell.blocks = vec![empty_paragraph_block(ids)?];
-        }
-    }
-    Ok(table)
 }
 
 fn split_table_cell(
@@ -40480,8 +40498,12 @@ mod tests {
         );
     }
 
+    /// A table that already holds a merge merges again (`docs/171`): it used to
+    /// refuse with `table.merge-already-merged`, which Word, Docs and ONLYOFFICE
+    /// never do. Mutation: put the `table_is_regular` refusal back in front of
+    /// `commit_merge` and this goes red on the second merge.
     #[test]
-    fn a_merged_table_refuses_a_further_merge_with_the_existing_reason() {
+    fn a_table_with_a_merge_merges_again() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
         let body = body_paragraph(&d);
         let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
@@ -40490,19 +40512,17 @@ mod tests {
         d.merge_table_cell_range(&cells[0][0], &cells[1][1])
             .expect("first merge");
         let after = cell_paragraphs(&d, table);
-        let message = d
-            .merge_table_cell_range_inner(&after[2][0], &after[2][1])
-            .expect_err("a table with a merge refuses a further merge");
-        let (sentence, code) = casual_doc_edit::refusal::split(&message);
-        assert_eq!(
-            code,
-            Some("table.merge-already-merged"),
-            "the refusal must be routable, got {message}"
-        );
-        assert!(
-            sentence.contains("merged cells"),
-            "and its English fallback must still say why, got {sentence}"
-        );
+        d.merge_table_cell_range_inner(&after[2][0], &after[2][1])
+            .expect("a second merge beside the first");
+        let t = casual_doc_edit::find_table(&d.document, table).expect("table");
+        let grid = TableGridMap::build(t);
+        let merged: Vec<(usize, usize)> = grid
+            .regions()
+            .iter()
+            .filter(|region| region.is_merged())
+            .map(|region| (region.row_count(), region.column_count()))
+            .collect();
+        assert_eq!(merged, [(2, 2), (1, 2)], "both merged cells exist");
     }
 
     #[test]
@@ -40969,8 +40989,22 @@ mod tests {
         assert_eq!(move_row_text(&d, table, 0), ["r0c0", "r0c1", "r0c2"]);
     }
 
+    /// The vertical-merge structure of `table`'s column 0, top to bottom.
+    fn column_zero_merges(d: &WasmDocument, table: NodeId) -> Vec<Option<VerticalMerge>> {
+        casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows
+            .iter()
+            .map(|row| row.cells[0].properties.vertical_merge)
+            .collect()
+    }
+
+    /// A drag on one row of a vertically merged cell moves the WHOLE merged
+    /// band (`docs/171`), never tearing the `restart`/`continue` pair — where it
+    /// used to be refused. Mutation: move the single row (`Vec::remove` /
+    /// `insert`) instead of the band and the merge structure comes out torn.
     #[test]
-    fn moving_a_row_out_of_a_vertical_merge_is_refused_with_a_reason() {
+    fn moving_a_row_of_a_vertical_merge_moves_the_whole_merged_band() {
         let (mut d, anchor, table) = move_fixture(4, 2);
         // Merge column 0 of rows 1 and 2 — a vMerge run in the middle of the table.
         let (top, bottom) = (
@@ -40980,23 +41014,34 @@ mod tests {
         d.merge_table_cell_range(&top, &bottom)
             .expect("merge rows 1-2");
 
-        let before = move_column_text(&d, table, 1);
-        let err = d
-            .move_table_row_inner(&anchor, 1, 3)
-            .expect_err("a row inside a vMerge run must not move");
-        assert!(
-            err.contains("vertically merged"),
-            "the refusal says WHY: {err}"
-        );
+        d.move_table_row_inner(&anchor, 1, 3)
+            .expect("the merged band moves below row 3");
         assert_eq!(
             move_column_text(&d, table, 1),
-            before,
-            "a refused move leaves the table exactly as it was"
+            ["r0c1", "r3c1", "r1c1", "r2c1"],
+            "both rows of the merged cell moved, in order"
+        );
+        assert_eq!(
+            column_zero_merges(&d, table),
+            [
+                None,
+                None,
+                Some(VerticalMerge::Restart),
+                Some(VerticalMerge::Continue)
+            ],
+            "and the merge is intact"
+        );
+        d.undo().expect("one undo step");
+        assert_eq!(
+            move_column_text(&d, table, 1),
+            ["r0c1", "r1c1", "r2c1", "r3c1"]
         );
     }
 
+    /// A row dropped INSIDE a merged band snaps past it, in the direction of
+    /// travel, instead of tearing it or being refused (`docs/171`).
     #[test]
-    fn dropping_a_row_inside_a_vertical_merge_is_refused_with_a_reason() {
+    fn dropping_a_row_inside_a_vertical_merge_snaps_past_it() {
         let (mut d, anchor, table) = move_fixture(4, 2);
         let (top, bottom) = (
             move_cell_paragraph(&d, table, 1, 0),
@@ -41005,26 +41050,24 @@ mod tests {
         d.merge_table_cell_range(&top, &bottom)
             .expect("merge rows 1-2");
 
-        let before = move_column_text(&d, table, 1);
-        // Row 3 is free to move, but index 2 is between the merge's two rows.
-        let err = d
-            .move_table_row_inner(&anchor, 3, 2)
-            .expect_err("a drop between restart and continue must be refused");
-        assert!(
-            err.contains("split a vertically merged region"),
-            "the refusal names the tear: {err}"
+        // Row 3 dropped at index 2, between the merge's two rows: it lands above
+        // the merged cell.
+        d.move_table_row_inner(&anchor, 3, 2)
+            .expect("the drop snaps to the merged cell's edge");
+        assert_eq!(
+            move_column_text(&d, table, 1),
+            ["r0c1", "r3c1", "r1c1", "r2c1"]
         );
-        assert_eq!(move_column_text(&d, table, 1), before);
-
-        // The same row moving ABOVE the merge is legal — the refusal is about the
-        // tear, not about tables that happen to hold a merge.
-        d.move_table_row_inner(&anchor, 3, 0)
-            .expect("a legal move still commits");
-        assert_eq!(move_column_text(&d, table, 1)[0], "r3c1");
+        assert_eq!(
+            column_zero_merges(&d, table)[2..],
+            [Some(VerticalMerge::Restart), Some(VerticalMerge::Continue)]
+        );
     }
 
+    /// A column dropped inside a horizontally merged band snaps past it, and the
+    /// merged cell keeps its span (`docs/171`).
     #[test]
-    fn moving_a_column_across_a_horizontal_merge_is_refused_with_a_reason() {
+    fn moving_a_column_beside_a_horizontal_merge_keeps_the_merge_whole() {
         let (mut d, anchor, table) = move_fixture(3, 3);
         let (left, right) = (
             move_cell_paragraph(&d, table, 1, 0),
@@ -41033,15 +41076,17 @@ mod tests {
         d.merge_table_cell_range(&left, &right)
             .expect("merge two cells across columns");
 
-        let before = move_row_text(&d, table, 0);
-        let err = d
-            .move_table_column_inner(&anchor, 2, 0)
-            .expect_err("a gridSpan makes column indices meaningless");
-        assert!(
-            err.contains("merges cells across columns"),
-            "the refusal says WHY: {err}"
-        );
-        assert_eq!(move_row_text(&d, table, 0), before);
+        d.move_table_column_inner(&anchor, 2, 1)
+            .expect("column 2 moves to the front of the merged band");
+        assert_eq!(move_row_text(&d, table, 0), ["r0c2", "r0c0", "r0c1"]);
+        let spans: Vec<Option<u32>> = casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows[1]
+            .cells
+            .iter()
+            .map(|cell| cell.properties.grid_span)
+            .collect();
+        assert_eq!(spans, [None, Some(2)], "the merged cell is whole, after it");
     }
 
     #[test]
@@ -50000,14 +50045,16 @@ mod tests {
         );
     }
 
-    /// A merged table still arms every column boundary no cell straddles, and the
-    /// engine accepts exactly those (`docs/141` TBL-20).
+    /// A merged table arms EVERY column boundary, including one a merged cell
+    /// crosses (`docs/171`), as Google Docs and ONLYOFFICE do: the drag moves
+    /// the line between two grid columns, the cells that have a border there
+    /// move it, and the merged cell over it keeps its total width.
     ///
-    /// The zone was disarmed for the whole table, so three working boundaries
-    /// were disabled to protect one. The refusal on the ambiguous one is specific
-    /// and marked, so the reader is told which border and why.
+    /// This used to refuse the straddled boundary as ambiguous, and before that
+    /// to disarm the whole table. Mutation: restore the straddle refusal in
+    /// `move_table_column_boundary_inner` and the boundary-0 drag goes red.
     #[test]
-    fn a_merged_table_arms_the_boundaries_no_cell_straddles() {
+    fn a_merged_table_arms_every_column_boundary() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
         let body = body_paragraph(&d);
         let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
@@ -50020,24 +50067,28 @@ mod tests {
         let info = d.table_info(&after[2][0]);
         assert_eq!(
             info.resizable_column_boundaries(),
-            vec![1, 2],
-            "boundary 0 runs through the merged cell; 1 and 2 are as unambiguous \
-             as in any regular table"
+            vec![0, 1, 2],
+            "every internal boundary, the one the merged cell crosses included"
         );
 
-        let refusal = d
-            .move_table_column_boundary_inner(&after[2][0], 0, 200, "border")
-            .expect_err("boundary 0 is straddled by the merged cell");
-        let (sentence, code) = casual_doc_edit::refusal::split(&refusal);
+        let before = column_widths(&d, table);
+        d.move_table_column_boundary_inner(&after[2][0], 0, 200, "border")
+            .expect("boundary 0 is draggable although the merged cell crosses it");
+        let now = column_widths(&d, table);
+        assert_eq!((now[0] - before[0], now[1] - before[1]), (200, -200));
+        let merged_width = casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows[0]
+            .cells[0]
+            .properties
+            .width
+            .and_then(|w| w.dxa_twips());
         assert_eq!(
-            code,
-            Some("table.column-boundary-straddled"),
-            "and it refuses with a routable reason: {refusal}"
+            merged_width,
+            Some(now[0] + now[1]),
+            "the merged cell carries the sum of the two columns it spans"
         );
-        assert!(
-            sentence.contains("both sides"),
-            "whose English says which border and why: {sentence}"
-        );
+        d.undo().expect("undo the drag");
 
         let before = column_widths(&d, table);
         d.move_table_column_boundary_inner(&after[2][0], 1, 200, "border")
@@ -50089,7 +50140,7 @@ mod tests {
                 assert!(info.found() && !info.merged(), "the probe cell is plain");
                 assert_eq!(
                     info.resizable_column_boundaries(),
-                    vec![1, 2],
+                    vec![0, 1, 2],
                     "and the answer is the same at both sizes, so the ratio is \
                      comparing equal work"
                 );
