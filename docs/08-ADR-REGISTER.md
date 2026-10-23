@@ -4511,6 +4511,50 @@ report.
 
 **Open.** `docs/178` §13 Q1–Q12.
 
+## ADR-074 — The engine worker is an actor that hands back summaries; the editable document and its layout stay on the main thread and become lazy first
+
+**Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-13.
+**Design and measurements:** `docs/180`. **Builds on:** `56` (threading model), `113` and
+`116` §7 (windowed and lazy layout), `107` §4 (editing budgets), ADR-033. **Refines:** `56`'s
+"move the core to a Worker (SAB + OffscreenCanvas)".
+
+**Context.** Open, the font-upgrade re-layout and the first edit after either are each one
+uninterruptible O(document) task on the main thread: 3.3 s, 3.2 s and 3.1 s at 20,000
+paragraphs, and 29 to 31 s and 25 s at 100,000 (`docs/180` §2). `56` assumed shared memory,
+but GitHub Pages sends no COOP/COEP and wasm threads need a nightly `std`, so `56`'s shared
+memory is unavailable. Without it only bytes cross. The model crosses cheaply (12 MB, 44 ms
+to decode at 20,000 paragraphs), but the laid-out pages do not (406 MB, 1.78 s, only 2.3×
+cheaper than computing them), and `SourceEnvelope` has no encoding at all (`docs/180` §3.2).
+The editor reads at least 291 distinct engine members synchronously (`docs/180` §3.2).
+
+**Decision.**
+
+1. **Pattern: an actor with a command queue.** A disposable module worker owns a second
+   engine instance, created from the page's already-compiled `WebAssembly.Module`. Commands
+   carry a request id and a document generation, and the worker answers with progress,
+   result or error. Cancel is a generation bump plus terminate-and-respawn, because a wasm
+   call cannot be interrupted. Fallback is the main-thread path, through the same
+   degrade-on-missing/throw/deadline transport the proofing worker already uses.
+2. **The editable document stays on the main thread**, with the caret, input, hit testing,
+   the editing choke point and the visible window's layout. No round trip is ever on the
+   keystroke path.
+3. **Only summaries cross:** the model, the measure tier, and `ImageBitmap` rasters for
+   read-only surfaces. The paint tier never crosses.
+4. **The main thread's layout becomes lazy before the worker ships.** The order is E1 (one
+   shaping pass per full layout, through the galley cache), then E2 (no per-keystroke
+   document scans), then E3 (an editable prefix-and-extend whole layout), then W1 (open in
+   the worker, with progress, Cancel and fallback), then W2 (read-only surfaces from a
+   worker replica fed by the op stream). See `docs/180` §6.
+
+**Rejected.** Handing the laid-out pages across (§3.2). An asynchronous `ed.doc` proxy over a
+worker-owned engine (291 members, a round trip per caret move). `SharedArrayBuffer`/wasm
+threads (no COOP/COEP, nightly `std`). `OffscreenCanvas` for the editing surface (the caret
+overlay must agree with the paint in the same frame). Shipping a worker open before E1 and
+E3: it would move the 3.1 s task from the open to the first keystroke, and the guard would
+pass while the user's wait stayed the same.
+
+**Open.** `docs/180` §7 Q1 to Q3.
+
 ## ADR-074 — The second render backend is the `vello_common` sparse-strip encoder, on the CPU first and the GPU by opt-in; `tiny-skia` stays the reference
 
 **Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-14.
