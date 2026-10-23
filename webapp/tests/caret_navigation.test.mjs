@@ -215,6 +215,34 @@ test("a dead end that returns the same position is overridden", () => {
   });
 });
 
+test("from a zero-tall line, the engine's move to the line level with it stands (HF-372)", () => {
+  // The slot after a page break that ends a paragraph is a zero-tall line at the
+  // top of the next page, level with that page's first line. Probing for
+  // something LOWER skipped the first line for the second.
+  const lines = [
+    { node: "brk", offset: 1, page: 2, y: 1440, height: 0, clientTop: 500 },
+    { node: "long", offset: 0, page: 2, y: 1440, height: 291, clientTop: 500 },
+    { node: "long", offset: 95, page: 2, y: 1730, height: 291, clientTop: 517 },
+  ];
+  const io = engine(lines);
+  io.positionRect = (position) => {
+    const line = lines.find((l) => l.node === position.node && l.offset === position.offset);
+    return line ? { page: line.page, y: line.y, height: line.height } : null;
+  };
+  const from = { node: "brk", offset: 1 };
+  assert.deepEqual(recoverVerticalMove("down", from, { node: "long", offset: 0 }, io), {
+    node: "long",
+    offset: 0,
+  });
+  assert.deepEqual(io.calls, [], "the engine's answer is taken without probing");
+  // A line WITH height keeps the strict rule: a same-y answer is sideways.
+  const tall = { node: "long", offset: 0 };
+  assert.notDeepEqual(recoverVerticalMove("down", tall, { node: "brk", offset: 1 }, io), {
+    node: "brk",
+    offset: 1,
+  });
+});
+
 test("nothing above the first line means nothing happens", () => {
   // The fallback must not manufacture a move. `p1` is the top line; every probe
   // above it resolves to nothing, so the engine's own answer stands.

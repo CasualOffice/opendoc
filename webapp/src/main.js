@@ -8625,7 +8625,7 @@ function caretProbeIO() {
     },
     positionRect: (position) => {
       const flat = doc.caretRect(position.node, position.offset);
-      return flat.length >= 5 ? { page: flat[0], y: flat[2] } : null;
+      return flat.length >= 5 ? { page: flat[0], y: flat[2], height: flat[4] } : null;
     },
   };
 }

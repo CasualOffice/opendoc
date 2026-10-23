@@ -419,29 +419,7 @@ impl<'a> LayoutSnapshot<'a> {
         };
 
         let stops = stops_for(lb.line, lb.left);
-        let mut nearest = nearest_stop(&stops, point.x);
-        // A soft-wrap boundary offset both ENDS this line and STARTS the next, and
-        // `caret_start_line` resolves that tie to the next line. So clicking past
-        // the last word of a wrapped line — or pressing End, which hit-tests the
-        // line's far right — put the caret at the left edge of the following line:
-        // 660px left and one line down from where the user pointed.
-        //
-        // Word and Docs answer the same click with the position after the last
-        // non-space character, which is strictly inside this line and therefore
-        // not ambiguous at all. That is both the correct behaviour and the thing
-        // that removes the tie, so no affinity has to be threaded through the API.
-        if lb.line.line_break == LineBreak::Wrap
-            && nearest.offset == lb.line.range.end.offset
-            && let Some(offset) = visual_line_end(lb.line)
-        {
-            nearest = CaretStop {
-                x: stops
-                    .iter()
-                    .find(|stop| stop.offset == offset)
-                    .map_or(nearest.x, |stop| stop.x),
-                offset,
-            };
-        }
+        let nearest = stop_on_line(lb.line, &stops, point.x);
         let horizontally_inside =
             point.x.raw() >= line_left(&stops).raw() && point.x.raw() <= line_right(&stops).raw();
         let zone = if vertically_inside && horizontally_inside {
@@ -453,6 +431,34 @@ impl<'a> LayoutSnapshot<'a> {
             pos: ModelPos::new(lb.line.range.start.node, nearest.offset),
             zone,
         })
+    }
+
+    /// The caret position at the visual start (`toward_end == false`) or end of
+    /// the line that holds `pos`: where Home, End, Shift+Home, Shift+End and a
+    /// line delete move to.
+    ///
+    /// The line is the one [`Self::caret_rect`] draws `pos` on, found by its model
+    /// range. Home and End used to find it by probing the caret's y with
+    /// [`Self::hit_test`], which answers for whatever line that y falls in, and a
+    /// line with no height owns no y: the empty line before a page break in a
+    /// paragraph that holds nothing else, or the empty line after a trailing
+    /// Shift+Enter, is zero tall, so the probe fell through to the nearest line
+    /// WITH text, in the paragraph above or below. Home or End there moved the
+    /// caret into another paragraph (`docs/109` HF-371).
+    ///
+    /// The edge is the stop a press at the line's far left or far right picks, by
+    /// the same rule as [`Self::hit_test`], including the end of a soft-wrapped
+    /// line. `None` when no line holds `pos`.
+    #[must_use]
+    pub fn line_edge(&self, pos: ModelPos, toward_end: bool) -> Option<ModelPos> {
+        let lines = self.line_boxes_with_running(None);
+        let lb = &lines[caret_start_line(&lines, pos)?];
+        let stops = stops_for(lb.line, lb.left);
+        // Page-local x is never negative, so 0 is past every line's left edge;
+        // `i32::MIN` would overflow `nearest_stop`'s distance.
+        let x = if toward_end { Twip(i32::MAX) } else { Twip(0) };
+        let edge = stop_on_line(lb.line, &stops, x);
+        Some(ModelPos::new(lb.line.range.start.node, edge.offset))
     }
 
     /// The caret box for `pos`: a zero-width, line-height-tall rectangle at the
@@ -835,12 +841,26 @@ impl<'a> LayoutSnapshot<'a> {
         // one; candidates in the caret's own column are preferred, so a taller
         // neighbouring cell cannot capture the caret. `cell` is `None` for a body
         // paragraph, which spans the content width and therefore always matches.
+        //
+        // A ZERO-TALL current line is the one exception to "strictly below". The
+        // empty line after a page break that ends a paragraph sits at the top of
+        // the next page with no height, and the next paragraph's first line
+        // starts at that same top; so does the text after a leading line break.
+        // "Strictly below" skipped that first line, so Down from the slot after
+        // a page break landed on the SECOND line of the page (`docs/109`
+        // HF-372). From a zero-tall line, a line at the same top that comes
+        // later in flow order (earlier, going up) is beyond it. The exception is
+        // only for a line with no height: two lines of one table row share a
+        // top too, and Down must not step sideways between their cells.
         let here = (lines[cur].page, lines[cur].top.raw());
-        let beyond = |lb: &LineBox<'_>| {
+        let zero_tall = lines[cur].line.height.raw() <= 0;
+        let beyond = |index: usize| {
+            let lb = &lines[index];
             let there = (lb.page, lb.top.raw());
+            let level = zero_tall && there == here;
             match dir {
-                Direction::Down => there > here,
-                Direction::Up => there < here,
+                Direction::Down => there > here || (level && index > cur),
+                Direction::Up => there < here || (level && index < cur),
             }
         };
         let in_column =
@@ -854,13 +874,20 @@ impl<'a> LayoutSnapshot<'a> {
                 Direction::Down => rows - hereness,
                 Direction::Up => hereness - rows,
             };
-            (vertical, (lb.left.raw() - affinity.raw()).abs())
+            // Within one band, a line with height before a zero-tall one. The
+            // slot after a page break that ends a paragraph is a zero-tall line
+            // level with the next page's first line; ranked first by flow order,
+            // it took a Down press of its own, on which the caret vanished (it
+            // has no height) and the walk lost a step (`docs/109` HF-372). Word
+            // keeps that slot on the break's own line, so one Down crosses it.
+            let zero_tall = i32::from(lb.line.height.raw() <= 0);
+            (vertical, zero_tall, (lb.left.raw() - affinity.raw()).abs())
         };
         let ranked = |column_only: bool| {
             let mut candidates: Vec<usize> = lines
                 .iter()
                 .enumerate()
-                .filter(|(_, lb)| beyond(lb) && (!column_only || in_column(lb)))
+                .filter(|(index, lb)| beyond(*index) && (!column_only || in_column(lb)))
                 .map(|(index, _)| index)
                 .collect();
             candidates.sort_by_key(|&index| rank(&lines[index]));
@@ -906,7 +933,7 @@ impl<'a> LayoutSnapshot<'a> {
             let Some(resolved) = caret_start_line(&lines, landed) else {
                 continue;
             };
-            if !beyond(&lines[resolved]) {
+            if !beyond(resolved) {
                 continue;
             }
             return Some(landed);
@@ -1819,6 +1846,43 @@ fn visual_line_end(line: &Line) -> Option<u32> {
             .find(|&offset| offset > last)
             .unwrap_or(line.range.end.offset),
     )
+}
+
+/// The caret slot on `line` that a press at page-local `x` resolves to: the
+/// nearest stop, except past the end of a soft-wrapped line (below). Shared by
+/// [`LayoutSnapshot::hit_test`] and [`LayoutSnapshot::line_edge`], so a click past
+/// a line's end and End put the caret in the same place.
+fn stop_on_line(line: &Line, stops: &[CaretStop], x: Twip) -> CaretStop {
+    if stops.is_empty() {
+        return CaretStop {
+            x,
+            offset: line.range.start.offset,
+        };
+    }
+    let mut nearest = nearest_stop(stops, x);
+    // A soft-wrap boundary offset both ENDS this line and STARTS the next, and
+    // `caret_start_line` resolves that tie to the next line. So clicking past
+    // the last word of a wrapped line — or pressing End — put the caret at the
+    // left edge of the following line: 660px left and one line down from where
+    // the user pointed.
+    //
+    // Word and Docs answer the same click with the position after the last
+    // non-space character, which is strictly inside this line and therefore
+    // not ambiguous at all. That is both the correct behaviour and the thing
+    // that removes the tie, so no affinity has to be threaded through the API.
+    if line.line_break == LineBreak::Wrap
+        && nearest.offset == line.range.end.offset
+        && let Some(offset) = visual_line_end(line)
+    {
+        nearest = CaretStop {
+            x: stops
+                .iter()
+                .find(|stop| stop.offset == offset)
+                .map_or(nearest.x, |stop| stop.x),
+            offset,
+        };
+    }
+    nearest
 }
 
 /// The caret slot whose x is nearest `x` (ties resolve to the first).

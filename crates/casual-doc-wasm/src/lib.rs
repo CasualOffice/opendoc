@@ -17997,29 +17997,22 @@ impl WasmDocument {
                     }
                 }
             }
-            // Line start/end: probe the same visual line at its far left/right via
-            // hit-testing (reuses the exact line geometry).
+            // Line start/end: the far left/right caret slot of the caret's own
+            // visual line, chosen as a click there would choose it.
             "lineStart" | "lineEnd" => {
                 // "The same visual line" means the line the user can SEE. The two
                 // layouts wrap differently once a deletion is struck, so probing
                 // the editing layout walked a line that is not on screen and Home
                 // and End moved the caret up or down by whole lines.
-                let snapshot = self.painted_snapshot();
-                let Some((page, rect)) =
-                    snapshot.caret_rect(self.view_pos(ModelPos::new(nid, offset)))
-                else {
-                    return (nid, offset);
-                };
-                let y = Twip(rect.origin.y.raw() + rect.size.height.raw() / 2);
-                let x = if dir == "lineStart" {
-                    Twip(0)
-                } else {
-                    Twip(i32::MAX)
-                };
-                snapshot
-                    .hit_test(page, Point::new(x, y))
-                    .map_or((nid, offset), |h| {
-                        let p = self.edit_pos(h.pos);
+                //
+                // The edge is taken from the caret's OWN line, not by probing
+                // its y: a zero-tall line (before a lone page break, after a
+                // trailing Shift+Enter) owns no y, and the probe moved the caret
+                // into the paragraph above or below (`docs/109` HF-371).
+                self.painted_snapshot()
+                    .line_edge(self.view_pos(ModelPos::new(nid, offset)), dir == "lineEnd")
+                    .map_or((nid, offset), |p| {
+                        let p = self.edit_pos(p);
                         (p.node, p.offset)
                     })
             }
@@ -47928,6 +47921,115 @@ mod tests {
             "undoing Shift+Enter removes the break"
         );
         d.document.validate().expect("valid after undo");
+    }
+
+    /// **Home, End and Down stay on the caret's own line around breaks and tabs**
+    /// (`docs/109` HF-371, HF-372). A line that holds no text has no height: the
+    /// line before and after a lone page break, and the empty line after a
+    /// trailing or before a leading Shift+Enter. Home and End found "the caret's
+    /// line" by hit-testing its y, which such a line does not own, and moved the
+    /// caret into the paragraph above or below; Down from one skipped the line
+    /// level with it. Mutations: put back the y probe in `moved_caret`'s
+    /// `lineStart`/`lineEnd` arm (red on the lone page break), or drop the
+    /// zero-tall rules in `LayoutSnapshot::move_vertical` (red on Down).
+    #[test]
+    fn home_and_end_stay_on_the_carets_own_line_around_breaks_and_tabs() {
+        let mut d = plain_text_document(4);
+        let paras = body_paragraphs(&d);
+        let (first, second, third, fourth) = (paras[0].0, paras[1].0, paras[2].0, paras[3].0);
+        let edge = |d: &WasmDocument, node: NodeId, offset: u32, dir: &str| {
+            let c = d
+                .move_caret(&node.to_string(), offset, dir, None)
+                .expect("move");
+            (c.node, c.offset)
+        };
+        let at = |node: NodeId, offset: u32| (node.to_string(), offset);
+
+        // A paragraph that holds nothing but a page break: the line before the
+        // break and the line after it are both empty and zero tall. Home and End
+        // on either must stay in that paragraph. Red before HF-371: End at
+        // offset 0 went to the END of the paragraph above, and Home at offset 1
+        // to the START of the one below.
+        let n = second.to_string();
+        let len = d.paragraph_text(second).len() as u32;
+        d.delete_selection(&n, 0, &n, len).expect("clear");
+        d.insert_break_inner(&n, 0, "page").expect("page break");
+        assert_eq!(d.paragraph_text(second), "\n");
+        for offset in [0, 1] {
+            for dir in ["lineStart", "lineEnd"] {
+                assert_eq!(
+                    edge(&d, second, offset, dir),
+                    at(second, offset),
+                    "{dir} from offset {offset} of a lone page break stays on its line"
+                );
+            }
+        }
+
+        // A trailing Shift+Enter: "one", break, and an empty last line.
+        let n = first.to_string();
+        let len = d.paragraph_text(first).len() as u32;
+        d.delete_selection(&n, 0, &n, len).expect("clear");
+        d.insert_text(&n, 0, "one".to_owned()).expect("type");
+        d.insert_line_break(&n, 3).expect("line break");
+        assert_eq!(
+            edge(&d, first, 0, "lineEnd"),
+            at(first, 3),
+            "End stops before the break"
+        );
+        assert_eq!(edge(&d, first, 3, "lineStart"), at(first, 0));
+        assert_eq!(
+            edge(&d, first, 4, "lineEnd"),
+            at(first, 4),
+            "End on the empty line after it"
+        );
+        assert_eq!(
+            edge(&d, first, 4, "lineStart"),
+            at(first, 4),
+            "Home on the empty line after it"
+        );
+        // …and with text after it, each line keeps its own edges.
+        d.insert_text(&n, 4, "two".to_owned()).expect("type");
+        assert_eq!(edge(&d, first, 4, "lineEnd"), at(first, 7));
+        assert_eq!(edge(&d, first, 7, "lineStart"), at(first, 4));
+        assert_eq!(edge(&d, first, 2, "lineEnd"), at(first, 3));
+
+        // A tab is one position on the line, so End lands after the text that
+        // follows it and Home before the text that precedes it.
+        let n = third.to_string();
+        let len = d.paragraph_text(third).len() as u32;
+        d.delete_selection(&n, 0, &n, len).expect("clear");
+        d.insert_text(&n, 0, "a\tb".to_owned()).expect("type a tab");
+        assert_eq!(d.paragraph_text(third), "a\tb");
+        assert_eq!(edge(&d, third, 0, "lineEnd"), at(third, 3));
+        assert_eq!(edge(&d, third, 3, "lineStart"), at(third, 0));
+
+        // Down from either side of the lone page break reaches the next page's
+        // first line in ONE press. The slot after the break is a zero-tall line
+        // level with that line; ranked first, it took a press of its own on
+        // which the caret had no height (HF-372).
+        for offset in [0, 1] {
+            assert_eq!(
+                edge(&d, second, offset, "down").0,
+                third.to_string(),
+                "Down from offset {offset} of a lone page break"
+            );
+        }
+
+        // A LEADING line break: a zero-tall empty line level with the text after
+        // it. "Strictly below" skipped that text, and here (the last paragraph)
+        // the caret did not move at all (HF-372).
+        let n = fourth.to_string();
+        let len = d.paragraph_text(fourth).len() as u32;
+        d.delete_selection(&n, 0, &n, len).expect("clear");
+        d.insert_text(&n, 0, "one".to_owned()).expect("type");
+        d.insert_line_break(&n, 0).expect("leading line break");
+        assert_eq!(d.paragraph_text(fourth), "\none");
+        let down = edge(&d, fourth, 0, "down");
+        assert_eq!(down.0, fourth.to_string());
+        assert!(
+            down.1 >= 1,
+            "Down from before a leading break lands on its text: {down:?}"
+        );
     }
 
     /// **The guarantee behind Shift+Enter** (`docs/109` HF-296): the caret after a

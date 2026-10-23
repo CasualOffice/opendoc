@@ -164,7 +164,17 @@ export function movedVertically(origin, target, direction) {
  */
 export function recoverVerticalMove(direction, from, engineResult, io) {
   const origin = io.positionRect(from);
-  if (movedVertically(origin, io.positionRect(engineResult), direction)) return engineResult;
+  const target = io.positionRect(engineResult);
+  if (movedVertically(origin, target, direction)) return engineResult;
+  // A caret on a ZERO-TALL line (the slot after a page break that ends a
+  // paragraph, at the top of the next page) shares its y with the line that
+  // follows it, so "lower on the page" cannot tell that line from this one. The
+  // engine can — it orders same-y lines by flow when the line it leaves has no
+  // height — and its answer is a different position on the same page and y.
+  // Probing instead skipped that line for the one below it (`docs/109` HF-372).
+  const level = origin && target && target.page === origin.page && target.y === origin.y;
+  const moved = engineResult.node !== from.node || engineResult.offset !== from.offset;
+  if (level && moved && origin.height === 0) return engineResult;
   return probeVerticalNeighbour(direction, from, io) ?? engineResult;
 }
 
@@ -179,7 +189,7 @@ export function recoverVerticalMove(direction, from, engineResult, io) {
  *   the painted caret's client rect
  * @param {(x:number, y:number) => ({node:string,offset:number}|null)} io.resolveAt
  *   hit-test a client point to a model position
- * @param {(pos:object) => ({page:number,y:number}|null)} io.positionRect
+ * @param {(pos:object) => ({page:number,y:number,height?:number}|null)} io.positionRect
  *   the engine's own geometry for a model position
  * @returns {{node:string,offset:number}|null} null when there is genuinely
  *   nothing in that direction — the top and bottom of the document must stay
