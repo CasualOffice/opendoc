@@ -293,3 +293,13 @@ shared grip contract in `docs/172`.
   refuses every case the grid map would answer differently.
 - **Sort and formulas on merged tables** still refuse, with their existing reasons.
 - **§7 items 3–8 and §8** are the next PR on this lane.
+
+## Owner decision, 2026-10-23: the column strip when there is no room above a table (HF-348)
+
+When the free space above a table is too small for a 24px column strip without covering a
+line of text, **no strip is painted**. Instead, Word's model applies: column selection arms
+over the table's own top border (±12px around the border line, clamped so it never reaches
+a line of text above), shown with the column-select cursor and a thin highlight of the
+column. A click selects the column; the "+" insert stays reachable from the band, the Table
+menu, the context menu and the palette. Below the table is rejected: it would separate the
+control from the edge it acts on.
