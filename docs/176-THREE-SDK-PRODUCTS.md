@@ -446,7 +446,17 @@ wrong, and the Native SDK's render and convert half **is** the viewer cut behind
 | R7 | **Overclaiming against competitors** | §7 quotes their own pages, and marks the rest *not stated*. No competitor size or speed is claimed, because none was measured |
 | R8 | The Native read view freezes model internals into a public API | The view is a projection with its own types (`docs/05`: "Internal model and transaction types are not re-exported") |
 
-## 10. Open questions for the owner
+## 10. Owner decisions (2026-10-23), and what is still open
+
+**Decided:**
+- **Build order: Viewer first.** It is the smallest step from today's code, competes directly with docx-preview, and forces the stable read API the Native SDK also needs.
+- **Viewer fonts (Q2): a small core inside the package, the rest supplied by the host** through the existing font-registry seam. No CDN fetch by default. Pixels stay deterministic when the host serves the same faces.
+- **Viewer formats (Q5): DOCX only by default.** ODT, RTF and TXT are opt-in features, because they add about 3.6 MB today through the format registry's writers.
+- **Java (Q3): both.** The FFM API (JDK 22+) first; a JNI shim for JDK 8-21 later, if customers ask.
+
+**Still open:** Q1 (package names and registry credentials), Q4 (whether Native batch edits need the transaction log), Q6 (native platform list), Q7 (whether Node needs a native addon or WASM is enough) and Q8 (a minimal `<opendoc-viewer>` element).
+
+### Original open questions (for reference)
 
 - **Q1. Names and registry ownership.** Are `@casualoffice/opendoc-viewer`, crate `opendoc`,
   Maven `org.casualoffice:opendoc`, PyPI `opendoc` and NuGet `CasualOffice.OpenDoc` right,
