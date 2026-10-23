@@ -205,6 +205,10 @@ mod toc;
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;
 
+// Formatting as you type: a typed list marker becomes a list in one undo step
+// (`docs/174` TA-05).
+mod input_rules;
+
 // Version diff (`docs/140` H3). Its own module for the same reason, and because
 // it touches nothing in the live session: it takes two checkpoints' bytes and
 // returns a sidecar, which is exactly what makes it movable into a Worker later
