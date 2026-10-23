@@ -456,8 +456,12 @@ const SRC = new URL("../src/", import.meta.url);
  *  structural-edit announcements cost two host bindings (the band's and the
  *  command tree's `status`), paid for by folding both `clearTableSelection`
  *  arrows to one line each; the scroll re-hover lives in `table_gutter.mjs`.
- *  MEASURED with `wc -l`. */
-const MAIN_JS_LINE_CEILING = 16030;
+ *  MEASURED with `wc -l`.
+ *
+ *  The split (`docs/177`, `109` HF-380): each feature domain leaves `main.js` for
+ *  a `create*(ed)` module handed the editor context, and every step lowers this
+ *  number to the file it left behind. MEASURED with `wc -l` after each step. */
+const MAIN_JS_LINE_CEILING = 14859;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -930,4 +934,43 @@ test("main.js keeps no module-level binding nothing reads", () => {
       "reachable in a way this scan cannot model, say how in a comment here rather " +
       "than leaving the guard to be argued with.",
   );
+});
+
+// The split of `main.js` (`docs/177`, `109` HF-380). A domain module is a
+// `create*(ed)` factory over the editor context `ed`, whose entries are getters
+// (and setters) generated in `main.js`. A name a module reaches that the context
+// does not carry reads `undefined` and fails at the first call, not at boot — so
+// the agreement is checked here, where it costs nothing.
+function domainModules() {
+  return moduleFiles().filter((f) => /^export function create\w+\(ed\)/m.test(read(f)));
+}
+
+test("every name a domain module reaches through ed is on the context", () => {
+  const main = read("main.js");
+  const missing = [];
+  for (const f of domainModules()) {
+    const body = code(read(f));
+    for (const [, name] of body.matchAll(/\bed\.([A-Za-z_$][\w$]*)/g)) {
+      if (!main.includes(`get ${name}() { return ${name}; }`)) missing.push(`${f}: ed.${name} (getter)`);
+    }
+    const writes =
+      /\bed\.([A-Za-z_$][\w$]*)\s*(?:(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)|\+\+|--)|(?:\+\+|--)\s*ed\.([A-Za-z_$][\w$]*)/g;
+    for (const m of body.matchAll(writes)) {
+      const name = m[1] ?? m[2];
+      if (!main.includes(`set ${name}(v) { ${name} = v; }`)) missing.push(`${f}: ed.${name} (setter)`);
+    }
+  }
+  assert.deepEqual(
+    [...new Set(missing)],
+    [],
+    "a domain module reaches a name the editor context in main.js does not carry. " +
+      "Add the getter (and a setter if the module assigns it) to the generated block.",
+  );
+});
+
+test("a domain module split out of main.js stays under 2,000 lines", () => {
+  const large = domainModules()
+    .map((f) => [f, read(f).split("\n").length - 1])
+    .filter(([, lines]) => lines > 2000);
+  assert.deepEqual(large, [], "SKILL §10: split the domain again rather than growing a second main.js");
 });

@@ -68,6 +68,7 @@ import {
   normalize as normalizeBrand,
 } from "./build-brand.mjs";
 import { readPalettes } from "./palette_source.mjs";
+import { editorSource } from "./editor_sources.mjs";
 import { RELEASE } from "../../packages/opendoc-embed/src/release.mjs";
 import {
   COMMAND_CONTRACT,
@@ -302,7 +303,8 @@ function packed() {
  *  capability nothing reads is withheld by the sandbox or by nothing at all, and
  *  the page has to say which — so it asks the code. */
 function chromeConsulted() {
-  const source = read(SOURCES.main);
+  // `main.js` and the domain modules split out of it (docs/177): one page, one source.
+  const source = editorSource(dirname(SOURCES.main));
   const consulted = new Map();
   for (const line of source.split("\n")) {
     const match = line.match(/(?:HOST_CAPS|hostCapabilities\(\))\.has\("([a-z]+)"\)/);

@@ -64,7 +64,7 @@ import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { FONT_SIZE_STEPS, RECOMMENDED_STYLES, caretContexts, nextFontSizeStep, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { styleDisplayName } from "./style_names.mjs";
-import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
+import { applyPreviewInk, applyStylePreview } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
 import { downloadBytes, populateSaveFormats } from "./save_formats.mjs";
@@ -76,7 +76,6 @@ import { createCompactToolbar } from "./compact_toolbar.mjs";
 import { createConfirmDialog } from "./confirm_dialog.mjs";
 import { createPropertiesDialog } from "./document_metadata.mjs";
 import { createNamePrompt } from "./name_dialog.mjs";
-import { createVersionHistory } from "./version_panel.mjs";
 import { CAPTURE_REASON } from "./version_history.mjs";
 import {
   PAGE_WINDOW_OVERSCAN_PX,
@@ -119,29 +118,13 @@ import { pageSnapTargets, snapBox } from "./object_snap.mjs";
 import { activeLocale, t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs";
-import { startLocalisation } from "./locale_boot.mjs";
 import { localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
 import { createFormattingMarks } from "./formatting_marks.mjs";
 import { createMeasurementUnits } from "./measurement_units.mjs";
 import { createDocumentProtection } from "./document_protection.mjs";
 import {
-  DRAFT_EXPORT_MODES,
-  DRAFT_WRITE_REASONS,
-  DraftPresence,
-  DraftScheduler,
-  HEARTBEAT_MS,
-  bindDraftFlushOnExit,
-  describeDraftAge,
-  describeDraftSize,
-  documentKey,
-  draftFormatFor,
-  draftSlotId,
-  evictableSlots,
-  offerableDrafts,
-  openDraftStore,
   openWordStore,
-  slotIsLive,
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
@@ -166,8 +149,6 @@ import { smallestContaining } from "./review_anchor.mjs";
 import { createReviewTracking } from "./review_tracking.mjs";
 import { scrollLeftFor, scrollTargetFor } from "./scroll_into_view.mjs";
 import { createAutoCorrect } from "./autocorrect.mjs";
-import { matchWithinScope, positionComparator } from "./find_scope.mjs";
-import { createFindSession } from "./find_session.mjs"; // TA-03/TA-04: the anchor typing refines from, and the all-match highlight
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
@@ -194,8 +175,6 @@ import {
   reviewRevisionTooltip,
 } from "./review_labels.mjs";
 import {
-  byteOffsetToStringIndex,
-  isWholeWordAt,
   recaseRichRuns,
   smartQuoteForTyped,
 } from "./text_rules.mjs";
@@ -233,7 +212,6 @@ import {
 import { reviewCurrentTargetIndex } from "./review_target.mjs";
 import {
   fileCategoryRowFor,
-  setPaneRenderer,
   showSettingsPane,
   releaseSettingsPanel,
   renderFilePane,
@@ -276,10 +254,93 @@ import { quickStyleCommands } from "./quick_styles.mjs";
 import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
-import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
 import { applyRegions } from "./chrome_regions.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
 import { cellContentsSelection } from "./table_tab.mjs";
+import { createFind } from "./editor_find.mjs";
+import { createDrafts } from "./editor_drafts.mjs";
+import { createVersions } from "./editor_versions.mjs";
+import { createSettings } from "./editor_settings.mjs";
+// editor-context:begin
+/** The editor context (docs/177): the one object every extracted module is handed.
+ *  Each entry is a live view of a binding this file still owns, read lazily, so a
+ *  module sees the value at call time exactly as the code did before it moved. */
+const ed = {
+  get AUTOSAVE_ALLOWED_HERE() { return AUTOSAVE_ALLOWED_HERE; },
+  get EDITOR_KEYBOARD_PLATFORM() { return EDITOR_KEYBOARD_PLATFORM; },
+  get HOST_CAPS() { return HOST_CAPS; },
+  get activatingRestore() { return activatingRestore; }, set activatingRestore(v) { activatingRestore = v; },
+  get armBackgroundMeasure() { return armBackgroundMeasure; },
+  get autosaveToggle() { return autosaveToggle; },
+  get blockUntrackedInSuggesting() { return blockUntrackedInSuggesting; },
+  get caretIsImplicit() { return caretIsImplicit; },
+  get clearAllDrafts() { return clearAllDrafts; },
+  get commentEdit() { return commentEdit; },
+  get commentQuotes() { return commentQuotes; },
+  get comparePanel() { return comparePanel; },
+  get confirmDiscardIfEdited() { return confirmDiscardIfEdited; },
+  get confirmModal() { return confirmModal; },
+  get currentName() { return currentName; },
+  get currentRevision() { return currentRevision; },
+  get currentSourceFormat() { return currentSourceFormat; },
+  get doc() { return doc; }, set doc(v) { doc = v; },
+  get documentEpoch() { return documentEpoch; },
+  get documentIsDirty() { return documentIsDirty; },
+  get draftDocKey() { return draftDocKey; }, set draftDocKey(v) { draftDocKey = v; },
+  get draftOffers() { return draftOffers; }, set draftOffers(v) { draftOffers = v; },
+  get draftsClearBtn() { return draftsClearBtn; },
+  get drawSelection() { return drawSelection; },
+  get focusEditorSurface() { return focusEditorSurface; },
+  get grammarCheckToggle() { return grammarCheckToggle; },
+  get hasRange() { return hasRange; },
+  get noteDraftDirty() { return noteDraftDirty; },
+  get objectPresence() { return objectPresence; },
+  get openBytes() { return openBytes; },
+  get pagesEl() { return pagesEl; },
+  get paintOverlayLayer() { return paintOverlayLayer; },
+  get place() { return place; },
+  get queueDraftWork() { return queueDraftWork; },
+  get readOnlyReason() { return readOnlyReason; }, set readOnlyReason(v) { readOnlyReason = v; },
+  get readReviewData() { return readReviewData; },
+  get redlineOf() { return redlineOf; },
+  get reflectShowingChangesState() { return reflectShowingChangesState; },
+  get reflowView() { return reflowView; },
+  get refreshDraftOffers() { return refreshDraftOffers; },
+  get renderAll() { return renderAll; },
+  get renderFilePage() { return renderFilePage; },
+  get restoredFromDraft() { return restoredFromDraft; }, set restoredFromDraft(v) { restoredFromDraft = v; },
+  get reviewCardCache() { return reviewCardCache; },
+  get reviewLayout() { return reviewLayout; }, set reviewLayout(v) { reviewLayout = v; },
+  get reviewMode() { return reviewMode; },
+  get reviewSidebar() { return reviewSidebar; },
+  get reviewSidebarPreference() { return reviewSidebarPreference; }, set reviewSidebarPreference(v) { reviewSidebarPreference = v; },
+  get revisionUnreadable() { return revisionUnreadable; },
+  get runEdit() { return runEdit; },
+  get saveSettings() { return saveSettings; },
+  get scrollFindMatchIntoView() { return scrollFindMatchIntoView; },
+  get selection() { return selection; }, set selection(v) { selection = v; },
+  get setDocumentState() { return setDocumentState; },
+  get setDraftStatus() { return setDraftStatus; },
+  get setGrammarCheckEnabled() { return setGrammarCheckEnabled; },
+  get setReviewMode() { return setReviewMode; },
+  get setSpellCheckEnabled() { return setSpellCheckEnabled; },
+  get setStatus() { return setStatus; },
+  get settings() { return settings; }, set settings(v) { settings = v; },
+  get settingsBtn() { return settingsBtn; },
+  get sharedRestoreRefusal() { return sharedRestoreRefusal; },
+  get showChange() { return showChange; },
+  get showingChanges() { return showingChanges; }, set showingChanges(v) { showingChanges = v; },
+  get spellCheckToggle() { return spellCheckToggle; },
+  get statusChannel() { return statusChannel; },
+  get tableRange() { return tableRange; },
+  get takeDraftSnapshot() { return takeDraftSnapshot; },
+  get toggleReview() { return toggleReview; },
+  get updateStats() { return updateStats; },
+  get updateToolbar() { return updateToolbar; },
+  get versionHistory() { return versionHistory; },
+  get versionPreviewHome() { return versionPreviewHome; }, set versionPreviewHome(v) { versionPreviewHome = v; },
+};
+// editor-context:end
 
 
 /** url → fetched or pending font bytes (persists across documents). */
@@ -497,26 +558,7 @@ const filePageBody = document.getElementById("filePageBody");
 const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 const viewOutlineBtn = document.getElementById("viewOutlineBtn");
-const findBtn = document.getElementById("findBtn");
-const findPanel = document.getElementById("findPanel");
-const findInput = document.getElementById("findInput");
-const replaceInput = document.getElementById("replaceInput");
-const findStatus = document.getElementById("findStatus");
-const findCase = document.getElementById("findCase");
-const findWholeWord = document.getElementById("findWholeWord");
-const findSelection = document.getElementById("findSelection");
-let findScope = null;
-const findSession = createFindSession({
-  getDoc: () => doc,
-  getSelection: () => selection,
-  isImplicit: () => caretIsImplicit(),
-  place: (flat, kind) => place(flat, kind),
-  revisionKey: () => `${documentEpoch}:${currentRevision}`,
-  active: () => !findPanel.hidden,
-  repaint: () => paintOverlayLayer(),
-  // The highlight only: the status line keeps what the last action said ("Replaced 4").
-  rescan: () => findSession.show(scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked)),
-});
+const { clearFindParagraphCache, findBtn, findSession, openFind } = createFind(ed);
 
 /** Shows the named ribbon tab's panel and marks its tab selected.
  *
@@ -13076,290 +13118,6 @@ document.addEventListener("keydown", (e) => {
 // worked, it just had no on-screen affordance to discover it.
 searchTrigger?.addEventListener("click", () => openCmd());
 
-// ---- Find / replace ---------------------------------------------------------
-const FIND_SCAN_CAP = 5000;
-
-function setFindStatus(text, miss = false) {
-  findStatus.textContent = text;
-  findStatus.classList.toggle("miss", miss);
-}
-
-const findParagraphTextCache = new Map();
-
-function paragraphTextForFind(node) {
-  if (!findParagraphTextCache.has(node)) {
-    const length = doc.paragraphLength(node);
-    findParagraphTextCache.set(node, doc.copyText(node, 0, node, length));
-  }
-  return findParagraphTextCache.get(node);
-}
-
-/** Whether an engine match stands alone as a word — the "Whole word" option.
- *  The paragraph text comes from the engine; the boundary rule itself is
- *  `isWholeWordAt`, which is pure and unit-tested. */
-function isWholeWordMatch(match) {
-  const text = paragraphTextForFind(match.startNode);
-  return isWholeWordAt(
-    text,
-    byteOffsetToStringIndex(text, match.startOffset),
-    byteOffsetToStringIndex(text, match.endOffset),
-  );
-}
-
-function clearFindParagraphCache() {
-  findParagraphTextCache.clear();
-}
-
-// Capture the current selection as an ordered scope for "find in selection".
-// selectionEdge(...false) is the document-order start, (...true) the end. We
-// copy the values out and free the WASM handles immediately. Returns null when
-// there is no non-empty range to scope to.
-function captureFindScope() {
-  if (!selection || !hasRange()) return null;
-  const { anchor, focus } = selection;
-  const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
-  const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
-  const scope = {
-    startNode: s.node,
-    startOffset: s.offset,
-    endNode: e.node,
-    endOffset: e.offset,
-  };
-  s.free();
-  e.free();
-  return scope;
-}
-
-// True iff position (aNode:aOff) <= position (bNode:bOff) in document order.
-// Same node compares offsets with no WASM call; otherwise selectionEdge(...false)
-// returns whichever endpoint is earlier, and since the two nodes differ the
-// returned node uniquely identifies which one that is.
-
-// A find match spans a single paragraph, so match.startNode === match.endNode.
-// Accept iff [match.startOffset .. match.endOffset] on that node lies within the
-// ordered scope [scopeStart .. scopeEnd]. Boundary-node matches (the common
-// single-paragraph case and the first/last paragraph of a multi-paragraph
-// scope) resolve with zero extra WASM calls; only genuinely-interior nodes need
-// the two order tests.
-function matchInFindSelection(match) {
-  if (!findSelection.checked) return true;
-  if (!findScope) return false;
-  return matchWithinScope(match, findScope, positionComparator(doc));
-}
-
-/** Scans every match in document order, starting from the top, up to
- * FIND_SCAN_CAP — bounded like every other pagination/parse loop in this
- * codebase, since findText wraps around and would otherwise loop forever.
- * Once every match has been visited once, the engine's wrap fallback can
- * re-surface *any* earlier match (not necessarily the first one), so
- * termination checks membership in every key seen so far, not just the
- * first — comparing only to the first match's key under-counts (it can
- * oscillate between two later matches forever without ever revisiting the
- * exact first one). */
-function scanAllMatches(query, matchCase, wholeWord = false) {
-  const matches = [];
-  if (!doc || !query) return matches;
-  const first = doc.firstPosition();
-  let node = first.node;
-  let offset = first.offset;
-  first.free();
-  const seen = new Set();
-  for (let i = 0; i < FIND_SCAN_CAP; i++) {
-    const match = doc.findText(query, node, offset, true, matchCase);
-    if (!match.found) {
-      match.free();
-      break;
-    }
-    const key = `${match.startNode}:${match.startOffset}`;
-    if (seen.has(key)) {
-      match.free();
-      break;
-    }
-    seen.add(key);
-    const candidate = {
-      startNode: match.startNode,
-      startOffset: match.startOffset,
-      endNode: match.endNode,
-      endOffset: match.endOffset,
-    };
-    if ((!wholeWord || isWholeWordMatch(candidate)) && matchInFindSelection(candidate)) {
-      matches.push(candidate);
-    }
-    node = match.endNode;
-    offset = match.endOffset;
-    match.free();
-  }
-  return matches;
-}
-
-/** Publishes the match list to the highlight and states "n of N". An untouched
- *  load-time caret is not a place the user searched from, so a document whose
- *  first characters are the query reports "N matches", not "1 of N". */
-function updateFindStatus(matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked)) {
-  const idx = findSession.show(matches);
-  if (!findInput.value) setFindStatus("");
-  else if (!matches.length) setFindStatus("No match", true);
-  else setFindStatus(matches.length === 1 ? "1 match" : idx >= 0 ? `${idx + 1} of ${matches.length}` : `${matches.length} matches`);
-}
-
-function selectedPlainText() {
-  if (!selection) return "";
-  const { anchor, focus } = selection;
-  if (anchor.node === focus.node && anchor.offset === focus.offset) return "";
-  return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
-}
-
-function queryMatchesSelection() {
-  const query = findInput.value;
-  if (!query) return false;
-  const selected = selectedPlainText();
-  if (!selected.includes("\n")) {
-    return findCase.checked
-      ? selected === query
-      : selected.toLocaleLowerCase() === query.toLocaleLowerCase();
-  }
-  return false;
-}
-
-function selectTextMatch(match, matches) {
-  if (!match || match.found === false) {
-    setFindStatus("No match", true);
-    return false;
-  }
-  selection = {
-    anchor: { node: match.startNode, offset: match.startOffset },
-    focus: { node: match.endNode, offset: match.endOffset },
-  };
-  updateFindStatus(matches); // before the repaint, so it paints this match as current
-  drawSelection();
-  // Deliberately does NOT call focusEditorSurface(): this runs on every
-  // keystroke while live-searching (findInput's "input" listener), and
-  // stealing focus back to the canvas mid-typing sent subsequent keystrokes
-  // to the document instead of the find box. Focus returns to the canvas
-  // only when the panel actually closes (closeFind).
-  scrollFindMatchIntoView();
-  return true;
-}
-
-/** One Find step. `incremental` (the query was typed) re-searches from the
- *  session's anchor and never advances; otherwise Next/Previous step from the
- *  current match, or from the caret (`find_session.mjs`, TA-03). */
-function findFromSelection(forward, incremental = false) {
-  const matches = doc && findInput.value ? scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked) : [];
-  if (!matches.length) {
-    updateFindStatus(matches);
-    return false;
-  }
-  return selectTextMatch(matches[findSession.pick(matches, forward, incremental)], matches);
-}
-
-async function replaceCurrentMatch() {
-  if (!doc || !findInput.value) return;
-  if (blockUntrackedInSuggesting()) return;
-  if (!queryMatchesSelection()) {
-    findFromSelection(true);
-    return;
-  }
-  const { anchor, focus } = selection;
-  await runEdit(() =>
-    doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, replaceInput.value),
-  );
-  findFromSelection(true);
-}
-
-/** Replaces every match in document order. Each iteration re-finds from just
- * past the previous replacement (not from the top), so a replacement text
- * that itself contains the query (e.g. "cat" -> "cats") can never re-match
- * what was just inserted and loop forever; FIND_SCAN_CAP is a bounded
- * backstop regardless. */
-async function replaceAllMatches() {
-  if (!doc || !findInput.value) return;
-  if (blockUntrackedInSuggesting()) return;
-  const replacement = replaceInput.value;
-  // Collect every match (honoring case / whole-word / selection scope) in
-  // document order, then replace them ALL as ONE undoable action — Word and
-  // Google Docs undo a Replace All in a single step. The ranges are passed in
-  // DESCENDING document order (reverse of the scan) so applying each replacement
-  // never shifts an earlier, not-yet-applied match's offsets.
-  const matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked);
-  if (!matches.length) {
-    setFindStatus("No match", true);
-    return;
-  }
-  const ordered = matches.slice().reverse();
-  await runEdit(() =>
-    doc.replaceRanges(
-      ordered.map((m) => m.startNode),
-      ordered.map((m) => m.startOffset),
-      ordered.map((m) => m.endNode),
-      ordered.map((m) => m.endOffset),
-      replacement,
-    ),
-  );
-  setFindStatus(`Replaced ${matches.length}`);
-}
-
-function openFind({ replace = false } = {}) {
-  if (!doc) return;
-  findPanel.hidden = false;
-  if (findSelection.checked) findSelection.dispatchEvent(new Event("change"));
-  const selected = selectedPlainText();
-  if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
-  updateFindStatus();
-  // ⌘H lands on the replacement once there is a query to replace (VS Code's rule; Word's Replace tab).
-  const field = replace && findInput.value ? replaceInput : findInput;
-  field.focus();
-  field.select();
-}
-
-function closeFind() {
-  findPanel.hidden = true;
-  findSession.clear();
-  focusEditorSurface();
-}
-
-findInput.addEventListener("input", () => {
-  if (findInput.value) findFromSelection(true, true); // refine from the anchor, never advance (TA-03)
-  else updateFindStatus();
-});
-findInput.addEventListener("focus", () => findSession.anchorHere());
-findCase.addEventListener("change", () => updateFindStatus());
-findWholeWord.addEventListener("change", () => updateFindStatus());
-findSelection.addEventListener("change", () => {
-  if (findSelection.checked) {
-    findScope = captureFindScope();
-  } else {
-    findScope = null;
-  }
-  updateFindStatus();
-});
-findInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    findFromSelection(!e.shiftKey);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeFind();
-  }
-});
-replaceInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    replaceCurrentMatch();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeFind();
-  }
-});
-findCase.addEventListener("change", () => findFromSelection(true, true));
-// The find bar's five buttons, looked up where they are USED: one listener each,
-// and five names in the widest scope in the product for them.
-document.getElementById("findPrev").addEventListener("click", () => findFromSelection(false));
-document.getElementById("findNext").addEventListener("click", () => findFromSelection(true));
-document.getElementById("replaceOne").addEventListener("click", replaceCurrentMatch);
-document.getElementById("replaceAll").addEventListener("click", replaceAllMatches);
-document.getElementById("findClose").addEventListener("click", closeFind);
-findBtn.addEventListener("click", () => openFind());
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
@@ -14926,644 +14684,14 @@ viewportEl.addEventListener("drop", (e) => {
 
 // ---- Settings: theme + accent + reviewer identity, persisted (OSS-customizable) ----
 const settingsBtn = document.getElementById("settingsBtn");
-// ---- Autosave drafts and crash recovery (HF-011 / OO-004, docs/112) --------
-//
-// The hole this closes: the open document lives in the wasm heap and nowhere
-// else, so an OOM kill, a wasm trap or a power cut — none of which run a single
-// line of shutdown code — took the whole session with it. The `beforeunload`
-// guard above catches a deliberate close and nothing else.
-//
-// The shape is the sibling's (opencalc `editor.drafts.js`), as owner decision
-// D-1 requires: an IndexedDB store with a meta row and a bytes row per tab
-// slot, written on quiesce with a ceiling, and a boot-time bar that OFFERS the
-// work back and never applies it. The policy lives in `drafts.mjs` where it can
-// be unit-tested; what is here is wiring, the surfaces, and the export ladder.
-//
-// Two invariants, both load-bearing:
-//   * nothing on the keystroke path is O(document) — `noteDraftDirty` stores an
-//     integer and re-arms a timer, and the snapshot runs from that timer;
-//   * the draft is written in the document's OWN format, because the
-//     normalized-JSON snapshot measurably drops embedded images (docs/112 §3.2)
-//     and handing back a document with its pictures gone is silent data loss.
-const draftRecoveryBar = document.getElementById("draftRecoveryBar");
-const draftRecoveryList = document.getElementById("draftRecoveryList");
-const draftRecoveryTitle = document.getElementById("draftRecoveryTitle");
-const draftStatusEl = document.getElementById("draftStatus");
-const autosaveToggle = document.getElementById("autosaveToggle");
-const spellCheckToggle = document.getElementById("spellCheckToggle");
-const grammarCheckToggle = document.getElementById("grammarCheckToggle");
-const draftsClearBtn = document.getElementById("draftsClearBtn");
-
-/** This tab's slot. `let`, because opening another document hands the current
- *  slot's draft over as an orphan and takes a fresh one (see
- *  `handOverDraftBeforeOpen`). */
-let draftSlot = draftSlotId(safeSessionStorage());
-let draftStore = null;
-let draftStoreOpening = null;
-/** Non-empty once autosave has given up, and the reason it gave. */
-let draftUnavailableReason = "";
+const {
+  AUTOSAVE_ALLOWED_HERE, adoptDraftDocument, autosaveToggle, clearAllDrafts, discardOwnDraft,
+  draftsClearBtn, grammarCheckToggle, handOverDraftBeforeOpen, noteDraftDirty, queueDraftWork,
+  refreshDraftOffers, setDraftStatus, showDraftRecovery, spellCheckToggle, startDrafts,
+  takeDraftSnapshot,
+} = createDrafts(ed);
 let draftDocKey = "";
 let draftOffers = [];
-let draftBarDismissed = false;
-let ownSlotHasDraft = false;
-let draftHeartbeatTimer = 0;
-/** Serializes store work: two overlapping writes would race on one slot. */
-let draftQueue = Promise.resolve();
-
-/** `sessionStorage`, or null where touching it throws (cross-origin embed,
- *  site data blocked) — the same posture `readPref` takes for preferences. */
-function safeSessionStorage() {
-  try {
-    return window.sessionStorage;
-  } catch {
-    return null;
-  }
-}
-
-/** Whether this page may keep drafts at all.
- *
- *  Off inside a frame: `home-embed.js` boots `editor.html?demo=1` in an iframe
- *  on the marketing home page, and without this every visitor who typed in the
- *  hero demo would leave a draft on the origin — which a later real session
- *  would then be offered. `?autosave=1` lets a host opt back in, and
- *  `?autosave=0` lets one opt out of the top-level case (docs/112 O-2). */
-// One authority. This used to re-derive framing here, which is exactly why
-// `capabilities.mjs` was not the single answer to "what may this page do".
-const AUTOSAVE_ALLOWED_HERE = HOST_CAPS.has("autosave");
-
-/** The user's switch. Defaults on; `settings` is read at call time. */
-function autosaveEnabled() {
-  return AUTOSAVE_ALLOWED_HERE && settings.autosave !== false && !draftUnavailableReason;
-}
-
-/** Autosave has failed in a way the user should know about. It is never silent:
- *  a draft that is not being written is a promise the editor is not keeping. */
-function reportAutosaveUnavailable(reason) {
-  if (draftUnavailableReason) return;
-  draftUnavailableReason = reason;
-  stopDraftHeartbeat();
-  setDraftStatus("Autosave unavailable", "unavailable", `Autosave is not running: ${reason}. Save the document to keep your work.`);
-  // `publish`, not `announce`: the draft pill it pairs with is `priority 3` in
-  // the footer's informational half, so it is the FIRST thing shed as the window
-  // narrows — a broken promise about the user's work must not narrow away with it.
-  statusChannel.publish(`Autosave unavailable: ${reason}`, "error");
-}
-
-function setDraftStatus(text, state = "", title = "") {
-  if (!draftStatusEl) return;
-  draftStatusEl.textContent = text;
-  draftStatusEl.hidden = !text;
-  if (state) draftStatusEl.dataset.draftState = state;
-  else delete draftStatusEl.dataset.draftState;
-  draftStatusEl.title = title || text;
-}
-
-/** hh:mm in the user's locale, for "Draft saved 14:32". */
-function clockTime(at) {
-  return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
-
-/** Opens the store once, lazily. Returns null when it cannot be opened, having
- *  already said so. */
-async function ensureDraftStore() {
-  if (draftStore) return draftStore;
-  if (!AUTOSAVE_ALLOWED_HERE || draftUnavailableReason) return null;
-  if (!draftStoreOpening) {
-    draftStoreOpening = openDraftStore({}).then(
-      (store) => {
-        draftStore = store;
-        return store;
-      },
-      (err) => {
-        reportAutosaveUnavailable(`this browser refused local storage (${err?.message ?? err})`);
-        return null;
-      },
-    );
-  }
-  return draftStoreOpening;
-}
-
-/** Runs store work one job at a time, so two writes never race on one slot. */
-function queueDraftWork(job) {
-  draftQueue = draftQueue.then(job).catch((err) => {
-    console.error("draft store", err);
-  });
-  return draftQueue;
-}
-
-// The cadence. Injected `write` is the only thing that ever costs document-sized
-// work, and the scheduler only ever calls it from a timer.
-const draftScheduler = new DraftScheduler({ write: (reason) => queueDraftWork(() => writeDraft(reason)) });
-
-// Cross-tab presence. Answering "is that tab still open?" with a heartbeat
-// timestamp is wrong in exactly the case that matters: a crashed tab's last
-// heartbeat is seconds old, so a heartbeat-only lease withholds the draft from
-// the person reopening the editor to get it back. Asking the other tabs
-// directly distinguishes "still open" from "died" immediately.
-const draftPresence = new DraftPresence({ slotId: draftSlot });
-
-/** O(1). The edit path's entire contribution to autosave. */
-function noteDraftDirty() {
-  if (!autosaveEnabled() || !doc) return;
-  draftScheduler.noteDirty();
-}
-
-/** Re-keys this tab onto a freshly opened document. */
-function adoptDraftDocument(name, bytes) {
-  draftDocKey = documentKey(name, bytes);
-  draftScheduler.reset();
-}
-
-/**
- * Takes the snapshot, in the document's own format.
- *
- * The mode ladder is `exportDocumentAs`'s plus `semantic` as the last resort, so
- * a draft and a save can never come from different ladders; there is deliberately
- * no cross-format fallback, because normalized JSON would succeed where DOCX
- * failed and drop every image. `contentId` rides along — see `version_panel.mjs`.
- */
-function takeDraftSnapshot() {
-  const formatId = draftFormatFor(currentSourceFormat);
-  let lastError = null;
-  for (const mode of DRAFT_EXPORT_MODES) {
-    try {
-      const artifact = doc.exportAs(formatId, mode);
-      const bytes = artifact.bytes;
-      let findings = 0;
-      try {
-        findings = findingTotals(artifact.reportJson).headline; // the chip's count (FID-FW-01)
-      } catch {
-        findings = 0; // a report we cannot parse must not lose us the draft
-      }
-      artifact.free();
-      return { bytes, formatId, mode, findings, contentId: doc.contentDigest(), words: ((s) => { const words = s.words; s.free(); return words; })(doc.documentStats()) };
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError ?? new Error("no export mode produced a snapshot");
-}
-
-/** Writes this tab's draft. Only ever called from the scheduler or a flush. */
-async function writeDraft(reason) {
-  if (!doc || !autosaveEnabled() || !documentIsDirty()) return;
-  const store = await ensureDraftStore();
-  if (!store) return;
-
-  let snapshot;
-  try {
-    snapshot = takeDraftSnapshot();
-  } catch (err) {
-    reportAutosaveUnavailable(`this document could not be exported (${err?.message ?? err})`);
-    return;
-  }
-
-  const now = Date.now();
-  const meta = {
-    slotId: draftSlot,
-    docKey: draftDocKey,
-    name: currentName,
-    formatId: snapshot.formatId,
-    exportMode: snapshot.mode,
-    findings: snapshot.findings,
-    revision: currentRevision,
-    bytes: snapshot.bytes.length,
-    savedAt: now,
-    heartbeatAt: now,
-    engine: engineVersion(),
-    reason,
-  };
-
-  try {
-    await pruneDraftSlots(store, now);
-    await store.putDraft(meta, snapshot.bytes);
-  } catch (err) {
-    // Quota is the one failure worth a second attempt: drop the oldest draft
-    // that is not ours and try again before giving up on autosave entirely.
-    if (err?.name === "QuotaExceededError") {
-      const freed = await freeOldestOtherSlot(store);
-      if (freed) {
-        try {
-          await store.putDraft(meta, snapshot.bytes);
-        } catch (retryErr) {
-          reportAutosaveUnavailable(`this browser is out of storage (${retryErr?.name ?? "quota"})`);
-          return;
-        }
-      } else {
-        reportAutosaveUnavailable("this browser is out of storage for local drafts");
-        return;
-      }
-    } else {
-      reportAutosaveUnavailable(`the draft could not be written (${err?.message ?? err})`);
-      return;
-    }
-  }
-
-  ownSlotHasDraft = true;
-  // The version capture rides HERE and nowhere else, with the SAME bytes: the
-  // artifact is already exported and already verified at this point, so a
-  // version costs one hash and one IndexedDB transaction rather than a second
-  // export of the document (`docs/140` §6.2, §7.5). The decision itself —
-  // `VersionCapturePolicy.shouldCapture` — is O(1) in both document size and
-  // stored-version count and is all the editing path ever pays.
-  versionHistory.capture(reason, snapshot);
-  setDraftStatus(
-    `Draft saved ${clockTime(now)}`,
-    "saved",
-    `${describeDraftSize(meta.bytes)} kept in this browser only, until you save. Written ${clockTime(now)}.`,
-  );
-  startDraftHeartbeat();
-}
-
-/** Deletes expired rows and anything past the slot cap, never our own. */
-async function pruneDraftSlots(store, now) {
-  const metas = await store.listMeta();
-  for (const slotId of evictableSlots(metas, { now, keepSlotId: draftSlot })) {
-    await store.deleteSlot(slotId);
-  }
-}
-
-/** Frees the oldest slot that is not ours. Returns whether anything went. */
-async function freeOldestOtherSlot(store) {
-  const metas = (await store.listMeta())
-    .filter((meta) => meta.slotId !== draftSlot)
-    .sort((a, b) => (a.savedAt ?? 0) - (b.savedAt ?? 0));
-  if (metas.length === 0) return false;
-  await store.deleteSlot(metas[0].slotId);
-  return true;
-}
-
-/** Tells other tabs this slot is still owned. Meta only — a few hundred bytes,
- *  never the snapshot — and only while a draft actually exists. */
-function startDraftHeartbeat() {
-  if (draftHeartbeatTimer || !ownSlotHasDraft) return;
-  draftHeartbeatTimer = setInterval(() => {
-    if (!ownSlotHasDraft) return stopDraftHeartbeat();
-    queueDraftWork(async () => {
-      const store = await ensureDraftStore();
-      if (store) await store.touch(draftSlot, Date.now());
-    });
-  }, HEARTBEAT_MS);
-}
-
-function stopDraftHeartbeat() {
-  if (!draftHeartbeatTimer) return;
-  clearInterval(draftHeartbeatTimer);
-  draftHeartbeatTimer = 0;
-}
-
-/** The work is on disk now, so this tab's draft has nothing left to protect. */
-function discardOwnDraft() {
-  draftScheduler.reset();
-  if (!ownSlotHasDraft) return;
-  ownSlotHasDraft = false;
-  stopDraftHeartbeat();
-  setDraftStatus("");
-  queueDraftWork(async () => {
-    const store = await ensureDraftStore();
-    if (store) await store.deleteSlot(draftSlot);
-  });
-}
-
-/**
- * Called just before another document replaces the open one.
- *
- * If there is unsaved work, it is written one last time and the slot is left
- * behind as an ORPHAN — heartbeat cleared, so the next scan offers it — while
- * this tab takes a fresh slot for the incoming document. The user may have
- * pressed "Discard and open" at the confirm gate, but that discards the
- * document from the screen; it is not a request to shred the only copy.
- */
-function handOverDraftBeforeOpen() {
-  if (!doc) return;
-  const hadWork = documentIsDirty() && autosaveEnabled();
-  const previousSlot = draftSlot;
-  if (hadWork) {
-    // Synchronous snapshot, queued write: the wrapper is freed by the caller
-    // moments from now, so the bytes must be taken before this returns.
-    let snapshot = null;
-    try {
-      snapshot = takeDraftSnapshot();
-    } catch {
-      snapshot = null; // nothing to hand over; the open still proceeds
-    }
-    if (snapshot) {
-      const meta = {
-        slotId: previousSlot,
-        docKey: draftDocKey,
-        name: currentName,
-        formatId: snapshot.formatId,
-        exportMode: snapshot.mode,
-        findings: snapshot.findings,
-        revision: currentRevision,
-        bytes: snapshot.bytes.length,
-        savedAt: Date.now(),
-        // Orphaned on purpose: this tab no longer owns the slot, so the next
-        // scan must not mistake it for a live tab's live draft.
-        heartbeatAt: 0,
-        engine: engineVersion(),
-        reason: "handover",
-      };
-      queueDraftWork(async () => {
-        const store = await ensureDraftStore();
-        if (store) await store.putDraft(meta, snapshot.bytes);
-      });
-      draftSlot = rotateDraftSlot();
-      // Presence must follow the rotation, or this tab keeps answering pings
-      // for the slot it just handed over — which would mark that orphan draft
-      // as belonging to a live tab and hide it from every recovery scan.
-      draftPresence.slotId = draftSlot;
-    }
-  } else if (ownSlotHasDraft) {
-    discardOwnDraft();
-  }
-  ownSlotHasDraft = false;
-  stopDraftHeartbeat();
-  draftScheduler.reset();
-  setDraftStatus("");
-}
-
-/** A fresh slot id for this tab, persisted like the first one. */
-function rotateDraftSlot() {
-  const storage = safeSessionStorage();
-  try {
-    storage?.removeItem("opendoc.draftSlot");
-  } catch {
-    /* storage is optional; a session-only slot still works */
-  }
-  return draftSlotId(storage);
-}
-
-// ---- The recovery offer -----------------------------------------------------
-
-/** Reads the meta store, prunes what has expired, and renders the bar. */
-async function refreshDraftOffers({ announce = false } = {}) {
-  const store = await ensureDraftStore();
-  if (!store) return;
-  const now = Date.now();
-  let metas = [];
-  try {
-    metas = await store.listMeta();
-  } catch (err) {
-    reportAutosaveUnavailable(`the draft store could not be read (${err?.message ?? err})`);
-    return;
-  }
-  for (const slotId of evictableSlots(metas, { now, keepSlotId: draftSlot })) {
-    try {
-      await store.deleteSlot(slotId);
-    } catch {
-      /* a row we cannot delete is not a reason to withhold the offer */
-    }
-  }
-  // Ask the other tabs which of these slots they still own. Only rows whose
-  // heartbeat is recent enough to be ambiguous are worth asking about, so a
-  // boot with nothing else running waits for nothing.
-  const ambiguous = metas
-    .filter((meta) => meta.slotId !== draftSlot && slotIsLive(meta, now, draftSlot))
-    .map((meta) => meta.slotId);
-  const liveSlotIds = await draftPresence.liveSlots(ambiguous);
-
-  draftOffers = offerableDrafts(metas, {
-    now,
-    ownSlotId: draftSlot,
-    liveSlotIds,
-    // Silence is only proof when there was a way to ask.
-    heartbeatFallback: draftPresence.unavailable,
-  }).filter(
-    // Once this tab has written its own draft, that draft is the document on
-    // screen. Offering it back would be offering the user their own live work.
-    (meta) => !(ownSlotHasDraft && meta.slotId === draftSlot),
-  );
-  renderDraftRecovery({ announce });
-}
-
-function renderDraftRecovery({ announce = false } = {}) {
-  if (!draftRecoveryBar) return;
-  if (draftBarDismissed || draftOffers.length === 0) {
-    draftRecoveryBar.hidden = true;
-    draftRecoveryList.replaceChildren();
-    return;
-  }
-  const now = Date.now();
-  draftRecoveryTitle.textContent =
-    draftOffers.length === 1
-      ? "Unsaved work recovered"
-      : `Unsaved work recovered from ${draftOffers.length} sessions`;
-
-  draftRecoveryList.replaceChildren(
-    ...draftOffers.map((meta) => {
-      const row = document.createElement("li");
-      row.className = "draft-recovery-row";
-      row.dataset.slot = meta.slotId;
-
-      const name = document.createElement("span");
-      name.className = "draft-recovery-name";
-      name.textContent = meta.name || "Untitled document";
-      name.title = meta.name || "Untitled document";
-
-      const detail = document.createElement("span");
-      detail.className = "draft-recovery-meta";
-      const sameDocument = meta.docKey && meta.docKey === draftDocKey ? " · this document" : "";
-      detail.textContent = `autosaved ${describeDraftAge(now - (meta.savedAt ?? now))} · ${describeDraftSize(meta.bytes)}${sameDocument}`;
-
-      const restore = document.createElement("button");
-      restore.type = "button";
-      restore.dataset.draftRestore = meta.slotId;
-      restore.textContent = "Restore";
-      restore.setAttribute("aria-label", `Restore ${meta.name || "the recovered document"}`);
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.dataset.draftDelete = meta.slotId;
-      remove.textContent = "Delete";
-      remove.setAttribute("aria-label", `Delete the recovered draft of ${meta.name || "this document"}`);
-
-      row.append(name, detail, restore, remove);
-      return row;
-    }),
-  );
-  draftRecoveryBar.hidden = false;
-  if (announce) {
-    const first = draftOffers[0];
-    // `announce`, not `publish`: the recovery bar is its own on-screen surface at
-    // every width, so a toast would be a second copy of what is already in view.
-    statusChannel.announce(
-      `Unsaved work recovered: ${first.name}, autosaved ${describeDraftAge(now - (first.savedAt ?? now))}. Restore or delete it from the recovery bar.`,
-    );
-  }
-}
-
-/** Brings the offer back after a dismissal — the File menu / palette route. */
-function showDraftRecovery() {
-  draftBarDismissed = false;
-  renderDraftRecovery();
-  queueDraftWork(() => refreshDraftOffers());
-  draftRecoveryBar?.querySelector("button[data-draft-restore]")?.focus({ preventScroll: true });
-}
-
-/** Restores one draft. Offers first, applies only on this call. */
-async function restoreDraft(slotId) {
-  const meta = draftOffers.find((row) => row.slotId === slotId);
-  const store = await ensureDraftStore();
-  if (!meta || !store) return;
-  // The same gate File ▸ Open uses: restoring replaces what is on screen.
-  if (!(await confirmDiscardIfEdited())) return;
-  let bytes;
-  try {
-    bytes = await store.readBytes(slotId);
-  } catch (err) {
-    setStatus(`The recovered draft could not be read: ${err?.message ?? err}`, "error");
-    return;
-  }
-  if (!bytes) {
-    setStatus("That draft is no longer in this browser's storage", "error");
-    await forgetDraft(slotId);
-    return;
-  }
-  // A promoted draft (a .txt document kept as DOCX so its formatting survived)
-  // comes back under the extension it will actually save as.
-  const name = downloadNameForFormat(meta.name, formatInfo(meta.formatId).extension);
-  // `openBytes` swallows a failed parse by design — it leaves the previous
-  // document on screen rather than destroying it — so success has to be
-  // observed, not assumed. Its opened-document hook runs only after the parse
-  // succeeded. Treating a failed restore as a success and then deleting the
-  // row would delete the only copy of the work the restore was trying to save.
-  let opened = false;
-  await openBytes(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), name, () => {
-    opened = true;
-  });
-  if (!opened) {
-    setStatus(`“${meta.name}” could not be restored — the draft has been kept`, "error");
-    return;
-  }
-  // Restored work has never been written out. Saying "Opened" here would tell
-  // the user their document is safe on disk when it is not.
-  restoredFromDraft = true;
-  setDocumentState("edited");
-  // Take our own copy BEFORE dropping the row it came from, so the work is
-  // never momentarily in neither place — a crash in the gap would otherwise
-  // lose exactly the document the user had just recovered.
-  await queueDraftWork(() => writeDraft(DRAFT_WRITE_REASONS.RESTORED));
-  if (slotId === draftSlot) {
-    // This tab reclaimed its own slot, so the write above IS that row, now
-    // holding the restored document. Deleting it would delete the work.
-    draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
-    renderDraftRecovery();
-  } else if (ownSlotHasDraft) {
-    await forgetDraft(slotId);
-  } else {
-    // Autosave could not take a copy (off, or unavailable), so the row we
-    // restored from is still the only one. Keep it; just stop offering it.
-    draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
-    renderDraftRecovery();
-  }
-  setStatus(
-    `Restored “${name}” from the draft autosaved ${describeDraftAge(Date.now() - (meta.savedAt ?? Date.now()))} — save it to keep it`,
-  );
-}
-
-/** Deletes one draft, after asking: it is the only copy of that work. */
-async function deleteDraftWithConfirmation(slotId) {
-  const meta = draftOffers.find((row) => row.slotId === slotId);
-  if (!meta) return;
-  const ok = await confirmModal({
-    title: "Delete this recovered draft?",
-    message: `“${meta.name}” was autosaved ${describeDraftAge(Date.now() - (meta.savedAt ?? Date.now()))}. This is the only copy of that work — deleting it cannot be undone.`,
-    confirmLabel: "Delete draft",
-    cancelLabel: "Keep it",
-    note: "Restore it first if you are not sure.",
-    icon: "warning",
-  });
-  if (!ok) return;
-  await forgetDraft(slotId);
-  setStatus(`Deleted the recovered draft of “${meta.name}”`);
-}
-
-async function forgetDraft(slotId) {
-  const store = await ensureDraftStore();
-  if (store) {
-    try {
-      await store.deleteSlot(slotId);
-    } catch (err) {
-      console.error("draft delete", err);
-    }
-  }
-  draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
-  renderDraftRecovery();
-}
-
-/** Settings ▸ Autosave ▸ Delete saved drafts, and the switch's off path. */
-async function clearAllDrafts({ confirm = true } = {}) {
-  if (confirm) {
-    const ok = await confirmModal({
-      title: "Delete every saved draft?",
-      message:
-        "Drafts are the only copy of work that was never saved to a file. Deleting them cannot be undone.",
-      confirmLabel: "Delete drafts",
-      cancelLabel: "Keep them",
-      icon: "warning",
-    });
-    if (!ok) return;
-  }
-  const store = await ensureDraftStore();
-  if (store) {
-    try {
-      await store.clear();
-    } catch (err) {
-      console.error("draft clear", err);
-    }
-  }
-  ownSlotHasDraft = false;
-  stopDraftHeartbeat();
-  draftOffers = [];
-  renderDraftRecovery();
-  setDraftStatus("");
-  setStatus("Saved drafts deleted");
-}
-
-draftRecoveryBar?.addEventListener("click", (event) => {
-  const restore = event.target.closest?.("button[data-draft-restore]");
-  if (restore) {
-    void restoreDraft(restore.dataset.draftRestore);
-    return;
-  }
-  const remove = event.target.closest?.("button[data-draft-delete]");
-  if (remove) void deleteDraftWithConfirmation(remove.dataset.draftDelete);
-});
-document.getElementById("draftRecoveryDismiss")?.addEventListener("click", () => {
-  // Dismiss keeps the draft. Nothing in this bar may lose work by being closed.
-  draftBarDismissed = true;
-  renderDraftRecovery();
-  setStatus("Recovered work is still available from File ▸ Recover unsaved work");
-});
-
-// Hidden, then pagehide: see `bindDraftFlushOnExit` for why those two.
-bindDraftFlushOnExit(draftScheduler);
-
-/** Boot: scan the store and offer whatever a previous session left behind. */
-async function startDrafts() {
-  if (!AUTOSAVE_ALLOWED_HERE) return;
-  if (settings.autosave === false) {
-    setDraftStatus("Autosave off", "off", "Autosave is off. Turn it back on in Settings ▸ Autosave.");
-    return;
-  }
-  await queueDraftWork(() => refreshDraftOffers({ announce: true }));
-}
-
-const settingsPanel = document.getElementById("settingsPanel");
-const themeSeg = document.getElementById("themeSeg");
-const accentSwatches = document.getElementById("accentSwatches");
-const accentCustom = document.getElementById("accentCustom");
-const settingsReset = document.getElementById("settingsReset");
-const settingsClose = document.getElementById("settingsClose");
-const languageSelect = document.getElementById("languageSelect");
-const authorNameInput = document.getElementById("authorName");
-const authorInitialsInput = document.getElementById("authorInitials");
-
-// Who owns the accent: the deployment's `brand.json`, or the visitor. Read once,
-// before the first `applySettings()`, because a brand resolved after the first
-// paint was never resolved before it.
-const ACCENT_PIN = brandAccent(document.documentElement);
 
 let settings = loadSettings();
 
@@ -15575,313 +14703,14 @@ function saveSettings() {
   savePrefObject("opendoc.settings", settings);
 }
 
-// ---- Version history (docs/139, docs/140, ADR-038/ADR-040; HF-068 / OO-004) --
-//
-// Everything about the timeline — the store handle, the panel, the keyboard
-// contract, the retention disclosure and the restore state machine — is in
-// `version_panel.mjs`. What is left here is the four seams it cannot own:
-// parsing bytes, putting a document on the canvas, taking it off again, and
-// reporting. Placed AFTER `settings`, because the capture interval is read from
-// it at construction.
-//
-// The read-only enforcement is deliberately NOT a new mechanism. A preview sets
-// `readOnlyReason` and `viewing` mode, which is the editor's existing fail-closed
-// choke point: `blockMutationInViewing()` refuses every mutation route — typing,
-// paste, toolbar, tables, review decisions, the SDK and the host bridge — and
-// `editRefusalMessage` already prefers `readOnlyReason` over every other
-// sentence, so a preview refuses an edit by SAYING it is a preview.
-const versionNamePrompt = createNamePrompt({
-  registerModal,
-  fallbackFocus: () => pagesEl,
-  ids: {
-    dialog: "versionNameDialog",
-    input: "versionNameInput",
-    confirm: "versionNameConfirm",
-    cancel: "versionNameCancel",
-    close: "versionNameClose",
-  },
-});
-
+const { showVersionPreview, versionHistory } = createVersions(ed);
 /** The live document and the chrome state a preview borrowed, or null. */
 let versionPreviewHome = null;
-
-/**
- * Swaps the canvas onto a read-only preview — a version, or a redline (ADR-065)
- * with `markup` on — or (with `null`) back to the live document. O(preview) to
- * render, once; the live wrapper is KEPT: it holds the reader's unsaved work.
- */
-async function showVersionPreview(previewDoc, { markup = false, reason = t("versionHistory.preview.readOnly") } = {}) {
-  if (previewDoc) {
-    versionPreviewHome ??= { doc, selection, reviewMode, readOnlyReason, showingChanges, reviewSidebarPreference };
-    doc = previewDoc;
-    readOnlyReason = reason; if (markup) reviewSidebarPreference = false; // a redline's index is its own panel, not decision cards
-    // A redline IS its markup; one too large for the markup layout is shown plain, and says why.
-    try { showingChanges = markup && (previewDoc.setShowChanges(true) ?? true); } catch (error) { showingChanges = false; setStatus(String(error?.message ?? error), "error"); }
-  } else {
-    if (!versionPreviewHome) return;
-    ({ doc, selection, readOnlyReason, showingChanges, reviewSidebarPreference } = versionPreviewHome);
-    const home = versionPreviewHome;
-    versionPreviewHome = null;
-    // LEAVING keeps the default focus restore: "Back to current" goes away with the
-    // banner, and declining to move focus would drop the keyboard onto `<body>`.
-    setReviewMode(home.reviewMode);
-  }
-  reflectShowingChangesState();
-  // A different document: every cached answer about the last one is wrong (object
-  // presence, table selection, card geometry; the measure ticker captures `doc`).
-  objectPresence.forget();
-  tableRange.clear();
-  reviewLayout = [];
-  reviewCardCache.clear();
-  commentEdit.end(); commentQuotes.clear(); commentQuotes.prime(doc, readReviewData(doc).comments);
-  if (previewDoc) {
-    const start = doc.firstPosition();
-    selection = {
-      anchor: { node: start.node, offset: start.offset },
-      focus: { node: start.node, offset: start.offset },
-    };
-    start.free();
-    setReviewMode("viewing", { restoreFocus: false });
-  }
-  armBackgroundMeasure();
-  await renderAll();
-  drawSelection();
-  updateToolbar();
-}
-
 /** Set while a restore is activating, so the open path does not ALSO record an
  *  import baseline on top of the restore version that just committed — one user
  *  action, one point in the timeline. */
 let activatingRestore = false;
-
-const versionHistory = createVersionHistory({
-  parse: (bytes) => open(bytes),
-  showPreview: (previewDoc, _row, options) => showVersionPreview(previewDoc, options),
-  // Through the ORDINARY open path, so a restored document is indistinguishable
-  // from an opened one: same admission limits, dirty tracking and loss reporting.
-  activateRestored: async (bytes, name) => {
-    activatingRestore = true;
-    try {
-      await openBytes(bytes, name);
-    } finally {
-      activatingRestore = false;
-    }
-    // Edited/Unsaved until the host saves it (`docs/139` §8.5 step 7):
-    // `openBytes` re-baselines dirty tracking onto the bytes it opened, and for a
-    // restore that baseline is a lie — the file on disk is still the old one.
-    // Same flag as a recovered draft, because it is the same fact.
-    restoredFromDraft = true;
-    setDocumentState("edited");
-  }, restoreRefusal: sharedRestoreRefusal, // ADR-068: a shared room refuses, never forks
-  snapshot: () => (doc ? takeDraftSnapshot() : null),
-  documentInfo: () => ({
-    name: currentName,
-    docKey: draftDocKey,
-    revision: revisionUnreadable ? null : currentRevision,
-    // Only with a document, and that guard is load-bearing: `applySettings` asks
-    // this for `unavailableReason` at module init, BEFORE `boot()` has awaited
-    // `init()`, and `engineVersion()` on an uninstantiated wasm module throws
-    // `__wbindgen_add_to_stack_pointer` of undefined and kills boot outright.
-    engine: doc ? engineVersion() : "",
-    actor: settings.authorName.trim(),
-    hasDocument: Boolean(doc),
-  }),
-  settings: () => settings,
-  hostAllows: () => AUTOSAVE_ALLOWED_HERE,
-  capabilities: () => HOST_CAPS,
-  publish: (text, kind) => statusChannel.publish(text, kind),
-  confirm: (options) => confirmModal(options),
-  promptName: (current) => versionNamePrompt.prompt(current),
-  onOpenChange: (isOpen) => {
-    // The timeline and the comments sidebar are both on the right, so they are
-    // mutually exclusive for the reason Outline and Pages are: the canvas is
-    // never squeezed from both sides at once.
-    if (isOpen && !reviewSidebar.hidden) toggleReview(false);
-  },
-  redline: redlineOf,
-  navigateTo: showChange,
-  beforePreview: () => comparePanel.closeView(),
-});
-
-/**
- * Pushes the host's reviewer identity into the open document through the
- * explicit `setActiveAuthor` seam (see docs/68 "Host identity seam" and
- * docs/81 REVIEW-GAP-013) — this is the one place identity crosses from the
- * host UI into the engine. A blank name still resolves to "You" so
- * `suggestInsert`/`suggestDelete`/etc. (which require a non-empty author)
- * keep working out of the box; a blank initials field lets the engine derive
- * initials from the name instead of duplicating that logic here.
- */
-function applyActiveAuthorToDocument() {
-  if (!doc) return;
-  const name = settings.authorName.trim() || "You";
-  const initials = settings.authorInitials.trim() || undefined;
-  doc.setActiveAuthor(name, initials, undefined);
-}
-
-/** Applies the current settings to the document root + reflects them in the panel. */
-function applySettings() {
-  applyAppearance({
-    root: document.documentElement,
-    theme: settings.theme,
-    accent: settings.accent,
-    pin: ACCENT_PIN,
-  });
-  // The gallery is built per document, but its legibility decisions were made
-  // against whatever palette was live at the time.
-  refreshStylePreviews();
-
-  reflectAppearance({
-    themeGroup,
-    swatches: accentSwatches,
-    custom: accentCustom,
-    settings,
-    pin: ACCENT_PIN,
-    reason: t("branding.themeSetByHost"),
-  });
-  authorNameInput.value = settings.authorName;
-  authorInitialsInput.value = settings.authorInitials;
-  if (autosaveToggle) {
-    autosaveToggle.checked = settings.autosave !== false;
-    // A control that cannot do anything says why, rather than sitting there
-    // looking operable (SKILL.md §10). In a host iframe autosave is off by
-    // policy, not by preference.
-    autosaveToggle.disabled = !AUTOSAVE_ALLOWED_HERE;
-    autosaveToggle.title = AUTOSAVE_ALLOWED_HERE
-      ? ""
-      : "Autosave is off in an embedded editor — the page that embeds it owns saving.";
-  }
-  if (draftsClearBtn) draftsClearBtn.disabled = !AUTOSAVE_ALLOWED_HERE;
-  // Version history rides on the autosave switch (ADR-038 / `docs/139` §18
-  // question 2: one switch must not promise what the other has stopped doing),
-  // so both switches and the retention numbers change what this entry says.
-  versionHistory.reflect();
-  if (spellCheckToggle) spellCheckToggle.checked = settings.spellCheck !== false;
-  if (grammarCheckToggle) grammarCheckToggle.checked = settings.grammarCheck !== false;
-  applyActiveAuthorToDocument();
-}
-
-autosaveToggle?.addEventListener("change", () => {
-  settings.autosave = autosaveToggle.checked;
-  saveSettings();
-  if (settings.autosave) {
-    setDraftStatus("");
-    noteDraftDirty();
-    void queueDraftWork(() => refreshDraftOffers());
-  } else {
-    // Off means off: the bytes go too, or "off" would only mean "stop adding".
-    void clearAllDrafts({ confirm: false });
-    setDraftStatus("Autosave off", "off", "Autosave is off. Turn it back on in Settings ▸ Autosave.");
-  }
-  // Version history rides this switch (ADR-038). Stored VERSIONS are left alone:
-  // `clear()` above empties the draft slots only, and deleting a timeline as a
-  // side effect of a switch is a destruction nobody asked for.
-  versionHistory.reflect();
-});
-draftsClearBtn?.addEventListener("click", () => void clearAllDrafts());
-spellCheckToggle?.addEventListener("change", () => setSpellCheckEnabled(spellCheckToggle.checked));
-grammarCheckToggle?.addEventListener("change", () => setGrammarCheckEnabled(grammarCheckToggle.checked));
-
-const themeGroup = bindRadioGroup(themeSeg, {
-  attr: "data-theme",
-  onSelect: (theme) => {
-    settings.theme = theme;
-    saveSettings();
-    applySettings();
-  },
-});
-accentSwatches.addEventListener("click", (e) => {
-  const b = e.target.closest(".acc[data-accent]");
-  if (!b) return;
-  settings.accent = b.dataset.accent;
-  saveSettings();
-  applySettings();
-});
-accentCustom.addEventListener("input", () => {
-  settings.accent = accentCustom.value;
-  saveSettings();
-  applySettings();
-});
-authorNameInput.addEventListener("input", () => {
-  settings.authorName = authorNameInput.value;
-  saveSettings();
-  applyActiveAuthorToDocument();
-});
-authorInitialsInput.addEventListener("input", () => {
-  settings.authorInitials = authorInitialsInput.value;
-  saveSettings();
-  applyActiveAuthorToDocument();
-});
-settingsReset.addEventListener("click", () => {
-  settings = { ...DEFAULT_SETTINGS };
-  saveSettings();
-  applySettings();
-});
-
-// Settings is a MODAL now, registered like every other dialog here. It was an
-// anchored popover with its own Escape handler and its own pointerdown light
-// dismiss — the hand-rolled dismissal `modal.mjs` exists to end — and it was
-// taller than the window, so scrolling it scrolled the document behind it. The
-// owner's report: "that panel doesn't make any sense now .. see dialog
-// instead". Registering it means Escape, the backdrop, the close button and
-// focus restoration are one path, Tab cannot walk out into the chrome behind
-// the scrim, and application shortcuts stop firing behind it.
-const settingsModal = registerModal(settingsPanel, {
-  initialFocus: () => themeGroup.selected(),
-  fallbackFocus: () => settingsBtn,
-});
-
-function toggleSettings(open) {
-  const show = open ?? !settingsModal.isOpen;
-  if (show === settingsModal.isOpen) return;
-  settingsBtn.setAttribute("aria-expanded", String(show));
-  if (show) settingsModal.open();
-  else settingsModal.close();
-}
-
-settingsBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  // The Settings DIALOG and the Settings PANE are the same element, and while
-  // the File page is open it is parented INSIDE the page — opening the dialog
-  // would raise a half-dialog out of a pane. One Settings, so the gear goes to
-  // wherever it currently lives.
-  if (showSettingsPane()) {
-    document.querySelector('#filePageBody [data-file-pane="settings"]')?.focus();
-    return;
-  }
-  toggleSettings();
-});
-settingsClose.addEventListener("click", () => toggleSettings(false));
-applySettings();
-// After `applySettings`, so the picker is built against the settings that were
-// actually loaded, and awaited nowhere: the editor draws in English and the
-// chosen language relabels it when its catalogue lands.
-// Locale (docs/124). After `applySettings`, so the picker sees the settings
-// that loaded; awaited nowhere, so the editor draws in English and relabels
-// when the catalogue lands. The counts are the one surface markup cannot
-// carry, so re-rendering them is what this hands over.
-setPaneRenderer(() => renderFilePage());
-void startLocalisation({
-  select: languageSelect,
-  // The footer control is a POPOVER, on the same manager the zoom presets use,
-  // so the two footer controls dismiss, restore focus and stay mutually
-  // exclusive by one implementation rather than two. The module owns the rest
-  // of that control's DOM already, so it looks the elements up itself.
-  registerPopover,
-  settings,
-  saveSettings,
-  onLocalised: () => {
-    // Every relabel re-introduces ⌘ from the catalogue (`105` UX-009, #599).
-    localizeShortcutGlyphs(document.body, EDITOR_KEYBOARD_PLATFORM);
-    reflowView.setEnabled(); // the width button's label is the STEP's, not markup's
-    if (doc) updateStats();
-    // The timeline's rows, day headings and disclosure are all script-built from
-    // locale-shaped values, and the View entry's disabled reason is a sentence —
-    // so this panel is one of the surfaces a relabel has to reach.
-    versionHistory.reflect();
-  },
-});
-
+const { applyActiveAuthorToDocument, toggleSettings } = createSettings(ed);
 // ---- Document properties (docProps/core.xml — title, author, subject, …) ----
 // The whole dialog is `document_metadata.mjs`: the six editable fields, the
 // seventeen read-only `docProps` cells beside them, and the one transaction Apply
