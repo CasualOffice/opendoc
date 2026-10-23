@@ -161,7 +161,6 @@ OnlyOffice
 OpenDoc
 OpenDocument
 OpenType
-PASETO
 PDF
 PDFR
 PDFs
