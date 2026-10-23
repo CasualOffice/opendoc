@@ -1024,6 +1024,20 @@ impl Reporter {
         );
     }
 
+    /// Reports a loss under a class id the importer mints (`docx.…`) rather than
+    /// under the element's bare name, because the name alone cannot say what
+    /// was lost: a `w:style` finding could be an unknown type or a duplicate
+    /// definition, and a reader needs to be told which (HF-406). The element is
+    /// kept as the location. `Omitted`, so it resolves to `preserved` while the
+    /// part is carried verbatim and is named by a save that regenerates it.
+    pub(crate) fn report_class(&mut self, feature: &str, element: &[u8]) {
+        self.insert(
+            feature.to_owned(),
+            FeatureLocation::element(element),
+            Finding::Omitted,
+        );
+    }
+
     /// Records a finding charged to the part being read now.
     fn insert(&mut self, feature: String, mut location: FeatureLocation, finding: Finding) {
         if location.part_name.is_none() {

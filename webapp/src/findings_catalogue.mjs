@@ -41,7 +41,11 @@ const BOOKKEEPING = true;
 /** Content, formatting or a setting with an effect — counted in the headline. */
 const CONTENT = false;
 
-const entry = (key, bookkeeping) => Object.freeze({ key, bookkeeping });
+// `stylesKey`, when given, is the words for the same id found IN THE STYLES
+// part: a `w:tblCellMar` in `styles.xml` is a table style's margins, while the
+// same element in the body is one table's own (`109` HF-406). The element name
+// cannot tell the two apart; the part it was found in can.
+const entry = (key, bookkeeping, stylesKey = null) => Object.freeze({ key, bookkeeping, stylesKey });
 
 /**
  * Every catalogued feature id, and the words for it.
@@ -126,6 +130,23 @@ export const FEATURE_CATALOGUE = Object.freeze({
   // (`docs/08` ADR-072).
   "docx.export.vml.regenerated": entry("findings.feature.vmlRegenerated", CONTENT),
   "docx.watermark": entry("findings.feature.watermark", CONTENT),
+
+  // ---- Styles and tables -----------------------------------------------------
+  // A `w:style` whose `@w:type` names no kind this editor has. (An OMITTED type
+  // is a paragraph style and is applied — HF-403.)
+  "style": entry("findings.feature.styleUnknownType", CONTENT),
+  // A second definition of a style id that disagrees with the first, by the kind
+  // of the copy left out. A copy that only adds to the first is folded in and
+  // raises nothing (HF-401, `casual-doc-import` `styles/duplicates.rs`).
+  "docx.style.duplicate.paragraph": entry("findings.feature.styleDuplicateParagraph", CONTENT),
+  "docx.style.duplicate.character": entry("findings.feature.styleDuplicateCharacter", CONTENT),
+  "docx.style.duplicate.table": entry("findings.feature.styleDuplicateTable", CONTENT),
+  "docx.style.duplicate.numbering": entry("findings.feature.styleDuplicateNumbering", CONTENT),
+  // Table geometry in a unit or spelling the engine could not read.
+  "tblCellMar": entry("findings.feature.tableCellMargins", CONTENT, "findings.feature.tableStyleCellMargins"),
+  "tcMar": entry("findings.feature.cellMargins", CONTENT, "findings.feature.tableStyleCellMargins"),
+  "tblInd": entry("findings.feature.tableIndent", CONTENT, "findings.feature.tableStyleIndent"),
+  "tblW": entry("findings.feature.tableWidth", CONTENT, "findings.feature.tableStyleWidth"),
 
   // ---- Charts and embedded files -------------------------------------------
   "chart.trendline": entry("findings.feature.chartTrendline", CONTENT),
@@ -381,7 +402,7 @@ export function describeFinding(reportEntry) {
 
   let words;
   if (known) {
-    words = known.key;
+    words = area === "styles" && known.stylesKey ? known.stylesKey : known.key;
   } else if ((shape === "element" || shape === "attribute") && area === "settings") {
     words = "findings.unknown.setting";
   } else if ((shape === "element" || shape === "attribute") && area === "properties") {
@@ -396,6 +417,7 @@ export function describeFinding(reportEntry) {
  *  fallbacks and the wheres — so a test can hold each one to every locale. */
 export function catalogueKeys() {
   const keys = new Set(Object.values(FEATURE_CATALOGUE).map((value) => value.key));
+  for (const value of Object.values(FEATURE_CATALOGUE)) if (value.stylesKey) keys.add(value.stylesKey);
   for (const shape of ["element", "attribute", "part", "class", "setting", "property"]) {
     keys.add(`findings.unknown.${shape}`);
   }

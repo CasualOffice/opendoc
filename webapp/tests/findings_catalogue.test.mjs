@@ -355,3 +355,31 @@ test("every legacy VML element reads as words, and drawn VML is listed as shown 
   });
   assert.deepEqual(groupFindings(report).map((group) => group.id), ["approximated"]);
 });
+
+// `109` HF-406. The owner's Google Docs export listed `style` ×32,
+// `tblCellMar` ×20 and `tblInd` ×1 as "Other content or formatting". The engine
+// now applies almost all of it; what a styles part can still raise is named,
+// and the same element reads differently in the styles than in the body.
+test("what a styles part can still raise is named, and says it came from a style", () => {
+  const styles = "word/styles.xml";
+  const cases = [
+    [finding("style", 1, styles), "A style of a type this editor cannot apply yet"],
+    [finding("docx.style.duplicate.paragraph", 1, styles), "A second definition of a paragraph style that disagrees with the first"],
+    [finding("docx.style.duplicate.character", 1, styles), "A second definition of a character style that disagrees with the first"],
+    [finding("docx.style.duplicate.table", 1, styles), "A second definition of a table style that disagrees with the first"],
+    [finding("docx.style.duplicate.numbering", 1, styles), "A second definition of a list style that disagrees with the first"],
+    [finding("tblCellMar", 20, styles), "Cell margins set by a table style"],
+    [finding("tcMar", 1, styles), "Cell margins set by a table style"],
+    [finding("tblInd", 1, styles), "Table indent set by a table style"],
+    [finding("tblW", 1, styles), "Table width set by a table style"],
+    [finding("tblCellMar", 1, "word/document.xml"), "Default cell margins of a table"],
+    [finding("tcMar", 4, "word/document.xml"), "Margins of a single cell"],
+    [finding("tblInd", 2, "word/footer1.xml"), "Table indent"],
+    [finding("tblW", 2, "word/document.xml"), "Table width"],
+  ];
+  for (const [entry, expected] of cases) {
+    assert.equal(words(entry), expected, `${entry.feature} in ${entry.location.partName}`);
+    assert.notEqual(words(entry), t("findings.unknown.element"));
+  }
+  assert.equal(where(cases[0][0]), t("findings.where.styles"), "and it still says where");
+});

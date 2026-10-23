@@ -64,8 +64,12 @@ use crate::cascade::{
     StyleCascade, TableStyleLayer, overlay_table_borders, requested_font_family,
     requested_font_family_for, union_cnf,
 };
+// Separate `use` lines to minimize import-block merge conflicts.
+use crate::cascade::overlay_cell_margins;
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::text::{ChartPrimitive, InlineChart};
+use casual_doc_model::v1::CnfStyle;
+use casual_doc_model::v1::TableProperties;
 // Separate `use` lines (anti-conflict): the galley sink seam, `docs/113` step 4.
 use crate::font_substitution::DeclaredFamilies;
 use crate::font_substitution::GenericFamily;
@@ -2310,9 +2314,21 @@ fn flow_table<S: GalleySink + ?Sized>(
     let merge_roles = resolve_vertical_merge_roles(table);
     let style_layers = resolve_table_style_layers(table, &ctx.cascade);
     let border_candidates = resolve_table_border_candidates(table, &style_layers);
-    let indent = table.properties.indent_twips.unwrap_or(0);
+    // The table's own `w:tblPr` over its style's (and the default table
+    // style's): indent, default cell margins, spacing, alignment, layout
+    // (HF-402). Resolved once per table, not per cell.
+    let props = ctx.cascade.resolve_table_properties(&table.properties);
+    let indent = props.indent_twips.unwrap_or(0);
     let available = (width.raw() - indent).max(1);
-    let widths = solve_table_columns(table, shaper, available, ctx, &merge_roles, &style_layers);
+    let widths = solve_table_columns(
+        table,
+        &props,
+        shaper,
+        available,
+        ctx,
+        &merge_roles,
+        &style_layers,
+    );
 
     // Logical grid edges are independent of physical alignment. `w:bidiVisual`
     // reflects a cell's logical range through the solved table box below.
@@ -2329,9 +2345,9 @@ fn flow_table<S: GalleySink + ?Sized>(
 
     let mut rows = Vec::with_capacity(table.rows.len());
     for (row_index, row) in table.rows.iter().enumerate() {
-        let row_spacing = effective_cell_spacing(table, row);
+        let row_spacing = effective_cell_spacing(&props, row);
         let row_origin = table_row_origin(
-            row.properties.alignment.or(table.properties.alignment),
+            row.properties.alignment.or(props.alignment),
             table.properties.tbl_bidi_visual,
             width.raw(),
             table_width,
@@ -2393,8 +2409,7 @@ fn flow_table<S: GalleySink + ?Sized>(
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
             // the start/top margins (and the vertical-alignment slack).
-            let mut margins =
-                resolve_cell_margins(&cell.properties.margins, &table.properties.cell_margins);
+            let mut margins = cell_content_margins(&cell.properties, style_layer, &props);
             if table.properties.tbl_bidi_visual {
                 std::mem::swap(&mut cell_spacing.start, &mut cell_spacing.end);
             }
@@ -2546,10 +2561,10 @@ fn table_row_origin(
 /// Resolves direct row-over-table `w:tblCellSpacing`. Style-provided row
 /// properties are intentionally outside this slice; model validation already
 /// rejects negatives, and the clamp keeps manually constructed documents safe.
-fn effective_cell_spacing(table: &Table, row: &TableRow) -> i32 {
+fn effective_cell_spacing(table: &TableProperties, row: &TableRow) -> i32 {
     row.properties
         .cell_spacing_twips
-        .or(table.properties.cell_spacing_twips)
+        .or(table.cell_spacing_twips)
         .unwrap_or(0)
         .max(0)
 }
@@ -2645,17 +2660,29 @@ pub(crate) fn resolve_table_style_layers(
     table: &Table,
     cascade: &StyleCascade<'_>,
 ) -> Vec<Vec<TableStyleLayer>> {
+    let props = cascade.resolve_table_properties(&table.properties);
+    let row_count = table.rows.len();
     table
         .rows
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(row_index, row)| {
+            let cell_count = row.cells.len();
             row.cells
                 .iter()
-                .map(|cell| {
-                    let cnf = union_cnf(
+                .enumerate()
+                .map(|(cell_index, cell)| {
+                    let authored = union_cnf(
                         row.properties.conditional_format.unwrap_or_default(),
                         cell.properties.conditional_format.unwrap_or_default(),
                     );
+                    let position = TablePosition {
+                        row: row_index,
+                        rows: row_count,
+                        column: cell_index,
+                        columns: cell_count,
+                    };
+                    let cnf = union_cnf(authored, positional_cnf(&props, position));
                     cascade.table_style_layer(
                         table.properties.style_ref,
                         table.properties.look,
@@ -2665,6 +2692,77 @@ pub(crate) fn resolve_table_style_layers(
                 .collect()
         })
         .collect()
+}
+
+/// Where one cell sits in its table, for [`positional_cnf`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TablePosition {
+    /// The row's index.
+    pub(crate) row: usize,
+    /// How many rows the table has.
+    pub(crate) rows: usize,
+    /// The cell's index within its row.
+    pub(crate) column: usize,
+    /// How many cells the row has.
+    pub(crate) columns: usize,
+}
+
+/// The conditional-format regions a cell occupies by POSITION (HF-405).
+///
+/// `w:cnfStyle` on a row or cell is a cache a producer may write of what the
+/// table style resolves to there; Word recomputes it from the cell's position,
+/// and Google Docs, LibreOffice and most generators never write it. Selecting
+/// regions from `w:cnfStyle` alone therefore painted no header row, no banding
+/// and no first column for every such table — the table style's conditional
+/// formats were imported and never applied. So the regions come from where the
+/// cell is, gated by `w:tblLook` in [`StyleCascade::table_style_layer`], and an
+/// authored `w:cnfStyle` is unioned on top (a producer that marks a row is
+/// still honoured).
+///
+/// Banding counts bands of `w:tblStyleRowBandSize` rows (columns), default 1,
+/// and starts AFTER a header row or first column that `w:tblLook` turns on, as
+/// Word's does; the header and total rows themselves are not banded when their
+/// look bit is on. `O(1)`.
+pub(crate) fn positional_cnf(props: &TableProperties, at: TablePosition) -> CnfStyle {
+    let look = props.look;
+    let first_row = at.row == 0;
+    let last_row = at.rows > 0 && at.row + 1 == at.rows;
+    let first_column = at.column == 0;
+    let last_column = at.columns > 0 && at.column + 1 == at.columns;
+    let band = |index: usize, skip_first: bool, excluded: bool, size: Option<u32>| {
+        if excluded || (skip_first && index == 0) {
+            return (false, false);
+        }
+        let size = size.unwrap_or(1).max(1) as usize;
+        let ordinal = (index - usize::from(skip_first)) / size;
+        (ordinal.is_multiple_of(2), !ordinal.is_multiple_of(2))
+    };
+    let (odd_h_band, even_h_band) = band(
+        at.row,
+        look.first_row,
+        look.last_row && last_row,
+        props.row_band_size,
+    );
+    let (odd_v_band, even_v_band) = band(
+        at.column,
+        look.first_column,
+        look.last_column && last_column,
+        props.col_band_size,
+    );
+    CnfStyle {
+        first_row,
+        last_row,
+        first_column,
+        last_column,
+        odd_v_band,
+        even_v_band,
+        odd_h_band,
+        even_h_band,
+        first_row_first_column: first_row && first_column,
+        first_row_last_column: first_row && last_column,
+        last_row_first_column: last_row && first_column,
+        last_row_last_column: last_row && last_column,
+    }
 }
 
 /// Materializes the border candidate on each physical cell side before shared-
@@ -2960,6 +3058,27 @@ pub(crate) fn resolve_cell_margins(
     }
 }
 
+/// A cell's content insets with the table style in the cascade (HF-402).
+///
+/// Per edge, lowest precedence last: the cell's own `w:tcMar`; the table
+/// style's `w:tcPr/w:tcMar` for this cell (base, then its active conditional
+/// regions, carried by `layer`); the table's `w:tblCellMar` (direct, then the
+/// table style's, already merged into `table` by
+/// [`StyleCascade::resolve_table_properties`]); then Word's built-in default.
+/// Cell-level margins, from either source, beat table-level ones because
+/// `w:tblCellMar` is defined as the default a cell's `w:tcMar` overrides
+/// (ECMA-376 §17.4.42); within each level direct formatting beats the style.
+/// `O(1)`.
+pub(crate) fn cell_content_margins(
+    cell: &casual_doc_model::v1::TableCellProperties,
+    layer: &TableStyleLayer,
+    table: &TableProperties,
+) -> CellContentMargins {
+    let mut margins = layer.cell_margins;
+    overlay_cell_margins(&mut margins, &cell.margins);
+    resolve_cell_margins(&margins, &table.cell_margins)
+}
+
 /// Maps a cell's `w:vAlign` to the layout enum (`Top` when unset — Word's
 /// default).
 fn cell_vertical_alignment(props: &casual_doc_model::v1::TableCellProperties) -> CellVAlign {
@@ -3124,6 +3243,7 @@ fn cell_no_wrap_applies(properties: &casual_doc_model::v1::TableCellProperties) 
 /// cells across the columns they cover.
 fn solve_table_columns(
     table: &Table,
+    props: &TableProperties,
     shaper: &dyn LineShaper,
     available: i32,
     ctx: &FlowCtx,
@@ -3171,9 +3291,10 @@ fn solve_table_columns(
                 // change to the solver's inputs and is left alone deliberately —
                 // only the no-wrap minimum, where it is load-bearing, is fixed.)
                 let cmin = if cell_no_wrap_applies(&cell.properties) {
-                    let margins = resolve_cell_margins(
-                        &cell.properties.margins,
-                        &table.properties.cell_margins,
+                    let margins = cell_content_margins(
+                        &cell.properties,
+                        &style_layers[row_index][cell_index],
+                        props,
                     );
                     cmin.max(cpref.saturating_add(margins.start.raw() + margins.end.raw()))
                 } else {
@@ -3202,7 +3323,7 @@ fn solve_table_columns(
         .width
         .and_then(|width| width.dxa_twips())
         .map_or(WidthSpec::Auto, WidthSpec::Dxa);
-    let layout = match table.properties.layout {
+    let layout = match props.layout {
         Some(TableLayout::Fixed) => TableLayout::Fixed,
         _ => TableLayout::Autofit,
     };
@@ -16434,6 +16555,63 @@ mod tests {
             nested.content_layout.origin.y.raw() >= 50,
             "bottom anchoring is resolved inside a table cell, not body-only"
         );
+    }
+
+    /// HF-405: a cell's conditional regions come from where it is, with bands
+    /// counted after an enabled header row in periods of the band size.
+    #[test]
+    fn conditional_regions_follow_position_and_band_after_the_header_row() {
+        use casual_doc_model::v1::TableLook;
+        let props = TableProperties {
+            look: TableLook {
+                first_row: true,
+                first_column: true,
+                ..TableLook::default()
+            },
+            row_band_size: Some(2),
+            ..TableProperties::default()
+        };
+        let at = |row, column| {
+            positional_cnf(
+                &props,
+                TablePosition {
+                    row,
+                    rows: 6,
+                    column,
+                    columns: 3,
+                },
+            )
+        };
+        let header = at(0, 0);
+        assert!(header.first_row && header.first_column && header.first_row_first_column);
+        assert!(
+            !header.odd_h_band && !header.even_h_band,
+            "the header row is not banded"
+        );
+        // Rows 1-2 are the first band, rows 3-4 the second, row 5 the first again.
+        let bands: Vec<(bool, bool)> = (1..6)
+            .map(|row| {
+                let cnf = at(row, 1);
+                (cnf.odd_h_band, cnf.even_h_band)
+            })
+            .collect();
+        assert_eq!(
+            bands,
+            vec![
+                (true, false),
+                (true, false),
+                (false, true),
+                (false, true),
+                (true, false)
+            ]
+        );
+        let last = at(5, 2);
+        assert!(last.last_row && last.last_column && last.last_row_last_column);
+        assert!(
+            !at(2, 0).odd_v_band,
+            "an enabled first column is not banded"
+        );
+        assert!(at(2, 1).odd_v_band && at(2, 2).even_v_band);
     }
 
     #[test]

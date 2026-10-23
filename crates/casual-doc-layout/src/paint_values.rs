@@ -115,11 +115,26 @@ pub fn table_cell_borders(
     flow::resolve_table_border_candidates(table, layers)
 }
 
-/// A cell's content insets: the cell's `w:tcMar`, then the table's
-/// `w:tblCellMar`, then Word's built-in defaults. O(1).
+/// A cell's content insets exactly as the page insets it: the cell's `w:tcMar`,
+/// then the table style's cell margins for this cell (`layer`, from
+/// [`table_cell_layers`]), then the table's `w:tblCellMar` over its style's
+/// (`table` must come from [`resolved_table_properties`]), then Word's
+/// built-in defaults. O(1).
 #[must_use]
-pub fn cell_margins(cell: &TableCellProperties, table: &TableProperties) -> CellContentMargins {
-    flow::resolve_cell_margins(&cell.margins, &table.cell_margins)
+pub fn cell_margins(
+    cell: &TableCellProperties,
+    layer: &TableStyleLayer,
+    table: &TableProperties,
+) -> CellContentMargins {
+    flow::cell_content_margins(cell, layer, table)
+}
+
+/// A table's effective table-level properties — its direct `w:tblPr` over its
+/// table style's (or the default table style's) — as layout places it: indent,
+/// cell margins, cell spacing, alignment and layout. O(style chain).
+#[must_use]
+pub fn resolved_table_properties(table: &Table, cascade: &StyleCascade<'_>) -> TableProperties {
+    cascade.resolve_table_properties(&table.properties)
 }
 
 /// A list paragraph's indentation: the paragraph's own (direct and style) per

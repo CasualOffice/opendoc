@@ -72,6 +72,8 @@ use crate::properties::{
 // Separate `use` lines to minimize import-block merge conflicts.
 use crate::properties::parse_border_edge;
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
+// Every twips-typed attribute reads through the one tolerant parser (HF-402).
+use crate::properties::twips_attr;
 use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::{TableStack, last_paragraph_mut};
@@ -4140,29 +4142,29 @@ impl BodyParser<'_> {
                     }
                 };
                 if let Some(section) = self.section.as_mut() {
-                    section.page_width = attr_i32(element, b"w");
-                    section.page_height = attr_i32(element, b"h");
+                    section.page_width = twips_attr(element, b"w");
+                    section.page_height = twips_attr(element, b"h");
                     section.orientation = orientation;
                 }
             }
             b"pgMar" if self.section.is_some() => {
                 if let Some(section) = self.section.as_mut() {
-                    section.margin_top = attr_i32(element, b"top");
-                    section.margin_bottom = attr_i32(element, b"bottom");
+                    section.margin_top = twips_attr(element, b"top");
+                    section.margin_bottom = twips_attr(element, b"bottom");
                     section.margin_start =
-                        attr_i32(element, b"start").or_else(|| attr_i32(element, b"left"));
+                        twips_attr(element, b"start").or_else(|| twips_attr(element, b"left"));
                     section.margin_end =
-                        attr_i32(element, b"end").or_else(|| attr_i32(element, b"right"));
+                        twips_attr(element, b"end").or_else(|| twips_attr(element, b"right"));
                     // Header/footer band distances from the page edges. Word nests
                     // the header/footer inside the top/bottom margins (see layout's
                     // `PageConfig::content_area`); absent means Word's 720-twip default.
-                    section.margin_header = attr_i32(element, b"header");
-                    section.margin_footer = attr_i32(element, b"footer");
-                    section.margin_gutter = attr_i32(element, b"gutter");
+                    section.margin_header = twips_attr(element, b"header");
+                    section.margin_footer = twips_attr(element, b"footer");
+                    section.margin_gutter = twips_attr(element, b"gutter");
                 }
             }
             b"cols" if self.section.is_some() => {
-                let space = attr_i32(element, b"space");
+                let space = twips_attr(element, b"space");
                 let separator = attribute_value(element, b"sep")
                     .as_deref()
                     .map(|value| is_true(Some(value)));
@@ -4181,8 +4183,8 @@ impl BodyParser<'_> {
                 }
             }
             b"col" if self.section.is_some() => {
-                let width = attr_i32(element, b"w");
-                let space = attr_i32(element, b"space");
+                let width = twips_attr(element, b"w");
+                let space = twips_attr(element, b"space");
                 if let (Some(width), Some(section)) = (width, self.section.as_mut()) {
                     // Bound the count so a hostile `w:cols` cannot accumulate an
                     // unbounded per-column vector (Word caps columns at 45).
@@ -4516,7 +4518,7 @@ impl BodyParser<'_> {
             }
             b"tblGrid" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {}
             b"gridCol" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
-                let width = attr_i32(element, b"w").map(|width| width.clamp(0, 31_680));
+                let width = twips_attr(element, b"w").map(|width| width.clamp(0, 31_680));
                 self.tables.add_grid_column(width);
             }
             b"tcPr" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
@@ -4588,7 +4590,7 @@ impl BodyParser<'_> {
                 let is_dxa = attribute_value(element, b"type")
                     .map(|kind| kind == "dxa")
                     .unwrap_or(true);
-                match attr_i32(element, b"w") {
+                match twips_attr(element, b"w") {
                     Some(v) if is_dxa => self.tables.set_table_indent(v.clamp(-31_680, 31_680)),
                     _ => self.reporter.report(b"tblInd"),
                 }
@@ -4597,7 +4599,7 @@ impl BodyParser<'_> {
                 let is_dxa = attribute_value(element, b"type")
                     .map(|kind| kind == "dxa")
                     .unwrap_or(true);
-                match attr_i32(element, b"w") {
+                match twips_attr(element, b"w") {
                     Some(v) if is_dxa => self.tables.set_table_cell_spacing(v.clamp(0, 31_680)),
                     _ => self.reporter.report(b"tblCellSpacing"),
                 }
@@ -4683,7 +4685,7 @@ impl BodyParser<'_> {
                 let is_dxa = attribute_value(element, b"type")
                     .map(|kind| kind == "dxa")
                     .unwrap_or(true);
-                match attr_i32(element, b"w") {
+                match twips_attr(element, b"w") {
                     Some(v) if is_dxa => self.tables.set_row_cell_spacing(v.clamp(0, 31_680)),
                     _ => self.reporter.report(b"tblCellSpacing"),
                 }
@@ -7358,7 +7360,7 @@ impl BodyParser<'_> {
                 let is_dxa = attribute_value(element, b"type")
                     .map(|kind| kind == "dxa")
                     .unwrap_or(true);
-                match attr_i32(element, b"w") {
+                match twips_attr(element, b"w") {
                     Some(width) if is_dxa => {
                         let width = width.clamp(0, 31_680);
                         if cell {
@@ -9539,8 +9541,8 @@ fn table_float_position(element: &BytesStart<'_>) -> TableFloatPosition {
         Some("outside") => Some(TableYAlign::Outside),
         _ => None,
     };
-    let signed = |name: &[u8]| attr_i32(element, name).map(|v| v.clamp(-31_680, 31_680));
-    let from_text = |name: &[u8]| attr_i32(element, name).map(|v| v.clamp(0, 31_680));
+    let signed = |name: &[u8]| twips_attr(element, name).map(|v| v.clamp(-31_680, 31_680));
+    let from_text = |name: &[u8]| twips_attr(element, name).map(|v| v.clamp(0, 31_680));
     TableFloatPosition {
         horz_anchor: anchor(b"horzAnchor"),
         vert_anchor: anchor(b"vertAnchor"),

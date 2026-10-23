@@ -29,8 +29,11 @@ use crate::properties::{
 };
 // Separate `use` lines to minimize import-block merge conflicts.
 use crate::properties::parse_border_edge;
+use crate::properties::twips_attr;
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
+
+mod duplicates;
 
 /// Resolved style definitions and their name/kind index.
 #[derive(Debug, Default)]
@@ -148,6 +151,12 @@ struct RawStyle {
     /// A style's `w:pPr/w:numPr` (raw numId + ilvl), resolved to the style's
     /// `paragraph.numbering` in the deferred pass once numbering is parsed.
     pending_numbering: Option<(String, u8)>,
+    /// The byte span of the definition's children in the styles part (up to
+    /// and including its end tag), so a second definition of the same id can be
+    /// compared with this one on its source markup (`styles/duplicates.rs`).
+    /// Empty for a childless `<w:style/>`; several once later copies of the
+    /// same id have been folded into this one.
+    spans: Vec<(usize, usize)>,
 }
 
 /// Parses the styles part into resolved styles, allocating ids from `ids`.
@@ -160,20 +169,35 @@ pub(crate) fn parse(
     let (raw, document_defaults, latent_styles) = parse_raw(xml, reporter, config)?;
 
     let mut by_name: BTreeMap<String, (StyleId, StyleKind)> = BTreeMap::new();
-    let mut assigned: Vec<(StyleId, StyleKind, Option<String>, RawStyle)> = Vec::new();
+    // Where each style id's FIRST definition sits in `assigned`, so a later
+    // definition of the same id can be folded into it (HF-401).
+    let mut first_index: BTreeMap<String, usize> = BTreeMap::new();
+    let mut assigned: Vec<(StyleId, StyleKind, RawStyle)> = Vec::new();
     for style in raw {
         let Some(kind) = style.kind else {
             reporter.report(b"style");
             continue;
         };
-        if by_name.contains_key(&style.style_id) {
-            reporter.report(b"style");
+        if let Some(&index) = first_index.get(&style.style_id) {
+            let first = &mut assigned[index];
+            // A second definition of a different KIND cannot continue the first
+            // (a character `Heading1` is not more of a paragraph `Heading1`), so
+            // it is lost and reported. Same kind: fold, and report only a real
+            // disagreement (`styles/duplicates.rs`).
+            if first.1 != kind || absorb_duplicate(xml, config, &mut first.2, style) {
+                reporter.report_class(duplicate_style_feature(kind), b"style");
+            }
             continue;
         }
         let id = StyleId::new(next_id(ids)?);
         by_name.insert(style.style_id.clone(), (id, kind));
-        assigned.push((id, kind, style.based_on.clone(), style));
+        first_index.insert(style.style_id.clone(), assigned.len());
+        assigned.push((id, kind, style));
     }
+    let assigned: Vec<(StyleId, StyleKind, Option<String>, RawStyle)> = assigned
+        .into_iter()
+        .map(|(id, kind, style)| (id, kind, style.based_on.clone(), style))
+        .collect();
 
     // Resolve basedOn candidates (dangling / kind-mismatch dropped + reported).
     let mut candidates: Vec<(StyleId, StyleKind, Option<StyleId>, RawStyle)> = Vec::new();
@@ -263,6 +287,156 @@ pub(crate) fn parse(
         latent_styles,
         pending_numbering,
     })
+}
+
+/// The report class for a second definition of a style id that could not be
+/// folded into the first, by the KIND of the copy that was dropped — so the
+/// findings dialog can say "a paragraph style" rather than "a style"
+/// (`webapp/src/findings_catalogue.mjs`).
+fn duplicate_style_feature(kind: StyleKind) -> &'static str {
+    match kind {
+        StyleKind::Paragraph => "docx.style.duplicate.paragraph",
+        StyleKind::Character => "docx.style.duplicate.character",
+        StyleKind::Table => "docx.style.duplicate.table",
+        StyleKind::Numbering => "docx.style.duplicate.numbering",
+    }
+}
+
+/// Folds a later definition of the same style id and kind into the first
+/// (`styles/duplicates.rs` states the rule). Returns `true` when the two copies
+/// disagree on something both set, which the caller reports.
+fn absorb_duplicate(
+    xml: &[u8],
+    config: ImportConfig,
+    first: &mut RawStyle,
+    later: RawStyle,
+) -> bool {
+    use duplicates::{fold_name, fold_scalar};
+    let mut conflict = false;
+    conflict |= fold_name(&mut first.name, later.name);
+    conflict |= fold_scalar(&mut first.aliases, later.aliases);
+    conflict |= fold_scalar(&mut first.based_on, later.based_on);
+    conflict |= fold_scalar(&mut first.next, later.next);
+    conflict |= fold_scalar(&mut first.link, later.link);
+    conflict |= fold_scalar(&mut first.ui_priority, later.ui_priority);
+    // Presence flags: the element (or attribute) asserts the flag, so either
+    // copy asserting it is the style asserting it.
+    first.is_default |= later.is_default;
+    first.custom_style |= later.custom_style;
+    first.hidden |= later.hidden;
+    first.semi_hidden |= later.semi_hidden;
+    first.unhide_when_used |= later.unhide_when_used;
+    first.q_format |= later.q_format;
+    first.locked |= later.locked;
+    // The formatting: the copies' markup read as ONE definition, in both
+    // orders. When the two readings agree, no property is set differently by
+    // the two copies, and that reading is their union.
+    if first.spans.len() >= MAX_FOLDED_COPIES {
+        return true;
+    }
+    let mut forward = first.spans.clone();
+    forward.extend(later.spans.iter().copied());
+    let mut backward = later.spans.clone();
+    backward.extend(first.spans.iter().copied());
+    match (
+        formatting_of(xml, &forward, config),
+        formatting_of(xml, &backward, config),
+    ) {
+        (Some(union), Some(reversed)) if union == reversed => {
+            (
+                first.paragraph,
+                first.run,
+                first.table,
+                first.table_row,
+                first.table_cell,
+                first.conditional,
+                first.pending_numbering,
+            ) = union;
+            first.spans = forward;
+            conflict
+        }
+        _ => true,
+    }
+}
+
+/// How many definitions of one style id are folded together before a further
+/// copy is reported instead: each fold re-reads every copy so far, so the bound
+/// keeps a hostile part with thousands of copies of one id linear.
+const MAX_FOLDED_COPIES: usize = 16;
+
+/// A definition's formatting containers, as [`absorb_duplicate`] compares them.
+type Formatting = (
+    Option<ParagraphProperties>,
+    Option<RunProperties>,
+    Option<TableProperties>,
+    Option<TableRowProperties>,
+    Option<TableCellProperties>,
+    Vec<TableStyleOverride>,
+    Option<(String, u8)>,
+);
+
+/// Reads the children of several `w:style` definitions (each a source span up
+/// to and including its end tag) as ONE definition, in the order given, with
+/// the ordinary reader — so a later copy's statement overrides an earlier
+/// one's exactly as a repeated element inside one definition would.
+///
+/// Re-read, not compared generically: a structural comparison of the model
+/// values needs one for every property type, and the only generic one at hand
+/// (serde) costs +68 KB in the wasm module to compare and +298 KB to merge,
+/// against `wasm_size.test.mjs`'s budget. Re-reading adds nothing. Findings go
+/// to a scratch reporter: every copy was already read, and reported, once. A
+/// list both copies carry (tab stops, a conditional region) is read twice, so
+/// equal entries are collapsed. `O(size of the copies)`.
+fn formatting_of(xml: &[u8], spans: &[(usize, usize)], config: ImportConfig) -> Option<Formatting> {
+    let mut joined = b"<w:style>".to_vec();
+    for &(start, end) in spans {
+        let children = xml.get(start..end)?;
+        // Drop the copy's own end tag: the joined definition has one.
+        let close = children
+            .windows(2)
+            .rposition(|pair| pair == b"</")
+            .unwrap_or(0);
+        joined.extend_from_slice(&children[..close]);
+    }
+    joined.extend_from_slice(b"</w:style>");
+    let mut scratch = Reporter::new(crate::report::SourceRetention::Regenerated);
+    let mut ctx = Ctx {
+        reporter: &mut scratch,
+        max_depth: config.max_depth,
+        max_elements: config.max_elements,
+        elements: 0,
+    };
+    let mut reader = Reader::from_reader(joined.as_slice());
+    let mut buffer = Vec::new();
+    let Ok(Node::Open(element)) = read_node(&mut reader, &mut buffer, &mut ctx) else {
+        return None;
+    };
+    let mut style = read_style(&mut reader, &mut buffer, &mut ctx, 1, &element).ok()?;
+    if let Some(paragraph) = style.paragraph.as_mut() {
+        collapse_equal(&mut paragraph.tabs);
+    }
+    collapse_equal(&mut style.conditional);
+    Some((
+        style.paragraph,
+        style.run,
+        style.table,
+        style.table_row,
+        style.table_cell,
+        style.conditional,
+        style.pending_numbering,
+    ))
+}
+
+/// Keeps the first of each set of equal entries in `items`. `O(n²)` in a list
+/// the readers bound (128 tab stops, 128 regions).
+fn collapse_equal<T: PartialEq>(items: &mut Vec<T>) {
+    let mut kept: Vec<T> = Vec::with_capacity(items.len());
+    for item in items.drain(..) {
+        if !kept.contains(&item) {
+            kept.push(item);
+        }
+    }
+    *items = kept;
 }
 
 /// Resolves an optional style-name reference to its id, reporting a dangling one.
@@ -447,7 +621,11 @@ fn parse_raw(
                 // the same top-level loop.
                 b"styles" => {}
                 b"style" => {
-                    styles.push(read_style(&mut reader, &mut buffer, &mut ctx, 1, &element)?);
+                    let start = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+                    let mut style = read_style(&mut reader, &mut buffer, &mut ctx, 1, &element)?;
+                    let end = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+                    style.spans = vec![(start, end)];
+                    styles.push(style);
                 }
                 b"docDefaults" => {
                     document_defaults =
@@ -551,9 +729,13 @@ fn int_attribute(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
 fn empty_style(element: &BytesStart<'_>) -> RawStyle {
     RawStyle {
         style_id: attribute_value(element, b"styleId").unwrap_or_default(),
-        kind: attribute_value(element, b"type")
-            .as_deref()
-            .and_then(style_kind_from),
+        // ECMA-376 §17.7.4.17: an omitted `@w:type` is a PARAGRAPH style. It was
+        // read as "no kind" and the whole definition reported lost (HF-403); only
+        // a type this model has no kind for is still refused.
+        kind: match attribute_value(element, b"type") {
+            None => Some(StyleKind::Paragraph),
+            Some(value) => style_kind_from(&value),
+        },
         is_default: style_default_attr(element),
         // `@w:customStyle` — the author's style rather than an application
         // built-in.
@@ -585,6 +767,7 @@ fn empty_style(element: &BytesStart<'_>) -> RawStyle {
         table_cell: None,
         conditional: Vec::new(),
         pending_numbering: None,
+        spans: Vec::new(),
     }
 }
 
@@ -1494,7 +1677,10 @@ fn dxa_twips(element: &BytesStart<'_>) -> Option<i32> {
     let is_dxa = attribute_value(element, b"type")
         .map(|kind| kind == "dxa")
         .unwrap_or(true);
-    let width = attribute_value(element, b"w").and_then(|value| value.parse::<i32>().ok());
+    // `twips_attr`, not `parse::<i32>`: Google Docs writes `w:w="108.0"`, and
+    // the strict parse reported a whole table style's cell margins and indent as
+    // lost (HF-402).
+    let width = twips_attr(element, b"w");
     match width {
         Some(width) if is_dxa => Some(width),
         _ => None,
