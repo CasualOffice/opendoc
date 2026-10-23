@@ -39,6 +39,7 @@ COV
 CPU
 CRDT
 CRLF
+CSP
 CSS
 Caladea
 Calibri
