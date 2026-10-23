@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 
 // fidelity.js is a classic browser <script> (this package is type=module, so it
 // can't be `require`d, and it must stay import/export-free for the browser).
@@ -638,10 +640,8 @@ test("every Charts grade is derived from the painter, the writer and the host su
   // and nothing in the host calls it, so a reader cannot create a chart. The
   // grade must not claim creation, and the moment a surface lands it must stop
   // denying it.
-  const host = readFileSync(
-    new URL("../src/main.js", import.meta.url),
-    "utf8",
-  );
+  // `main.js` and the domain modules split out of it (docs/177): the host.
+  const host = editorSource(fileURLToPath(new URL("../src/", import.meta.url)));
   const engineInserts = /js_name = insertChart/.test(
     read("casual-doc-wasm/src/lib.rs"),
   );

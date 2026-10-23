@@ -461,7 +461,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  The split (`docs/177`, `109` HF-380): each feature domain leaves `main.js` for
  *  a `create*(ed)` module handed the editor context, and every step lowers this
  *  number to the file it left behind. MEASURED with `wc -l` after each step. */
-const MAIN_JS_LINE_CEILING = 14341;
+const MAIN_JS_LINE_CEILING = 6311;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

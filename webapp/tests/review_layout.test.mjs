@@ -11,6 +11,8 @@
 // arithmetic and is not asserted here: `tests/e2e/narrow-review-column.spec.mjs`
 // resizes a real browser and hit-tests the page.
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { editorSource } from "../tools/editor_sources.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
@@ -100,7 +102,8 @@ test("the stylesheet and the script change shape at the same width", () => {
     "the media query the shell listens to must be built from the constant",
   );
   assert.match(
-    read("main.js"),
+    // `main.js` and the domain modules split out of it (docs/177).
+    editorSource(fileURLToPath(new URL("../src/", import.meta.url))),
     /phoneChrome\.reviewSheet\(\)/,
     "main.js must read the rung through the ladder, not re-derive it",
   );

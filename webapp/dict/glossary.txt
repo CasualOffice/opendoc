@@ -388,6 +388,7 @@ documentProtection
 docx
 dpi
 draggable
+drawSelection
 drawingml
 dropdown
 dropdowns
@@ -435,6 +436,7 @@ gridSpan
 gridlines
 gzip
 gzipped
+handleFile
 handoff
 hardcoded
 hardcodes
