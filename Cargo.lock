@@ -217,6 +217,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-review"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-edit",
+ "casual-doc-layout",
+ "casual-doc-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casual-doc-rtf"
 version = "0.0.1"
 dependencies = [
@@ -281,6 +292,7 @@ dependencies = [
  "casual-doc-ooxml",
  "casual-doc-pdf",
  "casual-doc-render",
+ "casual-doc-review",
  "casual-doc-selection",
  "casual-doc-transaction",
  "serde",
