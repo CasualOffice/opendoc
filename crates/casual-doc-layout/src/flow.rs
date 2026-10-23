@@ -6749,9 +6749,20 @@ pub(crate) fn shape_field_run(
     let layout = shaper.shape_paragraph(&[styled], tabs::unwrapped_constraints(), dummy);
     let mut glyphs: Vec<Glyph> = Vec::new();
     let (mut ascent, mut descent) = (Twip::ZERO, Twip::ZERO);
+    // The face the value was SHAPED with, which is the face its glyph ids
+    // index. `style.font` is the face the field's source run was drawn with,
+    // and when that is not a bundled face (a host-registered Carlito, an
+    // installed Calibri) the shaper cannot name its family from the id alone
+    // and shapes in the default family: painting those glyph ids with
+    // `style.font` drew the wrong glyphs ("2 of 14" as "Ï of ãÕ"). On the
+    // bundled path the two are the same id.
+    let mut font = style.font;
     if let Some(line) = layout.lines.first() {
         ascent = line.ascent;
         descent = line.descent;
+        if let Some(run) = line.runs.first() {
+            font = run.font;
+        }
         for run in &line.runs {
             for g in &run.glyphs {
                 glyphs.push(Glyph {
@@ -6772,7 +6783,7 @@ pub(crate) fn shape_field_run(
             // adds `base`), so the anchor names the paragraph they index. An
             // atomic field's painted value is not model text, so it names none.
             node: anchor.node,
-            font: style.font,
+            font,
             size: style.size,
             // The value IS shaped, just not from model text — `layout` above is
             // the shaped probe, and its first line's metrics are the face's at

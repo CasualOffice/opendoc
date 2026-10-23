@@ -12,6 +12,7 @@
 //! font-name matching, fallback — is `P1C-002` (`40-FONT-MANAGEMENT-DESIGN.md`).
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -92,7 +93,19 @@ pub struct ParleyShaper {
     /// renderer fetches bytes from, plus the running coverage gap. Cloned handle —
     /// call [`Self::registry`] to share it with the renderer.
     registry: FontRegistry,
+    /// Every requested family (`w:rFonts`) the collection had no face for since
+    /// the last [`take_unresolved_families`](Self::take_unresolved_families):
+    /// the names a host could supply. Filled on a miss only, with a lookup
+    /// before the allocation, so a run whose family is present pays nothing and
+    /// a missing one pays one set probe.
+    unresolved_families: RefCell<BTreeSet<String>>,
 }
+
+/// Whether bundled families may be absent and supplied by the host under their
+/// own names: the Viewer SDK's `viewer-core-fonts` build only. Everywhere else
+/// every bundled family is embedded and this rule never changes a pick.
+const HOST_SUPPLIES_BUNDLED_FAMILIES: bool =
+    cfg!(all(feature = "viewer-core-fonts", target_arch = "wasm32"));
 
 impl ParleyShaper {
     /// Creates a shaper with every target-bundled family registered. Browser
@@ -197,6 +210,7 @@ impl ParleyShaper {
             families,
             bundled_blobs,
             registry: FontRegistry::new(),
+            unresolved_families: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -365,6 +379,7 @@ impl ParleyShaper {
             if fonts.collection.family_id(name).is_some() {
                 return name;
             }
+            self.note_unresolved_family(name);
             // Requested family is missing: shape with the bundled
             // metric-compatible substitute (Liberation Sans/Serif/Mono, Carlito,
             // Caladea) so line breaking matches LibreOffice instead of the
@@ -374,12 +389,68 @@ impl ParleyShaper {
             // face outlined later cannot disagree. Falls through to `family_for`
             // if the substitute is somehow not registered.
             if let Some(sub) = crate::font_substitution::substitute(name, run.requested_family_kind)
-                && let Some(registered) = self.registered_name(sub.family.base)
             {
-                return registered;
+                if let Some(registered) = self.registered_name(sub.family.base) {
+                    return registered;
+                }
+                // The Viewer SDK's core-font build embeds only the default
+                // family; a substitute it does not embed is used as soon as the
+                // host registers it under its own name (`docs/176` §10, Q2).
+                if HOST_SUPPLIES_BUNDLED_FAMILIES
+                    && fonts.collection.family_id(sub.family.name).is_some()
+                {
+                    return sub.family.name;
+                }
             }
         }
+        // Same rule for a run the resolver placed in a non-embedded family
+        // without naming one (a declared generic class, say).
+        if HOST_SUPPLIES_BUNDLED_FAMILIES
+            && let Some(family) = crate::fonts::RESOLVER_FAMILIES
+                .iter()
+                .find(|family| family.contains(run.font))
+            && self.registered_name(family.base).is_none()
+            && fonts.collection.family_id(family.name).is_some()
+        {
+            return family.name;
+        }
         self.family_for(run.font)
+    }
+
+    /// Records a requested family the collection has no face for. One set
+    /// probe; allocates only the first time a name misses.
+    fn note_unresolved_family(&self, name: &str) {
+        let mut unresolved = self.unresolved_families.borrow_mut();
+        if !unresolved.contains(name) {
+            unresolved.insert(name.to_owned());
+        }
+    }
+
+    /// Whether the collection has a face registered under `family` (bundled,
+    /// host-registered or, with `system-fonts`, installed). O(1) amortised.
+    #[must_use]
+    pub fn has_family(&self, family: &str) -> bool {
+        self.fonts
+            .borrow_mut()
+            .collection
+            .family_id(family)
+            .is_some()
+    }
+
+    /// Drains the requested families (`w:rFonts` names) that had no face in
+    /// the collection since the last call, in sorted order.
+    ///
+    /// These are the names a run asked for and was substituted away from: on a
+    /// deterministic build every document font that is not bundled, and on a
+    /// machine with OS fonts every one that is not installed. A batch host (the
+    /// Viewer SDK) reads it after a layout pass to learn which faces it could
+    /// supply; registering one and laying out again shapes those runs with it.
+    ///
+    /// Complexity: O(distinct names).
+    pub fn take_unresolved_families(&self) -> Vec<String> {
+        std::mem::take(&mut *self.unresolved_families.borrow_mut())
+            .into_iter()
+            .collect()
     }
 
     /// The family name `parley` registered a bundled family under, keyed by the

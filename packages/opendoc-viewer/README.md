@@ -1,0 +1,91 @@
+# @casualoffice/opendoc-viewer
+
+The OpenDoc **Viewer SDK**: open a `.docx` in a browser or in Node, lay it out
+with OpenDoc's own pagination engine, and read it back as page pixels, PNG
+thumbnails, text, an outline, or a real-text PDF. Read-only and batch: there is
+no editing, selection, caret or collaboration code in the module at all
+(`docs/176` in the repository says how that cut is made and measured).
+
+Apache-2.0. Not yet published to npm: build it from the repository.
+
+```sh
+./packages/opendoc-viewer/build.sh      # needs Rust 1.96 + wasm32 target, and wasm-pack
+```
+
+## Browser
+
+```js
+import { openDocument, packageFontProvider } from "@casualoffice/opendoc-viewer";
+
+const bytes = new Uint8Array(await (await fetch("report.docx")).arrayBuffer());
+const doc = await openDocument(bytes, {
+  // Serve node_modules/@casualoffice/opendoc-viewer/pkg/fonts/ yourself.
+  fontProvider: packageFontProvider("/static/opendoc-fonts/"),
+});
+
+for (let i = 0; i < doc.pageCount; i++) {
+  const { width, height, rgba } = doc.renderPage(i, { dpi: 96 * devicePixelRatio });
+  const canvas = Object.assign(document.createElement("canvas"), { width, height });
+  canvas.getContext("2d").putImageData(new ImageData(rgba, width, height), 0, 0);
+  document.body.append(canvas);
+}
+console.log(doc.outline(), doc.pageText(0));
+const pdf = doc.toPdf();
+doc.free();
+```
+
+## Node
+
+```js
+import { readFile, writeFile } from "node:fs/promises";
+import { openDocument } from "@casualoffice/opendoc-viewer/node";
+
+const doc = await openDocument(await readFile("report.docx")); // package faces served from disk
+await writeFile("page-1.png", doc.renderPagePng(0, { dpi: 150 }));
+await writeFile("report.pdf", doc.toPdf());
+```
+
+## API
+
+| Call | Returns |
+| --- | --- |
+| `openDocument(bytes, { fonts, fontProvider, wasm })` | `ViewerDocument`; rejects with a sentence on a file it cannot open |
+| `doc.pageCount`, `doc.pageSize(i)`, `doc.pageSizes()` | Page geometry in twips and points (pages can differ) |
+| `doc.renderPage(i, { dpi })` | `{ width, height, rgba }`, premultiplied RGBA for `ImageData` |
+| `doc.renderPagePng(i, { dpi })` | PNG bytes |
+| `doc.pageText(i)`, `doc.text()` | Body text per page and whole; the pages concatenate to the whole |
+| `doc.outline()` | `[{ level, text, page }]` |
+| `doc.fontNeeds()` | `[{ requested, substitute, substituteAvailable }]` |
+| `doc.missingCodePoints()` | Code points no face drew |
+| `doc.registerFonts(faces)`, `doc.registerFallbackFont(face, scripts)` | Host faces; one re-layout per call |
+| `doc.toPdf()` | Real-text vector PDF of the same layout |
+| `doc.free()` | Releases engine memory |
+
+## Fonts
+
+The module embeds one family, **Liberation Sans**. Every other face the layout
+can use (Carlito for Calibri, Caladea for Cambria, Liberation Serif and Mono for
+Times New Roman and Courier New, Roboto, Noto Emoji) ships as a plain file in
+`pkg/fonts/`. **You serve those files**; the viewer never fetches from a CDN.
+
+After the first layout the viewer asks your `fontProvider` once per font it
+needed and did not have. Return the faces (the requested family itself, if you
+hold a licence for it, or its substitute), or nothing to keep the substitute in
+place. Everything returned is registered and the document is laid out once
+more. Serve the same faces and you get the same pixels on every machine.
+
+A document whose fonts you never supply still opens and renders, in Liberation
+Sans. Its line and page breaks then differ from Word's wherever the real face's
+metrics differ.
+
+## Formats
+
+DOCX only. ODT, RTF and plain text are the `formats` feature, which costs about
+3.6 MB raw today; build with
+`VIEWER_FEATURES=wasm,core-fonts,pdf,formats ./build.sh` to include them.
+
+## Size
+
+The measured size of this build is generated into `size.json` by
+`tools/measure-size.mjs` and published in `docs/176` §4.5. CI fails if the
+module grows past its budget (`test/size_budget.test.mjs`).

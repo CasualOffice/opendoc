@@ -96,6 +96,8 @@ function thirdPartyLicenceFiles() {
     "NOTICE",
     "packages/opendoc-embed/LICENSE",
     "packages/opendoc-embed/NOTICE",
+    "packages/opendoc-viewer/LICENSE",
+    "packages/opendoc-viewer/NOTICE",
   ]);
   const found = [];
   for (const path of filesUnder(REPO)) {
@@ -169,6 +171,26 @@ test("the published package ships the licence and the notice, not just the ident
   }
   assert.equal(manifest.license, "Apache-2.0");
   assert.match(manifest.author, /CasualOffice/);
+});
+
+test("the Viewer SDK package ships the licence, the notice and the face licences", () => {
+  // Same rule as the embed package: byte-identical copies of the root pair,
+  // published. The viewer also publishes font FILES (pkg/fonts/, docs/176
+  // §10 Q2), so the OFL texts those faces require must travel with them.
+  const viewer = join(REPO, "packages", "opendoc-viewer");
+  const viewerManifest = JSON.parse(readFileSync(join(viewer, "package.json"), "utf8"));
+  for (const name of ["LICENSE", "NOTICE"]) {
+    assert.equal(
+      readFileSync(join(viewer, name), "utf8"),
+      readFileSync(join(REPO, name), "utf8"),
+      `packages/opendoc-viewer/${name} is not the repository's ${name}`,
+    );
+    assert.ok(viewerManifest.files.includes(name), `"files" does not publish ${name}`);
+  }
+  assert.equal(viewerManifest.license, "Apache-2.0");
+  assert.ok(viewerManifest.files.includes("pkg/fonts"), `"files" does not publish the face files`);
+  const build = readFileSync(join(viewer, "build.sh"), "utf8");
+  assert.match(build, /cp "\$fonts\/LICENSES\/"\*\.txt "\$out\/LICENSES\/"/, "build.sh does not ship the OFL texts");
 });
 
 test("the webapp manifest declares the licence a consumer would look for", () => {

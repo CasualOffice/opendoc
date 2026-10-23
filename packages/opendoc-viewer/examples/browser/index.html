@@ -1,0 +1,94 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The Viewer SDK in a page, with the package alone: pick a DOCX, see every page,
+  its outline, and download the PDF. Build the package, then serve the
+  REPOSITORY ROOT (so ../../src and ../../pkg resolve) and open this file:
+
+    ./packages/opendoc-viewer/build.sh
+    python3 -m http.server 8000
+    open http://localhost:8000/packages/opendoc-viewer/examples/browser/
+
+  The fonts come from this server (pkg/fonts/), never from a CDN.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenDoc Viewer SDK example</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; background: Canvas; color: CanvasText; }
+      header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
+      main { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 16px; }
+      nav ol { padding-left: 1.2em; margin: 0; }
+      nav button { all: unset; cursor: pointer; text-decoration: underline; }
+      #pages canvas { display: block; max-width: 100%; height: auto; margin: 0 auto 16px; box-shadow: 0 1px 4px #0006; background: #fff; }
+      #status { opacity: 0.8; }
+      @media (max-width: 640px) { main { grid-template-columns: minmax(0, 1fr); } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <label>Document <input id="file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
+      <button id="pdf" type="button" disabled>Download PDF</button>
+      <span id="status" role="status" aria-live="polite">Pick a .docx file.</span>
+    </header>
+    <main>
+      <nav aria-label="Outline"><ol id="outline"></ol></nav>
+      <section id="pages" aria-label="Pages"></section>
+    </main>
+    <script type="module">
+      import { openDocument, packageFontProvider } from "../../src/index.js";
+
+      const fontProvider = packageFontProvider(new URL("../../pkg/fonts/", import.meta.url));
+      const $ = (id) => document.getElementById(id);
+      let doc = null;
+
+      $("file").addEventListener("change", async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        doc?.free();
+        doc = null;
+        $("pdf").disabled = true;
+        $("pages").replaceChildren();
+        $("outline").replaceChildren();
+        $("status").textContent = `Opening ${file.name}…`;
+        try {
+          const started = performance.now();
+          doc = await openDocument(new Uint8Array(await file.arrayBuffer()), { fontProvider });
+          const dpi = 96 * (window.devicePixelRatio || 1);
+          const canvases = [];
+          for (let i = 0; i < doc.pageCount; i++) {
+            const { width, height, rgba } = doc.renderPage(i, { dpi });
+            const canvas = Object.assign(document.createElement("canvas"), { width, height });
+            canvas.setAttribute("aria-label", `Page ${i + 1}`);
+            canvas.style.width = `${doc.pageSize(i).widthPt * (96 / 72)}px`;
+            canvas.getContext("2d").putImageData(new ImageData(rgba, width, height), 0, 0);
+            canvases.push(canvas);
+          }
+          $("pages").replaceChildren(...canvases);
+          for (const entry of doc.outline()) {
+            const item = document.createElement("li");
+            item.style.marginLeft = `${(entry.level - 1) * 12}px`;
+            const button = Object.assign(document.createElement("button"), { type: "button", textContent: entry.text });
+            button.addEventListener("click", () => canvases[entry.page ?? 0]?.scrollIntoView({ behavior: "smooth" }));
+            item.append(button);
+            $("outline").append(item);
+          }
+          $("pdf").disabled = !doc.hasPdf;
+          $("status").textContent = `${doc.pageCount} pages in ${Math.round(performance.now() - started)} ms.`;
+        } catch (error) {
+          $("status").textContent = String(error?.message ?? error);
+        }
+      });
+
+      $("pdf").addEventListener("click", () => {
+        if (!doc) return;
+        const url = URL.createObjectURL(new Blob([doc.toPdf()], { type: "application/pdf" }));
+        Object.assign(document.createElement("a"), { href: url, download: "document.pdf" }).click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      });
+    </script>
+  </body>
+</html>

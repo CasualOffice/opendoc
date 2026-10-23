@@ -1,0 +1,226 @@
+OpenDoc
+Copyright 2026 CasualOffice
+
+Developed by the CasualOffice Team (https://github.com/CasualOffice).
+
+This product is licensed under the Apache License, Version 2.0. The full text of
+the licence is in the LICENSE file beside this one, and at
+http://www.apache.org/licenses/LICENSE-2.0
+
+Contributions are welcome under the same licence. Unless a contributor states
+otherwise, a contribution intentionally submitted for inclusion in OpenDoc is
+provided under the Apache License, Version 2.0, without additional terms or
+conditions. CONTRIBUTING.md describes how to propose one, and GOVERNANCE.md
+describes who decides.
+
+This file is the Apache-2.0 section 4(d) notice: every attribution below belongs
+to a third-party work this repository actually ships, and every line of it is
+taken from that work's own licence file or its own embedded licence record --
+both committed here, both citable, neither remembered.
+
+
+================================================================================
+THIRD-PARTY NOTICES
+================================================================================
+
+--------------------------------------------------------------------------------
+1. Document fonts embedded in the layout engine
+--------------------------------------------------------------------------------
+
+These faces are compiled into `casual-doc-layout` with `include_bytes!`, so a
+binary built from this repository carries their bytes. The one exception is
+Roboto, whose four blobs the `external-web-fonts` WebAssembly build omits in
+favour of faces the browser fetches; the files themselves are committed either
+way. `crates/casual-doc-layout/fonts/README.md` records each file's provenance
+and the role the font resolver gives it.
+
+Roboto
+  crates/casual-doc-layout/fonts/Roboto-{Regular,Bold,Italic,BoldItalic}.ttf
+  Copyright 2015 Google Inc. All Rights Reserved.
+  Licensed under the Apache License, Version 2.0 -- the licence record carried in
+  the font's own `name` table (IDs 13 and 14). Its text is the LICENSE file at the
+  root of this repository.
+
+Caladea
+  crates/casual-doc-layout/fonts/Caladea-{Regular,Bold,Italic,BoldItalic}.ttf
+  Copyright (c) 2012 Huerta Tipografia
+  Licensed under the Apache License, Version 2.0 -- the licence record carried in
+  the font's own `name` table (IDs 13 and 14). Its text is the LICENSE file at the
+  root of this repository.
+
+Carlito
+  crates/casual-doc-layout/fonts/Carlito-{Regular,Bold,Italic,BoldItalic}.ttf
+  Copyright 2013 The Carlito Project Authors
+  (https://github.com/googlefonts/carlito), with Reserved Font Name "Carlito"
+  SIL Open Font License, Version 1.1
+  crates/casual-doc-layout/fonts/LICENSES/OFL-1.1-Carlito.txt
+
+Liberation Sans, Liberation Serif, Liberation Mono
+  crates/casual-doc-layout/fonts/liberation/Liberation{Sans,Serif,Mono}-*.ttf
+  Digitized data copyright (c) 2010 Google Corporation, with Reserved Font Arimo,
+  Tinos and Cousine.
+  Copyright (c) 2012 Red Hat, Inc., with Reserved Font Name Liberation.
+  SIL Open Font License, Version 1.1
+  crates/casual-doc-layout/fonts/LICENSES/OFL-1.1-Liberation.txt
+
+Noto Emoji
+  crates/casual-doc-layout/fonts/NotoEmoji-Variable.ttf
+  Copyright 2013 Google LLC
+  SIL Open Font License, Version 1.1
+  crates/casual-doc-layout/fonts/LICENSES/OFL-1.1-NotoEmoji.txt
+
+--------------------------------------------------------------------------------
+2. Interface fonts served with the web application
+--------------------------------------------------------------------------------
+
+These faces are self-hosted -- `webapp/src/fonts.css` references them from this
+repository and never from a font CDN, which `webapp/tests/chrome_fonts.test.mjs`
+enforces. They are the chrome's own typefaces and are not used to lay out a
+document.
+
+Inter
+  webapp/assets/fonts/inter-latin-400-700.woff2
+  Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/LICENSE-Inter.txt
+
+Instrument Sans
+  webapp/assets/fonts/instrument-sans.woff2, instrument-sans-italic.woff2
+  Copyright 2022 The Instrument Sans Project Authors
+  (https://github.com/Instrument/instrument-sans)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/LICENSE-Instrument-Sans.txt
+
+Newsreader
+  webapp/assets/fonts/newsreader.woff2, newsreader-italic.woff2
+  Copyright 2020 The Newsreader Project Authors
+  (http://github.com/productiontype/Newsreader)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/LICENSE-Newsreader.txt
+
+JetBrains Mono
+  webapp/assets/fonts/jetbrains-mono.woff2
+  Copyright 2020 The JetBrains Mono Project Authors
+  (https://github.com/JetBrains/JetBrainsMono)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/LICENSE-JetBrains-Mono.txt
+
+Material Symbols Outlined
+  webapp/assets/fonts/material-symbols-outlined.woff2
+  Copyright 2026 Google LLC. All Rights Reserved.
+  Licensed under the Apache License, Version 2.0
+  webapp/assets/fonts/LICENSE-Material-Symbols.txt
+
+--------------------------------------------------------------------------------
+3. Spelling word lists
+--------------------------------------------------------------------------------
+
+SCOWL (Spell Checker Oriented Word Lists)
+  webapp/dict/en-US.txt, webapp/dict/en-GB.txt -- generated from the
+  `scowl-2020.12.07` release by `webapp/tools/build-dictionary.mjs`; the release,
+  its URL and its SHA-256 are recorded in webapp/dict/README.md.
+  The collective work is Copyright 2000-2018 by Kevin Atkinson, together with the
+  further copyright holders named in the licence file itself.
+  webapp/dict/LICENSE.SCOWL.txt
+
+--------------------------------------------------------------------------------
+4. Document fonts self-hosted and served from this origin
+--------------------------------------------------------------------------------
+
+These faces lay out DOCUMENT text, not the chrome. They are not embedded in the
+engine: `webapp/src/web_fonts.mjs` fetches them from this repository's own origin
+at runtime and registers them through the font-registry seam. They are committed
+here, so this repository redistributes them. Each is redistributed unmodified,
+and the licence claim is verified from the file's own `name` table (IDs 13/14).
+Provenance, byte counts and SHA-256 digests are in
+`webapp/assets/fonts/script/README.md`.
+
+Roboto (variable, OFL build)
+  webapp/assets/fonts/script/Roboto-Variable.ttf, Roboto-Italic-Variable.ttf
+  Copyright 2011 The Roboto Project Authors
+  (https://github.com/googlefonts/roboto-classic)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-Roboto.txt
+  NOTE: this is the OFL-licensed Roboto that Google Fonts now publishes. The
+  Roboto embedded in the layout engine (section 1) is the older Apache-2.0
+  build and a different file; the two licences must not be conflated.
+
+Noto Sans
+  webapp/assets/fonts/script/NotoSans-Variable.ttf, NotoSans-Italic-Variable.ttf
+  Copyright 2022 The Noto Project Authors
+  (https://github.com/notofonts/latin-greek-cyrillic)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-NotoSans.txt
+
+Noto Serif
+  webapp/assets/fonts/script/NotoSerif-Variable.ttf, NotoSerif-Italic-Variable.ttf
+  Copyright 2022 The Noto Project Authors
+  (https://github.com/notofonts/latin-greek-cyrillic)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-NotoSerif.txt
+
+Noto Sans script families -- Arabic, Devanagari, Bengali, Gurmukhi, Gujarati,
+Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Hebrew, Thai, Symbols 2
+  webapp/assets/fonts/script/NotoSans{Arabic,Devanagari,Bengali,Gurmukhi,
+  Gujarati,Oriya,Tamil,Telugu,Kannada,Malayalam,Sinhala,Hebrew,Thai,
+  Symbols2}-Regular.ttf
+  Copyright 2022 The Noto Project Authors (https://github.com/notofonts/)
+  SIL Open Font License, Version 1.1
+  webapp/assets/fonts/script/OFL-1.1-Noto.txt
+
+--------------------------------------------------------------------------------
+5. Test-only font fixtures
+--------------------------------------------------------------------------------
+
+Font data that exists only so a test can create a condition. Not served to any
+reader and not embedded in the engine. See `fixtures/fonts/README.md`, which
+records the exact subsetting command, so the derivation is reproducible.
+
+Noto Sans CJK SC (19-codepoint test subset)
+  fixtures/fonts/NotoSansCJK-TestSubset.otf
+  (c) 2014-2021 Adobe (http://www.adobe.com/) -- the copyright record carried in
+  the font's own `name` table (ID 0). Published by The Noto Project
+  (https://github.com/notofonts/noto-cjk); Noto is a trademark of Google Inc.
+  SIL Open Font License, Version 1.1
+  fixtures/fonts/OFL-1.1-NotoSansCJK.txt
+  MODIFIED: subset to 19 code points with `fontTools.subset`, which the OFL
+  permits. This face declares NO Reserved Font Name -- the upstream OFL text
+  states none -- so the RFN restriction on renaming a modified font does not
+  apply. The file is still named `NotoSansCJK-TestSubset` so that nothing in
+  the tree can mistake a 19-glyph test fixture for the 16.4 MB upstream face.
+  It is never served to a reader.
+
+--------------------------------------------------------------------------------
+6. Fonts fetched at runtime, which this repository does not redistribute
+--------------------------------------------------------------------------------
+
+Four faces are too large to commit -- the three Noto Sans CJK region faces
+(~16.4 MB each) and the COLRv1 Noto Color Emoji face (4.99 MB), 51.8 MB
+together. `webapp/src/web_fonts.mjs` serves them from this origin when a
+deployment has provisioned them with `webapp/tools/provision-script-fonts.mjs`,
+and otherwise falls back to a commit-pinned upstream mirror. Either way the
+bytes are verified against a SHA-256 in the manifest before they are used.
+
+Because they are not committed, they carry no attribution above: they are
+distributed by their own publishers, under the SIL Open Font License 1.1, and
+each arrives with the licence records in its own `name` table. A deployment that
+provisions them IS redistributing them and should ship the OFL text alongside;
+`webapp/assets/fonts/script/OFL-1.1-Noto.txt` is that text. A host that would
+rather supply its own faces does so through the same font-registry seam.
+
+--------------------------------------------------------------------------------
+7. Standard data embedded in the engine
+--------------------------------------------------------------------------------
+
+ECMA-376 DrawingML preset shape definitions
+  crates/casual-doc-model/data/preset_shapes.txt -- generated by
+  `crates/casual-doc-import/examples/generate_preset_shapes.rs` from the
+  ECMA-376 Part 1 annex `presetShapeDefinitions.xml`, as redistributed in the
+  Apache POI project's Apache-2.0 release; the source copy, its URL and its
+  SHA-256 are recorded in crates/casual-doc-model/data/README.md. Compiled into
+  `casual-doc-model` with `include_str!`, so a binary built from this
+  repository carries it.
+  (c) Ecma International. Used under Ecma's copyright licence, clause (iv)
+  (implementation in a standard-conformant product), whose full text -- as the
+  licence requires -- accompanies the file:
+  crates/casual-doc-model/data/LICENSE-ECMA-376.txt
