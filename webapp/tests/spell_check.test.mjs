@@ -46,7 +46,15 @@ function fakeEngine(pagesCount = 6, { language = "", unknownWord = null } = {}) 
     paragraphs.push({ node: `p${page}b`, page, text: `This word ${word} is wrong` });
   }
   const index = new Map(paragraphs.map((p, i) => [p.node, i]));
-  const asked = { copyText: [], languageAt: [], selectionRects: [], decorationRects: [] };
+  const asked = {
+    copyText: [],
+    languageAt: [],
+    selectionRects: [],
+    decorationRects: [],
+    caretRect: [],
+    proofWindow: [],
+    decorationBatches: [],
+  };
 
   const cursor = (node, offset) => ({ node, offset, free() {} });
 
@@ -72,8 +80,42 @@ function fakeEngine(pagesCount = 6, { language = "", unknownWord = null } = {}) 
       asked.copyText.push(node);
       return paragraphs[index.get(node)].text;
     },
+    // Recorded so a scan that goes back to asking it per paragraph is an
+    // assertion: in the engine it builds the whole document's line boxes.
     caretRect(node) {
+      asked.caretRect.push(node);
       return [paragraphs[index.get(node)].page, 0, 0, 2, 20];
+    },
+    // The one call a scan makes (`docs/180` E2): the rows on the window's
+    // pages. Each row's text and language count as read, under the names the
+    // older per-paragraph calls were recorded under, so the window-extent
+    // guards below keep their meaning.
+    proofWindow(first, last) {
+      asked.proofWindow.push([first, last]);
+      const rows = paragraphs.filter((p) => p.page >= first && p.page <= last);
+      for (const row of rows) {
+        asked.copyText.push(row.node);
+        if (language) asked.languageAt.push(row.node);
+      }
+      return JSON.stringify(
+        rows.map((row) => ({ node: row.node, text: row.text, language: language || "" })),
+      );
+    },
+    // The marked runs' TEXT boxes, 14 twips tall, every mark in one call.
+    decorationRectsOnPages(first, last, rangesJson) {
+      const ranges = JSON.parse(rangesJson);
+      asked.decorationBatches.push(ranges.length);
+      const out = [];
+      for (const [node] of ranges) {
+        asked.decorationRects.push(node);
+        const page = paragraphs[index.get(node)]?.page;
+        if (page === undefined || page < first || page > last) {
+          out.push(0);
+        } else {
+          out.push(1, page, 100, 200, 40, 14);
+        }
+      }
+      return out;
     },
     // The LINE box: `ascent + descent + leading`, 40 twips tall here. This is
     // what the painter used to ask for, and a mark drawn at its bottom edge sat
@@ -1007,4 +1049,42 @@ test("a mark is placed from the run's TEXT box, never from the line box", async 
     "the painter must NOT ask for selection rects — that is the line box, and a " +
       "mark hung from it sits below the text by the whole of the leading",
   );
+});
+
+// `docs/180` E2, `109` HF-411: a scan and its paint make a constant number of
+// engine calls however many paragraphs and marks the window holds. The walk
+// this replaced asked `caretRect` once per paragraph, and the painter asked
+// `decorationRects` once per mark; in the engine each of those built the
+// whole document's line boxes, which was 466 ms per keystroke at 20,000
+// paragraphs. Doubling the window must not double the calls.
+test("a scan and its paint cost one engine call each, whatever the window holds", async () => {
+  const callsFor = async (pages) => {
+    const engine = fakeEngine(pages * 2);
+    const h = harness(engine);
+    h.setWindow(1, pages);
+    await settle(h);
+    // One scan (what a keystroke triggers) and one paint, measured alone.
+    engine.asked.proofWindow.length = 0;
+    engine.asked.decorationBatches.length = 0;
+    engine.asked.caretRect.length = 0;
+    h.checker.refresh();
+    const flags = h.flags().length;
+    return {
+      scans: engine.asked.proofWindow.length,
+      batches: engine.asked.decorationBatches.length,
+      marks: engine.asked.decorationBatches.reduce((a, b) => a + b, 0),
+      caretRects: engine.asked.caretRect.length,
+      flags,
+    };
+  };
+  const small = await callsFor(3);
+  const large = await callsFor(6);
+  assert.equal(large.flags, small.flags * 2, "the precondition: twice the marks on screen");
+  assert.deepEqual(
+    [large.scans, large.batches, large.caretRects],
+    [small.scans, small.batches, small.caretRects],
+    `engine calls grew with the window: ${JSON.stringify({ small, large })}`,
+  );
+  assert.equal(small.caretRects, 0, "a scan never asks caretRect per paragraph");
+  assert.deepEqual([small.scans, small.batches], [1, 1], JSON.stringify(small));
 });
