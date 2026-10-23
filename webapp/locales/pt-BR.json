@@ -1830,7 +1830,7 @@
   "table.reason.caretOutsideTable": "Coloque o cursor dentro de uma tabela",
   "table.reason.mergeSelection": "Selecione duas ou mais células antes de mesclar",
   "table.reason.merged": "Indisponível para tabelas com células mescladas",
-  "table.reason.noMergedCells": "Esta tabela não tem células mescladas",
+  "table.reason.cellNotMerged": "Esta célula não está mesclada",
   "table.reason.notTracked": "Esta alteração estrutural não pode ser controlada no modo Sugestões",
   "table.reason.rowHeights": "As linhas precisam de uma altura fixa ou mínima antes de serem distribuídas",
   "table.rowAppended": "Linha adicionada ao final da tabela",

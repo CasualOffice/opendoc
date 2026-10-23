@@ -1276,6 +1276,19 @@ struct ChromeCell {
     x: Twip,
     width: Twip,
     anchor: Option<NodeId>,
+    /// The first GRID column the cell covers — the sum of the spans before it,
+    /// not its index in the row, which stops being a grid column the moment a
+    /// cell spans (`docs/171`).
+    column: usize,
+    /// Grid columns covered, at least 1.
+    span: usize,
+}
+
+impl ChromeCell {
+    /// The last grid column the cell covers.
+    const fn last_column(&self) -> usize {
+        self.column + self.span - 1
+    }
 }
 
 /// The first paragraph node inside `blocks`, recursing into nested table cells —
@@ -1315,13 +1328,18 @@ fn collect_chrome_rows(fragment: &BlockFragment, left: Twip, top: Twip, out: &mu
         height: row_height,
         cells: Vec::with_capacity(cells.len()),
     };
+    let mut column = 0usize;
     for cell in cells {
         let cell_x = left + cell.x;
+        let span = cell.grid_span.max(1) as usize;
         row.cells.push(ChromeCell {
             x: cell_x,
             width: cell.width,
             anchor: first_paragraph_in_blocks(&cell.blocks),
+            column,
+            span,
         });
+        column += span;
         // A nested table's rows belong to their own table and are collected at
         // the inner content origin, which is the same origin `find_cell_rect`
         // recurses from.
@@ -1360,7 +1378,14 @@ fn chrome_from_rows(rows: Vec<ChromeRow>) -> Vec<TableChrome> {
 /// The boundaries of one table from the rows of it painted on one page.
 fn chrome_for_table(table: NodeId, rows: &[ChromeRow]) -> Option<TableChrome> {
     let first = rows.first()?;
-    let columns = rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
+    // GRID columns, as the model's grid map counts them (`docs/171`): a row of
+    // three cells, one spanning two, covers four columns. Counting cells here put
+    // every boundary after a merged cell on the wrong grid column.
+    let columns = rows
+        .iter()
+        .filter_map(|r| r.cells.last().map(|c| c.last_column() + 1))
+        .max()
+        .unwrap_or(0);
     if columns == 0 {
         return None;
     }
@@ -1409,11 +1434,22 @@ fn chrome_for_table(table: NodeId, rows: &[ChromeRow]) -> Option<TableChrome> {
     // Column boundaries: one per grid column, at that column's trailing border,
     // taken from the first painted row that reaches the column. The last is the
     // table's own trailing edge, which resizes the table rather than a border.
+    //
+    // A boundary is drawn where a cell ENDS at that grid column; a merged cell
+    // crossing it in one row does not hide it, because another row's cell ends
+    // there (`docs/171`). A boundary no painted row ends at has no line to drag.
     let column_edges = (0..columns)
         .filter_map(|col| {
-            let (cell, _) = rows
-                .iter()
-                .find_map(|row| row.cells.get(col).map(|cell| (cell, row)))?;
+            // Prefer a one-column cell, whose width IS the column's width.
+            let ending = |single: bool| {
+                rows.iter().find_map(|row| {
+                    row.cells
+                        .iter()
+                        .find(|cell| cell.last_column() == col && (!single || cell.span == 1))
+                        .map(|cell| (cell, row))
+                })
+            };
+            let (cell, _) = ending(true).or_else(|| ending(false))?;
             Some(TableBoundary {
                 index: u32::try_from(col).unwrap_or(u32::MAX),
                 x: cell.x + cell.width,
@@ -1422,8 +1458,12 @@ fn chrome_for_table(table: NodeId, rows: &[ChromeRow]) -> Option<TableChrome> {
                 extent: cell.width,
                 outer: col + 1 == columns,
                 anchor: cell.anchor.or_else(|| {
-                    rows.iter()
-                        .find_map(|row| row.cells.get(col).and_then(|c| c.anchor))
+                    rows.iter().find_map(|row| {
+                        row.cells
+                            .iter()
+                            .find(|c| c.column <= col && col <= c.last_column())
+                            .and_then(|c| c.anchor)
+                    })
                 })?,
             })
         })

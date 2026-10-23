@@ -261,20 +261,21 @@ test("a merged table names the merge, and only for the commands the merge gates"
         state.control.dataset.tableDistribute ??
         state.control.dataset.tableSort)
       .sort(),
-    [
-      "ascending",
-      "column",
-      "columns",
-      "delete-column",
-      "descending",
-      "insert-column-left",
-      "insert-column-right",
-    ],
-    "exactly the column-axis commands are gated on a regular grid — the same set the " +
-      "Table menu gates, which is the parity this declaration exists to keep",
+    ["ascending", "descending"],
+    "only Sort still needs a regular grid: column insert, delete, select and distribute " +
+      "resolve through the engine's grid map (docs/171) — the same set the Table menu " +
+      "gates, which is the parity this declaration exists to keep",
   );
   // And the row-axis commands stay live: one merge must not disable the whole band.
-  for (const key of ["insert-row-above", "insert-row-below", "delete-row", "delete-table"]) {
+  for (const key of [
+    "insert-row-above",
+    "insert-row-below",
+    "delete-row",
+    "delete-table",
+    "insert-column-left",
+    "insert-column-right",
+    "delete-column",
+  ]) {
     const state = states.find((entry) => entry.control.dataset.tableAction === key);
     assert.equal(state.enabled, true, `${key} does not depend on a regular grid`);
     assert.equal(state.reasonKey, "");

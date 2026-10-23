@@ -357,9 +357,7 @@ export function gutterAt(tables, x, y, opts) {
 export function armTableGutter(tables, x, y, opts, mode = {}) {
   const target = gutterAt(tables, x, y, opts);
   if (!target) return { target: null, refusal: "" };
-  if (target.axis === "column" && !target.table.regular) {
-    return { target: null, refusal: mode.editsBlocked ? "" : "table.reason.merged" };
-  }
+  // A merged table selects, inserts and moves columns like any other (`docs/171`).
   if (target.kind === "strip") return { target, refusal: "" };
   if (mode.editsBlocked) return { target: null, refusal: "" };
   if (mode.geometryBlocked) return { target: null, refusal: "table.reason.notTracked" };

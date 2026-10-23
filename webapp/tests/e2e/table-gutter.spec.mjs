@@ -351,14 +351,14 @@ test("the gutter arms by ENTERING the table, so the line above one is still that
   expect(consoleErrors).toEqual([]);
 });
 
-test("a merged table gets a row strip and NO column strip, rather than one that refuses", async ({
+test("a merged table gets both strips, and the column strip selects", async ({
   page,
   consoleErrors,
 }) => {
-  // A column selection has no meaning on a merged or spanned table —
-  // `tableSelectionAnchorNodes(node, "column")` returns nothing there — so a
-  // painted column strip would be a control that refuses on click. A row of a
-  // merged table is still a row, so that strip stays.
+  // A column of a merged table is a set of GRID columns the engine resolves
+  // (`docs/171`), so the column strip is armed like on any table. It used to be
+  // removed here, because `tableSelectionAnchorNodes(node, "column")` returned
+  // nothing on any merged table.
   await insertTable(page, 3, 3);
   await page.locator('[data-tab="table"]').click();
   await page.locator('[data-table-select="row"]').click();
@@ -370,7 +370,7 @@ test("a merged table gets a row strip and NO column strip, rather than one that 
   await page.mouse.move(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h / 2);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
   await expect(page.locator(".overlay .table-row-strip")).toHaveCount(1);
-  await expect(page.locator(".overlay .table-column-strip")).toHaveCount(0);
+  await expect(page.locator(".overlay .table-column-strip")).toHaveCount(1);
   expect(consoleErrors).toEqual([]);
 });
 

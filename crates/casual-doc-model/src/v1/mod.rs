@@ -35,6 +35,9 @@ mod numbering;
 mod preset_shapes;
 mod properties;
 mod table;
+// The normalized grid map: grid coordinates to the cell that owns them, the one
+// translation every table feature reads (`docs/171`).
+mod table_grid;
 
 pub use body::*;
 pub use chart::*;
@@ -52,6 +55,7 @@ pub use numbering::*;
 pub use preset_shapes::*;
 pub use properties::*;
 pub use table::*;
+pub use table_grid::*;
 
 #[cfg(test)]
 mod tests;

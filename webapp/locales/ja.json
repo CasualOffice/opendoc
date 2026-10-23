@@ -1820,7 +1820,7 @@
   "table.reason.caretOutsideTable": "カーソルを表の中に置いてください",
   "table.reason.mergeSelection": "結合する前にセルを 2 つ以上選択してください",
   "table.reason.merged": "セルが結合された表では使用できません",
-  "table.reason.noMergedCells": "この表には結合されたセルがありません",
+  "table.reason.cellNotMerged": "このセルは結合されていません",
   "table.reason.notTracked": "この構造の変更は提案モードでは記録できません",
   "table.reason.rowHeights": "行の高さを揃えるには、固定または最小の高さが必要です",
   "table.rowAppended": "表の末尾に行を追加しました",

@@ -297,6 +297,7 @@ mod tests {
             SourceFile::new("v1/preset_shapes.rs", include_str!("preset_shapes.rs")),
             SourceFile::new("v1/properties.rs", include_str!("properties.rs")),
             SourceFile::new("v1/table.rs", include_str!("table.rs")),
+            SourceFile::new("v1/table_grid.rs", include_str!("table_grid.rs")),
         ])
         // Seventeen at the time of writing: validation, the snapshot limits, the id
         // recorder, the chart-anchor recorder and the field-range tally in

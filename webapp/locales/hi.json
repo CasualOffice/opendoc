@@ -1825,7 +1825,7 @@
   "table.reason.caretOutsideTable": "कर्सर को किसी तालिका में रखें",
   "table.reason.mergeSelection": "मर्ज करने से पहले दो या अधिक सेल चुनें",
   "table.reason.merged": "मर्ज किए गए या विस्तारित सेल वाली तालिकाओं के लिए उपलब्ध नहीं",
-  "table.reason.noMergedCells": "इस तालिका में कोई मर्ज किया गया सेल नहीं है",
+  "table.reason.cellNotMerged": "यह सेल मर्ज नहीं किया गया है",
   "table.reason.notTracked": "इस संरचनात्मक परिवर्तन को सुझाव मोड में ट्रैक नहीं किया जा सकता",
   "table.reason.rowHeights": "वितरण से पहले पंक्तियों की निश्चित या न्यूनतम ऊँचाई आवश्यक है",
   "table.rowAppended": "तालिका के अंत में पंक्ति जोड़ी गई",

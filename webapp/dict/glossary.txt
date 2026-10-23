@@ -237,6 +237,7 @@ Ungroup
 Unicode
 UnlimitedOCR
 Unlinking
+Unmerge
 Untrusted
 VBA
 VLM
@@ -423,6 +424,8 @@ glyphs
 goldens
 grapheme
 grep
+gridAfter
+gridBefore
 gridSpan
 gridlines
 gzip
@@ -664,6 +667,7 @@ unlink
 unlinked
 unlocalised
 unmapped
+unmerge
 unmerged
 unmodeled
 unmodelled

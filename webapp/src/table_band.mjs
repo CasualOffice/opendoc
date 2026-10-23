@@ -65,11 +65,11 @@ export const TABLE_DISTRIBUTE_ACTIONS = Object.freeze({
  *  capability answering differently on two surfaces is the parity defect
  *  `109` UX-005 exists to end, not a separate feature.
  */
+// Column insert, delete, select and distribute work on a merged table (`docs/171`):
+// every one of them resolves cells through the engine's grid map. Sort alone still
+// needs a regular grid, as Word's does.
 export const TABLE_BAND_PRECONDITIONS = Object.freeze([
-  ['[data-table-action*="column"]', "regular"],
-  ['[data-table-select="column"]', "regular"],
   ['[data-table-distribute="rows"]', "rowHeights"],
-  ['[data-table-distribute="columns"]', "regular"],
   ["[data-table-sort]", "regular"],
   ["#mergeCellsBtn", "cellSelection"],
 ]);

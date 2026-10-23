@@ -113,6 +113,12 @@ pub mod breaks;
 // decide it is how the fifteen table refusals came to lose their reason.
 pub mod refusal;
 
+// Structural table edits (rows, columns, merge, unmerge, move) resolved through the
+// ONE grid map, `casual_doc_model::v1::TableGridMap` (`docs/171`). Its own module
+// because every one of them used to do its own cell-index arithmetic, and each
+// broke on merged cells in a different way.
+pub mod table_structure;
+
 // The identity space one operation mints in (doc 150 §9.3). Its own module because it is
 // the thing that makes `apply` a pure function of (document, operation): with a `Mint`
 // carried by the operation there is no generator in `apply` at all, so an identity this

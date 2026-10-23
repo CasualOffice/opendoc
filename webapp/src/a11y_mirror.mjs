@@ -290,17 +290,24 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null, 
           if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
           if (selected) {
             el.setAttribute("role", heads ? (isHeaderRow ? "columnheader" : "rowheader") : "gridcell");
+            // Measured in GRID columns, as the rectangle is (`docs/171`): a cell's
+            // index in the row is its grid column only until something spans.
+            const gridColumn = Number.isInteger(cell?.gridColumn) ? cell.gridColumn : column;
             const inside =
               index >= selected.firstRow &&
               index <= selected.lastRow &&
-              column >= selected.firstColumn &&
-              column <= selected.lastColumn;
+              gridColumn >= selected.firstColumn &&
+              gridColumn + (cell?.colSpan ?? 1) - 1 <= selected.lastColumn;
             el.setAttribute("aria-selected", inside ? "true" : "false");
           }
           // A cell is `{ text, checkboxes }`: a form puts its controls in
           // cells, and a string can carry a control's glyph but not its role,
           // its state or its name. Older payloads sent a bare string.
           el.textContent = String((typeof cell === "string" ? cell : cell?.text) ?? "");
+          // A merged cell is ONE cell to a reader, over the grid cells it covers
+          // (`docs/171`); the engine already left out the continuations it covers.
+          if (cell?.colSpan > 1) el.colSpan = cell.colSpan;
+          if (cell?.rowSpan > 1) el.rowSpan = cell.rowSpan;
           for (const box of Array.isArray(cell?.checkboxes) ? cell.checkboxes : []) {
             appendCheckbox(el, box, onToggleCheckbox);
           }

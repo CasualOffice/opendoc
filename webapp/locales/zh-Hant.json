@@ -1820,7 +1820,7 @@
   "table.reason.caretOutsideTable": "請將插入點置於表格中",
   "table.reason.mergeSelection": "合併前請選取兩個或更多儲存格",
   "table.reason.merged": "含合併儲存格的表格無法使用",
-  "table.reason.noMergedCells": "此表格沒有合併的儲存格",
+  "table.reason.cellNotMerged": "此儲存格未合併",
   "table.reason.notTracked": "建議模式下無法追蹤此結構變更",
   "table.reason.rowHeights": "平均分配列高前，列需要固定或最小高度",
   "table.rowAppended": "已在表格結尾新增一列",
