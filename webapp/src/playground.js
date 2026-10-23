@@ -276,7 +276,7 @@ function paintSnippets(state) {
   // `can=""` is noise a host would then copy forward.
   const element = [
     '<script type="module">',
-    '  import "@casualoffice/opendoc-embed/define";',
+    '  import "@casualoffice/opendoc-editor/define";',
     "</script>",
     "",
     "<opendoc-editor",

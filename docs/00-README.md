@@ -213,7 +213,7 @@ use by the later architecture, audit, and rendering-fidelity series listed above
 - Core crate: `casual_doc`
 - Public SDK facade: `casual_doc_sdk`
 - Native renderer: `casual_doc_renderer`
-- Published npm package: `@casualoffice/opendoc-embed` (this read
+- Published npm package: `@casualoffice/opendoc-editor` (this read
   `@casualoffice/document-runtime` until `docs/126` phase 3; that name has never
   existed)
 - Tauri integration crate: `casual_doc_tauri`

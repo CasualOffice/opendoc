@@ -174,7 +174,7 @@ partly there.
 
 ### 3.1 Two embed shapes, one contract (owner decision: both)
 
-- **Direct module** — `import "@casualoffice/opendoc-embed/define"`, which registers
+- **Direct module** — `import "@casualoffice/opendoc-editor/define"`, which registers
   `<opendoc-editor>`. (This said `createEditor` from `@casualoffice/document-runtime`
   until `docs/126` phase 3; neither the function nor that package has ever existed.
   A custom element is what shipped, because it works in React, Vue and plain HTML

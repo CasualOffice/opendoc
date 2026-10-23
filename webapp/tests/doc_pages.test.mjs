@@ -322,7 +322,7 @@ test("the withheld list holds the decisions this work actually took", () => {
   );
   assert.equal(
     JSON.parse(readRepo("packages/opendoc-embed/package.json")).name,
-    "@casualoffice/opendoc-embed",
+    "@casualoffice/opendoc-editor",
     "the shipped package name moved; re-check what docs/83 tells a reader to install",
   );
 });

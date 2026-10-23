@@ -6,7 +6,9 @@ thumbnails, text, an outline, or a real-text PDF. Read-only and batch: there is
 no editing, selection, caret or collaboration code in the module at all
 (`docs/176` in the repository says how that cut is made and measured).
 
-Apache-2.0. Not yet published to npm: build it from the repository.
+Apache-2.0. Pre-releases only, under npm's `next` tag
+(`npm install @casualoffice/opendoc-viewer@next`; `docs/176` §8.3), or build it
+from the repository:
 
 ```sh
 ./packages/opendoc-viewer/build.sh      # needs Rust 1.96 + wasm32 target, and wasm-pack

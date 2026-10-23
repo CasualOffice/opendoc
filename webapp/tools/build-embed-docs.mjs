@@ -1549,8 +1549,8 @@ function regions() {
         text: "what the packaging guard really runs",
       },
       [
-        `# Nothing publishes ${manifest.name} to a registry yet, so a host`,
-        "# installs the tarball `npm pack` produces from the checkout.",
+        `# ${manifest.name} publishes pre-releases only (npm tag \`next\`), so`,
+        "# from a checkout a host installs the tarball `npm pack` produces.",
         `cd ${rel(PACKAGE)}`,
         "npm pack                       # -> " + pack.filename,
         `npm install /path/to/${pack.filename}`,

@@ -4,7 +4,7 @@
 **Date:** 2026-07-31  
 **Depends on:** docs 05, 14, 15, 45, 56, 57, 59, 63, 68  
 **Primary Implementation:** Rust (`crates/casual-doc-sdk`, `crates/casual-doc-wasm`)  
-**NPM Package:** `@casualoffice/opendoc-embed` — what actually ships today.
+**NPM Package:** `@casualoffice/opendoc-editor` — what actually ships today.
 `@casualoffice/document-runtime` appears below as the FUTURE full-runtime package name and
 is **not published**; §Phase 3's task list is where it gets reserved. Corrected 2026-09-27:
 this field, and the install line in the overview, both named the unpublished one in the
@@ -24,7 +24,7 @@ OpenDoc is designed as a **deterministic, headless document engine** written in 
 
 This specification describes the long-term architecture for distributing OpenDoc
 as an **embeddable, customizable SDK**. The repository currently builds
-`@casualoffice/opendoc-embed` and verifies its tarball; it does not prove that a
+`@casualoffice/opendoc-editor` and verifies its tarball; it does not prove that a
 public registry release exists. The custom element, capability contract, host
 commands/events, and white-label seams are implemented. Multiplayer co-editing,
 document assistance, and MCP remain separate experimental designs and are not

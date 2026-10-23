@@ -15,7 +15,7 @@
 // (`webapp/stamp-assets.py`), and a committed file claiming a commit would be a
 // fabricated provenance of exactly the kind `docs/99` §9 exists to prevent.
 export const RELEASE = Object.freeze({
-  "package": "@casualoffice/opendoc-embed",
+  "package": "@casualoffice/opendoc-editor",
   "version": "0.1.0",
   "contract": 1,
   "engine": "0.0.1",

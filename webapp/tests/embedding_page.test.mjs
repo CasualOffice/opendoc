@@ -537,13 +537,21 @@ test("everything under 'does not do yet' is still not done", () => {
       `the package now ships a framework entry point (${subpath})`,
     );
   }
+  // Pre-releases only, from one manually dispatched workflow. What that workflow
+  // may and may not do is `npm_publish_workflow.test.mjs`; this asserts that no
+  // OTHER workflow publishes, because the page names exactly one.
   const workflows = join(REPO, ".github", "workflows");
   for (const file of readdirSync(workflows)) {
+    if (file === "npm-publish.yml") continue;
     assert.ok(
       !/npm publish|npm_publish|NODE_AUTH_TOKEN/.test(read(join(workflows, file))),
-      `${file} now publishes something; the page says nothing is published`,
+      `${file} now publishes something; the page says only npm-publish.yml does`,
     );
   }
+  assert.ok(
+    existsSync(join(workflows, "npm-publish.yml")),
+    "the page names npm-publish.yml as the one publishing workflow, and it is gone",
+  );
 });
 
 test("nothing in the package consults a licence", () => {
