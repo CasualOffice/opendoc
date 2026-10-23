@@ -78,6 +78,10 @@
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
+use crate::vml_path::{PathInputs, evaluate_path};
+// Own line (anti-conflict): the evaluated geometry is part of this module's API.
+pub use crate::vml_path::{VmlGeometry, VmlPathCommand, VmlSubpath};
+
 // --- unit conversion -------------------------------------------------------
 
 const TWIPS_PER_POINT: f64 = 20.0; // 1pt = 20 twips
@@ -374,6 +378,38 @@ pub struct VmlWrap {
     pub mode: Option<VmlWrapMode>,
     /// Top, bottom, left, and right clearance in twips.
     pub distances_twips: [Option<i64>; 4],
+    /// `w10:wrap@side`: which side(s) text flows down.
+    pub side: Option<VmlWrapSide>,
+    /// `w10:wrap@anchorx`: the horizontal reference frame, used when the style
+    /// names none (`mso-position-horizontal-relative` wins).
+    pub anchor_x: Option<VmlRelFrame>,
+    /// `w10:wrap@anchory`: the vertical reference frame, likewise.
+    pub anchor_y: Option<VmlRelFrame>,
+}
+
+/// `w10:wrap@side` (ECMA-376 Part 4 §14.3.2.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlWrapSide {
+    /// Text on both sides (`both`).
+    Both,
+    /// Text on the left only (`left`).
+    Left,
+    /// Text on the right only (`right`).
+    Right,
+    /// Text on the wider side only (`largest`).
+    Largest,
+}
+
+impl VmlWrapSide {
+    fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "both" => Some(Self::Both),
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "largest" => Some(Self::Largest),
+            _ => None,
+        }
+    }
 }
 
 /// A shape's fill: whether it is filled, its primary flat color, and — for a
@@ -401,6 +437,14 @@ pub struct VmlFill {
     /// own transparency would halve it twice. It is also the only place the
     /// opacity survives when the shape declares no `fillcolor` at all.
     pub opacity: Option<u8>,
+    /// The picture of a picture fill (`v:fill type="frame"`/`"tile"` with an
+    /// `r:id`): the image relationship painted inside the shape. `None` for
+    /// every other fill.
+    pub image_rid: Option<String>,
+    /// Whether the fill is a two-colour bitmap pattern (`type="pattern"`), which
+    /// is painted as its foreground colour — an approximation the caller
+    /// reports.
+    pub pattern: bool,
 }
 
 /// A parsed VML gradient fill (`v:fill type="gradient"`/`"gradientRadial"`): its
@@ -448,6 +492,90 @@ pub struct VmlStroke {
     pub color: Option<VmlColor>,
     /// The stroke width in twips, if a `strokeweight` was given.
     pub weight_twips: Option<i64>,
+    /// `v:stroke@dashstyle`, when it names a dash (a solid line is `None`).
+    pub dash: Option<VmlDash>,
+    /// `v:stroke@startarrow`.
+    pub start_arrow: Option<VmlArrow>,
+    /// `v:stroke@endarrow`.
+    pub end_arrow: Option<VmlArrow>,
+    /// Whether the stroke carries something this importer does not draw: a
+    /// compound `linestyle`, a picture or pattern stroke (`filltype`), or an
+    /// unrecognised dash. The caller reports the shape as approximated.
+    pub approximated: bool,
+}
+
+/// A VML dash pattern (`v:stroke@dashstyle`, ECMA-376 Part 4 §14.1.2.21).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlDash {
+    /// `shortdash`.
+    ShortDash,
+    /// `shortdot`.
+    ShortDot,
+    /// `shortdashdot`.
+    ShortDashDot,
+    /// `shortdashdotdot`.
+    ShortDashDotDot,
+    /// `dot`.
+    Dot,
+    /// `dash`.
+    Dash,
+    /// `longdash`.
+    LongDash,
+    /// `dashdot`.
+    DashDot,
+    /// `longdashdot`.
+    LongDashDot,
+    /// `longdashdotdot`.
+    LongDashDotDot,
+}
+
+impl VmlDash {
+    /// `Ok(None)` is solid; `Err` is a token this importer does not know (a
+    /// custom dash list), which the caller reports.
+    fn parse(token: &str) -> Result<Option<Self>, ()> {
+        Ok(Some(match token.trim().to_ascii_lowercase().as_str() {
+            "solid" => return Ok(None),
+            "shortdash" => Self::ShortDash,
+            "shortdot" => Self::ShortDot,
+            "shortdashdot" => Self::ShortDashDot,
+            "shortdashdotdot" => Self::ShortDashDotDot,
+            "dot" => Self::Dot,
+            "dash" => Self::Dash,
+            "longdash" => Self::LongDash,
+            "dashdot" => Self::DashDot,
+            "longdashdot" => Self::LongDashDot,
+            "longdashdotdot" => Self::LongDashDotDot,
+            _ => return Err(()),
+        }))
+    }
+}
+
+/// A VML line end (`v:stroke@startarrow`/`@endarrow`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlArrow {
+    /// `block` — a filled triangle.
+    Block,
+    /// `classic` — a stealth arrow.
+    Classic,
+    /// `open` — an open arrow.
+    Open,
+    /// `oval`.
+    Oval,
+    /// `diamond`.
+    Diamond,
+}
+
+impl VmlArrow {
+    fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "block" => Some(Self::Block),
+            "classic" => Some(Self::Classic),
+            "open" => Some(Self::Open),
+            "oval" => Some(Self::Oval),
+            "diamond" => Some(Self::Diamond),
+            _ => None,
+        }
+    }
 }
 
 /// A marker that a shape carried a `v:textbox`/`w:txbxContent`. The content is
@@ -632,6 +760,115 @@ pub struct VmlDrawing {
     pub textbox: Option<VmlTextbox>,
     /// The horizontal-rule marker, if the shape carried `o:hr="t"`.
     pub hr: Option<VmlHr>,
+    /// The evaluated path geometry of a `v:shape` (its own `path`, a `v:path@v`
+    /// child, or the path of the `v:shapetype` it names). `None` when there is
+    /// no path or it could not be evaluated (`crate::vml_path`).
+    pub geometry: Option<VmlGeometry>,
+    /// The DrawingML preset a `v:shapetype`'s `o:spt` names, used when the
+    /// shape has no evaluable path of its own (`None` otherwise).
+    pub preset: Option<&'static str>,
+    /// `flip:x` in the style.
+    pub flip_h: bool,
+    /// `flip:y` in the style.
+    pub flip_v: bool,
+    /// The index (into [`VmlPict::groups`]) of the OUTERMOST `v:group` this
+    /// shape belongs to, or `None` for an ungrouped shape.
+    pub group: Option<usize>,
+}
+
+/// A top-level `v:group`'s own box: where the group sits and how it wraps.
+/// Its children are flattened to absolute twips, so the group carries no
+/// coordinate transform — only its frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VmlGroupBox {
+    /// The group's `id`.
+    pub id: Option<String>,
+    /// The group box, in twips, with its reference frames and z-order.
+    pub position: VmlPosition,
+    /// The group's wrapping.
+    pub wrap: VmlWrap,
+    /// `rotation` from the group's style, in degrees clockwise.
+    pub rotation_degrees: Option<f64>,
+}
+
+/// A parsed `w:pict`: its shapes (flattened, absolute) and its top-level
+/// groups.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VmlPict {
+    /// Every shape, in document order.
+    pub drawings: Vec<VmlDrawing>,
+    /// Every top-level group, indexed by [`VmlDrawing::group`].
+    pub groups: Vec<VmlGroupBox>,
+}
+
+/// The `v:shapetype` definitions of one part, by `id`.
+///
+/// A shapetype is part-global, not pict-local: Word writes each one once, in
+/// the first `w:pict` that uses it, and every later shape in the same part
+/// names it by `type="#id"`. The registry therefore lives as long as the part's
+/// parser and is threaded through every [`parse_vml`] call.
+#[derive(Clone, Debug, Default)]
+pub struct VmlShapetypes {
+    types: std::collections::BTreeMap<String, Shapetype>,
+}
+
+/// What a shape inherits from its `v:shapetype`.
+#[derive(Clone, Debug, Default)]
+struct Shapetype {
+    path: Option<String>,
+    coordsize: Option<(i64, i64)>,
+    coordorigin: Option<(i64, i64)>,
+    adj: Vec<Option<i64>>,
+    formulas: Vec<String>,
+    spt: Option<u32>,
+    filled: Option<bool>,
+    stroked: Option<bool>,
+}
+
+impl VmlShapetypes {
+    /// The definition `reference` names (`#_x0000_t202` or `_x0000_t202`).
+    fn get(&self, reference: &str) -> Option<&Shapetype> {
+        self.types.get(reference.trim().trim_start_matches('#'))
+    }
+}
+
+/// The DrawingML preset for a VML `o:spt` shape-type number, for the shapes
+/// whose geometry is the same in both vocabularies. Unlisted numbers return
+/// `None` and the shape keeps its own path or the bounding-box fallback.
+fn spt_preset(spt: u32) -> Option<&'static str> {
+    Some(match spt {
+        1 | 75 | 202 => "rect",
+        2 => "roundRect",
+        3 => "ellipse",
+        4 => "diamond",
+        5 => "triangle",
+        6 => "rtTriangle",
+        7 => "parallelogram",
+        9 => "hexagon",
+        10 => "octagon",
+        11 => "plus",
+        12 => "star5",
+        13 => "rightArrow",
+        15 => "homePlate",
+        16 => "cube",
+        20 => "line",
+        22 => "can",
+        23 => "donut",
+        32 => "straightConnector1",
+        55 => "chevron",
+        56 => "pentagon",
+        66 => "leftArrow",
+        67 => "downArrow",
+        68 => "upArrow",
+        69 => "leftRightArrow",
+        70 => "upDownArrow",
+        74 => "heart",
+        96 => "smileyFace",
+        183 => "sun",
+        184 => "moon",
+        187 => "star4",
+        _ => return None,
+    })
 }
 
 // --- style parsing ---------------------------------------------------------
@@ -678,6 +915,9 @@ impl VmlWrap {
                 style.len("mso-wrap-distance-left").map(Len::to_twips),
                 style.len("mso-wrap-distance-right").map(Len::to_twips),
             ],
+            side: None,
+            anchor_x: None,
+            anchor_y: None,
         }
     }
 
@@ -693,6 +933,9 @@ impl VmlWrap {
                 *distance = inherited;
             }
         }
+        self.side = self.side.or(parent.side);
+        self.anchor_x = self.anchor_x.or(parent.anchor_x);
+        self.anchor_y = self.anchor_y.or(parent.anchor_y);
         self
     }
 
@@ -702,6 +945,18 @@ impl VmlWrap {
             .and_then(VmlWrapMode::parse)
         {
             self.mode = Some(mode);
+        }
+        if let Some(side) = attr(element, b"side")
+            .as_deref()
+            .and_then(VmlWrapSide::parse)
+        {
+            self.side = Some(side);
+        }
+        if let Some(frame) = attr(element, b"anchorx") {
+            self.anchor_x = Some(VmlRelFrame::parse(&frame));
+        }
+        if let Some(frame) = attr(element, b"anchory") {
+            self.anchor_y = Some(VmlRelFrame::parse(&frame));
         }
     }
 }
@@ -946,6 +1201,8 @@ fn parse_gradient_position(token: &str) -> Option<i32> {
 /// `None` but still receive scaled `width`/`height`.
 #[derive(Clone, Copy)]
 struct GroupCtx {
+    /// The index of the outermost group this context descends from.
+    top: usize,
     off_x: Option<f64>,
     scale_x: f64,
     off_y: Option<f64>,
@@ -974,6 +1231,7 @@ fn build_group_ctx(
     element: &BytesStart<'_>,
     style: &StyleProps,
     parent: Option<&GroupCtx>,
+    top: usize,
 ) -> GroupCtx {
     // The group box in absolute twips: from the style directly at the top level,
     // or via the parent transform when nested (child coords are parent-local).
@@ -1015,6 +1273,7 @@ fn build_group_ctx(
     };
 
     GroupCtx {
+        top: parent.map_or(top, |p| p.top),
         off_x: abs_left.map(|l| l - origin_x as f64 * scale_x),
         scale_x,
         off_y: abs_top.map(|t| t - origin_y as f64 * scale_y),
@@ -1108,6 +1367,18 @@ struct ShapeBuilder {
     textbox: Option<VmlTextbox>,
     hr: Option<VmlHr>,
     wrap: VmlWrap,
+    coordorigin_attr: Option<(i64, i64)>,
+    adj_attr: Option<String>,
+    /// `v:path@v`, the path written on the child rather than the shape.
+    path_child: Option<String>,
+    /// The shape's own `v:formulas/v:f@eqn` list.
+    formulas: Vec<String>,
+    fill_image_rid: Option<String>,
+    fill_pattern: bool,
+    stroke_dash: Option<VmlDash>,
+    stroke_start_arrow: Option<VmlArrow>,
+    stroke_end_arrow: Option<VmlArrow>,
+    stroke_approximated: bool,
 }
 
 impl ShapeBuilder {
@@ -1154,6 +1425,18 @@ impl ShapeBuilder {
             hr: parse_hr(element),
             wrap: VmlWrap::from_style(&style),
             style,
+            coordorigin_attr: attr(element, b"coordorigin")
+                .as_deref()
+                .and_then(parse_pair_i64),
+            adj_attr: attr(element, b"adj"),
+            path_child: None,
+            formulas: Vec::new(),
+            fill_image_rid: None,
+            fill_pattern: false,
+            stroke_dash: None,
+            stroke_start_arrow: None,
+            stroke_end_arrow: None,
+            stroke_approximated: false,
         }
     }
 
@@ -1187,6 +1470,13 @@ impl ShapeBuilder {
         if self.fill_colors.is_none() {
             self.fill_colors = attr(element, b"colors");
         }
+        match self.fill_type.as_deref() {
+            Some("frame" | "tile") if self.fill_image_rid.is_none() => {
+                self.fill_image_rid = attr(element, b"id");
+            }
+            Some("pattern") => self.fill_pattern = true,
+            _ => {}
+        }
     }
 
     /// Applies a `v:stroke` child (color / weight / on-off fallbacks).
@@ -1199,6 +1489,25 @@ impl ShapeBuilder {
         }
         if let Some(on) = attr(element, b"on").as_deref().map(parse_bool) {
             self.stroke_child_on = Some(on);
+        }
+        if let Some(dash) = attr(element, b"dashstyle") {
+            match VmlDash::parse(&dash) {
+                Ok(dash) => self.stroke_dash = dash,
+                Err(()) => self.stroke_approximated = true,
+            }
+        }
+        if let Some(arrow) = attr(element, b"startarrow") {
+            self.stroke_start_arrow = VmlArrow::parse(&arrow);
+        }
+        if let Some(arrow) = attr(element, b"endarrow") {
+            self.stroke_end_arrow = VmlArrow::parse(&arrow);
+        }
+        let compound = attr(element, b"linestyle")
+            .is_some_and(|style| !style.trim().eq_ignore_ascii_case("single"));
+        let textured = attr(element, b"filltype")
+            .is_some_and(|kind| !kind.trim().eq_ignore_ascii_case("solid"));
+        if compound || textured {
+            self.stroke_approximated = true;
         }
     }
 
@@ -1248,8 +1557,37 @@ impl ShapeBuilder {
         Some(VmlGradient { stops, kind })
     }
 
-    fn finalize(self, group: Option<&GroupCtx>) -> VmlDrawing {
-        let position = self.resolve_position(group);
+    fn finalize(self, group: Option<&GroupCtx>, shapetypes: &VmlShapetypes) -> VmlDrawing {
+        let template = self
+            .shape_type
+            .as_deref()
+            .and_then(|reference| shapetypes.get(reference));
+        let mut position = self.resolve_position(group);
+        // `w10:wrap@anchorx`/`@anchory` name the frames when the style does not.
+        let wrap = self.wrap.inherit(group.map(|ctx| ctx.wrap));
+        if position.h_relative.is_none() {
+            position.h_relative = wrap.anchor_x;
+        }
+        if position.v_relative.is_none() {
+            position.v_relative = wrap.anchor_y;
+        }
+        let filled = self
+            .filled_attr
+            .or_else(|| template.and_then(|t| t.filled))
+            .unwrap_or(true);
+        let stroked = self
+            .stroked_attr
+            .or_else(|| template.and_then(|t| t.stroked))
+            .unwrap_or(true);
+        let (geometry, preset) = match self.local {
+            ShapeLocal::Shape => self.resolve_geometry(template, &position, filled, stroked),
+            _ => (None, None),
+        };
+        let flip = self
+            .style
+            .get("flip")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         let color = self.fill_color.map(|mut c| {
             if let Some(a) = self.fill_opacity {
                 c.a = a;
@@ -1257,16 +1595,22 @@ impl ShapeBuilder {
             c
         });
         let fill = VmlFill {
-            on: self.filled_attr.unwrap_or(true),
+            on: filled,
             gradient: self.build_gradient(color),
             color,
             opacity: self.fill_opacity,
+            image_rid: self.fill_image_rid.clone(),
+            pattern: self.fill_pattern,
         };
-        let stroke_on = self.stroke_child_on.unwrap_or(true) && self.stroked_attr.unwrap_or(true);
+        let stroke_on = self.stroke_child_on.unwrap_or(true) && stroked;
         let stroke = VmlStroke {
             on: stroke_on,
             color: self.stroke_color,
             weight_twips: self.stroke_weight.map(Len::to_twips),
+            dash: self.stroke_dash,
+            start_arrow: self.stroke_start_arrow,
+            end_arrow: self.stroke_end_arrow,
+            approximated: self.stroke_approximated,
         };
         let kind = self.resolve_kind(&position, group);
         // A group's own `rotation` is NOT inherited: VML rotates a group as a unit
@@ -1284,13 +1628,81 @@ impl ShapeBuilder {
             rotation_degrees,
             fill,
             stroke,
-            wrap: self.wrap.inherit(group.map(|ctx| ctx.wrap)),
+            wrap,
             image_rid: self.image_rid,
             image_effects: self.image_effects,
             textpath: self.textpath,
             textbox: self.textbox,
             hr: self.hr,
+            geometry,
+            preset,
+            flip_h: flip.contains('x'),
+            flip_v: flip.contains('y'),
+            group: group.map(|ctx| ctx.top),
         }
+    }
+
+    /// The path geometry of a `v:shape`: its own `path` (or `v:path@v`), else
+    /// its shapetype's, evaluated in its own `coordsize`/`coordorigin` (else
+    /// the shapetype's, else VML's `1000,1000` default) against its formulas and
+    /// adjust values (else the shapetype's). When there is no evaluable path,
+    /// the shapetype's `o:spt` may still name a DrawingML preset.
+    fn resolve_geometry(
+        &self,
+        template: Option<&Shapetype>,
+        position: &VmlPosition,
+        filled: bool,
+        stroked: bool,
+    ) -> (Option<VmlGeometry>, Option<&'static str>) {
+        let own_path = self.path_attr.as_deref().or(self.path_child.as_deref());
+        let path = own_path.or_else(|| template.and_then(|t| t.path.as_deref()));
+        let size = self
+            .coordsize_attr
+            .or_else(|| template.and_then(|t| t.coordsize))
+            .unwrap_or((1000, 1000));
+        let origin = self
+            .coordorigin_attr
+            .or_else(|| template.and_then(|t| t.coordorigin))
+            .unwrap_or((0, 0));
+        let formulas: &[String] = if self.formulas.is_empty() {
+            template.map_or(&[], |t| t.formulas.as_slice())
+        } else {
+            &self.formulas
+        };
+        let defaults = template.map_or(&[][..], |t| t.adj.as_slice());
+        let own_adj = self.adj_attr.as_deref().map(parse_adj).unwrap_or_default();
+        let count = own_adj.len().max(defaults.len());
+        let adjust: Vec<i64> = (0..count)
+            .map(|i| {
+                own_adj
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .or_else(|| defaults.get(i).copied().flatten())
+                    .unwrap_or(0)
+            })
+            .collect();
+        let emu = |twips: Option<i64>| twips.unwrap_or(0).saturating_mul(EMU_PER_TWIP as i64);
+        let geometry = path.and_then(|path| {
+            evaluate_path(
+                path,
+                &PathInputs {
+                    origin,
+                    size,
+                    formulas,
+                    adjust: &adjust,
+                    box_emu: (emu(position.width), emu(position.height)),
+                    filled,
+                    stroked,
+                },
+            )
+        });
+        let preset = if geometry.is_none() {
+            template.and_then(|t| t.spt).and_then(spt_preset)
+        } else {
+            None
+        };
+        (geometry, preset)
     }
 
     /// Resolves the absolute box, applying the enclosing group transform when
@@ -1447,6 +1859,15 @@ fn corner_radius(arcsize: Option<f64>, position: &VmlPosition) -> Option<i64> {
     Some(round_twips(fraction * w.min(h) as f64))
 }
 
+/// Parses an `adj` list (`"5400,,10800"`): an omitted entry is `None`, so the
+/// shapetype's default for that slot applies.
+fn parse_adj(value: &str) -> Vec<Option<i64>> {
+    value
+        .split(',')
+        .map(|token| token.trim().parse::<i64>().ok())
+        .collect()
+}
+
 fn parse_inset(value: &str) -> [Option<i64>; 4] {
     let mut out = [None; 4];
     for (slot, token) in out.iter_mut().zip(value.split(',')) {
@@ -1461,17 +1882,30 @@ fn parse_inset(value: &str) -> [Option<i64>; 4] {
 /// elements) into a flat list of [`VmlDrawing`]s, with every `v:group` flattened
 /// to absolute-twip child positions. Best-effort: a malformed fragment returns
 /// the shapes parsed so far.
+///
+/// A fresh shapetype registry is used, so a shape naming a `v:shapetype`
+/// defined in an EARLIER fragment does not see it; [`parse_vml`] takes the
+/// part's registry for that.
 pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
+    parse_vml(fragment, &mut VmlShapetypes::default()).drawings
+}
+
+/// Parses a VML fragment into its shapes and its top-level groups, reading and
+/// extending the part's `v:shapetype` registry.
+///
+/// O(bytes) in the fragment, plus O(formulas + path tokens) per shape.
+pub fn parse_vml(fragment: &str, shapetypes: &mut VmlShapetypes) -> VmlPict {
     let bytes = fragment.as_bytes();
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().check_end_names = false;
     let mut buffer = Vec::new();
-    let mut out = Vec::new();
+    let mut pict = VmlPict::default();
     let mut groups: Vec<GroupCtx> = Vec::new();
     let mut shape: Option<ShapeBuilder> = None;
-    // Depth of a `v:shapetype` subtree being skipped (its `v:stroke`/`v:path`
-    // template children must not leak onto the next real shape).
-    let mut shapetype_depth = 0_usize;
+    // A `v:shapetype` being read: its id, its definition, and its depth (its
+    // `v:path`/`v:formulas` children belong to it and must not leak onto the
+    // next real shape).
+    let mut shapetype: Option<(String, Shapetype, usize)> = None;
 
     // A read error ends the `while let` (best-effort: keep what we parsed).
     while let Ok(event) = reader.read_event_into(&mut buffer) {
@@ -1480,12 +1914,14 @@ pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
             Event::Start(element) => {
                 let local = element.local_name();
                 let name = local.as_ref();
-                if shapetype_depth > 0 {
-                    shapetype_depth += 1;
+                if let Some((_, definition, depth)) = shapetype.as_mut() {
+                    *depth += 1;
+                    definition.apply_child(name, &element);
                 } else if name == b"shapetype" {
-                    shapetype_depth = 1;
+                    let (id, definition) = Shapetype::begin(&element);
+                    shapetype = Some((id, definition, 1));
                 } else {
-                    on_open(name, &element, &mut groups, &mut shape, true);
+                    on_open(name, &element, &mut groups, &mut shape, &mut pict, true);
                     if name == b"txbxContent" {
                         capture_txbx(&mut reader, &mut buffer, bytes, &mut shape);
                     }
@@ -1494,18 +1930,28 @@ pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
             Event::Empty(element) => {
                 let local = element.local_name();
                 let name = local.as_ref();
-                if shapetype_depth == 0 {
-                    on_open(name, &element, &mut groups, &mut shape, false);
-                    on_close(name, &mut groups, &mut shape, &mut out);
+                if let Some((_, definition, _)) = shapetype.as_mut() {
+                    definition.apply_child(name, &element);
+                } else if name == b"shapetype" {
+                    let (id, definition) = Shapetype::begin(&element);
+                    shapetypes.register(id, definition);
+                } else {
+                    on_open(name, &element, &mut groups, &mut shape, &mut pict, false);
+                    on_close(name, &mut groups, &mut shape, &mut pict, shapetypes);
                 }
             }
             Event::End(element) => {
                 let local = element.local_name();
                 let name = local.as_ref();
-                if shapetype_depth > 0 {
-                    shapetype_depth -= 1;
+                if let Some((_, _, depth)) = shapetype.as_mut() {
+                    *depth -= 1;
+                    if *depth == 0
+                        && let Some((id, definition, _)) = shapetype.take()
+                    {
+                        shapetypes.register(id, definition);
+                    }
                 } else {
-                    on_close(name, &mut groups, &mut shape, &mut out);
+                    on_close(name, &mut groups, &mut shape, &mut pict, shapetypes);
                 }
             }
             _ => {}
@@ -1514,9 +1960,62 @@ pub fn parse_vml_pict(fragment: &str) -> Vec<VmlDrawing> {
     }
     // Flush an unclosed final shape (defensive; well-formed input closes it).
     if let Some(builder) = shape.take() {
-        out.push(builder.finalize(groups.last()));
+        pict.drawings
+            .push(builder.finalize(groups.last(), shapetypes));
     }
-    out
+    pict
+}
+
+impl VmlShapetypes {
+    /// Records a definition. A later definition with the same id replaces the
+    /// earlier one, as it does in Word.
+    fn register(&mut self, id: String, definition: Shapetype) {
+        if !id.is_empty() {
+            self.types.insert(id, definition);
+        }
+    }
+}
+
+impl Shapetype {
+    /// Reads a `v:shapetype` start tag: its id and the attributes a shape
+    /// inherits.
+    fn begin(element: &BytesStart<'_>) -> (String, Self) {
+        let id = attr(element, b"id").unwrap_or_default();
+        let definition = Self {
+            path: attr(element, b"path"),
+            coordsize: attr(element, b"coordsize")
+                .as_deref()
+                .and_then(parse_pair_i64),
+            coordorigin: attr(element, b"coordorigin")
+                .as_deref()
+                .and_then(parse_pair_i64),
+            adj: attr(element, b"adj")
+                .as_deref()
+                .map(parse_adj)
+                .unwrap_or_default(),
+            formulas: Vec::new(),
+            spt: attr(element, b"spt")
+                .and_then(|value| value.trim().parse::<f64>().ok())
+                // `o:spt` is written as a float (`202`, `75.0`).
+                .map(|value| value as u32),
+            filled: attr(element, b"filled").as_deref().map(parse_bool),
+            stroked: attr(element, b"stroked").as_deref().map(parse_bool),
+        };
+        (id, definition)
+    }
+
+    /// Applies a child of the definition: `v:path@v` and `v:formulas/v:f`.
+    fn apply_child(&mut self, name: &[u8], element: &BytesStart<'_>) {
+        match name {
+            b"path" if self.path.is_none() => self.path = attr(element, b"v"),
+            b"f" => {
+                if let Some(eqn) = attr(element, b"eqn") {
+                    self.formulas.push(eqn);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn shape_local(name: &[u8]) -> Option<ShapeLocal> {
@@ -1525,7 +2024,7 @@ fn shape_local(name: &[u8]) -> Option<ShapeLocal> {
         b"roundrect" => Some(ShapeLocal::RoundRect),
         b"line" => Some(ShapeLocal::Line),
         b"oval" => Some(ShapeLocal::Oval),
-        b"shape" | b"polyline" | b"curve" => Some(ShapeLocal::Shape),
+        b"shape" | b"polyline" | b"curve" | b"arc" | b"image" => Some(ShapeLocal::Shape),
         _ => None,
     }
 }
@@ -1535,13 +2034,23 @@ fn on_open(
     element: &BytesStart<'_>,
     groups: &mut Vec<GroupCtx>,
     shape: &mut Option<ShapeBuilder>,
+    pict: &mut VmlPict,
     is_start: bool,
 ) {
     if name == b"group" {
         let style = StyleProps::parse(&attr(element, b"style").unwrap_or_default());
-        let ctx = build_group_ctx(element, &style, groups.last());
+        let top = pict.groups.len();
+        let ctx = build_group_ctx(element, &style, groups.last(), top);
         // Only a Start group nests; an empty group has no children (rare).
         if is_start {
+            if groups.is_empty() {
+                pict.groups.push(VmlGroupBox {
+                    id: attr(element, b"id"),
+                    position: top_level_position(&style),
+                    wrap: ctx.wrap,
+                    rotation_degrees: style.get("rotation").and_then(parse_fixed_point),
+                });
+            }
             groups.push(ctx);
         }
         return;
@@ -1564,6 +2073,16 @@ fn on_open(
     match name {
         b"fill" => builder.apply_fill(element),
         b"stroke" => builder.apply_stroke(element),
+        b"path" => {
+            if builder.path_child.is_none() {
+                builder.path_child = attr(element, b"v");
+            }
+        }
+        b"f" => {
+            if let Some(eqn) = attr(element, b"eqn") {
+                builder.formulas.push(eqn);
+            }
+        }
         b"imagedata" => {
             if builder.image_rid.is_none() {
                 builder.image_rid = attr(element, b"id");
@@ -1609,23 +2128,62 @@ fn on_open(
     }
 }
 
+/// A top-level shape's or group's own box, from its style alone.
+fn top_level_position(style: &StyleProps) -> VmlPosition {
+    VmlPosition {
+        left: abs_left_twips(style),
+        top: abs_top_twips(style),
+        width: style.len("width").map(Len::to_twips),
+        height: style.len("height").map(Len::to_twips),
+        z_index: style
+            .get("z-index")
+            .and_then(|z| z.trim().parse::<i32>().ok()),
+        h_relative: style
+            .get("mso-position-horizontal-relative")
+            .map(VmlRelFrame::parse),
+        v_relative: style
+            .get("mso-position-vertical-relative")
+            .map(VmlRelFrame::parse),
+        h_align: style
+            .get("mso-position-horizontal")
+            .and_then(VmlHorizontalAlign::parse),
+        v_align: style
+            .get("mso-position-vertical")
+            .and_then(VmlVerticalAlign::parse),
+    }
+}
+
 fn on_close(
     name: &[u8],
     groups: &mut Vec<GroupCtx>,
     shape: &mut Option<ShapeBuilder>,
-    out: &mut Vec<VmlDrawing>,
+    pict: &mut VmlPict,
+    shapetypes: &VmlShapetypes,
 ) {
     if name == b"group" {
-        groups.pop();
+        if let Some(closed) = groups.pop()
+            && groups.is_empty()
+            && let Some(group) = pict.groups.get_mut(closed.top)
+        {
+            // The group's `w10:wrap` is its LAST child, so its wrap (and the
+            // frames `anchorx`/`anchory` name) is only known now.
+            group.wrap = closed.wrap;
+            if group.position.h_relative.is_none() {
+                group.position.h_relative = closed.wrap.anchor_x;
+            }
+            if group.position.v_relative.is_none() {
+                group.position.v_relative = closed.wrap.anchor_y;
+            }
+        }
         return;
     }
     if shape_local(name).is_some()
         && let Some(builder) = shape.take()
     {
-        out.push(builder.finalize(groups.last()));
+        pict.drawings
+            .push(builder.finalize(groups.last(), shapetypes));
     }
 }
-
 /// Captures the raw inner XML of the currently-open `w:txbxContent` into the
 /// live shape's text-box marker, consuming events up to its matching end tag.
 fn capture_txbx(

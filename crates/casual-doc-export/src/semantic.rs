@@ -89,6 +89,8 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::ExportError;
+// Own line (anti-conflict): legacy VML written back as its source.
+use crate::legacy_vml::LegacyVmlWrites;
 use crate::report::{Disposition, DocxExport, ModelOutcome, Reporter};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding imports here do not collide in one list.
@@ -577,6 +579,8 @@ struct Ctx<'a> {
     /// The one counter every part's frames take their `wp:docPr/@id` from
     /// (`109` FID-SH-05).
     doc_pr_ids: &'a DocPrIds,
+    /// The legacy VML sources this package writes back (`docs/08` ADR-072).
+    legacy: &'a LegacyVmlWrites,
 }
 
 /// The `wp:docPr/@id` counter for one written package (`109` FID-SH-05).
@@ -833,12 +837,16 @@ pub fn export_package_with_options(
     }
     // One `wp:docPr/@id` sequence for the whole package (`109` FID-SH-05).
     let doc_pr_ids = DocPrIds::default();
+    // The legacy VML sources, and which of them this save writes back.
+    let legacy_vml = LegacyVmlWrites::new(definitions);
+    legacy_vml.enter_part("word/document.xml");
     let (document_xml, rels) = document_xml(
         document,
         &available_media,
         &available_embedded,
         reserved_rel_ids,
         &doc_pr_ids,
+        &legacy_vml,
     )?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
@@ -961,6 +969,7 @@ pub fn export_package_with_options(
             &available_embedded,
             &mut reporter,
         );
+        legacy_vml.enter_part("word/footnotes.xml");
         let (bytes, own_rels, own_media) = notes_xml(
             "w:footnotes",
             "w:footnote",
@@ -972,6 +981,7 @@ pub fn export_package_with_options(
                 own: &own_embedded,
             },
             &doc_pr_ids,
+            &legacy_vml,
         )?;
         extras.push(
             ExtraPart::new(
@@ -995,6 +1005,7 @@ pub fn export_package_with_options(
             &available_embedded,
             &mut reporter,
         );
+        legacy_vml.enter_part("word/endnotes.xml");
         let (bytes, own_rels, own_media) = notes_xml(
             "w:endnotes",
             "w:endnote",
@@ -1006,6 +1017,7 @@ pub fn export_package_with_options(
                 own: &own_embedded,
             },
             &doc_pr_ids,
+            &legacy_vml,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1029,6 +1041,7 @@ pub fn export_package_with_options(
             &available_embedded,
             &mut reporter,
         );
+        legacy_vml.enter_part("word/comments.xml");
         let (bytes, own_rels, own_media) = comments_xml(
             &definitions.comments,
             definitions,
@@ -1038,6 +1051,7 @@ pub fn export_package_with_options(
                 own: &own_embedded,
             },
             &doc_pr_ids,
+            &legacy_vml,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1183,6 +1197,7 @@ pub fn export_package_with_options(
             &available_embedded,
             &mut reporter,
         );
+        legacy_vml.enter_part(&part_name);
         let (bytes, own_rels, own_media) = header_footer_xml(
             "w:hdr",
             &header.blocks,
@@ -1194,6 +1209,7 @@ pub fn export_package_with_options(
                 own: &own_embedded,
             },
             &doc_pr_ids,
+            &legacy_vml,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1240,6 +1256,7 @@ pub fn export_package_with_options(
         // A synthesized watermark header has no blocks at all, so it references
         // no embedded object: an empty `own` is the whole truth here, not an
         // omission.
+        legacy_vml.enter_part(&part_name);
         let (bytes, own_rels, own_media) = header_footer_xml(
             "w:hdr",
             &[],
@@ -1251,6 +1268,7 @@ pub fn export_package_with_options(
                 own: &[],
             },
             &doc_pr_ids,
+            &legacy_vml,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1276,6 +1294,7 @@ pub fn export_package_with_options(
             &available_embedded,
             &mut reporter,
         );
+        legacy_vml.enter_part(&format!("word/footer{}.xml", index + 1));
         let (bytes, own_rels, own_media) = header_footer_xml(
             "w:ftr",
             &footer.blocks,
@@ -1287,6 +1306,7 @@ pub fn export_package_with_options(
                 own: &own_embedded,
             },
             &doc_pr_ids,
+            &legacy_vml,
         )?;
         extras.push(
             ExtraPart::new(
@@ -1302,6 +1322,8 @@ pub fn export_package_with_options(
             .with_own_embedded(own_embedded),
         );
     }
+
+    legacy_vml.report(&mut reporter);
 
     // Document metadata parts (`docProps/*`), referenced from the package root
     // relationships (not `document.xml.rels`). A group is emitted only when the
@@ -2236,6 +2258,9 @@ fn part_rels_xml(
 /// Emits a footnotes/endnotes part: each note keyed by a `w:id` derived from its
 /// `NoteId`, wrapping the note's blocks. A fresh per-part `Ctx` routes a note's
 /// hyperlinks into the part's own rels (returned), not the document's.
+// One parameter per package-wide writer state; bundling them would hide which
+// part writer reads which, which is the thing a reviewer of a part writer checks.
+#[allow(clippy::too_many_arguments)]
 fn notes_xml(
     root: &str,
     item: &str,
@@ -2244,6 +2269,7 @@ fn notes_xml(
     available_media: &DefinitionMap<MediaId, MediaReference>,
     surface: &SurfaceEmbedded<'_>,
     doc_pr_ids: &DocPrIds,
+    legacy: &LegacyVmlWrites,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images these notes use, declared by this part and reserved so a
@@ -2263,6 +2289,7 @@ fn notes_xml(
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
         doc_pr_ids,
+        legacy,
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -2295,6 +2322,7 @@ fn comments_xml(
     available_media: &DefinitionMap<MediaId, MediaReference>,
     surface: &SurfaceEmbedded<'_>,
     doc_pr_ids: &DocPrIds,
+    legacy: &LegacyVmlWrites,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     let mut own_media: Vec<MediaRel> = Vec::new();
@@ -2312,6 +2340,7 @@ fn comments_xml(
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
         doc_pr_ids,
+        legacy,
     };
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
@@ -2471,6 +2500,9 @@ fn people_xml(people: &[Person]) -> Result<Vec<u8>, ExportError> {
 /// `watermark` is the section watermark this part has to carry (headers only;
 /// Word never puts a watermark in a footer, and a footer shape would be clipped
 /// out of the bottom margin on a page whose footer is short).
+// One parameter per package-wide writer state; bundling them would hide which
+// part writer reads which, which is the thing a reviewer of a part writer checks.
+#[allow(clippy::too_many_arguments)]
 fn header_footer_xml(
     root: &str,
     blocks: &[BlockNode],
@@ -2479,6 +2511,7 @@ fn header_footer_xml(
     watermark: Option<&WatermarkShape<'_>>,
     surface: &SurfaceEmbedded<'_>,
     doc_pr_ids: &DocPrIds,
+    legacy: &LegacyVmlWrites,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images this part uses, reserved so a hyperlink minted inside the part
@@ -2499,6 +2532,7 @@ fn header_footer_xml(
         rels: RelBuilder::new(surface.reserved(&own_media)),
         tokens: IdTokens::new(defs, available_media),
         doc_pr_ids,
+        legacy,
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -4577,6 +4611,7 @@ fn document_xml(
     available_embedded: &BTreeSet<String>,
     media_rel_ids: BTreeSet<String>,
     doc_pr_ids: &DocPrIds,
+    legacy: &LegacyVmlWrites,
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut doc = start("w:document");
@@ -4627,6 +4662,7 @@ fn document_xml(
         rels: RelBuilder::new(media_rel_ids),
         tokens: IdTokens::new(document.definitions(), available_media),
         doc_pr_ids,
+        legacy,
     };
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
@@ -6022,9 +6058,7 @@ fn write_paragraph(
     if let Some(shape) = watermark {
         write_watermark_run(w, shape)?;
     }
-    for inline in inlines {
-        write_inline(w, inline, ctx, false)?;
-    }
+    write_inlines(w, inlines, ctx, false)?;
     w.write_event(Event::End(BytesEnd::new("w:p")))
         .map_err(pkg)?;
     Ok(())
@@ -6744,6 +6778,46 @@ fn push_embedded_part(
     }
 }
 
+/// Emits an inline sequence. A run of nodes that is the unchanged projection
+/// of a legacy VML drawing is written as that drawing's source, its text-box
+/// holes filled with the boxes' current blocks (`docs/08` ADR-072); every other
+/// node is written by [`write_inline`].
+///
+/// O(nodes), plus one fingerprint per retained drawing's first member.
+fn write_inlines(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    inlines: &[InlineNode],
+    ctx: &mut Ctx,
+    in_deletion: bool,
+) -> Result<(), ExportError> {
+    let mut index = 0;
+    while index < inlines.len() {
+        let rest = &inlines[index..];
+        if let Some((entry, blocks)) = LegacyVmlWrites::writable(ctx.defs, ctx.media, rest) {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            for (piece, text) in entry
+                .source
+                .iter()
+                .zip(blocks.iter().map(Some).chain(std::iter::once(None)))
+            {
+                w.get_mut().write_all(piece.as_bytes()).map_err(pkg)?;
+                for block in text.into_iter().flat_map(|blocks| blocks.iter()) {
+                    write_block(w, block, ctx)?;
+                }
+            }
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+            ctx.legacy.mark_written(rest[0].id());
+            index += entry.members.len();
+            continue;
+        }
+        ctx.legacy.note_projection(rest[0].id());
+        write_inline(w, &rest[0], ctx, in_deletion)?;
+        index += 1;
+    }
+    Ok(())
+}
+
 /// Emits one inline node. `in_deletion` is true when the node sits inside a
 /// tracked-change deletion range, so a run's text is written as `w:delText`
 /// (which the importer reads back into `run.text`, exactly like `w:t`).
@@ -6816,9 +6890,7 @@ fn write_inline(
                 el.push_attribute(("w:history", "1"));
             }
             w.write_event(Event::Start(el)).map_err(pkg)?;
-            for child in &link.inlines {
-                write_inline(w, child, ctx, in_deletion)?;
-            }
+            write_inlines(w, &link.inlines, ctx, in_deletion)?;
             w.write_event(Event::End(BytesEnd::new("w:hyperlink")))
                 .map_err(pkg)?;
         }
@@ -6838,9 +6910,7 @@ fn write_inline(
         // paragraph-spanning range alike.
         InlineNode::Field(field) => {
             write_field_prologue(w, &field.instruction, field.update, field.form.as_ref())?;
-            for child in &field.inlines {
-                write_inline(w, child, ctx, in_deletion)?;
-            }
+            write_inlines(w, &field.inlines, ctx, in_deletion)?;
             write_field_epilogue(w)?;
         }
         // A tracked-change or tracked-move run wrapper. Its own runs are deleted
@@ -6866,9 +6936,7 @@ fn write_inline(
                 el.push_attribute(("w:id", id.as_str()));
             }
             w.write_event(Event::Start(el)).map_err(pkg)?;
-            for child in &revision.inlines {
-                write_inline(w, child, ctx, deleted)?;
-            }
+            write_inlines(w, &revision.inlines, ctx, deleted)?;
             w.write_event(Event::End(BytesEnd::new(name)))
                 .map_err(pkg)?;
         }
@@ -6951,9 +7019,7 @@ fn write_inline(
             write_sdt_properties(w, &sdt.properties)?;
             w.write_event(Event::Start(start("w:sdtContent")))
                 .map_err(pkg)?;
-            for child in &sdt.inlines {
-                write_inline(w, child, ctx, in_deletion)?;
-            }
+            write_inlines(w, &sdt.inlines, ctx, in_deletion)?;
             w.write_event(Event::End(BytesEnd::new("w:sdtContent")))
                 .map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:sdt")))

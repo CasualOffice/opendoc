@@ -647,6 +647,11 @@ pub(crate) enum Finding {
     /// re-emitted on save, so the source detail is recoverable on the semantic
     /// path. Carries the retained byte count for the ledger record.
     RetainedInModel(usize),
+    /// Drawn by translation into the model — partially represented, like
+    /// `Degraded` — AND carried verbatim inside the model, so the source is
+    /// written back by a save that does not change the translation. A legacy
+    /// VML shape (`docs/08` ADR-072). Carries the retained byte count.
+    DegradedRetainedInModel(usize),
 }
 
 impl Finding {
@@ -658,6 +663,7 @@ impl Finding {
             Self::Degraded => FindingKey::Degraded,
             Self::Invalid => FindingKey::Invalid,
             Self::RetainedInModel(_) => FindingKey::RetainedInModel,
+            Self::DegradedRetainedInModel(_) => FindingKey::DegradedRetainedInModel,
         }
     }
 }
@@ -669,6 +675,7 @@ enum FindingKey {
     Degraded,
     Invalid,
     RetainedInModel,
+    DegradedRetainedInModel,
 }
 
 /// What retains the unconsumed source detail of everything a [`Reporter`] is
@@ -694,7 +701,12 @@ impl SourceRetention {
     /// same findings produce four different retention outcomes without one.
     fn resolve(self, finding: Finding) -> Disposition {
         match (self, finding) {
-            (Self::Snapshot, Finding::Degraded) => Disposition::DegradedPreserved,
+            (Self::Snapshot, Finding::Degraded | Finding::DegradedRetainedInModel(_)) => {
+                Disposition::DegradedPreserved
+            }
+            (Self::Regenerated, Finding::DegradedRetainedInModel(_)) => {
+                Disposition::DegradedPreserved
+            }
             (Self::Snapshot, _) => Disposition::OmittedPreserved,
             (Self::Regenerated, Finding::Omitted) => Disposition::OmittedNotRetained,
             (Self::Regenerated, Finding::Degraded) => Disposition::DegradedNotRetained,
@@ -940,6 +952,25 @@ impl Reporter {
         );
     }
 
+    /// Reports a legacy VML element that was DRAWN by translation into the
+    /// model — "shown approximately" — rather than left unshown (`docs/109`
+    /// HF-394).
+    ///
+    /// `retained_bytes` is `Some` when the pict's source is carried verbatim in
+    /// the model (`Definitions::legacy_vml`), which makes the finding preserved
+    /// on the semantic path too, under a ledger record of its own; `None` when
+    /// only the translation is carried, and the finding is preserved only by
+    /// whatever retains the part.
+    pub(crate) fn report_shown_approximately(
+        &mut self,
+        local: &[u8],
+        retained_bytes: Option<usize>,
+    ) {
+        let feature = String::from_utf8_lossy(local).into_owned();
+        let finding = retained_bytes.map_or(Finding::Degraded, Finding::DegradedRetainedInModel);
+        self.insert(feature, FeatureLocation::element(local), finding);
+    }
+
     /// Reports one revision-save ID (`w:rsid*` attribute, or a `w:rsid`/`w:rsids`
     /// entry in `settings.xml`) as a member of **one document-level class**
     /// rather than as a finding of its own.
@@ -1005,7 +1036,7 @@ impl Reporter {
     /// class that no single part owns.
     fn insert_unlocated(&mut self, feature: String, location: FeatureLocation, finding: Finding) {
         let retained_bytes = match finding {
-            Finding::RetainedInModel(bytes) => bytes,
+            Finding::RetainedInModel(bytes) | Finding::DegradedRetainedInModel(bytes) => bytes,
             _ => 0,
         };
         let key = (feature, finding.key(), location.part_name.clone());
@@ -1041,6 +1072,9 @@ impl Reporter {
                 FindingKey::Degraded => Finding::Degraded,
                 FindingKey::Invalid => Finding::Invalid,
                 FindingKey::RetainedInModel => Finding::RetainedInModel(pending.retained_bytes),
+                FindingKey::DegradedRetainedInModel => {
+                    Finding::DegradedRetainedInModel(pending.retained_bytes)
+                }
             };
             // A part carried verbatim holds its own findings' detail, in either
             // mode, under its own record (`Reporter::retain_part`).
@@ -1075,7 +1109,7 @@ impl Reporter {
             // equation that is in the saved file.
             let ledger_id = if disposition.claims_preservation() {
                 match (retention, key) {
-                    (_, FindingKey::RetainedInModel) => {
+                    (_, FindingKey::RetainedInModel | FindingKey::DegradedRetainedInModel) => {
                         Some(ledger.record_model_subtree(&feature, pending.retained_bytes))
                     }
                     (SourceRetention::Snapshot, _) => snapshot,

@@ -287,6 +287,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         package(&wrap_text_sides_entries())?,
     )?;
 
+    fs::write(
+        output.join("vml-shapes.docx"),
+        package(&vml_shapes_entries())?,
+    )?;
+
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((
         "customXml/item1.xml".to_owned(),
@@ -595,6 +600,54 @@ fn chart_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
 /// `ST_WrapText` value, the absent attribute, and a wrap element the schema gives
 /// no `@wrapText`. One PNG is shared by all six — the picture is scaffolding; the
 /// anchor is the subject.
+/// `vml-shapes.docx` (`docs/109` HF-390..HF-399): one of each legacy VML
+/// construct the importer normalises into the DrawingML model — `v:rect`,
+/// `v:roundrect`, `v:oval`, `v:line`, a `v:shape` drawn from a `v:shapetype`
+/// with formulas and an adjust value, a `v:shape` with its own path, a
+/// `v:group` with its own coordinate space holding a frame, an oval and a text
+/// box, a stand-alone `v:textbox`, a picture fill, a `v:imagedata` picture, an
+/// `mc:AlternateContent` whose DrawingML choice must win over its VML fallback,
+/// and a header text box. Self-generated, so it is free to commit.
+const VML_SHAPES_DOCUMENT: &[u8] = include_bytes!("data/vml-shapes/document.xml");
+const VML_SHAPES_HEADER: &[u8] = include_bytes!("data/vml-shapes/header1.xml");
+const VML_SHAPES_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+const VML_SHAPES_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rIdVmlImage" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/vml-image.png"/></Relationships>"#;
+
+fn vml_shapes_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            VML_SHAPES_DOCUMENT.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            VML_SHAPES_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            VML_SHAPES_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/header1.xml".to_owned(),
+            VML_SHAPES_HEADER.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/media/vml-image.png".to_owned(),
+            VISUAL_FLOAT_PNG.to_vec(),
+            CompressionMethod::Stored,
+        ),
+    ]
+}
+
 fn wrap_text_sides_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
     vec![
         (

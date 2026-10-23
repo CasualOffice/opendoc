@@ -26,6 +26,8 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 mod chart;
 // Own line (anti-conflict): the values-only workbook a regenerated chart names.
 mod chart_workbook;
+// Own line (anti-conflict): legacy VML written back as its source.
+mod legacy_vml;
 mod report;
 mod semantic;
 pub use report::{

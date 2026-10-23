@@ -23,6 +23,8 @@ use super::NumberingResolver;
 use super::{Chart, ChartId};
 // Own line (anti-conflict): the drawing-name side table (`docs/109` HF-267).
 use super::ObjectName;
+// Own line (anti-conflict): the legacy VML side table's entry.
+use super::LegacyVml;
 // Own line (anti-conflict): the shape theme-style side table's key.
 use crate::NodeId;
 
@@ -2017,6 +2019,15 @@ pub struct Definitions {
     /// byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub form_protection: DefinitionMap<SectionId, bool>,
+    /// Legacy VML drawings (`w:pict`) carried verbatim beside the DrawingML
+    /// projection the importer made of them, keyed by the first projected
+    /// node's id (`docs/08` ADR-072, `docs/109` HF-395). A side table for the
+    /// reason [`ObjectName`] gives. The writer emits an entry's source while its
+    /// projection is unchanged and the projection otherwise; an orphaned entry
+    /// (its nodes deleted) is never written. Additive: omitted when empty so
+    /// existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub legacy_vml: DefinitionMap<NodeId, LegacyVml>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
