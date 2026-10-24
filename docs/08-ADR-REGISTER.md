@@ -3729,7 +3729,7 @@ a mechanical answer.
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
-- native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
+- ~~native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid~~ — answered by **ADR-074** (proposed; `tiny-skia` stays the reference, a `vello_common` sparse-strip backend is second; see doc 179);
 - internal text storage: rope, piece tree, or chunked sequence;
 - ~~collaboration operation model: OT vs CRDT~~ — superseded by **ADR-033** (proposed; owner decision 2026-09-15; see doc 107);
 - ~~PDF generation backend~~ — superseded by **ADR-031** (Phase 0 accepted and implemented; see doc 98);
@@ -4510,3 +4510,99 @@ report.
 - Using MCP sampling to run generation inside the server.
 
 **Open.** `docs/178` §13 Q1–Q12.
+
+## ADR-073 — The engine worker is an actor that hands back summaries; the editable document and its layout stay on the main thread and become lazy first
+
+**Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-13.
+**Design and measurements:** `docs/180`. **Builds on:** `56` (threading model), `113` and
+`116` §7 (windowed and lazy layout), `107` §4 (editing budgets), ADR-033. **Refines:** `56`'s
+"move the core to a Worker (SAB + OffscreenCanvas)".
+
+**Context.** Open, the font-upgrade re-layout and the first edit after either are each one
+uninterruptible O(document) task on the main thread: 3.3 s, 3.2 s and 3.1 s at 20,000
+paragraphs, and 29 to 31 s and 25 s at 100,000 (`docs/180` §2). `56` assumed shared memory,
+but GitHub Pages sends no COOP/COEP and wasm threads need a nightly `std`, so `56`'s shared
+memory is unavailable. Without it only bytes cross. The model crosses cheaply (12 MB, 44 ms
+to decode at 20,000 paragraphs), but the laid-out pages do not (406 MB, 1.78 s, only 2.3×
+cheaper than computing them), and `SourceEnvelope` has no encoding at all (`docs/180` §3.2).
+The editor reads at least 291 distinct engine members synchronously (`docs/180` §3.2).
+
+**Decision.**
+
+1. **Pattern: an actor with a command queue.** A disposable module worker owns a second
+   engine instance, created from the page's already-compiled `WebAssembly.Module`. Commands
+   carry a request id and a document generation, and the worker answers with progress,
+   result or error. Cancel is a generation bump plus terminate-and-respawn, because a wasm
+   call cannot be interrupted. Fallback is the main-thread path, through the same
+   degrade-on-missing/throw/deadline transport the proofing worker already uses.
+2. **The editable document stays on the main thread**, with the caret, input, hit testing,
+   the editing choke point and the visible window's layout. No round trip is ever on the
+   keystroke path.
+3. **Only summaries cross:** the model, the measure tier, and `ImageBitmap` rasters for
+   read-only surfaces. The paint tier never crosses.
+4. **The main thread's layout becomes lazy before the worker ships.** The order is E1 (one
+   shaping pass per full layout, through the galley cache), then E2 (no per-keystroke
+   document scans), then E3 (an editable prefix-and-extend whole layout), then W1 (open in
+   the worker, with progress, Cancel and fallback), then W2 (read-only surfaces from a
+   worker replica fed by the op stream). See `docs/180` §6.
+
+**Rejected.** Handing the laid-out pages across (§3.2). An asynchronous `ed.doc` proxy over a
+worker-owned engine (291 members, a round trip per caret move). `SharedArrayBuffer`/wasm
+threads (no COOP/COEP, nightly `std`). `OffscreenCanvas` for the editing surface (the caret
+overlay must agree with the paint in the same frame). Shipping a worker open before E1 and
+E3: it would move the 3.1 s task from the open to the first keystroke, and the guard would
+pass while the user's wait stayed the same.
+
+**Open.** `docs/180` §7 Q1 to Q3.
+
+## ADR-074 — The second render backend is the `vello_common` sparse-strip encoder, on the CPU first and the GPU by opt-in; `tiny-skia` stays the reference
+
+**Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-14.
+**Design and measurements:** `docs/179`. **Answers:** the "native renderer" pending decision
+(`docs/109` Q8). **Builds on:** `docs/56` §5, `docs/43` §5.2.
+
+**Context.** RM-14 recorded that the GPU half of the render backend had never been begun.
+Measured first (`docs/179` §3): 85–99 % of a page's raster time is glyph rasterization in
+`tiny-skia`. Outline extraction is under 5 %, and allocation and the RGBA copy are a few
+percent. A dense page costs 26 ms native and 44 ms in wasm at 100 %, and 124 ms in wasm at
+200 % on a DPR-2 screen. Zoom, scroll-in and every edit pay the whole page again.
+
+**Decision.**
+
+1. **`tiny-skia` (`casual-doc-render`) stays the default backend and the golden reference.**
+   No golden moves. Any second backend is held to it within the tolerance
+   `casual-doc-render-gpu/tests/support/mod.rs` states (mean channel difference, share of
+   disagreeing pixels, and the worst 32-pixel square), on real fixtures and on a feature sheet
+   that puts every paint family where a mistake shows.
+2. **The second backend is one encoder from the display list onto the `vello_common`
+   drawing API** (`casual-doc-render-gpu`), with two painters: `vello_cpu` (CPU) and
+   `vello_hybrid` (`wgpu`: Metal, Vulkan and DX12 natively; WebGPU, and WebGL2 through its
+   `webgl` painter, in a browser). Measured, the sparse-strip pipeline is 4–5x faster than
+   `tiny-skia` on dense text on either processor, and 2.1x (scalar) or 3.6–4.6x (`simd128`)
+   in wasm.
+3. **Rare families are painted by the reference into a tile, not encoded twice:** colour
+   glyphs, arrowheads and pictures. They match the CPU page exactly, and there is one
+   implementation of each.
+4. **Everything is opt-in until measured in the shipped editor.** Nothing depends on the crate
+   by default; `casual-doc-wasm`'s `sparse-raster` feature adds `renderPageSparse` with
+   `renderPage`'s contract and is not built by `webapp/build.sh`. Proposing `vello_cpu` with
+   `simd128` as the browser default waits for an A/B on time to interactive and per-keystroke
+   repaint (`docs/179` §9).
+5. **The GPU painter stays opt-in.** On an Apple M4 it is no faster than `vello_cpu`, because
+   strip building stays on the CPU, so its value is very large pixel counts and hosts that own
+   a GPU surface (it skips `putImageData`, about 9 ms a page at 384 dpi). Every GPU error
+   means "use the CPU raster for this page".
+6. **Versions are the `vello_common` 0.2 family** (`vello_cpu` 0.2, `vello_hybrid` 0.2,
+   `wgpu` 29): the newest that keeps the 1.88 MSRV.
+
+**Rejected.**
+
+- `vello` (compute shaders): WebGPU only, with no WebGL2 fallback; headless Chromium on the
+  measuring machine had no WebGPU adapter. 0.11 also needs Rust 1.89.
+- A hand-written `wgpu` renderer (tessellation plus a glyph atlas): it rebuilds what
+  `vello_common` already is, with a second anti-aliaser to validate.
+- A glyph coverage atlas inside `tiny-skia`: it would move the reference's own pixels.
+- A page bitmap cache as *the* fix: it does nothing for zoom or edits, and costs 55 MB a page
+  at 384 dpi. It is worth having later on top of any backend.
+
+**Open.** `docs/179` §10 Q1–Q3.

@@ -21,6 +21,12 @@ crate-type = ["cdylib", "rlib"]
 # deterministic complete bundle.
 default = ["web-host-fonts"]
 web-host-fonts = ["casual-doc-layout/external-web-fonts"]
+# Opt-in second raster (`docs/179`, ADR-073 Proposed): `renderPageSparse`, the
+# same page through `casual-doc-render-gpu`'s sparse-strip encoder on
+# `vello_cpu`. OFF by default and not built by `webapp/build.sh`, so the shipped
+# module and `renderPage` are unchanged; a host that builds with it gets one more
+# export with `renderPage`'s exact contract to A/B against.
+sparse-raster = ["dep:casual-doc-render-gpu", "casual-doc-render-gpu/sparse-cpu"]
 
 # Modern rustc emits bulk-memory / sign-ext / nontrapping-fptoint instructions by
 # default; `wasm-opt` must be told to accept them, or validation fails. These
@@ -45,6 +51,8 @@ casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 casual-doc-render.workspace = true
+# Only with `sparse-raster` (above).
+casual-doc-render-gpu = { workspace = true, optional = true }
 # The one lowering of review edits (suggestions, comments, decisions), shared
 # with the Native SDK and the MCP server (`docs/178` §8 A1).
 casual-doc-review.workspace = true

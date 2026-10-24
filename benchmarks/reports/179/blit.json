@@ -1,0 +1,22 @@
+{
+ "rows": [
+  {
+   "w": 816,
+   "h": 1056,
+   "ms": 1.300000011920929
+  },
+  {
+   "w": 1632,
+   "h": 2112,
+   "ms": 3
+  },
+  {
+   "w": 3264,
+   "h": 4224,
+   "ms": 7.600000023841858
+  }
+ ],
+ "webgpu": "absent",
+ "gl2": true,
+ "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+}

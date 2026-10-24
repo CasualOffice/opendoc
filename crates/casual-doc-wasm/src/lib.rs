@@ -63,7 +63,11 @@ use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 // import does not conflict here.
 use casual_doc_layout::compose::{ComposeOptions, compose_page_with};
 use casual_doc_layout::display::Color as PaintColor;
-use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config, paginate_document};
+use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config};
+// Tests compare against the uncached whole layout; the facade itself always
+// lays out through the galley cache (`paginate_whole_cached`, HF-410).
+#[cfg(test)]
+use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
 use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
@@ -82,7 +86,6 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
 // Own line (anti-conflict): the per-viewer fold filter (ADR-049).
 use casual_doc_layout::document_layout::paginate_document_after_edit_folded;
-use casual_doc_layout::document_layout::paginate_document_folded;
 use casual_doc_layout::fold::FoldSet;
 use casual_doc_model::v1::BreakKind;
 // The start type a section break gives the section that follows it.
@@ -260,6 +263,11 @@ mod presence;
 // 26k lines and is owned by other lanes, and the whole feature is one read, one
 // write and the gate that decides when the write survives a save.
 mod chart;
+
+// The opt-in sparse-strip raster (`docs/179`, ADR-073 Proposed): one more export
+// with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
+#[cfg(feature = "sparse-raster")]
+mod sparse_raster;
 
 use window::BodyLayout;
 use window::WindowedBody;
@@ -560,7 +568,7 @@ impl EditContext {
 ///
 /// Held together because rendering must serve the faces the shaper actually
 /// resolved during pagination — [`ParleyShaper::registry`] is only complete after
-/// [`paginate_document`] has shaped every paragraph.
+/// [`casual_doc_layout::document_layout::paginate_document`] has shaped every paragraph.
 #[wasm_bindgen]
 pub struct WasmDocument {
     document: Document,
@@ -687,6 +695,9 @@ pub struct WasmDocument {
     /// this. Collapsing them would make a repaint look like an edit to anything
     /// replaying the chain (doc 147 §3.3).
     revision: u32,
+    /// Word, character and paragraph totals, kept incrementally across text
+    /// edits so the status bar's per-keystroke read is `O(edit)` (HF-412).
+    stats: core::cell::RefCell<StatsLedger>,
     /// Shaped-paragraph cache for the incremental edit path: an edit re-shapes only
     /// the paragraph(s) it touched (hash-based invalidation) and reuses the rest, so
     /// re-pagination is `O(edit)` rather than `O(document)`. Cleared whenever a font
@@ -3647,6 +3658,174 @@ impl WasmDocument {
             out.extend_from_slice(&flat_rect(page, rect));
         }
         out
+    }
+
+    /// The body paragraphs with content on pages `first_page..=last_page`
+    /// (1-based), in document order, as a JSON array of
+    /// `{"node": id, "text": plain text, "language": shared w:lang or ""}` —
+    /// everything a proofing pass reads about the visible pages, in **one**
+    /// call (`docs/180` E2, `109` HF-411).
+    ///
+    /// It replaces a host walk that made about five engine calls per paragraph
+    /// (`hitTest`, `moveCaret`, `caretRect`, `paragraphLength`, `copyText`,
+    /// `languageAt`), most of them `O(document)` each: `caretRect` built the
+    /// line boxes of the whole document to answer which page a paragraph was
+    /// on, and measured 466 ms per keystroke at 20,000 paragraphs.
+    ///
+    /// Pattern: a **finger search** — memoization with validation on use, the
+    /// same shape as `casual_doc_model::v1::locate`'s route hint. The pages
+    /// name their paragraphs (`O(window)`), and the model blocks that hold them
+    /// are found by searching outward from where the previous call found its
+    /// window. A stale finger costs a longer search, never a wrong answer: a
+    /// block is accepted only if it really holds a paragraph from the window.
+    /// Proofing asks about the same pages after every keystroke, so the
+    /// search is `O(window)` on the path that runs per keystroke, and
+    /// `O(distance scrolled)` once after a jump.
+    ///
+    /// Body only, as before: header, footer, note and text-box stories are
+    /// proofed by nothing yet (`docs/146` §8).
+    #[wasm_bindgen(js_name = proofWindow)]
+    #[must_use]
+    pub fn proof_window(&self, first_page: u32, last_page: u32) -> String {
+        let rows: Vec<serde_json::Value> = self
+            .window_paragraphs(first_page, last_page)
+            .into_iter()
+            .map(|(node, text, language)| {
+                serde_json::json!({ "node": node.to_string(), "text": text, "language": language })
+            })
+            .collect();
+        serde_json::Value::Array(rows).to_string()
+    }
+
+    /// Decoration rectangles ([`decorationRects`](Self::decoration_rects)) for
+    /// many single-paragraph ranges on pages `first_page..=last_page`, answered
+    /// from one build of those pages' line boxes (`docs/180` E2, `109`
+    /// HF-411).
+    ///
+    /// `ranges_json` is `[[node, start, end], …]`. The result is flat: for each
+    /// range in order, its rectangle count `n`, then `n` five-tuples
+    /// `[page, x, y, w, h]` in page-local twips. A range off the window, or one
+    /// naming no paragraph, answers `0`.
+    ///
+    /// `decorationRects` builds the whole document's line boxes per call, so a
+    /// host marking every misspelling on screen paid `O(document)` per mark.
+    /// This is `O(window + marks)`.
+    #[wasm_bindgen(js_name = decorationRectsOnPages)]
+    #[must_use]
+    pub fn decoration_rects_on_pages(
+        &self,
+        first_page: u32,
+        last_page: u32,
+        ranges_json: &str,
+    ) -> Vec<i32> {
+        let ranges: Vec<(String, u32, u32)> = serde_json::from_str(ranges_json).unwrap_or_default();
+        let window = LayoutSnapshot::new(self.painted_layout()).page_window(first_page, last_page);
+        let mut out = Vec::new();
+        for (node, start, end) in ranges {
+            let Ok(node) = NodeId::from_str(&node) else {
+                out.push(0);
+                continue;
+            };
+            let (start, end) = (start.min(end), start.max(end));
+            let range = ModelRange::new(
+                self.view_pos(ModelPos::new(node, start)),
+                self.view_pos(ModelPos::new(node, end)),
+            );
+            let rects = window.decoration_rects(range);
+            out.push(i32::try_from(rects.len()).unwrap_or(i32::MAX));
+            for (page, rect) in rects {
+                out.extend_from_slice(&flat_rect(page, rect));
+            }
+        }
+        out
+    }
+
+    /// The rows behind [`proof_window`](Self::proof_window): `(node, text,
+    /// language)` for each body paragraph with content on the window's pages,
+    /// in document order. See there for the pattern and its complexity.
+    fn window_paragraphs(&self, first_page: u32, last_page: u32) -> Vec<(NodeId, String, String)> {
+        let wanted: std::collections::HashSet<NodeId> = LayoutSnapshot::new(self.painted_layout())
+            .body_paragraphs_on_pages(first_page, last_page)
+            .into_iter()
+            .collect();
+        let body = self.document.body();
+        if wanted.is_empty() || body.is_empty() {
+            return Vec::new();
+        }
+        let holds = |index: usize| -> bool {
+            #[cfg(test)]
+            PROOF_BLOCKS_EXAMINED.with(|n| n.set(n.get() + 1));
+            let mut found = false;
+            visit_paragraphs(std::slice::from_ref(&body[index]), &mut |paragraph| {
+                found |= wanted.contains(&paragraph.id);
+            });
+            found
+        };
+        let finger = PROOF_FINGER.with(std::cell::Cell::get).min(body.len() - 1);
+        // Outward from the finger: the window is almost always where it was.
+        let mut hit = None;
+        for distance in 0..body.len() {
+            if let Some(index) = finger.checked_add(distance).filter(|i| *i < body.len())
+                && holds(index)
+            {
+                hit = Some(index);
+                break;
+            }
+            if let Some(index) = finger.checked_sub(distance).filter(|_| distance > 0)
+                && holds(index)
+            {
+                hit = Some(index);
+                break;
+            }
+            if distance > finger && finger + distance >= body.len() {
+                break;
+            }
+        }
+        let Some(hit) = hit else {
+            return Vec::new();
+        };
+        // A block on the window that holds no proofable paragraph (an empty
+        // table row run, an alt chunk) must not end the walk, so a short gap is
+        // tolerated in both directions. The gap is a constant, so the walk stays
+        // O(window).
+        const GAP: usize = 4;
+        let mut start = hit;
+        let mut misses = 0;
+        let mut index = hit;
+        while index > 0 && misses < GAP {
+            index -= 1;
+            if holds(index) {
+                start = index;
+                misses = 0;
+            } else {
+                misses += 1;
+            }
+        }
+        let mut end = hit;
+        misses = 0;
+        index = hit;
+        while index + 1 < body.len() && misses < GAP {
+            index += 1;
+            if holds(index) {
+                end = index;
+                misses = 0;
+            } else {
+                misses += 1;
+            }
+        }
+        PROOF_FINGER.with(|finger| finger.set(start));
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut rows = Vec::new();
+        visit_paragraphs(&body[start..=end], &mut |paragraph| {
+            if !wanted.contains(&paragraph.id) {
+                return;
+            }
+            let text = node_plain_text(&paragraph.inlines);
+            let length = u32::try_from(text.len()).unwrap_or(u32::MAX);
+            let language = shared_language_of_paragraph(&cascade, paragraph, 0, length);
+            rows.push((paragraph.id, text, language));
+        });
+        rows
     }
 
     /// The plain text a selection covers — the first (read-only) action of the
@@ -10967,19 +11146,17 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = documentStats)]
     #[must_use]
     pub fn document_stats(&self) -> DocStats {
-        let mut nodes = Vec::new();
-        collect_block_text_all_surfaces(&self.document, &mut nodes);
+        // `O(1)` when the ledger is current, which it is after every text
+        // edit; one `O(document)` recount after anything else (HF-412).
+        let mut ledger = self.stats.borrow_mut();
+        if ledger.at != Some(self.revision) {
+            ledger.rebuild(&self.document, self.revision);
+        }
         DocStats {
-            words: nodes
-                .iter()
-                .map(|(_, t)| t.split_whitespace().count() as u32)
-                .sum(),
-            characters: nodes
-                .iter()
-                .map(|(_, t)| t.chars().filter(|c| !c.is_whitespace()).count() as u32)
-                .sum(),
-            characters_with_spaces: nodes.iter().map(|(_, t)| t.chars().count() as u32).sum(),
-            paragraphs: nodes.len() as u32,
+            words: ledger.totals.words,
+            characters: ledger.totals.characters,
+            characters_with_spaces: ledger.totals.characters_with_spaces,
+            paragraphs: ledger.paragraphs,
             // The painted count, so this agrees with `pageCount` on the same
             // object. It used to report the editing layout's, which differs from
             // `pageCount` exactly when markup is shown — an SDK inconsistency
@@ -13389,17 +13566,19 @@ impl WasmDocument {
     /// — the DOCUMENT revision — does not (`docs/147` §3.3).
     fn relayout_for_fold(&mut self) {
         self.galley_cache = GalleyCache::new();
-        self.layout = BodyLayout::Whole(paginate_document_folded(
+        self.layout = BodyLayout::Whole(paginate_whole_cached(
             &self.document,
             &self.shaper,
+            &mut self.galley_cache,
             ReviewView::Editing,
             self.layout_view,
             &self.folds,
         ));
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_folded(
+            self.markup_layout = Some(paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -14569,10 +14748,14 @@ impl WasmDocument {
         if on && self.layout.is_windowed() {
             return Err(windowed_not_available("The show-changes preview"));
         }
+        // Through the cache, like every whole layout: the markup view has its
+        // own retained-galley slot, so the first keystroke after turning the
+        // preview on resumes instead of re-shaping the document (HF-410).
         self.markup_layout = on.then(|| {
-            paginate_document_folded(
+            paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -14694,17 +14877,19 @@ impl WasmDocument {
         // every page, so offering it as a resume baseline would splice pages laid
         // out to rules that no longer apply.
         self.galley_cache = GalleyCache::new();
-        self.layout = BodyLayout::Whole(paginate_document_folded(
+        self.layout = BodyLayout::Whole(paginate_whole_cached(
             &self.document,
             &self.shaper,
+            &mut self.galley_cache,
             ReviewView::Editing,
             self.layout_view,
             &self.folds,
         ));
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_folded(
+            self.markup_layout = Some(paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -14903,9 +15088,10 @@ impl WasmDocument {
             self.layout.remeasure(&self.document, &self.shaper);
             return;
         }
-        self.layout = BodyLayout::Whole(paginate_document_folded(
+        self.layout = BodyLayout::Whole(paginate_whole_cached(
             &self.document,
             &self.shaper,
+            &mut self.galley_cache,
             ReviewView::Editing,
             self.layout_view,
             &self.folds,
@@ -14913,9 +15099,10 @@ impl WasmDocument {
         // A new face re-shapes the markup view as much as the editing one, and
         // the markup view is what is on screen while it exists.
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_folded(
+            self.markup_layout = Some(paginate_whole_cached(
                 &self.document,
                 &self.shaper,
+                &mut self.galley_cache,
                 ReviewView::Markup,
                 self.layout_view,
                 &self.folds,
@@ -15730,7 +15917,13 @@ impl WasmDocument {
     /// only: the cache re-derives and re-hashes every paragraph, which is always
     /// correct and always `O(document)`.
     fn finish_edit_with(&mut self, caret: Pos, damage: &DirtySet) -> EditResult {
+        let before = self.revision;
         self.revision += 1;
+        // The statistics move by the edited paragraphs' difference when the
+        // damage is complete, and are left stale (recounted on read) otherwise.
+        self.stats
+            .get_mut()
+            .advance(&self.document, damage, before, self.revision);
         // The incremental pass reuses pages from the layout it is handed, so it
         // must be handed them exactly as they were BUILT — no table scrolled —
         // or a reused page would carry an offset into a comparison and a resume
@@ -20264,6 +20457,51 @@ fn shared_language_in_range(document: &Document, node: NodeId, start: u32, end: 
     shared.unwrap_or_default().to_string()
 }
 
+thread_local! {
+    /// Where `window_paragraphs` last found its window: the index of the first
+    /// top-level body block holding a paragraph on it. A hint only — validated
+    /// on every use and never trusted (see `proof_window`), so it needs no
+    /// invalidation and is safely shared by every document on the thread.
+    static PROOF_FINGER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test-only meter: top-level body blocks `window_paragraphs` examined —
+    /// the quantity a doubling guard reads (`SKILL.md` §8).
+    #[cfg(test)]
+    static PROOF_BLOCKS_EXAMINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Test-only meter: paragraphs the statistics ledger counted.
+    #[cfg(test)]
+    static PARAGRAPHS_COUNTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// [`shared_language_in_range`] over a paragraph the caller already holds, so a
+/// batch over many paragraphs pays no lookup per paragraph and builds the
+/// style cascade once. `O(runs in the range)`.
+fn shared_language_of_paragraph(
+    cascade: &StyleCascade<'_>,
+    paragraph: &Paragraph,
+    start: u32,
+    end: u32,
+) -> String {
+    let paragraph_style = cascade.paragraph_style(&paragraph.properties);
+    let mut shared: Option<String> = None;
+    for direct in casual_doc_edit::run_properties_in_paragraph_range(paragraph, start, end) {
+        let run = cascade.resolve_run(paragraph_style, direct);
+        let value = run
+            .language
+            .as_ref()
+            .and_then(|language| language.value.as_deref())
+            .unwrap_or_default();
+        if value.is_empty() {
+            return String::new();
+        }
+        match &shared {
+            None => shared = Some(value.to_owned()),
+            Some(existing) if existing == value => {}
+            Some(_) => return String::new(),
+        }
+    }
+    shared.unwrap_or_default()
+}
+
 /// Resolves the run a caret inherits, including document defaults and paragraph /
 /// character styles. Empty paragraphs still inherit their paragraph style.
 fn effective_caret_run_properties(
@@ -23188,6 +23426,52 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
 /// the two compared page for page. A test that had to build 262,145 paragraphs
 /// to reach the windowed path would be slow enough not to be run, and would
 /// have nothing affordable to compare the result against.
+/// Lays the whole body out **through the galley cache**, so the shaping this
+/// pass does is the shaping the next edit resumes from (`docs/180` E1, `109`
+/// HF-410).
+///
+/// Pattern: a warm cache. Every whole layout outside the edit path — the
+/// open, the font upgrade (`repaginate`), a fold, a view change, turning
+/// "show changes" on — used to call `paginate_document_folded`, which shapes
+/// every paragraph and keeps nothing. The first keystroke after any of them
+/// then found an empty cache and no retained galley, and shaped the whole
+/// document a second time: 3.1 s at 20,000 paragraphs, against 0.35 s for the
+/// keystroke after it. Built here with [`DirtySet::everything`] and no previous
+/// layout, the pass shapes every paragraph exactly once (the same work the
+/// uncached path did), stores each fragment, and hands its galley back to the
+/// cache, so the first edit takes the same `O(edit)` resume path as every
+/// later one.
+///
+/// The output is the layout `paginate_document_folded` produces for the same
+/// inputs: `paginate_document_after_edit_folded` with no previous layout runs
+/// the same plans and the same `finish_pagination`, and falls back to exactly
+/// that function for `w:numRestart="eachPage"` notes. The layout crate's
+/// `incremental_matches_the_fresh_path_*` battery holds the two equal.
+///
+/// Complexity: `O(document)`, once per whole layout — it IS the whole layout.
+/// The caller decides whether the cache must be emptied first (a new face or a
+/// new measure invalidates every entry); this function never does.
+fn paginate_whole_cached(
+    document: &Document,
+    shaper: &ParleyShaper,
+    cache: &mut GalleyCache,
+    review_view: ReviewView,
+    view: LayoutView,
+    folds: &FoldSet,
+) -> PaginatedLayout {
+    paginate_document_after_edit_folded(
+        document,
+        shaper,
+        cache,
+        &DirtySet::everything(),
+        review_view,
+        None,
+        view,
+        folds,
+    )
+    .layout
+}
+
 fn open_document_bounded(
     bytes: &[u8],
     selection: FormatSelection,
@@ -23253,6 +23537,25 @@ fn open_document_bounded(
     // measured on the owner's file, which does not fit a wasm32 address space.
     // Try the windowed path; a document a window cannot serve is refused with
     // the reason rather than attempted and aborted.
+    // `w15:collapsed` is the document's SAVED default (ADR-049's cross-session
+    // tier), so a file Word saved with a heading folded opens folded. Seeded
+    // here, once, from a cheap pass over the top-level blocks that reads one
+    // `Option<bool>` per paragraph and resolves no style cascade. Read BEFORE
+    // the layout, so a folded document is laid out once, folded, rather than
+    // once unfolded and again folded.
+    //
+    // A windowed body gets an empty set: its measure tier is built in chunks a
+    // host scrolls through, and invalidating that on a fold would re-measure the
+    // document (`109` FOLD-003). The facade refuses a toggle there with a reason.
+    let folds = if windowed {
+        FoldSet::new()
+    } else {
+        saved_folds(&document)
+    };
+    // The whole layout is built through the galley cache the document keeps,
+    // so the first edit resumes from this pass instead of shaping every
+    // paragraph again (`docs/180` §2.2 and E1, `109` HF-410).
+    let mut galley_cache = GalleyCache::new();
     let layout = if windowed {
         match WindowedBody::open(&document, &shaper) {
             Ok(body) => BodyLayout::Windowed(Box::new(body)),
@@ -23261,7 +23564,14 @@ fn open_document_bounded(
             }
         }
     } else {
-        BodyLayout::Whole(paginate_document(&document, &shaper))
+        BodyLayout::Whole(paginate_whole_cached(
+            &document,
+            &shaper,
+            &mut galley_cache,
+            ReviewView::Editing,
+            LayoutView::Paged,
+            &folds,
+        ))
     };
     let default_config = document_page_config(&document);
 
@@ -23276,34 +23586,6 @@ fn open_document_bounded(
     let mut edit_ids = IdGenerator::new(IdSpace::local(IdSpace::of_document(document.id())).get());
     edit_ids.reserve_through(document.highest_counter_in(IdSpace::new(edit_ids.namespace())));
     let revision_ids = RevisionIdAllocator::from_document(&document);
-
-    // `w15:collapsed` is the document's SAVED default (ADR-049's cross-session
-    // tier), so a file Word saved with a heading folded opens folded. Seeded
-    // here, once, from a cheap pass over the top-level blocks that reads one
-    // `Option<bool>` per paragraph and resolves no style cascade.
-    //
-    // A windowed body gets an empty set: its measure tier is built in chunks a
-    // host scrolls through, and invalidating that on a fold would re-measure the
-    // document (`109` FOLD-003). The facade refuses a toggle there with a reason.
-    let folds = if layout.is_windowed() {
-        FoldSet::new()
-    } else {
-        saved_folds(&document)
-    };
-    // Re-paginate only when the document really carries a folded heading, which
-    // is rare: the open above already paid for the unfolded layout, and paying
-    // twice for every document to spare one is the wrong trade.
-    let layout = if folds.is_empty() {
-        layout
-    } else {
-        BodyLayout::Whole(paginate_document_folded(
-            &document,
-            &shaper,
-            ReviewView::Editing,
-            LayoutView::Paged,
-            &folds,
-        ))
-    };
 
     let saved_styles = document
         .definitions()
@@ -23337,9 +23619,9 @@ fn open_document_bounded(
         host_ceiling: Capabilities::local(),
         revision_ids,
         revision: 0,
-        // Populated lazily on the first edit's incremental re-pagination; the open
-        // above uses the full path since there is nothing yet to reuse.
-        galley_cache: GalleyCache::new(),
+        // Warm: the open's layout pass filled it and handed it its galley.
+        galley_cache,
+        stats: core::cell::RefCell::default(),
         // List definitions are created on demand by the first bullet/numbered toggle.
         saved_styles,
         bullet_list: None,
@@ -25707,6 +25989,177 @@ impl ParagraphFlags {
     pub fn page_break_before(&self) -> bool {
         self.page_break_before
     }
+}
+
+/// One paragraph's contribution to [`DocStats`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ParagraphCounts {
+    words: u32,
+    characters: u32,
+    characters_with_spaces: u32,
+}
+
+impl ParagraphCounts {
+    /// The counts of one paragraph's plain text. `O(text)`.
+    fn of(text: &str) -> Self {
+        #[cfg(test)]
+        PARAGRAPHS_COUNTED.with(|n| n.set(n.get() + 1));
+        Self {
+            words: text.split_whitespace().count() as u32,
+            characters: text.chars().filter(|c| !c.is_whitespace()).count() as u32,
+            characters_with_spaces: text.chars().count() as u32,
+        }
+    }
+}
+
+/// The word, character and paragraph totals, kept **incrementally**
+/// (`docs/180` §2.3 and E2, `109` HF-412).
+///
+/// Pattern: incremental computation over a dirty set. `documentStats` walked
+/// every paragraph of every surface and allocated its text on every call, and
+/// the status bar called it after every keystroke: 93 ms per keystroke at
+/// 20,000 paragraphs. The ledger keeps each paragraph's counts and the
+/// totals; a text edit's **complete** damage set (`damage_of`) names the only
+/// paragraphs whose text changed, so the totals move by the difference for
+/// those paragraphs alone, `O(edited paragraphs)`.
+///
+/// Validity is a stamp, never an assumption: the ledger describes the
+/// document at `at`, a value of `WasmDocument::revision`. Every path that
+/// changes the document moves the revision. The one path that updates the
+/// ledger in step is a text edit with a complete damage set; anything else
+/// (a split, a join, a paste, an undo, a remote operation, a view change)
+/// leaves the stamp behind, and the next read rebuilds the ledger in one
+/// `O(document)` pass. Being wrong in that direction costs a recount; there is
+/// no direction in which it serves a stale count.
+///
+/// A damaged paragraph is a subtree, not one paragraph: its inlines can own
+/// block stories (a text box, a shape's text body, a group's text shapes), and
+/// those story paragraphs are counted too. An operation that rewrites the host's
+/// inlines (`addTextToShape`, deleting a text box, undoing either) adds or
+/// removes story paragraphs without naming them in the damage. So the ledger
+/// keeps, per host, the ids of the story paragraphs beneath it, re-reads the
+/// whole subtree of each damaged paragraph, and leaves itself stale when that
+/// set of ids moved (a structural gesture, never a keystroke).
+#[derive(Debug, Default)]
+struct StatsLedger {
+    /// The revision the ledger describes; `None` until the first build.
+    at: Option<u32>,
+    /// Each paragraph's counts, by id.
+    per_paragraph: HashMap<NodeId, ParagraphCounts>,
+    /// For each paragraph whose inlines own block stories, the ids of every
+    /// paragraph inside them, at any depth, in document order. Absent for a
+    /// paragraph that owns none, which is almost every paragraph.
+    stories: HashMap<NodeId, Vec<NodeId>>,
+    /// The sum of `per_paragraph`.
+    totals: ParagraphCounts,
+    /// How many paragraphs the document has.
+    paragraphs: u32,
+    /// Whether the last build met a paragraph id twice. The full count counts
+    /// both; a per-id ledger cannot, so such a document is always counted in
+    /// full rather than counted wrong.
+    ambiguous: bool,
+}
+
+impl StatsLedger {
+    /// Rebuilds the ledger from the whole document. `O(document)`.
+    fn rebuild(&mut self, document: &Document, revision: u32) {
+        self.per_paragraph.clear();
+        self.stories.clear();
+        self.totals = ParagraphCounts::default();
+        self.ambiguous = false;
+        let mut paragraphs = 0_u32;
+        // The traversal `collect_block_text_all_surfaces` is written on, so the
+        // set and the order of paragraphs counted are exactly its.
+        visit_paragraphs_all_surfaces(document, &mut |paragraph| {
+            let counts = ParagraphCounts::of(&node_plain_text(&paragraph.inlines));
+            self.totals.words += counts.words;
+            self.totals.characters += counts.characters;
+            self.totals.characters_with_spaces += counts.characters_with_spaces;
+            self.ambiguous |= self.per_paragraph.insert(paragraph.id, counts).is_some();
+            let nested = story_paragraph_ids(paragraph);
+            if !nested.is_empty() {
+                self.stories.insert(paragraph.id, nested);
+            }
+            paragraphs += 1;
+        });
+        self.paragraphs = paragraphs;
+        self.at = (!self.ambiguous).then_some(revision);
+    }
+
+    /// Replaces one paragraph's counts in the totals. `false` when the ledger
+    /// does not know the paragraph, so the caller leaves it stale.
+    fn recount(&mut self, id: NodeId, new: ParagraphCounts) -> bool {
+        let Some(old) = self.per_paragraph.get_mut(&id) else {
+            return false;
+        };
+        self.totals.words = self.totals.words - old.words + new.words;
+        self.totals.characters = self.totals.characters - old.characters + new.characters;
+        self.totals.characters_with_spaces = self.totals.characters_with_spaces
+            - old.characters_with_spaces
+            + new.characters_with_spaces;
+        *old = new;
+        true
+    }
+
+    /// Moves the ledger from revision `before` to `after` across a text edit
+    /// whose complete damage is `damage`. Leaves the ledger stale (so the next
+    /// read rebuilds it) whenever it cannot account for the edit exactly.
+    /// `O(damaged subtrees)`: each damaged paragraph is resolved through the
+    /// route hint the edit itself just recorded (`casual_doc_model::v1::locate`),
+    /// and it and the story paragraphs its inlines own are re-read. A plain
+    /// paragraph owns none, so a keystroke re-reads one paragraph.
+    fn advance(&mut self, document: &Document, damage: &DirtySet, before: u32, after: u32) {
+        if self.at != Some(before) || !damage.is_complete() {
+            return;
+        }
+        // Stale until the loop has accounted for every damaged paragraph.
+        self.at = None;
+        for node in damage.iter() {
+            let Some(paragraph) = document.paragraph(node) else {
+                // Not a paragraph the ledger knows: it cannot be accounted
+                // for, so the next read recounts.
+                return;
+            };
+            // The story paragraphs beneath it must be the ones the ledger
+            // holds. When they are not, the edit added or removed paragraphs
+            // the damage does not name, and only a recount is exact.
+            let nested = story_paragraph_ids(paragraph);
+            let known = self.stories.get(&node).map_or(&[][..], Vec::as_slice);
+            if nested != known {
+                return;
+            }
+            if !self.recount(
+                node,
+                ParagraphCounts::of(&node_plain_text(&paragraph.inlines)),
+            ) {
+                return;
+            }
+            // Same ids, but the host's inlines were rewritten, so the text
+            // inside them may have changed too.
+            let mut exact = true;
+            if !nested.is_empty() {
+                visit_text_box_paragraphs(&paragraph.inlines, &mut |story| {
+                    exact &= self.recount(
+                        story.id,
+                        ParagraphCounts::of(&node_plain_text(&story.inlines)),
+                    );
+                });
+            }
+            if !exact {
+                return;
+            }
+        }
+        self.at = Some(after);
+    }
+}
+
+/// The ids of every paragraph inside the block stories `paragraph`'s inlines
+/// own, at any depth, in the order [`visit_paragraphs`] visits them. Empty, and
+/// unallocated, for a paragraph that owns none. `O(inlines in the subtree)`.
+fn story_paragraph_ids(paragraph: &Paragraph) -> Vec<NodeId> {
+    let mut ids = Vec::new();
+    visit_text_box_paragraphs(&paragraph.inlines, &mut |story| ids.push(story.id));
+    ids
 }
 
 /// Document statistics for the status footer.
@@ -32161,6 +32614,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            stats: core::cell::RefCell::default(),
             saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
@@ -32616,6 +33070,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            stats: core::cell::RefCell::default(),
             saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
@@ -32931,6 +33386,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            stats: core::cell::RefCell::default(),
             saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
@@ -36824,6 +37280,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            stats: core::cell::RefCell::default(),
             saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
@@ -38007,6 +38464,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            stats: core::cell::RefCell::default(),
             saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
@@ -39510,6 +39968,7 @@ mod tests {
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
+            stats: core::cell::RefCell::default(),
             saved_styles: BTreeMap::new(),
             bullet_list: None,
             numbered_list: None,
@@ -41794,6 +42253,284 @@ mod tests {
             "a keystroke disturbs the page it lands on, not {small_pages} pages \
              ({small_dirty} repainted)"
         );
+    }
+
+    /// The blocks the FIRST keystroke after each whole layout re-derives, at
+    /// `paragraphs` paragraphs, plus what the open itself shaped. One entry per
+    /// whole-layout path the facade has: the open, the font upgrade, a view
+    /// change and back, and turning the markup preview on.
+    fn first_keystroke_after_each_whole_layout(
+        paragraphs: usize,
+    ) -> (usize, Vec<(&'static str, usize)>) {
+        let mut d = plain_text_document(paragraphs);
+        let opened_shaping = d.galley_cache.shaped_last_build();
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        let mut offset = 6u32;
+        let mut keystroke = |d: &mut WasmDocument| {
+            d.type_text(&node, offset, &node, offset, "x".to_owned(), 1)
+                .expect("typing into a plain-text document");
+            offset += 1;
+            d.galley_cache.rebuilt_last_build()
+        };
+        let mut work = vec![("open", keystroke(&mut d))];
+
+        let faces = [casual_doc_layout::fonts::ROBOTO_REGULAR];
+        let lengths: Vec<u32> = faces.iter().map(|face| face.len() as u32).collect();
+        let bytes: Vec<u8> = faces.into_iter().flatten().copied().collect();
+        d.register_fonts_inner(&bytes, &lengths)
+            .expect("register a host face");
+        work.push(("font upgrade", keystroke(&mut d)));
+
+        d.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("reflow view");
+        work.push(("reflow view", keystroke(&mut d)));
+        d.set_layout_view_inner(0, 0, 0).expect("paged view");
+        work.push(("paged view", keystroke(&mut d)));
+
+        d.set_show_changes_inner(true).expect("show changes");
+        work.push(("show changes", keystroke(&mut d)));
+        (opened_shaping, work)
+    }
+
+    /// **One shaping pass per full layout** (`docs/180` §2.2 and E1, `109`
+    /// HF-410). Every whole layout outside the edit path is built through the
+    /// galley cache, so the first keystroke after it resumes from that pass
+    /// instead of shaping the document a second time — measured at 3.1 s for
+    /// the first keystroke on a 20,000-paragraph document before this.
+    ///
+    /// Doubling test, not a timing: the open must shape every paragraph once
+    /// (`O(document)` once, so it doubles with the document), and the first
+    /// keystroke after the open and after every other whole layout must
+    /// re-derive the same number of blocks at `n` and at `2n` paragraphs.
+    #[test]
+    fn the_first_keystroke_after_a_whole_layout_resumes_instead_of_reshaping() {
+        let small_n = 300;
+        let (small_open, small) = first_keystroke_after_each_whole_layout(small_n);
+        let (large_open, large) = first_keystroke_after_each_whole_layout(small_n * 2);
+        for ((path, small_work), (_, large_work)) in small.iter().zip(&large) {
+            assert_eq!(
+                small_work,
+                large_work,
+                "the first keystroke after the {path} must not grow with the \
+                 document: {small_work} blocks re-derived at {small_n} paragraphs \
+                 and {large_work} at {}",
+                small_n * 2
+            );
+            assert!(
+                *small_work <= 2,
+                "the first keystroke after the {path} re-derived {small_work} \
+                 blocks; it touches one paragraph"
+            );
+        }
+        // The open shaped the document once: the work is done, and done once.
+        assert!(
+            small_open >= small_n && large_open >= small_n * 2,
+            "the open must shape every paragraph once: {small_open} at {small_n} \
+             and {large_open} at {}",
+            small_n * 2
+        );
+    }
+
+    /// The statistics a full recount gives, for comparing the ledger against.
+    fn recounted_stats(d: &WasmDocument) -> (u32, u32, u32, u32) {
+        let mut ledger = StatsLedger::default();
+        ledger.rebuild(&d.document, d.revision);
+        (
+            ledger.totals.words,
+            ledger.totals.characters,
+            ledger.totals.characters_with_spaces,
+            ledger.paragraphs,
+        )
+    }
+
+    fn stats_of(d: &WasmDocument) -> (u32, u32, u32, u32) {
+        let s = d.document_stats();
+        (
+            s.words(),
+            s.characters(),
+            s.characters_with_spaces(),
+            s.paragraphs(),
+        )
+    }
+
+    /// Paragraphs counted by the `documentStats` read after one keystroke,
+    /// at `paragraphs` paragraphs (the status bar reads it after every edit).
+    fn stats_work_after_a_keystroke(paragraphs: usize) -> u64 {
+        let mut d = plain_text_document(paragraphs);
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        let _ = d.document_stats();
+        d.type_text(&node, 6, &node, 6, "x y".to_owned(), 1)
+            .expect("typing");
+        PARAGRAPHS_COUNTED.with(|n| n.set(0));
+        let _ = d.document_stats();
+        PARAGRAPHS_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// **`documentStats` after a keystroke is `O(edit)`** (`docs/180` §2.3, E2,
+    /// `109` HF-412): 93 ms per keystroke at 20,000 paragraphs when it
+    /// recounted the document. Doubling test on the paragraphs counted.
+    #[test]
+    fn document_stats_after_a_keystroke_does_not_grow_with_the_document() {
+        let small_n = 300;
+        let small = stats_work_after_a_keystroke(small_n);
+        let large = stats_work_after_a_keystroke(small_n * 2);
+        assert_eq!(
+            small,
+            large,
+            "documentStats after a keystroke counted {small} paragraphs at \
+             {small_n} paragraphs and {large} at {}",
+            small_n * 2
+        );
+        assert!(
+            small <= 1,
+            "one keystroke recounts one paragraph, not {small}"
+        );
+    }
+
+    /// The incremental totals are the recount's, after every kind of edit:
+    /// typing, a delete, a replacement, Enter, a join, undo and redo. Any of
+    /// them reported wrong would be a status bar that lies.
+    #[test]
+    fn document_stats_stays_equal_to_a_full_recount_across_edits() {
+        let mut d = open_document(b"Hello world\nab c\nthird line here\n").expect("open");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        assert_eq!(stats_of(&d), recounted_stats(&d), "at open");
+        d.type_text(&node, 5, &node, 5, " big".to_owned(), 1)
+            .expect("type");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after typing");
+        d.type_text(&node, 0, &node, 3, "Je".to_owned(), 1)
+            .expect("replace");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after a replacement");
+        d.delete_range(&node, 0, 2).expect("delete");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after a delete");
+        d.split_paragraph(&node, 2).expect("enter");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after Enter");
+        let second = d.ordered_paragraphs()[1].0.to_string();
+        d.type_text(&second, 0, &second, 0, "z ".to_owned(), 2)
+            .expect("type in the new paragraph");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "typing after Enter");
+        d.delete_backward(&second, 0).expect("join");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after a join");
+        d.undo().expect("undo");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after undo");
+        d.redo().expect("redo");
+        assert_eq!(stats_of(&d), recounted_stats(&d), "after redo");
+    }
+
+    /// Top-level blocks `proofWindow` examined for the LAST page, asked twice
+    /// as proofing does (once per keystroke), at `paragraphs` paragraphs.
+    fn proof_window_work_on_the_last_page(paragraphs: usize) -> (u64, usize, u32) {
+        let d = plain_text_document(paragraphs);
+        let last = d.page_count();
+        let _ = d.proof_window(last, last);
+        PROOF_BLOCKS_EXAMINED.with(|n| n.set(0));
+        let rows = d.window_paragraphs(last, last);
+        (
+            PROOF_BLOCKS_EXAMINED.with(std::cell::Cell::get),
+            rows.len(),
+            last,
+        )
+    }
+
+    /// **Proofing the visible pages is `O(window)`** (`docs/180` §2.3, E2,
+    /// `109` HF-411). The host walk this replaces called `caretRect` once per
+    /// paragraph, and that built the whole document's line boxes each time:
+    /// 466 ms per keystroke at 20,000 paragraphs. Doubling test on the blocks
+    /// examined for the last page, the far end from where a search from the
+    /// top would start.
+    #[test]
+    fn proofing_the_visible_pages_does_not_grow_with_the_document() {
+        let small_n = 400;
+        let (small, small_rows, small_pages) = proof_window_work_on_the_last_page(small_n);
+        let (large, large_rows, large_pages) = proof_window_work_on_the_last_page(small_n * 2);
+        assert!(
+            large_pages >= small_pages * 2 - 1 && small_rows > 0,
+            "the precondition: twice the pages ({small_pages} and {large_pages}) and a \
+             non-empty window"
+        );
+        assert!(
+            large <= small + 2 * 4 + 2 && small <= small_rows as u64 + 2 * 4 + 2,
+            "proofing the last page examined {small} blocks at {small_n} paragraphs \
+             ({small_rows} on the page) and {large} at {}",
+            small_n * 2
+        );
+        let _ = large_rows;
+    }
+
+    /// The window rows are exactly the body paragraphs `caretRect` places on
+    /// those pages, in document order, with their text — the answer the walk
+    /// it replaces gave, without asking it.
+    #[test]
+    fn proof_window_lists_the_paragraphs_on_its_pages_with_their_text() {
+        let d = plain_text_document(300);
+        let (first, last) = (2, 3);
+        let expected: Vec<(String, String)> = d
+            .ordered_paragraphs()
+            .into_iter()
+            .filter(|(id, _)| {
+                let page = d
+                    .caret_rect(&id.to_string(), 0)
+                    .first()
+                    .copied()
+                    .unwrap_or(0);
+                (first as i32..=last as i32).contains(&page)
+            })
+            .map(|(id, _)| (id.to_string(), d.paragraph_text(id)))
+            .collect();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&d.proof_window(first, last)).expect("JSON rows");
+        let got: Vec<(String, String)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row["node"].as_str().unwrap_or_default().to_owned(),
+                    row["text"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        assert!(!expected.is_empty(), "pages 2 and 3 hold paragraphs");
+        // A paragraph continuing onto the window from the page before is on
+        // screen too, so the rows may start one earlier; nothing else differs.
+        let offset = got.len() - expected.len();
+        assert!(
+            offset <= 1,
+            "{} rows for {} paragraphs",
+            got.len(),
+            expected.len()
+        );
+        assert_eq!(&got[offset..], expected.as_slice());
+    }
+
+    /// The batched decoration rects are the per-call ones, and building the
+    /// window costs the window's lines, not the document's.
+    #[test]
+    fn decoration_rects_on_pages_match_the_per_call_answer_at_window_cost() {
+        let window_lines = |paragraphs: usize| {
+            let d = plain_text_document(paragraphs);
+            LayoutSnapshot::new(d.painted_layout())
+                .page_window(2, 2)
+                .line_count()
+        };
+        let (small, large) = (window_lines(300), window_lines(600));
+        assert_eq!(
+            small, large,
+            "one page's window holds {small} lines at 300 paragraphs and {large} at 600"
+        );
+
+        let d = plain_text_document(300);
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&d.proof_window(2, 2)).expect("JSON rows");
+        let node = rows[1]["node"].as_str().expect("a node").to_owned();
+        let ranges = format!(r#"[["{node}",0,4],["{node}",2,3],["not-a-node",0,1]]"#);
+        let batched = d.decoration_rects_on_pages(2, 2, &ranges);
+        let mut expected = Vec::new();
+        for (start, end) in [(0, 4), (2, 3)] {
+            let one = d.decoration_rects(&node, start, &node, end);
+            expected.push(i32::try_from(one.len() / 5).expect("count"));
+            expected.extend(one);
+        }
+        expected.push(0);
+        assert_eq!(batched, expected);
     }
 
     /// The structured-paste fixture: a body paragraph to paste into, and a

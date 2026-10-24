@@ -723,49 +723,7 @@ impl<'a> LayoutSnapshot<'a> {
     where
         F: Fn(&LineBox<'_>, Twip, Twip) -> Rect,
     {
-        let lines = self.line_boxes_with_running(on_page);
-        let Some(mut start_i) = caret_start_line(&lines, range.start) else {
-            return Vec::new();
-        };
-        let Some(mut end_i) = caret_end_line(&lines, range.end) else {
-            return Vec::new();
-        };
-        if start_i > end_i {
-            std::mem::swap(&mut start_i, &mut end_i);
-        }
-
-        let mut rects = Vec::new();
-        for (i, lb) in lines.iter().enumerate().take(end_i + 1).skip(start_i) {
-            let stops = stops_for(lb.line, lb.left);
-            let left = line_left(&stops);
-            let right = line_right(&stops);
-            let at = |off: u32| {
-                stops
-                    .iter()
-                    .find(|s| s.offset == off)
-                    .map_or_else(|| nearest_stop(&stops, lb.left).x, |s| s.x)
-            };
-            let x0 = if i == start_i {
-                at(range.start.offset)
-            } else {
-                left
-            };
-            let x1 = if i == end_i {
-                at(range.end.offset)
-            } else {
-                right
-            };
-            let (lo, hi) = if x0.raw() <= x1.raw() {
-                (x0, x1)
-            } else {
-                (x1, x0)
-            };
-            if lo.raw() == hi.raw() {
-                continue;
-            }
-            rects.push((lb.page, rect(lb, lo, hi)));
-        }
-        rects
+        covered_line_spans_in(&self.line_boxes_with_running(on_page), range, rect)
     }
 
     /// [`Self::selection_rects`]'s horizontal spans over the marked run's **text
@@ -830,13 +788,7 @@ impl<'a> LayoutSnapshot<'a> {
     #[must_use]
     pub fn decoration_rects_on(&self, range: ModelRange, on_page: Option<u32>) -> Vec<(u32, Rect)> {
         self.covered_line_spans(range, on_page, |lb, lo, hi| {
-            // The run that owns the first offset the range covers ON THIS LINE:
-            // the range's own start on the line it starts on, the line's start
-            // after that. A mark that wraps is charged to the run it sits beside
-            // on each line, not to whatever run the first line happened to hold.
-            let offset = range.start.offset.max(lb.line.range.start.offset);
-            let (top, height) = lb.run_text_box(offset);
-            Rect::new(Point::new(lo, top), Size::new(hi - lo, height))
+            decoration_box(lb, range, lo, hi)
         })
     }
 
@@ -1302,6 +1254,212 @@ impl<'a> LayoutSnapshot<'a> {
         }
         out
     }
+}
+
+// ---------------------------------------------------------------------------
+// Page-window geometry (`docs/180` E2, `109` HF-411)
+// ---------------------------------------------------------------------------
+
+/// The line boxes of a contiguous run of pages, built **once** and then asked
+/// any number of questions.
+///
+/// Pattern: batching over a bounded window. [`LayoutSnapshot::decoration_rects`]
+/// and its siblings build the line boxes of the WHOLE document on every call,
+/// which is `O(document)` per call. A host that marks every misspelling on
+/// screen made one such call per mark, and its paragraph walk made one
+/// `caret_rect` call per paragraph to learn which page it was on: measured at
+/// 466 ms per keystroke on a 20,000-paragraph document (`docs/180` §2.3). A
+/// window answers every question about the pages on screen from one
+/// `O(window)` build.
+///
+/// Only body content placed on the window's pages and the text boxes hanging
+/// off it are included: running headers and footers repeat on every page and
+/// are answered per page by the `_on` methods, which is what a host editing
+/// one of them already calls.
+pub struct PageWindowGeometry<'a> {
+    lines: Vec<LineBox<'a>>,
+}
+
+impl core::fmt::Debug for PageWindowGeometry<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PageWindowGeometry")
+            .field("lines", &self.lines.len())
+            .finish()
+    }
+}
+
+impl PageWindowGeometry<'_> {
+    /// [`LayoutSnapshot::decoration_rects`] for a range on the window's pages.
+    /// A range that starts or ends off the window yields no rectangles: it
+    /// cannot be resolved from the window's lines, and guessing would place a
+    /// mark on the wrong line.
+    ///
+    /// Complexity: `O(lines in the window)`.
+    #[must_use]
+    pub fn decoration_rects(&self, range: ModelRange) -> Vec<(u32, Rect)> {
+        covered_line_spans_in(&self.lines, range, |lb, lo, hi| {
+            decoration_box(lb, range, lo, hi)
+        })
+    }
+
+    /// How many line boxes the window holds — what a complexity guard reads.
+    #[must_use]
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+}
+
+impl<'a> LayoutSnapshot<'a> {
+    /// The pages numbered `first..=last` that this layout holds, found by
+    /// binary search (pages are in ascending number order). `O(log pages)`.
+    fn pages_numbered(&self, first: u32, last: u32) -> &'a [crate::page::Page] {
+        let pages = self.layout.pages.as_slice();
+        let start = pages.partition_point(|page| page.number < first);
+        let end = pages.partition_point(|page| page.number <= last);
+        pages.get(start..end.max(start)).unwrap_or_default()
+    }
+
+    /// The geometry of pages `first..=last`, built once (see
+    /// [`PageWindowGeometry`]). Complexity: `O(log pages + content on those
+    /// pages)`, independent of the rest of the document.
+    #[must_use]
+    pub fn page_window(&self, first: u32, last: u32) -> PageWindowGeometry<'a> {
+        let mut lines = Vec::new();
+        for page in self.pages_numbered(first, last) {
+            for placed in &page.placed {
+                collect_fragment(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    page.number,
+                    None,
+                    &mut lines,
+                );
+            }
+        }
+        // Text boxes hang off the body lines collected above (`Line::text_boxes`).
+        let mut boxes = Vec::new();
+        for host in &lines {
+            for text_box in &host.line.text_boxes {
+                let left = host.left + text_box.origin.x + text_box.content_layout.origin.x;
+                let mut top = host.top + text_box.origin.y + text_box.content_layout.origin.y;
+                for block in &text_box.blocks {
+                    collect_fragment(block, left, top, host.page, None, &mut boxes);
+                    top = top + block.height();
+                }
+            }
+        }
+        lines.extend(boxes);
+        PageWindowGeometry { lines }
+    }
+
+    /// The body paragraphs with content on pages `first..=last`, in flow order,
+    /// each once: top-level paragraphs and the paragraphs of every table cell
+    /// on those pages (nested tables included). A paragraph that starts on an
+    /// earlier page and continues onto the window is included, because part
+    /// of it is on screen.
+    ///
+    /// Complexity: `O(log pages + fragments on those pages)`. This is the
+    /// enumeration a host proofing the visible pages needs, and it replaces a
+    /// walk that asked `caret_rect` — `O(document)` — once per paragraph.
+    #[must_use]
+    pub fn body_paragraphs_on_pages(&self, first: u32, last: u32) -> Vec<NodeId> {
+        fn visit(
+            fragment: &BlockFragment,
+            seen: &mut std::collections::HashSet<NodeId>,
+            out: &mut Vec<NodeId>,
+        ) {
+            match fragment {
+                // A paragraph split across a page boundary (or a row split
+                // across two) arrives as two fragments; it is listed once.
+                BlockFragment::Paragraph { id, .. } => {
+                    if seen.insert(*id) {
+                        out.push(*id);
+                    }
+                }
+                BlockFragment::TableRow { cells, .. } => {
+                    for cell in cells {
+                        for block in &cell.blocks {
+                            visit(block, seen, out);
+                        }
+                    }
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for page in self.pages_numbered(first, last) {
+            for placed in &page.placed {
+                visit(&placed.fragment, &mut seen, &mut out);
+            }
+        }
+        out
+    }
+}
+
+/// The box a decoration over `range` occupies on line `lb` between `lo` and
+/// `hi`: the marked run's own text box, not the line box. Shared by
+/// [`LayoutSnapshot::decoration_rects_on`] and [`PageWindowGeometry`] so the
+/// two cannot disagree.
+fn decoration_box(lb: &LineBox<'_>, range: ModelRange, lo: Twip, hi: Twip) -> Rect {
+    // The run that owns the first offset the range covers ON THIS LINE:
+    // the range's own start on the line it starts on, the line's start
+    // after that. A mark that wraps is charged to the run it sits beside
+    // on each line, not to whatever run the first line happened to hold.
+    let offset = range.start.offset.max(lb.line.range.start.offset);
+    let (top, height) = lb.run_text_box(offset);
+    Rect::new(Point::new(lo, top), Size::new(hi - lo, height))
+}
+
+/// The walk behind `covered_line_spans`, over a set of line boxes the caller
+/// built: the whole document's, or one page window's
+/// ([`PageWindowGeometry`]). The lines must be in flow order.
+fn covered_line_spans_in<F>(lines: &[LineBox<'_>], range: ModelRange, rect: F) -> Vec<(u32, Rect)>
+where
+    F: Fn(&LineBox<'_>, Twip, Twip) -> Rect,
+{
+    let Some(mut start_i) = caret_start_line(lines, range.start) else {
+        return Vec::new();
+    };
+    let Some(mut end_i) = caret_end_line(lines, range.end) else {
+        return Vec::new();
+    };
+    if start_i > end_i {
+        std::mem::swap(&mut start_i, &mut end_i);
+    }
+
+    let mut rects = Vec::new();
+    for (i, lb) in lines.iter().enumerate().take(end_i + 1).skip(start_i) {
+        let stops = stops_for(lb.line, lb.left);
+        let left = line_left(&stops);
+        let right = line_right(&stops);
+        let at = |off: u32| {
+            stops
+                .iter()
+                .find(|s| s.offset == off)
+                .map_or_else(|| nearest_stop(&stops, lb.left).x, |s| s.x)
+        };
+        let x0 = if i == start_i {
+            at(range.start.offset)
+        } else {
+            left
+        };
+        let x1 = if i == end_i {
+            at(range.end.offset)
+        } else {
+            right
+        };
+        let (lo, hi) = if x0.raw() <= x1.raw() {
+            (x0, x1)
+        } else {
+            (x1, x0)
+        };
+        if lo.raw() == hi.raw() {
+            continue;
+        }
+        rects.push((lb.page, rect(lb, lo, hi)));
+    }
+    rects
 }
 
 // ---------------------------------------------------------------------------

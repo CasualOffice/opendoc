@@ -60,3 +60,6 @@ node_modules
 #   git clone --depth 1 https://github.com/ONLYOFFICE/sdkjs reference/sdkjs
 #   git clone --depth 1 https://github.com/ONLYOFFICE/web-apps reference/web-apps
 reference/
+
+# The wasm render bench is outside the workspace; its lock is local only (docs/179 §2).
+/benchmarks/render-wasm/Cargo.lock

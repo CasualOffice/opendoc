@@ -474,97 +474,38 @@ export function createSpellChecker(io) {
 
   // ---- Extraction -----------------------------------------------------------
 
-  /** The page a paragraph starts on, or 0 when it has no geometry. */
-  function pageOf(doc, node) {
-    try {
-      return doc.caretRect(node, 0)[0] ?? 0;
-    } catch {
-      return 0;
-    }
-  }
-
   /**
-   * The paragraphs on the pages currently in the window, in document order.
+   * The body paragraphs with content on the pages in the window, in document
+   * order, as `{ node, text, language }` rows — ONE engine call
+   * (`proofWindow`, `docs/180` E2, `109` HF-411).
    *
-   * Seeds by hit-testing the vertical middle of the first page in the window —
-   * definitely body text, not the header band — then walks `moveCaret` back to
-   * the start of the window and forward to its end. ~4 engine calls per
-   * paragraph and nothing proportional to the document's size.
+   * This replaced a walk that seeded with `hitTest`, stepped with `moveCaret`
+   * and asked `caretRect` for each paragraph's page, plus `paragraphLength`,
+   * `copyText` and `languageAt` for each: about five engine calls a paragraph,
+   * most of them O(document) each, because `caretRect` built the line boxes of
+   * the whole document to answer one page number. Measured at 466 ms per
+   * keystroke on a 20,000-paragraph document. The engine now answers from the
+   * window's own page fragments, so a scan is O(window) and never
+   * O(document).
    *
-   * **Body text only.** Header, footer, footnote, endnote and text-box stories
-   * are separate stories, and the engine will not hand them over: `hitTest`
-   * walks the body fragments only, and `moveCaret` left/right stops at a story
-   * boundary by design — which is the property this walk relies on to terminate.
-   * Painting those nodes would already work; ENUMERATING them needs a new
-   * engine export, which is why `docs/146` §8 ranks it P3 and why it is not in
-   * this increment.
+   * `language` is the paragraph's shared `w:lang`, or `""` when it mixes
+   * languages or declares none; the document default applies then, and
+   * per-run spans on a mixed paragraph are `docs/146` §8's P3 row.
+   *
+   * **Body text only**, as before: header, footer, footnote, endnote and
+   * text-box stories are separate stories the engine does not list here
+   * (`docs/146` §8, P3).
    */
-  function paragraphsInWindow(doc, pages) {
-    const first = pages[0];
-    const last = pages.at(-1);
-    let seed = null;
-    for (const fraction of [0.5, 0.35, 0.65, 0.25, 0.75]) {
-      let hit = null;
-      try {
-        hit = doc.hitTest(
-          first.pageNumber,
-          Math.round(first.wTwip / 2),
-          Math.round(first.hTwip * fraction),
-        );
-      } catch {
-        hit = null;
-      }
-      if (hit) {
-        seed = hit.node;
-        hit.free();
-        break;
-      }
+  function windowRows(doc, pages) {
+    const first = pages[0].pageNumber;
+    const last = pages.at(-1).pageNumber;
+    let rows = [];
+    try {
+      rows = JSON.parse(doc.proofWindow(first, last));
+    } catch {
+      return [];
     }
-    if (!seed) return [];
-
-    let start = seed;
-    for (let i = 0; i < MAX_SCAN_PARAGRAPHS; i += 1) {
-      const moved = doc.moveCaret(start, 0, "left");
-      const node = moved.node;
-      moved.free();
-      // The engine answers with the position it was given at the very start of
-      // the document, so "the node did not change" is the end of the walk.
-      if (node === start) break;
-      if (pageOf(doc, node) < first.pageNumber) break;
-      start = node;
-    }
-
-    const nodes = [start];
-    let node = start;
-    for (let i = 0; i < MAX_SCAN_PARAGRAPHS; i += 1) {
-      const moved = doc.moveCaret(node, doc.paragraphLength(node), "right");
-      const next = moved.node;
-      moved.free();
-      if (next === node) break;
-      if (pageOf(doc, next) > last.pageNumber) break;
-      node = next;
-      nodes.push(node);
-    }
-    return nodes;
-  }
-
-  /** The language to check `node` in.
-   *
-   *  One `languageAt` call per PARAGRAPH over its whole range: if the paragraph
-   *  is uniform the answer covers every word in it. `""` means the paragraph
-   *  mixes languages (or the engine does not expose `w:lang` at all, which is
-   *  the pre-`languageAt` build), and then the document default applies —
-   *  per-run spans on a mixed paragraph are `docs/146` §8's P3 row. */
-  function languageFor(doc, node, length) {
-    let tag = "";
-    if (typeof doc.languageAt === "function") {
-      try {
-        tag = doc.languageAt(node, 0, length) || "";
-      } catch {
-        tag = "";
-      }
-    }
-    return tag || io.defaultLanguage?.() || DEFAULT_SPELL_LANGUAGE;
+    return Array.isArray(rows) ? rows.slice(0, MAX_SCAN_PARAGRAPHS) : [];
   }
 
   /** The revision of `node` given the text just read from the engine. Bumped
@@ -623,16 +564,13 @@ export function createSpellChecker(io) {
     let missing = "";
     let failed = "";
 
-    for (const node of paragraphsInWindow(doc, pages)) {
-      let length = 0;
-      let text = "";
-      try {
-        length = doc.paragraphLength(node);
-        text = doc.copyText(node, 0, node, length);
-      } catch {
-        continue;
-      }
-      const tag = languageFor(doc, node, length);
+    // Dirty paragraphs only: every row is read in the one call above, and a
+    // paragraph whose text is what it was last time keeps its revision, so
+    // its key hits the cache and it is not sent to be checked again. Only a
+    // paragraph the edit changed (or one new to the window) is.
+    for (const { node, text = "", language = "" } of windowRows(doc, pages)) {
+      if (typeof node !== "string") continue;
+      const tag = language || io.defaultLanguage?.() || DEFAULT_SPELL_LANGUAGE;
       const locale = dictionaryForLanguage(tag);
       if (!locale) {
         // No word list exists for this language at all. Grammar is English-only
@@ -839,6 +777,7 @@ export function createSpellChecker(io) {
   function paint() {
     const doc = io.getDoc?.();
     if (!doc) return;
+    const marks = [];
     for (const paragraph of scanned) {
       for (const entry of paragraph.misspellings) {
         if (
@@ -848,45 +787,60 @@ export function createSpellChecker(io) {
         )
           continue;
         if (dismissed(entry, paragraph)) continue;
-        let rects = [];
-        try {
-          // `decorationRects`, NOT `selectionRects`. A selection rect is the
-          // LINE BOX — `ascent + descent + leading` — and the squiggle is drawn
-          // at the bottom of the element it is placed in, so the mark walked
-          // away from the text as the paragraph's line spacing grew. Measured
-          // through the real pipeline on an 11pt line, as px below the painted
-          // baseline at 96 dpi: single 3.9, 1.15x 6.9, 1.5x 13.6, double 23.3 —
-          // which is the owner's "zigzag is appear way below the content line".
-          // It was also charged the TALLEST run on the line, so an 11pt
-          // misspelling beside 28pt text was marked 10.1 px down instead of 3.9.
-          //
-          // `decorationRects` answers the marked run's own text box, so the
-          // wave sits in its descender space at every spacing and every size —
-          // which is where Word puts it and where ONLYOFFICE puts it
-          // (`sdkjs/.../line-draw-state.js` feeds `Baseline + 0.4 *
-          // TextDescent` to `Spelling` and to the character `Underline` alike).
-          rects = doc.decorationRects(
-            paragraph.node,
-            entry.byteStart,
-            paragraph.node,
-            entry.byteEnd,
-          );
-        } catch {
-          continue;
-        }
-        const grammar = entry.kind === "grammar";
-        for (let i = 0; i + 4 < rects.length; i += 5) {
-          const el = io.place(
-            rects.slice(i, i + 5),
-            grammar ? GRAMMAR_MARKER_CLASS : SPELL_MARKER_CLASS,
-          );
-          if (!el) continue;
-          if (grammar) {
-            el.dataset.grammarRule = entry.ruleId;
-            el.title = entry.message;
-          } else {
-            el.dataset.spellWord = entry.word;
-          }
+        marks.push({ paragraph, entry });
+      }
+    }
+    if (!marks.length) return;
+    const pages = io.windowPages?.() ?? [];
+    if (!pages.length) return;
+    // `decorationRectsOnPages`, NOT `selectionRects`, and ONE call for every
+    // mark on screen (`docs/180` E2, HF-411). A selection rect is the LINE BOX
+    // — `ascent + descent + leading` — and the squiggle is drawn at the bottom
+    // of the element it is placed in, so the mark walked away from the text as
+    // the paragraph's line spacing grew. Measured through the real pipeline on
+    // an 11pt line, as px below the painted baseline at 96 dpi: single 3.9,
+    // 1.15x 6.9, 1.5x 13.6, double 23.3 — which is the owner's "zigzag is
+    // appear way below the content line". It was also charged the TALLEST run
+    // on the line, so an 11pt misspelling beside 28pt text was marked 10.1 px
+    // down instead of 3.9.
+    //
+    // A decoration rect answers the marked run's own text box, so the wave
+    // sits in its descender space at every spacing and every size — which is
+    // where Word puts it and where ONLYOFFICE puts it
+    // (`sdkjs/.../line-draw-state.js` feeds `Baseline + 0.4 * TextDescent` to
+    // `Spelling` and to the character `Underline` alike).
+    //
+    // Batched because the per-mark `decorationRects` built the whole
+    // document's line boxes on every call; this builds the window's once.
+    let flat = [];
+    try {
+      flat = doc.decorationRectsOnPages(
+        pages[0].pageNumber,
+        pages.at(-1).pageNumber,
+        JSON.stringify(
+          marks.map(({ paragraph, entry }) => [paragraph.node, entry.byteStart, entry.byteEnd]),
+        ),
+      );
+    } catch {
+      return;
+    }
+    let at = 0;
+    for (const { entry } of marks) {
+      const count = flat[at] ?? 0;
+      const rects = flat.slice(at + 1, at + 1 + count * 5);
+      at += 1 + count * 5;
+      const grammar = entry.kind === "grammar";
+      for (let i = 0; i + 4 < rects.length; i += 5) {
+        const el = io.place(
+          rects.slice(i, i + 5),
+          grammar ? GRAMMAR_MARKER_CLASS : SPELL_MARKER_CLASS,
+        );
+        if (!el) continue;
+        if (grammar) {
+          el.dataset.grammarRule = entry.ruleId;
+          el.title = entry.message;
+        } else {
+          el.dataset.spellWord = entry.word;
         }
       }
     }

@@ -116,6 +116,16 @@ impl Surface {
         Ok(Self { pixmap })
     }
 
+    /// Creates a fully transparent `width × height` surface. A page is never
+    /// painted on one; it is the tile another backend rasterizes a single item
+    /// into through this crate and composites over its own page, so the item's
+    /// pixels are the reference renderer's (`casual-doc-render-gpu`, `docs/179`
+    /// §6).
+    pub fn transparent(width: u32, height: u32) -> Result<Self, RenderError> {
+        let pixmap = Pixmap::new(width, height).ok_or(RenderError::InvalidSize)?;
+        Ok(Self { pixmap })
+    }
+
     /// The raw premultiplied-RGBA pixels.
     #[must_use]
     pub fn data(&self) -> &[u8] {

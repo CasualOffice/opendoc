@@ -39,6 +39,7 @@ COV
 CPU
 CRDT
 CRLF
+CSP
 CSS
 Caladea
 Calibri
@@ -57,6 +58,7 @@ DOCXF
 DOM
 DOTX
 DPI
+DPR
 DTD
 Dialogs
 Diff
@@ -285,6 +287,7 @@ adversarially
 affordance
 affordances
 agentic
+alloc
 allocator
 allowlist
 allowlisted
@@ -433,6 +436,7 @@ github
 glibc
 glyphs
 goldens
+gpu
 grapheme
 grep
 gridAfter
@@ -588,6 +592,7 @@ reflowed
 reflows
 relayout
 rels
+renderPage
 renderable
 renderer
 renderers
@@ -610,6 +615,7 @@ runnable
 rustdoc
 sRGB
 sandboxed
+sbix
 scalable
 schemas
 scrollable
