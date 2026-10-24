@@ -29,6 +29,14 @@ The editor reads an optional `globalThis.OPENDOC_COLLABORATION` provider:
 }
 ```
 
+Three more optional methods give a room a shared, authored version history
+(`docs/175` §11 and §16, HF-362): `listVersions({ room, before, limit })` returns
+`{ versions: [{ id, revision, createdAt, author: { id, name }, name?, kind }], more }`
+newest first, `before` being the id of the oldest version already listed;
+`saveVersion({ room, revision, name, bytes })` returns `{ id }` and carries **no author**,
+which the host attests from its own session; `versionBytes({ room, id })` returns
+`{ bytes, revision }`. Version bytes are `collabSnapshot()` packages, as below.
+
 `createShare` is required to enable Share for an unshared document. A participant
 already following a valid shared link can copy that link again without this method.
 The editor exports the seed, persists it through the host, verifies that editing did

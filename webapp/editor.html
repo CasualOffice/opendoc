@@ -3247,6 +3247,21 @@
         <div class="version-filter">
           <label class="version-filter-label"><input id="versionNamedOnly" type="checkbox" /><span data-i18n="versionPanel.onlyNamedVersions">Only named versions</span></label>
         </div>
+        <!-- In a room whose host keeps versions (docs/175 §11, HF-362): the room's
+             shared, authored versions in a grid of their own, above this device's —
+             never one list. Hidden outside that scope; every word in it is set by
+             version_panel.mjs when it is shown, so nothing is read before the
+             catalogue lands (SKILL §11). -->
+        <section id="versionSharedSection" class="version-section version-shared-section" hidden aria-labelledby="versionSharedHeading">
+          <h3 id="versionSharedHeading" class="version-section-head"></h3>
+          <div id="versionSharedList" class="version-list version-shared-list" role="grid" tabindex="0" aria-labelledby="versionSharedHeading"></div>
+          <p id="versionSharedStatus" class="version-foot-line version-foot-muted version-shared-status" aria-live="polite" hidden></p>
+          <div class="version-shared-actions">
+            <button id="versionSharedMore" type="button" class="dialog-button" hidden></button>
+            <button id="versionSaveShared" type="button" class="dialog-button" hidden></button>
+          </div>
+        </section>
+        <h3 id="versionDeviceHeading" class="version-section-head" hidden></h3>
         <div data-i18n-label="versionPanel.versionsOfThisDocument.label" id="versionPanelBody" class="panel-body version-list" role="grid" tabindex="0" aria-label="Versions of this document"></div>
         <!-- The disclosure docs/139 §12 asks for by name: how much history there
              is, where it lives, and what the policy will do with it. A person

@@ -92,6 +92,18 @@ export function createPalette(ed) {
               disabledReason: ed.versionHistory.unavailableReason(),
               run: () => void ed.versionHistory.toggle(),
             },
+            // The second surface of the panel's "Save a version for everyone"
+            // (`docs/175` §11): disabled with the reason outside a room whose host
+            // keeps versions, never absent.
+            {
+              id: "file.saveSharedVersion",
+              label: t("versionHistory.shared.save"),
+              group: "File",
+              kw: "save shared version everyone room checkpoint named history snapshot",
+              enabled: !ed.versionHistory.saveSharedRefusal(),
+              disabledReason: ed.versionHistory.saveSharedRefusal(),
+              run: () => void ed.versionHistory.saveShared(),
+            },
           ]
         : []),
       {

@@ -62,8 +62,41 @@ const hostScript = `globalThis.OPENDOC_COLLABORATION = {
   const id = new URL(room).pathname.split('/').pop();
   const result = await fetch('/api/shares/'+id+'/snapshot?revision='+revision, {method:'POST',body:bytes});
   if (!result.ok) throw new Error('Checkpoint was refused.');
+ },
+ async listVersions({room, before, limit, signal}) {
+  const id = new URL(room).pathname.split('/').pop();
+  const query = new URLSearchParams({limit: String(limit)});
+  if (before) query.set('before', before);
+  const result = await fetch('/api/shares/'+id+'/versions?'+query, {signal});
+  if (!result.ok) throw new Error(await result.text() || 'The share host would not list versions.');
+  return result.json();
+ },
+ async saveVersion({room, revision, name, bytes}) {
+  const id = new URL(room).pathname.split('/').pop();
+  const query = new URLSearchParams({revision: String(revision)});
+  if (name) query.set('name', name);
+  const result = await fetch('/api/shares/'+id+'/versions?'+query, {method:'POST', body:bytes});
+  if (!result.ok) throw new Error(await result.text() || 'The share host refused the version.');
+  return result.json();
+ },
+ async versionBytes({room, id: version, signal}) {
+  const id = new URL(room).pathname.split('/').pop();
+  const result = await fetch('/api/shares/'+id+'/versions/'+encodeURIComponent(version), {signal});
+  if (!result.ok) throw new Error(await result.text() || 'The share host has no such version.');
+  return {revision: Number(result.headers.get('X-Document-Revision')), bytes: new Uint8Array(await result.arrayBuffer())};
  }
 };`;
+// Shared versions (`docs/175` §11): in memory per room, bounded, and AUTHORED BY THIS HOST.
+// The author is read from the session cookie, never from the request — the client sends no
+// author field at all, and one it did send would be ignored.
+const MAX_VERSIONS = 200;
+const MAX_PAGE = 50;
+function sessionPerson(cookie) {
+  const raw = /(?:^|;\s*)opendoc_dev_user=([^;]+)/.exec(cookie || "")?.[1];
+  if (!raw) return null;
+  const [id, name] = decodeURIComponent(raw).split("|");
+  return id ? { id, name: name || id } : null;
+}
 async function bytes(request) {
   let count = 0; const chunks = [];
   for await (const chunk of request) {
@@ -105,7 +138,7 @@ async function createRoomInner(seed) {
     child.stderr.on('data', data => { if (String(data).includes('relaying')) { clearTimeout(deadline); done(); } });
     child.stdout.on('data', data => { if (String(data).includes('relaying')) { clearTimeout(deadline); done(); } });
   });
-  const room = {id,port,revision:0,seed,snapshot:seed};
+  const room = {id,port,revision:0,seed,snapshot:seed,versions:[]};
   rooms.set(id,room);
   await writeFile(resolve(directory, `${id}.json`),seed);
   return room;
@@ -143,6 +176,43 @@ const server = http.createServer(async (request, response) => {
       if (request.method !== 'GET') { response.writeHead(405); response.end(); return; }
       response.setHeader('X-Document-Revision',String(room.revision));
       response.setHeader('Content-Type','application/json'); response.end(room.snapshot); return;
+    }
+    const versionList = /^\/api\/shares\/([^/]+)\/versions$/.exec(url.pathname);
+    const versionOne = /^\/api\/shares\/([^/]+)\/versions\/([^/]+)$/.exec(url.pathname);
+    if (versionList || versionOne) {
+      const room = rooms.get((versionList || versionOne)[1]);
+      if (!room) { response.writeHead(404); response.end(); return; }
+      if (versionOne) {
+        if (request.method !== 'GET') { response.writeHead(405); response.end(); return; }
+        const version = room.versions.find((entry) => entry.id === decodeURIComponent(versionOne[2]));
+        if (!version) { response.writeHead(404, {'Content-Type':'text/plain'}); response.end('No such version.'); return; }
+        response.setHeader('X-Document-Revision', String(version.revision));
+        response.setHeader('Content-Type','application/json'); response.end(version.bytes); return;
+      }
+      if (request.method === 'POST') {
+        // Who saved it is THIS host's session, never anything the request says.
+        const author = sessionPerson(request.headers.cookie);
+        if (!author) { response.writeHead(403, {'Content-Type':'text/plain'}); response.end('Sign in to save a shared version.'); return; }
+        if (room.versions.length >= MAX_VERSIONS) { response.writeHead(507, {'Content-Type':'text/plain'}); response.end('This room keeps at most 200 versions.'); return; }
+        const revision = Number(url.searchParams.get('revision'));
+        if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid revision');
+        const name = String(url.searchParams.get('name') || '').slice(0, 120);
+        const snapshot = await bytes(request); normalized(snapshot);
+        const version = { id: randomUUID(), revision, createdAt: Date.now(), author, name, kind: name ? 'named' : 'manual', bytes: snapshot };
+        room.versions.push(version);
+        response.setHeader('Content-Type','application/json'); response.end(JSON.stringify({ id: version.id })); return;
+      }
+      if (request.method !== 'GET') { response.writeHead(405); response.end(); return; }
+      // Newest first, a bounded page, `before` naming the oldest row the caller holds.
+      const limit = Math.min(MAX_PAGE, Math.max(1, Number(url.searchParams.get('limit')) || 25));
+      const newestFirst = [...room.versions].reverse();
+      const before = url.searchParams.get('before');
+      const start = before ? newestFirst.findIndex((entry) => entry.id === before) + 1 : 0;
+      if (before && start === 0) { response.writeHead(404, {'Content-Type':'text/plain'}); response.end('No such version.'); return; }
+      const page = newestFirst.slice(start, start + limit)
+        .map(({ id, revision, createdAt, author, name, kind }) => ({ id, revision, createdAt, author, ...(name ? { name } : {}), kind }));
+      response.setHeader('Content-Type','application/json');
+      response.end(JSON.stringify({ versions: page, more: start + limit < newestFirst.length })); return;
     }
     const document = /^\/documents\/([^/]+)\.json$/.exec(url.pathname);
     if (document) {

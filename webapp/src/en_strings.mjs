@@ -1128,6 +1128,38 @@ export const EN_STRINGS = Object.freeze({
   // ADR-068: a restore in a shared room would change this reader's copy alone.
   "versionHistory.restore.sharedRefused":
     "This document is shared, so restoring a version would change your copy and not everyone else's. Make a copy of this version or download it instead",
+  // Shared version history in a room (docs/175 §11, HF-362): the room's versions,
+  // kept and authored by the host, beside this device's own capture.
+  "versionHistory.section.shared": "Shared versions",
+  "versionHistory.section.device": "On this device",
+  "versionHistory.section.deviceOnly": "Versions on this device only",
+  "versionHistory.shared.loading": "Loading shared versions…",
+  "versionHistory.shared.unavailable": "Shared versions could not be loaded",
+  "versionHistory.shared.empty": "No shared versions yet. Save a version for everyone to start this document's shared history.",
+  "versionHistory.shared.listFailed": "Shared versions could not be loaded: {message}",
+  "versionHistory.shared.limit": "Shared versions shown: {count}, the most this panel holds. Older versions stay with the host.",
+  "versionHistory.shared.retry": "Try again",
+  "versionHistory.shared.loadOlder": "Load older shared versions",
+  "versionHistory.shared.save": "Save a version for everyone",
+  "versionHistory.shared.saving": "Saving a version for everyone…",
+  "versionHistory.shared.saved": "Version saved for everyone in this document",
+  "versionHistory.shared.savedNamed": "“{name}” saved for everyone in this document",
+  "versionHistory.shared.saveFailed": "The version was not saved for everyone: {message}",
+  "versionHistory.shared.cannotSave": "This host does not save shared versions",
+  "versionHistory.shared.cannotRead": "This host does not provide the contents of shared versions",
+  "versionHistory.shared.malformed": "The host's answer about shared versions could not be read",
+  "versionHistory.shared.readFailed": "This shared version could not be opened: {message}",
+  "versionHistory.shared.left": "This document is no longer shared, so its shared versions cannot be opened",
+  "versionHistory.shared.hostKeeps": "The host keeps shared versions, so they cannot be kept or deleted from here",
+  "versionHistory.shared.nameAtSave": "A shared version is named when it is saved. Use Save a version for everyone",
+  "versionHistory.shared.loadOlderToCompare": "Load older shared versions to compare this one with the version before it",
+  "versionHistory.shared.nothingToSave": "There is no document to save",
+  "versionHistory.shared.noRoom": "Only a shared document whose host keeps versions can save a version for everyone",
+  "versionHistory.shared.prompt.title": "Save a version for everyone",
+  "versionHistory.shared.prompt.description": "Everyone in this document will see this version, under the name the host knows you by.",
+  "versionHistory.shared.prompt.note": "Saving a version changes nothing in the document. The name is optional.",
+  "versionHistory.shared.prompt.confirm": "Save version",
+
   "versionHistory.restored":
     "Restored the version from {when}. The document you replaced is still in the timeline.",
 

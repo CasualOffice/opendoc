@@ -689,7 +689,7 @@ const ed = {
   get shapeDrawMode() { return shapeDrawMode; },
   get shapeFillBtn() { return shapeFillBtn; },
   get shapeOutlineBtn() { return shapeOutlineBtn; },
-  get sharedRestoreRefusal() { return sharedRestoreRefusal; },
+  get sharedRestoreRefusal() { return sharedRestoreRefusal; }, get sharedHistory() { return sharedHistory; },
   get showChange() { return showChange; },
   get showContextMenu() { return showContextMenu; },
   get showDraftRecovery() { return showDraftRecovery; },
@@ -1587,7 +1587,7 @@ const regionCycle = createRegionCycle({ root: document, focusEditor: () => focus
 /** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
 let collab = null;
 const { presence: remotePresence, recovery, share, chrome: shareChrome,
-  start: startCollaboration, commands: collabFeatureCommands, loadStartup: loadSharedStartup, beforeReplace: leaveSharedDocument, restoreRefusal: sharedRestoreRefusal } = createCollaborationShell({
+  start: startCollaboration, commands: collabFeatureCommands, loadStartup: loadSharedStartup, beforeReplace: leaveSharedDocument, restoreRefusal: sharedRestoreRefusal, sharedHistory } = createCollaborationShell({
   root: document, getDocument: () => doc, getTransport: () => collab, setTransport: (pipe) => { collab = pipe; },
   getSelection: () => selection, getSettings: () => settings, getName: () => currentName, hostConfig,
   paintOverlay: () => paintOverlayLayer(), receiveAccess: (outcome) => accessChrome.received(outcome),

@@ -266,6 +266,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // granted `autosave` and not `edit` gets a timeline whose restore lands in a
   // Viewing-mode session, which is the same answer every other mutation gets.
   exact("file.versionHistory", "autosave"),
+  // Saving a version for everyone in a room persists document bytes on the HOST, which
+  // is what `save` grants — the same grant `collab.share` asks for (`docs/169`).
+  exact("file.saveSharedVersion", "save"),
 
   // ---- edit ---------------------------------------------------------------
   exact("edit.undo", "mutate"),

@@ -7279,6 +7279,57 @@ body.is-format-painting .page-wrap * {
   outline-offset: -2px;
 }
 
+/* A room's two timelines (docs/175 §11): the shared one above, bounded so this
+   device's always keeps room below it, each under a heading of its own. Existing
+   tokens only (SKILL §11). */
+.version-shared-section {
+  display: flex;
+  flex-direction: column;
+  max-height: 50%;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.version-shared-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding: 4px 6px;
+}
+
+.version-section-head {
+  margin: 0;
+  padding: var(--pnl-pad-y) var(--pnl-pad-x) 2px;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 650;
+}
+
+.version-shared-status {
+  padding: 0 var(--pnl-pad-x);
+}
+
+.version-shared-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px var(--pnl-pad-x) var(--pnl-pad-y);
+}
+
+.version-shared-actions .dialog-button {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+/* `display` above would otherwise outrank the `hidden` attribute, and the
+   standalone panel would grow an empty shared band (the rule `.dialog-card
+   [hidden]` states for modals). */
+.version-shared-section[hidden],
+.version-section-head[hidden],
+.version-shared-actions [hidden] {
+  display: none;
+}
+
 .version-group + .version-group {
   margin-top: 8px;
 }
