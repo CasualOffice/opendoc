@@ -4093,6 +4093,83 @@ mod tests {
         );
     }
 
+    /// Giving a shape text adds a paragraph INSIDE the host paragraph's inlines,
+    /// and removing a text box removes the paragraphs inside it. The statistics
+    /// ledger (HF-412) moves by the damaged paragraph's difference, and the
+    /// damaged paragraph is the HOST: the story paragraphs it owns came and went
+    /// without being named in the damage. The status bar must still agree with a
+    /// full recount after each, or the paragraph and word counts lie.
+    #[test]
+    fn statistics_follow_story_paragraphs_a_host_edit_adds_and_removes() {
+        use casual_doc_model::v1::ShapeGeometry;
+
+        let recount = |document: &WasmDocument| {
+            let mut ledger = crate::StatsLedger::default();
+            ledger.rebuild(&document.document, document.revision);
+            (ledger.totals.words, ledger.paragraphs)
+        };
+        let reported = |document: &WasmDocument| {
+            let stats = document.document_stats();
+            (stats.words(), stats.paragraphs())
+        };
+
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        // Read once, so the ledger is current and the edits below advance it.
+        assert_eq!(reported(&document), recount(&document), "at open");
+        document
+            .insert_shape(&paragraph, 0, "star5")
+            .expect("insert a star");
+        assert_eq!(reported(&document), recount(&document), "after the star");
+        let shape = shapes_with(&document, ShapeGeometry::Star5)[0].clone();
+
+        let before = reported(&document);
+        let result = document
+            .add_text_to_shape_inner(&shape)
+            .expect("give the star a text body");
+        assert_eq!(
+            reported(&document),
+            recount(&document),
+            "after giving the star a text body"
+        );
+        assert!(
+            reported(&document).1 > before.1,
+            "the star's text body is counted: {:?} after, {before:?} before",
+            reported(&document)
+        );
+
+        document
+            .insert_text(&result.node, result.offset, "INSIDE THE STAR".to_owned())
+            .expect("type into the star");
+        assert_eq!(
+            reported(&document),
+            recount(&document),
+            "after typing in the star"
+        );
+
+        // A host-paragraph edit that leaves the story set alone is still exact:
+        // typing next to the star.
+        document
+            .insert_text(&paragraph, 0, "beside ".to_owned())
+            .expect("type in the host paragraph");
+        assert_eq!(
+            reported(&document),
+            recount(&document),
+            "after typing in the host paragraph"
+        );
+
+        // And the undo that takes the text body away again.
+        document.undo().expect("undo the typing beside");
+        document.undo().expect("undo the typing inside");
+        document.undo().expect("undo the text body");
+        assert_eq!(
+            reported(&document),
+            recount(&document),
+            "after undoing the text body"
+        );
+        assert_eq!(reported(&document), before, "back to the star without text");
+    }
+
     /// A freeform shape has a custom path `GroupTextBox` cannot model, so
     /// giving it text is REFUSED rather than silently flattening it.
     #[test]

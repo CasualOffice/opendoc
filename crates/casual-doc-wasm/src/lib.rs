@@ -26031,12 +26031,25 @@ impl ParagraphCounts {
 /// leaves the stamp behind, and the next read rebuilds the ledger in one
 /// `O(document)` pass. Being wrong in that direction costs a recount; there is
 /// no direction in which it serves a stale count.
+///
+/// A damaged paragraph is a subtree, not one paragraph: its inlines can own
+/// block stories (a text box, a shape's text body, a group's text shapes), and
+/// those story paragraphs are counted too. An operation that rewrites the host's
+/// inlines (`addTextToShape`, deleting a text box, undoing either) adds or
+/// removes story paragraphs without naming them in the damage. So the ledger
+/// keeps, per host, the ids of the story paragraphs beneath it, re-reads the
+/// whole subtree of each damaged paragraph, and leaves itself stale when that
+/// set of ids moved (a structural gesture, never a keystroke).
 #[derive(Debug, Default)]
 struct StatsLedger {
     /// The revision the ledger describes; `None` until the first build.
     at: Option<u32>,
     /// Each paragraph's counts, by id.
     per_paragraph: HashMap<NodeId, ParagraphCounts>,
+    /// For each paragraph whose inlines own block stories, the ids of every
+    /// paragraph inside them, at any depth, in document order. Absent for a
+    /// paragraph that owns none, which is almost every paragraph.
+    stories: HashMap<NodeId, Vec<NodeId>>,
     /// The sum of `per_paragraph`.
     totals: ParagraphCounts,
     /// How many paragraphs the document has.
@@ -26050,27 +26063,51 @@ struct StatsLedger {
 impl StatsLedger {
     /// Rebuilds the ledger from the whole document. `O(document)`.
     fn rebuild(&mut self, document: &Document, revision: u32) {
-        let mut nodes = Vec::new();
-        collect_block_text_all_surfaces(document, &mut nodes);
         self.per_paragraph.clear();
+        self.stories.clear();
         self.totals = ParagraphCounts::default();
         self.ambiguous = false;
-        for (id, text) in &nodes {
-            let counts = ParagraphCounts::of(text);
+        let mut paragraphs = 0_u32;
+        // The traversal `collect_block_text_all_surfaces` is written on, so the
+        // set and the order of paragraphs counted are exactly its.
+        visit_paragraphs_all_surfaces(document, &mut |paragraph| {
+            let counts = ParagraphCounts::of(&node_plain_text(&paragraph.inlines));
             self.totals.words += counts.words;
             self.totals.characters += counts.characters;
             self.totals.characters_with_spaces += counts.characters_with_spaces;
-            self.ambiguous |= self.per_paragraph.insert(*id, counts).is_some();
-        }
-        self.paragraphs = nodes.len() as u32;
+            self.ambiguous |= self.per_paragraph.insert(paragraph.id, counts).is_some();
+            let nested = story_paragraph_ids(paragraph);
+            if !nested.is_empty() {
+                self.stories.insert(paragraph.id, nested);
+            }
+            paragraphs += 1;
+        });
+        self.paragraphs = paragraphs;
         self.at = (!self.ambiguous).then_some(revision);
+    }
+
+    /// Replaces one paragraph's counts in the totals. `false` when the ledger
+    /// does not know the paragraph, so the caller leaves it stale.
+    fn recount(&mut self, id: NodeId, new: ParagraphCounts) -> bool {
+        let Some(old) = self.per_paragraph.get_mut(&id) else {
+            return false;
+        };
+        self.totals.words = self.totals.words - old.words + new.words;
+        self.totals.characters = self.totals.characters - old.characters + new.characters;
+        self.totals.characters_with_spaces = self.totals.characters_with_spaces
+            - old.characters_with_spaces
+            + new.characters_with_spaces;
+        *old = new;
+        true
     }
 
     /// Moves the ledger from revision `before` to `after` across a text edit
     /// whose complete damage is `damage`. Leaves the ledger stale (so the next
     /// read rebuilds it) whenever it cannot account for the edit exactly.
-    /// `O(damaged paragraphs)`: each is resolved through the route hint the
-    /// edit itself just recorded (`casual_doc_model::v1::locate`).
+    /// `O(damaged subtrees)`: each damaged paragraph is resolved through the
+    /// route hint the edit itself just recorded (`casual_doc_model::v1::locate`),
+    /// and it and the story paragraphs its inlines own are re-read. A plain
+    /// paragraph owns none, so a keystroke re-reads one paragraph.
     fn advance(&mut self, document: &Document, damage: &DirtySet, before: u32, after: u32) {
         if self.at != Some(before) || !damage.is_complete() {
             return;
@@ -26083,19 +26120,46 @@ impl StatsLedger {
                 // for, so the next read recounts.
                 return;
             };
-            let Some(old) = self.per_paragraph.get_mut(&node) else {
+            // The story paragraphs beneath it must be the ones the ledger
+            // holds. When they are not, the edit added or removed paragraphs
+            // the damage does not name, and only a recount is exact.
+            let nested = story_paragraph_ids(paragraph);
+            let known = self.stories.get(&node).map_or(&[][..], Vec::as_slice);
+            if nested != known {
                 return;
-            };
-            let new = ParagraphCounts::of(&node_plain_text(&paragraph.inlines));
-            self.totals.words = self.totals.words - old.words + new.words;
-            self.totals.characters = self.totals.characters - old.characters + new.characters;
-            self.totals.characters_with_spaces = self.totals.characters_with_spaces
-                - old.characters_with_spaces
-                + new.characters_with_spaces;
-            *old = new;
+            }
+            if !self.recount(
+                node,
+                ParagraphCounts::of(&node_plain_text(&paragraph.inlines)),
+            ) {
+                return;
+            }
+            // Same ids, but the host's inlines were rewritten, so the text
+            // inside them may have changed too.
+            let mut exact = true;
+            if !nested.is_empty() {
+                visit_text_box_paragraphs(&paragraph.inlines, &mut |story| {
+                    exact &= self.recount(
+                        story.id,
+                        ParagraphCounts::of(&node_plain_text(&story.inlines)),
+                    );
+                });
+            }
+            if !exact {
+                return;
+            }
         }
         self.at = Some(after);
     }
+}
+
+/// The ids of every paragraph inside the block stories `paragraph`'s inlines
+/// own, at any depth, in the order [`visit_paragraphs`] visits them. Empty, and
+/// unallocated, for a paragraph that owns none. `O(inlines in the subtree)`.
+fn story_paragraph_ids(paragraph: &Paragraph) -> Vec<NodeId> {
+    let mut ids = Vec::new();
+    visit_text_box_paragraphs(&paragraph.inlines, &mut |story| ids.push(story.id));
+    ids
 }
 
 /// Document statistics for the status footer.
