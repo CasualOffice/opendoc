@@ -196,7 +196,7 @@
           <code data-claim="package-name">@casualoffice/opendoc-editor</code>
           version <span data-claim="package-version">0.1.0</span>:
           <span data-claim="package-file-count">12</span> files,
-          <span data-claim="package-unpacked-kb">233 kB</span> unpacked,
+          <span data-claim="package-unpacked-kb">238 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b data-i18n="site.embedding.prereleasesOnlyNextTag">Only pre-releases are published, under npm's next tag</b>, by a
           workflow the owner dispatches by hand (<code>docs/176</code> §8.3), so from a checkout a host installs
@@ -769,10 +769,10 @@ docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal</code>
           <span data-claim="contract-version">1</span>:
           <span data-claim="command-count">215</span> commands by name and
           <span data-claim="family-count">11</span> families of value commands,
-          <span data-claim="event-count">7</span> events,
+          <span data-claim="event-count">9</span> events,
           <span data-claim="refusal-code-count">9</span> refusal codes and
-          <span data-claim="verb-count">5</span> verbs
-          (<code data-claim="verbs">describe execute query ping identify</code>).
+          <span data-claim="verb-count">7</span> verbs
+          (<code data-claim="verbs">describe execute query ping identify directory.answer mention.answer</code>).
         </p>
         <p class="doc-body" data-i18n="site.embedding.bothTransportsBuiltOne">
           Both transports are built from one schema,
@@ -866,6 +866,16 @@ async function runCommand(panel, transport, id) {
             <div class="disp-name"><code>refusal</code></div>
             <div class="disp-cell"><code>code</code> <code>command</code> <code>requires</code> <code>message</code></div>
             <div class="disp-cell" data-i18n="site.event.refusal">Whenever a command is refused, including one nobody asked for over the API.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>directory-query</code></div>
+            <div class="disp-cell"><code>qid</code> <code>query</code> <code>limit</code></div>
+            <div class="disp-cell" data-i18n="site.event.directory-query">When the reader types `@` and at least one more character in a comment, and the frame was opened with `directory=1`. Answer with `directory.answer`.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>mention</code></div>
+            <div class="disp-cell"><code>qid</code> <code>people</code> <code>commentId</code> <code>excerpt</code> <code>room</code></div>
+            <div class="disp-cell" data-i18n="site.event.mention">When a comment that mentions people has been ordered (acknowledged in a room, saved standalone). Answer with `mention.answer`.</div>
           </div>
         </div>
         <!-- @end event-table -->

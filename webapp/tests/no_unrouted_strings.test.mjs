@@ -123,7 +123,9 @@ const CEILINGS = new Map([
   // forward: the two rounds overlapped on exactly one column, so neither
   // branch's number describes this tree — which is the merge trap
   // `module_seams.test.mjs` records three times.
-  ["embedding.page.html", 88],
+  // 88 -> 89 with HF-361's `mention` event: its detail table names the field
+  // `commentId`, a wire identifier the scanner reads as a word. Not prose.
+  ["embedding.page.html", 89],
   ["fidelity.page.html", 0],
   ["index.page.html", 0],
   ["playground.page.html", 3],

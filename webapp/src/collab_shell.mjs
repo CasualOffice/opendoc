@@ -9,6 +9,7 @@ import { createRecoveryDownloader } from "./recovery_chrome.mjs";
 import { refusalAnnouncement } from "./session_access.mjs";
 import { avatarPolicy, hostIdentity, joinIdentity } from "./host_identity.mjs";
 import { PRESENCE_OUTCOMES, createPresence } from "./collab_presence.mjs";
+import { mentionsOrdered } from "./mention_notices.mjs";
 
 /** Host-managed sharing, checkpoints, recovery and ephemeral presence scheduling. */
 export function createCollaborationShell({ root, getDocument, getTransport, setTransport,
@@ -81,6 +82,9 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
           if (said) status(said, "warn");
         }
         if (["welcome", "resumed", "ack", "applied"].includes(o.kind)) publishCheckpoint();
+        // A mention is sent once its comment is ORDERED (`docs/175` §7.2): when an
+        // acknowledgement leaves nothing of this replica's unacknowledged.
+        if (o.kind === "ack" && !engineUnacknowledged()) void mentionsOrdered("room");
         if (PRESENCE_OUTCOMES.includes(o.kind)) { paintOverlay(); remotePresence.changed(); }
         const said = receiveAccess(o); if (said) status(said);
         if (o.documentChanged) { followArrival(); arrival(o); }
@@ -210,6 +214,9 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
     const url = new URL(window.location.href);
     for (const key of ["room", "document", "revision"]) url.searchParams.delete(key);
     window.history.replaceState(null, "", url);
+  }
+  function engineUnacknowledged() {
+    try { return Boolean(JSON.parse(getDocument().collabState).unacknowledged); } catch { return true; }
   }
   return { presence: remotePresence, strip, recovery, share, chrome: shareChrome, start: startCollaboration, commands, loadStartup, beforeReplace,
     /** Why Restore must not run now, or "". A restore replaces this tab's document

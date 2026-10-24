@@ -804,6 +804,26 @@ fn derive_initials(name: &str) -> String {
     casual_doc_edit::authorship::derive_initials(name)
 }
 
+/// The composer's mention list (`[{start, end, link?}]`), bounded: at most 64 mentions in one
+/// comment, which is more than any comment a person writes and few enough that a crafted list
+/// cannot make the lowering walk long.
+fn parse_mentions(json: &str) -> Result<Vec<review_lower::Mention>, String> {
+    const MAX_MENTIONS: usize = 64;
+    let mentions: Vec<review_lower::Mention> = serde_json::from_str(json).map_err(|_| {
+        casual_doc_edit::refusal::marked(
+            "comment.mention-unusable",
+            "A mention in this comment could not be placed. Type the name again and pick it from the list.",
+        )
+    })?;
+    if mentions.len() > MAX_MENTIONS {
+        return Err(casual_doc_edit::refusal::marked(
+            "comment.mention-unusable",
+            "This comment mentions more people than one comment can.",
+        ));
+    }
+    Ok(mentions)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TypingHistory {
     session: u32,
@@ -1198,28 +1218,42 @@ impl WasmDocument {
                 .map_err(|error| format!("export {format}: {error}"))?
         } else {
             let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
-            self.with_current_statistics(statistics, |document, resources, source| {
+            // The host's opt-in `people.xml` entry (`docs/175` §6.2) on the editor's own Save
+            // too, not only on `exportDocx`: one rule, both paths. A save that adds one is a
+            // changed document, so it is never the source bytes copied through.
+            let person = if format.as_str() == casual_doc_io::formats::DOCX {
+                self.persisted_person()?
+            } else {
+                None
+            };
+            let unchanged = self.revision == 0 && person.is_none();
+            let export = |document: &Document,
+                          resources: &DocumentResources,
+                          source: Option<&SourceEnvelope>,
+                          source_unchanged: bool| {
+                let copy = person
+                    .clone()
+                    .map(|person| save_identity::with_person(document, person));
                 registry.export(
                     &format,
                     ExportRequest {
-                        document,
+                        document: copy.as_ref().unwrap_or(document),
                         resources,
                         source,
-                        source_unchanged: false,
+                        source_unchanged,
                         mode,
                     },
                 )
+            };
+            self.with_current_statistics(statistics, |document, resources, source| {
+                export(document, resources, source, false)
             })
             .unwrap_or_else(|| {
-                registry.export(
-                    &format,
-                    ExportRequest {
-                        document: &self.document,
-                        resources: &self.resources,
-                        source: self.format_state.source.as_ref(),
-                        source_unchanged: self.revision == 0,
-                        mode,
-                    },
+                export(
+                    &self.document,
+                    &self.resources,
+                    self.format_state.source.as_ref(),
+                    unchanged,
                 )
             })
             .map_err(|error| format!("export {format}: {error}"))?
@@ -11394,6 +11428,97 @@ impl WasmDocument {
         self.commit_review(lowered).map_err(to_js)
     }
 
+    /// [`add_comment`](Self::add_comment) with `@` mentions (`docs/175` §7.3): `mentions` is a
+    /// JSON array of `{start, end, link?}`, offsets in UTF-16 code units of `text` — what the
+    /// composer measured — and each linked span becomes a hyperlink run to the directory
+    /// entry's link. A mention that cannot be placed exactly is refused, never guessed at.
+    #[wasm_bindgen(js_name = addCommentMentioning)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_comment_mentioning(
+        &mut self,
+        start_node: &str,
+        start: u32,
+        end_node: &str,
+        end: u32,
+        text: &str,
+        mentions: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.add_comment_mentioning_inner(
+            start_node, start, end_node, end, text, mentions, author, initials, date,
+        )
+        .map_err(to_js)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_comment_mentioning_inner(
+        &mut self,
+        start_node: &str,
+        start: u32,
+        end_node: &str,
+        end: u32,
+        text: &str,
+        mentions: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
+        let mentions = parse_mentions(mentions)?;
+        let author = self.resolve_author(author);
+        let initials = self.resolve_initials(initials);
+        let lowered = review_lower::add_comment_mentioning(
+            &self.document,
+            &mut ReviewIds {
+                nodes: &mut self.edit_ids,
+                revisions: &mut self.revision_ids,
+            },
+            start_node,
+            start,
+            end_node,
+            end,
+            text,
+            &mentions,
+            author,
+            initials,
+            date,
+        )?;
+        self.commit_review(lowered)
+    }
+
+    /// [`reply_to_comment`](Self::reply_to_comment) with `@` mentions, as
+    /// [`add_comment_mentioning`](Self::add_comment_mentioning) takes them.
+    #[wasm_bindgen(js_name = replyMentioning)]
+    pub fn reply_mentioning(
+        &mut self,
+        parent: &str,
+        text: &str,
+        mentions: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let mentions = parse_mentions(mentions).map_err(to_js)?;
+        let author = self.resolve_author(author);
+        let initials = self.resolve_initials(initials);
+        let lowered = review_lower::reply_mentioning(
+            &self.document,
+            &mut ReviewIds {
+                nodes: &mut self.edit_ids,
+                revisions: &mut self.revision_ids,
+            },
+            parent,
+            text,
+            &mentions,
+            author,
+            initials,
+            date,
+        )
+        .map_err(to_js)?;
+        self.commit_review(lowered).map_err(to_js)
+    }
+
     /// Removes a comment thread and all of its range/reference markers.
     #[wasm_bindgen(js_name = deleteComment)]
     pub fn delete_comment(&mut self, comment: &str) -> Result<EditResult, JsValue> {
@@ -13982,23 +14107,33 @@ impl WasmDocument {
     /// one person's work to the other's account. The host disambiguates; it knows who they are.
     fn with_persisted_author(&self) -> Result<std::borrow::Cow<'_, Document>, String> {
         use std::borrow::Cow;
+        Ok(match self.persisted_person()? {
+            Some(person) => Cow::Owned(save_identity::with_person(&self.document, person)),
+            None => Cow::Borrowed(&self.document),
+        })
+    }
+
+    /// The `people.xml` entry a DOCX save adds for the active author, or `None` when it adds
+    /// none — see [`with_persisted_author`](Self::with_persisted_author) for the rule and the
+    /// collision refusal. Shared by `exportDocx` and the editor's own Save (`exportAs`), so
+    /// the two cannot write different files.
+    fn persisted_person(&self) -> Result<Option<casual_doc_model::v1::Person>, String> {
         let Some(author) = self.active_author.as_ref() else {
-            return Ok(Cow::Borrowed(&self.document));
+            return Ok(None);
         };
         let Some(presence) = author.persist.as_ref() else {
-            return Ok(Cow::Borrowed(&self.document));
+            return Ok(None);
         };
         let people = &self.document.definitions().people;
         if let Some(existing) = people.iter().find(|person| person.author == author.name) {
             return match &existing.presence {
-                Some(held) if held == presence => Ok(Cow::Borrowed(&self.document)),
-                Some(_) => Err(casual_doc_edit::refusal::marked(
+                Some(held) if held != presence => Err(casual_doc_edit::refusal::marked(
                     "identity-name-collision",
                     "Two different people share this author name in the document, so Word could \
                      not tell their changes apart. Ask the application you opened this in to give \
                      them different names.",
                 )),
-                None => Ok(Cow::Borrowed(&self.document)),
+                _ => Ok(None),
             };
         }
         let authored_comment = self
@@ -14011,16 +14146,10 @@ impl WasmDocument {
             || build_review_revision_summaries(&self.document)
                 .iter()
                 .any(|revision| revision.author.as_deref() == Some(author.name.as_str()));
-        if !authored {
-            return Ok(Cow::Borrowed(&self.document));
-        }
-        Ok(Cow::Owned(save_identity::with_person(
-            &self.document,
-            casual_doc_model::v1::Person {
-                author: author.name.clone(),
-                presence: Some(presence.clone()),
-            },
-        )))
+        Ok(authored.then(|| casual_doc_model::v1::Person {
+            author: author.name.clone(),
+            presence: Some(presence.clone()),
+        }))
     }
 
     /// Moves this replica's minting into the space a relay's participant number implies.

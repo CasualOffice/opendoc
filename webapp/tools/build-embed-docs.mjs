@@ -164,6 +164,10 @@ const EVENT_WHEN = Object.freeze({
   export: "After an export writes another format out.",
   error: "When something failed that was not a command being refused.",
   refusal: "Whenever a command is refused, including one nobody asked for over the API.",
+  "directory-query":
+    "When the reader types `@` and at least one more character in a comment, and the frame was opened with `directory=1`. Answer with `directory.answer`.",
+  mention:
+    "When a comment that mentions people has been ordered (acknowledged in a room, saved standalone). Answer with `mention.answer`.",
 });
 
 /** What each refusal code means, and which layer decided it.

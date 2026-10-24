@@ -147,9 +147,13 @@ test("every declared event's detail is exactly what the session emits", async ()
     revision: () => 7,
     dirty: () => true,
     selection: () => ({ anchor: { node: "n", offset: 0 }, focus: { node: "n", offset: 1 }, hasRange: true }),
+    directoryRemote: true,
   });
   const seen = new Map();
   for (const name of HOST_EVENT_NAMES) session.on(name, (e) => seen.set(e.event, e.detail));
+  // The two directory events (`docs/175` §7), driven the way the chrome drives them.
+  void session.mentions.search("Gr").catch(() => {});
+  void session.mentions.notify({ people: ["u"], commentId: "c", excerpt: "hi", room: null }).catch(() => {});
   session.noteReady();
   session.noteChange();
   session.noteSelection();

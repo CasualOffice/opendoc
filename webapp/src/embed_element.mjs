@@ -211,6 +211,23 @@ export class OpenDocEditorElement extends ElementBase {
   #identity = null;
   /** The host client carrying the one-shot `identify`, while it is in flight. */
   #identifier = null;
+  /** The host's directory for @mention (`{search, notify}`), or null. */
+  #directory = null;
+  /** The client serving it to the frame, and how to stop. */
+  #directoryServer = null;
+
+  /** The host directory for @mention (`docs/175` §7.2): `{ search(query, {limit,
+   *  signal}), notify?(notice) }`. A property, because functions cannot be
+   *  attributes. Remounts, so the frame is told (`?directory=1`) that it may offer a
+   *  picker; with none set, `@` in a comment is plain text and nothing is asked. */
+  get directory() {
+    return this.#directory;
+  }
+
+  set directory(value) {
+    this.#directory = value && typeof value.search === "function" ? value : null;
+    if (this.isConnected && this.#root) this.#queueRemount();
+  }
 
   /** The identity in force for this mount: validated and frozen, or null when
    *  none was given or the one given was refused (the refusal is on the
@@ -354,7 +371,17 @@ export class OpenDocEditorElement extends ElementBase {
     // language their page may not be in.
     if (title) frame.title = title;
     else reportMissingTitle();
+    // The directory flag says only that a directory exists; the directory itself
+    // is served over the frame's message channel once it has loaded.
+    if (this.#directory) url.searchParams.set("directory", "1");
+    else url.searchParams.delete("directory");
     frame.src = url.href;
+    this.#directoryServer?.();
+    this.#directoryServer = null;
+    if (this.#directory) {
+      const directory = this.#directory;
+      frame.addEventListener("load", () => this.#serveDirectory(frame, url.origin, directory), { once: true });
+    }
     // The identity crosses in a MESSAGE, after the frame's scripts have run (a
     // module script has finished before `load`), never in the URL above. The frame
     // was told by `awaitIdentity=1` to hold its startup document and room until
@@ -511,6 +538,20 @@ export class OpenDocEditorElement extends ElementBase {
     return notes;
   }
 
+  /** Answers the frame's `directory-query` and `mention` events from the host's
+   *  directory, for as long as this frame is the mounted one. */
+  #serveDirectory(frame, origin, directory) {
+    if (this.#frame !== frame) return;
+    let client;
+    try {
+      client = createHostClient({ frame, editorOrigin: origin, view: window });
+    } catch {
+      return;
+    }
+    const stop = client.serveDirectory(directory);
+    this.#directoryServer = () => { stop(); client.dispose(); };
+  }
+
   /** Hands the identity to the frame in the one-shot `identify` request. A
    *  refusal (a frame that already decided, or one that is not ours) is said
    *  once in the console with its code, never with the identity. */
@@ -550,6 +591,8 @@ export class OpenDocEditorElement extends ElementBase {
   #teardown() {
     this.#identifier?.dispose();
     this.#identifier = null;
+    this.#directoryServer?.();
+    this.#directoryServer = null;
     if (this.#frame) {
       try {
         this.#frame.src = "about:blank";

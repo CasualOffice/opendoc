@@ -405,8 +405,10 @@ test("everything under 'does not do yet' is still not done", () => {
   assert.deepEqual(withArgs, ["view.zoom"], "more commands take arguments now");
 
   // No document I/O through the contract: none of the verbs moves bytes.
-  // `identify` carries who the person is (`docs/175` §3), never a document.
-  assert.deepEqual([...PROTOCOL.requests], ["describe", "execute", "query", "ping", "identify"]);
+  // `identify` carries who the person is (`docs/175` §3), never a document; the
+  // two directory answers carry people the HOST found (§7), never a document.
+  assert.deepEqual([...PROTOCOL.requests],
+    ["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer"]);
   const write = HOST_EVENTS.find((event) => event.name === "export");
   assert.deepEqual(
     [...write.detail],

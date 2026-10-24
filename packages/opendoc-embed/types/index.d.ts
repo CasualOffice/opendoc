@@ -261,7 +261,7 @@ export declare function defineOpenDocEditor(tag?: string): boolean;
 // while being wrong.
 
 /** Every event a host can hear. */
-export type HostEventName = "ready" | "change" | "selection" | "save" | "export" | "error" | "refusal";
+export type HostEventName = "ready" | "change" | "selection" | "save" | "export" | "error" | "refusal" | "directory-query" | "mention";
 
 /** Everything a refusal can say, as a code to branch on — never the message,
  *  which is localised and belongs to the chrome. */

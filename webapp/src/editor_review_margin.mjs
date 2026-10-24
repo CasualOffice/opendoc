@@ -7,6 +7,7 @@ import { orderedSelectionEnds } from "./caret_navigation.mjs";
 import { reviewCardSignature, reviewCommentIsReplyTo, reviewStackHeight, stackReviewCards } from "./review_layout.mjs";
 import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
 import { commentEditButton, commentEditor, commentQuoteElement } from "./review_comment_card.mjs";
+import { attachCommentMentions } from "./mention_composer.mjs";
 import { formatReviewDate, reviewAuthorColor, reviewAuthorKey, reviewCardAriaLabel, reviewChangeTypeLabel, reviewCommentTooltip, reviewFormattingDescription, reviewRevisionTooltip } from "./review_labels.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -494,12 +495,18 @@ export function createReviewMargin(ed) {
         actions.className = "review-composer-actions";
         const cancel = reviewCardButton("Cancel", () => { ed.closeReviewPopover(); ed.focusEditorSurface(); });
         cancel.dataset.testid = "review-comment-cancel";
+        // `@` asks the host's directory, when there is one (`docs/175` §7). Attached
+        // BEFORE the composer keys, so Enter picks a name while the list is open.
+        const mentioning = attachCommentMentions(ed, textarea, t);
         const submit = reviewCardButton("Comment", async () => {
           const text = textarea.value.trim();
           if (!text || !ed.reviewComposerState?.range) return;
           const { start, end } = ed.reviewComposerState.range;
           const metadata = ed.currentReviewTimestamp();
-          await ed.runEdit(() => ed.doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date), { keepView: true });
+          await mentioning.post(text, {
+            plain: (doc) => doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date),
+            mentioning: (doc, spans) => doc.addCommentMentioning(start.node, start.offset, end.node, end.offset, text, spans, undefined, undefined, metadata.date),
+          });
           ed.reviewComposerState = null;
           ed.reviewSidebarPreference = true;
           ed.announceReview("Comment added");
@@ -841,11 +848,16 @@ export function createReviewMargin(ed) {
             resize();
             syncActions();
           };
+          // Before the composer keys, as in the new-comment composer.
+          const mentioning = attachCommentMentions(ed, textarea, t);
           const submit = reviewCardButton("Reply", async () => {
             const text = textarea.value.trim();
             if (!text) return;
             const metadata = ed.currentReviewTimestamp();
-            await ed.runEdit(() => ed.doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date), { keepView: true });
+            await mentioning.post(text, {
+              plain: (doc) => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date),
+              mentioning: (doc, spans) => doc.replyMentioning(item.data.id, text, spans, undefined, undefined, metadata.date),
+            });
             ed.announceReview("Reply added");
             ed.drawSelection();
             ed.focusEditorSurface();

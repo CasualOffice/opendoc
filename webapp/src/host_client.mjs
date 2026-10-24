@@ -179,7 +179,42 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
           ? (id) => send("query", { id })
           : type === "identify"
             ? (identity) => send("identify", { identity })
-            : () => send(type);
+            : type === "directory.answer"
+              ? (qid, people, more = false) => send(type, { qid, people, more })
+              : type === "mention.answer"
+                ? (qid, status) => send(type, { qid, status })
+                : () => send(type);
   }
+  /** Serves a host directory (`docs/175` §7.2) over this client: answers every
+   *  `directory-query` with `directory.search` and every `mention` with
+   *  `directory.notify`. What the `<opendoc-editor>` element does with its
+   *  `directory` property, and what a raw `postMessage` host can call too.
+   *  Each query aborts the one before it, as the editor's own picker does.
+   *  Returns a function that stops serving. */
+  client.serveDirectory = (directory) => {
+    let current = null;
+    const offQuery = client.on("directory-query", async ({ detail }) => {
+      current?.abort();
+      const controller = new AbortController();
+      current = controller;
+      let answer = { people: [], more: false };
+      try {
+        answer = (await directory.search(detail.query, { limit: detail.limit, signal: controller.signal })) ?? answer;
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      void client["directory.answer"](detail.qid, answer.people ?? [], Boolean(answer.more)).catch(() => {});
+    });
+    const offMention = client.on("mention", async ({ detail }) => {
+      let status = "declined";
+      try {
+        if (typeof directory.notify === "function") status = (await directory.notify(detail))?.status ?? "declined";
+      } catch {
+        status = "declined";
+      }
+      void client["mention.answer"](detail.qid, status).catch(() => {});
+    });
+    return () => { current?.abort(); offQuery(); offMention(); };
+  };
   return client;
 }

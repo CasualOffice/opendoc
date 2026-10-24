@@ -94,6 +94,8 @@ export function attachHostBridge({ session, view }) {
     if (type === "query") return session.query(message.id);
     if (type === "describe") return session.describe();
     if (type === "identify") return session.identify(message.identity);
+    if (type === "directory.answer") return session["directory.answer"](message);
+    if (type === "mention.answer") return session["mention.answer"](message);
     return session.ping();
   }
 

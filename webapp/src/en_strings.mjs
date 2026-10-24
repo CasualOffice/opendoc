@@ -24,6 +24,13 @@ export const EN_STRINGS = Object.freeze({
   // The avatar strip (`presence_strip.mjs`, `docs/109` HF-330). Until a host
   // identity contract exists a participant is the relay's number, and the chrome
   // says so rather than letting "P2" pass for a name.
+  // @mention (`docs/175` §7): the picker over the host's directory, and what the
+  // host answered when told who was mentioned.
+  "mention.listLabel": "People matching “{query}”",
+  "mention.noMatch": "No one matches “{query}”",
+  "mention.notified": "{names} will be told about this comment",
+  "mention.needsAccess": "{names} can’t open this document",
+  "mention.declined": "{names} won’t be told about this comment",
   "collab.presence.label": "People in this document",
   "collab.presence.initials": "P{number}",
   "collab.presence.unnamed": "{name} — numbered by the room, because this host does not share names",

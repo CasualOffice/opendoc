@@ -80,11 +80,17 @@ pub enum HostEvent {
     Error,
     /// A command was refused, with a code a host can branch on.
     Refusal,
+    /// The reader typed `@` and at least one character: who matches (`docs/175` §7). Answered
+    /// with [`HostRequest::DirectoryAnswer`]. Carries the query and a limit, nothing else.
+    DirectoryQuery,
+    /// A comment that mentions people has been ordered: tell them. Answered with
+    /// [`HostRequest::MentionAnswer`].
+    Mention,
 }
 
 impl HostEvent {
     /// Every host event, in the order the contract declares them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Ready,
         Self::Change,
         Self::Selection,
@@ -92,6 +98,8 @@ impl HostEvent {
         Self::Export,
         Self::Error,
         Self::Refusal,
+        Self::DirectoryQuery,
+        Self::Mention,
     ];
 
     /// The event's name on the wire, which is also its name in the editor.
@@ -105,6 +113,8 @@ impl HostEvent {
             Self::Export => "export",
             Self::Error => "error",
             Self::Refusal => "refusal",
+            Self::DirectoryQuery => "directory-query",
+            Self::Mention => "mention",
         }
     }
 }
@@ -217,7 +227,7 @@ impl HostRefusal {
 
 /// What a host may ask of an editor, over either transport.
 ///
-/// Five, and the same five the in-process session exposes as methods, so neither
+/// Seven, and the same seven the in-process session exposes as methods, so neither
 /// transport has a verb the other lacks.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum HostRequest {
@@ -231,16 +241,22 @@ pub enum HostRequest {
     Ping,
     /// Who is using the editor (`docs/175` §3): accepted once, before a room is joined.
     Identify,
+    /// The host's answer to a [`HostEvent::DirectoryQuery`], by its `qid`.
+    DirectoryAnswer,
+    /// The host's answer to a [`HostEvent::Mention`], by its `qid`.
+    MentionAnswer,
 }
 
 impl HostRequest {
     /// Every request verb, in the order the contract declares them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Describe,
         Self::Execute,
         Self::Query,
         Self::Ping,
         Self::Identify,
+        Self::DirectoryAnswer,
+        Self::MentionAnswer,
     ];
 
     /// The verb's spelling on the wire.
@@ -252,6 +268,8 @@ impl HostRequest {
             Self::Query => "query",
             Self::Ping => "ping",
             Self::Identify => "identify",
+            Self::DirectoryAnswer => "directory.answer",
+            Self::MentionAnswer => "mention.answer",
         }
     }
 }

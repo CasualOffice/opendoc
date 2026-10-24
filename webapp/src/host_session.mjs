@@ -47,6 +47,17 @@ import {
 } from "./host_contract.mjs";
 import { announcementRegion } from "./status_policy.mjs";
 import { hostIdentity } from "./host_identity.mjs";
+import { DIRECTORY_PARAM, createDirectoryChannel } from "./directory.mjs";
+
+/** Whether the frame was opened by a host that serves the directory over
+ *  `postMessage` (`?directory=1`, which the element sets when given one). */
+function remoteDirectoryAsked(search) {
+  try {
+    return new URLSearchParams(search ?? "").get(DIRECTORY_PARAM) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** A frozen ok result. `revision` is the handle a host correlates against the
  *  `change` event; `null` when the engine could not report one. */
@@ -92,6 +103,7 @@ export function createHostSession({
   selection = () => null,
   document: documentInfo = () => ({}),
   identify = (identity) => hostIdentity.identify(identity),
+  directoryRemote = remoteDirectoryAsked(globalThis.location?.search),
 }) {
   /** event name -> listeners. One Set per event so an `off` is O(1). */
   const listeners = new Map(HOST_EVENT_NAMES.map((name) => [name, new Set()]));
@@ -121,6 +133,11 @@ export function createHostSession({
       }
     }
   }
+
+  /** The host directory for @mention (`docs/175` §7): in-process through the
+   *  `directory` property below, or over `postMessage` when the frame was
+   *  opened with `?directory=1`. Neither: no picker, nothing sent. */
+  const directoryChannel = createDirectoryChannel({ emit, remote: directoryRemote });
 
   /** The registry as a Map, built once per call that needs it. O(registry) —
    *  the same build the command palette already performs on every keystroke
@@ -228,6 +245,42 @@ export function createHostSession({
       }
       return result;
     },
+
+    /** The in-process directory: `window.opendoc.directory = { search, notify }`
+     *  (`docs/175` §7.2). `search(query, {limit, signal})` resolves to
+     *  `{people: [{id, name, initials?, avatar?, link?}], more}`; the optional
+     *  `notify(notice)` to `{status: "notified" | "needs-access" | "declined"}`.
+     *  Functions cannot be attributes, so this is a property, as on the element. */
+    get directory() {
+      return directoryChannel.directory;
+    },
+    set directory(value) {
+      directoryChannel.directory = value;
+    },
+
+    /** `directory.answer`: a `postMessage` host's answer to a `directory-query`
+     *  event, `{qid, people, more}`. Unknown or late `qid`s are ignored. */
+    "directory.answer"(message) {
+      return Object.freeze({ answered: directoryChannel.answerDirectory(message) });
+    },
+
+    /** `mention.answer`: a `postMessage` host's answer to a `mention` event,
+     *  `{qid, status}`. */
+    "mention.answer"(message) {
+      return Object.freeze({ answered: directoryChannel.answerMention(message) });
+    },
+
+    /** The chrome's side of the directory: whether to offer a picker at all, who
+     *  matches a query, and telling the host who was mentioned. */
+    mentions: Object.freeze({
+      available: () => directoryChannel.available(),
+      search: (query, options) => directoryChannel.search(query, options),
+      notify: (notice) => directoryChannel.notify(notice),
+      /** A host answer that broke a bound is reported, never trimmed silently. */
+      dropped(count) {
+        emit("error", { code: "directory-dropped", message: String(count), command: null });
+      },
+    }),
 
     /** Liveness, and the cheapest possible one: no registry build. */
     ping() {
