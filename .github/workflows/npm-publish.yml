@@ -211,7 +211,9 @@ jobs:
           set -euo pipefail
           (cd packages/opendoc-embed && npm version "${RELEASE_VERSION}" --no-git-tag-version)
           node webapp/tools/build-embed-package.mjs
-          changed="$(git diff --name-only | sort | tr '\n' ' ')"
+          # The viewer's own bump (an earlier step, when package=both) is not
+          # this generator's doing, so it is left out of the comparison.
+          changed="$(git diff --name-only -- . ':!packages/opendoc-viewer' | sort | tr '\n' ' ')"
           want="packages/opendoc-embed/package.json packages/opendoc-embed/src/release.mjs "
           if [[ "${changed}" != "${want}" ]]; then
             echo "::error::the version bump changed '${changed}', expected '${want}'"
