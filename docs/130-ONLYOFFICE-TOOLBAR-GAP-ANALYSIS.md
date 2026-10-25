@@ -433,7 +433,7 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 | **Update Table** (all / page numbers only) | `Links.js:183-194`, menu `:313-318` | — | **Absent** · needs **engine** — part of OO-001 |
 | Footnote / Endnote, **convert to endnotes / to footnotes / swap**, **delete all notes**, **note settings**, go-to next/prev note | `Links.js:175-177`, menu `:332-398` | `insert.footnote`, `insert.endnote` | **Weaker** · needs **facade + engine** — §4.6 |
 | Link | `Links.js:178-180` | `insert.link` | **Present** |
-| Bookmark | `Links.js:212-221` | `insert.bookmark` → Bookmark manager (`docs/78`) | **Present** |
+| Bookmark | `Links.js:212-221` | `insert.bookmark` → Bookmark manager (`docs/tracker/completed/editor-interactions.md` §Bookmark navigation) | **Present** |
 | Caption | `Links.js:224-233` | `reference.caption` (`main.js`, in `REFERENCE_SURFACE`) | **Present** — shipped; `docs/109` row 77 is stale (§8) |
 | Cross-reference | `Links.js:236-245` | `reference.crossReference` (`main.js`, in `REFERENCE_SURFACE`) | **Present** — shipped |
 | **Table of Figures** + its Update | `Links.js:248-257`, `:260-269` | — | **Absent** · needs **engine** — OO-001 |

@@ -1,4 +1,4 @@
-//! Where the CPU raster spends its time — the instrument behind `docs/179`.
+//! Where the CPU raster spends its time — the instrument behind `docs/architecture/179`.
 //!
 //! Renders every page of two documents at three device scales and prints, per
 //! document and scale, the median milliseconds for:
@@ -27,7 +27,7 @@
 //!
 //! `cargo run --release -p casual-doc-render --example render_profile [heavy.docx-out]`
 //! — the optional path writes the generated heavy document, so the wasm harness
-//! (`docs/179` §2) can time the identical file through the shipped `render_page`.
+//! (`docs/architecture/179` §2) can time the identical file through the shipped `render_page`.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // a measuring tool, not library code
 
 use std::time::Instant;

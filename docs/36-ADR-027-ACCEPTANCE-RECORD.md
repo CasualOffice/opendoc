@@ -56,7 +56,7 @@ package 256 MiB / 1 GiB — enforced per-part **and** aggregate on expanded size
 wired into the preservation-ledger writer (not only the admitter). (3)
 **Overflow:** fail-closed with a typed error (`ODC-1003`); no silent downgrade.
 An opt-in `Retention`→`Semantic` graceful downgrade is deferred, not default.
-Competitive basis (see `37-PHASE-1A-DECISION-RESEARCH.md`): the dominant pattern
+Competitive basis (see `tracker/completed/retired-documents.md#doc-37`): the dominant pattern
 is bounded retention with fail-closed refusal — Word hard-bounds (512 MB file /
 32 MB text) and refuses over-limit files; ONLYOFFICE enforces uncompressed
 `inputLimits` (DOCX 50 MB) and returns a size-limit refusal, never a silent
@@ -111,7 +111,7 @@ anchor.
    directly and offsets are identical across native and WASM. Schema v1 pins the
    grapheme unit before importer implementation.
 
-Competitive basis (see `37-PHASE-1A-DECISION-RESEARCH.md` D5): convergent — all
+Competitive basis (see `tracker/completed/retired-documents.md#doc-37` D5): convergent — all
 three engines preserve source data beside a normalized model, none guarantees a
 byte-identical **edited** round-trip, and they diverge on anchor granularity.
 ONLYOFFICE snapshots the whole package (`origin.docx`, decoupled from node
@@ -161,7 +161,7 @@ one media relationship); conformance-class acceptance is orthogonal to
 feature-support level. The Strict/Transitional probe fixture asserts
 byte-identical normalized output between the two twins. Phase 2 emit-default is
 Transitional (forward-looking; not exercised in 1A). Competitive basis (see
-`37-PHASE-1A-DECISION-RESEARCH.md`): Open XML SDK maps `purl.oclc.org` →
+`tracker/completed/retired-documents.md#doc-37`): Open XML SDK maps `purl.oclc.org` →
 `schemas.openxmlformats.org` on load; LibreOffice `filterdetect.cxx`
 (`OOXMLVariant::ISO_Strict`) normalizes Strict→Transitional and emits
 Transitional; ONLYOFFICE accepts Strict schema and saves Transitional; Word has
@@ -211,7 +211,7 @@ Disposition per `35-DISPOSITION-TAXONOMY.md`, per class:
 
 Each class is a registry policy entry with an explicit save disposition before
 any retention or export; none is loaded as live executable or active content.
-Competitive basis (see `37-PHASE-1A-DECISION-RESEARCH.md`, D9): convergent
+Competitive basis (see `tracker/completed/retired-documents.md#doc-37`, D9): convergent
 security-conservative behavior across all three engines — LibreOffice preserves
 but comments-out VBA and disables macros by default (help.libreoffice.org
 vbasupport; CVE-2019-9853 treated macro-on-load as a bug), ONLYOFFICE never runs
@@ -270,13 +270,13 @@ R3 is an open implementation task and does not block acceptance.
   duplicate, broken, unresolvable, or wrong-content-type is a typed error
   (`MissingMainDocument` / `AmbiguousMainDocument`), never silent acceptance.
   `word/document.xml` is retained only as an optional fast-path heuristic, never
-  an admission gate. Competitive basis (see `37-PHASE-1A-DECISION-RESEARCH.md`):
+  an admission gate. Competitive basis (see `tracker/completed/retired-documents.md#doc-37`):
   OPC fixes only these two names; LibreOffice
   `getFragmentPathFromFirstTypeFromOfficeDoc` (source-verified), Open XML SDK
   `MainDocumentPart.RelationshipTypeConstant`, and ONLYOFFICE
   `CRels(/_rels/.rels)` root read all discover by relationship type. Follow-ups:
   amend `28-DOCX-PACKAGE-READER.md` required-parts; add non-conventional-path
-  and Strict-namespace fixtures to `23-DOCX-FIXTURE-CORPUS.md`; the
+  and Strict-namespace fixtures to `tracker/completed/retired-documents.md#doc-23`; the
   relationship-selection tie-break and reordered-ZIP determinism are tracked
   with R3. Code follow-up: `crates/casual-doc-ooxml/src/lib.rs:260` drops
   `DOCUMENT_PART` from the required set (demoted to a fast-path constant).
@@ -303,7 +303,7 @@ R3 is an open implementation task and does not block acceptance.
   anchored to the contiguous body paragraph IDs it produced. Nesting recursion is
   capped by the streaming-parser depth limit; over-depth containers are
   dispositioned `omitted` + `rejected` (never silently truncated). Competitive
-  basis (see `37-PHASE-1A-DECISION-RESEARCH.md`): ECMA-376 shares
+  basis (see `tracker/completed/retired-documents.md#doc-37`): ECMA-376 shares
   `EG_BlockLevelElts` across body/`w:tc`/`w:txbxContent`/`w:sdtContent` and text
   exists only in `w:p`/`w:r` — so flattening loses geometry, not text, while
   rejecting loses all cell text (and would make the real-producer fixture golden

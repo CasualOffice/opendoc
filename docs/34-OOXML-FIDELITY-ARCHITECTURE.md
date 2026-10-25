@@ -3,8 +3,8 @@
 **Status:** Accepted — 2026-07-24
 **Decision:** ADR-027 (accepted; see `36-ADR-027-ACCEPTANCE-RECORD.md`)
 **Tracker:** P1A-003
-**Research basis:** `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`,
-`37-PHASE-1A-DECISION-RESEARCH.md`
+**Research basis:** `tracker/completed/retired-documents.md#doc-33`,
+`tracker/completed/retired-documents.md#doc-37`
 **Implementation state:** Unblocked for the schema-v1 and read-path slices
 
 ## Decision Required

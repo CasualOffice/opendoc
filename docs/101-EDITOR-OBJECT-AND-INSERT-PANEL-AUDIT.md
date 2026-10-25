@@ -7,7 +7,7 @@
 **Priority:** document safety and editing correctness first; SDK and OT/CRDT are
 explicitly outside this work.
 
-**Depends on:** docs 52, 58, 63, 64, 67, 69, 84, 85, 86 (typed OMML), 87, and
+**Depends on:** doc 47's former 52 slice, docs 58, 63, 64, 67, 84, 85, 86 (typed OMML), 87, and
 99.
 
 **Implementation record:** `UXOBJ-001/006` shipped in PR #481 on 2026-08-12.

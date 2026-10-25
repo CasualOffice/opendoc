@@ -477,7 +477,7 @@ export function createSpellChecker(io) {
   /**
    * The body paragraphs with content on the pages in the window, in document
    * order, as `{ node, text, language }` rows — ONE engine call
-   * (`proofWindow`, `docs/180` E2, `109` HF-411).
+   * (`proofWindow`, `docs/architecture/180` E2, `109` HF-411).
    *
    * This replaced a walk that seeded with `hitTest`, stepped with `moveCaret`
    * and asked `caretRect` for each paragraph's page, plus `paragraphLength`,
@@ -794,7 +794,7 @@ export function createSpellChecker(io) {
     const pages = io.windowPages?.() ?? [];
     if (!pages.length) return;
     // `decorationRectsOnPages`, NOT `selectionRects`, and ONE call for every
-    // mark on screen (`docs/180` E2, HF-411). A selection rect is the LINE BOX
+    // mark on screen (`docs/architecture/180` E2, HF-411). A selection rect is the LINE BOX
     // — `ascent + descent + leading` — and the squiggle is drawn at the bottom
     // of the element it is placed in, so the mark walked away from the text as
     // the paragraph's line spacing grew. Measured through the real pipeline on

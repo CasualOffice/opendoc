@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Opt-in GPU backend for the OpenDoc display list (`docs/179`, ADR-073).
+//! Opt-in GPU backend for the OpenDoc display list (`docs/architecture/179`, ADR-073).
 //!
 //! `casual-doc-render` (tiny-skia) is the default backend and the golden
 //! reference. This crate paints the SAME [`casual_doc_layout::display::DisplayList`]

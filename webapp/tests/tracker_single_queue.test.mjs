@@ -86,24 +86,27 @@ test("docs/109: no id is queued twice", () => {
 // pieces of work — a deferred Pages action bump, which landed in the queue, and
 // a print hang, which was worked and filed under "Closed since the queue was
 // opened". Both guards above passed: the uniqueness check reads `queueRows`, so
-// a closed row reusing a queued id is invisible to it, and so is a closed row
-// duplicated within the closed table.
+// a completed row reusing a queued id is invisible to it, and so is a completed
+// row duplicated within the completed-work history.
 //
 // That is not cosmetic. The id is how a commit, a code comment and a doc cite a
 // row; two rows sharing one means a citation resolves to whichever the reader
 // finds first, and the other piece of work has no name at all. Two parallel
 // lanes each taking "the next free number" from the queue is exactly how it
 // happens, and it will happen again.
-test("docs/109: no id is minted twice anywhere in the document", () => {
+test("tracker: no id is minted twice across open and completed work", () => {
   const text = read(BACKLOG);
   const queued = new Map(queueRows(text).map((r) => [r.id, `queue row ${r.n}`]));
 
-  // The closed table's rows start with the Id directly, having no `#`.
-  const closedAt = text.indexOf("## Closed since the queue was opened");
-  assert.ok(closedAt > 0, "docs/109 must carry a 'Closed since the queue was opened' section");
+  // The completed table's rows start with the Id directly, having no `#`.
+  assert.match(text, /\[tracker\/completed\.md\]\(tracker\/completed\.md\)/,
+    "docs/109 must link to the completed-work history");
+  const completed = read("tracker/completed.md");
+  const completedAt = completed.indexOf("## Closed since the queue was opened");
+  assert.ok(completedAt > 0, "the completed-work file must carry the closed rows");
   const closed = new Map();
   const clashes = [];
-  for (const line of text.slice(closedAt).split("\n")) {
+  for (const line of completed.slice(completedAt).split("\n")) {
     const row = line.match(/^\|\s*([A-Z]+[A-Z0-9-]*-[A-Z0-9]+)\s*\|/);
     if (!row) continue;
     const id = row[1];

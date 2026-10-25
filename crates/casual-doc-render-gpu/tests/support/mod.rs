@@ -1,6 +1,6 @@
 //! The tolerance both parity tests hold the second backend to, and the
 //! comparison that measures it. One definition, so the sheet and the documents
-//! cannot drift apart (`docs/179` §6).
+//! cannot drift apart (`docs/architecture/179` §6).
 //!
 //! Three numbers per page, against the CPU reference:
 //!

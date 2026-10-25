@@ -1,5 +1,5 @@
 #!/bin/bash
-# docs/179 §2 and §5: wasm timings (scalar and simd128 builds) and module sizes.
+# docs/architecture/179 §2 and §5: wasm timings (scalar and simd128 builds) and module sizes.
 #
 #   benchmarks/render-wasm/run.sh <heavy.docx> [out-dir]
 #

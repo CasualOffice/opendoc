@@ -4514,18 +4514,18 @@ report.
 ## ADR-073 — The engine worker is an actor that hands back summaries; the editable document and its layout stay on the main thread and become lazy first
 
 **Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-13.
-**Design and measurements:** `docs/180`. **Builds on:** `56` (threading model), `113` and
+**Design and measurements:** `docs/architecture/180`. **Builds on:** `56` (threading model), `113` and
 `116` §7 (windowed and lazy layout), `107` §4 (editing budgets), ADR-033. **Refines:** `56`'s
 "move the core to a Worker (SAB + OffscreenCanvas)".
 
 **Context.** Open, the font-upgrade re-layout and the first edit after either are each one
 uninterruptible O(document) task on the main thread: 3.3 s, 3.2 s and 3.1 s at 20,000
-paragraphs, and 29 to 31 s and 25 s at 100,000 (`docs/180` §2). `56` assumed shared memory,
+paragraphs, and 29 to 31 s and 25 s at 100,000 (`docs/architecture/180` §2). `56` assumed shared memory,
 but GitHub Pages sends no COOP/COEP and wasm threads need a nightly `std`, so `56`'s shared
 memory is unavailable. Without it only bytes cross. The model crosses cheaply (12 MB, 44 ms
 to decode at 20,000 paragraphs), but the laid-out pages do not (406 MB, 1.78 s, only 2.3×
-cheaper than computing them), and `SourceEnvelope` has no encoding at all (`docs/180` §3.2).
-The editor reads at least 291 distinct engine members synchronously (`docs/180` §3.2).
+cheaper than computing them), and `SourceEnvelope` has no encoding at all (`docs/architecture/180` §3.2).
+The editor reads at least 291 distinct engine members synchronously (`docs/architecture/180` §3.2).
 
 **Decision.**
 
@@ -4544,7 +4544,7 @@ The editor reads at least 291 distinct engine members synchronously (`docs/180` 
    shaping pass per full layout, through the galley cache), then E2 (no per-keystroke
    document scans), then E3 (an editable prefix-and-extend whole layout), then W1 (open in
    the worker, with progress, Cancel and fallback), then W2 (read-only surfaces from a
-   worker replica fed by the op stream). See `docs/180` §6.
+   worker replica fed by the op stream). See `docs/architecture/180` §6.
 
 **Rejected.** Handing the laid-out pages across (§3.2). An asynchronous `ed.doc` proxy over a
 worker-owned engine (291 members, a round trip per caret move). `SharedArrayBuffer`/wasm
@@ -4553,16 +4553,16 @@ overlay must agree with the paint in the same frame). Shipping a worker open bef
 E3: it would move the 3.1 s task from the open to the first keystroke, and the guard would
 pass while the user's wait stayed the same.
 
-**Open.** `docs/180` §7 Q1 to Q3.
+**Open.** `docs/architecture/180` §7 Q1 to Q3.
 
 ## ADR-074 — The second render backend is the `vello_common` sparse-strip encoder, on the CPU first and the GPU by opt-in; `tiny-skia` stays the reference
 
 **Status:** Proposed 2026-10-24, awaiting owner review. **Row:** `docs/109` RM-14.
-**Design and measurements:** `docs/179`. **Answers:** the "native renderer" pending decision
+**Design and measurements:** `docs/architecture/179`. **Answers:** the "native renderer" pending decision
 (`docs/109` Q8). **Builds on:** `docs/56` §5, `docs/43` §5.2.
 
 **Context.** RM-14 recorded that the GPU half of the render backend had never been begun.
-Measured first (`docs/179` §3): 85–99 % of a page's raster time is glyph rasterization in
+Measured first (`docs/architecture/179` §3): 85–99 % of a page's raster time is glyph rasterization in
 `tiny-skia`. Outline extraction is under 5 %, and allocation and the RGBA copy are a few
 percent. A dense page costs 26 ms native and 44 ms in wasm at 100 %, and 124 ms in wasm at
 200 % on a DPR-2 screen. Zoom, scroll-in and every edit pay the whole page again.
@@ -4587,7 +4587,7 @@ percent. A dense page costs 26 ms native and 44 ms in wasm at 100 %, and 124 ms 
    by default; `casual-doc-wasm`'s `sparse-raster` feature adds `renderPageSparse` with
    `renderPage`'s contract and is not built by `webapp/build.sh`. Proposing `vello_cpu` with
    `simd128` as the browser default waits for an A/B on time to interactive and per-keystroke
-   repaint (`docs/179` §9).
+   repaint (`docs/architecture/179` §9).
 5. **The GPU painter stays opt-in.** On an Apple M4 it is no faster than `vello_cpu`, because
    strip building stays on the CPU, so its value is very large pixel counts and hosts that own
    a GPU surface (it skips `putImageData`, about 9 ms a page at 384 dpi). Every GPU error
@@ -4605,4 +4605,4 @@ percent. A dense page costs 26 ms native and 44 ms in wasm at 100 %, and 124 ms 
 - A page bitmap cache as *the* fix: it does nothing for zoom or edits, and costs 55 MB a page
   at 384 dpi. It is worth having later on top of any backend.
 
-**Open.** `docs/179` §10 Q1–Q3.
+**Open.** `docs/architecture/179` §10 Q1–Q3.

@@ -717,7 +717,7 @@ in `crates/casual-doc-export/src/semantic.rs`), including `w:lvlOverride`,
 `w:startOverride`, a full nested `w:lvl` redefinition, `w:isLgl`, `w:suff`, `w:lvlJc`,
 `w:lvlRestart`, `w:pStyle`, level `w:pPr` and level `w:rPr` — and it preserves *presence* by
 emitting a bare `<w:pPr/>` for a `Some(default)`. Six export round-trip tests and nine import
-tests name numbering. `docs/44`'s row **P1F-6** (*"only `ilvl`+`start`;
+tests name numbering. `docs/44-COVERAGE-GAP-AUDIT.md`'s row **P1F-6** (*"only `ilvl`+`start`;
 `numFmt`/`lvlText`/`lvlJc`/`suff` dropped"*) is marked Done and is Done.
 
 **One import mapping silently stripped lists from a whole class of real Word
@@ -1716,7 +1716,7 @@ themed row rather than 37, **five must survive individually**:
 - **`docs/109` OO-016** — re-rank; add the ONLYOFFICE trigger table as the spec.
 - **`docs/109` OO-021** — sharpen to "a per-level write path, of which the gallery is one
   caller".
-- **`docs/44` P1F-6** — closed correctly; add the footnote that `lvlJc` round-trips and does not
+- **`docs/44-COVERAGE-GAP-AUDIT.md` P1F-6** — closed correctly; add the footnote that `lvlJc` round-trips and does not
   render.
 - **`docs/08`** — *"51 variants"* → 53.
 - **`docs/130`** §8's 264px → 288px, and §11.1's five → seven.

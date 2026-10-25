@@ -378,7 +378,7 @@ export function createPointer(ed) {
       return;
     }
     // A click on a FORM CHECKBOX ticks it rather than placing a caret beside a
-    // glyph. Word and ONLYOFFICE both do this (`docs/118` §2), and it is the
+    // glyph. Word and ONLYOFFICE both do this (`docs/118-DOCUMENT-AUDIT-2026-09-22.md` §2), and it is the
     // difference between the owner's Medical Incident Report Form being a form
     // and being a picture of one: eight controls, none of them tickable.
     if (ed.toggleFormCheckboxAt(anchor.node, anchor.offset)) {

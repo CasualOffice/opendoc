@@ -1,5 +1,5 @@
 //! Times the CPU raster and the sparse-strip encoder inside WebAssembly
-//! (`docs/179` §2), and keeps the GPU path reachable for the size measurement
+//! (`docs/architecture/179` §2), and keeps the GPU path reachable for the size measurement
 //! (§5). No wasm-bindgen: raw exports, timed from JS with `performance.now()`.
 //! Run through `run.sh`.
 #![allow(unsafe_code)]

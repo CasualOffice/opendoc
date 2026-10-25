@@ -216,9 +216,10 @@ The test `webapp/tests/rival_plan.test.mjs` fails if any of the following holds:
 
 ### 3. Character formatting: effects and spacing (RM-18)
 
-**State:** Implemented on `feat/batch3-character-formatting`; final validation is
-running in GitHub CI at the owner's request. The four tasks share one PR.
-See docs/170 for the transaction, rendering and UX design.
+**State:** The implementation merged on `main` in #835. The row remains open
+because its ten capability re-grades and the final batch acceptance have not
+been recorded in `docs/153` or `docs/109`; the generated scores therefore do
+not claim those gains. See docs/170 for the transaction, rendering and UX design.
 
 **Where:** casual-doc-wasm (run setters), casual-doc-render (effects), webapp font dialog.
 

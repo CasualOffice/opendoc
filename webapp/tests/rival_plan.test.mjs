@@ -20,6 +20,7 @@ import {
 
 const PLAN = new URL("../../docs/168-WORD-AND-DOCS-RIVAL-PLAN.md", import.meta.url);
 const BACKLOG = new URL("../../docs/109-BACKLOG.md", import.meta.url);
+const COMPLETED = new URL("../../docs/tracker/completed.md", import.meta.url);
 const text = readFileSync(PLAN, "utf8");
 const plan = parsePlan(text);
 const verdicts = capabilityVerdicts();
@@ -59,13 +60,13 @@ test("the batches run 1..N and name tracker rows that exist", () => {
     plan.batches.map((batch) => batch.order),
     plan.batches.map((_, i) => i + 1),
   );
-  const backlog = readFileSync(BACKLOG, "utf8");
+  const backlog = readFileSync(BACKLOG, "utf8") + readFileSync(COMPLETED, "utf8");
   for (const batch of plan.batches) {
     for (const id of batch.ids) {
       assert.match(
         backlog,
         new RegExp(`^\\| (?:\\d+ \\| )?${id} \\|`, "m"),
-        `batch ${batch.order} names ${id}, which docs/109 has no row for`,
+        `batch ${batch.order} names ${id}, which the open queue and completed history have no row for`,
       );
     }
   }

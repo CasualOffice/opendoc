@@ -1,4 +1,4 @@
-//! A deterministic HEAVY page for the render benchmarks (`docs/179` §2): dense
+//! A deterministic HEAVY page for the render benchmarks (`docs/architecture/179` §2): dense
 //! 9pt justified text with mixed bold, italic, underline and highlight, a shaded
 //! 6 × 12 table and a line of colour emoji. Shared by `render_profile` and
 //! `casual-doc-render-gpu`'s `gpu_profile` through `#[path]`, so both time the

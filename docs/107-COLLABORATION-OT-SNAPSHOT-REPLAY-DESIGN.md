@@ -606,7 +606,7 @@ Recorded rather than hidden, per AGENTS.md.
    paragraph split dividing a range, and the run a concurrent insertion attaches to.
 5. **Log format stability.** The operation log becomes persisted, versioned data — so the
    operation enum becomes a compatibility surface. Needs a schema-version policy like
-   `22-NORMALIZED-SCHEMA-V0.md`'s, and a decision on whether old logs must replay on new
+   `tracker/completed/retired-documents.md#doc-22`'s, and a decision on whether old logs must replay on new
    builds.
 6. ~~**`site_id` allocation** without a mandatory server, and collision behaviour.~~
    **Answered 2026-09-30 by `152` §4 (ADR-047), and by a property rather than by a

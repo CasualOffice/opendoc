@@ -28,7 +28,7 @@ export const OBJECT_LABELS = {
  *
  * A group child's reference has `root !== subject`: the root is the anchored
  * group, the subject the shape within it. That distinction is the engine's and
- * the host does not reconstruct it from geometry (`docs/101` UXOBJ-001).
+ * the host does not reconstruct it from geometry (`docs/101-EDITOR-OBJECT-AND-INSERT-PANEL-AUDIT.md` UXOBJ-001).
  */
 export function traversalRoot(ref) {
   return ref && ref.root && ref.subject !== ref.root ? ref.root : null;

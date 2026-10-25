@@ -5,7 +5,7 @@
 //! implement. The walk is the only place a paint item's meaning lives on this
 //! side; the painters only rasterize.
 //!
-//! **Native families** — everything that costs time on a real page (`docs/179`
+//! **Native families** — everything that costs time on a real page (`docs/architecture/179`
 //! §3: glyphs are 85–97 % of a page's raster) — are encoded as vector commands:
 //! outline glyph runs and their single/double/thick/patterned/wavy underlines
 //! and strikes, the outline text effects, rectangles, ellipses, rounded

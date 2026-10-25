@@ -1,4 +1,4 @@
-// docs/179 §4.3: what handing an RGBA page to a canvas costs in Chromium —
+// docs/architecture/179 §4.3: what handing an RGBA page to a canvas costs in Chromium —
 // new ImageData + putImageData, then a one-pixel getImageData so the upload is
 // not deferred past the timer — and whether WebGPU / WebGL2 are available.
 // Needs `playwright-core` resolvable (NODE_PATH) and a Playwright Chromium in

@@ -1,6 +1,6 @@
 # 40 — Font Management Design
 
-Status: Draft for review. Owner: OpenDoc core. Depends on: 28 (Package Reader), 34 (Fidelity Architecture), 35 (Disposition Taxonomy), 38 (Schema v1), 39 (Semantic Writer). Feeds: Phase 1B layout/resolution and the `FontProvider` interface named in 03-HLD.md l.178 and 06-ROADMAP l.97/101/290.
+Status: Draft for review. Owner: OpenDoc core. Depends on: 28 (Package Reader), 34 (Fidelity Architecture), 35 (Disposition Taxonomy), 38 (Schema v1), 39 (Semantic Writer). Feeds: Phase 1B layout/resolution and the `FontProvider` interface named in tracker/completed/retired-documents.md#doc-3 l.178 and 06-ROADMAP l.97/101/290.
 
 ## 1. Goals and non-goals
 
@@ -172,7 +172,7 @@ Workspace currently has **zero** font crates (only `quick-xml 0.41`, `zip =7.2.0
 
 Until 1A.2/1A.3 land, Retention (byte-floor) mode already preserves `fontTable.xml`/`theme1.xml`/`.odttf` verbatim (package.rs admits every non-macro part) — so the *no-edit* case is safe today; the work closes the *semantic-write* gap.
 
-**Phase 1B — resolution.** `FontProvider` trait (the boundary named in 03-HLD.md l.178) + `FaceIndex` (three tiers) + `resolve()` implementing §5.2 verbatim + PANOSE/altName substitution + per-glyph fallback. Bundled fallback set + precompiled metrics index (Liberation/Carlito/Caladea). Golden tests snapshot a fixed `FaceIndex` (embedded+bundled only); host enumeration excluded.
+**Phase 1B — resolution.** `FontProvider` trait (the boundary from the former HLD, recoverable through tracker/completed/retired-documents.md#doc-3) + `FaceIndex` (three tiers) + `resolve()` implementing §5.2 verbatim + PANOSE/altName substitution + per-glyph fallback. Bundled fallback set + precompiled metrics index (Liberation/Carlito/Caladea). Golden tests snapshot a fixed `FaceIndex` (embedded+bundled only); host enumeration excluded.
 
 **Phase 1C+ (out of scope here).** Shaping + layout consume the resolved faces/metrics.
 

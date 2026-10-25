@@ -241,18 +241,6 @@ export const WITHHELD = [
       "on the owner's instruction.",
   },
   {
-    source: "docs/06-ROADMAP-AND-DELIVERY.md",
-    reason:
-      "Contradicted by the current product order, in the part a reader would act " +
-      "on. Its product-sequencing paragraph (2026-07-25) positions the Tauri " +
-      "desktop application ahead of the public editing SDK and the browser " +
-      "editor; the site is built web-first with Tauri deferred, and the owner's " +
-      "delivery order set 2026-09-25 runs authoring, then mobile, then " +
-      "embeddability, then the SDK, with collaboration last. Publishing a " +
-      "superseded sequencing statement as current site content is a false claim " +
-      "whichever direction it points.",
-  },
-  {
     source: "docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md",
     reason:
       "ONE blocker left, and it is not the one that put it here. It was withheld " +

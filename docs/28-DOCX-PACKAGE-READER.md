@@ -77,7 +77,7 @@ reject structurally valid packages with unusual office-document part names.
 > binds by content type, fail-closed. `word/document.xml` becomes an optional
 > fast-path heuristic. The Phase 0 three-part requirement above is superseded for
 > the Phase 1A read path; see `36-ADR-027-ACCEPTANCE-RECORD.md` (R1) and
-> `37-PHASE-1A-DECISION-RESEARCH.md`.
+> `tracker/completed/retired-documents.md#doc-37`.
 
 ## Package Path Rules
 

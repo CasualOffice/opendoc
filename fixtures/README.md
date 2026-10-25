@@ -3,7 +3,7 @@
 This directory contains repository-owned synthetic fixtures. Do not copy
 documents from the sibling study repository, customer data, or third-party
 vendor suites into this directory without the rights review required by
-`docs/23-DOCX-FIXTURE-CORPUS.md`.
+`docs/tracker/completed/retired-documents.md#doc-23`.
 
 Regenerate the package fixtures from the repository root:
 

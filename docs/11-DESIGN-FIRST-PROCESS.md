@@ -30,7 +30,10 @@ Record links and conclusions when they affect design.
 
 ### 3. Design Note
 
-For substantial work, create a design note under `docs/design/` once that directory exists. Until then, add a section to the closest numbered doc or tracker item.
+For substantial work, update the closest numbered design document. Create a new
+numbered document only when a durable, independently reviewable contract or
+decision does not fit an existing one. A routine fix does not need its own
+design document.
 
 The design should include:
 
@@ -56,13 +59,15 @@ Accepted designs should state:
 
 ### 5. Tracker Update
 
-Update `docs/14-EXECUTION-TRACKER.md` with:
+Add or update the row in `docs/109-BACKLOG.md`, the single working queue, in
+the same change as the work. `docs/14-EXECUTION-TRACKER.md` is an archive closed
+to new rows. The backlog row records:
 
 - status;
 - owner;
 - scope;
 - acceptance gates;
-- links to design/ADR/docs.
+- links to the relevant design, ADR, or evidence.
 
 ### 6. Implementation
 

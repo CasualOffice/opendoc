@@ -1,5 +1,5 @@
 //! The GPU backend against the CPU reference, page by page — the instrument
-//! behind `docs/179` §4.
+//! behind `docs/architecture/179` §4.
 //!
 //! For every page of `sample.docx` and the generated heavy page, at 96, 192 and
 //! 384 dpi, prints the median milliseconds of:

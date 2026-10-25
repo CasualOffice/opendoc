@@ -3,7 +3,7 @@
 //! `vello_hybrid` splits rasterization: the CPU flattens paths into sparse
 //! strips (the coverage of the pixels an edge crosses), and the GPU fills them
 //! and composites. That split is why it runs on WebGL2-class hardware as well as
-//! WebGPU, and why the CPU still pays for path flattening (`docs/179` §4).
+//! WebGPU, and why the CPU still pays for path flattening (`docs/architecture/179` §4).
 //!
 //! [`GpuRenderer`] owns one device, one queue and one renderer, and keeps the
 //! render target and the readback buffer between pages of the same size, so a

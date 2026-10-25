@@ -1,6 +1,9 @@
 # 170 — Character formatting and glyph effects
 
 Implementation design for the owner's requested `docs/168` batch 3 (RM-18).
+The implementation merged in #835. Acceptance and capability re-grading remain
+open in `docs/109` and `docs/168`; the CI notes below record the state at the
+time of that PR, not the current status of GitHub checks.
 Uses the transaction and backend boundaries in docs/43, docs/58 and docs/108.
 
 ## Authoring and policy

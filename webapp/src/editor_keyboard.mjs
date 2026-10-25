@@ -105,7 +105,7 @@ export function createKeyboard(ed) {
     }
 
     // Space ticks the form checkbox the caret is in, as in Word — the keyboard
-    // half of the click in `onPointerDown` (`docs/118` §2). Collapsed caret and
+    // half of the click in `onPointerDown` (`docs/118-DOCUMENT-AUDIT-2026-09-22.md` §2). Collapsed caret and
     // no modifier only: Ctrl+Space is Clear Formatting (a keymap row now, claimed
     // by the dispatcher), and a Space over a selection is a replacement, not a
     // toggle.

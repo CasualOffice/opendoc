@@ -1,4 +1,4 @@
-//! `renderPageSparse`: the opt-in second raster (`docs/179`, ADR-073 Proposed).
+//! `renderPageSparse`: the opt-in second raster (`docs/architecture/179`, ADR-073 Proposed).
 //!
 //! The SAME page `renderPage` draws — same layout, same compose options, same
 //! fonts, same media, same background — painted by `casual-doc-render-gpu`'s
@@ -21,7 +21,7 @@ use crate::{BorrowedMedia, PageBitmap, WasmDocument, to_js};
 #[wasm_bindgen]
 impl WasmDocument {
     /// [`WasmDocument::render_page`] through the sparse-strip raster. Measured
-    /// 3–5x faster on text-dense pages (`docs/179` §4); within the parity
+    /// 3–5x faster on text-dense pages (`docs/architecture/179` §4); within the parity
     /// tolerance of `renderPage`, not pixel-identical to it.
     ///
     /// Throws where `renderPage` throws, and when a side exceeds 65,535 device
