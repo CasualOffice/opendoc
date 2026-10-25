@@ -58,7 +58,7 @@ jobs:
           toolchain: 1.96.0
           components: clippy
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
@@ -73,7 +73,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       # The oracle geometry gate (docs/94 H2) runs FIRST and by name, on every
       # pull request. It is part of the workspace sweep below too, but a gate
       # that only exists as one line of a 3,000-line log is a gate nobody can
@@ -118,7 +118,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Run release benchmark smoke
         run: >-
           cargo run -p opendoc-benchmark --release --locked --
@@ -187,7 +187,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Build API documentation
         run: cargo doc --workspace --all-features --no-deps --locked
 
@@ -203,7 +203,7 @@ jobs:
           toolchain: 1.96.0
           targets: wasm32-unknown-unknown
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Check WASM-compatible foundation
         run: cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
 
@@ -224,7 +224,7 @@ jobs:
           toolchain: 1.96.0
           targets: wasm32-unknown-unknown
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Install wasm-pack
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
         with:
@@ -275,7 +275,7 @@ jobs:
           toolchain: 1.96.0
           targets: wasm32-unknown-unknown
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Install wasm-pack
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
         with:
@@ -346,7 +346,7 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Check platform
         run: ${{ matrix.command }}
 
