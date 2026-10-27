@@ -415,3 +415,68 @@ Documentation only: this document, ADR-075 (proposed) and `docs/109` RM-48.
 - `UI_COMMANDS` and G3 (editor command ids ⇔ registry), G4 (generated schemas), G5 (suggest
   round-trip over every command) and G7 beyond tables: R3 and later R1 steps.
 - The anchor resolver has not moved down; surfaces (R2) are not built.
+
+### Lane surfaces
+
+**R2 built (`casual-doc-ai`, `opendoc-mcp` read tools).**
+
+- `Surface::{Body, Header(id), Footer(id), Footnote(id), Endnote(id), TextBox(id),
+  Comment(id)}` (`casual-doc-ai/src/surface.rs`), spelled `body` or `<kind>:<id>`. It is the
+  engine's `casual_doc_edit::Surface` plus text boxes and comment bodies; `85` §8c.3 holds:
+  ids are unique across stories, so an anchor needs no surface and a read does. `enumerate`
+  walks the document once (O(document)); no per-node scan.
+- `get_outline` lists every surface, paged by `surfaces_cursor`: id, kind, section and page
+  type for a header or footer, the referencing paragraph for a note, the host paragraph for a
+  text box, the author and `editable: false` for a comment, paragraph and table counts,
+  estimated tokens and a preview. It also lists bookmarks (with their paragraph and surface)
+  and counts links, fields, objects and content controls document-wide.
+- `read_blocks` takes `surface`; without one it reads the cursor's surface, else the surface
+  holding `start`, else the body. A cursor names its surface and cannot page another.
+  `search` and `chunk_document` take `surface` (one, or `all`); the default stays the body
+  (and, for chunks, comment threads). `read_table` names the table's surface. Every hit,
+  chunk and result names its surface.
+- Projections (`casual-doc-ai/src/project.rs`, one wildcard-free match on `InlineNode`):
+  links with their URL or bookmark, fields with kind, instruction and result (and
+  paragraph-spanning fields from `field_ranges`), bookmarks by name, note references with the
+  note's surface, comment references, inline content controls, and objects: pictures and
+  floating pictures with alt text and extent, text boxes and group text boxes with their
+  surface, shape groups with their children, equations with their linear text. A block
+  content control is its own entry (type, tag, alias, lock) and the blocks it wraps name it.
+  Charts, SmartArt, OLE objects, other graphics, alt-chunks and equations without a linear
+  form are named with a reason and counted in each result's `omitted`. All of it is
+  structured data, bounded per paragraph and kind (`178` §5.8).
+- Anchors resolve on every surface the read tools return ids from. A comment body's
+  paragraph is refused with `unsupported-surface` and the reason: a comment changes through
+  `comment` and `resolve_comment`, and the engine's paragraph operations do not reach it.
+- **Exit gate passed, with no change to `plan.rs`:** an agent finds a header paragraph and a
+  footnote paragraph through `get_outline` and `read_blocks`, suggests a replacement into
+  each, saves DOCX; `word/header1.xml` and `word/footnotes.xml` each carry `w:ins` and `w:del`
+  by the session author, `word/document.xml` carries none, and the reopened document lists
+  exactly four revisions anchored in those two paragraphs
+  (`casual-doc-ai/tests/surfaces.rs`). The check is the package XML, not Word itself.
+
+**Guards, each driven red by a mutation and restored:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| G2 inlines (projection) | Delete the `Math` arm in `project.rs` | `E0004: non-exhaustive patterns: InlineNode::Math(_) not covered` |
+| G2 blocks | Delete the `AltChunk` arm in `structure::blocks_in` | `E0004: non-exhaustive patterns: BlockNode::AltChunk(_) not covered` |
+| Every surface is listed | Drop the footnote loop from `surface::enumerate` | outline kinds `left: [body, header, footer, endnote, comment, text_box]`; the exit gate "one footnote surface, left: 0" |
+| Text boxes are surfaces | `InlineNode::TextBox(_) => {}` in `text_boxes_in` | outline kinds lack `text_box`; search-all and anchor tests red |
+| Content controls not flattened | Do not emit the control's own entry in `blocks_in` | projection test: `expect("the control")` |
+| Omitted is counted | Drop the equation's `omitted.push` | `omitted.count left: 0, right: 1` |
+| Hyperlinks carry their URL | Drop `value["url"]` | `left: Null, right: "https://example.com/terms"` |
+| Comment bodies refuse with a reason | Remove the comment branch in `anchor::paragraph` | `left: "anchor-not-found", right: "unsupported-surface"` |
+| Anchors resolve on every surface | `anchor::paragraph` looks in the body only | header/footnote anchors fail; the exit gate's plan is refused |
+
+**Found, not fixed here (outside this lane's files).** An inline DrawingML text box is modeled
+(its paragraphs are a surface) but the importer also reports the drawing as omitted, so a
+DOCX save of a document holding one is refused by the loss gate unless `drawing` is
+accepted. The exit-gate fixture therefore has no text box; the read tests use one.
+Deletions are not in a paragraph's `text` or `runs` (the engine's final-with-markup
+projection shows insertions only); `list_tracked_changes` is where deletions are read.
+
+**Not built.** Chart series and data, SmartArt and OLE content (named and counted, not
+read); `read_table` cells list text and the first paragraph id, not their links or objects;
+the outline's heading tree covers the body only; the MCP conformance suite calls the read
+tools without a `surface` argument (the library tests carry the surface cases).

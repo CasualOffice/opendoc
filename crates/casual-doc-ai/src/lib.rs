@@ -30,12 +30,15 @@ pub mod error;
 pub mod limits;
 pub mod plan;
 pub mod profile;
+mod project;
 pub mod read;
 pub mod session;
 mod structure;
+pub mod surface;
 pub mod text;
 
 pub use error::{AiError, AiResult};
 pub use limits::Limits;
 pub use profile::Profile;
 pub use session::{Clock, ExportFormat, Session, SessionConfig};
+pub use surface::Surface;

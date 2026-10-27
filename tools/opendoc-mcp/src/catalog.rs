@@ -31,6 +31,25 @@ fn limit() -> Value {
     json!({ "type": "integer", "minimum": 1, "maximum": 200 })
 }
 
+/// One surface (`docs/181` R2), as get_outline lists them; `all` too where
+/// `every` is set.
+fn surface(every: bool) -> Value {
+    let pattern = if every {
+        "^(body|all|(header|footer|footnote|endnote|text_box|comment):[0-9a-f]{32})$"
+    } else {
+        "^(body|(header|footer|footnote|endnote|text_box|comment):[0-9a-f]{32})$"
+    };
+    json!({
+        "type": "string",
+        "pattern": pattern,
+        "description": if every {
+            "`body` (the default), `all`, or one surface as get_outline lists it: header:<id>, footer:<id>, footnote:<id>, endnote:<id>, text_box:<id>, comment:<id>."
+        } else {
+            "`body`, or one surface as get_outline lists it: header:<id>, footer:<id>, footnote:<id>, endnote:<id>, text_box:<id>, comment:<id>. Default: the cursor's surface, else the surface holding `start`, else the body."
+        }
+    })
+}
+
 fn anchor() -> Value {
     json!({
         "type": "object",
@@ -111,10 +130,10 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
-            description: "Headings and tables with their ids, heading paths and estimated tokens (bytes/4), plus comment and tracked-change counts. Read this first.",
+            description: "Headings and tables with their ids, heading paths and estimated tokens (bytes/4); every surface (headers and footers with their section and page type, footnotes, endnotes, comments, text boxes) with its id and tokens; bookmarks; counts. Read this first.",
             input: || {
                 object(
-                    json!({ "document": doc(), "depth": { "type": "integer", "minimum": 1, "maximum": 9 }, "cursor": cursor(), "limit": limit() }),
+                    json!({ "document": doc(), "depth": { "type": "integer", "minimum": 1, "maximum": 9 }, "cursor": cursor(), "limit": limit(), "surfaces_cursor": cursor() }),
                     &["document"],
                 )
             },
@@ -126,10 +145,10 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
-            description: "Body blocks in order from `start` (a block id) or `cursor`, to a token ceiling, as typed JSON or Markdown with each block prefixed {#id}. States truncation.",
+            description: "One surface's blocks (the body by default) in order from `start` (a block id) or `cursor`, to a token ceiling, as typed JSON or Markdown with each block prefixed {#id}. Paragraphs list their links, fields, bookmarks, note references, content controls and objects; what is not shown is counted in `omitted`. States truncation.",
             input: || {
                 object(
-                    json!({ "document": doc(), "start": { "type": "string" }, "cursor": cursor(), "max_tokens": { "type": "integer", "minimum": 1 }, "format": { "enum": ["json", "markdown"] } }),
+                    json!({ "document": doc(), "surface": surface(false), "start": { "type": "string" }, "cursor": cursor(), "max_tokens": { "type": "integer", "minimum": 1 }, "format": { "enum": ["json", "markdown"] } }),
                     &["document"],
                 )
             },
@@ -151,7 +170,7 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
-            description: "One table's cells, row-paged, with merged-cell spans and each cell's paragraph id.",
+            description: "One table's cells, row-paged, with merged-cell spans and each cell's paragraph id. The table may be on any surface; the result names it.",
             input: || {
                 object(
                     json!({ "document": doc(), "table": { "type": "string" }, "cursor": cursor(), "rows": limit() }),
@@ -196,10 +215,10 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
-            description: "Find text: exact (case-sensitive), insensitive, or words (whole words, case-insensitive; ASCII case folding). Hits carry node, exact, prefix and suffix, ready to use as an anchor. Regular expressions are not supported.",
+            description: "Find text: exact (case-sensitive), insensitive, or words (whole words, case-insensitive; ASCII case folding). Hits carry node, surface, exact, prefix and suffix, ready to use as an anchor. Searches the body unless `surface` names another or `all`. Regular expressions are not supported.",
             input: || {
                 object(
-                    json!({ "document": doc(), "query": { "type": "string" }, "mode": { "enum": ["exact", "insensitive", "words"] }, "cursor": cursor(), "limit": limit() }),
+                    json!({ "document": doc(), "query": { "type": "string" }, "surface": surface(true), "mode": { "enum": ["exact", "insensitive", "words"] }, "cursor": cursor(), "limit": limit() }),
                     &["document", "query"],
                 )
             },
@@ -211,10 +230,10 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
-            description: "Structure-aware chunks (sections, table row runs, comment threads) with deterministic ids and anchors, for a host's own embedding index.",
+            description: "Structure-aware chunks (sections, table row runs, comment threads) with deterministic ids, anchors and their surface, for a host's own embedding index. The body and comment threads unless `surface` names another or `all`.",
             input: || {
                 object(
-                    json!({ "document": doc(), "max_tokens": { "type": "integer", "minimum": 32 }, "cursor": cursor(), "limit": limit() }),
+                    json!({ "document": doc(), "max_tokens": { "type": "integer", "minimum": 32 }, "surface": surface(true), "cursor": cursor(), "limit": limit() }),
                     &["document"],
                 )
             },

@@ -9,8 +9,9 @@ use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 
+use casual_doc_ai::Surface;
 use casual_doc_ai::plan::{self, EditPlan};
-use casual_doc_ai::read::{self, ReadFormat, SearchMode};
+use casual_doc_ai::read::{self, ReadFormat, Scope, SearchMode};
 use casual_doc_ai::{
     AiError, AiResult, Clock, ExportFormat, Limits, Profile, Session, SessionConfig,
 };
@@ -364,11 +365,12 @@ impl Server {
             }
             "get_outline" => {
                 let s = self.session(str_arg(args, "document")?)?;
-                plain(read::outline(
+                plain(read::outline_paged(
                     s,
                     opt_u64(args, "depth").map(|d| d.min(9) as u8),
                     opt_str(args, "cursor"),
                     opt_u64(args, "limit").map(|l| l as usize),
+                    opt_str(args, "surfaces_cursor"),
                 )?)
             }
             "read_blocks" => {
@@ -378,8 +380,9 @@ impl Server {
                     Some("markdown") => ReadFormat::Markdown,
                     Some(_) => return Err(AiError::invalid("`format` is json or markdown.")),
                 };
-                plain(read::read_blocks(
+                plain(read::read_blocks_in(
                     s,
+                    opt_str(args, "surface").map(Surface::parse).transpose()?,
                     opt_str(args, "start"),
                     opt_str(args, "cursor"),
                     opt_u64(args, "max_tokens").map(|t| t.min(u64::from(u32::MAX)) as u32),
@@ -425,19 +428,21 @@ impl Server {
                         ));
                     }
                 };
-                plain(read::search(
+                plain(read::search_in(
                     s,
                     str_arg(args, "query")?,
                     mode,
+                    Scope::parse(opt_str(args, "surface"))?,
                     opt_str(args, "cursor"),
                     opt_u64(args, "limit").map(|l| l as usize),
                 )?)
             }
             "chunk_document" => {
                 let s = self.session(str_arg(args, "document")?)?;
-                plain(read::chunks(
+                plain(read::chunks_in(
                     s,
                     opt_u64(args, "max_tokens").map(|t| t.min(u64::from(u32::MAX)) as u32),
+                    Scope::parse(opt_str(args, "surface"))?,
                     opt_str(args, "cursor"),
                     opt_u64(args, "limit").map(|l| l as usize),
                 )?)

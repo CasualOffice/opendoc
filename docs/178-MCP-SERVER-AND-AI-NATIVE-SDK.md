@@ -782,7 +782,7 @@ re-minted still differs, so ADR-052's identity convention is unchanged.
 
 **Not built, stated.**
 
-- Reading covers the body; headers, footers, notes and text boxes are not projected yet.
+- Every surface is read (`docs/181` §12 "Lane surfaces"); charts, SmartArt, OLE objects, alt-chunks and equations without a linear form are named and counted as `omitted`, not projected.
 - `search` has exact, case-insensitive and whole-word modes; regular expressions are not
   supported (no regex dependency), and case folding is ASCII-only.
 - Paragraphs holding an equation, a note reference or a preview-less embedded object are

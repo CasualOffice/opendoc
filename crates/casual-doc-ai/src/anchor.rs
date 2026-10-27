@@ -43,16 +43,41 @@ impl Resolved {
     }
 }
 
-/// The paragraph `node` names, wherever it lives. **O(document)** (one walk).
+/// The paragraph `node` names, wherever it lives: the body, a header, a footer,
+/// a footnote, an endnote or a text box (every surface `read_blocks` and
+/// `search` return ids from). **O(document)** (one walk).
+///
+/// A paragraph of a comment's own body is found too, and refused with
+/// `unsupported-surface`: the read tools return its id, so "no such
+/// paragraph" would be false, but a comment changes through the `comment` and
+/// `resolve_comment` edits, and the engine's paragraph operations do not reach
+/// comment bodies.
 pub(crate) fn paragraph<'a>(document: &'a Document, node: &str) -> AiResult<&'a Paragraph> {
     let id = node_id(node)?;
-    find_paragraph_any(document, id).ok_or_else(|| {
-        AiError::new(
-            "anchor-not-found",
-            "No paragraph has that id at this revision; read the document again.",
+    if let Some(found) = find_paragraph_any(document, id) {
+        return Ok(found);
+    }
+    let in_comment = document
+        .definitions()
+        .comments
+        .iter()
+        .find(|(_, comment)| crate::surface::holds(&comment.blocks, id));
+    if let Some((comment, _)) = in_comment {
+        return Err(AiError::new(
+            "unsupported-surface",
+            "That paragraph is in a comment's body, which is read-only by anchor; reply to or \
+             resolve the comment with the comment and resolve_comment edits.",
         )
-        .with_details(json!({ "node": node }))
-    })
+        .with_details(json!({
+            "node": node,
+            "surface": crate::surface::Surface::Comment(comment.node_id()).to_string(),
+        })));
+    }
+    Err(AiError::new(
+        "anchor-not-found",
+        "No paragraph has that id at this revision; read the document again.",
+    )
+    .with_details(json!({ "node": node })))
 }
 
 /// Resolves `anchor` against `document`. With no quote and no offsets it names
